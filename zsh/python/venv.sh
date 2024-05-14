@@ -69,19 +69,15 @@ function deactivate_venv() {
     echo -e "$(c_ko Deactivated) virtual environment: $CVENV"
 }
 
-# Toggle venv activation/deactivation
-function toggle_venv() {
-    if [[ $VIRTUAL_ENV ]]; then
-        deactivate_venv
-    else
-        activate_venv
-    fi
-}
-
 # Shortcut to create a python venv cin the current folder if one doesn't exist already
 # It it exists, acts as a toggle to activate/deactivate the env
 # And ensure it's added to the .gitignore at creation
 function venv() {
+
+    if [[ $VIRTUAL_ENV ]]; then
+        deactivate_venv
+        return
+    fi
 
     # Prompt the user if they want to create a venv if it doesn't exist in current folder
     if ! check_venv; then
@@ -108,5 +104,6 @@ function venv() {
             fi
         fi
     fi
-    toggle_venv
+    
+    activate_venv
 }

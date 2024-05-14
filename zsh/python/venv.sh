@@ -151,8 +151,7 @@ function pipreq() {
             echo -e "$(c_ko Error): virtual environment $CVD doesn't exist in $CPD, won't install pip requirements out of it."
             return
         fi
-
-        pip install -r requirements.txt
     fi
 
+    pip install -r requirements.txt
 }

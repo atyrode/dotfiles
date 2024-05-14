@@ -4,7 +4,7 @@
 		- fzf
 		- neofetch
 		- python
-			- venv
+		- tree
 	- ohmyzsh
 - VSCode
 - Obsidian

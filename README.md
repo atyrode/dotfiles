@@ -25,5 +25,8 @@
 ## Python :
 
 - `python` & `pip` shortcuts `python3` & `pip3`
+
 - `venv` is a _python venv_ manager which toggles the venv on or off in the current working directy. It will create a venv if it doesn't exist (called 'venv') and will offer to add it to .gitignore.
-- Helper functions for `venv`: `check_venv()`, `create_venv()`, `check_gitignore_exists()`, `create_gitignore()`, `check_venv_in_gitignore()`, `add_venv_to_gitignore()`, `activate_venv()`, `deactivate_venv()`
+- Helper functions for `venv`: `venv_exists()`, `create_venv()`, `gitignore_exists()`, `create_gitignore()`, `venv_in_gitignore()`, `add_venv_to_gitignore()`, `activate_venv()`, `deactivate_venv()`, `venv_is_active()`
+
+- `pipreq` is a command that pip install requirements in the current venv, if it exists and is activated, or will otherwise prompt you to

@@ -72,40 +72,43 @@ function venv() {
     # Colored variables representation
     CVD=$(folder $VENV_DIR)
     CPD=$(folder $PARENT_DIR)
+    CVENV="$(folder $VENV_DIR)/$(folder $PARENT_DIR)"
     CGI=$(file $GITIGNORE)
-
-    # Ensure venv is in .gitignore
-    if [ -e $GITIGNORE ]; then
-        if ! grep -q "^$VENV_DIR$" $GITIGNORE; then
-            if prompt_yes_no "Do you want to add $CVD to $CGI?"; then
-                echo $VENV_DIR >> $GITIGNORE
-                echo -e "$CVD added to $CGI in $CPD."
-            else
-                echo -e "$CVD $(ko "not added") to $CGI."
-            fi
-        fi
-    else
-        if prompt_yes_no "$CGI does not exist. Do you want to create it and add $CVD?"; then
-            echo $VENV_DIR > $GITIGNORE
-            echo -e "$CVD $(ok added) to $CGI in $CPD."
-        else
-            echo -e "$CGI $(ko "not created") and $CVD $(ko "not added")."
-        fi
-    fi
 
     # Create venv if it doesn't exist
     if [ ! -d "$VENV_DIR" ]; then
         python3 -m venv $VENV_DIR
-        echo -e "Virtual environment $CVD $(ok created) in $CPD."
+        echo -e "Virtual environment $CVD has been $(ok created) in $CPD."
+
+        # Ensure venv is in .gitignore
+        echo -e "---------------------"
+        if [ -e $GITIGNORE ]; then
+            if ! grep -q "^$VENV_DIR$" $GITIGNORE; then
+                if prompt_yes_no "Do you want to add $CVD to $CGI?"; then
+                    echo $VENV_DIR >> $GITIGNORE
+                    echo -e "$CVD added to $CGI in $CPD."
+                else
+                    echo -e "$CVD $(ko "not added") to $CGI."
+                fi
+            fi
+        else
+            if prompt_yes_no "$CGI does not exist. Do you want to create it and add $CVD?"; then
+                echo $VENV_DIR > $GITIGNORE
+                echo -e "$CVD $(ok added) to $CGI in $CPD."
+            else
+                echo -e "$CGI $(ko "not created") and $CVD $(ko "not added")."
+            fi
+        fi
+        echo -e "---------------------"
     fi
 
     # Toggle venv activation
     if [ -z "$VIRTUAL_ENV" ]; then
         source $VENV_DIR/bin/activate
-        echo -e "Virtual environment $CVD $(ok activated) in $CPD."
+        echo -e "Virtual environment $CVENV has been $(ok activated)"
     else
         deactivate
-        echo -e "Virtual environment $CVD $(ko deactivated) in $CPD."
+        echo -e "Virtual environment $CVENV has been $(ko deactivated)"
     fi
 }
 

@@ -1,1 +1,10 @@
-../Obsidian/meteovio/Alouette/Mac/Stack.md
+- iTerm 2
+	- Homebrew
+		- zoxide
+		- fzf
+		- neofetch
+		- python
+			- venv
+	- ohmyzsh
+- VSCode
+- Obsidian

@@ -1,3 +1,6 @@
+# Shortcuts clear to cl
+alias cl="clear"
+
 # Shortcut to source ~/.zshrc
 function zconf() {
     # Deactivate the current virtual environment if one is active
@@ -14,7 +17,6 @@ function zconf() {
     source ~/.zshrc
     echo -e "$(c_ok Sourced) ~/.zshrc."
 }
-
 
 # Zoxide to replace cd
 alias cd="z"

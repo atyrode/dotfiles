@@ -43,3 +43,4 @@ for file in "${CONFIG_FILES[@]}"; do
         source "$DOTFILES_DIR/$file"
     fi
 done
+export PATH="/opt/homebrew/opt/node@20/bin:$PATH"

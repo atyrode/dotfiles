@@ -5,6 +5,7 @@
 		- neofetch
 		- python
 		- tree
+		- node
 	- ohmyzsh
 - VSCode
 - Obsidian

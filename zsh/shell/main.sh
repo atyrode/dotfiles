@@ -19,8 +19,13 @@ function zconf() {
 }
 
 # Zoxide to replace cd
-alias cd="z"
-eval "$(zoxide init zsh)"
+eval "$(zoxide init --cmd cd zsh)"
 
 # Replaces Ctrl + R search with fzf
 eval "$(fzf --zsh)"
+
+# Fd to replace find
+alias find="fd"
+
+# Bat to replace cat
+alias cat="bat"

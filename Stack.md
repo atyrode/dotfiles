@@ -1,7 +1,9 @@
 - iTerm 2
 	- Homebrew
-		- zoxide
-		- fzf
+		- zoxide (replace cd)
+		- fzf (replace Ctrl+R/Ctrl+S)
+		- fd (replace find)
+		- bat (replace cat)
 		- neofetch
 		- python
 		- tree

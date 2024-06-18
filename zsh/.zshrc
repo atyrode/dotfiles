@@ -14,7 +14,7 @@ plugins=(git)
 source $ZSH/oh-my-zsh.sh
 
 # Get the directory of the current script (.zshrc)
-DOTFILES_DIR="$(dirname "$(realpath "$PWD/.zshrc")")"
+DOTFILES_DIR="$(dirname "$(realpath "$HOME/.zshrc")")"
 
 # List of configuration files to source
 CONFIG_FILES=(

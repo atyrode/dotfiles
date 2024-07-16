@@ -8,7 +8,8 @@
 		- python
 		- tree
 		- node
-    - dive
+  		- -btop
+    		- dive
 	- ohmyzsh
 - VSCode
 - Obsidian

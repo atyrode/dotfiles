@@ -8,7 +8,7 @@
 		- python
 		- tree
 		- node
-  		- -btop
+  		- btop
     		- dive
 	- ohmyzsh
 - VSCode

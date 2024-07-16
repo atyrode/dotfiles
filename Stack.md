@@ -9,7 +9,7 @@
 		- tree
 		- node
   		- btop
-    		- dive
+		- dive
 	- ohmyzsh
 - VSCode
 - Obsidian

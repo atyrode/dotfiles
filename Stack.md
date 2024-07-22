@@ -4,12 +4,15 @@
 		- fzf (replace Ctrl+R/Ctrl+S)
 		- fd (replace find)
 		- bat (replace cat)
+		- btop (replace htop)
+		- tree (replace ls)
 		- neofetch
 		- python
-		- tree
 		- node
-  		- btop
 		- dive
+		- docker-compose
+		- pulseaudio
+		- rust
 	- ohmyzsh
 - VSCode
 - Obsidian

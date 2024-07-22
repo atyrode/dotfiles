@@ -12,7 +12,8 @@
 		- dive
 		- docker-compose
 		- pulseaudio
-		- rust
+		- rustup
+		- rectangle
 	- ohmyzsh
 - VSCode
 - Obsidian

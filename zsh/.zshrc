@@ -22,6 +22,8 @@ CONFIG_FILES=(
     "utils.sh"          # Utility functions
     "shell"             # Shell configuration (directory, note no .sh extension)
     "python"            # Python configuration (directory as well)
+    "node"              # Node configuration (directory as well)
+    "footer.sh"         # End of configuration/start up behavior
 )
 
 # Source all configuration files
@@ -43,4 +45,4 @@ for file in "${CONFIG_FILES[@]}"; do
         source "$DOTFILES_DIR/$file"
     fi
 done
-export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+

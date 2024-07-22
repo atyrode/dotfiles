@@ -62,7 +62,7 @@ function venv_in_gitignore() {
 
 # Add venv to .gitignore
 function add_venv_to_gitignore() {
-    echo $VENV_DIR >> $GITIGNORE
+    echo "\n"$VENV_DIR >> $GITIGNORE
     echo -e "$(c_ok Added) $CVD to $CGI in $CPD."
 }
 

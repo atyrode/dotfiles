@@ -29,3 +29,9 @@ alias find="fd"
 
 # Bat to replace cat
 alias cat="bat"
+
+# Btop to replace htop
+alias htop="btop"
+
+# Tree to replace ls
+alias ls="tree -L 1 --noreport"

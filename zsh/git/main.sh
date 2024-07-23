@@ -1,19 +1,20 @@
 git_update_author() {
-    local git_url=$1
+    local project_name=$1
+    local owner=${2:-"atyrode"}
+    local git_url="$owner/$project_name"
 
     echo -e "$(c_ok Starting) the repository update process..."
-
-    # Extract the repo name from the URL
-    local repo_name
-    repo_name=$(basename -s .git "$git_url")
+    
+    local repo_url="https://github.com/${git_url}.git"
+    local clone_url="git@github.com:${git_url}.git"
 
     # Clone the repository
-    echo -e "$(c_ok Cloning) the repository from $git_url..."
-    git clone "$git_url"
+    echo -e "$(c_ok Cloning) the repository from $repo_url..."
+    git clone "$clone_url"
 
     # Change directory to the cloned repository
-    echo -e "$(c_folder Changing) directory to the cloned repository: $repo_name..."
-    cd "$repo_name" || exit
+    echo -e "$(c_folder Changing) directory to the cloned repository: $project_name..."
+    cd "$project_name"
 
     # Run the filter-repo command
     echo -e "$(c_ok Running) git filter-repo to update email addresses..."
@@ -23,9 +24,9 @@ if commit.author_email == b"alex.tyrode@outlook.fr":
     commit.committer_email = b"alex.tyrode@alouette.ai"
 '
 
-    # Add the remote URL
-    echo -e "$(c_ok Adding) the remote URL..."
-    git remote add origin "$git_url"
+    # # Add the remote URL
+    # echo -e "$(c_ok Adding) the remote URL..."
+    # git remote add origin "$repo_url"
 
     # Push the changes with force
     echo -e "$(c_ok Pushing) the changes with force to the remote repository..."
@@ -39,7 +40,7 @@ if commit.author_email == b"alex.tyrode@outlook.fr":
 
     # Delete the cloned repository
     echo -e "$(c_ok Deleting) the cloned repository..."
-    rm -rf "$repo_name"
+    rm -rf "$project_name"
 }
 
 lab() {

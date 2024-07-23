@@ -50,7 +50,12 @@ lab() {
 
     # Clone the repository
     echo -e "$(c_ok Cloning) the repository from GitLab..."
-    git clone "https://gitlab.alouette.dev/alex.tyrode/$repo_name.git"
+    if git clone "https://gitlab.alouette.dev/alex.tyrode/$repo_name.git"; then
+        echo -e "$(c_ok Successfully cloned) $repo_name."
+    else
+        echo -e "$(c_ko Error) while try to clone: '$repo_name'. Please check the repository name and network connection."
+        return 1  # Exit the function with an error status
+    fi
 
     # Change directory to the cloned repository
     echo -e "$(c_folder Changing) directory to the cloned repository: $(c_folder $repo_name)..."

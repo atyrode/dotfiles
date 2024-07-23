@@ -23,6 +23,7 @@ CONFIG_FILES=(
     "shell"             # Shell configuration (directory, note no .sh extension)
     "python"            # Python configuration (directory as well)
     "node"              # Node configuration (directory as well)
+    "git"               # Git configuration (directory as well)
     "footer.sh"         # End of configuration/start up behavior
 )
 

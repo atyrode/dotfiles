@@ -36,6 +36,10 @@ if commit.author_email == b"alex.tyrode@outlook.fr":
 
     echo -e "$(c_ok Repository) update process completed successfully!"
     cd ..
+
+    # Delete the cloned repository
+    echo -e "$(c_ok Deleting) the cloned repository..."
+    rm -rf "$repo_name"
 }
 
 lab() {

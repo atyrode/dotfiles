@@ -1,0 +1,6 @@
+[credentiel]
+    helper = store
+[includeIf "gitdir/i:**/gitlab.alouette.dev/**"]
+    path = ~/.gitconfigs/.alouette.config
+[includeIf "gitdir/i:**/github.com/**"]
+    path = ~/.gitconfigs/.default.config

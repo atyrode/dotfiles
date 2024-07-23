@@ -1,0 +1,19 @@
+- iTerm 2
+	- Homebrew
+		- zoxide (replace cd)
+		- fzf (replace Ctrl+R/Ctrl+S)
+		- fd (replace find)
+		- bat (replace cat)
+		- btop (replace htop)
+		- tree (replace ls)
+		- neofetch
+		- python
+		- node
+		- dive
+		- docker-compose
+		- pulseaudio
+		- rustup
+		- rectangle
+	- ohmyzsh
+- VSCode
+- Obsidian

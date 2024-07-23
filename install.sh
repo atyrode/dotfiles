@@ -143,8 +143,13 @@ trap cleanup EXIT
 
 CWD=$(pwd)
 
-ohai "Navigating to the home ($HOME) directory"
-execute "cd" "$HOME"
+# If option "-s" skip the change to the home directory
+if [[ "$1" == "-s" ]]; then
+  ohai "Skipping the change to the home directory"
+else
+  ohai "Navigating to the home ($HOME) directory"
+  execute "cd" "$HOME"
+fi
 
 ohai "Creating a backup folder (.dotfiles-backup)"
 if [[ -d .dotfiles-backup ]]; then
@@ -154,25 +159,31 @@ else
   mkdir .dotfiles-backup
 fi
 
-ohai "Creating a temporary directory for the dotfiles"
-if [[ -d dotfiles ]]; then
-  warn "The dotfiles directory already exists. Please back up your existing configuration files."
-  exit 1
+# If option "-s" is passed, skip the download and extraction of the dotfiles repository
+if [[ "$1" == "-s" ]]; then
+  ohai "Skipping the download and extraction of the dotfiles repository"
 else
-  mkdir dotfiles
+
+  ohai "Creating a temporary directory for the dotfiles"
+  if [[ -d dotfiles ]]; then
+    warn "The dotfiles directory already exists. Please back up your existing configuration files."
+    exit 1
+  else
+    mkdir dotfiles
+  fi
+
+  ohai "Downloading the dotfiles repository"
+  execute "curl" "-L" "https://github.com/atyrode/dotfiles/tarball/main" "-o" "dotfiles.tar.gz"
+
+  ohai "Extracting the dotfiles archive"
+  execute "tar" "-xzf" "dotfiles.tar.gz" "--strip-components=1" "-C" "dotfiles"
+
+  ohai "Deleting the dotfiles archive"
+  execute "rm" "dotfiles.tar.gz"
+
+  ohai "Navigating to the dotfiles directory"
+  execute "cd" "dotfiles"
 fi
-
-ohai "Downloading the dotfiles repository"
-execute "curl" "-L" "https://github.com/atyrode/dotfiles/tarball/main" "-o" "dotfiles.tar.gz"
-
-ohai "Extracting the dotfiles archive"
-execute "tar" "-xzf" "dotfiles.tar.gz" "--strip-components=1" "-C" "dotfiles"
-
-ohai "Deleting the dotfiles archive"
-execute "rm" "dotfiles.tar.gz"
-
-ohai "Navigating to the dotfiles directory"
-execute "cd" "dotfiles"
 
 ohai "Setting up the dotfiles configuration..."
 
@@ -195,14 +206,34 @@ execute "read" "-p" "> " "WORK_EMAIL"
 WORK_EMAIL=${WORK_EMAIL:-alex.tyrode@alouette.ai}
 
 (
+    backup() {
+      if [ -f "$1" ]; then
+          echo "Moving the existing file (at '$1') to .dotfiles-backup..."
+          mv "$1" "$HOME/.dotfiles-backup/$1"
+      fi
+    }
+
+    install() {
+        FILENAME=$(basename "$1")
+        echo "Installing $1..."
+        backup $2
+        mv "$1" "$2"
+    }
+
+    export -f backup
+    export -f install
+
     export FIRST_NAME=$FIRST_NAME
     export LAST_NAME=$LAST_NAME
     export WORK_EMAIL=$WORK_EMAIL
     export PERSONAL_EMAIL=$PERSONAL_EMAIL
 
     # Find directories in the current directory and execute setup.sh if it exists
+    ohai "Checking for setup.sh files in directories of $PWD"
+    ohai "List of directories:"
+    ls -d */
+
     for dir in */ ; do
-        echo "Checking directory: $dir"  # Debug: output the directory being checked
         if [[ -d "$dir" && -f "${dir}setup.sh" ]]; then
             ohai "Setting up: $dir"
             (bash "${dir}setup.sh")

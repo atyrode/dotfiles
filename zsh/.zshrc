@@ -18,13 +18,13 @@ DOTFILES_DIR="$(dirname "$(realpath "$HOME/.zshrc")")"
 
 # List of configuration files to source
 CONFIG_FILES=(
-    "color.sh"          # Color management
-    "utils.sh"          # Utility functions
+    "src/color.sh"      # Color management
+    "src/utils.sh"      # Utility functions
     "shell"             # Shell configuration (directory, note no .sh extension)
     "python"            # Python configuration (directory as well)
     "node"              # Node configuration (directory as well)
     "git"               # Git configuration (directory as well)
-    "footer.sh"         # End of configuration/start up behavior
+    "src/footer.sh"     # End of configuration/start up behavior
 )
 
 # Source all configuration files

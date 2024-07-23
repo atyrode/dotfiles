@@ -2,12 +2,6 @@
 
 # Some of this code is based on the install.sh of Homebrew (https://brew.sh)
 
-# We don't need return codes for "$(command)", only stdout is needed.
-# Allow `[[ -n "$(command)" ]]`, `func "$(command)"`, pipes, etc.
-# shellcheck disable=SC2312
-
-set -u
-
 abort() {
   printf "%s\n" "$@" >&2
   exit 1
@@ -56,11 +50,11 @@ ohai() {
 }
 
 caution() {
-  printf "\t${tty_yellow}[?]${tty_bold} %s${tty_reset} %s\n" "$(chomp "$1")" >&2
+  printf "${tty_yellow}[?]${tty_bold} %s${tty_reset} %s\n" "$(chomp "$1")" >&2
 }
 
 warn() {
-  printf "\t${tty_red}/!\\${tty_bold} %s${tty_reset} %s\n" "$(chomp "$1")" >&2
+  printf "${tty_red}/!\\${tty_bold} %s${tty_reset} %s\n" "$(chomp "$1")" >&2
 }
 
 # USER isn't always set so provide a fall back for the installer and subprocesses.
@@ -180,22 +174,24 @@ execute "rm" "dotfiles.tar.gz"
 ohai "Navigating to the dotfiles directory"
 execute "cd" "dotfiles"
 
-ohai "Please enter your first name (default: Alex):"
-read FIRST_NAME
+ohai "Setting up the dotfiles configuration..."
+
+caution "Please enter your first name (default: Alex):"
+execute "read" "-p" "> " "FIRST_NAME"
 FIRST_NAME=${FIRST_NAME:-Alex}
 FIRST_NAME=$(echo $FIRST_NAME | awk '{print toupper(substr($0, 1, 1)) tolower(substr($0, 2))}')
 
-ohai "Please enter your last name (default: TYRODE):"
-read LAST_NAME
+caution "Please enter your last name (default: TYRODE):"
+execute "read" "-p" "> " "LAST_NAME"
 LAST_NAME=${LAST_NAME:-TYRODE}
 LAST_NAME=$(echo $LAST_NAME | awk '{print toupper($0)}')
 
-ohai "Please enter your PERSONAL email address default: alex.tyrode@outlook.fr):"
-read PERSONAL_EMAIL
+caution "Please enter your PERSONAL email address default: alex.tyrode@outlook.fr):"
+execute "read" "-p" "> " "PERSONAL_EMAIL"
 PERSONAL_EMAIL=${PERSONAL_EMAIL:-alex.tyrode@outlook.fr}
 
-ohai "Please enter your WORK email address (default: alex.tyrode@alouette.ai):"
-read WORK_EMAIL
+caution "Please enter your WORK email address (default: alex.tyrode@alouette.ai):"
+execute "read" "-p" "> " "WORK_EMAIL"
 WORK_EMAIL=${WORK_EMAIL:-alex.tyrode@alouette.ai}
 
 (
@@ -204,18 +200,16 @@ WORK_EMAIL=${WORK_EMAIL:-alex.tyrode@alouette.ai}
     export WORK_EMAIL=$WORK_EMAIL
     export PERSONAL_EMAIL=$PERSONAL_EMAIL
 
-    ohai "Setting up the dotfiles configuration..."
-
-    # Find directories in the current directory and execute main.sh if it exists
+    # Find directories in the current directory and execute setup.sh if it exists
     for dir in */ ; do
-        if [[ -d "$dir" && -f "${dir}main.sh" ]]; then
-        ohai "Setting up: $dir"
-        (bash "${dir}main.sh")
+        echo "Checking directory: $dir"  # Debug: output the directory being checked
+        if [[ -d "$dir" && -f "${dir}setup.sh" ]]; then
+            ohai "Setting up: $dir"
+            (bash "${dir}setup.sh")
+        else 
+            warn "No setup.sh found in $dir"
         fi
     done
 )
-
-# Step 5: Source the new .zshrc to apply the configuration
-source ~/.zshrc
 
 echo "Configuration set up successfully!"

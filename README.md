@@ -3,6 +3,8 @@
 
 # Quickstart
 
+`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/install.sh)"`
+
 `git clone git@github.com:atyrode/dotfiles.git && cd dotfiles && ./setup.sh && cd .. && rm -rf dotfiles`
 
 ## oh-my-zsh config setup :

@@ -17,6 +17,7 @@
 @import url("tweaks/sidebar.css");
 @import url("tweaks/popup-search.css");
 @import url("tweaks/navbar-icons.css");
+@import url("tweaks/navbar-in-sidebar.css");
 
 /* Enable translucency on browser toolbars. (MacOS only) */
 /**/@import url("tweaks/mac-translucent.css") (-moz-bool-pref: "uc.tweak.mac-translucent");/**/

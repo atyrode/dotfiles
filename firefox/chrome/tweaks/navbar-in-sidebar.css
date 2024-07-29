@@ -1,0 +1,11 @@
+body {
+    flex-direction: row !important;
+}
+
+#browser {
+    min-width: 100% !important;
+}
+
+#appcontent .browserStack {
+	margin-block-start: var(--uc-tweak-rounded-corners-padding) !important;
+}

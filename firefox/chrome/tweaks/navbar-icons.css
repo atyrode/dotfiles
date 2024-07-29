@@ -58,9 +58,9 @@
 /* ------------------------------------------------------------------------- */
 /*                             Titlebar Buttons                              */
 /* ------------------------------------------------------------------------- */
-/* Shifts the urlbar to the left because the title bar buttons are hidden    */
+/* Shifts the urlbar to the left if the title bar buttons are hidden         */
     :root {
-        /* --uc-titlebar-drag-space: -58.5px !important; */
+        /* --uc-titlebar-drag-space: -58.5px !important; */ /* <- if hidden  */
     }
 
 /* Completely disable the titlebar                                           */
@@ -68,12 +68,24 @@
         /* display: none !important; */
     }
 
+
+/* Add some margin above the buttons, and above the whole navbar             */
+    .titlebar-buttonbox {
+        margin-top: 4px !important;
+    }
+
+    #nav-bar {
+        margin-top: 2px !important;
+        margin-bottom: 2px !important;
+    }
+
 /* ------------------------------------------------------------------------- */
 /*                              PanelUI Button                               */
 /* ------------------------------------------------------------------------- */
-/* Puts back the settings menu button on the right of the screen */
+/* Puts back the settings menu button on the right of the screen             */
     #PanelUI-button {
-        order: 0 !important;
+        order: 0 !important;    
         margin-left: 0px !important;
         padding-right: 0px !important;
     }
+

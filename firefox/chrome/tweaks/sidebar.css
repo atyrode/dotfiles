@@ -17,7 +17,7 @@
 }
 
 #sidebar-box {
-  --uc-sidebar-width: 52px;
+  --uc-sidebar-width: 51px;
   --uc-sidebar-hover-width: 200px;
   --uc-autohide-sidebar-delay: 100ms; /* Wait 0.1s before hiding sidebar */
   --uc-autohide-transition-duration: 115ms;
@@ -46,7 +46,7 @@
 /* if this preference is activated in about:config, sidebar width will be increased */
 @media (-moz-bool-pref: "uc.tweak.longer-sidebar") {
   :root #sidebar-box {
-    --uc-sidebar-hover-width: 250px !important;
+    --uc-sidebar-hover-width: 350px !important;
   }
 }
 
@@ -65,10 +65,10 @@
 }
 
 #main-window[sizemode="maximized"] #sidebar-box {
-  --uc-sidebar-width: 52px;
+  --uc-sidebar-width: 51px;
 }
 #main-window[sizemode="fullscreen"] #sidebar-box {
-  --uc-sidebar-width: 52px;
+  --uc-sidebar-width: 51px;
 }
 
 #sidebar-header {

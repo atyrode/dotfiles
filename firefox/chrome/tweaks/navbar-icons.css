@@ -1,6 +1,7 @@
 /* Will hide some of the icons in the urlbar when it's not hovered*/
 
 #nav-bar:not(:hover) {
+    #unified-extensions-button,             /* The extensions button */
     #fullscreen-button                      /* The fullscreen button */
     {
         opacity: 0 !important;
@@ -36,6 +37,7 @@
 #PanelUI-button,
 #translations-button,
 #fullscreen-button
+#unified-extensions-button              
 {
     transition: opacity 0.2s ease-in-out !important;
 }
@@ -44,8 +46,7 @@
 #forward-button,                        /* The forward button */
 #back-button,                           /* The back button */
 #reload-button,                         /* The reload button */
-#titlebar,                              /* The titlebar (close, minimize, maximize) */
-#unified-extensions-button              /* The extensions button */
+#titlebar                               /* The titlebar (close, minimize, maximize) */
 {
     display: none !important;
 }

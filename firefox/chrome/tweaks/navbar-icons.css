@@ -1,12 +1,20 @@
 /* Will hide some of the icons in the urlbar when it's not hovered*/
 
+#nav-bar:not(:hover) {
+    #fullscreen-button                      /* The fullscreen button */
+    {
+        opacity: 0 !important;
+    }
+}
+
 /* When the urlbar is focused or the user is typing, the icons are shown again */
 #urlbar-container:not(:hover) {
     #tracking-protection-icon-container,    /* The tracking protection (shield) icon and menu */
     #reader-mode-button,                    /* The reader mode button */
     #star-button-box,                       /* The bookmark star button */
     #identity-box,                          /* The identity block (padlock) */
-    #picture-in-picture-button              /* The picture-in-picture button */
+    #picture-in-picture-button,             /* The picture-in-picture button */
+    #translations-button                    /* The translation button */
     {
         opacity: 0 !important;
     }
@@ -25,7 +33,9 @@
 #star-button-box,
 #identity-box,
 #picture-in-picture-button,
-#PanelUI-button
+#PanelUI-button,
+#translations-button,
+#fullscreen-button
 {
     transition: opacity 0.2s ease-in-out !important;
 }
@@ -34,7 +44,7 @@
 #forward-button,                        /* The forward button */
 #back-button,                           /* The back button */
 #reload-button,                         /* The reload button */
-#titlebar,                               /* The titlebar (close, minimize, maximize) */
+#titlebar,                              /* The titlebar (close, minimize, maximize) */
 #unified-extensions-button              /* The extensions button */
 {
     display: none !important;
@@ -42,7 +52,7 @@
 
 /* Shifts the urlbar to the left because the title bar buttons are hidden */
 :root {
-    --uc-titlebar-drag-space: -65px !important;
+    --uc-titlebar-drag-space: -55px !important;
 }
 
 /* Puts back the button on the right of the screen */

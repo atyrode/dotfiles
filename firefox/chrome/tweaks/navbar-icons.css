@@ -52,7 +52,7 @@
 
 /* Shifts the urlbar to the left because the title bar buttons are hidden */
 :root {
-    --uc-titlebar-drag-space: -55px !important;
+    --uc-titlebar-drag-space: -58.5px !important;
 }
 
 /* Puts back the button on the right of the screen */

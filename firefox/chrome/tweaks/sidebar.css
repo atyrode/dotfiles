@@ -17,7 +17,7 @@
 }
 
 #sidebar-box {
-  --uc-sidebar-width: 6px;
+  --uc-sidebar-width: 52px;
   --uc-sidebar-hover-width: 200px;
   --uc-autohide-sidebar-delay: 100ms; /* Wait 0.1s before hiding sidebar */
   --uc-autohide-transition-duration: 115ms;
@@ -30,7 +30,7 @@
   z-index: 1;
   transition: opacity var(--uc-autohide-transition-duration)
     var(--uc-autohide-transition-type) var(--uc-autohide-sidebar-delay) !important;
-  opacity: 1%;
+  opacity: 100%;
 }
 
 /* Add a pseudoelement to increase the hover area for the sidebar */
@@ -65,10 +65,10 @@
 }
 
 #main-window[sizemode="maximized"] #sidebar-box {
-  --uc-sidebar-width: 0.3rem;
+  --uc-sidebar-width: 52px;
 }
 #main-window[sizemode="fullscreen"] #sidebar-box {
-  --uc-sidebar-width: 0.3rem;
+  --uc-sidebar-width: 52px;
 }
 
 #sidebar-header {
@@ -230,4 +230,8 @@
     min-width: var(--uc-sidebar-hover-width) !important;
     transition-delay: 0ms !important;
   }
+}
+
+#appcontent .browserStack {
+  margin-inline-start: 0px !important;
 }

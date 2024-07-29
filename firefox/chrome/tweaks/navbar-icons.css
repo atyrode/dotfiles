@@ -1,64 +1,79 @@
 /* Will hide some of the icons in the urlbar when it's not hovered*/
 
-#nav-bar:not(:hover) {
-    #unified-extensions-button,             /* The extensions button */
-    #fullscreen-button                      /* The fullscreen button */
-    {
-        opacity: 0 !important;
+/* ------------------------------------------------------------------------- */
+/*                              Navbar Icons                                 */
+/* ------------------------------------------------------------------------- */
+/* Hides some of the icons in the navbar when it's not hovered               */
+    #nav-bar:not(:hover) {
+        #unified-extensions-button,           /* The extensions button       */
+        #fullscreen-button                    /* The fullscreen button       */
+        {
+            opacity: 0 !important;
+        }
     }
-}
 
-/* When the urlbar is focused or the user is typing, the icons are shown again */
-#urlbar-container:not(:hover) {
-    #tracking-protection-icon-container,    /* The tracking protection (shield) icon and menu */
-    #reader-mode-button,                    /* The reader mode button */
-    #star-button-box,                       /* The bookmark star button */
-    #identity-box,                          /* The identity block (padlock) */
-    #picture-in-picture-button,             /* The picture-in-picture button */
-    #translations-button                    /* The translation button */
-    {
-        opacity: 0 !important;
+/* Hide some of the icons in the urlbar when it's not hovered                */
+    #urlbar-container:not(:hover) {
+        #tracking-protection-icon-container,  /* Tracking protection button  */
+        #reader-mode-button,                  /* Reader mode button          */
+        #star-button-box,                     /* Bookmark star button        */
+        #identity-box,                        /* Identity button             */
+        #picture-in-picture-button,           /* Picture-in-picture button   */
+        #translations-button                  /* The translation button      */
+        {
+            opacity: 0 !important;
+        }
     }
-}
 
-#urlbar-container:hover {
-    #urlbar-background                      /* The background of the urlbar */
-    {
-        background-color: rgb(64, 69, 82) !important;
+/* "Highlight" the urlbar when hovered                                       */
+    #urlbar-container:hover {
+        #urlbar-background                    /* Background of the urlbar    */
+        {
+            background-color: rgb(64, 69, 82) !important;
+        }
     }
-}
 
-/* These can all be left as is, they simply set the transition but not the actual opacity */
-#tracking-protection-icon-container,
-#reader-mode-button,
-#star-button-box,
-#identity-box,
-#picture-in-picture-button,
-#PanelUI-button,
-#translations-button,
-#fullscreen-button
-#unified-extensions-button              
-{
-    transition: opacity 0.2s ease-in-out !important;
-}
+/* Set the opacity transition properties                                     */
+    #tracking-protection-icon-container,
+    #reader-mode-button,
+    #star-button-box,
+    #identity-box,
+    #picture-in-picture-button,
+    #PanelUI-button,
+    #translations-button,
+    #fullscreen-button,
+    #unified-extensions-button              
+    {
+        transition: opacity 0.2s ease-in-out !important;
+    }
 
-/* Completely disable */
-#forward-button,                        /* The forward button */
-#back-button,                           /* The back button */
-#reload-button,                         /* The reload button */
-#titlebar                               /* The titlebar (close, minimize, maximize) */
-{
-    display: none !important;
-}
+/* Completely disable these buttons below                                    */
+    #forward-button,                          /* The forward button          */
+    #back-button,                             /* The back button             */
+    #reload-button                            /* The reload button           */
+    {
+        display: none !important;
+    }
 
-/* Shifts the urlbar to the left because the title bar buttons are hidden */
-:root {
-    --uc-titlebar-drag-space: -58.5px !important;
-}
+/* ------------------------------------------------------------------------- */
+/*                             Titlebar Buttons                              */
+/* ------------------------------------------------------------------------- */
+/* Shifts the urlbar to the left because the title bar buttons are hidden    */
+    :root {
+        /* --uc-titlebar-drag-space: -58.5px !important; */
+    }
 
-/* Puts back the button on the right of the screen */
-#PanelUI-button {
-    order: 0 !important;
-    margin-left: 0px !important;
-    padding-right: 0px !important;
-}
+/* Completely disable the titlebar                                           */
+    #titlebar {
+        /* display: none !important; */
+    }
+
+/* ------------------------------------------------------------------------- */
+/*                              PanelUI Button                               */
+/* ------------------------------------------------------------------------- */
+/* Puts back the settings menu button on the right of the screen */
+    #PanelUI-button {
+        order: 0 !important;
+        margin-left: 0px !important;
+        padding-right: 0px !important;
+    }

@@ -1,4 +1,3 @@
-
 /* Adds a "webpage" border at the top */
 #appcontent .browserStack {
 	margin-block-start: var(--uc-tweak-rounded-corners-padding) !important;
@@ -11,10 +10,17 @@
 	width: 63px !important;
     transition: width 115ms linear 100ms !important;
     will-change: width;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+#nav-bar {
+    opacity: 0 !important;
+    transition: opacity 150ms linear 100ms !important;
 }
 
 #sidebar{
-    padding-top: 28px !important;
+    padding-top: 62px !important;
 }
 
 #navigator-toolbox:hover ~ #browser #sidebar-box #sidebar-header,
@@ -29,15 +35,30 @@
 }
 
 #navigator-toolbox:hover {
-    width: 250px !important;
+    width: 350px !important;
 }
 
-/* #main-window {
-    #navigator-toolbox + #browser > #sidebar-box:hover ~ #navigator-toolbox {
-        width: 250px !important;
-    }
-} */
+#navigator-toolbox:hover #nav-bar {
+    opacity: 1 !important;
+}
 
-toolbox ~ #browser:hover #sidebar-box:hover {
-    width: 250px !important;
+#navigator-toolbox:has(+ #browser #sidebar-box:hover) {
+    width: 350px !important;
+}
+
+#navigator-toolbox:has(+ #browser #sidebar-box:hover) #nav-bar {
+    opacity: 1 !important;
+}
+
+#titlebar {
+    height: 32px !important;
+}
+
+#urlbar-container {
+    width: auto !important;
+}
+
+#urlbar-background                    /* Background of the urlbar    */
+{
+    background-color: rgb(64, 69, 82) !important;
 }

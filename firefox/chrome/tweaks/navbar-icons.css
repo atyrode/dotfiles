@@ -50,7 +50,9 @@
 /* Completely disable these buttons below                                    */
     #forward-button,                          /* The forward button          */
     #back-button,                             /* The back button             */
-    #reload-button                            /* The reload button           */
+    #reload-button,                           /* The reload button           */
+    #unified-extensions-button,               /* The extensions button       */
+    #personal-bookmarks                       /* The bookmarks button        */
     {
         display: none !important;
     }

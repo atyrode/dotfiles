@@ -7,9 +7,6 @@ pkill firefox
 # Wait for
 sleep 0.2
 
-# Open firefox
-open -a firefox
-
 # Switch to the desktop on the right using AppleScript
 osascript <<EOF
 tell application "System Events"
@@ -18,3 +15,6 @@ tell application "System Events"
     key up control
 end tell
 EOF
+
+# Open firefox
+open -a firefox

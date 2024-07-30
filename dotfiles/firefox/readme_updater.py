@@ -75,7 +75,7 @@ class Readme:
             f.write(updated_readme)
 
 if __name__ == "__main__":
-    userjs_path = Path("profile/user.js")
+    userjs_path = Path("dotfiles/firefox/profile/user.js")
     readme_path = Path("README.md")
 
     settings = Settings(userjs=userjs_path, regex_pattern=COMPILED_PATTERN)

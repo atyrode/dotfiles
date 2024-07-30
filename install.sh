@@ -141,6 +141,9 @@ trap cleanup EXIT
 
 ############### Main script ###############
 
+# First, navigate to the dotfiles directory of the repository
+cd dotfiles
+
 CWD=$(pwd)
 
 # If option "-s" skip the change to the home directory

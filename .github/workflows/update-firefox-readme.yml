@@ -1,0 +1,34 @@
+name: Update README.md
+
+on:
+  push:
+    paths:
+      - 'dotfiles/firefox/profile/user.js'
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.1.1
+        with:
+          python-version: '3.x'
+
+      - name: Update README.md
+        run: python dotfiles/firefox/readme_updater.py
+
+      - name: Commit changes
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git add dotfiles/firefox/README.md
+          git commit -m 'Update README.md via GitHub Action' || echo "No changes to commit"
+
+      - name: Push changes
+        uses: ad-m/github-push-action@v0.8.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}

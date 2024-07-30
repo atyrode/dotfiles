@@ -1,4 +1,4 @@
-# Copy the dotfiles to the target firefox profile directory
+# Setup the firefox dotfiles
 sh setup.sh
 
 # Kill the firefox process

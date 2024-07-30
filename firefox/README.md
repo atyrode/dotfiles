@@ -2,7 +2,7 @@
 
 ## about:config
 
-These parameters are set by the user.js:
+These parameters are set by the user.js dotfile:
 
 | **Preference Name**                      | **Description**                                                          | **Default Value** | **Desired Value** |
 |------------------------------------------|--------------------------------------------------------------------------|-------------------|-------------------|
@@ -10,6 +10,16 @@ These parameters are set by the user.js:
 | `devtools.debugger.remote-enabled`       | Allows remote debugging of Firefox itself.                               | `false`           | `true`            |
 | `devtools.debugger.prompt-connection`    | Suppresses the confirmation prompt for remote debugging connections.     | `true`            | `false`           |
 
+
+They enable access to the Developer Console of the Firefox App itself with:
+
+### - MacOS
+
+`Cmd` + `Option` + `Shift` + `I`
+
+### - Normal OS
+
+`Ctrl` + `Alt` + `Shift` + `I`
 
 # Prod
 

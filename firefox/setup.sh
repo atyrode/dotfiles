@@ -5,6 +5,7 @@ firefox_dotfiles_dir="$PWD/profile"
 
 # Firefox profile name
 target_profile="arcfox"
+
 # Firefox profile directory
 firefox_profile_dir="/Users/alex/Library/Application Support/Firefox/Profiles"
 

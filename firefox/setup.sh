@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Dotfiles directory in the repository
-firefox_dotfiles_dir="$PWD/chrome"
+firefox_dotfiles_dir="$PWD/profile"
 
 # Firefox profile name
 target_profile="arcfox"
@@ -9,4 +9,4 @@ target_profile="arcfox"
 firefox_profile_dir="/Users/alex/Library/Application Support/Firefox/Profiles"
 
 # Copy the dotfiles to the target firefox profile directory
-cp -r "$firefox_dotfiles_dir" "$firefox_profile_dir/$target_profile"
+cp -r "$firefox_dotfiles_dir/" "$firefox_profile_dir/$target_profile/"

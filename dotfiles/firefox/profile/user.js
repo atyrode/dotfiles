@@ -13,3 +13,4 @@ user_pref("devtools.debugger.prompt-connection", false);
 // Enable userChrome.css and userContent.css
 // default: false
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+

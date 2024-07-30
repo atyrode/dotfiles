@@ -49,7 +49,7 @@
     &[tabsintitlebar] #nav-bar {
       /* When not in fullscreen mode */
       &:not([inFullscreen]) {
-        padding-left: calc(70px - 8px) !important;
+        padding-left: calc(70px + 3.6px) !important;
       }
       
       /* When in fullscreen mode */

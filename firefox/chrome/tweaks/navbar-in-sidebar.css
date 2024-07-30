@@ -1,11 +1,43 @@
-body {
-    flex-direction: row !important;
-}
 
-#browser {
-    min-width: 100% !important;
-}
-
+/* Adds a "webpage" border at the top */
 #appcontent .browserStack {
 	margin-block-start: var(--uc-tweak-rounded-corners-padding) !important;
+}
+
+/* Reconfigure the navbar */
+#navigator-toolbox {
+	position: absolute !important;
+	z-index: 2 !important;
+	width: 63px !important;
+    transition: width 115ms linear 100ms !important;
+    will-change: width;
+}
+
+#sidebar{
+    padding-top: 28px !important;
+}
+
+#navigator-toolbox:hover ~ #browser #sidebar-box #sidebar-header,
+#navigator-toolbox:hover ~ #browser #sidebar-box #sidebar {
+  margin-inline-start: calc(
+    var(--uc-tweak-rounded-corners-padding) - 10px
+  ) !important;
+  min-width: var(--uc-sidebar-hover-width) !important;
+  transition-delay: 0ms !important;
+  opacity: 100% !important;
+  border-radius: 0 !important;
+}
+
+#navigator-toolbox:hover {
+    width: 250px !important;
+}
+
+/* #main-window {
+    #navigator-toolbox + #browser > #sidebar-box:hover ~ #navigator-toolbox {
+        width: 250px !important;
+    }
+} */
+
+toolbox ~ #browser:hover #sidebar-box:hover {
+    width: 250px !important;
 }

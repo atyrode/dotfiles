@@ -1,12 +1,12 @@
 #!/bin/bash
 
-dotfiles_firefox_dir="$PWD"
+# Dotfiles directory in the repository
+firefox_dotfiles_dir="$PWD/chrome"
 
-# Navigate to the Firefox Profiles directory, assuming MacOS for now
-cd "/Users/alex/Library/Application Support/Firefox/Profiles"
+# Firefox profile name
+target_profile="arcfox"
+# Firefox profile directory
+firefox_profile_dir="/Users/alex/Library/Application Support/Firefox/Profiles"
 
-# Find the folder ending in .default-release
-profile_folder=$(ls | grep ".default-release")
-
-# Copy the "chrome" folder from the dotfiles to the profile folder
-cp -r "$dotfiles_firefox_dir/chrome" "$profile_folder"
+# Copy the dotfiles to the target firefox profile directory
+cp -r "$firefox_dotfiles_dir" "$firefox_profile_dir/$target_profile"

@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'dotfiles/firefox/profile/user.js'
+      - '.github/workflows/update-firefox-readme.yml'
 
 jobs:
   update-readme:

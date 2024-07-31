@@ -20,7 +20,7 @@
 | `devtools.chrome.enabled` | Enable developer tools for chrome and add-ons | `true` | `false` |
 | `devtools.debugger.remote-enabled` | Enable remote debugging | `true` | `false` |
 | `devtools.debugger.prompt-connection` | Disable the connection prompt for remote debugging | `false` | `true` |
-| `toolkit.legacyUserProfileCustomizations.stylesheets` | Enable userChrome.css and userContent.css | `true` | `false` |
+| `toolkit.legacyUserProfileCustomizations.stylesheets` | Enable userChrome.css and userContent.css for customizing Firefox UI | `true` | `false` |
 <!-- END_PREF_TABLE -->
 
 # Dev

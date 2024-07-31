@@ -10,7 +10,7 @@ user_pref("devtools.debugger.remote-enabled", true);
 // default: true
 user_pref("devtools.debugger.prompt-connection", false);
 
-// Enable userChrome.css and userContent.css
+// Enable userChrome.css and userContent.css for customizing Firefox UI
 // default: false
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
 

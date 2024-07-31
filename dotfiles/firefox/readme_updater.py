@@ -76,7 +76,7 @@ class Readme:
 
 if __name__ == "__main__":
     userjs_path = Path("dotfiles/firefox/profile/user.js")
-    readme_path = Path("README.md")
+    readme_path = Path("dotfiles/firefox/README.md")
 
     settings = Settings(userjs=userjs_path, regex_pattern=COMPILED_PATTERN)
     readme = Readme(readme_path=readme_path)

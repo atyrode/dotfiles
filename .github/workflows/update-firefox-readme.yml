@@ -5,6 +5,7 @@ on:
     paths:
       - 'dotfiles/firefox/profile/user.js'
       - '.github/workflows/update-firefox-readme.yml'
+      - 'dotfiles/firefox/readme_updater.py'
 
 jobs:
   update-readme:

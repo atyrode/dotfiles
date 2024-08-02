@@ -48,11 +48,11 @@
     }
 
 /* "Highlight" the urlbar when hovered                                       */
-    #urlbar-container:hover {
+    #urlbar-container:hover:not(:has([breakout-extend="true"])) {
         /* ***Background of the urlbar***    */
         #urlbar-background                    
         {
-            background-color: rgb(255, 255, 255) !important;
+            background-color: rgb(64, 69, 82) !important;
         }
     }
 
@@ -72,7 +72,7 @@
     #_0cd726db-f954-44f2-bf4f-7ed0de734de2_-BAP,
     #_3c078156-979c-498b-8990-85f7987dd929_-BAP,
     #userchrome-toggle_joolee_nl-BAP, 
-    #PanelUI-menu-button         
+    #PanelUI-menu-button      
     {
         transition: opacity 0.2s ease-in-out !important;
     }

@@ -155,3 +155,45 @@ function pipreq() {
 
     pip install -r requirements.txt
 }
+
+alias pipr="pipreq"
+
+# Shortcut to freeze requirements.txt in the current python venv
+function pipfreeze() {
+
+    update_venv_vars
+
+    if ! venv_is_active; then 
+        venv
+
+        if ! venv_exists; then
+            echo -e "$(c_ko Error): virtual environment $CVD doesn't exist in $CPD, won't update pip requirements out of it."
+            return
+        fi
+    fi
+
+    pip freeze > requirements.txt
+    echo -e "$(c_ok Updated) requirements.txt in $CPD."
+}
+
+alias pipf="pipfreeze"
+
+# Shortcut to remove all installed packages in the current python venv
+function pipdel() {
+
+    update_venv_vars
+
+    if ! venv_is_active; then 
+        venv
+
+        if ! venv_exists; then
+            echo -e "$(c_ko Error): virtual environment $CVD doesn't exist in $CPD, won't remove pip packages out of it."
+            return
+        fi
+    fi
+
+    pip freeze | xargs pip uninstall -y
+    echo -e "$(c_ok Removed) all installed packages in $CVD."
+}
+
+alias pipd="pipdel"

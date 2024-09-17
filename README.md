@@ -37,3 +37,7 @@
 - Helper functions for `venv`: `venv_exists()`, `create_venv()`, `gitignore_exists()`, `create_gitignore()`, `venv_in_gitignore()`, `add_venv_to_gitignore()`, `activate_venv()`, `deactivate_venv()`, `venv_is_active()`
 
 - `pipreq` is a command that pip install requirements in the current venv, if it exists and is activated, or will otherwise prompt you to
+
+# Tmux conf:
+
+https://github.com/gpakosz/.tmux

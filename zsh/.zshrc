@@ -1,3 +1,6 @@
+# Expose homebrew
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
 
@@ -46,4 +49,3 @@ for file in "${CONFIG_FILES[@]}"; do
         source "$DOTFILES_DIR/$file"
     fi
 done
-

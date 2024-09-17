@@ -6,14 +6,17 @@
 		- bat (replace cat)
 		- btop (replace htop)
 		- tree (replace ls)
-		- neofetch
+		- dua-cli (alternative to ncdu)
+		- neofetch (welcome prompt)
 		- python
+		- uv (replaces pip, written in Rust)
 		- node
-		- dive
+		- dive (docker image analysis)
 		- docker-compose
 		- pulseaudio
 		- rustup
 		- rectangle
+		~ superfile (file/directory manager) - Requires 'nerdfonts' (annoying)
 	- ohmyzsh
 - VSCode
 - Obsidian

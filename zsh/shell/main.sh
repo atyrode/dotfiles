@@ -35,3 +35,6 @@ alias htop="btop"
 
 # Tree to replace ls
 alias ls="tree -L 1 --noreport"
+
+# Quick attach to tmux session
+alias atmux="tmux attach-session -t"

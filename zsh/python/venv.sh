@@ -72,7 +72,9 @@ function activate_venv() {
 }
 
 function deactivate_venv() {
+    cd $VIRTUAL_ENV/..
     deactivate
+    cd - > /dev/null
     echo -e "$(c_ko Deactivated) virtual environment: $CVENV"
 }
 

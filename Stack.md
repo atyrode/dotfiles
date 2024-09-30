@@ -1,26 +1,24 @@
 - iTerm 2
-	- Homebrew (`brew install`)
-		- `zoxide` (replace cd)
-		- `fzf` (replace Ctrl+R/Ctrl+S)
-		- `fd` (replace find)
-		- `bat` (replace cat)
-		- `btop` (replace htop)
-		- `tree` (replace ls)
-		- `dua-cli` (alternative to ncdu)
-		- `neofetch` (welcome prompt)
-		- `python`
-		- `uv` (replaces pip, written in Rust)
-		- `node`
-		- `dive` (docker image analysis)
-		- `docker-compose`
-		- `pulseaudio`
-		- `rustup`
-		- `rectangle`
-		- ~ superfile (file/directory manager) - Requires 'nerdfonts' (annoying)
-  		- `--cask visual-studio-code`
-    		- `firefox`
-      		- `obsidian`
-        	- `netbird`	  	
-	- ohmyzsh
-- VSCode
-- Obsidian
+- ohmyzsh
+- Homebrew (`brew install`)
+	- `zoxide` (replace cd)
+	- `fzf` (replace Ctrl+R/Ctrl+S)
+	- `fd` (replace find)
+	- `bat` (replace cat)
+	- `btop` (replace htop)
+	- `tree` (replace ls)
+	- `dua-cli` (alternative to ncdu)
+	- `neofetch` (welcome prompt)
+	- `python`
+	- `uv` (replaces pip, written in Rust)
+	- `node`
+	- `dive` (docker image analysis)
+	- `docker-compose`
+	- `pulseaudio`
+	- `rustup`
+	- `rectangle`
+	- ~ superfile (file/directory manager) - Requires 'nerdfonts' (annoying)
+	- `--cask visual-studio-code`
+	- `firefox`
+	- `obsidian`
+	- `netbird`

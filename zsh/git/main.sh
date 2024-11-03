@@ -80,3 +80,118 @@ lab() {
     fi
 }
 
+backlab() {
+    # Backups a GitLab repository with embedded LFS objects (arg = repo name)
+    # Includes colored messages for better readability
+
+    local repo_name=$1
+
+    if [[ -z "$repo_name" ]]; then
+        echo -e "$(c_ko 'Error'): No repository name provided."
+        echo "Usage: backlab <repository-name>"
+        return 1
+    fi
+
+    local repo_url="https://gitlab.alouette.dev/alex.tyrode/$repo_name.git"
+    local backup_dir="$repo_name-backup"
+    local bundle_name="$repo_name.bundle"
+
+    # Clone the repository using --mirror
+    echo -e "$(c_ok 'Cloning') the repository with --mirror for a complete backup..."
+    if git clone --mirror "$repo_url" "$backup_dir"; then
+        echo -e "$(c_ok 'Successfully cloned') $(c_file $repo_name) into $(c_folder $backup_dir)."
+    else
+        echo -e "$(c_ko 'Error') while trying to clone '$(c_file $repo_name)'. Please check the repository name and network connection."
+        return 1
+    fi
+
+    # Change directory to the cloned repository
+    echo -e "$(c_folder 'Changing') directory to the cloned repository: $(c_folder $backup_dir)..."
+    cd "$backup_dir"
+
+    # Fetch all Git LFS objects if LFS is used
+    if git lfs ls-files &> /dev/null; then
+        echo -e "$(c_ok 'Git LFS detected'), fetching all LFS objects..."
+        if git lfs fetch --all; then
+            echo -e "$(c_ok 'Successfully fetched') all Git LFS objects."
+        else
+            echo -e "$(c_ko 'Error') while fetching Git LFS objects."
+            return 1
+        fi
+
+        # Migrate LFS objects back into Git
+        echo -e "$(c_ok 'Embedding') Git LFS objects into Git history..."
+        if git lfs migrate export --include="*"; then
+            echo -e "$(c_ok 'Successfully embedded') LFS objects into Git history."
+        else
+            echo -e "$(c_ko 'Error') embedding LFS objects into Git history."
+            return 1
+        fi
+    else
+        echo -e "No Git LFS objects detected."
+    fi
+
+    # Create a Git bundle
+    echo -e "$(c_ok 'Creating') a Git bundle for the repository..."
+    if git bundle create "../$bundle_name" --all; then
+        echo -e "$(c_ok 'Successfully created') the bundle: $(c_file $bundle_name)."
+    else
+        echo -e "$(c_ko 'Error') while creating the Git bundle."
+        return 1
+    fi
+
+    # Navigate back and clean up if desired
+    cd ..
+
+    # Optionally remove the mirror clone if not needed
+    echo -e "$(c_ok 'Cleaning up') the mirror clone..."
+    rm -rf "$backup_dir"
+
+    echo -e "$(c_ok 'Backup complete'). The repository has been bundled into $(c_file $bundle_name)."
+}
+
+unbacklab() {
+    # Restores a repository from a Git bundle with embedded LFS objects (arg = repo name)
+    # Includes colored messages for better readability
+
+    local repo_name=$1
+
+    if [[ -z "$repo_name" ]]; then
+        echo -e "$(c_ko 'Error'): No repository name provided."
+        echo "Usage: unbacklab <repository-name>"
+        return 1
+    fi
+
+    local bundle_name="$repo_name.bundle"
+
+    # Check if the bundle file exists
+    if [[ ! -f "$bundle_name" ]]; then
+        echo -e "$(c_ko 'Error'): Bundle file $(c_file $bundle_name) not found."
+        return 1
+    fi
+
+    # Clone the repository from the bundle
+    echo -e "$(c_ok 'Cloning') the repository from the bundle..."
+    if git clone "$bundle_name" "$repo_name"; then
+        echo -e "$(c_ok 'Successfully cloned') $(c_file $repo_name) from the bundle."
+    else
+        echo -e "$(c_ko 'Error') while cloning from the bundle."
+        return 1
+    fi
+
+    # Change directory to the cloned repository
+    echo -e "$(c_folder 'Changing') directory to the cloned repository: $(c_folder $repo_name)..."
+    cd "$repo_name"
+
+    # Since LFS objects are embedded, no need to handle LFS separately
+    echo -e "$(c_ok 'Restoration complete'). The repository is ready to use."
+
+    # Optionally, check out the default branch
+    echo -e "$(c_ok 'Checking out') the default branch..."
+    if git checkout "$(git symbolic-ref refs/heads/* | sed 's@^refs/heads/@@')"; then
+        echo -e "$(c_ok 'Successfully checked out') the default branch."
+    else
+        echo -e "$(c_ko 'Error') checking out the default branch."
+        return 1
+    fi
+}

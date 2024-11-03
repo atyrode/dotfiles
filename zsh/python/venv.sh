@@ -199,3 +199,11 @@ function pipdel() {
 }
 
 alias pipd="pipdel"
+
+revenv() {
+    deactivate_venv
+    rm -rf $VENV_DIR
+    create_venv
+    activate_venv
+    pipreq
+}

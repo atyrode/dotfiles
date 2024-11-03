@@ -185,13 +185,4 @@ unbacklab() {
 
     # Since LFS objects are embedded, no need to handle LFS separately
     echo -e "$(c_ok 'Restoration complete'). The repository is ready to use."
-
-    # Optionally, check out the default branch
-    echo -e "$(c_ok 'Checking out') the default branch..."
-    if git checkout "$(git symbolic-ref refs/heads/* | sed 's@^refs/heads/@@')"; then
-        echo -e "$(c_ok 'Successfully checked out') the default branch."
-    else
-        echo -e "$(c_ko 'Error') checking out the default branch."
-        return 1
-    fi
 }

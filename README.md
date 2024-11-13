@@ -1,3 +1,3 @@
 ```bash
-source "$(curl -fsSL atyrode.sh)"
+/bin/bash -c "$(curl -fsSL atyrode.sh)"
 ```

@@ -156,6 +156,7 @@
 
 #sidebar-box:hover {
   opacity: 100% !important;
+  z-index: 3;
 }
 
 .sidebar-panel {

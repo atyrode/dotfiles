@@ -1,5 +1,7 @@
-# Expose homebrew
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+# Set up Homebrew environment (Linux only)
+if [[ "$(uname)" == "Linux" ]]; then
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+fi
 
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"

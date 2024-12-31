@@ -159,52 +159,6 @@ else
   mkdir .dotfiles-backup
 fi
 
-# If option "-s" is passed, skip the download and extraction of the dotfiles repository
-if [[ "$1" == "-s" ]]; then
-  ohai "Skipping the download and extraction of the dotfiles repository"
-else
-
-  ohai "Creating a temporary directory for the dotfiles"
-  if [[ -d dotfiles ]]; then
-    warn "The dotfiles directory already exists. Please back up your existing configuration files."
-    exit 1
-  else
-    mkdir dotfiles
-  fi
-
-  ohai "Downloading the dotfiles repository"
-  execute "curl" "-L" "https://github.com/atyrode/dotfiles/tarball/main" "-o" "dotfiles.tar.gz"
-
-  ohai "Extracting the dotfiles archive"
-  execute "tar" "-xzf" "dotfiles.tar.gz" "--strip-components=1" "-C" "dotfiles"
-
-  ohai "Deleting the dotfiles archive"
-  execute "rm" "dotfiles.tar.gz"
-
-  ohai "Navigating to the dotfiles directory"
-  execute "cd" "dotfiles"
-fi
-
-ohai "Setting up the dotfiles configuration..."
-
-caution "Please enter your first name (default: Alex):"
-execute "read" "-p" "> " "FIRST_NAME"
-FIRST_NAME=${FIRST_NAME:-Alex}
-FIRST_NAME=$(echo $FIRST_NAME | awk '{print toupper(substr($0, 1, 1)) tolower(substr($0, 2))}')
-
-caution "Please enter your last name (default: TYRODE):"
-execute "read" "-p" "> " "LAST_NAME"
-LAST_NAME=${LAST_NAME:-TYRODE}
-LAST_NAME=$(echo $LAST_NAME | awk '{print toupper($0)}')
-
-caution "Please enter your PERSONAL email address default: alex.tyrode@outlook.fr):"
-execute "read" "-p" "> " "PERSONAL_EMAIL"
-PERSONAL_EMAIL=${PERSONAL_EMAIL:-alex.tyrode@outlook.fr}
-
-caution "Please enter your WORK email address (default: alex.tyrode@alouette.ai):"
-execute "read" "-p" "> " "WORK_EMAIL"
-WORK_EMAIL=${WORK_EMAIL:-alex.tyrode@alouette.ai}
-
 (
     backup() {
       if [ -f "$1" ]; then
@@ -222,11 +176,6 @@ WORK_EMAIL=${WORK_EMAIL:-alex.tyrode@alouette.ai}
 
     export -f backup
     export -f install
-
-    export FIRST_NAME=$FIRST_NAME
-    export LAST_NAME=$LAST_NAME
-    export WORK_EMAIL=$WORK_EMAIL
-    export PERSONAL_EMAIL=$PERSONAL_EMAIL
 
     # Find directories in the current directory and execute setup.sh if it exists
     ohai "Checking for setup.sh files in directories of $PWD"

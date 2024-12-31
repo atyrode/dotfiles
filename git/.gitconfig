@@ -3,5 +3,3 @@
     email = alex.tyrode@outlook.fr
 [credentiel]
     helper = store
-[includeIf "gitdir/i:**/gitlab.alouette.dev/**"]
-    path = ~/.gitconfigs/.alouette.config

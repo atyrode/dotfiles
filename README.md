@@ -1,13 +1,11 @@
 # Installation
 
-## 1. Get Nix
+## 1. Get NixOS
 
-Using [DeterminateSystems' installer](https://github.com/DeterminateSystems/nix-installer): 
+### Windows
 
-```
-curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | \
-  sh -s -- install
-```
+Follow the instructions for: [NixOS for WSL](https://github.com/nix-community/NixOS-WSL?tab=readme-ov-file)
+
 
 ## 2. Get Home Manager
 

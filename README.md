@@ -3,6 +3,7 @@
 ## 1. Get Nix
 
 Using [DeterminateSystems' installer](https://github.com/DeterminateSystems/nix-installer): 
+
 ```
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | \
   sh -s -- install

@@ -10,6 +10,6 @@ eval "$(fzf --zsh)"
 # Utility replacements          # src --> new
 
 alias find="fd"                 # find --> fd
-alias cat="bat"                 # cat --> bat
+# alias cat="bat"               # cat --> bat
 alias htop="btop"               # htop --> btop
 alias ls="tree -L 1 --noreport" # ls --> tree

@@ -44,3 +44,5 @@ git clone https://github.com/gpakosz/.tmux.git
 ln -s -f "$(pwd)/.tmux/.tmux.conf" ~/.tmux.conf
 cp .tmux/.tmux.conf.local ~
 tmux source ~/.tmux.conf
+
+# TODO: "zreconf" which pops a gui you can use to toggle some aliases (bat, fd, zoxide, fzf, etc...)

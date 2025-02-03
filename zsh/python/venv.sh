@@ -143,7 +143,6 @@ function venv() {
 
 # Shortcut to install requirements.txt in the current python venv
 function pipreq() {
-
     update_venv_vars
 
     if ! venv_is_active; then 
@@ -155,7 +154,13 @@ function pipreq() {
         fi
     fi
 
-    pip install -r requirements.txt
+    # Check if uv is installed and available
+    if command -v uv &> /dev/null; then
+        echo -e "$(c_ok Found) uv, using it instead of pip..."
+        uvreq
+    else
+        pip install -r requirements.txt
+    fi
 }
 
 alias pipr="pipreq"
@@ -199,6 +204,25 @@ function pipdel() {
 }
 
 alias pipd="pipdel"
+
+# Shortcut to install requirements.txt in the current python venv using uv
+function uvreq() {
+
+    update_venv_vars
+
+    if ! venv_is_active; then 
+        venv
+
+        if ! venv_exists; then
+            echo -e "$(c_ko Error): virtual environment $CVD doesn't exist in $CPD, won't install uv requirements out of it."
+            return
+        fi
+    fi
+
+    uv pip install -r requirements.txt
+}
+
+alias uvr="uvreq"
 
 revenv() {
     deactivate_venv

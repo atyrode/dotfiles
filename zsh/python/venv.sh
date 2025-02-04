@@ -141,7 +141,23 @@ function venv() {
     fi
 }
 
-# Shortcut to install requirements.txt in the current python venv
+# Check if uv is installed, if not install it
+function ensure_uv_installed() {
+    if ! command -v uv &> /dev/null; then
+        echo -e "$(c_ok Installing) uv package manager..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        
+        # Verify installation succeeded
+        if ! command -v uv &> /dev/null; then
+            echo -e "$(c_ko Error): Failed to install uv package manager."
+            return 1
+        fi
+        echo -e "$(c_ok Installed) uv package manager successfully."
+    fi
+    return 0
+}
+
+# Modify the pipreq function to handle uv installation
 function pipreq() {
     update_venv_vars
 
@@ -154,11 +170,12 @@ function pipreq() {
         fi
     fi
 
-    # Check if uv is installed and available
-    if command -v uv &> /dev/null; then
-        echo -e "$(c_ok Found) uv, using it instead of pip..."
+    # Check if uv is installed and install it if needed
+    if ensure_uv_installed; then
+        echo -e "$(c_ok Using) uv instead of pip..."
         uvreq
     else
+        echo -e "$(c_ok Falling back) to pip..."
         pip install -r requirements.txt
     fi
 }

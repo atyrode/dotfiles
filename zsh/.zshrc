@@ -29,6 +29,7 @@ CONFIG_FILES=(
     "python"            # Python configuration (directory as well)
     "node"              # Node configuration (directory as well)
     "git"               # Git configuration (directory as well)
+    "docker"            # Docker configuration (directory as well)
     "src/footer.sh"     # End of configuration/start up behavior
 )
 
@@ -51,3 +52,9 @@ for file in "${CONFIG_FILES[@]}"; do
         source "$DOTFILES_DIR/$file"
     fi
 done
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+. "$HOME/.local/bin/env"

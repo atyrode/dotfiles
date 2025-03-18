@@ -1,7 +1,7 @@
 ################## VARIABLES ####################
 
 # venv variables
-VENV_DIR="venv"
+VENV_DIR=".venv"
 PARENT_DIR=""
 GITIGNORE=".gitignore"
 
@@ -19,11 +19,39 @@ function update_venv_vars() {
     CVENV="$CPD/$CVD"
 }
 
+################## SUMMARY ####################
+#
+# Core Functions:
+# - venv_exists()         - Check if a virtual environment exists
+# - uv_available()        - Check if uv is available
+# - ensure_uv_installed() - Ensure uv is installed, install if needed
+# - create_venv()         - Create a virtual environment (uses uv if available)
+# - activate_venv()       - Activate a virtual environment
+# - deactivate_venv()     - Deactivate a virtual environment
+# - venv_is_active()      - Check if a virtual environment is active
+#
+# Specialized Functions:
+# - venv()            - Create/activate/deactivate a virtual environment
+# - pipreq() / pipr   - Install requirements.txt using pip or uv
+# - pipfreeze() / pipf - Freeze installed packages to requirements.txt
+# - pipdel() / pipd   - Remove all installed packages
+# - revenv()          - Recreate a virtual environment
+#
+
 ################# CORE FUNCTIONS ################
 
 # Check if python venv exists in current folder (exists: 0, doesn't exist: 1)
 function venv_exists() {
-    if [ -d "venv" ]; then
+    if [ -d "$VENV_DIR" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Check if uv is available (exists: 0, doesn't exist: 1)
+function uv_available() {
+    if command -v uv &> /dev/null; then
         return 0
     else
         return 1
@@ -32,7 +60,12 @@ function venv_exists() {
 
 # Create python venv in current folder
 function create_venv() {
-    python3 -m venv $VENV_DIR
+    if uv_available; then
+        echo -e "$(c_ok Using) uv to create virtual environment..."
+        uv venv
+    else
+        python3 -m venv $VENV_DIR
+    fi
     echo -e "$(c_ok Created) virtual environment $CVD in $CPD."
 }
 
@@ -72,9 +105,9 @@ function activate_venv() {
 }
 
 function deactivate_venv() {
-    cd $VIRTUAL_ENV/..
+    command cd $VIRTUAL_ENV/..
     deactivate
-    cd - > /dev/null
+    command cd - > /dev/null
     echo -e "$(c_ko Deactivated) virtual environment: $CVENV"
 }
 
@@ -94,6 +127,22 @@ function check_requirements_exists() {
     else
         return 1
     fi
+}
+
+# Check if uv is installed, if not install it
+function ensure_uv_installed() {
+    if ! command -v uv &> /dev/null; then
+        echo -e "$(c_ok Installing) uv package manager..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        
+        # Verify installation succeeded
+        if ! command -v uv &> /dev/null; then
+            echo -e "$(c_ko Error): Failed to install uv package manager."
+            return 1
+        fi
+        echo -e "$(c_ok Installed) uv package manager successfully."
+    fi
+    return 0
 }
 
 ############### SPECIALIZED FUNCTIONS ##################
@@ -141,23 +190,7 @@ function venv() {
     fi
 }
 
-# Check if uv is installed, if not install it
-function ensure_uv_installed() {
-    if ! command -v uv &> /dev/null; then
-        echo -e "$(c_ok Installing) uv package manager..."
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        
-        # Verify installation succeeded
-        if ! command -v uv &> /dev/null; then
-            echo -e "$(c_ko Error): Failed to install uv package manager."
-            return 1
-        fi
-        echo -e "$(c_ok Installed) uv package manager successfully."
-    fi
-    return 0
-}
-
-# Modify the pipreq function to handle uv installation
+# Install requirements.txt in the current python venv
 function pipreq() {
     update_venv_vars
 
@@ -173,9 +206,9 @@ function pipreq() {
     # Check if uv is installed and install it if needed
     if ensure_uv_installed; then
         echo -e "$(c_ok Using) uv instead of pip..."
-        uvreq
+        uv pip install -r requirements.txt
     else
-        echo -e "$(c_ok Falling back) to pip..."
+        echo -e "Uv is not installed, $(c_ok falling back) to pip..."
         pip install -r requirements.txt
     fi
 }
@@ -196,7 +229,14 @@ function pipfreeze() {
         fi
     fi
 
-    pip freeze > requirements.txt
+    # Check if uv is installed and install it if needed
+    if ensure_uv_installed; then
+        echo -e "$(c_ok Using) uv instead of pip..."
+        uv pip freeze > requirements.txt
+    else
+        echo -e "Uv is not installed, $(c_ok falling back) to pip..."
+        pip freeze > requirements.txt
+    fi
     echo -e "$(c_ok Updated) requirements.txt in $CPD."
 }
 
@@ -216,32 +256,21 @@ function pipdel() {
         fi
     fi
 
-    pip freeze | xargs pip uninstall -y
+    # Check if uv is installed and install it if needed
+    if ensure_uv_installed; then
+        echo -e "$(c_ok Using) uv instead of pip..."
+        uv pip freeze | xargs uv pip uninstall -y
+    else
+        echo -e "Uv is not installed, $(c_ok falling back) to pip..."
+        pip freeze | xargs pip uninstall -y
+    fi
     echo -e "$(c_ok Removed) all installed packages in $CVD."
 }
 
 alias pipd="pipdel"
 
-# Shortcut to install requirements.txt in the current python venv using uv
-function uvreq() {
 
-    update_venv_vars
-
-    if ! venv_is_active; then 
-        venv
-
-        if ! venv_exists; then
-            echo -e "$(c_ko Error): virtual environment $CVD doesn't exist in $CPD, won't install uv requirements out of it."
-            return
-        fi
-    fi
-
-    uv pip install -r requirements.txt
-}
-
-alias uvr="uvreq"
-
-revenv() {
+function revenv() {
     deactivate_venv
     rm -rf $VENV_DIR
     create_venv

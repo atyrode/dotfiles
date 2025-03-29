@@ -306,16 +306,34 @@ function _remove_packages() {
 
 # Toggle, activate, or create a python virtual environment
 function venv() {
+    local target_dir="${1:-$(pwd)}"
+    
+    # Store the original directory
+    local original_dir="$(pwd)"
+    
+    # Change to target directory if it exists
+    if [ -d "$target_dir" ]; then
+        \cd "$target_dir" || {
+            echo -e "$(c_ko Error): Could not change to directory: $target_dir"
+            return 1
+        }
+    else
+        echo -e "$(c_ko Error): Directory does not exist: $target_dir"
+        return 1
+    fi
+    
     update_venv_vars
     
     # Toggle deactivate if active
     if _venv_is_active; then
         _deactivate_venv
-        return
+    else
+        # Otherwise ensure venv exists and is active
+        _ensure_venv_exists_active
     fi
     
-    # Otherwise ensure venv exists and is active
-    _ensure_venv_exists_active
+    # Return to original directory
+    \cd "$original_dir"
 }
 
 # Install requirements.txt in the current python venv

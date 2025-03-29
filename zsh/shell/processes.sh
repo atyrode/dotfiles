@@ -18,6 +18,64 @@ function zconf() {
     echo -e "$(c_ok Sourced) ~/.zshrc."
 }
 
+# Git pull with commit preview and confirmation
+function zpull() {
+    local force=false
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -f|--force)
+                force=true
+                shift
+                ;;
+            *)
+                echo -e "$(c_ko Error): Unknown option '$1'"
+                return 1
+                ;;
+        esac
+    done
+
+    # Check if we're in a git repository
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo -e "$(c_ko Error): Not a git repository"
+        return 1
+    fi
+
+    # Fetch latest changes
+    echo -e "$(c_folder Fetching) latest changes..."
+    git fetch
+
+    # Check if we're up to date
+    if [[ $(git status -uno) == *"up to date"* ]]; then
+        echo -e "$(c_ok Up to date) with remote."
+        return 0
+    fi
+
+    # Get the latest 5 commits
+    echo -e "\n$(c_file Latest) commits:"
+    git log -n 5 --pretty=format:"%C(yellow)%h%Creset - %C(green)%an%Creset, %C(cyan)%ar%Creset%n%s%n"
+
+    # Skip confirmation if force flag is set
+    if $force; then
+        echo -e "$(c_folder Pulling) changes..."
+        git pull
+        echo -e "$(c_ok Success)!"
+        return 0
+    fi
+
+    # Ask for confirmation
+    echo -e "\n$(c_file Pull) changes? (Y/n)"
+    read -r response
+    response=${response:-Y}  # Default to Y if no response
+
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo -e "$(c_folder Pulling) changes..."
+        git pull
+        echo -e "$(c_ok Success)!"
+    else
+        echo -e "$(c_file Cancelled)."
+    fi
+}
+
 # Quick search for processes
 pfind() {
     # Color definitions

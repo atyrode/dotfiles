@@ -344,6 +344,22 @@ alias pipd="pipdel"
 
 # Recreate virtual environment and reinstall packages
 function revenv() {
+    local target_dir="${1:-$(pwd)}"
+    
+    # Store the original directory
+    local original_dir="$(pwd)"
+    
+    # Change to target directory if it exists
+    if [ -d "$target_dir" ]; then
+        \cd "$target_dir" || {
+            echo -e "$(c_ko Error): Could not change to directory: $target_dir"
+            return 1
+        }
+    else
+        echo -e "$(c_ko Error): Directory does not exist: $target_dir"
+        return 1
+    fi
+    
     update_venv_vars
     
     # Try to deactivate if active
@@ -358,4 +374,7 @@ function revenv() {
     
     # Install requirements if they exist
     _check_requirements_exists && _install_requirements
+    
+    # Return to original directory
+    \cd "$original_dir"
 }

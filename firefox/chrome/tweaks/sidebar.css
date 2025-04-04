@@ -18,7 +18,7 @@
 
 #sidebar-box {
   --uc-sidebar-width: 51px;
-  --uc-sidebar-hover-width: 200px;
+  --uc-sidebar-hover-width: 350px !important;
   --uc-autohide-sidebar-delay: 100ms; /* Wait 0.1s before hiding sidebar */
   --uc-autohide-transition-duration: 115ms;
   --uc-autohide-transition-type: linear;

@@ -48,8 +48,9 @@ exec zsh
 - **Python 3** + **uv** - Modern Python package manager
 - **Node.js 20** + **Bun** - JavaScript runtime
 - **Git** - Pre-configured with useful aliases
+- **GCC** - Native compiler for Rust/C build scripts
 - **tmux** - Terminal multiplexer
-- **rustup** - Rust toolchain installer
+- **Rust tooling** - cargo, rustc, rustfmt, clippy, and rust-analyzer
 
 ### System & Containers
 - **btop** - Modern system monitor

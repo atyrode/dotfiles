@@ -15,7 +15,9 @@
     fastfetch
 
     # Python tooling
-    python3
+    (python3.withPackages (ps: with ps; [
+      pillow
+    ]))
     uv
 
     # JavaScript/TypeScript tooling
@@ -31,7 +33,12 @@
     git
     gh
     tmux
-    rustup
+    gcc
+    cargo
+    rustc
+    rustfmt
+    clippy
+    rust-analyzer
     codex
     bubblewrap
   ];

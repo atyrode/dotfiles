@@ -90,7 +90,7 @@ _nix_dotfiles_backup_symlink_conflicts() {
 }
 
 _nix_dotfiles_should_restart_shell() {
-  [[ "${NIX_DOTFILES_RESTART_SHELL:-1}" != "0" ]] || return 1
+  [[ "${NIX_DOTFILES_RESTART_SHELL:-0}" == "1" ]] || return 1
   [[ -z "${CODEX_SHELL:-}${CODEX_CI:-}${CODEX_SANDBOX:-}" ]] || return 1
   [[ -t 0 && -t 1 ]] || return 1
 }
@@ -124,7 +124,8 @@ zconf() {
     return 1
   }
 
-  # Reload HM session vars (PATH, etc.) then restart login shell
+  # Reload HM session vars (PATH, etc.) for this shell. Restarting the shell is
+  # opt-in because replacing the terminal process can hang embedded terminals.
   if [[ -f "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" ]]; then
     source "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
   fi

@@ -1,10 +1,17 @@
 # nix-dotfiles
 
-Nix + Home Manager configuration for shell and developer tooling (Ubuntu/WSL optimized).
+Nix + Home Manager configuration for shell and developer tooling on macOS and Linux.
 
-## 🚀 Quick Start (Ubuntu)
+## 🚀 Quick Start
 
-**One command installation:**
+**From this checkout:**
+
+```bash
+cd ~/code/nix-dotfiles
+./install.sh
+```
+
+**One command installation from GitHub:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atyrode/nix-dotfiles/main/install.sh | bash
@@ -19,13 +26,13 @@ sh <(curl -L https://nixos.org/nix/install) --daemon
 
 # 2. Enable flakes
 mkdir -p ~/.config/nix
-echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+echo "extra-experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
 # 3. Clone and setup
 git clone https://github.com/atyrode/nix-dotfiles.git ~/nix-dotfiles
 cd ~/nix-dotfiles
-git add -A  # ⚠️ Required: Nix flakes need all files tracked by Git
-nix run home-manager -- switch --flake .#alex
+if [ -L ~/.zshrc ]; then mv ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S); fi
+HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-aarch64-darwin
 
 # 4. Restart shell
 exec zsh
@@ -55,8 +62,8 @@ exec zsh
 ### System & Containers
 - **btop** - Modern system monitor
 - **dua** - Disk usage analyzer
-- **Docker** + **docker-compose** + **dive** - Container tools
-- **neofetch** - System info on startup
+- **Docker** + **docker-compose** + **dive** - Container tools on Linux configs
+- **fastfetch** - System info on startup
 
 ---
 
@@ -138,13 +145,28 @@ nix-dotfiles/
 
 ## ⚙️ Customization
 
-### Change Username
+### System Configurations
 
-Edit `flake.nix` and replace `defaultUsername = "alex"` with your username, or build with:
+The installer detects the current system and selects the matching configuration:
 
 ```bash
-nix run home-manager -- switch --flake .#alex --override-input nixpkgs github:NixOS/nixpkgs/nixos-unstable
+alex-aarch64-darwin
+alex-x86_64-darwin
+alex-aarch64-linux
+alex-x86_64-linux
 ```
+
+For this Mac, the manual switch command is:
+
+```bash
+HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-aarch64-darwin
+```
+
+### Change Username
+
+Edit `flake.nix` and replace `defaultUsername = "alex"` with your username.
+
+If you want to keep the username but force a config, set `FLAKE_CONFIG` before running the installer.
 
 ### Add Packages
 
@@ -161,13 +183,11 @@ Edit files in `home/shell/` - they're organized by category for easy maintenance
 **"Path is not tracked by Git" error:**
 ```bash
 cd ~/nix-dotfiles
-git add -A
-# If you want to commit (recommended):
-git commit -m "Add configuration files" || true
+git add <file>
 zconf
 ```
 
-**Note:** Nix flakes require all referenced files to be tracked by Git. After adding new files, always run `git add -A` before `zconf`.
+**Note:** Nix flakes require referenced files to be tracked by Git. After adding new files, run `git add <file>` before `zconf`.
 
 **Nix not found after install:**
 ```bash
@@ -179,15 +199,18 @@ zconf
 ```bash
 # Check if all files are tracked
 git status
-git add -A
 zconf
 ```
+
+If the error says an existing symlink such as `~/.zshrc` would be clobbered,
+run `./install.sh` instead of the manual switch command. The installer backs up
+symlinked shell entrypoints before activation.
 
 ---
 
 ## 📝 Requirements
 
-- Ubuntu (or any Linux with Nix support)
+- macOS or Linux with Nix support
 - Git
 - Internet connection (for initial install)
 

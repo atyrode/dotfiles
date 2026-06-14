@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
 
 {
   programs.zsh = {
@@ -12,9 +12,10 @@
       theme = "robbyrussell";
       plugins = [
         "git"
+        "tmux"
+      ] ++ lib.optionals pkgs.stdenv.isLinux [
         "docker"
         "docker-compose"
-        "tmux"
       ];
     };
 

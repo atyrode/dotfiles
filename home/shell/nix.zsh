@@ -41,6 +41,18 @@ _nix_dotfiles_dir() {
   fi
 }
 
+_nix_dotfiles_source_nix() {
+  if (( ${+commands[nix]} )); then
+    return 0
+  fi
+
+  if [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]]; then
+    source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+  elif [[ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ]]; then
+    source "$HOME/.nix-profile/etc/profile.d/nix.sh"
+  fi
+}
+
 _nix_dotfiles_backup_if_symlink() {
   local path="$1"
 
@@ -49,25 +61,38 @@ _nix_dotfiles_backup_if_symlink() {
   fi
 
   local target
-  target="$(readlink "$path")"
+  zmodload zsh/stat 2>/dev/null || true
+  target="$(zstat -L +link -- "$path" 2>/dev/null || echo "${path:A}")"
   case "$target" in
-    /nix/store/*-home-manager-files/*)
+    /nix/store/*-home-manager-files/*|/nix/store/*-hm_..zshrc|/nix/store/*-hm_..zshenv)
       return 0
       ;;
   esac
 
   local backup="$path.backup"
   if [[ -e "$backup" || -L "$backup" ]]; then
-    backup="$path.backup.$(date +%Y%m%d%H%M%S)"
+    zmodload zsh/datetime 2>/dev/null || true
+    if (( ${+EPOCHSECONDS} )); then
+      backup="$path.backup.$(strftime "%Y%m%d%H%M%S" "$EPOCHSECONDS")"
+    else
+      backup="$path.backup.$$"
+    fi
   fi
 
   echo -e "$(c_folder "Backing up") existing symlink: $path -> $backup"
+  zmodload zsh/files 2>/dev/null || true
   mv "$path" "$backup"
 }
 
 _nix_dotfiles_backup_symlink_conflicts() {
   _nix_dotfiles_backup_if_symlink "$HOME/.zshrc"
   _nix_dotfiles_backup_if_symlink "$HOME/.zshenv"
+}
+
+_nix_dotfiles_should_restart_shell() {
+  [[ "${NIX_DOTFILES_RESTART_SHELL:-1}" != "0" ]] || return 1
+  [[ -z "${CODEX_SHELL:-}${CODEX_CI:-}${CODEX_SANDBOX:-}" ]] || return 1
+  [[ -t 0 && -t 1 ]] || return 1
 }
 
 zconf() {
@@ -91,8 +116,10 @@ zconf() {
 
   _nix_dotfiles_backup_symlink_conflicts
 
+  _nix_dotfiles_source_nix
+
   echo -e "$(c_folder "Switching") Home Manager from: $flake_dir#$flake_config"
-  HOME_MANAGER_BACKUP_EXT=backup nix run "$flake_dir#home-manager" -- switch --flake "$flake_dir#$flake_config" || {
+  HOME_MANAGER_BACKUP_EXT=backup command nix run "$flake_dir#home-manager" -- switch --flake "$flake_dir#$flake_config" || {
     echo -e "$(c_ko "Home Manager switch failed")"
     return 1
   }
@@ -102,7 +129,12 @@ zconf() {
     source "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
   fi
 
-  exec zsh -l
+  if _nix_dotfiles_should_restart_shell; then
+    exec zsh -l
+  fi
+
+  echo -e "$(c_ok "Home Manager switch complete.")"
+  echo -e "Run $(c_file "exec zsh -l") or open a new terminal to reload the shell."
 }
 
 ############################################
@@ -128,17 +160,31 @@ atyrode() {
   # Extract and display packages (simple text parsing - works reliably)
   if [[ -f "$packages_file" ]]; then
     echo -e "$(c_ok "📦 Configured Packages:")"
-    awk '
-    / = with pkgs; \[/ { in_list = 1; next }
-    in_list && /^[[:space:]]*\];/ { in_list = 0; next }
-    in_list {
-      if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\]/ && $0 !~ /^[[:space:]]*$/) {
-        gsub(/^[[:space:]]+|[[:space:]]+$|,$/, "", $0)
-        if ($0 ~ /^[a-zA-Z0-9_]+$/) {
-          print $0
+    local package_groups=(
+      cliPackages
+      pythonPackages
+      javascriptPackages
+      developmentPackages
+    )
+
+    case "$flake_config" in
+      *-darwin) package_groups+=(darwinPackages) ;;
+      *-linux) package_groups+=(linuxPackages) ;;
+    esac
+
+    for package_group in "${package_groups[@]}"; do
+      awk -v group="$package_group" '
+      $0 ~ "^[[:space:]]*" group " = with pkgs; \\[" { in_list = 1; next }
+      in_list && /^[[:space:]]*\];/ { in_list = 0; next }
+      in_list {
+        if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\]/ && $0 !~ /^[[:space:]]*$/) {
+          gsub(/^[[:space:]]+|[[:space:]]+$|,$/, "", $0)
+          if ($0 ~ /^[a-zA-Z0-9_]+$/) {
+            print $0
+          }
         }
-      }
-    }' "$packages_file" | sort -u | \
+      }' "$packages_file"
+    done | sort -u | \
       while read -r pkg; do
         [[ -n "$pkg" ]] && echo -e "  $(c_file "•") $pkg"
       done
@@ -151,7 +197,7 @@ atyrode() {
     for func_file in "$shell_dir"/*.zsh; do
       [[ -f "$func_file" ]] && \
         grep -E '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$func_file" | \
-        sed 's/() {.*$//' | \
+        sed -E 's/[[:space:]]*\(\)[[:space:]]*\{.*$//' | \
         sed 's/^[[:space:]]*//' | \
         while read -r func; do
           # Skip internal/private functions starting with _
@@ -182,7 +228,7 @@ atyrode() {
     echo -e "$(c_ok "🔀 Git Aliases:")"
     grep -E 'alias\.[a-zA-Z_][a-zA-Z0-9_]*\s*=' "$git_file" | \
       sed 's/alias\.//' | \
-      sed 's/\s*=.*$//' | \
+      sed 's/[[:space:]]*=.*$//' | \
       sed 's/^[[:space:]]*//' | \
       while read -r git_alias; do
         echo -e "  $(c_file "•") git $git_alias"
@@ -193,10 +239,16 @@ atyrode() {
   # Extract and display zsh plugins
   if [[ -f "$zsh_file" ]]; then
     echo -e "$(c_ok "🎨 Zsh Plugins:")"
-    awk '/plugins = \[/,/\]/ {
-      if ($0 ~ /"[a-zA-Z0-9_-]+"/) {
-        match($0, /"([^"]+)"/, arr)
-        if (arr[1] != "") print arr[1]
+    awk '
+    /plugins = \[/ { in_list = 1; next }
+    in_list && /^[[:space:]]*\]/ { in_list = 0; next }
+    in_list {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line ~ /^"[a-zA-Z0-9_-]+"/) {
+        gsub(/^"/, "", line)
+        gsub(/".*$/, "", line)
+        if (line != "") print line
       }
     }' "$zsh_file" | \
       while read -r plugin; do

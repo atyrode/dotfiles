@@ -1,6 +1,8 @@
 { pkgs, lib, ... }:
 
 let
+  codexProfileCleanEnv = "env -u CODEX_CI -u CODEX_HOME -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED -u CODEX_SHELL -u CODEX_SQLITE_HOME -u CODEX_THREAD_ID";
+
   codex-profile = pkgs.stdenvNoCC.mkDerivation rec {
     pname = "codex-profile";
     version = "0.2.0-unstable-2026-06-16";
@@ -12,6 +14,12 @@ let
       rev = "6b374f6e25d364f89f774a8275330958fd2d5f6b";
       hash = "sha256-i8s8hbyuhlFBlB+NOEvIACvvIdOcjwSX4mLqK27hLdw=";
     };
+
+    postPatch = ''
+      substituteInPlace bin/codex-profile \
+        --replace-fail 'env CODEX_HOME="$codex_home"' '${codexProfileCleanEnv} CODEX_HOME="$codex_home"' \
+        --replace-fail 'open -n --env "CODEX_HOME=$codex_home"' '${codexProfileCleanEnv} open -n --env "CODEX_HOME=$codex_home"'
+    '';
 
     dontBuild = true;
 

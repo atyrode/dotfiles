@@ -14,6 +14,38 @@
 
     defaultUsername = "alex";
 
+    overlays = [
+      (final: prev: {
+        codex = prev.codex.overrideAttrs (_finalAttrs: previousAttrs: {
+          version = "0.139.0";
+          src = prev.fetchFromGitHub {
+            owner = "openai";
+            repo = "codex";
+            tag = "rust-v0.139.0";
+            hash = "sha256-XjzlkBUkBey+P3tFLDYB3ae5oseUfW5tmzhLzqlqj2E=";
+          };
+          cargoHash = "sha256-8mN4OTRJvt2mBYHQXZS55PSOChLqEIiXwPu2y+2MZ9o=";
+          postPatch = ''
+            substituteInPlace $cargoDepsCopy/*/webrtc-sys-*/build.rs \
+              --replace-fail "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+            substituteInPlace Cargo.toml \
+              --replace-fail 'lto = "thin"' "" \
+              --replace-fail 'codegen-units = 1' ""
+          '';
+          nativeBuildInputs =
+            previousAttrs.nativeBuildInputs
+            ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
+              final.lld
+            ];
+          env =
+            previousAttrs.env
+            // final.lib.optionalAttrs final.stdenv.hostPlatform.isDarwin {
+              NIX_CFLAGS_LINK = "-fuse-ld=${final.lib.getExe' final.lld "ld64.lld"}";
+            };
+        });
+      })
+    ];
+
     systems = [
       "aarch64-darwin"
       "x86_64-darwin"
@@ -34,7 +66,7 @@
     mkHomeConfig = { system, username ? defaultUsername, homeDirectory ? homeDirectoryFor system username }:
       home-manager.lib.homeManagerConfiguration {
         pkgs = import nixpkgs {
-          inherit system;
+          inherit system overlays;
           config.allowUnfree = true;
         };
 

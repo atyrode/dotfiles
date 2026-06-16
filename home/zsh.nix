@@ -25,6 +25,7 @@
       source ${./shell/colors.zsh}
       source ${./shell/utils.zsh}
       source ${./shell/aliases.zsh}
+      source ${./shell/codex.zsh}
       source ${./shell/python.zsh}
       source ${./shell/git.zsh}
       source ${./shell/nix.zsh}

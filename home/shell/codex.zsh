@@ -2,30 +2,26 @@
 # Codex profile helpers
 ############################################
 
-# These helpers only choose a CODEX_HOME profile. Credentials, auth.json files,
-# sessions, logs, caches, and connector state stay outside this dotfiles repo in
-# ~/.codex and ~/.codex-alt.
+# The actual auth.json files stay machine-local in ~/.codex* and are not
+# managed by this public dotfiles repo.
 
-_codex_profile() {
-  local nix_codex_profile="$HOME/.nix-profile/bin/codex-profile"
+codex-profile-path() {
+  local profile="${1:-default}"
 
-  if [[ -x "$nix_codex_profile" ]]; then
-    "$nix_codex_profile" "$@"
-  else
-    command codex-profile "$@"
-  fi
+  case "$profile" in
+    default|main)
+      printf '%s\n' "$HOME/.codex-profiles/default"
+      ;;
+    *)
+      printf '%s\n' "$HOME/.codex-profiles/$profile"
+      ;;
+  esac
 }
 
-alias codex-main="_codex_profile cli default"
-alias codex-alt="_codex_profile cli alt"
+codex-login-main() {
+  codex-use main && codex login --device-auth "$@"
+}
 
-alias codex-app-main="_codex_profile app default"
-alias codex-app-alt="_codex_profile app alt"
-
-alias codex-side-main="_codex_profile app-instance default"
-alias codex-side-alt="_codex_profile app-instance alt"
-
-codex-both() {
-  _codex_profile app-instance default "$@"
-  _codex_profile app-instance alt "$@"
+codex-login-alt() {
+  codex-use alt && codex login --device-auth "$@"
 }

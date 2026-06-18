@@ -10,6 +10,7 @@ let
     text = ''
       profile_root="$HOME/.codex-profiles"
       active_path="$HOME/.codex"
+      active_state="$profile_root/.active-profile"
 
       usage() {
         cat <<'EOF'
@@ -18,11 +19,12 @@ Usage:
   codex-use <default|main|profile>
   codex-use migrate
   codex-use list
+  codex-use path [default|main|profile]
   codex-use ps
   codex-use stop [--force]
 
-Profiles are stored in ~/.codex-profiles/<profile>.
-The active profile is exposed to normal Codex as ~/.codex.
+Inactive profiles are stored in ~/.codex-profiles/<profile>.
+The active profile is always a real ~/.codex directory.
 EOF
       }
 
@@ -41,11 +43,35 @@ EOF
         printf '%s/%s\n' "$profile_root" "$(canonical_profile "$1")"
       }
 
+      timestamp() {
+        date +%Y%m%d%H%M%S
+      }
+
       validate_profile() {
         if [[ ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
           printf 'Invalid Codex profile: %s\n' "$1" >&2
           exit 2
         fi
+      }
+
+      read_active_state() {
+        if [[ ! -f "$active_state" ]]; then
+          return 1
+        fi
+
+        IFS= read -r profile < "$active_state"
+        profile="$(canonical_profile "$profile")"
+        validate_profile "$profile"
+        printf '%s\n' "$profile"
+      }
+
+      write_active_state() {
+        profile="$(canonical_profile "$1")"
+        validate_profile "$profile"
+        mkdir -p "$profile_root"
+        chmod 700 "$profile_root"
+        printf '%s\n' "$profile" > "$active_state"
+        chmod 600 "$active_state"
       }
 
       codex_processes() {
@@ -117,20 +143,20 @@ EOF
           return
         fi
 
-        if [[ ! -L "$active_path" ]]; then
-          printf 'legacy\n'
+        if [[ -L "$active_path" ]]; then
+          target="$(readlink "$active_path")"
+          case "$target" in
+            "$profile_root"/*)
+              printf '%s\n' "''${target#"$profile_root"/}"
+              ;;
+            *)
+              printf 'external:%s\n' "$target"
+              ;;
+          esac
           return
         fi
 
-        target="$(readlink "$active_path")"
-        case "$target" in
-          "$profile_root"/*)
-            printf '%s\n' "''${target#"$profile_root"/}"
-            ;;
-          *)
-            printf 'external:%s\n' "$target"
-            ;;
-        esac
+        read_active_state || printf 'legacy\n'
       }
 
       show_current() {
@@ -141,37 +167,44 @@ EOF
           printf 'Run %s after closing Codex to enable profile switching.\n' "codex-use migrate"
         elif [[ "$profile" == external:* ]]; then
           printf 'CODEX_HOME=%s\n' "$(readlink "$active_path")"
+          printf 'Run %s after closing Codex to convert ~/.codex back to a real directory.\n' "codex-use migrate"
         elif [[ "$profile" == "none" ]]; then
           printf 'CODEX_HOME=%s\n' "$active_path"
         else
-          printf 'CODEX_HOME=%s\n' "$(profile_path "$profile")"
+          printf 'CODEX_HOME=%s\n' "$active_path"
         fi
       }
 
-      migrate_profiles() {
-        ensure_no_codex_processes
+      active_profile_path() {
+        if [[ $# -gt 1 ]]; then
+          usage >&2
+          exit 2
+        fi
 
+        if [[ $# -eq 0 ]]; then
+          profile="$(current_profile)"
+        else
+          profile="$(canonical_profile "$1")"
+          validate_profile "$profile"
+        fi
+
+        current="$(current_profile)"
+        if [[ "$profile" == "$current" && -d "$active_path" && ! -L "$active_path" ]]; then
+          printf '%s\n' "$active_path"
+        elif [[ "$profile" == "none" || "$profile" == "legacy" || "$profile" == external:* ]]; then
+          printf '%s\n' "$active_path"
+        else
+          printf '%s\n' "$(profile_path "$profile")"
+        fi
+      }
+
+      migrate_legacy_profile_dirs() {
         mkdir -p "$profile_root"
         chmod 700 "$profile_root"
 
-        if [[ -e "$active_path" && ! -L "$active_path" ]]; then
-          default_target="$(profile_path default)"
-          if [[ -e "$default_target" ]]; then
-            backup_target="$profile_root/recovered-$(date +%Y%m%d%H%M%S)"
-            mv "$active_path" "$backup_target"
-            chmod 700 "$backup_target"
-            printf 'Moved leftover %s to %s.\n' "$active_path" "$backup_target"
-          else
-            mv "$active_path" "$default_target"
-            chmod 700 "$default_target"
-          fi
-          ln -s "$default_target" "$active_path"
-        elif [[ ! -e "$active_path" ]]; then
-          mkdir -p "$(profile_path default)"
-          chmod 700 "$(profile_path default)"
-          ln -s "$(profile_path default)" "$active_path"
-        fi
+        active_profile="''${1:-}"
 
+        shopt -s nullglob
         for legacy_dir in "$HOME"/.codex-*; do
           [[ -d "$legacy_dir" ]] || continue
           [[ "$legacy_dir" != "$profile_root" ]] || continue
@@ -179,6 +212,14 @@ EOF
           profile="''${legacy_dir##*/.codex-}"
           validate_profile "$profile"
           target="$(profile_path "$profile")"
+
+          if [[ "$profile" == "$active_profile" ]]; then
+            backup_target="$profile_root/recovered-$profile-$(timestamp)"
+            mv "$legacy_dir" "$backup_target"
+            chmod 700 "$backup_target"
+            printf 'Moved duplicate active legacy profile %s to %s.\n' "$legacy_dir" "$backup_target" >&2
+            continue
+          fi
 
           if [[ -e "$target" ]]; then
             printf 'Skipping %s: %s already exists.\n' "$legacy_dir" "$target" >&2
@@ -188,37 +229,162 @@ EOF
           mv "$legacy_dir" "$target"
           chmod 700 "$target"
         done
+        shopt -u nullglob
+      }
+
+      migrate_profiles() {
+        ensure_no_codex_processes
+
+        mkdir -p "$profile_root"
+        chmod 700 "$profile_root"
+
+        if [[ -L "$active_path" ]]; then
+          target="$(readlink "$active_path")"
+          case "$target" in
+            "$profile_root"/*)
+              profile="''${target#"$profile_root"/}"
+              validate_profile "$profile"
+
+              if [[ ! -d "$target" ]]; then
+                printf 'Active profile target is missing: %s\n' "$target" >&2
+                exit 1
+              fi
+
+              unlink "$active_path"
+              mv "$target" "$active_path"
+              chmod 700 "$active_path"
+              write_active_state "$profile"
+              migrate_legacy_profile_dirs "$profile"
+              ;;
+            *)
+              printf '%s points outside %s: %s\n' "$active_path" "$profile_root" "$target" >&2
+              printf 'Replace it with a real directory manually, then run %s again.\n' "codex-use migrate" >&2
+              exit 1
+              ;;
+          esac
+        elif [[ -d "$active_path" ]]; then
+          if read_active_state >/dev/null; then
+            profile="$(read_active_state)"
+          else
+            profile="default"
+            default_target="$(profile_path "$profile")"
+
+            if [[ -e "$default_target" ]]; then
+              backup_target="$profile_root/recovered-$(timestamp)"
+              mv "$active_path" "$backup_target"
+              chmod 700 "$backup_target"
+              mv "$default_target" "$active_path"
+              chmod 700 "$active_path"
+              printf 'Moved leftover %s to %s.\n' "$active_path" "$backup_target"
+            else
+              chmod 700 "$active_path"
+            fi
+
+            write_active_state "$profile"
+          fi
+
+          migrate_legacy_profile_dirs "$profile"
+        elif [[ ! -e "$active_path" ]]; then
+          profile="default"
+          default_target="$(profile_path "$profile")"
+
+          if [[ -d "$default_target" ]]; then
+            mv "$default_target" "$active_path"
+          else
+            mkdir -p "$active_path"
+          fi
+
+          chmod 700 "$active_path"
+          write_active_state "$profile"
+          migrate_legacy_profile_dirs "$profile"
+        else
+          printf '%s exists but is not a directory.\n' "$active_path" >&2
+          exit 1
+        fi
 
         show_current
       }
 
+      ensure_migrated() {
+        if [[ -e "$active_path" && ! -L "$active_path" ]]; then
+          if read_active_state >/dev/null; then
+            return
+          fi
+        fi
+
+        migrate_profiles >/dev/null
+      }
+
       switch_profile() {
         ensure_no_codex_processes
+        ensure_migrated
 
         profile="$(canonical_profile "$1")"
         validate_profile "$profile"
-        target="$(profile_path "$profile")"
+        current="$(read_active_state)"
 
-        if [[ -e "$active_path" && ! -L "$active_path" ]]; then
-          printf '%s is a real directory, so switching is not enabled yet.\n' "$active_path" >&2
-          printf 'Close Codex, then run %s once.\n' "codex-use migrate" >&2
+        if [[ "$profile" == "$current" ]]; then
+          chmod 700 "$active_path"
+          printf 'active Codex profile: %s\n' "$profile"
+          printf 'CODEX_HOME=%s\n' "$active_path"
+          return
+        fi
+
+        target="$(profile_path "$profile")"
+        if [[ -e "$target" && ! -d "$target" ]]; then
+          printf '%s exists but is not a directory.\n' "$target" >&2
           exit 1
         fi
 
-        mkdir -p "$target"
-        chmod 700 "$target"
-        ln -sfn "$target" "$active_path"
+        current_target="$(profile_path "$current")"
+        if [[ -e "$current_target" ]]; then
+          backup_target="$profile_root/recovered-$current-$(timestamp)"
+          mv "$current_target" "$backup_target"
+          chmod 700 "$backup_target"
+          printf 'Moved existing inactive %s profile to %s.\n' "$current" "$backup_target" >&2
+        fi
+
+        mv "$active_path" "$current_target"
+        chmod 700 "$current_target"
+
+        if [[ -d "$target" ]]; then
+          mv "$target" "$active_path"
+        else
+          mkdir -p "$active_path"
+        fi
+
+        chmod 700 "$active_path"
+        write_active_state "$profile"
 
         printf 'active Codex profile: %s\n' "$profile"
-        printf 'CODEX_HOME=%s\n' "$target"
+        printf 'CODEX_HOME=%s\n' "$active_path"
       }
 
       list_profiles() {
         mkdir -p "$profile_root"
+        active_profile="$(current_profile)"
+
+        case "$active_profile" in
+          none|legacy|external:*)
+            ;;
+          *)
+            printf '%s\n' "$active_profile"
+            ;;
+        esac
+
+        shopt -s nullglob
         for profile_dir in "$profile_root"/*; do
           [[ -d "$profile_dir" ]] || continue
-          printf '%s\n' "''${profile_dir##*/}"
+          profile="''${profile_dir##*/}"
+          [[ "$profile" != "$active_profile" ]] || continue
+          printf '%s\n' "$profile"
         done
+        shopt -u nullglob
+      }
+
+      show_path() {
+        shift
+        active_profile_path "$@"
       }
 
       case "''${1:-}" in
@@ -233,6 +399,9 @@ EOF
           ;;
         list)
           list_profiles
+          ;;
+        path)
+          show_path "$@"
           ;;
         ps)
           codex_processes

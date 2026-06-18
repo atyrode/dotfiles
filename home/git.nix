@@ -5,9 +5,11 @@
     settings = {
       user.name = "Alex TYRODE";
       user.email = "alex@tyrode.dev";
+      user.signingKey = "/home/alex/.ssh/id_ed25519_git_signing.pub";
       
       credential.helper = "store";
-      signing.key = "0F98F322B003809C";
+      gpg.format = "ssh";
+      gpg.ssh.allowedSignersFile = "/home/alex/.config/git/allowed_signers";
       
       # Useful defaults
       init.defaultBranch = "main";

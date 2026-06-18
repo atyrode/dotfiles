@@ -3,19 +3,11 @@
 ############################################
 
 # The actual auth.json files stay machine-local in ~/.codex* and are not
-# managed by this public dotfiles repo.
+# managed by this public dotfiles repo. The active profile lives at ~/.codex;
+# inactive profiles live under ~/.codex-profiles.
 
 codex-profile-path() {
-  local profile="${1:-default}"
-
-  case "$profile" in
-    default|main)
-      printf '%s\n' "$HOME/.codex-profiles/default"
-      ;;
-    *)
-      printf '%s\n' "$HOME/.codex-profiles/$profile"
-      ;;
-  esac
+  codex-use path "$@"
 }
 
 codex-login-main() {

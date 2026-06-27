@@ -2,6 +2,7 @@
 
 {
   imports = [
+    ./codex.nix
     ./packages.nix
     ./zsh.nix
     ./git.nix

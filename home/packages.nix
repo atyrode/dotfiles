@@ -1,6 +1,9 @@
 { pkgs, lib, ... }:
 
 let
+  codexAgents = ../codex/AGENTS.md;
+  codexConfig = ../codex/config.toml;
+
   codex-use = pkgs.writeShellApplication {
     name = "codex-use";
     runtimeInputs = [
@@ -11,6 +14,8 @@ let
       profile_root="$HOME/.codex-profiles"
       active_path="$HOME/.codex"
       active_state="$profile_root/.active-profile"
+      codex_agents_source="${codexAgents}"
+      codex_config_source="${codexConfig}"
 
       usage() {
         cat <<'EOF'
@@ -45,6 +50,31 @@ EOF
 
       timestamp() {
         date +%Y%m%d%H%M%S
+      }
+
+      install_managed_profile_files() {
+        profile_dir="$1"
+        mkdir -p "$profile_dir"
+        chmod 700 "$profile_dir"
+
+        if [[ -d "$profile_dir/AGENTS.md" && ! -L "$profile_dir/AGENTS.md" ]]; then
+          printf '%s\n' "Cannot manage $profile_dir/AGENTS.md: it is a directory." >&2
+          exit 1
+        fi
+
+        rm -f "$profile_dir/AGENTS.md"
+        ln -s "$codex_agents_source" "$profile_dir/AGENTS.md"
+
+        if [[ ! -s "$profile_dir/config.toml" ]]; then
+          if [[ -d "$profile_dir/config.toml" && ! -L "$profile_dir/config.toml" ]]; then
+            printf '%s\n' "Cannot seed $profile_dir/config.toml: it is a directory." >&2
+            exit 1
+          fi
+
+          rm -f "$profile_dir/config.toml"
+          cp "$codex_config_source" "$profile_dir/config.toml"
+          chmod 600 "$profile_dir/config.toml"
+        fi
       }
 
       validate_profile() {
@@ -302,6 +332,7 @@ EOF
           exit 1
         fi
 
+        install_managed_profile_files "$active_path"
         show_current
       }
 
@@ -325,6 +356,7 @@ EOF
 
         if [[ "$profile" == "$current" ]]; then
           chmod 700 "$active_path"
+          install_managed_profile_files "$active_path"
           printf 'active Codex profile: %s\n' "$profile"
           printf 'CODEX_HOME=%s\n' "$active_path"
           return
@@ -355,6 +387,7 @@ EOF
 
         chmod 700 "$active_path"
         write_active_state "$profile"
+        install_managed_profile_files "$active_path"
 
         printf 'active Codex profile: %s\n' "$profile"
         printf 'CODEX_HOME=%s\n' "$active_path"

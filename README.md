@@ -1,20 +1,20 @@
-# nix-dotfiles
+# dotfiles
 
-Nix + Home Manager configuration for shell and developer tooling on macOS and Linux.
+Personal dotfiles managed with Nix and Home Manager for shell and developer tooling on macOS and Linux.
 
 ## 🚀 Quick Start
 
 **From this checkout:**
 
 ```bash
-cd ~/code/nix-dotfiles
+cd ~/code/dotfiles
 ./install.sh
 ```
 
 **One command installation from GitHub:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/atyrode/nix-dotfiles/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/install.sh | bash
 ```
 
 Or manually:
@@ -29,8 +29,8 @@ mkdir -p ~/.config/nix
 echo "extra-experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
 # 3. Clone and setup
-git clone https://github.com/atyrode/nix-dotfiles.git ~/nix-dotfiles
-cd ~/nix-dotfiles
+git clone https://github.com/atyrode/dotfiles.git ~/dotfiles
+cd ~/dotfiles
 if [ -L ~/.zshrc ]; then mv ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S); fi
 HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-aarch64-darwin
 
@@ -105,14 +105,14 @@ git ci        # git commit
 
 **Update dotfiles:**
 ```bash
-cd ~/nix-dotfiles
+cd ~/dotfiles
 git pull
 zconf
 ```
 
 **Update Nix packages:**
 ```bash
-cd ~/nix-dotfiles
+cd ~/dotfiles
 nix flake update
 zconf
 ```
@@ -122,7 +122,7 @@ zconf
 ## 📁 Structure
 
 ```
-nix-dotfiles/
+dotfiles/
 ├── flake.nix              # Main flake configuration
 ├── install.sh             # Quick install script
 └── home/                  # Home Manager modules
@@ -182,7 +182,7 @@ Edit files in `home/shell/` - they're organized by category for easy maintenance
 
 **"Path is not tracked by Git" error:**
 ```bash
-cd ~/nix-dotfiles
+cd ~/dotfiles
 git add <file>
 zconf
 ```

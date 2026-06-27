@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install nix-dotfiles on Linux or macOS.
+# Install dotfiles on Linux or macOS.
 # Usage:
 #   ./install.sh
-#   curl -fsSL https://raw.githubusercontent.com/atyrode/nix-dotfiles/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/install.sh | bash
 
-REPO_URL="https://github.com/atyrode/nix-dotfiles.git"
-DEFAULT_DOTFILES_DIR="${HOME}/nix-dotfiles"
+REPO_URL="https://github.com/atyrode/dotfiles.git"
+DEFAULT_DOTFILES_DIR="${HOME}/dotfiles"
 
 detect_system() {
     case "$(uname -s):$(uname -m)" in
@@ -149,7 +149,7 @@ SYSTEM="$(detect_system)"
 FLAKE_CONFIG="${FLAKE_CONFIG:-alex-${SYSTEM}}"
 DOTFILES_DIR="$(resolve_dotfiles_dir)"
 
-echo "Installing nix-dotfiles..."
+echo "Installing dotfiles..."
 echo "System: $SYSTEM"
 echo "Home Manager config: $FLAKE_CONFIG"
 

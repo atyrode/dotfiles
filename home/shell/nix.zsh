@@ -2,7 +2,7 @@
 # Nix / Home Manager utilities
 ############################################
 
-_nix_dotfiles_system() {
+_dotfiles_system() {
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64) echo "aarch64-darwin" ;;
     Darwin:x86_64) echo "x86_64-darwin" ;;
@@ -15,33 +15,33 @@ _nix_dotfiles_system() {
   esac
 }
 
-_nix_dotfiles_config() {
-  if [[ -n "${NIX_DOTFILES_CONFIG:-}" ]]; then
-    echo "$NIX_DOTFILES_CONFIG"
+_dotfiles_config() {
+  if [[ -n "${DOTFILES_CONFIG:-}" ]]; then
+    echo "$DOTFILES_CONFIG"
     return 0
   fi
 
   local system
-  system="$(_nix_dotfiles_system)" || return 1
+  system="$(_dotfiles_system)" || return 1
   echo "alex-$system"
 }
 
-_nix_dotfiles_dir() {
-  if [[ -n "${NIX_DOTFILES:-}" ]]; then
-    echo "$NIX_DOTFILES"
+_dotfiles_dir() {
+  if [[ -n "${DOTFILES:-}" ]]; then
+    echo "$DOTFILES"
   elif [[ -f "./flake.nix" ]]; then
     echo "$PWD"
-  elif [[ -f "$HOME/nix-dotfiles/flake.nix" ]]; then
-    echo "$HOME/nix-dotfiles"
-  elif [[ -f "$HOME/code/nix-dotfiles/flake.nix" ]]; then
-    echo "$HOME/code/nix-dotfiles"
+  elif [[ -f "$HOME/dotfiles/flake.nix" ]]; then
+    echo "$HOME/dotfiles"
+  elif [[ -f "$HOME/code/dotfiles/flake.nix" ]]; then
+    echo "$HOME/code/dotfiles"
   else
-    echo -e "$(c_ko "Could not find flake.nix"). Set NIX_DOTFILES or run from the repo."
+    echo -e "$(c_ko "Could not find flake.nix"). Set DOTFILES or run from the repo."
     return 1
   fi
 }
 
-_nix_dotfiles_source_nix() {
+_dotfiles_source_nix() {
   if (( ${+commands[nix]} )); then
     return 0
   fi
@@ -53,7 +53,7 @@ _nix_dotfiles_source_nix() {
   fi
 }
 
-_nix_dotfiles_backup_if_symlink() {
+_dotfiles_backup_if_symlink() {
   local path="$1"
 
   if [[ ! -L "$path" ]]; then
@@ -84,13 +84,13 @@ _nix_dotfiles_backup_if_symlink() {
   mv "$path" "$backup"
 }
 
-_nix_dotfiles_backup_symlink_conflicts() {
-  _nix_dotfiles_backup_if_symlink "$HOME/.zshrc"
-  _nix_dotfiles_backup_if_symlink "$HOME/.zshenv"
+_dotfiles_backup_symlink_conflicts() {
+  _dotfiles_backup_if_symlink "$HOME/.zshrc"
+  _dotfiles_backup_if_symlink "$HOME/.zshenv"
 }
 
-_nix_dotfiles_should_restart_shell() {
-  [[ "${NIX_DOTFILES_RESTART_SHELL:-0}" == "1" ]] || return 1
+_dotfiles_should_restart_shell() {
+  [[ "${DOTFILES_RESTART_SHELL:-0}" == "1" ]] || return 1
   [[ -z "${CODEX_SHELL:-}${CODEX_CI:-}${CODEX_SANDBOX:-}" ]] || return 1
   [[ -t 0 && -t 1 ]] || return 1
 }
@@ -106,17 +106,17 @@ zconf() {
   unalias -a
 
   # Find the flake directory:
-  # - uses $NIX_DOTFILES if you set it
-  # - otherwise tries current dir, ~/nix-dotfiles, then ~/code/nix-dotfiles
+  # - uses $DOTFILES if you set it
+  # - otherwise tries current dir, ~/dotfiles, then ~/code/dotfiles
   local flake_dir
-  flake_dir="$(_nix_dotfiles_dir)" || return 1
+  flake_dir="$(_dotfiles_dir)" || return 1
 
   local flake_config
-  flake_config="$(_nix_dotfiles_config)" || return 1
+  flake_config="$(_dotfiles_config)" || return 1
 
-  _nix_dotfiles_backup_symlink_conflicts
+  _dotfiles_backup_symlink_conflicts
 
-  _nix_dotfiles_source_nix
+  _dotfiles_source_nix
 
   echo -e "$(c_folder "Switching") Home Manager from: $flake_dir#$flake_config"
   HOME_MANAGER_BACKUP_EXT=backup command nix run "$flake_dir#home-manager" -- switch --flake "$flake_dir#$flake_config" || {
@@ -130,7 +130,7 @@ zconf() {
     source "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
   fi
 
-  if _nix_dotfiles_should_restart_shell; then
+  if _dotfiles_should_restart_shell; then
     exec zsh -l
   fi
 
@@ -145,17 +145,17 @@ zconf() {
 atyrode() {
   # Find the dotfiles directory (same logic as zconf)
   local flake_dir
-  flake_dir="$(_nix_dotfiles_dir)" || return 1
+  flake_dir="$(_dotfiles_dir)" || return 1
 
   local flake_config
-  flake_config="$(_nix_dotfiles_config)" || return 1
+  flake_config="$(_dotfiles_config)" || return 1
 
   local packages_file="$flake_dir/home/packages.nix"
   local shell_dir="$flake_dir/home/shell"
   local git_file="$flake_dir/home/git.nix"
   local zsh_file="$flake_dir/home/zsh.nix"
 
-  echo -e "\n$(c_folder "==== Nix Dotfiles Help ====")\n"
+  echo -e "\n$(c_folder "==== Dotfiles Help ====")\n"
   echo -e "$(c_ok "Active configuration:") $flake_config\n"
 
   # Extract and display packages (simple text parsing - works reliably)

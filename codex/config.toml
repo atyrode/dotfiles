@@ -1,0 +1,21 @@
+# Generic Codex defaults for this dotfiles repo.
+#
+# Keep machine-local state out of this file. In particular, do not track
+# [projects] trust entries here: Codex mutates those as local checkout paths are
+# trusted or untrusted. The live file remains ~/.codex/config.toml.
+
+personality = "pragmatic"
+approvals_reviewer = "guardian_subagent"
+model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+plan_mode_reasoning_effort = "xhigh"
+service_tier = "default"
+
+[tui]
+theme = "catppuccin-frappe"
+
+[features]
+goals = true
+
+[notice]
+fast_default_opt_out = true

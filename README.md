@@ -192,7 +192,9 @@ HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x
 ```
 
 You can also set `DOTFILES_CONFIG=alex-x86_64-linux-desktop` before running
-`zconf` on a Linux desktop.
+`zconf` on a Linux desktop. Successful `zconf` and `install.sh` runs record
+the active configuration so helper commands such as `atyrode` only show what
+applies to the current setup.
 
 ### Change Username
 

@@ -46,6 +46,13 @@ source_home_manager_session_vars() {
     set -u
 }
 
+record_active_config() {
+    local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
+
+    mkdir -p "$state_dir"
+    printf '%s\n' "$FLAKE_CONFIG" > "$state_dir/dotfiles-config"
+}
+
 ensure_nix() {
     source_nix
 
@@ -183,6 +190,9 @@ if switch_configuration; then
     echo "Installation complete."
     echo ""
 
+    if ! record_active_config; then
+        echo "Warning: could not record active dotfiles configuration." >&2
+    fi
     source_home_manager_session_vars
 
     HM_ZSH=""

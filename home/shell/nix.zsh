@@ -23,6 +23,19 @@ _dotfiles_config() {
 
   local system
   system="$(_dotfiles_system)" || return 1
+
+  local active_config_file
+  active_config_file="$(_dotfiles_active_config_file)"
+  if [[ -r "$active_config_file" ]]; then
+    local active_config
+    read -r active_config < "$active_config_file"
+
+    if [[ -n "$active_config" ]] && _dotfiles_config_matches_system "$active_config" "$system"; then
+      echo "$active_config"
+      return 0
+    fi
+  fi
+
   echo "alex-$system"
 }
 
@@ -39,6 +52,45 @@ _dotfiles_dir() {
     echo -e "$(c_ko "Could not find flake.nix"). Set DOTFILES or run from the repo."
     return 1
   fi
+}
+
+_dotfiles_active_config_file() {
+  echo "${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/dotfiles-config"
+}
+
+_dotfiles_config_matches_system() {
+  local flake_config="$1"
+  local system="$2"
+
+  case "$system:$flake_config" in
+    *-darwin:*linux*|*-linux:*darwin*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+_dotfiles_record_active_config() {
+  local flake_config="$1"
+  local active_config_file
+  active_config_file="$(_dotfiles_active_config_file)"
+
+  mkdir -p "${active_config_file:h}" || return 1
+  printf '%s\n' "$flake_config" > "$active_config_file"
+}
+
+_dotfiles_reload_shell_modules() {
+  local flake_dir="$1"
+  local shell_dir="$flake_dir/home/shell"
+
+  [[ -d "$shell_dir" ]] || return 0
+
+  source "$shell_dir/colors.zsh"
+  source "$shell_dir/utils.zsh"
+  source "$shell_dir/aliases.zsh"
+  source "$shell_dir/codex.zsh"
+  source "$shell_dir/python.zsh"
+  source "$shell_dir/git.zsh"
+  source "$shell_dir/nix.zsh"
+  source "$shell_dir/tmux.zsh"
 }
 
 _dotfiles_source_nix() {
@@ -177,11 +229,17 @@ zconf() {
     _dotfiles_switch_home_manager "$flake_dir" "$flake_config" || return 1
   fi
 
+  if ! _dotfiles_record_active_config "$flake_config"; then
+    echo -e "$(c_ko "Could not record active dotfiles configuration")"
+  fi
+
   # Reload HM session vars (PATH, etc.) for this shell. Restarting the shell is
   # opt-in because replacing the terminal process can hang embedded terminals.
   if [[ -f "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh" ]]; then
     source "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
   fi
+
+  _dotfiles_reload_shell_modules "$flake_dir"
 
   if _dotfiles_should_restart_shell; then
     exec zsh -l

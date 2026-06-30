@@ -123,7 +123,7 @@ _dotfiles_switch_darwin() {
         return 1
       }
     else
-      command sudo env NIX_CONFIG="$nix_config" "$darwin_rebuild_cmd" switch --flake "$flake_dir#$flake_config" || {
+      command sudo -H env NIX_CONFIG="$nix_config" "$darwin_rebuild_cmd" switch --flake "$flake_dir#$flake_config" || {
         echo -e "$(c_ko "nix-darwin switch failed")"
         return 1
       }
@@ -137,7 +137,7 @@ _dotfiles_switch_darwin() {
         return 1
       }
     else
-      command sudo env NIX_CONFIG="$nix_config" "$nix_cmd" run "$flake_dir#darwin-rebuild" -- switch --flake "$flake_dir#$flake_config" || {
+      command sudo -H env NIX_CONFIG="$nix_config" "$nix_cmd" run "$flake_dir#darwin-rebuild" -- switch --flake "$flake_dir#$flake_config" || {
         echo -e "$(c_ko "nix-darwin switch failed")"
         return 1
       }

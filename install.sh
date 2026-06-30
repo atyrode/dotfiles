@@ -154,7 +154,7 @@ switch_configuration() {
         if [[ "$EUID" -eq 0 ]]; then
             "$nix_cmd" run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
         else
-            sudo env NIX_CONFIG="$nix_config" "$nix_cmd" run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
+            sudo -H env NIX_CONFIG="$nix_config" "$nix_cmd" run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
         fi
     else
         HOME_MANAGER_BACKUP_EXT=backup nix run ".#home-manager" -- switch --flake ".#$FLAKE_CONFIG"
@@ -205,7 +205,7 @@ else
     echo "Installation failed. Try the same switch manually for the full error:"
     echo "   cd $DOTFILES_DIR"
     if [[ "$SYSTEM" == *-darwin ]]; then
-        echo "   sudo nix run .#darwin-rebuild -- switch --flake .#$FLAKE_CONFIG"
+        echo "   sudo -H nix run .#darwin-rebuild -- switch --flake .#$FLAKE_CONFIG"
     else
         echo "   HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#$FLAKE_CONFIG"
     fi

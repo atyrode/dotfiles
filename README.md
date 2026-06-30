@@ -32,7 +32,7 @@ echo "extra-experimental-features = nix-command flakes" >> ~/.config/nix/nix.con
 git clone https://github.com/atyrode/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 if [ -L ~/.zshrc ]; then mv ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S); fi
-sudo nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
+sudo -H nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
 
 # 4. Restart shell
 exec zsh
@@ -165,7 +165,7 @@ alex-x86_64-linux
 For this Mac, the manual switch command is:
 
 ```bash
-sudo nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
+sudo -H nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
 ```
 
 After the first macOS switch, `zconf` uses nix-darwin on macOS and will ask

@@ -11,8 +11,10 @@ in
     arduino-ide
     lichess
     parsec-bin
+    plugdata
     steam
     steamcmd
+    vital
     vlc
   ];
 }

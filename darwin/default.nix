@@ -55,6 +55,7 @@
       "bitwarden"
       "display-pilot"
       "parsec"
+      "plugdata"
       "sonos"
       "steam"
       "zen"

@@ -295,6 +295,7 @@ _dotfiles_package_description() {
     orbstack) echo "Lightweight macOS containers and Linux machines app." ;;
     parsec) echo "Low-latency remote desktop and game streaming app." ;;
     parsec-bin) echo "Low-latency remote desktop and game streaming app." ;;
+    plugdata) echo "Pure Data-based visual programming environment and audio plugin host." ;;
     postman) echo "API client and testing app." ;;
     prismlauncher) echo "Minecraft launcher for modded instances." ;;
     python3) echo "Python interpreter with Pillow bundled for image work." ;;
@@ -315,6 +316,7 @@ _dotfiles_package_description() {
     tmux) echo "Terminal multiplexer." ;;
     tree) echo "Directory tree printer." ;;
     uv) echo "Fast Python package and project manager." ;;
+    vital) echo "Spectral warping wavetable synthesizer." ;;
     vlc) echo "VLC media player." ;;
     vlc-bin) echo "VLC media player app bundle for macOS." ;;
     vscode) echo "Visual Studio Code editor." ;;

@@ -454,6 +454,10 @@ EOF
     '';
   };
 
+  lichess = import ./pkgs/lichess.nix {
+    inherit lib pkgs;
+  };
+
   cliPackages = with pkgs; [
     # File navigation & search
     zoxide
@@ -518,6 +522,7 @@ EOF
     chatgpt
     discord
     godot
+    lichess
     obsidian
     orbstack
     postman

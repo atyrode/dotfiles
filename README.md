@@ -70,7 +70,7 @@ exec zsh
 - **ffmpeg**, **Android tools**, **scrcpy**, **nmap**, **socat**, and **clamav**
 
 ### macOS Apps
-- **Nix app bundles** - ChatGPT, Discord, Godot, Obsidian, OrbStack,
+- **Nix app bundles** - ChatGPT, Discord, Godot, Lichess, Obsidian, OrbStack,
   Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, VS Code, and WhatsApp
 - **Homebrew casks** - Arduino IDE, Bitwarden, Display Pilot, Parsec, Sonos,
   Steam, and Zen Browser, managed through nix-darwin

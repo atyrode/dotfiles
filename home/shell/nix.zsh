@@ -286,6 +286,7 @@ _dotfiles_package_description() {
     go) echo "Go compiler and tooling." ;;
     godot) echo "Godot game engine editor." ;;
     jq) echo "Command-line JSON processor." ;;
+    lichess) echo "Launcher for lichess.org." ;;
     nixd) echo "Nix language server." ;;
     nixfmt) echo "Official Nix formatter." ;;
     nmap) echo "Network scanner and diagnostic tool." ;;

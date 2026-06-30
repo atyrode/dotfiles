@@ -461,11 +461,17 @@ EOF
     fd
     bat
     tree
+    ripgrep
     
     # System monitoring
     btop
     dua
     fastfetch
+
+    # Shell helpers
+    direnv
+    shellcheck
+    shfmt
   ];
 
   pythonPackages = with pkgs; [
@@ -480,6 +486,7 @@ EOF
     # JavaScript/TypeScript tooling
     nodejs_24
     bun
+    deno
   ];
 
   developmentPackages = with pkgs; [
@@ -487,11 +494,22 @@ EOF
     git
     gh
     tmux
+    jq
+    ffmpeg
+    go
+    nmap
+    socat
+    android-tools
+    scrcpy
+    dive
+    clamav
     cargo
     rustc
     rustfmt
     clippy
     rust-analyzer
+    nixd
+    nixfmt
     codex
     codex-use
   ];
@@ -499,9 +517,16 @@ EOF
   darwinPackages = with pkgs; [
     chatgpt
     discord
+    godot
     obsidian
+    orbstack
+    postman
+    prismlauncher
+    reaper
     signal-desktop
     spotify
+    vlc-bin
+    vscode
     whatsapp-for-mac
   ];
 
@@ -509,7 +534,6 @@ EOF
     # Container tools
     docker
     docker-compose
-    dive
 
     # Linux-only development tools
     gcc

@@ -53,21 +53,27 @@ exec zsh
 
 ### Development Tools
 - **Python 3** + **uv** - Modern Python package manager
-- **Node.js 20** + **Bun** - JavaScript runtime
+- **Node.js 24** + **Bun** + **Deno** - JavaScript/TypeScript runtimes
 - **Git** - Pre-configured with useful aliases
 - **GCC** - Native compiler for Rust/C build scripts
 - **tmux** - Terminal multiplexer
 - **Rust tooling** - cargo, rustc, rustfmt, clippy, and rust-analyzer
+- **Nix tooling** - nixd and nixfmt
 
 ### System & Containers
 - **btop** - Modern system monitor
 - **dua** - Disk usage analyzer
-- **Docker** + **docker-compose** + **dive** - Container tools on Linux configs
+- **Docker** + **docker-compose** - Container tools on Linux configs
+- **OrbStack** - Docker/Linux runtime on macOS
+- **dive** - Docker image inspector
 - **fastfetch** - System info on startup
+- **ffmpeg**, **Android tools**, **scrcpy**, **nmap**, **socat**, and **clamav**
 
 ### macOS Apps
-- **Nix app bundles** - ChatGPT, Discord, Obsidian, Signal, Spotify, and WhatsApp
-- **Homebrew casks** - Zen Browser and Steam, managed through nix-darwin
+- **Nix app bundles** - ChatGPT, Discord, Godot, Obsidian, OrbStack,
+  Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, VS Code, and WhatsApp
+- **Homebrew casks** - Arduino IDE, Bitwarden, Display Pilot, Parsec, Sonos,
+  Steam, and Zen Browser, managed through nix-darwin
 
 ---
 
@@ -133,6 +139,7 @@ dotfiles/
 ├── install.sh             # Quick install script
 └── home/                  # Home Manager modules
     ├── default.nix        # Main configuration
+    ├── linux-desktop.nix  # Optional Linux desktop packages
     ├── packages.nix       # Package definitions
     ├── zsh.nix            # Zsh configuration
     ├── git.nix            # Git configuration
@@ -160,6 +167,7 @@ alex-aarch64-darwin
 alex-x86_64-darwin
 alex-aarch64-linux
 alex-x86_64-linux
+alex-x86_64-linux-desktop
 ```
 
 For this Mac, the manual switch command is:
@@ -176,6 +184,15 @@ On Linux, the matching configuration still uses Home Manager directly:
 ```bash
 HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x86_64-linux
 ```
+
+For Linux desktop machines that need Steam, SteamCMD, and VLC:
+
+```bash
+HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x86_64-linux-desktop
+```
+
+You can also set `DOTFILES_CONFIG=alex-x86_64-linux-desktop` before running
+`zconf` on a Linux desktop.
 
 ### Change Username
 

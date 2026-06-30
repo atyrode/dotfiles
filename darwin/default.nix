@@ -51,6 +51,11 @@
     taps = builtins.attrNames config.nix-homebrew.taps;
 
     casks = [
+      "arduino-ide"
+      "bitwarden"
+      "display-pilot"
+      "parsec"
+      "sonos"
       "steam"
       "zen"
     ];

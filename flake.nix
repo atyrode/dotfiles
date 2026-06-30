@@ -67,20 +67,27 @@
       else "/home/${username}";
 
     # Helper function to create home configuration
-    mkHomeConfig = { system, username ? defaultUsername, homeDirectory ? homeDirectoryFor system username }:
+    mkHomeConfig = {
+      system,
+      username ? defaultUsername,
+      homeDirectory ? homeDirectoryFor system username,
+      extraModules ? [ ],
+    }:
       home-manager.lib.homeManagerConfiguration {
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
         };
 
-        modules = [
-          ./home
-          {
-            home.username = username;
-            home.homeDirectory = homeDirectory;
-          }
-        ];
+        modules =
+          [
+            ./home
+            {
+              home.username = username;
+              home.homeDirectory = homeDirectory;
+            }
+          ]
+          ++ extraModules;
       };
 
     mkDarwinConfig = { system, username ? defaultUsername, homeDirectory ? homeDirectoryFor system username }:
@@ -105,6 +112,12 @@
       };
 
     configs = forAllSystems (system: mkHomeConfig { inherit system; });
+    linuxDesktopConfigs = {
+      "x86_64-linux" = mkHomeConfig {
+        system = "x86_64-linux";
+        extraModules = [ ./home/linux-desktop.nix ];
+      };
+    };
     darwinConfigs = lib.genAttrs darwinSystems (system: mkDarwinConfig { inherit system; });
   in {
     homeConfigurations =
@@ -123,6 +136,8 @@
       // {
         "${defaultUsername}-darwin" = configs.${defaultDarwinSystem};
         "${defaultUsername}-linux" = configs."x86_64-linux";
+        "${defaultUsername}-linux-desktop" = linuxDesktopConfigs."x86_64-linux";
+        "${defaultUsername}-x86_64-linux-desktop" = linuxDesktopConfigs."x86_64-linux";
       };
 
     darwinConfigurations =

@@ -70,10 +70,11 @@ exec zsh
 - **ffmpeg**, **Android tools**, **scrcpy**, **nmap**, **socat**, and **clamav**
 
 ### macOS Apps
-- **Nix app bundles** - ChatGPT, Discord, Godot, Lichess, Obsidian, OrbStack,
-  Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, VS Code, and WhatsApp
-- **Homebrew casks** - Arduino IDE, Bitwarden, Codex Desktop, Display Pilot,
-  Parsec, PlugData, Sonos, Steam, and Zen Browser, managed through nix-darwin
+- **Nix app bundles** - ChatGPT, Godot, Lichess, Obsidian, OrbStack, Postman,
+  Prism Launcher, REAPER, Signal, Spotify, VLC, VS Code, and WhatsApp
+- **Homebrew casks** - Arduino IDE, Bitwarden, Codex Desktop, Discord, Display
+  Pilot, Parsec, PlugData, Sonos, Steam, and Zen Browser, managed through
+  nix-darwin
 - **Manual/vendor-managed macOS apps** - ROLI Connect, ROLI Dashboard, ROLI
   Studio Player, and Vital stay outside the declarative setup until they have a
   stable public installer or package source.

@@ -520,7 +520,6 @@ EOF
 
   darwinPackages = with pkgs; [
     chatgpt
-    discord
     godot
     lichess
     obsidian

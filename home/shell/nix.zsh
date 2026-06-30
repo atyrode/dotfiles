@@ -109,19 +109,39 @@ _dotfiles_switch_home_manager() {
 _dotfiles_switch_darwin() {
   local flake_dir="$1"
   local flake_config="$2"
+  local nix_config="${NIX_CONFIG:-extra-experimental-features = nix-command flakes}"
 
   echo -e "$(c_folder "Switching") nix-darwin from: $flake_dir#$flake_config"
+  echo -e "$(c_folder "Elevating") nix-darwin activation with sudo"
 
   if (( ${+commands[darwin-rebuild]} )); then
-    command darwin-rebuild switch --flake "$flake_dir#$flake_config" || {
-      echo -e "$(c_ko "nix-darwin switch failed")"
-      return 1
-    }
+    local darwin_rebuild_cmd="${commands[darwin-rebuild]}"
+
+    if (( EUID == 0 )); then
+      command "$darwin_rebuild_cmd" switch --flake "$flake_dir#$flake_config" || {
+        echo -e "$(c_ko "nix-darwin switch failed")"
+        return 1
+      }
+    else
+      command sudo env NIX_CONFIG="$nix_config" "$darwin_rebuild_cmd" switch --flake "$flake_dir#$flake_config" || {
+        echo -e "$(c_ko "nix-darwin switch failed")"
+        return 1
+      }
+    fi
   else
-    command nix run "$flake_dir#darwin-rebuild" -- switch --flake "$flake_dir#$flake_config" || {
-      echo -e "$(c_ko "nix-darwin switch failed")"
-      return 1
-    }
+    local nix_cmd="${commands[nix]}"
+
+    if (( EUID == 0 )); then
+      command "$nix_cmd" run "$flake_dir#darwin-rebuild" -- switch --flake "$flake_dir#$flake_config" || {
+        echo -e "$(c_ko "nix-darwin switch failed")"
+        return 1
+      }
+    else
+      command sudo env NIX_CONFIG="$nix_config" "$nix_cmd" run "$flake_dir#darwin-rebuild" -- switch --flake "$flake_dir#$flake_config" || {
+        echo -e "$(c_ko "nix-darwin switch failed")"
+        return 1
+      }
+    fi
   fi
 }
 

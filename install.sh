@@ -147,7 +147,15 @@ backup_home_manager_symlink_conflicts() {
 
 switch_configuration() {
     if [[ "$SYSTEM" == *-darwin ]]; then
-        nix run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
+        local nix_cmd
+        nix_cmd="$(command -v nix)"
+        local nix_config="${NIX_CONFIG:-extra-experimental-features = nix-command flakes}"
+
+        if [[ "$EUID" -eq 0 ]]; then
+            "$nix_cmd" run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
+        else
+            sudo env NIX_CONFIG="$nix_config" "$nix_cmd" run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
+        fi
     else
         HOME_MANAGER_BACKUP_EXT=backup nix run ".#home-manager" -- switch --flake ".#$FLAKE_CONFIG"
     fi
@@ -197,7 +205,7 @@ else
     echo "Installation failed. Try the same switch manually for the full error:"
     echo "   cd $DOTFILES_DIR"
     if [[ "$SYSTEM" == *-darwin ]]; then
-        echo "   nix run .#darwin-rebuild -- switch --flake .#$FLAKE_CONFIG"
+        echo "   sudo nix run .#darwin-rebuild -- switch --flake .#$FLAKE_CONFIG"
     else
         echo "   HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#$FLAKE_CONFIG"
     fi

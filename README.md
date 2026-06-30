@@ -32,7 +32,7 @@ echo "extra-experimental-features = nix-command flakes" >> ~/.config/nix/nix.con
 git clone https://github.com/atyrode/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 if [ -L ~/.zshrc ]; then mv ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S); fi
-nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
+sudo nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
 
 # 4. Restart shell
 exec zsh
@@ -109,14 +109,14 @@ git ci        # git commit
 
 **Update dotfiles:**
 ```bash
-cd ~/dotfiles
+cd ~/code/dotfiles  # or your dotfiles checkout
 git pull
 zconf
 ```
 
 **Update Nix packages:**
 ```bash
-cd ~/dotfiles
+cd ~/code/dotfiles  # or your dotfiles checkout
 nix flake update
 zconf
 ```
@@ -165,8 +165,11 @@ alex-x86_64-linux
 For this Mac, the manual switch command is:
 
 ```bash
-nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
+sudo nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
 ```
+
+After the first macOS switch, `zconf` uses nix-darwin on macOS and will ask
+for sudo when system activation is required.
 
 On Linux, the matching configuration still uses Home Manager directly:
 

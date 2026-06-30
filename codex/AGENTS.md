@@ -133,6 +133,14 @@ When instructions conflict, follow the most specific applicable instruction. If 
 - If validation fails, distinguish failures caused by the current change from pre-existing or unrelated failures when practical. Report the exact command, the relevant failure, and the likely cause. Do not claim success when checks fail.
 - If checks cannot be run, state exactly why and describe the remaining risk.
 
+## Web Rendering Checks
+
+- For web projects, when a change can affect layout, styling, routing, browser behavior, or user-visible content, use Playwright to inspect the rendered page when practical.
+- Prefer the project's existing Playwright setup. If Playwright is absent but a rendered-browser check is important, install or invoke it through the project's package manager in a project-local way; do not install global browser tooling.
+- Capture screenshots for relevant desktop and mobile viewports, inspect console and network failures, and use the rendered result to catch visual regressions, broken routes, hydration errors, missing assets, and unreadable or overlapping UI.
+- Prefer local dev servers, preview builds, fixtures, or test environments. Ask before using Playwright against production, authenticated, paid, private, or rate-limited systems.
+- If Playwright cannot be installed or run in the current environment, use the closest available browser-rendering or screenshot alternative and report the limitation.
+
 ## Final Handoff
 
 - For implementation work, make the source-control state explicit: branch, changed files, commits if created, push/PR status if relevant, validation run, and remaining risk.

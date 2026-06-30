@@ -267,6 +267,7 @@ _dotfiles_package_description() {
     clamav) echo "Open-source malware scanner." ;;
     clippy) echo "Rust linter." ;;
     codex) echo "OpenAI Codex CLI." ;;
+    codex-app) echo "OpenAI Codex Desktop macOS app." ;;
     codex-use) echo "Local helper for switching Codex profiles." ;;
     deno) echo "Secure JavaScript and TypeScript runtime." ;;
     direnv) echo "Loads per-directory shell environments." ;;

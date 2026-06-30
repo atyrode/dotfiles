@@ -53,6 +53,7 @@
     casks = [
       "arduino-ide"
       "bitwarden"
+      "codex-app"
       "display-pilot"
       "parsec"
       "plugdata"

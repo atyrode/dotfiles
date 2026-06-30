@@ -10,6 +10,7 @@ model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 plan_mode_reasoning_effort = "xhigh"
 service_tier = "default"
+default_permissions = "workspace-github"
 
 [tui]
 theme = "catppuccin-frappe"
@@ -19,3 +20,21 @@ goals = true
 
 [notice]
 fast_default_opt_out = true
+
+[permissions.workspace-github]
+description = "Workspace edits with GitHub network access for git and gh workflows."
+
+[permissions.workspace-github.filesystem]
+":root" = "read"
+":workspace_roots" = { "." = "write" }
+":tmpdir" = "write"
+":slash_tmp" = "write"
+
+[permissions.workspace-github.network]
+enabled = true
+mode = "limited"
+
+[permissions.workspace-github.network.domains]
+"github.com" = "allow"
+"**.github.com" = "allow"
+"**.githubusercontent.com" = "allow"

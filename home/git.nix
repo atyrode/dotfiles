@@ -1,3 +1,5 @@
+{ config, ... }:
+
 {
   programs.git = {
     enable = true;
@@ -5,11 +7,11 @@
     settings = {
       user.name = "Alex TYRODE";
       user.email = "alex@tyrode.dev";
-      user.signingKey = "/home/alex/.ssh/id_ed25519_git_signing.pub";
+      user.signingKey = "${config.home.homeDirectory}/.ssh/id_ed25519_git_signing.pub";
       
       credential.helper = "store";
       gpg.format = "ssh";
-      gpg.ssh.allowedSignersFile = "/home/alex/.config/git/allowed_signers";
+      gpg.ssh.allowedSignersFile = "${config.home.homeDirectory}/.config/git/allowed_signers";
       
       # Useful defaults
       init.defaultBranch = "main";

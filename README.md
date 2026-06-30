@@ -1,6 +1,6 @@
 # dotfiles
 
-Personal dotfiles managed with Nix and Home Manager for shell and developer tooling on macOS and Linux.
+Personal dotfiles managed with Nix and Home Manager for shell and developer tooling on macOS and Linux. macOS system activation uses nix-darwin, with Homebrew installed through nix-homebrew for native cask apps.
 
 ## 🚀 Quick Start
 
@@ -32,7 +32,7 @@ echo "extra-experimental-features = nix-command flakes" >> ~/.config/nix/nix.con
 git clone https://github.com/atyrode/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 if [ -L ~/.zshrc ]; then mv ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S); fi
-HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-aarch64-darwin
+nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
 
 # 4. Restart shell
 exec zsh
@@ -64,6 +64,10 @@ exec zsh
 - **dua** - Disk usage analyzer
 - **Docker** + **docker-compose** + **dive** - Container tools on Linux configs
 - **fastfetch** - System info on startup
+
+### macOS Apps
+- **Nix app bundles** - ChatGPT, Discord, Obsidian, Signal, Spotify, and WhatsApp
+- **Homebrew casks** - Zen Browser and Steam, managed through nix-darwin
 
 ---
 
@@ -123,6 +127,8 @@ zconf
 
 ```
 dotfiles/
+├── darwin/                # nix-darwin and Homebrew configuration
+│   └── default.nix        # macOS system and cask definitions
 ├── flake.nix              # Main flake configuration
 ├── install.sh             # Quick install script
 └── home/                  # Home Manager modules
@@ -159,7 +165,13 @@ alex-x86_64-linux
 For this Mac, the manual switch command is:
 
 ```bash
-HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-aarch64-darwin
+nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
+```
+
+On Linux, the matching configuration still uses Home Manager directly:
+
+```bash
+HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x86_64-linux
 ```
 
 ### Change Username
@@ -171,6 +183,10 @@ If you want to keep the username but force a config, set `FLAKE_CONFIG` before r
 ### Add Packages
 
 Edit `home/packages.nix` and add to the `home.packages` list, then run `zconf`.
+
+### Add macOS Homebrew Apps
+
+Edit `darwin/default.nix` and add cask names to `homebrew.casks`, then run `zconf` on macOS.
 
 ### Modify Shell Functions
 
@@ -206,6 +222,13 @@ If the error says an existing symlink such as `~/.zshrc` would be clobbered,
 run `./install.sh` instead of the manual switch command. The installer backs up
 symlinked shell entrypoints before activation.
 
+**macOS Homebrew activation fails:**
+```bash
+zconf
+```
+
+The macOS configuration installs Homebrew through nix-homebrew and then applies the declared casks through nix-darwin. The first activation may ask for administrator authentication.
+
 ---
 
 ## 📝 Requirements
@@ -222,3 +245,5 @@ Nix will be installed automatically if not present.
 
 - [Nix](https://nixos.org/)
 - [Home Manager](https://github.com/nix-community/home-manager)
+- [nix-darwin](https://github.com/LnL7/nix-darwin)
+- [nix-homebrew](https://github.com/zhaofengli/nix-homebrew)

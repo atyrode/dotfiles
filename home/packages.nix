@@ -497,7 +497,12 @@ EOF
   ];
 
   darwinPackages = with pkgs; [
-    # Add macOS-only packages here.
+    chatgpt
+    discord
+    obsidian
+    signal-desktop
+    spotify
+    whatsapp-for-mac
   ];
 
   linuxPackages = with pkgs; [

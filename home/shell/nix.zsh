@@ -195,6 +195,152 @@ zconf() {
 # Help function - lists all dotfiles content
 ############################################
 
+_dotfiles_package_description() {
+  case "$1" in
+    android-tools) echo "ADB and Fastboot tools for Android devices." ;;
+    arduino-ide) echo "Arduino development IDE." ;;
+    bat) echo "cat replacement with syntax highlighting and paging." ;;
+    bitwarden) echo "Bitwarden password manager desktop app." ;;
+    btop) echo "Interactive terminal system monitor." ;;
+    bubblewrap) echo "Linux sandboxing helper used by some desktop tools." ;;
+    bun) echo "JavaScript runtime, package manager, and test runner." ;;
+    cargo) echo "Rust package manager and build tool." ;;
+    chatgpt) echo "OpenAI ChatGPT desktop app." ;;
+    clamav) echo "Open-source malware scanner." ;;
+    clippy) echo "Rust linter." ;;
+    codex) echo "OpenAI Codex CLI." ;;
+    codex-use) echo "Local helper for switching Codex profiles." ;;
+    deno) echo "Secure JavaScript and TypeScript runtime." ;;
+    direnv) echo "Loads per-directory shell environments." ;;
+    discord) echo "Discord desktop chat app." ;;
+    display-pilot) echo "BenQ Display Pilot monitor control app." ;;
+    dive) echo "Docker image layer inspector." ;;
+    docker) echo "Docker container engine CLI package for Linux." ;;
+    docker-compose) echo "Docker Compose CLI for multi-container projects." ;;
+    dua) echo "Interactive disk usage analyzer." ;;
+    fastfetch) echo "Fast terminal system information summary." ;;
+    fd) echo "Fast, user-friendly file finder." ;;
+    ffmpeg) echo "Audio and video conversion and inspection tools." ;;
+    fzf) echo "Command-line fuzzy finder." ;;
+    gcc) echo "GNU C/C++ compiler toolchain for Linux." ;;
+    gh) echo "GitHub CLI." ;;
+    git) echo "Version control system." ;;
+    go) echo "Go compiler and tooling." ;;
+    godot) echo "Godot game engine editor." ;;
+    jq) echo "Command-line JSON processor." ;;
+    nixd) echo "Nix language server." ;;
+    nixfmt) echo "Official Nix formatter." ;;
+    nmap) echo "Network scanner and diagnostic tool." ;;
+    nodejs_24) echo "Node.js 24 JavaScript runtime." ;;
+    obsidian) echo "Obsidian Markdown notes app." ;;
+    orbstack) echo "Lightweight macOS containers and Linux machines app." ;;
+    parsec) echo "Low-latency remote desktop and game streaming app." ;;
+    parsec-bin) echo "Low-latency remote desktop and game streaming app." ;;
+    postman) echo "API client and testing app." ;;
+    prismlauncher) echo "Minecraft launcher for modded instances." ;;
+    python3) echo "Python interpreter with Pillow bundled for image work." ;;
+    reaper) echo "Digital audio workstation." ;;
+    ripgrep) echo "Fast recursive text search." ;;
+    rust-analyzer) echo "Rust language server." ;;
+    rustc) echo "Rust compiler." ;;
+    rustfmt) echo "Rust formatter." ;;
+    scrcpy) echo "Android screen mirroring and control tool." ;;
+    shellcheck) echo "Shell script linter." ;;
+    shfmt) echo "Shell script formatter." ;;
+    signal-desktop) echo "Signal private messenger desktop app." ;;
+    socat) echo "General-purpose socket relay and networking tool." ;;
+    sonos) echo "Sonos desktop controller app." ;;
+    spotify) echo "Spotify desktop music app." ;;
+    steam) echo "Steam game launcher." ;;
+    steamcmd) echo "Steam command-line client for server and game file workflows." ;;
+    tmux) echo "Terminal multiplexer." ;;
+    tree) echo "Directory tree printer." ;;
+    uv) echo "Fast Python package and project manager." ;;
+    vlc) echo "VLC media player." ;;
+    vlc-bin) echo "VLC media player app bundle for macOS." ;;
+    vscode) echo "Visual Studio Code editor." ;;
+    whatsapp-for-mac) echo "WhatsApp desktop app." ;;
+    zen) echo "Zen Browser, installed through Homebrew on macOS." ;;
+    zoxide) echo "Smart cd replacement based on directory history." ;;
+    *) echo "Configured package from this dotfiles setup." ;;
+  esac
+}
+
+_dotfiles_extract_nix_package_group() {
+  local file="$1"
+  local group="$2"
+
+  awk -v group="$group" '
+  BEGIN {
+    assignment = group
+    gsub(/[][\\.^$*+?(){}|]/, "\\\\&", assignment)
+  }
+  $0 ~ "^[[:space:]]*" assignment "[[:space:]]*=[[:space:]]*with pkgs;[[:space:]]*\\[" {
+    in_list = 1
+    next
+  }
+  in_list && /^[[:space:]]*\];/ {
+    in_list = 0
+    next
+  }
+  in_list {
+    line = $0
+    sub(/#.*/, "", line)
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    gsub(/,$/, "", line)
+
+    if (line == "") next
+
+    if (in_python_packages) {
+      if (line ~ /^\]\)/ || line ~ /^\]\]\)/ || line ~ /^\]\)\)/) {
+        in_python_packages = 0
+      }
+      next
+    }
+
+    if (line ~ /^\(python3\.withPackages/) {
+      print "python3"
+      in_python_packages = 1
+      next
+    }
+
+    if (line ~ /^[A-Za-z0-9_][A-Za-z0-9_+.-]*$/) {
+      print line
+    }
+  }' "$file"
+}
+
+_dotfiles_extract_homebrew_casks() {
+  local file="$1"
+
+  awk '
+  /^[[:space:]]*casks[[:space:]]*=[[:space:]]*\[/ {
+    in_list = 1
+    next
+  }
+  in_list && /^[[:space:]]*\];/ {
+    in_list = 0
+    next
+  }
+  in_list {
+    line = $0
+    sub(/#.*/, "", line)
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    if (line ~ /^"[^"]+"/) {
+      gsub(/^"/, "", line)
+      gsub(/".*$/, "", line)
+      if (line != "") print line
+    }
+  }' "$file"
+}
+
+_dotfiles_print_package_lines() {
+  while read -r pkg; do
+    [[ -n "$pkg" ]] || continue
+    echo -e "  $(c_file "•") $(c_file "$pkg") - $(_dotfiles_package_description "$pkg")"
+  done
+}
+
 atyrode() {
   # Find the dotfiles directory (same logic as zconf)
   local flake_dir
@@ -204,6 +350,8 @@ atyrode() {
   flake_config="$(_dotfiles_config)" || return 1
 
   local packages_file="$flake_dir/home/packages.nix"
+  local linux_desktop_file="$flake_dir/home/linux-desktop.nix"
+  local darwin_file="$flake_dir/darwin/default.nix"
   local shell_dir="$flake_dir/home/shell"
   local git_file="$flake_dir/home/git.nix"
   local zsh_file="$flake_dir/home/zsh.nix"
@@ -213,7 +361,7 @@ atyrode() {
 
   # Extract and display packages (simple text parsing - works reliably)
   if [[ -f "$packages_file" ]]; then
-    echo -e "$(c_ok "📦 Configured Packages:")"
+    echo -e "$(c_ok "📦 Nix Packages for $flake_config:")"
     local package_groups=(
       cliPackages
       pythonPackages
@@ -222,25 +370,30 @@ atyrode() {
     )
 
     case "$flake_config" in
-      *-darwin) package_groups+=(darwinPackages) ;;
-      *-linux) package_groups+=(linuxPackages) ;;
+      *darwin*) package_groups+=(darwinPackages) ;;
+    esac
+
+    case "$flake_config" in
+      *linux*) package_groups+=(linuxPackages) ;;
     esac
 
     for package_group in "${package_groups[@]}"; do
-      awk -v group="$package_group" '
-      $0 ~ "^[[:space:]]*" group " = with pkgs; \\[" { in_list = 1; next }
-      in_list && /^[[:space:]]*\];/ { in_list = 0; next }
-      in_list {
-        if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\]/ && $0 !~ /^[[:space:]]*$/) {
-          gsub(/^[[:space:]]+|[[:space:]]+$|,$/, "", $0)
-          if ($0 ~ /^[a-zA-Z0-9_]+$/) {
-            print $0
-          }
-        }
-      }' "$packages_file"
-    done | sort -u | \
-      while read -r pkg; do
-        [[ -n "$pkg" ]] && echo -e "  $(c_file "•") $pkg"
+      _dotfiles_extract_nix_package_group "$packages_file" "$package_group"
+    done | sort -u | _dotfiles_print_package_lines
+    echo ""
+  fi
+
+  if [[ "$flake_config" == *linux-desktop* && -f "$linux_desktop_file" ]]; then
+    echo -e "$(c_ok "🖥️ Linux Desktop Nix Packages:")"
+    _dotfiles_extract_nix_package_group "$linux_desktop_file" "home.packages" | sort -u | _dotfiles_print_package_lines
+    echo ""
+  fi
+
+  if [[ "$flake_config" == *darwin* && -f "$darwin_file" ]]; then
+    echo -e "$(c_ok "🍺 macOS Homebrew Casks:")"
+    _dotfiles_extract_homebrew_casks "$darwin_file" | sort -u | \
+      while read -r cask; do
+        [[ -n "$cask" ]] && echo -e "  $(c_file "•") $(c_file "$cask") - $(_dotfiles_package_description "$cask")"
       done
     echo ""
   fi

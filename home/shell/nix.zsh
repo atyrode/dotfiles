@@ -95,6 +95,36 @@ _dotfiles_should_restart_shell() {
   [[ -t 0 && -t 1 ]] || return 1
 }
 
+_dotfiles_switch_home_manager() {
+  local flake_dir="$1"
+  local flake_config="$2"
+
+  echo -e "$(c_folder "Switching") Home Manager from: $flake_dir#$flake_config"
+  HOME_MANAGER_BACKUP_EXT=backup command nix run "$flake_dir#home-manager" -- switch --flake "$flake_dir#$flake_config" || {
+    echo -e "$(c_ko "Home Manager switch failed")"
+    return 1
+  }
+}
+
+_dotfiles_switch_darwin() {
+  local flake_dir="$1"
+  local flake_config="$2"
+
+  echo -e "$(c_folder "Switching") nix-darwin from: $flake_dir#$flake_config"
+
+  if (( ${+commands[darwin-rebuild]} )); then
+    command darwin-rebuild switch --flake "$flake_dir#$flake_config" || {
+      echo -e "$(c_ko "nix-darwin switch failed")"
+      return 1
+    }
+  else
+    command nix run "$flake_dir#darwin-rebuild" -- switch --flake "$flake_dir#$flake_config" || {
+      echo -e "$(c_ko "nix-darwin switch failed")"
+      return 1
+    }
+  fi
+}
+
 zconf() {
   # If a venv is active, deactivate it first
   if [[ -n "$VIRTUAL_ENV" ]]; then
@@ -111,6 +141,9 @@ zconf() {
   local flake_dir
   flake_dir="$(_dotfiles_dir)" || return 1
 
+  local system
+  system="$(_dotfiles_system)" || return 1
+
   local flake_config
   flake_config="$(_dotfiles_config)" || return 1
 
@@ -118,11 +151,11 @@ zconf() {
 
   _dotfiles_source_nix
 
-  echo -e "$(c_folder "Switching") Home Manager from: $flake_dir#$flake_config"
-  HOME_MANAGER_BACKUP_EXT=backup command nix run "$flake_dir#home-manager" -- switch --flake "$flake_dir#$flake_config" || {
-    echo -e "$(c_ko "Home Manager switch failed")"
-    return 1
-  }
+  if [[ "$system" == *-darwin && "${DOTFILES_FORCE_HOME_MANAGER:-0}" != "1" ]]; then
+    _dotfiles_switch_darwin "$flake_dir" "$flake_config" || return 1
+  else
+    _dotfiles_switch_home_manager "$flake_dir" "$flake_config" || return 1
+  fi
 
   # Reload HM session vars (PATH, etc.) for this shell. Restarting the shell is
   # opt-in because replacing the terminal process can hang embedded terminals.
@@ -134,7 +167,7 @@ zconf() {
     exec zsh -l
   fi
 
-  echo -e "$(c_ok "Home Manager switch complete.")"
+  echo -e "$(c_ok "Configuration switch complete.")"
   echo -e "Run $(c_file "exec zsh -l") or open a new terminal to reload the shell."
 }
 

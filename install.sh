@@ -145,13 +145,21 @@ backup_home_manager_symlink_conflicts() {
     backup_if_symlink "$HOME/.zshenv"
 }
 
+switch_configuration() {
+    if [[ "$SYSTEM" == *-darwin ]]; then
+        nix run ".#darwin-rebuild" -- switch --flake ".#$FLAKE_CONFIG"
+    else
+        HOME_MANAGER_BACKUP_EXT=backup nix run ".#home-manager" -- switch --flake ".#$FLAKE_CONFIG"
+    fi
+}
+
 SYSTEM="$(detect_system)"
 FLAKE_CONFIG="${FLAKE_CONFIG:-alex-${SYSTEM}}"
 DOTFILES_DIR="$(resolve_dotfiles_dir)"
 
 echo "Installing dotfiles..."
 echo "System: $SYSTEM"
-echo "Home Manager config: $FLAKE_CONFIG"
+echo "Configuration: $FLAKE_CONFIG"
 
 ensure_nix
 ensure_flakes
@@ -159,10 +167,10 @@ prepare_dotfiles_dir
 warn_about_untracked_files
 backup_home_manager_symlink_conflicts
 
-echo "Building and activating Home Manager configuration..."
+echo "Building and activating configuration..."
 echo "This may take a few minutes on first run."
 
-if HOME_MANAGER_BACKUP_EXT=backup nix run ".#home-manager" -- switch --flake ".#$FLAKE_CONFIG"; then
+if switch_configuration; then
     echo ""
     echo "Installation complete."
     echo ""
@@ -188,6 +196,10 @@ else
     echo ""
     echo "Installation failed. Try the same switch manually for the full error:"
     echo "   cd $DOTFILES_DIR"
-    echo "   HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#$FLAKE_CONFIG"
+    if [[ "$SYSTEM" == *-darwin ]]; then
+        echo "   nix run .#darwin-rebuild -- switch --flake .#$FLAKE_CONFIG"
+    else
+        echo "   HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#$FLAKE_CONFIG"
+    fi
     exit 1
 fi

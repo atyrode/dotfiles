@@ -73,9 +73,10 @@ When instructions conflict, follow the most specific applicable instruction. If 
 
 - Fetch remote state before committing, branching, merging, pushing, deploying, or making release decisions when remote state is relevant.
 - Keep `main` stable. Use short-lived feature or fix branches when a separate branch is useful.
-- Do not create commits, tags, releases, or pull requests unless the operator asks for source-control output or the repository workflow clearly requires it for the requested task.
-- Never push without explicit operator direction.
-- Push directly to `main` only when the operator explicitly asks for it and the repository workflow allows it.
+- Agents may create local commits and push non-`main` branches for completed, scoped work after checking worktree and remote state, unless the operator says to keep changes local.
+- Opening a pull request is allowed when pushing a branch for review is the natural repository workflow, unless the operator asks not to.
+- Do not create tags or releases unless the operator explicitly requests them.
+- Do not push directly to `main` unless the operator explicitly names `main` as the target and the repository workflow allows it.
 - Do not change branch protection, bypass branch protection, force-push protected/shared branches, delete remote refs, or rewrite shared remote history unless the operator explicitly authorizes that exact action in the current conversation.
 - Treat approvals as scoped to the current request unless the operator explicitly says they should persist.
 
@@ -85,7 +86,7 @@ When instructions conflict, follow the most specific applicable instruction. If 
 - Prefer read-only inspection before write actions.
 - Ask before proceeding when an action would be destructive, expensive, public, privileged, persistent, externally visible, security-sensitive, or likely to affect production/shared systems.
 - Use dry-run, diff, plan, validate-only, status, or smoke-test modes before risky actions when available.
-- Do not create commits, tags, releases, pull requests, deployments, published packages, issue comments, emails, cloud changes, database migrations, or data mutations unless explicitly requested or clearly required by the approved workflow.
+- Do not create tags, releases, deployments, published packages, issue comments, emails, cloud changes, database migrations, or data mutations unless explicitly requested or clearly required by the approved workflow.
 - Treat database changes, backfills, credential rotation, infrastructure changes, and production operations as high-risk. Validate first, document rollback or remediation where practical, and avoid running them against shared systems without explicit direction.
 
 ## Operator Scripts And External Systems

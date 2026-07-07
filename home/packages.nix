@@ -466,7 +466,8 @@ EOF
     bat
     tree
     ripgrep
-    
+    unzip
+
     # System monitoring
     btop
     dua

@@ -183,6 +183,8 @@
         herdr.overlays.default
         (final: _previous: {
           agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+          codex-configured = final.callPackage ./pkgs/codex-configured { };
+          codex-use = final.callPackage ./pkgs/codex-use { };
           herdr-configured = final.callPackage ./pkgs/herdr-configured { };
           herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
           omp = final.callPackage ./pkgs/omp { };
@@ -278,6 +280,8 @@
           inherit (pkgs)
             agent-tools-migrate
             atyrode
+            codex-configured
+            codex-use
             herdr
             herdr-configured
             herdr-omp-integration
@@ -332,10 +336,26 @@
                 ' ${registryFile} >/dev/null
                 mkdir "$out"
               '';
+          baseOnlyConfig = home-manager.lib.homeManagerConfiguration {
+            inherit pkgs;
+            modules = [
+              capabilityModules.base
+              nix-index-database.homeModules.default
+              {
+                home.username = "fixture";
+                home.homeDirectory = if lib.hasSuffix "-darwin" system then "/Users/fixture" else "/home/fixture";
+                programs.nix-index-database.comma.enable = true;
+              }
+            ];
+          };
         in
         import ./checks/agent-tools.nix { inherit lib pkgs; }
         // {
           atyrode-cli = import ./checks/atyrode-cli.nix { inherit pkgs; };
+          codex-use = import ./checks/codex-use.nix {
+            inherit lib pkgs;
+            baseConfig = baseOnlyConfig;
+          };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {

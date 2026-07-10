@@ -161,7 +161,7 @@ dotfiles/
 └── home/                  # Home Manager modules
     ├── default.nix        # Main configuration
     ├── linux-desktop.nix  # Optional Linux desktop packages
-    ├── packages.nix       # Package definitions
+    ├── profiles/          # Composable host capability modules
     ├── zsh.nix            # Zsh configuration
     ├── git.nix            # Git configuration
     └── shell/             # Thin interactive shell surface
@@ -204,6 +204,9 @@ and closure review workflow.
 [Shell surface](docs/shell.md) records every retained and removed function,
 alias, startup side effect, and Oh My Zsh plugin.
 
+[Codex state](docs/codex-state.md) documents convergent portable configuration,
+transactional authentication profiles, recovery, and secret/mutable ownership.
+
 For this Mac, the manual switch command is:
 
 ```bash
@@ -238,7 +241,8 @@ If you want to keep the username but force a config, set `FLAKE_CONFIG` before r
 
 ### Add Packages
 
-Edit `home/packages.nix` and add to the `home.packages` list, then run `zconf`.
+Add the package to its owning module under `home/profiles/`, update the checked
+package inventory, then run `atyrode apply`.
 
 ### Add macOS Homebrew Apps
 

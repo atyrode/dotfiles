@@ -2,8 +2,8 @@
 # Nix / Home Manager compatibility
 ############################################
 
-# Keep the historical entry point while the packaged CLI becomes the shared
-# operator/agent interface. The CLI owns discovery, preflight, and activation.
+# Compatibility entry point until 2026-10-01. Use `atyrode apply` in scripts
+# and new documentation. The CLI owns discovery, preflight, and activation.
 zconf() {
   command atyrode apply "$@" || return
 

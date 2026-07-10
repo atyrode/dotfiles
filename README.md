@@ -68,7 +68,7 @@ exec zsh
 - **Docker** + **docker-compose** - Linux clients in the `containers` capability
 - **OrbStack** - Docker/Linux runtime on macOS
 - **dive** - Docker image inspector
-- **fastfetch** - System info on startup
+- **fastfetch** - Explicit system information command (not a startup side effect)
 - **Explicit capabilities** - ffmpeg (`media`), Android tools/scrcpy (`mobile`),
   and nmap/socat/ClamAV (`security`)
 
@@ -164,12 +164,9 @@ dotfiles/
     ├── packages.nix       # Package definitions
     ├── zsh.nix            # Zsh configuration
     ├── git.nix            # Git configuration
-    └── shell/             # Modular shell functions
-        ├── colors.zsh     # Color helpers
-        ├── aliases.zsh    # Shell aliases
-        ├── nix.zsh        # Nix/Home Manager utils
-        ├── tmux.zsh       # Tmux utilities
-        └── startup.zsh    # Startup commands
+    └── shell/             # Thin interactive shell surface
+        ├── nix.zsh        # Temporary zconf compatibility entry point
+        └── startup.zsh    # Interactive-only local override hook
 ```
 
 ---
@@ -203,6 +200,9 @@ compatibility boundary.
 [Package ownership](docs/package-ownership.md) records the checked agent
 baseline, optional capabilities, project-owned runtimes, harness boundaries,
 and closure review workflow.
+
+[Shell surface](docs/shell.md) records every retained and removed function,
+alias, startup side effect, and Oh My Zsh plugin.
 
 For this Mac, the manual switch command is:
 

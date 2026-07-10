@@ -1,20 +1,6 @@
-############################################
-# Startup footer
-############################################
-
-_should_run_fastfetch() {
-  [[ -o interactive ]] || return 1
-  [[ "${DOTFILES_FASTFETCH:-1}" != "0" ]] || return 1
-  [[ -z "${DOTFILES_FASTFETCH_SHOWN:-}" ]] || return 1
-  [[ -z "${CI:-}" ]] || return 1
-  [[ -z "${SSH_CONNECTION:-}" ]] || return 1
-  [[ "${TERM_PROGRAM:-}" != "vscode" ]] || return 1
-}
-
-if _should_run_fastfetch; then
-  export DOTFILES_FASTFETCH_SHOWN=1
-  fastfetch
+# Narrow machine-local escape hatch for interactive behavior that cannot be
+# expressed portably. Project policy, runtimes, and shared tools do not belong
+# here. This file is never loaded by non-interactive shells.
+if [[ -o interactive && -r "$HOME/.config/zsh/local.zsh" ]]; then
+  source "$HOME/.config/zsh/local.zsh"
 fi
-
-# Machine-local overrides, not managed by this repo.
-[[ -r "$HOME/.config/zsh/local.zsh" ]] && source "$HOME/.config/zsh/local.zsh"

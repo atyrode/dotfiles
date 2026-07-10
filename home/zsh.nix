@@ -1,4 +1,4 @@
-{ pkgs, lib, ... }:
+{ pkgs, ... }:
 
 {
   programs.zsh = {
@@ -10,26 +10,16 @@
     oh-my-zsh = {
       enable = true;
       theme = "robbyrussell";
-      plugins = [
-        "git"
-        "tmux"
-      ] ++ lib.optionals pkgs.stdenv.isLinux [
-        "docker"
-        "docker-compose"
-      ];
+      plugins = [ "git" ];
     };
 
     # Load custom shell functions (in order)
     initContent = ''
       # Load shell configuration modules
-      source ${./shell/colors.zsh}
-      source ${./shell/aliases.zsh}
-      source ${./shell/codex.zsh}
       source ${./shell/nix.zsh}
-      source ${./shell/tmux.zsh}
       source ${./shell/startup.zsh}
     '';
   };
-  
+
   home.sessionVariables.SHELL = "${pkgs.zsh}/bin/zsh";
 }

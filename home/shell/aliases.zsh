@@ -11,12 +11,3 @@ eval "$(zoxide init zsh)"
 
 # fzf Ctrl+R
 eval "$(fzf --zsh)"
-
-############################################
-# Python helpers
-############################################
-
-alias python="python3"
-alias pip="pip3"
-alias py="python3"
-alias pymake="uv pip install -e ."

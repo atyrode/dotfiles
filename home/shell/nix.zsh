@@ -84,11 +84,8 @@ _dotfiles_reload_shell_modules() {
   [[ -d "$shell_dir" ]] || return 0
 
   source "$shell_dir/colors.zsh"
-  source "$shell_dir/utils.zsh"
   source "$shell_dir/aliases.zsh"
   source "$shell_dir/codex.zsh"
-  source "$shell_dir/python.zsh"
-  source "$shell_dir/git.zsh"
   source "$shell_dir/nix.zsh"
   source "$shell_dir/tmux.zsh"
 }
@@ -198,12 +195,6 @@ _dotfiles_switch_darwin() {
 }
 
 zconf() {
-  # If a venv is active, deactivate it first
-  if [[ -n "$VIRTUAL_ENV" ]]; then
-    deactivate
-    echo -e "$(c_ok "Deactivated") virtual environment."
-  fi
-
   # Clear aliases (keeps your old behavior)
   unalias -a
 

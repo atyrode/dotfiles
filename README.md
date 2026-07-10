@@ -52,7 +52,7 @@ exec zsh
 - **tree** - Directory tree viewer
 
 ### Development Tools
-- **Python 3** + **uv** - Modern Python package manager
+- **Python 3** + **uv** - Project and agent Python runtime tooling
 - **Node.js 24** + **Bun** + **Deno** - JavaScript/TypeScript runtimes
 - **Git** - Pre-configured with useful aliases
 - **GCC** - Native compiler for Rust/C build scripts
@@ -88,15 +88,6 @@ exec zsh
 
 Run `atyrode` to see everything, or check these highlights:
 
-### Python Virtual Environments
-```bash
-venv          # Create/activate venv in current directory
-pipreq        # Install from requirements.txt
-pipfreeze     # Freeze current packages
-revenv        # Recreate venv from scratch
-unvenv        # Remove venv
-```
-
 ### Nix/Home Manager
 ```bash
 zconf         # Reload dotfiles configuration
@@ -118,11 +109,6 @@ OMP, Herdr, their integration, shared skills, and mise are installed by `zconf`
 with the rest of the Home Manager profile. See
 [Agent tools](docs/agent-tools.md) for ownership, model routing, project skill
 layout, migration behavior, and updates.
-
-### Git Helpers
-```bash
-hub <repo>    # Clone your GitHub repo and setup Python env
-```
 
 ### Git Aliases
 ```bash
@@ -179,10 +165,7 @@ dotfiles/
     ├── git.nix            # Git configuration
     └── shell/             # Modular shell functions
         ├── colors.zsh     # Color helpers
-        ├── utils.zsh      # Utility functions
         ├── aliases.zsh    # Shell aliases
-        ├── python.zsh     # Python venv management
-        ├── git.zsh        # Git helpers
         ├── nix.zsh        # Nix/Home Manager utils
         ├── tmux.zsh       # Tmux utilities
         └── startup.zsh    # Startup commands

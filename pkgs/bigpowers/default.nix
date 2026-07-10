@@ -16,6 +16,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [ jq ];
 
+  postPatch = ''
+    jq -e '
+      .mcpServers."bigpowers-mcp".command == "node" and
+      .mcpServers."bigpowers-mcp".args == ["bigpowers-mcp/build/index.js"]
+    ' .mcp.json >/dev/null
+    rm .mcp.json
+  '';
+
   unpackPhase = ''
     runHook preUnpack
 

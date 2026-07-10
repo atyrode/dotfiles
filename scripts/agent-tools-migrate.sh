@@ -56,6 +56,19 @@ backup_copy() {
   cp -p "$source" "$backup_dir/$relative"
 }
 
+retire_bigpowers_mcp_workaround() {
+  local config="$HOME/.omp/agent/mcp.json"
+  [[ -f "$config" && ! -L "$config" ]] || return 0
+
+  jq -e '
+    (.mcpServers // {}) == {} and
+    (.disabledServers // []) == ["bigpowers-mcp"] and
+    ((keys - ["$schema", "mcpServers", "disabledServers"]) | length) == 0
+  ' "$config" >/dev/null 2>&1 || return 0
+
+  backup_move "$config"
+}
+
 preflight_binary() {
   local name="$1"
   local path="$HOME/.local/bin/$name"
@@ -104,6 +117,8 @@ plugin_root="$HOME/.omp/plugins"
 if path_exists "$plugin_root/node_modules/bigpowers"; then
   backup_move "$plugin_root"
 fi
+
+retire_bigpowers_mcp_workaround
 
 managed_agent_names=(
   architect-deep

@@ -98,6 +98,8 @@ in
           .pi.skills == ["./.pi/skills"] and
           .pi.prompts == ["./.pi/prompts"]
         ' ${pkgs.bigpowers}/share/omp/plugins/bigpowers/package.json >/dev/null
+        test ! -e ${pkgs.bigpowers}/share/omp/plugins/bigpowers/.mcp.json
+        test -f ${pkgs.bigpowers}/share/omp/plugins/bigpowers/.pi/skills/using-bigpowers/SKILL.md
 
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
@@ -165,6 +167,7 @@ in
         nativeBuildInputs = [
           pkgs.findutils
           pkgs.gnugrep
+          pkgs.jq
           pkgs.yq-go
         ];
       }
@@ -198,6 +201,13 @@ in
             printf 'legacy\n' > "$HOME/.omp/agent/rules/no-shell-text-surgery.md"
             printf 'legacy\n' > "$HOME/.omp/agent/gpt56-only.yml"
             printf 'legacy\n' > "$HOME/.omp/agent/managed-skills/ts-react-dead-code-sweep/SKILL.md"
+            cat > "$HOME/.omp/agent/mcp.json" <<'EOF'
+        {
+          "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+          "mcpServers": {},
+          "disabledServers": ["bigpowers-mcp"]
+        }
+        EOF
 
             cat > "$HOME/.omp/agent/config.yml" <<'EOF'
         setupVersion: 7
@@ -233,7 +243,9 @@ in
             test -f "$backup_dir/.omp/agent/rules/no-shell-text-surgery.md"
             test -f "$backup_dir/.omp/agent/gpt56-only.yml"
             test -f "$backup_dir/.omp/agent/managed-skills/ts-react-dead-code-sweep/SKILL.md"
+            test -f "$backup_dir/.omp/agent/mcp.json"
             test -f "$backup_dir/.omp/agent/config.yml"
+            test ! -e "$HOME/.omp/agent/mcp.json"
 
             test "$(yq eval '.setupVersion' "$HOME/.omp/agent/config.yml")" = "7"
             test "$(yq eval '.dev.autoqa.consent' "$HOME/.omp/agent/config.yml")" = "accepted"
@@ -270,6 +282,23 @@ in
             test ! -e "$opaque_home/executed"
             test -x "$opaque_backup/.local/bin/omp"
             test -f "$opaque_state/migration-v2.complete"
+
+            custom_mcp_home="$TMPDIR/custom-mcp-home"
+            mkdir -p "$custom_mcp_home/.omp/agent"
+            cat > "$custom_mcp_home/.omp/agent/mcp.json" <<'EOF'
+        {
+          "mcpServers": {
+            "custom": {
+              "command": "custom-mcp"
+            }
+          },
+          "disabledServers": ["bigpowers-mcp"]
+        }
+        EOF
+
+            HOME="$custom_mcp_home" "$migration"
+            jq -e '.mcpServers.custom.command == "custom-mcp"' \
+              "$custom_mcp_home/.omp/agent/mcp.json" >/dev/null
 
             unsafe_home="$TMPDIR/unsafe-home"
             mkdir -p "$unsafe_home/.local/bin/omp"

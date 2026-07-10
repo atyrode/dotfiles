@@ -9,7 +9,8 @@ installation or activation command; there is no separate plugin or skill sync.
 Nix owns:
 
 - the pinned OMP binary and generated Zsh completion;
-- the pinned Bigpowers package loaded into interactive OMP sessions;
+- the pinned Bigpowers package loaded into interactive OMP sessions, with its
+  broken optional MCP launcher disabled at package build time;
 - the pinned Herdr flake input and generated OMP integration;
 - the managed OMP base config and model presets;
 - the patched bundled agents, custom deep agents, and global generic skills;
@@ -88,12 +89,22 @@ machine-specific assumptions; the first migration only relocates the generic
 Bigpowers stays a pinned OMP plugin rather than being copied into the global
 skill directory, preserving its package structure and prompt collection.
 
+Bigpowers 2.76.2 also ships an optional `.mcp.json` launcher for
+`bigpowers-mcp`. That server cannot start from the published package because its
+Node dependencies are absent. The Nix derivation validates and removes that
+launcher while retaining the independently loaded skills and prompts. A future
+Bigpowers update should remove this workaround only after its packaged MCP
+server starts successfully.
+
 ## First activation
 
 Before Home Manager checks link targets, the activation hook examines legacy
 paths. Conflicting regular files or symlinks at the OMP and Herdr binary paths,
 the standalone Bigpowers plugin tree, managed agents, the Herdr extension,
-presets, rules, and the old generic skill are moved to a timestamped backup.
+presets, rules, and the old generic skill are moved to a timestamped backup. The
+exact temporary `mcp.json` denylist previously used for `bigpowers-mcp` is also
+retired; MCP configurations containing any custom servers or settings are left
+untouched.
 Legacy binaries are never executed during detection:
 
 ```text
@@ -114,7 +125,8 @@ Home Manager dry-runs make the migration dry-run too.
 
 1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`.
 2. Update Bigpowers' version and npm tarball hash in
-   `pkgs/bigpowers/default.nix`.
+   `pkgs/bigpowers/default.nix`, then re-evaluate whether its MCP launcher still
+   needs to be removed.
 3. Update the Herdr input revision in `flake.nix`, then run
    `nix flake lock --update-input herdr`.
 4. Review model identifiers and routing in `omp/config.yml` and

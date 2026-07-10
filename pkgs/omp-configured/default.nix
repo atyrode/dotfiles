@@ -1,9 +1,16 @@
 {
+  bash,
+  cacert,
+  coreutils,
+  findutils,
+  gitMinimal,
+  gnugrep,
   jq,
   lib,
   herdr-omp-integration,
   omp,
   omp-agents,
+  patch,
   runCommand,
   writeShellApplication,
   yq-go,
@@ -12,11 +19,18 @@
 let
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
+  untrustedConfig = ../../omp/untrusted.yml;
+  untrustedPrompt = builtins.readFile ../../omp/untrusted-system-prompt.md;
+  yoloConfig = ../../omp/yolo-session.yml;
+  neutralRoot = runCommand "omp-untrusted-neutral-root" { } ''
+    mkdir "$out"
+  '';
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
     cp ${herdr-omp-integration}/share/omp/extensions/herdr-omp-agent-state.ts "$out/extensions/"
     cp ${../../omp/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
+    cp ${../../omp/extensions/task-isolation-guard.ts} "$out/extensions/task-isolation-guard.ts"
     cp ${../../omp/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
     cat > "$out/package.json" <<'EOF'
     {
@@ -26,7 +40,8 @@ let
       "omp": {
         "extensions": [
           "./extensions/herdr-omp-agent-state.ts",
-          "./extensions/managed-settings-guard.ts"
+          "./extensions/managed-settings-guard.ts",
+          "./extensions/task-isolation-guard.ts"
         ]
       }
     }
@@ -82,7 +97,15 @@ let
   ];
   enforcedPolicyPaths = [
     "tools.approvalMode"
+    "tools.approval.bash"
+    "tools.approval.eval"
+    "tools.approval.browser"
+    "tools.approval.task"
+    "tools.approval.github"
     "secrets.enabled"
+    "task.isolation.mode"
+    "task.isolation.merge"
+    "task.isolation.commits"
   ];
   managedOwnedPaths = managedDefaultPaths ++ managedPresetPaths;
   allManagedPaths = managedOwnedPaths ++ enforcedPolicyPaths;
@@ -100,6 +123,7 @@ let
         launcher=${lib.escapeShellArg name}
         defaults_config='${defaultsConfig}'
         policy_config='${policyConfig}'
+        yolo_config='${yoloConfig}'
         platform_root='${platformRoot}'
         local_config="''${XDG_CONFIG_HOME:-$HOME/.config}/omp/local.yml"
 
@@ -557,8 +581,15 @@ let
             layer_files+=( "$one_shot" )
           done
           layer_files+=( "$policy_config" )
+          if [[ "$runtime_approval_mode" == yolo ]]; then
+            layer_files+=( "$yolo_config" )
+          fi
 
           local merged_json effective_managed policy_json diagnostic_json one_shots_json runtime_overrides
+          local runtime_yolo=false
+          if [[ "$runtime_approval_mode" == yolo ]]; then
+            runtime_yolo=true
+          fi
           merged_json='{}'
           local layer_json layer_file
           for layer_file in "''${layer_files[@]}"; do
@@ -584,6 +615,7 @@ let
               --arg smol "$runtime_smol" \
               --arg slow "$runtime_slow" \
               --arg plan "$runtime_plan" \
+              --argjson unattended "$runtime_yolo" \
               --argjson advisor "$runtime_advisor" '
                 {
                   approvalMode: (if $approvalMode == "" then null else $approvalMode end),
@@ -592,6 +624,7 @@ let
                   smol: (if $smol == "" then null else $smol end),
                   slow: (if $slow == "" then null else $slow end),
                   plan: (if $plan == "" then null else $plan end),
+                  unattended: (if $unattended then true else null end),
                   advisor: (if $advisor then true else null end)
                 }
                 | with_entries(select(.value != null))
@@ -642,6 +675,8 @@ let
               --arg local "$local_config" \
               --argjson localPresent "$local_present" \
               --arg policy "$policy_config" \
+              --arg yolo "$yolo_config" \
+              --argjson runtimeYolo "$runtime_yolo" \
               --argjson presets "$preset_paths_json" \
               --argjson oneShots "$one_shots_json" \
               --argjson defaultKeys "$managed_default_paths_json" \
@@ -666,7 +701,12 @@ let
                     + ($presets | map({ kind: "preset", managed: true, path: . }))
                     + ($oneShots | map({ kind: "one-shot-config", managed: false, invocationSpecific: true, path: . }))
                     + [
-                      { kind: "managed-policy", managed: true, enforced: true, path: $policy },
+                      { kind: "managed-policy", managed: true, enforced: true, path: $policy }
+                    ]
+                    + (if $runtimeYolo then [
+                      { kind: "one-session-unattended-policy", managed: true, invocationSpecific: true, path: $yolo }
+                    ] else [] end)
+                    + [
                       { kind: "runtime-flags", managed: false, invocationSpecific: true, overrides: $runtimeOverrides }
                     ]
                   ),
@@ -913,6 +953,11 @@ let
           managed_args+=( --config "$one_shot" )
         done
         managed_args+=( --config "$policy_config" )
+        if [[ "$runtime_approval_mode" == yolo ]]; then
+          printf '%s\n' \
+            'WARNING: OMP unattended yolo mode is enabled for this process only. Tool approvals are bypassed; this is not an OS sandbox.' >&2
+          managed_args+=( --config "$yolo_config" )
+        fi
 
         if [[ "$subcommand" == acp ]]; then
           exec "$raw_omp" acp "''${managed_args[@]}" "''${session_args[@]}"
@@ -929,6 +974,205 @@ let
     presets.gpt
     presets.opusFallback
   ];
+  trustedUntrustedPath = lib.makeBinPath [
+    bash
+    coreutils
+    findutils
+    gitMinimal
+    gnugrep
+    patch
+  ];
+  ompUntrusted = writeShellApplication {
+    name = "ompu";
+    runtimeInputs = [ coreutils ];
+    text = ''
+      raw_omp=${lib.escapeShellArg (lib.getExe omp)}
+      launch_cwd="$PWD"
+      target_cwd="$PWD"
+      original_args=( "$@" )
+      forwarded_args=()
+
+      refuse_flag() {
+        printf '%s\n' \
+          "ompu refused '$1': the untrusted launcher owns credentials, state, executable-resource discovery, tools, and approval policy." >&2
+        exit 2
+      }
+
+      i=0
+      while (( i < ''${#original_args[@]} )); do
+        arg="''${original_args[$i]}"
+        case "$arg" in
+          --)
+            forwarded_args+=( "$arg" )
+            i=$((i + 1))
+            while (( i < ''${#original_args[@]} )); do
+              forwarded_args+=( "''${original_args[$i]}" )
+              i=$((i + 1))
+            done
+            break
+            ;;
+          --cwd=*)
+            target_cwd="''${arg#--cwd=}"
+            ;;
+          --cwd)
+            (( i + 1 < ''${#original_args[@]} )) || refuse_flag "$arg"
+            i=$((i + 1))
+            target_cwd="''${original_args[$i]}"
+            ;;
+          --profile|--alias|--api-key|--config|--extension|-e|--hook|--plugin-dir|--approval-mode|--tools|--skills|--system-prompt|--append-system-prompt|--session-dir|--session|--resume|-r|--fork|--provider-session-id)
+            refuse_flag "$arg"
+            ;;
+          --profile=*|--alias=*|--api-key=*|--config=*|--extension=*|-e=*|--hook=*|--plugin-dir=*|--approval-mode=*|--tools=*|--skills=*|--system-prompt=*|--append-system-prompt=*|--session-dir=*|--session=*|--resume=*|-r=*|--fork=*|--provider-session-id=*)
+            refuse_flag "''${arg%%=*}"
+            ;;
+          --auto-approve|--yolo|--no-extensions)
+            refuse_flag "$arg"
+            ;;
+          *)
+            forwarded_args+=( "$arg" )
+            ;;
+        esac
+        i=$((i + 1))
+      done
+
+      case "$target_cwd" in
+        /*) ;;
+        *) target_cwd="$launch_cwd/$target_cwd" ;;
+      esac
+      [[ -d "$target_cwd" ]] || {
+        printf 'ompu target directory does not exist: %s\n' "$target_cwd" >&2
+        exit 2
+      }
+      target_cwd="$(cd "$target_cwd" && pwd -P)"
+
+      state_root="$HOME/.local/state/atyrode/omp-untrusted"
+      if [[ -L "$state_root" ]]; then
+        printf 'ompu state root must not be a symlink: %s\n' "$state_root" >&2
+        exit 2
+      fi
+      isolated_home="$state_root/home"
+      isolated_tmp="$state_root/tmp"
+      isolated_worktrees="$state_root/worktrees"
+      isolated_xdg_config="$state_root/xdg/config"
+      isolated_xdg_data="$state_root/xdg/data"
+      isolated_xdg_state="$state_root/xdg/state"
+      isolated_xdg_cache="$state_root/xdg/cache"
+      mkdir -p \
+        "$isolated_home" \
+        "$isolated_tmp" \
+        "$isolated_worktrees" \
+        "$isolated_xdg_config" \
+        "$isolated_xdg_data" \
+        "$isolated_xdg_state" \
+        "$isolated_xdg_cache"
+      chmod 700 "$state_root" "$isolated_home" "$isolated_tmp" "$isolated_worktrees"
+
+      run_isolated() {
+        exec env -i \
+          HOME="$isolated_home" \
+          USER="''${USER:-untrusted}" \
+          LOGNAME="''${LOGNAME:-''${USER:-untrusted}}" \
+          SHELL=${lib.escapeShellArg (lib.getExe bash)} \
+          PATH=${lib.escapeShellArg trustedUntrustedPath} \
+          TMPDIR="$isolated_tmp" \
+          XDG_CONFIG_HOME="$isolated_xdg_config" \
+          XDG_DATA_HOME="$isolated_xdg_data" \
+          XDG_STATE_HOME="$isolated_xdg_state" \
+          XDG_CACHE_HOME="$isolated_xdg_cache" \
+          OMP_WORKTREE_DIR="$isolated_worktrees" \
+          OMP_PROFILE=untrusted \
+          PI_PROFILE=untrusted \
+          PI_BASH_NO_LOGIN=1 \
+          PI_PY=0 \
+          PI_JS=0 \
+          PI_RB=0 \
+          PI_JL=0 \
+          TERM="''${TERM:-xterm-256color}" \
+          LANG=C \
+          LC_ALL=C \
+          SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt \
+          GIT_CONFIG_NOSYSTEM=1 \
+          GIT_CONFIG_GLOBAL=/dev/null \
+          GIT_TERMINAL_PROMPT=0 \
+          GIT_ASKPASS=${coreutils}/bin/false \
+          SSH_ASKPASS=${coreutils}/bin/false \
+          GIT_CONFIG_COUNT=4 \
+          GIT_CONFIG_KEY_0=credential.helper \
+          GIT_CONFIG_VALUE_0= \
+          GIT_CONFIG_KEY_1=core.hooksPath \
+          GIT_CONFIG_VALUE_1=/dev/null \
+          GIT_CONFIG_KEY_2=core.fsmonitor \
+          GIT_CONFIG_VALUE_2=false \
+          GIT_CONFIG_KEY_3=core.sshCommand \
+          GIT_CONFIG_VALUE_3=${coreutils}/bin/false \
+          "$@"
+      }
+
+      case "''${forwarded_args[0]:-}" in
+        __complete|agents|auth-broker|auth-gateway|bench|commit|completions|config|dry-balance|gallery|gc|grep|grievances|install|join|models|plugin|read|say|search|setup|shell|ssh|stats|tiny-models|token|ttsr|usage|worktree)
+          cd ${neutralRoot}
+          run_isolated "$raw_omp" --profile untrusted "''${forwarded_args[@]}"
+          ;;
+        update)
+          printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+          exit 2
+          ;;
+      esac
+
+      blocked_paths=(
+        "$target_cwd/.omp/extensions"
+        "$target_cwd/.omp/hooks"
+        "$target_cwd/.omp/plugins"
+        "$target_cwd/.omp/commands"
+        "$target_cwd/.omp/tools"
+        "$target_cwd/.omp/package.json"
+        "$target_cwd/.omp/secrets.yml"
+        "$target_cwd/.pi/extensions"
+        "$target_cwd/.pi/hooks"
+        "$target_cwd/.pi/plugins"
+        "$target_cwd/.pi/commands"
+        "$target_cwd/.pi/tools"
+        "$target_cwd/.claude/hooks"
+        "$target_cwd/.claude/commands"
+        "$target_cwd/.codex/hooks"
+        "$target_cwd/.codex/commands"
+        "$target_cwd/.gemini/hooks"
+        "$target_cwd/.gemini/commands"
+        "$target_cwd/.agents/hooks"
+        "$target_cwd/.agents/commands"
+      )
+      for blocked in "''${blocked_paths[@]}"; do
+        if [[ -e "$blocked" || -L "$blocked" ]]; then
+          printf '%s\n' \
+            "ompu refused the project because executable or policy-bearing project state exists at $blocked. Review/remove it or use a trusted launcher." >&2
+          exit 2
+        fi
+      done
+
+      managed_args=(
+        --profile untrusted
+        --extension ${platformRoot}
+        --config ${defaultsConfig}
+      )
+      if [[ -e "$target_cwd/.omp/settings.json" ]]; then
+        managed_args+=( --config "$target_cwd/.omp/settings.json" )
+      fi
+      if [[ -e "$target_cwd/.omp/config.yml" ]]; then
+        managed_args+=( --config "$target_cwd/.omp/config.yml" )
+      fi
+      managed_args+=(
+        --config ${untrustedConfig}
+        --append-system-prompt ${lib.escapeShellArg untrustedPrompt}
+        --no-lsp
+        --no-pty
+        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,inspect_image,checkpoint,rewind,task,job,todo,write'
+        --cwd "$target_cwd"
+      )
+
+      cd ${neutralRoot}
+      run_isolated "$raw_omp" "''${managed_args[@]}" "''${forwarded_args[@]}"
+    '';
+  };
 in
 runCommand "omp-configured-${lib.getVersion omp}"
   {
@@ -944,9 +1188,12 @@ runCommand "omp-configured-${lib.getVersion omp}"
         managedOwnedPaths
         managedPresetPaths
         omp
+        neutralRoot
         platformRoot
         policyConfig
         presets
+        untrustedConfig
+        yoloConfig
         ;
     };
 
@@ -962,5 +1209,6 @@ runCommand "omp-configured-${lib.getVersion omp}"
     ln -s ${lib.getExe ompFable} "$out/bin/ompf"
     ln -s ${lib.getExe ompGpt} "$out/bin/ompg"
     ln -s ${lib.getExe ompOpus} "$out/bin/ompo"
+    ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"
   ''

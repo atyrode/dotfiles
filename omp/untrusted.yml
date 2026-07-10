@@ -1,0 +1,65 @@
+tools:
+  approvalMode: always-ask
+  approval:
+    bash: prompt
+    task: prompt
+    eval: deny
+    browser: deny
+    github: deny
+    ssh: deny
+    debug: deny
+
+secrets:
+  enabled: true
+
+mcp:
+  enableProjectConfig: false
+  notifications: false
+
+extensions: []
+disabledExtensions: []
+
+autolearn:
+  enabled: false
+  autoContinue: false
+
+memory:
+  backend: off
+
+browser:
+  enabled: false
+  headless: true
+
+github:
+  enabled: false
+
+eval:
+  py: false
+  js: false
+  rb: false
+  jl: false
+
+skills:
+  enableSkillCommands: false
+
+commands:
+  enableClaudeUser: false
+  enableClaudeProject: false
+  enableOpencodeUser: false
+  enableOpencodeProject: false
+
+task:
+  isolation:
+    mode: auto
+    merge: patch
+    commits: generic
+  maxRecursionDepth: 1
+
+lsp:
+  enabled: false
+
+debug:
+  enabled: false
+
+git:
+  enabled: false

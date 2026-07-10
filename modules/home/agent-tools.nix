@@ -9,6 +9,7 @@ let
   cfg = config.atyrode.agentTools;
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
+  untrustedConfig = ../../omp/untrusted.yml;
   presets = {
     budget = ../../omp/presets/budget.yml;
     fable = ../../omp/presets/fable-primary.yml;
@@ -50,6 +51,7 @@ in
     xdg.configFile = {
       "omp/defaults.yml".source = defaultsConfig;
       "omp/policy.yml".source = policyConfig;
+      "omp/untrusted.yml".source = untrustedConfig;
       "omp/presets/budget.yml".source = presets.budget;
       "omp/presets/fable-primary.yml".source = presets.fable;
       "omp/presets/gpt56.yml".source = presets.gpt;

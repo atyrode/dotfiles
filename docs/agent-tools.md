@@ -22,7 +22,9 @@ belong in this repository or the Nix store.
 
 The package overlay lives in `flake.nix`, reusable package derivations live in
 `pkgs/`, and Home Manager deployment lives in
-`modules/home/agent-tools.nix`.
+`modules/home/agent-tools.nix`. On Linux, the OMP package preserves upstream's
+binary unchanged and launches it through Nix's dynamic loader instead of
+rewriting the Bun executable with `patchelf`.
 
 ## OMP launchers
 

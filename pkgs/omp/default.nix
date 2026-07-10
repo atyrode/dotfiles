@@ -1,7 +1,7 @@
 {
   fetchurl,
   lib,
-  patchelf,
+  makeWrapper,
   stdenv,
 }:
 
@@ -39,21 +39,26 @@ stdenv.mkDerivation {
   };
 
   dontUnpack = true;
+  dontPatchELF = true;
   dontStrip = true;
 
-  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ patchelf ];
+  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ];
 
   installPhase = ''
     runHook preInstall
 
-    install -Dm755 "$src" "$out/bin/omp"
-
-    ${lib.optionalString stdenv.hostPlatform.isLinux ''
-      patchelf \
-        --set-interpreter ${stdenv.cc.bintools.dynamicLinker} \
-        --set-rpath ${lib.makeLibraryPath [ stdenv.cc.cc.lib ]} \
-        "$out/bin/omp"
-    ''}
+    ${
+      if stdenv.hostPlatform.isLinux then
+        ''
+          install -Dm755 "$src" "$out/libexec/omp"
+          makeWrapper ${stdenv.cc.bintools.dynamicLinker} "$out/bin/omp" \
+            --add-flags "$out/libexec/omp"
+        ''
+      else
+        ''
+          install -Dm755 "$src" "$out/bin/omp"
+        ''
+    }
 
     runHook postInstall
   '';

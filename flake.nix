@@ -96,6 +96,7 @@
         host
         // {
           inherit aliases capabilities;
+          dotfilesDirectory = host.dotfilesDirectory or "${host.homeDirectory}/nix-dotfiles";
           hostname = host.hostname or null;
         };
 
@@ -116,6 +117,7 @@
         inherit (host)
           aliases
           capabilities
+          dotfilesDirectory
           homeDirectory
           hostname
           platform
@@ -149,6 +151,9 @@
           omp = final.callPackage ./pkgs/omp { };
           omp-agents = final.callPackage ./pkgs/omp-agents { };
           omp-configured = final.callPackage ./pkgs/omp-configured { };
+          atyrode = final.callPackage ./pkgs/atyrode {
+            hostRegistry = publicHosts;
+          };
         })
       ];
 
@@ -233,6 +238,7 @@
         {
           inherit (pkgs)
             agent-tools-migrate
+            atyrode
             herdr
             herdr-configured
             herdr-omp-integration
@@ -290,6 +296,7 @@
         in
         import ./checks/agent-tools.nix { inherit lib pkgs; }
         // {
+          atyrode-cli = import ./checks/atyrode-cli.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
         }

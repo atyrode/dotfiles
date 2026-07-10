@@ -86,12 +86,13 @@ exec zsh
 
 ## 🛠️ Custom Functions
 
-Run `atyrode` to see everything, or check these highlights:
+Use the packaged `atyrode` interface, or check these highlights:
 
 ### Nix/Home Manager
 ```bash
-zconf         # Reload dotfiles configuration
-atyrode       # Show help and list all tools
+atyrode apply --plan  # Inspect the exact host, source, and backend
+zconf                 # Compatibility wrapper for `atyrode apply`
+atyrode doctor host   # Validate the managed machine identity
 ```
 
 ### Agent Tools
@@ -194,6 +195,10 @@ capabilities. Compatibility aliases such as `alex`, `alex-linux`,
 `alex-darwin`, and `alex-linux-desktop` remain available. See
 [Hosts and capabilities](docs/hosts.md) for the identity contract and the
 add/rename/retire workflow.
+
+[The `atyrode` CLI](docs/atyrode.md) documents deterministic application,
+machine-readable capability discovery, diagnostics, and the `zconf`
+compatibility boundary.
 
 For this Mac, the manual switch command is:
 

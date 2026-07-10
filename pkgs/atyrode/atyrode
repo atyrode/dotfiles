@@ -1,0 +1,237 @@
+#!@shell@
+# shellcheck shell=bash disable=SC1008,SC2239
+set -euo pipefail
+
+readonly registry='@registry@'
+readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
+
+die() {
+  local code="$1"
+  shift
+  printf 'atyrode: %s\n' "$*" >&2
+  exit "$code"
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  atyrode apply [HOST] [--repo PATH] [--plan|--dry-run] [--json] [--restart-shell]
+  atyrode capabilities list [--json]
+  atyrode capabilities show [HOST] [--json]
+  atyrode doctor host [HOST] [--json]
+  atyrode doctor tools [--json]
+  atyrode host [HOST] [--json]
+
+The host registry is the authority for identity, platform, capabilities, and
+the default checkout. apply validates everything before invoking nh. Commands
+reserved for later issues: workspace, agent, generations, rollback, and clean.
+EOF
+}
+
+actual_system() {
+  if [[ -n "${_ATYRODE_TEST_SYSTEM:-}" ]]; then
+    printf '%s\n' "$_ATYRODE_TEST_SYSTEM"
+    return
+  fi
+  case "$(uname -s):$(uname -m)" in
+    Darwin:arm64) printf 'aarch64-darwin\n' ;;
+    Darwin:x86_64) printf 'x86_64-darwin\n' ;;
+    Linux:arm64|Linux:aarch64) printf 'aarch64-linux\n' ;;
+    Linux:x86_64) printf 'x86_64-linux\n' ;;
+    *) die "$EX_UNAVAILABLE" "unsupported platform: $(uname -s) $(uname -m)" ;;
+  esac
+}
+
+actual_user() {
+  printf '%s\n' "${_ATYRODE_TEST_USER:-$(id -un)}"
+}
+
+actual_hostname() {
+  if [[ -n "${_ATYRODE_TEST_HOSTNAME:-}" ]]; then
+    printf '%s\n' "$_ATYRODE_TEST_HOSTNAME"
+  else
+    hostname -s 2>/dev/null || hostname
+  fi
+}
+
+resolve_host() {
+  local requested="${1:-}"
+  if [[ -z "$requested" ]]; then
+    requested="${ATYRODE_HOST:-}"
+  fi
+  if [[ -z "$requested" && -r "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json" ]]; then
+    requested="$(jq -r '.id // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json")"
+  fi
+  if [[ -n "$requested" ]]; then
+    jq -er --arg requested "$requested" '
+      to_entries[] | select(.key == $requested or (.value.aliases | index($requested))) | .key
+    ' "$registry" || die "$EX_DATAERR" "unknown host or alias: $requested"
+    return
+  fi
+
+  local system user hostname matches
+  system="$(actual_system)"
+  user="$(actual_user)"
+  hostname="$(actual_hostname)"
+  matches="$(jq -r --arg system "$system" --arg user "$user" --arg hostname "$hostname" '
+    [to_entries[] | select(.value.system == $system and .value.username == $user)]
+    | ((map(select(.value.hostname == $hostname))) // []) as $exact
+    | if ($exact | length) == 1 then $exact[0].key
+      elif length == 1 then .[0].key
+      else empty end
+  ' "$registry")"
+  [[ -n "$matches" ]] || die "$EX_DATAERR" "host identity is ambiguous; pass a registered host explicitly"
+  printf '%s\n' "$matches"
+}
+
+host_json() {
+  jq -c --arg host "$1" '.[$host]' "$registry"
+}
+
+doctor_host() {
+  local requested="${1:-}" json="${2:-0}" host data system user hostname ok=true
+  host="$(resolve_host "$requested")"
+  data="$(host_json "$host")"
+  system="$(actual_system)"
+  user="$(actual_user)"
+  hostname="$(actual_hostname)"
+  [[ "$(jq -r '.system' <<<"$data")" == "$system" ]] || ok=false
+  [[ "$(jq -r '.username' <<<"$data")" == "$user" ]] || ok=false
+  local expected_hostname
+  expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
+  [[ -z "$expected_hostname" || "$expected_hostname" == "$hostname" ]] || ok=false
+
+  if [[ "$json" == 1 ]]; then
+    jq -nc --arg host "$host" --arg system "$system" --arg user "$user" \
+      --arg hostname "$hostname" --argjson registered "$data" --argjson ok "$ok" \
+      '{ok:$ok,host:$host,actual:{system:$system,username:$user,hostname:$hostname},registered:$registered}'
+  else
+    printf 'host: %s\nsystem: %s\nuser: %s\nhostname: %s\nstatus: %s\n' \
+      "$host" "$system" "$user" "$hostname" "$([[ "$ok" == true ]] && echo ok || echo mismatch)"
+  fi
+  [[ "$ok" == true ]] || return "$EX_DATAERR"
+}
+
+capabilities() {
+  local action="${1:-list}" requested="" json=0
+  shift || true
+  if [[ "$action" == show && $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi
+  [[ "${1:-}" != --json ]] || json=1
+  case "$action" in
+    list)
+      if [[ "$json" == 1 ]]; then
+        jq -c '[.[].capabilities[]] | unique' "$registry"
+      else
+        jq -r '[.[].capabilities[]] | unique[]' "$registry"
+      fi
+      ;;
+    show)
+      local host data
+      host="$(resolve_host "$requested")"; data="$(host_json "$host")"
+      if [[ "$json" == 1 ]]; then jq -c '{host:.id,capabilities}' <<<"$data"
+      else jq -r '.capabilities[]' <<<"$data"; fi
+      ;;
+    *) die "$EX_USAGE" "capabilities expects list or show" ;;
+  esac
+}
+
+doctor_tools() {
+  local json=0 tool rows='[]' status path
+  [[ "${1:-}" != --json ]] || json=1
+  for tool in nix nh git jq zsh; do
+    if path="$(command -v "$tool" 2>/dev/null)"; then status=ok; else status=missing; path=''; fi
+    rows="$(jq -c --arg name "$tool" --arg status "$status" --arg path "$path" \
+      '. + [{name:$name,status:$status,path:$path}]' <<<"$rows")"
+  done
+  if [[ "$json" == 1 ]]; then printf '%s\n' "$rows"
+  else jq -r '.[] | "\(.name): \(.status)\(if .path == "" then "" else " (\(.path))" end)"' <<<"$rows"; fi
+}
+
+apply_config() {
+  local requested="" repo="" plan=0 dry=0 json=0 restart=0
+  if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) [[ $# -ge 2 ]] || die "$EX_USAGE" "--repo requires a path"; repo="$2"; shift 2 ;;
+      --plan) plan=1; shift ;;
+      --dry-run) dry=1; shift ;;
+      --json) json=1; shift ;;
+      --restart-shell) restart=1; shift ;;
+      -h|--help) usage; return ;;
+      *) die "$EX_USAGE" "unknown apply option: $1" ;;
+    esac
+  done
+
+  local host data expected_system expected_user expected_hostname platform default_repo revision dirty backend installable
+  local git_command="${ATYRODE_GIT:-git}"
+  host="$(resolve_host "$requested")"
+  data="$(host_json "$host")"
+  expected_system="$(jq -r '.system' <<<"$data")"
+  expected_user="$(jq -r '.username' <<<"$data")"
+  expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
+  platform="$(jq -r '.platform' <<<"$data")"
+  default_repo="$(jq -r '.dotfilesDirectory' <<<"$data")"
+  repo="${repo:-$default_repo}"
+  [[ "$repo" == /* ]] || die "$EX_USAGE" "repository path must be absolute: $repo"
+  [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
+  [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
+  [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
+  [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
+  command -v nh >/dev/null || die "$EX_UNAVAILABLE" "nh is unavailable"
+  command -v "$git_command" >/dev/null || die "$EX_UNAVAILABLE" "git is unavailable"
+  "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
+  revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
+  dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
+  backend="nh-home"; [[ "$platform" != darwin ]] || backend="nh-darwin"
+  installable="$repo#$host"
+
+  local output
+  output="$(jq -nc --arg host "$host" --arg repo "$repo" --arg system "$expected_system" \
+    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" \
+    --arg installable "$installable" --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
+    '{host:$host,installable:$installable,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,dirty:$dirty,repository:$repo,mutationBoundary:"activation only after preflight"}')"
+  if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
+  else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
+  [[ "$plan" == 0 ]] || return 0
+
+  local -a nh_args
+  local nh_command="${ATYRODE_NH:-nh}"
+  if [[ "$platform" == darwin ]]; then nh_args=("$nh_command" darwin switch "$installable" --diff always)
+  else nh_args=("$nh_command" home switch "$installable" --configuration "$host" --backup-extension backup --diff always); fi
+  [[ "$dry" == 0 ]] || nh_args+=(--dry)
+  "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
+  if [[ "$dry" == 0 ]]; then
+    local state_dir state_file temp
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
+    state_file="$state_dir/dotfiles-config"
+    mkdir -p "$state_dir"
+    temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
+    printf '%s\n' "$host" >"$temp"
+    mv -f "$temp" "$state_file"
+  fi
+  if [[ "$restart" == 1 ]]; then
+    printf 'Activation completed. Restart the current shell with: exec zsh -l\n' >&2
+  fi
+}
+
+main() {
+  local subcommand="${1:-help}"
+  shift || true
+  case "$subcommand" in
+    apply) apply_config "$@" ;;
+    capabilities) capabilities "$@" ;;
+    doctor)
+      case "${1:-}" in
+        host) shift; local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
+        tools) shift; doctor_tools "$@" ;;
+        *) die "$EX_USAGE" "doctor expects host or tools" ;;
+      esac
+      ;;
+    host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
+    workspace|agent|generations|rollback|clean) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
+    help|-h|--help) usage ;;
+    *) die "$EX_USAGE" "unknown command: $subcommand" ;;
+  esac
+}
+
+main "$@"

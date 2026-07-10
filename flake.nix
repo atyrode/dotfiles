@@ -342,6 +342,10 @@
             inherit lib pkgs;
             hostConfigs = canonicalHomeConfigs;
           };
+          shell-surface = import ./checks/shell-surface.nix {
+            inherit lib pkgs;
+            hostConfigs = canonicalHomeConfigs;
+          };
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-evaluation = darwinEvaluation;

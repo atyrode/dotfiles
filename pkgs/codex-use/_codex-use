@@ -1,0 +1,18 @@
+#compdef codex-use
+
+_codex_use() {
+  local -a commands
+  commands=(
+    'status:show active profile and ownership'
+    'converge:update portable managed files'
+    'migrate:migrate legacy profile layouts'
+    'list:list authentication profiles'
+    'path:print a profile path'
+    'ps:list Codex processes'
+    'stop:stop Codex processes'
+    'login:select a profile and start device authentication'
+  )
+  _describe 'command or profile' commands
+}
+
+_codex_use "$@"

@@ -4,41 +4,25 @@ Personal dotfiles managed with Nix and Home Manager for shell and developer tool
 
 ## 🚀 Quick Start
 
-**From this checkout:**
+**From a reviewed checkout:**
 
 ```bash
-cd ~/code/dotfiles
-./install.sh
+cd ~/nix-dotfiles
+./install.sh plan --config alex-x86_64-linux
+./install.sh apply --config alex-x86_64-linux
 ```
 
-**One command installation from GitHub:**
+**Supported fresh-machine command:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/install.sh | bash
+git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
 ```
 
-Or manually:
-
-```bash
-# 1. Install Nix (if not installed)
-sh <(curl -L https://nixos.org/nix/install) --daemon
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-
-# 2. Enable flakes
-mkdir -p ~/.config/nix
-echo "extra-experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
-
-# 3. Clone and setup
-git clone https://github.com/atyrode/dotfiles.git ~/dotfiles
-cd ~/dotfiles
-if [ -L ~/.zshrc ]; then mv ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S); fi
-sudo -H nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
-
-# 4. Restart shell
-exec zsh
-```
-
-**That's it!** Your shell is now configured. Run `atyrode` to see all available tools.
+Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
+will not guess between desktop, development, server, or Mac profiles. It uses
+explicit preflight, plan, apply, verify, and rollback phases, verifies a pinned
+upstream Nix artifact when Nix is absent, and preserves recoverable migration
+receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 
 ---
 
@@ -125,14 +109,14 @@ git ci        # git commit
 
 **Update dotfiles:**
 ```bash
-cd ~/code/dotfiles  # or your dotfiles checkout
+cd ~/nix-dotfiles
 git pull
 zconf
 ```
 
 **Update Nix packages:**
 ```bash
-cd ~/code/dotfiles  # or your dotfiles checkout
+cd ~/nix-dotfiles
 nix flake update
 zconf
 ```
@@ -153,7 +137,7 @@ dotfiles/
 │   └── default.nix        # macOS system and cask definitions
 ├── docs/                    # Architecture and maintenance guides
 ├── flake.nix              # Main flake configuration
-├── install.sh             # Quick install script
+├── install.sh             # Phased, transactional bootstrap
 ├── modules/                 # Reusable Home Manager modules
 ├── omp/                     # Managed config, presets, agents, and rules
 ├── pkgs/                    # Pinned custom derivations and wrappers
@@ -228,16 +212,17 @@ For Linux desktop machines that need Steam, SteamCMD, and VLC:
 HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x86_64-linux-desktop
 ```
 
-You can also set `DOTFILES_CONFIG=alex-x86_64-linux-desktop` before running
-`zconf` on a Linux desktop. Successful `zconf` and `install.sh` runs record
-the active configuration so helper commands such as `atyrode` only show what
-applies to the current setup.
+You can also set `ATYRODE_HOST=alex-x86_64-linux-desktop` before running
+`zconf` on a Linux desktop. Successful `zconf` and `install.sh apply` runs
+record the active configuration so helper commands such as `atyrode` only show
+what applies to the current setup.
 
 ### Change Username
 
-Edit `flake.nix` and replace `defaultUsername = "alex"` with your username.
-
-If you want to keep the username but force a config, set `FLAKE_CONFIG` before running the installer.
+Edit the owning entry in `hosts/default.nix`, including its username and home
+directory, then follow the validation workflow in [Hosts and
+capabilities](docs/hosts.md). Select a bootstrap host with `--config`; the
+`FLAKE_CONFIG` environment variable is the equivalent non-interactive input.
 
 ### Add Packages
 
@@ -258,7 +243,7 @@ Edit files in `home/shell/` - they're organized by category for easy maintenance
 
 **"Path is not tracked by Git" error:**
 ```bash
-cd ~/dotfiles
+cd ~/nix-dotfiles
 git add <file>
 zconf
 ```
@@ -278,9 +263,15 @@ git status
 zconf
 ```
 
-If the error says an existing symlink such as `~/.zshrc` would be clobbered,
-run `./install.sh` instead of the manual switch command. The installer backs up
-symlinked shell entrypoints before activation.
+If the error says an existing path such as `~/.zshrc` would be clobbered, run
+the bootstrap plan and apply phases for the registered host. The versioned
+migration backs up file and symlink entrypoints before activation and restores
+them automatically if activation fails.
+
+```sh
+./install.sh plan --config <host>
+./install.sh apply --config <host>
+```
 
 **macOS Homebrew activation fails:**
 ```bash
@@ -294,7 +285,7 @@ The macOS configuration installs Homebrew through nix-homebrew and then applies 
 ## 📝 Requirements
 
 - macOS or Linux with Nix support
-- Git
+- Git, Bash, `curl`, `tar`, and either `sha256sum` or `shasum` for a fresh machine
 - Internet connection (for initial install)
 
 Nix will be installed automatically if not present.

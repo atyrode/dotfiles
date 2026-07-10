@@ -1,0 +1,5 @@
+tools:
+  approvalMode: write
+
+secrets:
+  enabled: true

@@ -7,7 +7,8 @@
 
 let
   cfg = config.atyrode.agentTools;
-  baseConfig = ../../omp/config.yml;
+  defaultsConfig = ../../omp/defaults.yml;
+  policyConfig = ../../omp/policy.yml;
   presets = {
     budget = ../../omp/presets/budget.yml;
     fable = ../../omp/presets/fable-primary.yml;
@@ -47,7 +48,8 @@ in
     ];
 
     xdg.configFile = {
-      "omp/base.yml".source = baseConfig;
+      "omp/defaults.yml".source = defaultsConfig;
+      "omp/policy.yml".source = policyConfig;
       "omp/presets/budget.yml".source = presets.budget;
       "omp/presets/fable-primary.yml".source = presets.fable;
       "omp/presets/gpt56.yml".source = presets.gpt;
@@ -59,25 +61,22 @@ in
         source = ../../agents/skills;
         recursive = true;
       };
-
-      ".omp/agent/agents" = {
-        source = "${cfg.ompAgentsPackage}/share/omp/agents";
-        recursive = true;
-      };
-
-      ".omp/agent/extensions/herdr-omp-agent-state.ts".source =
-        "${cfg.herdrIntegrationPackage}/share/omp/extensions/herdr-omp-agent-state.ts";
-
-      ".omp/agent/rules/no-shell-text-surgery.md".source = ../../omp/rules/no-shell-text-surgery.md;
     };
 
-    home.activation.migrateLegacyAgentTools = lib.mkIf cfg.migrateLegacy (
-      lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
+    home.activation = lib.mkIf cfg.migrateLegacy {
+      migrateLegacyAgentTools = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
         if [[ -v DRY_RUN ]]; then
           export AGENT_TOOLS_DRY_RUN=1
         fi
-        ${lib.getExe cfg.migrationPackage}
-      ''
-    );
+        ${lib.getExe cfg.migrationPackage} prepare
+      '';
+
+      finalizeLegacyAgentTools = lib.hm.dag.entryAfter [ "installPackages" "linkGeneration" ] ''
+        if [[ -v DRY_RUN ]]; then
+          export AGENT_TOOLS_DRY_RUN=1
+        fi
+        ${lib.getExe cfg.migrationPackage} finalize "$newGenPath/home-files"
+      '';
+    };
   };
 }

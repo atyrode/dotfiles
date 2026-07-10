@@ -9,12 +9,15 @@ let
   wrapper = writeShellApplication {
     name = "herdr";
     text = ''
-      case "''${1:-}" in
-        update)
+      for arg in "$@"; do
+        if [[ "$arg" == -- ]]; then
+          break
+        fi
+        if [[ "$arg" == update ]]; then
           printf '%s\n' 'Herdr is managed by Nix. Update the flake input, then run zconf.' >&2
           exit 2
-          ;;
-      esac
+        fi
+      done
 
       exec ${lib.escapeShellArg (lib.getExe herdr)} "$@"
     '';

@@ -15,6 +15,9 @@
 
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
+    nix-index-database.url = "github:nix-community/nix-index-database";
+    nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
+
     homebrew-core = {
       url = "github:homebrew/homebrew-core";
       flake = false;
@@ -34,6 +37,7 @@
       herdr,
       nix-darwin,
       nix-homebrew,
+      nix-index-database,
       homebrew-core,
       homebrew-cask,
       ...
@@ -50,11 +54,37 @@
 
       forAllSystems = lib.genAttrs systems;
 
+      # Each name corresponds to a reviewed package in a selected capability.
+      # Homebrew casks are governed independently by the nix-darwin module.
+      allowedUnfreePackages = [
+        "arduino-ide"
+        "chatgpt"
+        "codex"
+        "obsidian"
+        "orbstack"
+        "parsec-bin"
+        "postman"
+        "reaper"
+        "signal-desktop"
+        "spotify"
+        "steam"
+        "steam-original"
+        "steam-unwrapped"
+        "steamcmd"
+        "vital"
+        "vscode"
+        "whatsapp-for-mac"
+      ];
+
       capabilityModules = {
         base = ./home/profiles/base.nix;
         development = ./home/profiles/development.nix;
         agent-tools = ./home/profiles/agent-tools.nix;
         desktop = ./home/profiles/desktop.nix;
+        containers = ./home/profiles/containers.nix;
+        media = ./home/profiles/media.nix;
+        mobile = ./home/profiles/mobile.nix;
+        security = ./home/profiles/security.nix;
         server = ./home/profiles/server.nix;
       };
       knownCapabilities = builtins.attrNames capabilityModules;
@@ -140,7 +170,14 @@
       modulesForHost =
         name: host:
         map (capability: capabilityModules.${capability}) host.capabilities
-        ++ [ (mkHostIdentityModule name host) ];
+        ++ [
+          nix-index-database.homeModules.default
+          {
+            programs.nix-index-database.comma.enable = true;
+            programs.nix-index.enable = true;
+          }
+          (mkHostIdentityModule name host)
+        ];
 
       agentToolsOverlay = lib.composeManyExtensions [
         herdr.overlays.default
@@ -161,7 +198,7 @@
         system:
         import nixpkgs {
           inherit system;
-          config.allowUnfree = true;
+          config.allowUnfreePredicate = package: builtins.elem (lib.getName package) allowedUnfreePackages;
           overlays = [ agentToolsOverlay ];
         };
 
@@ -198,6 +235,8 @@
             {
               nixpkgs.hostPlatform = host.system;
               nixpkgs.overlays = [ agentToolsOverlay ];
+              nixpkgs.config.allowUnfreePredicate =
+                package: builtins.elem (lib.getName package) allowedUnfreePackages;
             }
           ];
         };
@@ -299,6 +338,10 @@
           atyrode-cli = import ./checks/atyrode-cli.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
+          package-ownership = import ./checks/package-ownership.nix {
+            inherit lib pkgs;
+            hostConfigs = canonicalHomeConfigs;
+          };
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-evaluation = darwinEvaluation;

@@ -13,5 +13,27 @@
 
   programs.home-manager.enable = true;
 
-  home.packages = [ pkgs.atyrode ];
+  home.packages = with pkgs; [
+    atyrode
+    bat
+    btop
+    direnv
+    dua
+    fd
+    fastfetch
+    gh
+    git
+    jq
+    ripgrep
+    tree
+    unzip
+  ];
+
+  programs.direnv = {
+    enable = true;
+    nix-direnv.enable = true;
+  };
+
+  programs.fzf.enable = true;
+  programs.zoxide.enable = true;
 }

@@ -11,17 +11,22 @@ points; OMP and Codex profiles remain harness-specific mutable-state boundaries.
 
 ## Current capabilities
 
-- `base`: shell, Git, mise, and Home Manager itself.
-- `development`: the current shared CLI and development package set.
+- `base`: shell, Git/GitHub, search, direnv/nix-direnv, mise, on-demand lookup,
+  diagnostics, and Home Manager itself.
+- `development`: cross-repository Nix and shell quality tools, not project
+  language runtimes.
 - `agent-tools`: Codex, OMP, Herdr, managed agents, and their configuration.
-- `desktop`: desktop-only additions; currently selects the Linux desktop module.
+- `desktop`: operator-selected graphical applications.
+- `mobile`: Android device tooling.
+- `media`: audio/video conversion and inspection.
+- `containers`: container clients and inspection tools; the daemon is
+  system-owned.
+- `security`: declared scanning and network diagnostics.
 - `server`: marks the reviewed headless composition consumed by #28.
 
-Issue #18 owns the next package-placement pass. Until it lands, some packages
-inside `development` remain broader than their eventual mobile, media,
-container, security, or project-owned capabilities. The registry records the
-composition boundary now without claiming that package classification is
-already complete.
+Project compilers and runtimes are owned by committed dev shells, `mise.toml`,
+and native manifests. See [Package ownership](package-ownership.md) for the
+checked matrix and harness boundaries.
 
 Each activated Home Manager configuration exposes its canonical identity in
 `$ATYRODE_HOST`, its comma-separated capability set in

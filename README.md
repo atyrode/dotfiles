@@ -52,25 +52,25 @@ exec zsh
 - **tree** - Directory tree viewer
 
 ### Development Tools
-- **Python 3** + **uv** - Project and agent Python runtime tooling
-- **Node.js 24** + **Bun** + **Deno** - JavaScript/TypeScript runtimes
 - **Git** - Pre-configured with useful aliases
-- **GCC** - Native compiler for Rust/C build scripts
 - **tmux** - Terminal multiplexer
-- **Rust tooling** - cargo, rustc, rustfmt, clippy, and rust-analyzer
-- **Nix tooling** - nixd and nixfmt
+- **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
 - **OMP** - Pinned coding agent, model presets, agents, and skills
 - **Herdr** - Persistent terminal workspaces for AI coding agents
 - **mise** - Declaratively installed runtime/version manager
+- **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
+  native compilers come from committed dev shells, `mise.toml`, or native
+  manifests instead of every host's global profile
 
 ### System & Containers
 - **btop** - Modern system monitor
 - **dua** - Disk usage analyzer
-- **Docker** + **docker-compose** - Container tools on Linux configs
+- **Docker** + **docker-compose** - Linux clients in the `containers` capability
 - **OrbStack** - Docker/Linux runtime on macOS
 - **dive** - Docker image inspector
 - **fastfetch** - System info on startup
-- **ffmpeg**, **Android tools**, **scrcpy**, **nmap**, **socat**, and **clamav**
+- **Explicit capabilities** - ffmpeg (`media`), Android tools/scrcpy (`mobile`),
+  and nmap/socat/ClamAV (`security`)
 
 ### macOS Apps
 - **Nix app bundles** - ChatGPT, Godot, Lichess, Obsidian, OrbStack, Postman,
@@ -199,6 +199,10 @@ add/rename/retire workflow.
 [The `atyrode` CLI](docs/atyrode.md) documents deterministic application,
 machine-readable capability discovery, diagnostics, and the `zconf`
 compatibility boundary.
+
+[Package ownership](docs/package-ownership.md) records the checked agent
+baseline, optional capabilities, project-owned runtimes, harness boundaries,
+and closure review workflow.
 
 For this Mac, the manual switch command is:
 

@@ -1,0 +1,38 @@
+retry:
+  fallbackChains:
+    designer:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-5.6-luna:high
+    reviewer:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-5.6-luna:high
+    Tester:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-luna:high
+      - openai-codex/gpt-5.6-sol:medium
+    plan:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-5.6-luna:high
+    architect-deep:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-5.6-luna:high
+    reviewer-deep:
+      - anthropic/claude-opus-4-8:xhigh
+      - openai-codex/gpt-5.6-terra:xhigh
+      - openai-codex/gpt-5.6-luna:xhigh
+    debugger-deep:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:xhigh
+      - openai-codex/gpt-5.6-luna:xhigh
+    designer-deep:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-5.6-luna:high
+    tester-deep:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-5.6-luna:high

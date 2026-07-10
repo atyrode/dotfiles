@@ -1,0 +1,57 @@
+modelRoles:
+  default: anthropic/claude-fable-5:high
+  advisor: anthropic/claude-fable-5:medium
+  smol: openai-codex/gpt-5.6-luna:low
+  task: openai-codex/gpt-5.6-terra:medium
+  sonic: openai-codex/gpt-5.6-luna:minimal
+  explore: openai-codex/gpt-5.6-terra:low
+  librarian: openai-codex/gpt-5.6-terra:medium
+  designer: anthropic/claude-fable-5:high
+  reviewer: anthropic/claude-fable-5:high
+  Tester: anthropic/claude-fable-5:high
+  plan: anthropic/claude-fable-5:high
+  slow: anthropic/claude-fable-5:xhigh
+  architect-deep: anthropic/claude-fable-5:high
+  reviewer-deep: anthropic/claude-fable-5:high
+  debugger-deep: anthropic/claude-fable-5:high
+  designer-deep: anthropic/claude-fable-5:high
+  tester-deep: anthropic/claude-fable-5:high
+  tiny: openai-codex/gpt-5.6-luna:minimal
+  commit: openai-codex/gpt-5.6-luna:low
+
+retry:
+  enabled: false
+  modelFallback: false
+
+providers:
+  anthropic:
+    serverSideFallback: false
+
+advisor:
+  enabled: false
+  subagents: false
+
+branchSummary:
+  enabled: false
+
+autolearn:
+  enabled: false
+  autoContinue: false
+
+task:
+  agentModelOverrides:
+    architect-deep: anthropic/claude-fable-5:high
+    debugger-deep: anthropic/claude-fable-5:high
+    designer: anthropic/claude-fable-5:high
+    designer-deep: anthropic/claude-fable-5:high
+    explore: openai-codex/gpt-5.6-terra:low
+    librarian: openai-codex/gpt-5.6-terra:medium
+    plan: anthropic/claude-fable-5:high
+    reviewer: anthropic/claude-fable-5:high
+    reviewer-deep: anthropic/claude-fable-5:high
+    sonic: openai-codex/gpt-5.6-luna:minimal
+    task: openai-codex/gpt-5.6-terra:medium
+    Tester: anthropic/claude-fable-5:high
+    tester-deep: anthropic/claude-fable-5:high
+
+defaultThinkingLevel: medium

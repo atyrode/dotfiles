@@ -10,6 +10,9 @@
     nix-darwin.url = "github:LnL7/nix-darwin";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
 
+    herdr.url = "github:ogulcancelik/herdr/v0.7.3";
+    herdr.inputs.nixpkgs.follows = "nixpkgs";
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {
@@ -27,6 +30,7 @@
     self,
     nixpkgs,
     home-manager,
+    herdr,
     nix-darwin,
     nix-homebrew,
     homebrew-core,
@@ -61,6 +65,25 @@
 
     forAllSystems = lib.genAttrs systems;
 
+    agentToolsOverlay = lib.composeManyExtensions [
+      herdr.overlays.default
+      (final: _previous: {
+        agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+        herdr-configured = final.callPackage ./pkgs/herdr-configured { };
+        herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
+        omp = final.callPackage ./pkgs/omp { };
+        omp-agents = final.callPackage ./pkgs/omp-agents { };
+        omp-configured = final.callPackage ./pkgs/omp-configured { };
+      })
+    ];
+
+    pkgsFor = system:
+      import nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+        overlays = [ agentToolsOverlay ];
+      };
+
     homeDirectoryFor = system: username:
       if lib.hasSuffix "-darwin" system
       then "/Users/${username}"
@@ -74,10 +97,7 @@
       extraModules ? [ ],
     }:
       home-manager.lib.homeManagerConfiguration {
-        pkgs = import nixpkgs {
-          inherit system;
-          config.allowUnfree = true;
-        };
+        pkgs = pkgsFor system;
 
         modules =
           [
@@ -107,6 +127,7 @@
           ./darwin
           {
             nixpkgs.hostPlatform = system;
+            nixpkgs.overlays = [ agentToolsOverlay ];
           }
         ];
       };
@@ -148,6 +169,54 @@
       // {
         "${defaultUsername}-darwin" = darwinConfigs.${defaultDarwinSystem};
       };
+
+    overlays.default = agentToolsOverlay;
+
+    homeManagerModules.agent-tools = import ./modules/home/agent-tools.nix;
+
+    packages = forAllSystems (
+      system:
+      let
+        pkgs = pkgsFor system;
+      in
+      {
+        inherit (pkgs)
+          agent-tools-migrate
+          herdr
+          herdr-configured
+          herdr-omp-integration
+          omp
+          omp-agents
+          omp-configured
+          ;
+      }
+    );
+
+    checks = forAllSystems (
+      system:
+      let
+        pkgs = pkgsFor system;
+        homeEvaluation = builtins.deepSeq configs.${system}.activationPackage.drvPath (
+          pkgs.runCommand "check-home-evaluation-${system}" { } ''
+            mkdir "$out"
+          ''
+        );
+        darwinEvaluation = builtins.deepSeq darwinConfigs.${system}.system.drvPath (
+          pkgs.runCommand "check-darwin-evaluation-${system}" { } ''
+            mkdir "$out"
+          ''
+        );
+      in
+      import ./checks/agent-tools.nix { inherit lib pkgs; }
+      // {
+        home-evaluation = homeEvaluation;
+      }
+      // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
+        darwin-evaluation = darwinEvaluation;
+      }
+    );
+
+    formatter = forAllSystems (system: (pkgsFor system).nixfmt);
 
     apps = forAllSystems (
       system:

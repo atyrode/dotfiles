@@ -286,13 +286,16 @@ _dotfiles_package_description() {
     git) echo "Version control system." ;;
     go) echo "Go compiler and tooling." ;;
     godot) echo "Godot game engine editor." ;;
+    herdr) echo "Persistent terminal workspace manager for AI coding agents." ;;
     jq) echo "Command-line JSON processor." ;;
     lichess) echo "Launcher for lichess.org." ;;
+    mise) echo "Runtime and tool version manager." ;;
     nixd) echo "Nix language server." ;;
     nixfmt) echo "Official Nix formatter." ;;
     nmap) echo "Network scanner and diagnostic tool." ;;
     nodejs_24) echo "Node.js 24 JavaScript runtime." ;;
     obsidian) echo "Obsidian Markdown notes app." ;;
+    omp) echo "Oh My Pi coding agent with managed profiles." ;;
     orbstack) echo "Lightweight macOS containers and Linux machines app." ;;
     parsec) echo "Low-latency remote desktop and game streaming app." ;;
     parsec-bin) echo "Low-latency remote desktop and game streaming app." ;;
@@ -445,6 +448,16 @@ atyrode() {
     echo ""
   fi
 
+  echo -e "$(c_ok "🤖 Agent Tools:")"
+  echo -e "  $(c_file "•") $(c_file "omp")   - Balanced GPT-5.6 Terra profile"
+  echo -e "  $(c_file "•") $(c_file "ompb")  - Budget profile"
+  echo -e "  $(c_file "•") $(c_file "ompg")  - OpenAI-only high-capability profile"
+  echo -e "  $(c_file "•") $(c_file "ompo")  - GPT profile with selected Opus fallbacks"
+  echo -e "  $(c_file "•") $(c_file "ompf")  - Fable-first profile with fallback disabled"
+  echo -e "  $(c_file "•") $(c_file "herdr") - Persistent terminal workspace manager"
+  echo -e "  $(c_file "•") $(c_file "mise")  - Project runtime and tool version manager"
+  echo ""
+
   if [[ "$flake_config" == *linux-desktop* && -f "$linux_desktop_file" ]]; then
     echo -e "$(c_ok "🖥️ Linux Desktop Nix Packages:")"
     _dotfiles_extract_nix_package_group "$linux_desktop_file" "home.packages" | sort -u | _dotfiles_print_package_lines
@@ -530,6 +543,7 @@ atyrode() {
   echo -e "$(c_ok "💡 Quick Commands:")"
   echo -e "  $(c_file "•") zconf    - Reload dotfiles configuration"
   echo -e "  $(c_file "•") atyrode  - Show this help message"
+  echo -e "  $(c_file "•") omp[b|g|o|f] - Launch a managed OMP model profile"
   echo ""
   echo -e "$(c_folder "Dotfiles location: $flake_dir")\n"
 }

@@ -40,6 +40,14 @@ pkgs.runCommand "check-atyrode-cli"
     atyrode capabilities list --json | jq -e 'index("base") and index("server")' >/dev/null
     atyrode capabilities show alex-linux --json | jq -e '.host == "alex-x86_64-linux"' >/dev/null
     atyrode doctor host --json | jq -e '.ok and .registered.id == "alex-x86_64-linux"' >/dev/null
+    tools="$(atyrode doctor tools --json || true)"
+    jq -e '
+      any(.[]; .name == "OMP"
+        and .capability == "agent-tools"
+        and (.launchModes | index("untrusted"))
+        and (.versionOwner | length > 0))
+      and all(.[]; .status != "missing" or (.remediation | contains("do not install globally")))
+    ' <<< "$tools" >/dev/null
     atyrode apply --repo "$HOME/nix-dotfiles" --plan --json | jq -e '
       .host == "alex-x86_64-linux"
       and .backend == "nh-home"

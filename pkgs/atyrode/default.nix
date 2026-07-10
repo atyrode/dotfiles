@@ -1,18 +1,144 @@
 {
+  bubblewrap,
+  codex,
   coreutils,
   gitMinimal,
+  herdr-configured,
   hostname,
   hostRegistry,
   jq,
   lib,
   makeWrapper,
   nh,
+  nix,
+  omp-configured,
   runtimeShell,
   stdenvNoCC,
+  tmux,
+  zsh,
 }:
 
 let
   registry = builtins.toFile "atyrode-host-registry.json" (builtins.toJSON hostRegistry);
+  tools = builtins.toFile "atyrode-tool-inventory.json" (
+    builtins.toJSON [
+      {
+        name = "Nix";
+        command = "nix";
+        capability = "base";
+        version = lib.getVersion nix;
+        versionOwner = "pinned nixpkgs/system installer";
+        mutableState = "shared Nix store and user evaluation caches";
+        launchModes = [
+          "build"
+          "develop"
+          "shell"
+        ];
+      }
+      {
+        name = "nh";
+        command = "nh";
+        capability = "base";
+        version = lib.getVersion nh;
+        versionOwner = "pinned nixpkgs";
+        mutableState = "none beyond Nix state";
+        launchModes = [
+          "home"
+          "darwin"
+        ];
+      }
+      {
+        name = "Codex";
+        command = "codex";
+        capability = "agent-tools";
+        version = lib.getVersion codex;
+        versionOwner = "pinned nixpkgs";
+        mutableState = "~/.codex and ~/.codex-profiles";
+        launchModes = [
+          "interactive"
+          "exec"
+        ];
+      }
+      {
+        name = "OMP";
+        command = "omp";
+        capability = "agent-tools";
+        version = lib.getVersion omp-configured;
+        versionOwner = "repository package derivation";
+        mutableState = "profile-scoped auth, sessions, MCP state, and caches";
+        launchModes = [
+          "normal"
+          "preset"
+          "untrusted"
+          "acp"
+        ];
+      }
+      {
+        name = "Herdr";
+        command = "herdr";
+        capability = "agent-tools";
+        version = lib.getVersion herdr-configured;
+        versionOwner = "repository package derivation";
+        mutableState = "Herdr workspace registry";
+        launchModes = [
+          "workspace"
+          "agent"
+        ];
+      }
+      {
+        name = "tmux adapter";
+        command = "tmux";
+        capability = "agent-tools";
+        version = lib.getVersion tmux;
+        versionOwner = "pinned nixpkgs";
+        mutableState = "tmux server sockets and sessions";
+        launchModes = [
+          "Herdr backend"
+          "interactive"
+        ];
+      }
+      {
+        name = "bubblewrap isolation backend";
+        command = "bwrap";
+        capability = "agent-tools";
+        platform = "linux";
+        version = lib.getVersion bubblewrap;
+        versionOwner = "pinned nixpkgs";
+        mutableState = "none";
+        launchModes = [ "OMP task isolation" ];
+      }
+      {
+        name = "comma";
+        command = ",";
+        capability = "base";
+        version = "nix-index-database input";
+        versionOwner = "pinned flake input";
+        mutableState = "shared Nix store";
+        launchModes = [ "on-demand command" ];
+      }
+      {
+        name = "nix-index";
+        command = "nix-locate";
+        capability = "base";
+        version = "nix-index-database input";
+        versionOwner = "pinned flake input";
+        mutableState = "immutable packaged index";
+        launchModes = [ "lookup" ];
+      }
+      {
+        name = "Zsh";
+        command = "zsh";
+        capability = "base";
+        version = lib.getVersion zsh;
+        versionOwner = "pinned nixpkgs";
+        mutableState = "history and completion cache";
+        launchModes = [
+          "interactive"
+          "login"
+        ];
+      }
+    ]
+  );
 in
 stdenvNoCC.mkDerivation {
   pname = "atyrode";
@@ -25,7 +151,8 @@ stdenvNoCC.mkDerivation {
     install -D -m755 "$src" "$out/bin/atyrode"
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@shell@' '${runtimeShell}' \
-      --replace-fail '@registry@' '${registry}'
+      --replace-fail '@registry@' '${registry}' \
+      --replace-fail '@tools@' '${tools}'
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
         lib.makeBinPath [

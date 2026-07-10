@@ -9,6 +9,9 @@
       "development"
       "agent-tools"
       "desktop"
+      "mobile"
+      "media"
+      "containers"
     ];
     aliases = [ "alex-darwin" ];
   };
@@ -23,6 +26,9 @@
       "development"
       "agent-tools"
       "desktop"
+      "mobile"
+      "media"
+      "containers"
     ];
     aliases = [ ];
   };
@@ -66,6 +72,9 @@
       "development"
       "agent-tools"
       "desktop"
+      "mobile"
+      "media"
+      "containers"
     ];
     aliases = [ "alex-linux-desktop" ];
   };
@@ -81,6 +90,8 @@
       "development"
       "agent-tools"
       "server"
+      "containers"
+      "security"
     ];
     aliases = [ ];
   };

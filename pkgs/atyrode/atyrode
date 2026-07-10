@@ -3,6 +3,7 @@
 set -euo pipefail
 
 readonly registry='@registry@'
+readonly tool_inventory='@tools@'
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
 die() {
@@ -136,15 +137,29 @@ capabilities() {
 }
 
 doctor_tools() {
-  local json=0 tool rows='[]' status path
+  local json=0 rows='[]' status path entry command capability platform host data expected remediation
   [[ "${1:-}" != --json ]] || json=1
-  for tool in nix nh git jq zsh; do
-    if path="$(command -v "$tool" 2>/dev/null)"; then status=ok; else status=missing; path=''; fi
-    rows="$(jq -c --arg name "$tool" --arg status "$status" --arg path "$path" \
-      '. + [{name:$name,status:$status,path:$path}]' <<<"$rows")"
-  done
+  host="$(resolve_host)"
+  data="$(host_json "$host")"
+  while IFS= read -r entry; do
+    command="$(jq -r '.command' <<<"$entry")"
+    capability="$(jq -r '.capability' <<<"$entry")"
+    platform="$(jq -r '.platform // empty' <<<"$entry")"
+    expected=false
+    if jq -e --arg capability "$capability" '.capabilities | index($capability)' <<<"$data" >/dev/null \
+      && [[ -z "$platform" || "$platform" == "$(jq -r '.platform' <<<"$data")" ]]; then
+      expected=true
+    fi
+    if path="$(command -v "$command" 2>/dev/null)"; then status=ok
+    else status=missing; path=''; fi
+    remediation="enable the $capability capability and apply the registered host; do not install globally"
+    rows="$(jq -c --argjson entry "$entry" --arg status "$status" --arg path "$path" \
+      --argjson expected "$expected" --arg remediation "$remediation" \
+      '. + [$entry + {status:$status,path:$path,expected:$expected,remediation:(if $status == "missing" then $remediation else null end)}]' <<<"$rows")"
+  done < <(jq -c '.[]' "$tool_inventory")
   if [[ "$json" == 1 ]]; then printf '%s\n' "$rows"
-  else jq -r '.[] | "\(.name): \(.status)\(if .path == "" then "" else " (\(.path))" end)"' <<<"$rows"; fi
+  else jq -r '.[] | "\(.name): \(.status) [\(.capability)]\(if .path == "" then "" else " (\(.path))" end)"' <<<"$rows"; fi
+  jq -e 'all(.[]; (.expected | not) or .status == "ok")' <<<"$rows" >/dev/null
 }
 
 apply_config() {

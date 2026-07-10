@@ -454,103 +454,15 @@ EOF
     '';
   };
 
-  lichess = import ./pkgs/lichess.nix {
-    inherit lib pkgs;
-  };
-
-  cliPackages = with pkgs; [
-    # File navigation & search
-    zoxide
-    fzf
-    fd
-    bat
-    tree
-    ripgrep
-    unzip
-
-    # System monitoring
-    btop
-    dua
-    fastfetch
-
-    # Shell helpers
-    direnv
-    shellcheck
-    shfmt
-  ];
-
-  pythonPackages = with pkgs; [
-    # Python tooling
-    (python3.withPackages (ps: with ps; [
-      pillow
-    ]))
-    uv
-  ];
-
-  javascriptPackages = with pkgs; [
-    # JavaScript/TypeScript tooling
-    nodejs_24
-    bun
-    deno
-  ];
-
-  developmentPackages = with pkgs; [
-    # Development tools
-    git
-    gh
-    tmux
-    jq
-    ffmpeg
-    go
-    nmap
-    socat
-    android-tools
-    scrcpy
-    dive
-    clamav
-    cargo
-    rustc
-    rustfmt
-    clippy
-    rust-analyzer
-    nixd
-    nixfmt
-    codex
-    codex-use
-  ];
-
-  darwinPackages = with pkgs; [
-    chatgpt
-    godot
-    lichess
-    obsidian
-    orbstack
-    postman
-    prismlauncher
-    reaper
-    signal-desktop
-    spotify
-    vlc-bin
-    vscode
-    whatsapp-for-mac
-  ];
-
-  linuxPackages = with pkgs; [
-    # Container tools
-    docker
-    docker-compose
-
-    # Linux-only development tools
-    gcc
-    bubblewrap
-  ];
 in
 {
+  # Harness packages and state tooling belong to the agent-tools capability.
+  # Language runtimes and project compilers intentionally do not live here.
   home.packages =
-    cliPackages
-    ++ pythonPackages
-    ++ javascriptPackages
-    ++ developmentPackages
-    ++ lib.optionals pkgs.stdenv.isDarwin darwinPackages
-    ++ lib.optionals pkgs.stdenv.isLinux linuxPackages;
+    (with pkgs; [
+      codex
+      codex-use
+      tmux
+    ])
+    ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
 }

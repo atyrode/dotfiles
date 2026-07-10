@@ -352,6 +352,7 @@
         import ./checks/agent-tools.nix { inherit lib pkgs; }
         // {
           atyrode-cli = import ./checks/atyrode-cli.nix { inherit pkgs; };
+          bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
           codex-use = import ./checks/codex-use.nix {
             inherit lib pkgs;
             baseConfig = baseOnlyConfig;

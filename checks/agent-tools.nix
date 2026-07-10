@@ -6,7 +6,10 @@
 let
   defaultsConfig = ../omp/defaults.yml;
   policyConfig = ../omp/policy.yml;
+  untrustedConfig = ../omp/untrusted.yml;
+  yoloConfig = ../omp/yolo-session.yml;
   settingsGuardExtension = ../omp/extensions/managed-settings-guard.ts;
+  taskIsolationGuardExtension = ../omp/extensions/task-isolation-guard.ts;
   budgetPreset = ../omp/presets/budget.yml;
   fablePreset = ../omp/presets/fable-primary.yml;
   gptPreset = ../omp/presets/gpt56.yml;
@@ -33,6 +36,36 @@ let
   configuredStub = pkgs.callPackage ../pkgs/omp-configured {
     omp = stubOmp;
   };
+  untrustedStubOmp =
+    pkgs.runCommand "omp-16.3.14-untrusted-stub"
+      {
+        meta = stubOmp.meta;
+      }
+      ''
+        mkdir -p "$out/bin" "$out/share/zsh/site-functions"
+        cat > "$out/bin/omp" <<'EOF'
+        #!${pkgs.runtimeShell}
+        printf 'cwd=%s\n' "$PWD"
+        printf 'HOME=%s\n' "$HOME"
+        printf 'XDG_CONFIG_HOME=%s\n' "$XDG_CONFIG_HOME"
+        printf 'XDG_DATA_HOME=%s\n' "$XDG_DATA_HOME"
+        printf 'XDG_STATE_HOME=%s\n' "$XDG_STATE_HOME"
+        printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
+        printf 'OMP_PROFILE=%s\n' "$OMP_PROFILE"
+        printf 'PI_PROFILE=%s\n' "$PI_PROFILE"
+        printf 'PI_JS=%s\n' "$PI_JS"
+        printf 'PI_PY=%s\n' "$PI_PY"
+        printf 'OPENAI_API_KEY=%s\n' "''${OPENAI_API_KEY-unset}"
+        printf 'GH_TOKEN=%s\n' "''${GH_TOKEN-unset}"
+        printf 'SSH_AUTH_SOCK=%s\n' "''${SSH_AUTH_SOCK-unset}"
+        printf '%s\n' '--args--' "$@"
+        EOF
+        chmod +x "$out/bin/omp"
+        printf '#compdef omp\n' > "$out/share/zsh/site-functions/_omp"
+      '';
+  configuredUntrustedStub = pkgs.callPackage ../pkgs/omp-configured {
+    omp = untrustedStubOmp;
+  };
 in
 {
   omp-stack =
@@ -56,6 +89,8 @@ in
         for config in \
           ${defaultsConfig} \
           ${policyConfig} \
+          ${untrustedConfig} \
+          ${yoloConfig} \
           ${budgetPreset} \
           ${fablePreset} \
           ${gptPreset}
@@ -75,19 +110,31 @@ in
         test "$(yq eval '.secrets.enabled' ${defaultsConfig})" = "null"
         test "$(yq eval '.tools.approvalMode' ${policyConfig})" = "write"
         test "$(yq eval '.secrets.enabled' ${policyConfig})" = "true"
-        test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "secrets,tools"
-        test "$(yq eval '.tools | keys | join(",")' ${policyConfig})" = "approvalMode"
+        test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "secrets,task,tools"
+        test "$(yq eval '.tools | keys | sort | join(",")' ${policyConfig})" = "approval,approvalMode"
+        for tool in bash eval browser task github; do
+          test "$(yq eval ".tools.approval.$tool" ${policyConfig})" = "prompt"
+        done
         test "$(yq eval '.secrets | keys | join(",")' ${policyConfig})" = "enabled"
+        test "$(yq eval '.task.isolation.mode' ${policyConfig})" = "auto"
+        test "$(yq eval '.task.isolation.merge' ${policyConfig})" = "patch"
+        test "$(yq eval '.task.isolation.commits' ${policyConfig})" = "generic"
+        test "$(yq eval '.tools.approvalMode' ${untrustedConfig})" = "always-ask"
+        test "$(yq eval '.mcp.enableProjectConfig' ${untrustedConfig})" = "false"
+        test "$(yq eval '.tools.approval.browser' ${untrustedConfig})" = "deny"
+        test "$(yq eval '.tools.approval.github' ${untrustedConfig})" = "deny"
+        test "$(yq eval '.tools.approval.eval' ${untrustedConfig})" = "deny"
+        test "$(yq eval '.tools.approval.bash' ${yoloConfig})" = "allow"
         test "$(yq eval '.retry.modelFallback' ${fablePreset})" = "false"
 
-        for command in omp ompb ompf ompg ompo; do
+        for command in omp ompb ompf ompg ompo ompu; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
           test "''${command_version##*/}" = "16.3.14"
         done
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-        )" = "omp,ompb,ompf,ompg,ompo"
+        )" = "omp,ompb,ompf,ompg,ompo,ompu"
         test "$(${pkgs.herdr-configured}/bin/herdr --version)" = "herdr 0.7.3"
 
         for invocation in 'update' '--handoff update' 'update --handoff'; do
@@ -228,6 +275,34 @@ in
         mkdir -p "$HOME/.omp/agent"
         ${pkgs.bun}/bin/bun "$TMPDIR/settings-guard.test.ts"
 
+        cat > "$TMPDIR/task-isolation-guard.test.ts" <<'EOF'
+        import guard, { taskIsolationViolation } from "${taskIsolationGuardExtension}";
+
+        const expectViolation = (input: unknown) => {
+          if (!taskIsolationViolation(input)) throw new Error("unsafe task call was accepted");
+        };
+        const expectAllowed = (input: unknown) => {
+          if (taskIsolationViolation(input)) throw new Error("isolated task call was rejected");
+        };
+        expectViolation({});
+        expectViolation({ isolated: false });
+        expectViolation({ tasks: [] });
+        expectViolation({ tasks: [{ isolated: true }, { prompt: "unsafe" }] });
+        expectAllowed({ isolated: true });
+        expectAllowed({ tasks: [{ isolated: true }, { isolated: true }] });
+
+        const handlers = new Map<string, Function>();
+        guard({ on(name: string, handler: Function) { handlers.set(name, handler); } } as any);
+        const blocked = await handlers.get("tool_call")?.({ toolName: "task", input: {} });
+        if (blocked?.block !== true || !blocked.reason.includes("isolated")) {
+          throw new Error("task tool gate did not fail closed");
+        }
+        if (await handlers.get("tool_call")?.({ toolName: "read", input: {} })) {
+          throw new Error("unrelated tool call was blocked");
+        }
+        EOF
+        ${pkgs.bun}/bin/bun "$TMPDIR/task-isolation-guard.test.ts"
+
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
         )" -eq 13
@@ -235,6 +310,7 @@ in
           ${pkgs.herdr-omp-integration}/share/omp/extensions/herdr-omp-agent-state.ts
         test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 13
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
+        test -f ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md
 
         mkdir "$out"
@@ -344,6 +420,8 @@ in
         $TMPDIR/acp-one-shot.yml
         --config
         ${configuredStub.policyConfig}
+        --config
+        ${configuredStub.yoloConfig}
         --approval-mode
         yolo
         EOF
@@ -425,10 +503,22 @@ in
             jq -e '.effectiveManaged.modelRoles["machine-only"] == "machine/model:low"' \
               "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.tools.approvalMode == "write"' "$TMPDIR/managed.json" >/dev/null
+            jq -e '.effectiveManaged.tools.approval == {
+              "bash":"prompt","eval":"prompt","browser":"prompt","task":"prompt","github":"prompt"
+            }' "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.secrets.enabled == true' "$TMPDIR/managed.json" >/dev/null
+            jq -e '.effectiveManaged.task.isolation == {
+              "mode":"auto","merge":"patch","commits":"generic"
+            }' "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.privateToken == null' "$TMPDIR/managed.json" >/dev/null
             ! grep -q 'do-not-print' "$TMPDIR/managed.json"
-            jq -e '.enforcedPolicy == {"tools":{"approvalMode":"write"},"secrets":{"enabled":true}}' \
+            jq -e '.enforcedPolicy == {
+              "tools":{"approvalMode":"write","approval":{
+                "bash":"prompt","eval":"prompt","browser":"prompt","task":"prompt","github":"prompt"
+              }},
+              "secrets":{"enabled":true},
+              "task":{"isolation":{"mode":"auto","merge":"patch","commits":"generic"}}
+            }' \
               "$TMPDIR/managed.json" >/dev/null
             test "$(jq -r '[.sources[].kind] | join(",")' "$TMPDIR/managed.json")" = \
               'writable-machine-state,managed-defaults,native-project,native-project,machine-local,preset,one-shot-config,managed-policy,runtime-flags'
@@ -454,6 +544,11 @@ in
               config managed --json > "$TMPDIR/runtime-managed.json"
             jq -e '
               .effectiveManaged.tools.approvalMode == "yolo"
+              and .effectiveManaged.tools.approval.bash == "allow"
+              and .effectiveManaged.tools.approval.eval == "allow"
+              and .effectiveManaged.tools.approval.browser == "allow"
+              and .effectiveManaged.tools.approval.task == "allow"
+              and .effectiveManaged.tools.approval.github == "allow"
               and .effectiveManaged.modelRoles.default == "runtime/default:high"
               and .effectiveManaged.modelRoles.smol == "runtime/smol:medium"
               and .effectiveManaged.modelRoles.slow == "runtime/slow:xhigh"
@@ -469,9 +564,18 @@ in
               "smol":"runtime/smol:medium",
               "slow":"runtime/slow:xhigh",
               "plan":"runtime/plan:high",
-              "advisor":true
+              "advisor":true,
+              "unattended":true
             }' \
               "$TMPDIR/runtime-managed.json" >/dev/null
+            jq -e '[.sources[].kind] | index("one-session-unattended-policy") != null' \
+              "$TMPDIR/runtime-managed.json" >/dev/null
+
+            ${configuredStub}/bin/omp --yolo --mode rpc \
+              > "$TMPDIR/yolo.out" 2> "$TMPDIR/yolo.err"
+            grep -q 'unattended yolo mode is enabled for this process only' "$TMPDIR/yolo.err"
+            grep -Fx -- '--config' "$TMPDIR/yolo.out" >/dev/null
+            grep -Fx -- '${configuredStub.yoloConfig}' "$TMPDIR/yolo.out" >/dev/null
 
             PI_SMOL_MODEL=env/smol:low PI_SLOW_MODEL=env/slow:high PI_PLAN_MODEL=env/plan:medium \
               ${configuredStub}/bin/omp config managed --json > "$TMPDIR/runtime-env.json"
@@ -634,6 +738,72 @@ in
               grep -q 'managed by Nix' "$TMPDIR/update.err"
             done
 
+            untrusted_home="$TMPDIR/untrusted-home"
+            untrusted_project="$TMPDIR/untrusted-project"
+            mkdir -p "$untrusted_home" "$untrusted_project/.omp"
+            cat > "$untrusted_project/.omp/settings.json" <<'EOF'
+        {"tools":{"approvalMode":"yolo"},"secrets":{"enabled":false}}
+        EOF
+            cat > "$untrusted_project/.omp/config.yml" <<'EOF'
+        tools:
+          approvalMode: yolo
+          approval:
+            browser: allow
+            github: allow
+            eval: allow
+        secrets:
+          enabled: false
+        mcp:
+          enableProjectConfig: true
+        task:
+          isolation:
+            mode: none
+        EOF
+            HOME="$untrusted_home" \
+              OPENAI_API_KEY=must-not-cross-boundary \
+              GH_TOKEN=must-not-cross-boundary \
+              SSH_AUTH_SOCK="$TMPDIR/agent.sock" \
+              ${configuredUntrustedStub}/bin/ompu \
+                --cwd "$untrusted_project" --mode rpc --no-session \
+                > "$TMPDIR/untrusted.out"
+            grep -Fx "cwd=${configuredUntrustedStub.neutralRoot}" "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx "HOME=$untrusted_home/.local/state/atyrode/omp-untrusted/home" \
+              "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'OMP_PROFILE=untrusted' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'PI_PROFILE=untrusted' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'PI_JS=0' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'PI_PY=0' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'OPENAI_API_KEY=unset' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'GH_TOKEN=unset' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx 'SSH_AUTH_SOCK=unset' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx '${configuredUntrustedStub.untrustedConfig}' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx "$untrusted_project/.omp/settings.json" "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx "$untrusted_project/.omp/config.yml" "$TMPDIR/untrusted.out" >/dev/null
+            test "$(grep -nFx '${configuredUntrustedStub.untrustedConfig}' "$TMPDIR/untrusted.out" | cut -d: -f1)" \
+              -gt "$(grep -nFx "$untrusted_project/.omp/config.yml" "$TMPDIR/untrusted.out" | cut -d: -f1)"
+            grep -Fx -- '--no-lsp' "$TMPDIR/untrusted.out" >/dev/null
+            grep -Fx -- '--no-pty' "$TMPDIR/untrusted.out" >/dev/null
+
+            for unsafe in '--yolo' '--approval-mode yolo' '--config attacker.yml' '--no-extensions'; do
+              read -r -a args <<< "$unsafe"
+              set +e
+              HOME="$untrusted_home" ${configuredUntrustedStub}/bin/ompu "''${args[@]}" \
+                > "$TMPDIR/untrusted-refused.out" 2> "$TMPDIR/untrusted-refused.err"
+              untrusted_refused_status=$?
+              set -e
+              test "$untrusted_refused_status" -eq 2
+              grep -q "ompu refused" "$TMPDIR/untrusted-refused.err"
+            done
+
+            mkdir -p "$untrusted_project/.omp/extensions"
+            set +e
+            HOME="$untrusted_home" ${configuredUntrustedStub}/bin/ompu --cwd "$untrusted_project" \
+              > "$TMPDIR/untrusted-project.out" 2> "$TMPDIR/untrusted-project.err"
+            executable_project_status=$?
+            set -e
+            test "$executable_project_status" -eq 2
+            grep -q 'executable or policy-bearing project state' "$TMPDIR/untrusted-project.err"
+
             mkdir "$out"
       '';
 
@@ -696,6 +866,12 @@ in
           custom: preserved
         tools:
           approvalMode: yolo
+          approval:
+            bash: allow
+            eval: allow
+            browser: allow
+            task: allow
+            github: allow
           custom: preserved
         secrets:
           enabled: false
@@ -722,6 +898,10 @@ in
           minBlockedMinutes: 42
         task:
           disabledAgents: []
+          isolation:
+            mode: none
+            merge: commits
+            commits: agent
           maxConcurrency: 3
         memory:
           backend: local
@@ -751,6 +931,7 @@ in
             test "$(yq eval '.retry.enabled' "$HOME/.omp/agent/config.yml")" = "null"
             test "$(yq eval '.retry.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
             test "$(yq eval '.tools.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
+            test "$(yq eval '.tools.approval' "$HOME/.omp/agent/config.yml")" = "null"
             test "$(yq eval '.secrets.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
             test "$(yq eval '.advisor.immuneTurns' "$HOME/.omp/agent/config.yml")" = "7"
             test "$(yq eval '.statusLine.separator' "$HOME/.omp/agent/config.yml")" = "preserved"
@@ -759,6 +940,7 @@ in
             test "$(yq eval '.display.smoothStreaming' "$HOME/.omp/agent/config.yml")" = "false"
             test "$(yq eval '.codexResets.minBlockedMinutes' "$HOME/.omp/agent/config.yml")" = "42"
             test "$(yq eval '.task.maxConcurrency' "$HOME/.omp/agent/config.yml")" = "3"
+            test "$(yq eval '.task.isolation' "$HOME/.omp/agent/config.yml")" = "null"
             test "$(yq eval '.memory.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
             test "$(yq eval '.theme.light' "$HOME/.omp/agent/config.yml")" = "light"
             test "$(yq eval '.browser.custom' "$HOME/.omp/agent/config.yml")" = "preserved"

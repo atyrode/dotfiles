@@ -13,7 +13,7 @@ Nix owns:
 - the managed OMP defaults, enforced policy, and model presets;
 - the patched bundled agents, custom deep agents, global generic skills, and
   managed-settings guard extension;
-- the `omp`, `ompb`, `ompf`, `ompg`, and `ompo` launchers; and
+- the `omp`, `ompb`, `ompf`, `ompg`, `ompo`, and restricted `ompu` launchers; and
 - mise itself, with no globally declared mise tools.
 
 OMP and Herdr continue to own mutable runtime data such as authentication,
@@ -23,9 +23,10 @@ belong in this repository or the Nix store.
 This subsystem deliberately owns neither a `pi` executable nor a `.pi`
 mutable-state namespace. The bounded Pi experiment in #29 may therefore install
 alongside OMP without an executable collision, shared authentication/session
-state, or any parity requirement. The package check asserts the exact five OMP
+state, or any parity requirement. The package check asserts the exact six OMP
 launcher names and verifies that an OMP clean-home startup does not create
-`.pi` state.
+`.pi` state. Security boundaries and the untrusted-project launcher are
+documented in [Agent security](agent-security.md).
 
 Agents, rules, the settings guard, and the Herdr extension are assembled into
 a read-only OMP extension-package root in the Nix store and injected explicitly
@@ -48,6 +49,7 @@ rewriting the Bun executable with `patchelf`.
 | `ompg` | OpenAI-only difficult work | GPT-5.6 Sol with Terra/Luna fallbacks |
 | `ompo` | Expensive review and deep reasoning | GPT-5.6 with Opus fallbacks for selected roles |
 | `ompf` | Fable-first work with predictable routing | Fable for primary/deliberative roles, with automatic fallback disabled |
+| `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 
 The balanced profile keeps cheap, fast roles on Luna or low-thinking Terra,
 uses Sol for the hardest debugging and testing, and reserves Fable/Opus for
@@ -89,12 +91,17 @@ Normal sessions load configuration in this order:
 7. the Nix-managed enforced policy; and
 8. explicit runtime flags such as `--model` or `--approval-mode`.
 
-Later layers win. The enforced policy currently fixes workspace-write approval
-and secret obfuscation for every normal session. A supported runtime flag may
-still override policy for that one process, while machine, project, preset, and
-one-shot config files cannot. `omp acp` receives the same layers in the same
-order, with the overlays placed after the `acp` subcommand as required by OMP's
-parser.
+Later layers win. The enforced policy fixes workspace-write approval, secret
+obfuscation, explicit prompts for shell/eval, browser, task spawning, and
+GitHub capabilities, plus automatic task isolation with patch merging. Machine,
+project, preset, and one-shot config files cannot weaken those controls. `omp
+acp` receives the same layers in the same order, with the overlays placed after
+the `acp` subcommand as required by OMP's parser.
+
+Unattended yolo mode is available only through an explicit `--yolo`,
+`--auto-approve`, or `--approval-mode yolo` runtime flag. The wrapper prints a
+warning and applies a one-process approval overlay after the enforced policy.
+There is intentionally no persistent yolo config, profile, or alias.
 
 OMP maintenance subcommands are passed directly to OMP because their parsers do
 not consistently accept interactive launch flags. Preset launchers preserve

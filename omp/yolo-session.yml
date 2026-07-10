@@ -1,0 +1,7 @@
+tools:
+  approval:
+    bash: allow
+    eval: allow
+    browser: allow
+    task: allow
+    github: allow

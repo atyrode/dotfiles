@@ -1,5 +1,17 @@
 tools:
   approvalMode: write
+  approval:
+    bash: prompt
+    eval: prompt
+    browser: prompt
+    task: prompt
+    github: prompt
 
 secrets:
   enabled: true
+
+task:
+  isolation:
+    mode: auto
+    merge: patch
+    commits: generic

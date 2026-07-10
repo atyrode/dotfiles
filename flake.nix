@@ -69,7 +69,6 @@
       herdr.overlays.default
       (final: _previous: {
         agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
-        bigpowers = final.callPackage ./pkgs/bigpowers { };
         herdr-configured = final.callPackage ./pkgs/herdr-configured { };
         herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
         omp = final.callPackage ./pkgs/omp { };
@@ -183,7 +182,6 @@
       {
         inherit (pkgs)
           agent-tools-migrate
-          bigpowers
           herdr
           herdr-configured
           herdr-omp-integration

@@ -260,7 +260,6 @@ _dotfiles_package_description() {
     bat) echo "cat replacement with syntax highlighting and paging." ;;
     bitwarden) echo "Bitwarden password manager desktop app." ;;
     btop) echo "Interactive terminal system monitor." ;;
-    bigpowers) echo "Pinned skills and prompts loaded into interactive OMP sessions." ;;
     bubblewrap) echo "Linux sandboxing helper used by some desktop tools." ;;
     bun) echo "JavaScript runtime, package manager, and test runner." ;;
     cargo) echo "Rust package manager and build tool." ;;
@@ -296,7 +295,7 @@ _dotfiles_package_description() {
     nmap) echo "Network scanner and diagnostic tool." ;;
     nodejs_24) echo "Node.js 24 JavaScript runtime." ;;
     obsidian) echo "Obsidian Markdown notes app." ;;
-    omp) echo "Oh My Pi coding agent with managed profiles and Bigpowers." ;;
+    omp) echo "Oh My Pi coding agent with managed profiles." ;;
     orbstack) echo "Lightweight macOS containers and Linux machines app." ;;
     parsec) echo "Low-latency remote desktop and game streaming app." ;;
     parsec-bin) echo "Low-latency remote desktop and game streaming app." ;;
@@ -450,7 +449,7 @@ atyrode() {
   fi
 
   echo -e "$(c_ok "🤖 Agent Tools:")"
-  echo -e "  $(c_file "•") $(c_file "omp")   - Balanced GPT-5.6 Terra profile with Bigpowers"
+  echo -e "  $(c_file "•") $(c_file "omp")   - Balanced GPT-5.6 Terra profile"
   echo -e "  $(c_file "•") $(c_file "ompb")  - Budget profile"
   echo -e "  $(c_file "•") $(c_file "ompg")  - OpenAI-only high-capability profile"
   echo -e "  $(c_file "•") $(c_file "ompo")  - GPT profile with selected Opus fallbacks"

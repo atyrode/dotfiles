@@ -24,7 +24,7 @@ let
 in
 {
   options.atyrode.agentTools = {
-    enable = lib.mkEnableOption "the declarative OMP, Herdr, and Bigpowers stack";
+    enable = lib.mkEnableOption "the declarative OMP and Herdr stack";
 
     migrateLegacy = lib.mkOption {
       type = lib.types.bool;

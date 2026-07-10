@@ -28,12 +28,7 @@ let
             printf '#compdef omp\n' > "$out/share/zsh/site-functions/_omp"
       '';
 
-  stubBigpowers = pkgs.runCommand "bigpowers-stub" { } ''
-    mkdir -p "$out/share/omp/plugins/bigpowers"
-  '';
-
   configuredStub = pkgs.callPackage ../pkgs/omp-configured {
-    bigpowers = stubBigpowers;
     omp = stubOmp;
   };
 in
@@ -92,15 +87,6 @@ in
         test ! -s "$TMPDIR/models.err"
         jq -e '.models | type == "array"' "$TMPDIR/models.json" >/dev/null
 
-        jq -e '
-          .name == "bigpowers" and
-          .version == "2.76.2" and
-          .pi.skills == ["./.pi/skills"] and
-          .pi.prompts == ["./.pi/prompts"]
-        ' ${pkgs.bigpowers}/share/omp/plugins/bigpowers/package.json >/dev/null
-        test ! -e ${pkgs.bigpowers}/share/omp/plugins/bigpowers/.mcp.json
-        test -f ${pkgs.bigpowers}/share/omp/plugins/bigpowers/.pi/skills/using-bigpowers/SKILL.md
-
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
         )" -eq 13
@@ -125,8 +111,6 @@ in
             cat > "$TMPDIR/expected" <<EOF
         --config
         ${toString baseConfig}
-        --plugin-dir
-        ${stubBigpowers}/share/omp/plugins/bigpowers
         --config
         $XDG_CONFIG_HOME/omp/local.yml
         --config
@@ -145,18 +129,10 @@ in
             set +e
             ${configuredStub}/bin/omp update > "$TMPDIR/update.out" 2> "$TMPDIR/update.err"
             update_status=$?
-        ${configuredStub}/bin/omp plugin install bigpowers > "$TMPDIR/plugin.out" 2> "$TMPDIR/plugin.err"
-        plugin_status=$?
-        ${configuredStub}/bin/omp install --global bigpowers > "$TMPDIR/install.out" 2> "$TMPDIR/install.err"
-        install_status=$?
-        set -e
+            set -e
 
-        test "$update_status" -eq 2
-        test "$plugin_status" -eq 2
-        test "$install_status" -eq 2
-        grep -q 'managed by Nix' "$TMPDIR/update.err"
-        grep -q 'managed by Nix' "$TMPDIR/plugin.err"
-        grep -q 'managed by Nix' "$TMPDIR/install.err"
+            test "$update_status" -eq 2
+            grep -q 'managed by Nix' "$TMPDIR/update.err"
 
             mkdir "$out"
       '';

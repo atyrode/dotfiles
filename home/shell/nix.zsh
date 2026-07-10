@@ -21,6 +21,11 @@ _dotfiles_config() {
     return 0
   fi
 
+  if [[ -n "${ATYRODE_HOST:-}" ]]; then
+    echo "$ATYRODE_HOST"
+    return 0
+  fi
+
   local system
   system="$(_dotfiles_system)" || return 1
 

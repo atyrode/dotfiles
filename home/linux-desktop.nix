@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 
 let
   lichess = import ./pkgs/lichess.nix {
@@ -6,7 +6,7 @@ let
     lib = pkgs.lib;
   };
 in
-{
+lib.mkIf pkgs.stdenv.isLinux {
   home.packages = with pkgs; [
     arduino-ide
     lichess

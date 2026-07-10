@@ -26,200 +26,282 @@
     };
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    home-manager,
-    herdr,
-    nix-darwin,
-    nix-homebrew,
-    homebrew-core,
-    homebrew-cask,
-    ...
-  }:
-  let
-    lib = nixpkgs.lib;
-
-    defaultUsername = "alex";
-
-    hostAliases = {
-      "ubuntu-4gb-nbg1-1" = "x86_64-linux";
-    };
-
-    systems = [
-      "aarch64-darwin"
-      "x86_64-darwin"
-      "aarch64-linux"
-      "x86_64-linux"
-    ];
-
-    darwinSystems = [
-      "aarch64-darwin"
-      "x86_64-darwin"
-    ];
-
-    # Safe fallback for bare `home-manager --flake .` invocations.
-    # Shell helpers should still select an explicit system-specific config.
-    defaultSystem = "x86_64-linux";
-    defaultDarwinSystem = "aarch64-darwin";
-
-    forAllSystems = lib.genAttrs systems;
-
-    agentToolsOverlay = lib.composeManyExtensions [
-      herdr.overlays.default
-      (final: _previous: {
-        agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
-        herdr-configured = final.callPackage ./pkgs/herdr-configured { };
-        herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
-        omp = final.callPackage ./pkgs/omp { };
-        omp-agents = final.callPackage ./pkgs/omp-agents { };
-        omp-configured = final.callPackage ./pkgs/omp-configured { };
-      })
-    ];
-
-    pkgsFor = system:
-      import nixpkgs {
-        inherit system;
-        config.allowUnfree = true;
-        overlays = [ agentToolsOverlay ];
-      };
-
-    homeDirectoryFor = system: username:
-      if lib.hasSuffix "-darwin" system
-      then "/Users/${username}"
-      else "/home/${username}";
-
-    # Helper function to create home configuration
-    mkHomeConfig = {
-      system,
-      username ? defaultUsername,
-      homeDirectory ? homeDirectoryFor system username,
-      extraModules ? [ ],
+  outputs =
+    {
+      self,
+      nixpkgs,
+      home-manager,
+      herdr,
+      nix-darwin,
+      nix-homebrew,
+      homebrew-core,
+      homebrew-cask,
+      ...
     }:
-      home-manager.lib.homeManagerConfiguration {
-        pkgs = pkgsFor system;
+    let
+      lib = nixpkgs.lib;
 
-        modules =
-          [
-            ./home
-            {
-              home.username = username;
-              home.homeDirectory = homeDirectory;
-            }
-          ]
-          ++ extraModules;
+      systems = [
+        "aarch64-darwin"
+        "x86_64-darwin"
+        "aarch64-linux"
+        "x86_64-linux"
+      ];
+
+      forAllSystems = lib.genAttrs systems;
+
+      capabilityModules = {
+        base = ./home/profiles/base.nix;
+        development = ./home/profiles/development.nix;
+        agent-tools = ./home/profiles/agent-tools.nix;
+        desktop = ./home/profiles/desktop.nix;
+        server = ./home/profiles/server.nix;
       };
+      knownCapabilities = builtins.attrNames capabilityModules;
+      rawHosts = import ./hosts;
 
-    mkDarwinConfig = { system, username ? defaultUsername, homeDirectory ? homeDirectoryFor system username }:
-      nix-darwin.lib.darwinSystem {
-        specialArgs = {
-          inherit
-            homeDirectory
-            homebrew-cask
-            homebrew-core
-            username
-            ;
+      validateHost =
+        name: host:
+        let
+          expectedPlatform = if lib.hasSuffix "-darwin" host.system then "darwin" else "linux";
+          capabilities = host.capabilities or [ ];
+          aliases = host.aliases or [ ];
+        in
+        assert lib.assertMsg (builtins.elem host.system systems)
+          "host ${name} uses unsupported system ${host.system}";
+        assert lib.assertMsg (
+          host.platform == expectedPlatform
+        ) "host ${name} platform ${host.platform} does not match ${host.system}";
+        assert lib.assertMsg (
+          builtins.isString host.username && host.username != ""
+        ) "host ${name} must declare a non-empty username";
+        assert lib.assertMsg (
+          builtins.isString host.homeDirectory && lib.hasPrefix "/" host.homeDirectory
+        ) "host ${name} must declare an absolute homeDirectory";
+        assert lib.assertMsg (capabilities != [ ]) "host ${name} must select at least one capability";
+        assert lib.assertMsg (builtins.elem "base" capabilities)
+          "host ${name} must select the base capability";
+        assert lib.assertMsg (
+          !(builtins.elem "server" capabilities && builtins.elem "desktop" capabilities)
+        ) "host ${name} cannot combine server and desktop capabilities";
+        assert lib.assertMsg (
+          builtins.length capabilities == builtins.length (lib.unique capabilities)
+        ) "host ${name} declares duplicate capabilities";
+        assert lib.assertMsg (lib.all (
+          capability: builtins.hasAttr capability capabilityModules
+        ) capabilities) "host ${name} declares an unknown capability";
+        assert lib.assertMsg (
+          builtins.length aliases == builtins.length (lib.unique aliases)
+        ) "host ${name} declares duplicate aliases";
+        host
+        // {
+          inherit aliases capabilities;
+          hostname = host.hostname or null;
         };
 
-        modules = [
-          home-manager.darwinModules.home-manager
-          nix-homebrew.darwinModules.nix-homebrew
-          ./darwin
-          {
-            nixpkgs.hostPlatform = system;
-            nixpkgs.overlays = [ agentToolsOverlay ];
-          }
-        ];
-      };
+      validatedHosts = lib.mapAttrs validateHost rawHosts;
+      canonicalHostNames = builtins.attrNames validatedHosts;
+      allHostAliases = lib.concatMap (name: validatedHosts.${name}.aliases) canonicalHostNames;
+      hosts =
+        assert lib.assertMsg (
+          builtins.length allHostAliases == builtins.length (lib.unique allHostAliases)
+        ) "host aliases must be globally unique";
+        assert lib.assertMsg (lib.all (
+          alias: !(builtins.hasAttr alias validatedHosts)
+        ) allHostAliases) "host aliases must not collide with canonical host names";
+        validatedHosts;
 
-    configs = forAllSystems (system: mkHomeConfig { inherit system; });
-    linuxDesktopConfigs = {
-      "x86_64-linux" = mkHomeConfig {
-        system = "x86_64-linux";
-        extraModules = [ ./home/linux-desktop.nix ];
-      };
-    };
-    darwinConfigs = lib.genAttrs darwinSystems (system: mkDarwinConfig { inherit system; });
-  in {
-    homeConfigurations =
-      {
-        # Default configuration for bare Home Manager invocations.
-        ${defaultUsername} = configs.${defaultSystem};
-      }
-      // lib.mapAttrs' (
-        system: config:
-          lib.nameValuePair "${defaultUsername}-${system}" config
-      ) configs
-      // lib.mapAttrs' (
-        hostname: system:
-          lib.nameValuePair "${defaultUsername}@${hostname}" configs.${system}
-      ) hostAliases
-      // {
-        "${defaultUsername}-darwin" = configs.${defaultDarwinSystem};
-        "${defaultUsername}-linux" = configs."x86_64-linux";
-        "${defaultUsername}-linux-desktop" = linuxDesktopConfigs."x86_64-linux";
-        "${defaultUsername}-x86_64-linux-desktop" = linuxDesktopConfigs."x86_64-linux";
-      };
-
-    darwinConfigurations =
-      lib.mapAttrs' (
-        system: config:
-          lib.nameValuePair "${defaultUsername}-${system}" config
-      ) darwinConfigs
-      // {
-        "${defaultUsername}-darwin" = darwinConfigs.${defaultDarwinSystem};
-      };
-
-    overlays.default = agentToolsOverlay;
-
-    homeManagerModules.agent-tools = import ./modules/home/agent-tools.nix;
-
-    packages = forAllSystems (
-      system:
-      let
-        pkgs = pkgsFor system;
-      in
-      {
-        inherit (pkgs)
-          agent-tools-migrate
-          herdr
-          herdr-configured
-          herdr-omp-integration
-          omp
-          omp-agents
-          omp-configured
+      publicHost = name: host: {
+        id = name;
+        inherit (host)
+          aliases
+          capabilities
+          homeDirectory
+          hostname
+          platform
+          system
+          username
           ;
-      }
-    );
+      };
+      publicHosts = lib.mapAttrs publicHost hosts;
+      hostRegistryJson = builtins.toJSON publicHosts;
 
-    checks = forAllSystems (
-      system:
-      let
-        pkgs = pkgsFor system;
-        homeEvaluation = builtins.deepSeq configs.${system}.activationPackage.drvPath (
-          pkgs.runCommand "check-home-evaluation-${system}" { } ''
-            mkdir "$out"
-          ''
-        );
-        darwinEvaluation = builtins.deepSeq darwinConfigs.${system}.system.drvPath (
-          pkgs.runCommand "check-darwin-evaluation-${system}" { } ''
-            mkdir "$out"
-          ''
-        );
-      in
-      import ./checks/agent-tools.nix { inherit lib pkgs; }
-      // {
-        home-evaluation = homeEvaluation;
-      }
-      // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
-        darwin-evaluation = darwinEvaluation;
-      }
-    );
+      mkHostIdentityModule = name: host: {
+        home.sessionVariables = {
+          ATYRODE_HOST = name;
+          ATYRODE_CAPABILITIES = lib.concatStringsSep "," host.capabilities;
+        };
 
-    formatter = forAllSystems (system: (pkgsFor system).nixfmt);
+        xdg.configFile."atyrode/host.json".text = builtins.toJSON (publicHost name host);
+      };
 
-    apps = forAllSystems (
-      system:
+      modulesForHost =
+        name: host:
+        map (capability: capabilityModules.${capability}) host.capabilities
+        ++ [ (mkHostIdentityModule name host) ];
+
+      agentToolsOverlay = lib.composeManyExtensions [
+        herdr.overlays.default
+        (final: _previous: {
+          agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+          herdr-configured = final.callPackage ./pkgs/herdr-configured { };
+          herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
+          omp = final.callPackage ./pkgs/omp { };
+          omp-agents = final.callPackage ./pkgs/omp-agents { };
+          omp-configured = final.callPackage ./pkgs/omp-configured { };
+        })
+      ];
+
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+          overlays = [ agentToolsOverlay ];
+        };
+
+      mkHomeConfig =
+        name: host:
+        home-manager.lib.homeManagerConfiguration {
+          pkgs = pkgsFor host.system;
+
+          modules = modulesForHost name host ++ [
+            {
+              home.username = host.username;
+              home.homeDirectory = host.homeDirectory;
+            }
+          ];
+        };
+
+      mkDarwinConfig =
+        name: host:
+        nix-darwin.lib.darwinSystem {
+          specialArgs = {
+            inherit
+              homebrew-cask
+              homebrew-core
+              ;
+            homeDirectory = host.homeDirectory;
+            homeModules = modulesForHost name host;
+            username = host.username;
+          };
+
+          modules = [
+            home-manager.darwinModules.home-manager
+            nix-homebrew.darwinModules.nix-homebrew
+            ./darwin
+            {
+              nixpkgs.hostPlatform = host.system;
+              nixpkgs.overlays = [ agentToolsOverlay ];
+            }
+          ];
+        };
+
+      canonicalHomeConfigs = lib.mapAttrs mkHomeConfig hosts;
+      darwinHosts = lib.filterAttrs (_name: host: host.platform == "darwin") hosts;
+      canonicalDarwinConfigs = lib.mapAttrs mkDarwinConfig darwinHosts;
+
+      aliasesFor =
+        selectedHosts: configs:
+        lib.foldl' (
+          aliases: name:
+          aliases
+          // builtins.listToAttrs (
+            map (alias: lib.nameValuePair alias configs.${name}) selectedHosts.${name}.aliases
+          )
+        ) { } (builtins.attrNames selectedHosts);
+    in
+    {
+      homeConfigurations = canonicalHomeConfigs // aliasesFor hosts canonicalHomeConfigs;
+
+      darwinConfigurations = canonicalDarwinConfigs // aliasesFor darwinHosts canonicalDarwinConfigs;
+
+      lib = {
+        capabilities = knownCapabilities;
+        hostRegistry = publicHosts;
+      };
+
+      overlays.default = agentToolsOverlay;
+
+      homeManagerModules.agent-tools = import ./modules/home/agent-tools.nix;
+
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        {
+          inherit (pkgs)
+            agent-tools-migrate
+            herdr
+            herdr-configured
+            herdr-omp-integration
+            omp
+            omp-agents
+            omp-configured
+            ;
+        }
+      );
+
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          systemHomeConfigs = lib.filterAttrs (
+            name: _config: hosts.${name}.system == system
+          ) canonicalHomeConfigs;
+          systemDarwinConfigs = lib.filterAttrs (
+            name: _config: darwinHosts.${name}.system == system
+          ) canonicalDarwinConfigs;
+          homeEvaluationPaths = lib.mapAttrsToList (
+            _name: config: config.activationPackage.drvPath
+          ) systemHomeConfigs;
+          darwinEvaluationPaths = lib.mapAttrsToList (
+            _name: config: config.system.drvPath
+          ) systemDarwinConfigs;
+          homeEvaluation = builtins.deepSeq homeEvaluationPaths (
+            pkgs.runCommand "check-home-evaluation-${system}" { } ''
+              mkdir "$out"
+            ''
+          );
+          darwinEvaluation = builtins.deepSeq darwinEvaluationPaths (
+            pkgs.runCommand "check-darwin-evaluation-${system}" { } ''
+              mkdir "$out"
+            ''
+          );
+          registryFile = pkgs.writeText "atyrode-host-registry.json" hostRegistryJson;
+          registryCheck =
+            pkgs.runCommand "check-host-registry-${system}"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                jq -e '
+                  length >= 6
+                  and all(.[];
+                    (.id | type == "string")
+                    and (.system | type == "string")
+                    and (.username | type == "string")
+                    and (.homeDirectory | startswith("/"))
+                    and (.capabilities | length > 0))
+                ' ${registryFile} >/dev/null
+                mkdir "$out"
+              '';
+        in
+        import ./checks/agent-tools.nix { inherit lib pkgs; }
+        // {
+          home-evaluation = homeEvaluation;
+          host-registry = registryCheck;
+        }
+        // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
+          darwin-evaluation = darwinEvaluation;
+        }
+      );
+
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
+
+      apps = forAllSystems (
+        system:
         {
           home-manager = {
             type = "app";
@@ -232,6 +314,6 @@
             program = "${nix-darwin.packages.${system}.darwin-rebuild}/bin/darwin-rebuild";
           };
         }
-    );
-  };
+      );
+    };
 }

@@ -185,7 +185,15 @@ alex-x86_64-darwin
 alex-aarch64-linux
 alex-x86_64-linux
 alex-x86_64-linux-desktop
+alex@ubuntu-4gb-nbg1-1
 ```
+
+These outputs are generated from the authoritative host registry and
+composable `base`, `development`, `agent-tools`, `desktop`, and `server`
+capabilities. Compatibility aliases such as `alex`, `alex-linux`,
+`alex-darwin`, and `alex-linux-desktop` remain available. See
+[Hosts and capabilities](docs/hosts.md) for the identity contract and the
+add/rename/retire workflow.
 
 For this Mac, the manual switch command is:
 

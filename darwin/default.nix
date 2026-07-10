@@ -1,6 +1,7 @@
 {
   config,
   homeDirectory,
+  homeModules,
   homebrew-cask,
   homebrew-core,
   pkgs,
@@ -24,7 +25,7 @@
     backupFileExtension = "backup";
 
     users.${username} = {
-      imports = [ ../home ];
+      imports = homeModules;
 
       home = {
         inherit username homeDirectory;

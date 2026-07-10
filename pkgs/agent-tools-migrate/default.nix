@@ -1,5 +1,7 @@
 {
   coreutils,
+  diffutils,
+  flock,
   jq,
   lib,
   writeShellApplication,
@@ -11,6 +13,8 @@ writeShellApplication {
 
   runtimeInputs = [
     coreutils
+    diffutils
+    flock
     jq
     yq-go
   ];

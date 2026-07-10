@@ -59,6 +59,9 @@ exec zsh
 - **tmux** - Terminal multiplexer
 - **Rust tooling** - cargo, rustc, rustfmt, clippy, and rust-analyzer
 - **Nix tooling** - nixd and nixfmt
+- **OMP + Bigpowers** - Pinned coding agent, model presets, agents, and skills
+- **Herdr** - Persistent terminal workspaces for AI coding agents
+- **mise** - Declaratively installed runtime/version manager
 
 ### System & Containers
 - **btop** - Modern system monitor
@@ -100,6 +103,21 @@ zconf         # Reload dotfiles configuration
 atyrode       # Show help and list all tools
 ```
 
+### Agent Tools
+```bash
+omp           # Balanced GPT-5.6 Terra profile
+ompb          # Budget profile
+ompg          # OpenAI-only high-capability profile
+ompo          # GPT profile with selected Opus fallbacks
+ompf          # Fable-first profile with fallback disabled
+herdr         # Persistent terminal workspace manager
+```
+
+OMP, Bigpowers, Herdr, their integration, shared skills, and mise are installed
+by `zconf` with the rest of the Home Manager profile. See
+[Agent tools](docs/agent-tools.md) for ownership, model routing, project skill
+layout, migration behavior, and updates.
+
 ### Git Helpers
 ```bash
 hub <repo>    # Clone your GitHub repo and setup Python env
@@ -131,16 +149,27 @@ nix flake update
 zconf
 ```
 
+Pinned OMP, Bigpowers, and Herdr updates have additional hash and compatibility
+checks documented in [Agent tools](docs/agent-tools.md#updating).
+
 ---
 
 ## 📁 Structure
 
 ```
 dotfiles/
+├── .github/workflows/       # Native Linux/macOS flake checks
+├── agents/                  # Generic cross-project skills
+├── checks/                  # Nix package and migration checks
 ├── darwin/                # nix-darwin and Homebrew configuration
 │   └── default.nix        # macOS system and cask definitions
+├── docs/                    # Architecture and maintenance guides
 ├── flake.nix              # Main flake configuration
 ├── install.sh             # Quick install script
+├── modules/                 # Reusable Home Manager modules
+├── omp/                     # Managed config, presets, agents, and rules
+├── pkgs/                    # Pinned custom derivations and wrappers
+├── scripts/                 # Activation-time migration logic
 └── home/                  # Home Manager modules
     ├── default.nix        # Main configuration
     ├── linux-desktop.nix  # Optional Linux desktop packages
@@ -273,3 +302,7 @@ Nix will be installed automatically if not present.
 - [Home Manager](https://github.com/nix-community/home-manager)
 - [nix-darwin](https://github.com/LnL7/nix-darwin)
 - [nix-homebrew](https://github.com/zhaofengli/nix-homebrew)
+- [Oh My Pi](https://github.com/can1357/oh-my-pi)
+- [Bigpowers](https://github.com/danielvm-git/bigpowers)
+- [Herdr](https://herdr.dev)
+- [mise](https://mise.jdx.dev)

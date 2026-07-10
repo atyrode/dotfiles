@@ -49,9 +49,4 @@ in
       done
     fi
   '';
-
-  home.file.".agents/skills" = {
-    source = ../codex/skills;
-    recursive = true;
-  };
 }

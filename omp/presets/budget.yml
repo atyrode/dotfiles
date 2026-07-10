@@ -1,0 +1,73 @@
+modelRoles:
+  default: openai-codex/gpt-5.6-terra:low
+  advisor: openai-codex/gpt-5.6-luna:minimal
+  smol: openai-codex/gpt-5.6-luna:minimal
+  task: openai-codex/gpt-5.6-terra:low
+  sonic: openai-codex/gpt-5.6-luna:minimal
+  explore: openai-codex/gpt-5.6-luna:low
+  librarian: openai-codex/gpt-5.6-terra:low
+  designer: openai-codex/gpt-5.6-terra:medium
+  reviewer: openai-codex/gpt-5.6-terra:medium
+  Tester: openai-codex/gpt-5.6-terra:medium
+  plan: openai-codex/gpt-5.6-terra:high
+  slow: openai-codex/gpt-5.6-terra:high
+  architect-deep: openai-codex/gpt-5.6-terra:high
+  reviewer-deep: openai-codex/gpt-5.6-terra:high
+  debugger-deep: openai-codex/gpt-5.6-terra:high
+  designer-deep: openai-codex/gpt-5.6-terra:high
+  tester-deep: openai-codex/gpt-5.6-terra:high
+  tiny: openai-codex/gpt-5.6-luna:minimal
+  commit: openai-codex/gpt-5.6-luna:minimal
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  fallbackChains:
+    default: [openai-codex/gpt-5.6-luna:medium]
+    advisor: [openai-codex/gpt-5.6-terra:low]
+    smol: [openai-codex/gpt-5.6-terra:low]
+    task: [openai-codex/gpt-5.6-luna:medium]
+    sonic: [openai-codex/gpt-5.6-terra:low]
+    explore: [openai-codex/gpt-5.6-terra:low]
+    librarian: [openai-codex/gpt-5.6-luna:medium]
+    designer: [openai-codex/gpt-5.6-luna:high]
+    reviewer: [openai-codex/gpt-5.6-luna:high]
+    Tester: [openai-codex/gpt-5.6-luna:high]
+    plan: [openai-codex/gpt-5.6-luna:high]
+    slow: [openai-codex/gpt-5.6-luna:xhigh]
+    architect-deep: [openai-codex/gpt-5.6-luna:high]
+    reviewer-deep: [openai-codex/gpt-5.6-luna:high]
+    debugger-deep: [openai-codex/gpt-5.6-luna:high]
+    designer-deep: [openai-codex/gpt-5.6-luna:high]
+    tester-deep: [openai-codex/gpt-5.6-luna:high]
+    tiny: [openai-codex/gpt-5.6-terra:low]
+    commit: [openai-codex/gpt-5.6-terra:low]
+
+advisor:
+  enabled: false
+
+branchSummary:
+  enabled: false
+
+autolearn:
+  enabled: false
+  autoContinue: false
+
+task:
+  agentModelOverrides:
+    architect-deep: openai-codex/gpt-5.6-terra:high
+    debugger-deep: openai-codex/gpt-5.6-terra:high
+    designer: openai-codex/gpt-5.6-terra:medium
+    designer-deep: openai-codex/gpt-5.6-terra:high
+    explore: openai-codex/gpt-5.6-luna:low
+    librarian: openai-codex/gpt-5.6-terra:low
+    plan: openai-codex/gpt-5.6-terra:high
+    reviewer: openai-codex/gpt-5.6-terra:medium
+    reviewer-deep: openai-codex/gpt-5.6-terra:high
+    sonic: openai-codex/gpt-5.6-luna:minimal
+    task: openai-codex/gpt-5.6-terra:low
+    Tester: openai-codex/gpt-5.6-terra:medium
+    tester-deep: openai-codex/gpt-5.6-terra:high
+
+defaultThinkingLevel: low

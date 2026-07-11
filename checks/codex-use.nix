@@ -162,6 +162,14 @@ pkgs.runCommand "check-codex-use"
     grep -F -- '--profile atyrode exec task' "$CODEX_ARGS_FILE" >/dev/null
     ${configuredCodex}/bin/codex -p custom exec task
     test "$(cat "$CODEX_ARGS_FILE")" = '-p custom exec task'
+    ${configuredCodex}/bin/codex
+    test "$(cat "$CODEX_ARGS_FILE")" = '--profile atyrode'
+    ${configuredCodex}/bin/codex -c features.code_mode_host=true app-server --listen unix:///tmp/sock
+    test "$(cat "$CODEX_ARGS_FILE")" = '-c features.code_mode_host=true app-server --listen unix:///tmp/sock'
+    ${configuredCodex}/bin/codex login --api-key key
+    test "$(cat "$CODEX_ARGS_FILE")" = 'login --api-key key'
+    ${configuredCodex}/bin/codex resume --last
+    test "$(cat "$CODEX_ARGS_FILE")" = '--profile atyrode resume --last'
 
     mkdir "$out"
   ''

@@ -233,7 +233,15 @@ files.
 
 ## Updating
 
-1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`.
+The `update-pins` workflow refreshes the repository-owned binary pins (OMP
+and Codex) every six hours: `scripts/update-pins.sh` bumps versions and
+hashes, a bot pull request runs the full dispatched CI, and a green run
+merges itself. A red run leaves the pull request open for curation — that is
+the expected outcome when upstream changes bundled content. The manual flow
+below remains valid for hand-driven updates:
+
+1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`
+   (or run `scripts/update-pins.sh`).
 2. Update the Herdr input revision in `flake.nix`, then run
    `nix flake lock --update-input herdr`.
 3. Review model identifiers and routing in `omp/defaults.yml` and

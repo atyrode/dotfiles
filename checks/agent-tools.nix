@@ -16,7 +16,7 @@ let
   opusPreset = ../omp/presets/opus-fallback.yml;
 
   stubOmp =
-    pkgs.runCommand "omp-16.3.14-stub"
+    pkgs.runCommand "omp-stub"
       {
         meta = {
           mainProgram = "omp";
@@ -37,7 +37,7 @@ let
     omp = stubOmp;
   };
   untrustedStubOmp =
-    pkgs.runCommand "omp-16.3.14-untrusted-stub"
+    pkgs.runCommand "omp-untrusted-stub"
       {
         meta = stubOmp.meta;
       }
@@ -84,7 +84,7 @@ in
 
         raw_omp=${lib.escapeShellArg (lib.getExe pkgs.omp)}
         raw_version="$("$raw_omp" --version)"
-        test "''${raw_version##*/}" = "16.3.14"
+        test "''${raw_version##*/}" = "${lib.getVersion pkgs.omp}"
 
         for config in \
           ${defaultsConfig} \
@@ -131,7 +131,7 @@ in
 
         for command in omp ompb ompf ompg ompo ompu; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
-          test "''${command_version##*/}" = "16.3.14"
+          test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
         done
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
@@ -170,7 +170,8 @@ in
           | env HOME="$acp_home" PI_CODING_AGENT_DIR="$acp_home/agent" \
             timeout 20 ${pkgs.omp-configured}/bin/omp acp > "$TMPDIR/acp-init.jsonl"
         jq -e \
-          '.id == 1 and .result.protocolVersion == 1 and .result.agentInfo.version == "16.3.14"' \
+          '.id == 1 and .result.protocolVersion == 1 and .result.agentInfo.version == $version' \
+          --arg version "${lib.getVersion pkgs.omp}" \
           "$TMPDIR/acp-init.jsonl" >/dev/null
         test ! -e "$acp_home/.pi"
 
@@ -307,10 +308,10 @@ in
 
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
-        )" -eq 13
+        )" -eq 11
         grep -q 'HERDR_INTEGRATION_ID=omp' \
           ${pkgs.herdr-omp-integration}/share/omp/extensions/herdr-omp-agent-state.ts
-        test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 13
+        test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 11
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md

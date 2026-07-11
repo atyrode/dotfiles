@@ -1,0 +1,65 @@
+name: Update pins
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: update-pins
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+
+      - name: Refresh pins
+        id: refresh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          summary="$(./scripts/update-pins.sh)"
+          {
+            printf 'summary<<SUMMARY_EOF\n%s\nSUMMARY_EOF\n' "$summary"
+            if [ -n "$summary" ]; then printf 'changed=true\n'; fi
+          } >> "$GITHUB_OUTPUT"
+
+      # Bot-created pushes and pull requests do not trigger workflows, so CI
+      # is dispatched explicitly and the merge waits for its verdict. A red
+      # run leaves the pull request open: bundled-content changes usually
+      # need patch or fixture curation before the bump can land.
+      - name: Open and land the bump
+        if: steps.refresh.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMMARY: ${{ steps.refresh.outputs.summary }}
+        run: |
+          branch="bot/update-pins"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add pkgs
+          git commit -m "chore(pins): refresh repository-owned binaries" -m "$SUMMARY"
+          git push -f origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(pins): refresh repository-owned binaries" \
+            --body "$SUMMARY" \
+            || true
+          gh workflow run nix.yml --ref "$branch"
+          sleep 30
+          run_id="$(gh run list --workflow nix.yml --branch "$branch" --limit 1 --json databaseId --jq '.[0].databaseId')"
+          gh run watch "$run_id" --exit-status
+          gh pr merge "$branch" --squash --delete-branch
+          gh workflow run nix.yml --ref main

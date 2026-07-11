@@ -31,7 +31,7 @@ stdenvNoCC.mkDerivation {
     cp bundled/*.md "$agents_dir/"
     cp ${../../omp/agents/deep}/*.md "$agents_dir/"
 
-    test "$(find "$agents_dir" -maxdepth 1 -name '*.md' | wc -l)" -eq 13
+    test "$(find "$agents_dir" -maxdepth 1 -name '*.md' | wc -l)" -eq 11
 
     runHook postInstall
   '';

@@ -39,9 +39,23 @@ jobs:
           persist-credentials: false
 
       - name: Install Nix
-        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      # Restore the newest Nix store cache for this platform; without it every
+      # run rebuilds all local derivations from an empty store (~13 min).
+      # Saving happens only on pushes to main so pull requests never pay the
+      # multi-gigabyte save step; GitHub's 10 GiB LRU quota evicts old entries.
+      # The store is deliberately not garbage-collected before saving: a
+      # `nix flake check` store has no GC roots, so collection would empty it.
+      - name: Restore Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ matrix.system }}-${{ hashFiles('flake.lock', '**/*.nix', 'checks/**', 'darwin/**', 'home/**', 'hosts/**', 'inventory/**', 'modules/**', 'pkgs/**', 'scripts/**', 'install.sh') }}
+          restore-prefixes-first-match: nix-${{ matrix.system }}-
+          save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check flake
         run: nix flake check --show-trace

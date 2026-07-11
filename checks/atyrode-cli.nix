@@ -56,8 +56,24 @@ pkgs.runCommand "check-atyrode-cli"
     set -e
     test "$production_identity_status" = 65
 
-    atyrode capabilities list --json | jq -e 'index("base") and index("server")' >/dev/null
-    atyrode capabilities show alex-linux --json | jq -e '.host == "alex-x86_64-linux"' >/dev/null
+    atyrode capabilities list --json | jq -e '
+      (map(.name) | index("base") and index("server"))
+      and all(.[]; .description | length > 0)
+      and (.[] | select(.name == "base") | .active)
+      and ((.[] | select(.name == "desktop") | .active) | not)
+    ' >/dev/null
+    atyrode capabilities show alex-linux --json | jq -e '
+      .host == "alex-x86_64-linux"
+      and (.description | length > 0)
+      and (.capabilities | map(.name) | index("agent-tools"))
+      and all(.capabilities[]; .description | length > 0)
+    ' >/dev/null
+
+    # On a machine whose identity is ambiguous the list degrades to
+    # unmarked instead of dying.
+    mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json"
+    atyrode capabilities list --json | jq -e 'all(.[]; .active | not)' >/dev/null
+    mv "$TMPDIR/host.json" "$XDG_CONFIG_HOME/atyrode/host.json"
     atyrode doctor host --json | jq -e '.ok and .registered.id == "alex-x86_64-linux"' >/dev/null
     tools="$(atyrode doctor tools --json || true)"
     jq -e '

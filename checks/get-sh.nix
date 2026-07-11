@@ -1,5 +1,17 @@
 { pkgs }:
 
+let
+  # The picker filters presets by the build platform, so the refusal
+  # message names a different host per system.
+  expectedPickerHost =
+    {
+      "aarch64-darwin" = "alex-aarch64-darwin";
+      "aarch64-linux" = "alex-aarch64-linux";
+      "x86_64-darwin" = "alex-x86_64-darwin";
+      "x86_64-linux" = "alex-x86_64-linux";
+    }
+    .${pkgs.stdenv.hostPlatform.system};
+in
 pkgs.runCommand "check-get-entrypoint" { } ''
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME" "$TMPDIR/bin"
@@ -17,8 +29,9 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   #!${pkgs.runtimeShell}
   case "$1" in
     clone)
-      mkdir -p "$3"
+      mkdir -p "$3/inventory"
       cp "$TMPDIR/install-stub" "$3/install.sh"
+      cp "$TMPDIR/hosts.tsv" "$3/inventory/hosts.tsv"
       printf '%s\n' "$2" > "$3/origin"
       ;;
     -C)
@@ -29,13 +42,7 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   esac
   EOF
   chmod +x "$TMPDIR/bin/git"
-
-  # Without a host argument the usage failure must name the registry.
-  if bash ${../get.sh} >/dev/null 2>"$TMPDIR/usage-err"; then
-    echo 'missing host unexpectedly succeeded' >&2
-    exit 1
-  fi
-  grep -F 'hosts/default.nix' "$TMPDIR/usage-err" >/dev/null
+  cp ${../inventory/hosts.tsv} "$TMPDIR/hosts.tsv"
 
   # git is absent from this build environment until the stub joins PATH.
   if bash ${../get.sh} alex-x86_64-linux >/dev/null 2>"$TMPDIR/git-err"; then
@@ -68,6 +75,16 @@ pkgs.runCommand "check-get-entrypoint" { } ''
     exit 1
   fi
   grep -F -- '--yes' "$TMPDIR/tty-err" >/dev/null
+  test ! -e "$INSTALL_ARGS_FILE"
+
+  # Without a host and without a terminal, the picker refuses and names the
+  # presets registered for this system instead of guessing.
+  if bash ${../get.sh} </dev/null >/dev/null 2>"$TMPDIR/picker-err"; then
+    echo 'host-less run without a terminal unexpectedly succeeded' >&2
+    exit 1
+  fi
+  grep -F 'pass one of:' "$TMPDIR/picker-err" >/dev/null
+  grep -F '${expectedPickerHost}' "$TMPDIR/picker-err" >/dev/null
   test ! -e "$INSTALL_ARGS_FILE"
 
   # DOTFILES_DIR relocates the clone and forwards extra install arguments.

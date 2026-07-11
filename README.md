@@ -20,7 +20,9 @@ curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 
 The fetched `get.sh` only clones the repository and hands off to the cloned
 `install.sh`; cloning first and running `./install.sh apply --config <host>`
-yourself remains equivalent.
+yourself remains equivalent. Omit the host to pick interactively from the
+registered presets for this machine, each described with what it installs;
+`atyrode capabilities list` shows the same descriptions per capability later.
 
 Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
 will not guess between desktop, development, or Mac profiles. It uses

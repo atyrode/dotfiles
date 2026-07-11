@@ -134,17 +134,38 @@ capabilities() {
   [[ "${1:-}" != --json ]] || json=1
   case "$action" in
     list)
+      # Mark the capabilities selected by the resolved host when one
+      # resolves; on unregistered machines the list stays unmarked.
+      local active="[]" host=""
+      # die inside the substitution exits the subshell itself, so the
+      # unresolved-host guard has to sit outside it.
+      host="$(resolve_host 2>/dev/null)" || host=""
+      [[ -z "$host" ]] || active="$(host_json "$host" | jq -c '.capabilities')"
       if [[ "$json" == 1 ]]; then
-        jq -c 'sort | unique' "$capability_inventory"
+        jq -c --argjson active "$active" \
+          'sort_by(.name) | map(. + {active: (.name as $n | $active | index($n) != null)})' \
+          "$capability_inventory"
       else
-        jq -r 'sort | unique[]' "$capability_inventory"
+        jq -r --argjson active "$active" \
+          'sort_by(.name)[] | "\(.name)\(if (.name as $n | $active | index($n)) then " [active]" else "" end): \(.description)"' \
+          "$capability_inventory"
       fi
       ;;
     show)
-      local host data
+      local host data selected
       host="$(resolve_host "$requested")"; data="$(host_json "$host")"
-      if [[ "$json" == 1 ]]; then jq -c '{host:.id,capabilities}' <<<"$data"
-      else jq -r '.capabilities[]' <<<"$data"; fi
+      selected="$(jq -c '.capabilities' <<<"$data")"
+      if [[ "$json" == 1 ]]; then
+        jq -c --argjson data "$data" --argjson selected "$selected" \
+          '{host: $data.id, description: $data.description,
+            capabilities: [sort_by(.name)[] | select(.name as $n | $selected | index($n))]}' \
+          "$capability_inventory"
+      else
+        jq -r '"\(.id): \(.description)"' <<<"$data"
+        jq -r --argjson selected "$selected" \
+          'sort_by(.name)[] | select(.name as $n | $selected | index($n)) | "  \(.name): \(.description)"' \
+          "$capability_inventory"
+      fi
       ;;
     *) die "$EX_USAGE" "capabilities expects list or show" ;;
   esac

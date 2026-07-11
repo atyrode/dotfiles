@@ -102,6 +102,15 @@
         };
       };
       knownCapabilities = builtins.attrNames capabilityModules;
+      capabilityDescriptions = import ./home/profiles/descriptions.nix;
+      capabilityInventory =
+        assert lib.assertMsg (
+          builtins.attrNames capabilityDescriptions == knownCapabilities
+        ) "capability descriptions must cover the capability set exactly";
+        map (name: {
+          inherit name;
+          description = capabilityDescriptions.${name};
+        }) knownCapabilities;
       serverPolicy = builtins.fromJSON (builtins.readFile ./inventory/server-profile.json);
       serverCapabilities = serverPolicy.capabilities;
       darwinModule = ./darwin;
@@ -155,12 +164,16 @@
         assert lib.assertMsg (
           builtins.isString host.homeDirectory && lib.hasPrefix "/" host.homeDirectory
         ) "host ${name} must declare an absolute homeDirectory";
+        assert lib.assertMsg (builtins.isString (
+          host.description or ""
+        )) "host ${name} description must be a string";
         assert lib.assertMsg (
           builtins.length aliases == builtins.length (lib.unique aliases)
         ) "host ${name} declares duplicate aliases";
         host
         // {
           inherit aliases capabilities;
+          description = host.description or "";
           hostname = host.hostname or null;
         };
 
@@ -186,6 +199,7 @@
         inherit (host)
           aliases
           capabilities
+          description
           homeDirectory
           hostname
           platform
@@ -195,6 +209,15 @@
       };
       publicHosts = lib.mapAttrs publicHost hosts;
       hostRegistryJson = builtins.toJSON publicHosts;
+      # Flat projection consumed by get.sh before Nix exists on the machine;
+      # the host-registry check keeps the committed copy honest.
+      hostsTsv = lib.concatMapStrings (
+        name:
+        let
+          host = publicHosts.${name};
+        in
+        "${name}\t${host.system}\t${lib.concatStringsSep "," host.capabilities}\t${host.description}\n"
+      ) (builtins.attrNames publicHosts);
 
       mkHostIdentityModule =
         {
@@ -250,7 +273,7 @@
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
             atyrode = final.callPackage ./pkgs/atyrode {
-              capabilities = knownCapabilities;
+              capabilities = capabilityInventory;
               inherit homebrewCasks;
               hostRegistry = publicRegistry;
             };
@@ -404,6 +427,7 @@
           selectHomeManagerProfiles
           ;
         capabilities = knownCapabilities;
+        inherit capabilityDescriptions;
         hostRegistry = publicHosts;
         serverProfile = serverPolicy;
       };
@@ -536,9 +560,14 @@
                     and (.system | type == "string")
                     and (.username | type == "string")
                     and (.homeDirectory | startswith("/"))
+                    and (.description | type == "string" and length > 0)
                     and (.capabilities | length > 0))
                   and ([.[].capabilities[]] | index("server") | not)
                 ' ${registryFile} >/dev/null
+                if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${./inventory/hosts.tsv}; then
+                  echo 'inventory/hosts.tsv is out of date with hosts/default.nix' >&2
+                  exit 1
+                fi
                 mkdir "$out"
               '';
           baseOnlyConfig = home-manager.lib.homeManagerConfiguration {

@@ -146,7 +146,8 @@ builtins.deepSeq evaluationPaths (
     ''
       atyrode capabilities show ${externalFixture.hostId} --json | jq -e '
         .host == "${externalFixture.hostId}"
-        and .capabilities == ["base", "server", "agent-tools"]
+        and (.capabilities | map(.name)) == ["agent-tools", "base", "server"]
+        and all(.capabilities[]; .description | length > 0)
       ' >/dev/null
 
       jq -e '

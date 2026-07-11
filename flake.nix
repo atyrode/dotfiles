@@ -76,25 +76,71 @@
         "whatsapp-for-mac"
       ];
 
-      capabilityModules = {
-        base = ./home/profiles/base.nix;
-        development = ./home/profiles/development.nix;
-        agent-tools = ./home/profiles/agent-tools.nix;
-        desktop = ./home/profiles/desktop.nix;
-        containers = ./home/profiles/containers.nix;
-        media = ./home/profiles/media.nix;
-        mobile = ./home/profiles/mobile.nix;
-        security = ./home/profiles/security.nix;
-        server = ./home/profiles/server.nix;
+      rawCapabilityModules = import ./home/profiles;
+
+      mkCapabilityModule = name: module: {
+        imports = [
+          ./modules/home/capability-contract.nix
+          module
+        ];
+
+        atyrode.capabilities.selected = [ name ];
+      };
+
+      capabilityModules = lib.mapAttrs mkCapabilityModule rawCapabilityModules // {
+        base = {
+          imports = [
+            ./modules/home/capability-contract.nix
+            rawCapabilityModules.base
+            nix-index-database.homeModules.default
+          ];
+
+          atyrode.capabilities.selected = [ "base" ];
+          programs.nix-index.enable = true;
+          programs.nix-index-database.comma.enable = true;
+        };
       };
       knownCapabilities = builtins.attrNames capabilityModules;
+      serverPolicy = builtins.fromJSON (builtins.readFile ./inventory/server-profile.json);
+      serverCapabilities = serverPolicy.capabilities;
+      darwinModule = ./darwin;
       rawHosts = import ./hosts;
+
+      validateCapabilities =
+        {
+          capabilities,
+          name ? "composition",
+          system,
+        }:
+        assert lib.assertMsg (builtins.elem system systems) "${name} uses unsupported system ${system}";
+        assert lib.assertMsg (capabilities != [ ]) "${name} must select at least one capability";
+        assert lib.assertMsg (builtins.elem "base" capabilities) "${name} must select the base capability";
+        assert lib.assertMsg (
+          !(builtins.elem "server" capabilities && builtins.elem "desktop" capabilities)
+        ) "${name} cannot combine server and desktop capabilities";
+        assert lib.assertMsg (
+          !(builtins.elem "server" capabilities && builtins.elem "development" capabilities)
+        ) "${name} cannot combine server and development capabilities";
+        assert lib.assertMsg (
+          !builtins.elem "server" capabilities || lib.hasSuffix "-linux" system
+        ) "${name} can select the server capability only on Linux";
+        assert lib.assertMsg (
+          builtins.length capabilities == builtins.length (lib.unique capabilities)
+        ) "${name} declares duplicate capabilities";
+        assert lib.assertMsg (lib.all (
+          capability: builtins.hasAttr capability capabilityModules
+        ) capabilities) "${name} declares an unknown capability";
+        capabilities;
 
       validateHost =
         name: host:
         let
           expectedPlatform = if lib.hasSuffix "-darwin" host.system then "darwin" else "linux";
-          capabilities = host.capabilities or [ ];
+          capabilities = validateCapabilities {
+            inherit name;
+            inherit (host) system;
+            capabilities = host.capabilities or [ ];
+          };
           aliases = host.aliases or [ ];
         in
         assert lib.assertMsg (builtins.elem host.system systems)
@@ -108,18 +154,6 @@
         assert lib.assertMsg (
           builtins.isString host.homeDirectory && lib.hasPrefix "/" host.homeDirectory
         ) "host ${name} must declare an absolute homeDirectory";
-        assert lib.assertMsg (capabilities != [ ]) "host ${name} must select at least one capability";
-        assert lib.assertMsg (builtins.elem "base" capabilities)
-          "host ${name} must select the base capability";
-        assert lib.assertMsg (
-          !(builtins.elem "server" capabilities && builtins.elem "desktop" capabilities)
-        ) "host ${name} cannot combine server and desktop capabilities";
-        assert lib.assertMsg (
-          builtins.length capabilities == builtins.length (lib.unique capabilities)
-        ) "host ${name} declares duplicate capabilities";
-        assert lib.assertMsg (lib.all (
-          capability: builtins.hasAttr capability capabilityModules
-        ) capabilities) "host ${name} declares an unknown capability";
         assert lib.assertMsg (
           builtins.length aliases == builtins.length (lib.unique aliases)
         ) "host ${name} declares duplicate aliases";
@@ -130,17 +164,22 @@
           hostname = host.hostname or null;
         };
 
-      validatedHosts = lib.mapAttrs validateHost rawHosts;
-      canonicalHostNames = builtins.attrNames validatedHosts;
-      allHostAliases = lib.concatMap (name: validatedHosts.${name}.aliases) canonicalHostNames;
-      hosts =
+      validateHostRegistry =
+        registry:
+        let
+          validated = lib.mapAttrs validateHost registry;
+          canonicalNames = builtins.attrNames validated;
+          aliases = lib.concatMap (name: validated.${name}.aliases) canonicalNames;
+        in
         assert lib.assertMsg (
-          builtins.length allHostAliases == builtins.length (lib.unique allHostAliases)
+          builtins.length aliases == builtins.length (lib.unique aliases)
         ) "host aliases must be globally unique";
         assert lib.assertMsg (lib.all (
-          alias: !(builtins.hasAttr alias validatedHosts)
-        ) allHostAliases) "host aliases must not collide with canonical host names";
-        validatedHosts;
+          alias: !(builtins.hasAttr alias validated)
+        ) aliases) "host aliases must not collide with canonical host names";
+        validated;
+
+      hosts = validateHostRegistry rawHosts;
 
       publicHost = name: host: {
         id = name;
@@ -158,43 +197,90 @@
       publicHosts = lib.mapAttrs publicHost hosts;
       hostRegistryJson = builtins.toJSON publicHosts;
 
-      mkHostIdentityModule = name: host: {
-        home.sessionVariables = {
-          ATYRODE_HOST = name;
-          ATYRODE_CAPABILITIES = lib.concatStringsSep "," host.capabilities;
+      mkHostIdentityModule =
+        {
+          host,
+          name,
+        }:
+        let
+          validated = validateHost name host;
+        in
+        {
+          home.sessionVariables = {
+            ATYRODE_HOST = name;
+            ATYRODE_CAPABILITIES = lib.concatStringsSep "," validated.capabilities;
+          };
+
+          xdg.configFile."atyrode/host.json".text = builtins.toJSON (publicHost name validated);
         };
 
-        xdg.configFile."atyrode/host.json".text = builtins.toJSON (publicHost name host);
-      };
+      selectHomeManagerProfiles =
+        {
+          capabilities,
+          name ? "composition",
+          system,
+        }:
+        map (capability: capabilityModules.${capability}) (validateCapabilities {
+          inherit capabilities name system;
+        });
 
       modulesForHost =
         name: host:
-        map (capability: capabilityModules.${capability}) host.capabilities
-        ++ [
-          nix-index-database.homeModules.default
-          {
-            programs.nix-index-database.comma.enable = true;
-            programs.nix-index.enable = true;
-          }
-          (mkHostIdentityModule name host)
+        selectHomeManagerProfiles {
+          inherit name;
+          inherit (host) capabilities system;
+        }
+        ++ [ (mkHostIdentityModule { inherit host name; }) ];
+
+      mkPackageOverlay =
+        {
+          hostRegistry ? { },
+        }:
+        let
+          publicRegistry = lib.mapAttrs publicHost (validateHostRegistry hostRegistry);
+        in
+        lib.composeManyExtensions [
+          herdr.overlays.default
+          (final: _previous: {
+            agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+            codex-configured = final.callPackage ./pkgs/codex-configured { };
+            codex-use = final.callPackage ./pkgs/codex-use { };
+            herdr-configured = final.callPackage ./pkgs/herdr-configured { };
+            herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
+            omp = final.callPackage ./pkgs/omp { };
+            omp-agents = final.callPackage ./pkgs/omp-agents { };
+            omp-configured = final.callPackage ./pkgs/omp-configured { };
+            atyrode = final.callPackage ./pkgs/atyrode {
+              capabilities = knownCapabilities;
+              hostRegistry = publicRegistry;
+            };
+          })
         ];
 
-      agentToolsOverlay = lib.composeManyExtensions [
-        herdr.overlays.default
-        (final: _previous: {
-          agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
-          codex-configured = final.callPackage ./pkgs/codex-configured { };
-          codex-use = final.callPackage ./pkgs/codex-use { };
-          herdr-configured = final.callPackage ./pkgs/herdr-configured { };
-          herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
-          omp = final.callPackage ./pkgs/omp { };
-          omp-agents = final.callPackage ./pkgs/omp-agents { };
-          omp-configured = final.callPackage ./pkgs/omp-configured { };
-          atyrode = final.callPackage ./pkgs/atyrode {
-            hostRegistry = publicHosts;
+      agentToolsOverlay = mkPackageOverlay { hostRegistry = rawHosts; };
+
+      dotfilesHomeNixosModule =
+        { config, lib, ... }:
+        {
+          imports = [ home-manager.nixosModules.home-manager ];
+
+          options.atyrode.dotfiles.hostRegistry = lib.mkOption {
+            type = lib.types.attrsOf lib.types.anything;
+            default = { };
+            description = "Non-secret host registry supplied by the consuming NixOS flake.";
           };
-        })
-      ];
+
+          config = {
+            home-manager.useGlobalPkgs = lib.mkDefault true;
+            home-manager.useUserPackages = lib.mkDefault true;
+            nixpkgs.overlays = [
+              (mkPackageOverlay { hostRegistry = config.atyrode.dotfiles.hostRegistry; })
+            ];
+            nixpkgs.config.allowUnfreePredicate = lib.mkDefault (
+              package: builtins.elem (lib.getName package) allowedUnfreePackages
+            );
+          };
+        };
 
       pkgsFor =
         system:
@@ -203,6 +289,54 @@
           config.allowUnfreePredicate = package: builtins.elem (lib.getName package) allowedUnfreePackages;
           overlays = [ agentToolsOverlay ];
         };
+
+      portablePkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate = package: builtins.elem (lib.getName package) allowedUnfreePackages;
+          overlays = [ (mkPackageOverlay { }) ];
+        };
+
+      mkServerHomeConfig =
+        {
+          homeDirectory ? "/home/fixture",
+          system,
+          username ? "fixture",
+        }:
+        home-manager.lib.homeManagerConfiguration {
+          pkgs = portablePkgsFor system;
+          modules =
+            selectHomeManagerProfiles {
+              name = "portable server profile";
+              inherit system;
+              capabilities = serverCapabilities;
+            }
+            ++ [
+              {
+                home = {
+                  inherit homeDirectory username;
+                };
+              }
+            ];
+        };
+
+      serverHomeConfigs = lib.genAttrs serverPolicy.supportedSystems (
+        system: mkServerHomeConfig { inherit system; }
+      );
+
+      serverProfileManifests = lib.mapAttrs (
+        system: serverHomeConfig:
+        import ./checks/server-profile.nix {
+          inherit
+            lib
+            serverHomeConfig
+            serverPolicy
+            system
+            ;
+          pkgs = portablePkgsFor system;
+        }
+      ) serverHomeConfigs;
 
       mkHomeConfig =
         name: host:
@@ -233,7 +367,7 @@
           modules = [
             home-manager.darwinModules.home-manager
             nix-homebrew.darwinModules.nix-homebrew
-            ./darwin
+            darwinModule
             {
               nixpkgs.hostPlatform = host.system;
               nixpkgs.overlays = [ agentToolsOverlay ];
@@ -263,13 +397,28 @@
       darwinConfigurations = canonicalDarwinConfigs // aliasesFor darwinHosts canonicalDarwinConfigs;
 
       lib = {
+        inherit
+          allowedUnfreePackages
+          mkHostIdentityModule
+          mkPackageOverlay
+          selectHomeManagerProfiles
+          ;
         capabilities = knownCapabilities;
         hostRegistry = publicHosts;
+        serverProfile = serverPolicy;
       };
 
       overlays.default = agentToolsOverlay;
 
-      homeManagerModules.agent-tools = import ./modules/home/agent-tools.nix;
+      homeManagerModules = {
+        # Preserve the original low-level configurable module export.
+        agent-tools = import ./modules/home/agent-tools.nix;
+        profiles = capabilityModules;
+      };
+
+      nixosModules.dotfiles-home = dotfilesHomeNixosModule;
+
+      darwinModules.default = darwinModule;
 
       packages = forAllSystems (
         system:
@@ -290,12 +439,34 @@
             omp-configured
             ;
         }
+        // lib.optionalAttrs (lib.hasSuffix "-linux" system) {
+          server-profile-manifest = serverProfileManifests.${system};
+        }
       );
 
       checks = forAllSystems (
         system:
         let
           pkgs = pkgsFor system;
+          isLinux = lib.hasSuffix "-linux" system;
+          serverHomeConfig = if isLinux then serverHomeConfigs.${system} else null;
+          alternateServerHomeConfig =
+            if isLinux then
+              mkServerHomeConfig {
+                inherit system;
+                homeDirectory = "/home/second-fixture";
+                username = "second-fixture";
+              }
+            else
+              null;
+          externalServerFixture =
+            if isLinux then
+              import ./checks/fixtures/nixos-server.nix {
+                dotfiles = self;
+                inherit nixpkgs system;
+              }
+            else
+              null;
           systemHomeConfigs = lib.filterAttrs (
             name: _config: hosts.${name}.system == system
           ) canonicalHomeConfigs;
@@ -326,13 +497,14 @@
               }
               ''
                 jq -e '
-                  length >= 6
+                  length >= 5
                   and all(.[];
                     (.id | type == "string")
                     and (.system | type == "string")
                     and (.username | type == "string")
                     and (.homeDirectory | startswith("/"))
                     and (.capabilities | length > 0))
+                  and ([.[].capabilities[]] | index("server") | not)
                 ' ${registryFile} >/dev/null
                 mkdir "$out"
               '';
@@ -340,11 +512,9 @@
             inherit pkgs;
             modules = [
               capabilityModules.base
-              nix-index-database.homeModules.default
               {
                 home.username = "fixture";
                 home.homeDirectory = if lib.hasSuffix "-darwin" system then "/Users/fixture" else "/home/fixture";
-                programs.nix-index-database.comma.enable = true;
               }
             ];
           };
@@ -360,13 +530,29 @@
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {
-            inherit lib pkgs;
-            hostConfigs = canonicalHomeConfigs;
+            inherit lib pkgs serverPolicy;
+            serverConfig = if isLinux then serverHomeConfig.config else null;
           };
           shell-surface = import ./checks/shell-surface.nix {
             inherit lib pkgs;
             hostConfigs = canonicalHomeConfigs;
           };
+        }
+        // lib.optionalAttrs isLinux {
+          portable-profiles = import ./checks/portable-profiles.nix {
+            inherit
+              alternateServerHomeConfig
+              lib
+              pkgs
+              selectHomeManagerProfiles
+              serverHomeConfig
+              serverPolicy
+              system
+              ;
+            externalFixture = externalServerFixture;
+            serverProfileManifest = serverProfileManifests.${system};
+          };
+          server-profile = serverProfileManifests.${system};
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-evaluation = darwinEvaluation;

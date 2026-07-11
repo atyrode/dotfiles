@@ -1,33 +1,48 @@
 {
-  hostConfigs,
   lib,
   pkgs,
+  serverConfig ? null,
+  serverPolicy,
 }:
 
 let
   matrix = ../inventory/packages.json;
-  serverPackages = map lib.getName hostConfigs."alex@ubuntu-4gb-nbg1-1".config.home.packages;
-  forbiddenServerPackages = [
-    "android-tools"
-    "arduino-ide"
-    "bun"
-    "deno"
-    "ffmpeg"
-    "gcc"
-    "godot"
-    "go"
-    "nodejs"
-    "parsec-bin"
-    "python"
-    "rustc"
-    "scrcpy"
-    "steam"
-    "uv"
-    "vscode"
-  ];
-  leakedServerPackages = lib.intersectLists serverPackages forbiddenServerPackages;
+  serverPackages =
+    if serverConfig == null then [ ] else lib.unique (map lib.getName serverConfig.home.packages);
+  leakedServerPackages = lib.intersectLists serverPackages serverPolicy.forbiddenTopLevelPackages;
+  missingServerPackages = lib.subtractLists serverPackages serverPolicy.requiredTopLevelPackages;
+  selectedCapabilities =
+    if serverConfig == null then
+      [ ]
+    else
+      lib.sort builtins.lessThan serverConfig.atyrode.capabilities.selected;
+  expectedCapabilities = lib.sort builtins.lessThan serverPolicy.capabilities;
 in
-assert lib.assertMsg (leakedServerPackages == [ ]) "server capability leaked workstation packages";
+assert lib.assertMsg (serverPolicy.schemaVersion == 1) "unknown server profile policy schema";
+assert lib.assertMsg (
+  serverPolicy.profile == "server"
+) "server profile policy has the wrong profile";
+assert lib.assertMsg (
+  serverPolicy.supportedSystems == [
+    "aarch64-linux"
+    "x86_64-linux"
+  ]
+) "server profile policy must support exactly the two Linux architectures";
+assert lib.assertMsg (
+  serverPolicy.productionFacts == [ ]
+) "server profile policy must not contain production facts";
+assert lib.assertMsg (lib.all
+  (budget: budget.maxNarBytes > 0 && budget.maxStorePaths > 0 && budget.maxTopLevelPackages > 0)
+  (builtins.attrValues serverPolicy.closureBudgets)
+) "server profile budgets must set positive closure and package ceilings";
+assert lib.assertMsg (
+  serverConfig == null || leakedServerPackages == [ ]
+) "server capability leaked forbidden packages: ${lib.concatStringsSep ", " leakedServerPackages}";
+assert lib.assertMsg (serverConfig == null || missingServerPackages == [ ])
+  "server capability is missing required packages: ${lib.concatStringsSep ", " missingServerPackages}";
+assert lib.assertMsg (
+  serverConfig == null || selectedCapabilities == expectedCapabilities
+) "server capability selection does not match the reviewed policy";
 pkgs.runCommand "check-package-ownership"
   {
     nativeBuildInputs = [ pkgs.jq ];

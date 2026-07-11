@@ -1,5 +1,6 @@
 {
   bubblewrap,
+  capabilities,
   codex,
   coreutils,
   gitMinimal,
@@ -19,6 +20,7 @@
 }:
 
 let
+  capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
   registry = builtins.toFile "atyrode-host-registry.json" (builtins.toJSON hostRegistry);
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
@@ -150,6 +152,7 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     install -D -m755 "$src" "$out/bin/atyrode"
     substituteInPlace "$out/bin/atyrode" \
+      --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
       --replace-fail '@tools@' '${tools}'

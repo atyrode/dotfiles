@@ -19,7 +19,7 @@ git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME
 ```
 
 Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
-will not guess between desktop, development, server, or Mac profiles. It uses
+will not guess between desktop, development, or Mac profiles. It uses
 explicit preflight, plan, apply, verify, and rollback phases, verifies a pinned
 upstream Nix artifact when Nix is absent, and preserves recoverable migration
 receipts. See [Bootstrap and migrations](docs/bootstrap.md).
@@ -167,15 +167,19 @@ alex-x86_64-darwin
 alex-aarch64-linux
 alex-x86_64-linux
 alex-x86_64-linux-desktop
-alex@ubuntu-4gb-nbg1-1
 ```
 
 These outputs are generated from the authoritative host registry and
-composable `base`, `development`, `agent-tools`, `desktop`, and `server`
-capabilities. Compatibility aliases such as `alex`, `alex-linux`,
-`alex-darwin`, and `alex-linux-desktop` remain available. See
+composable capability modules. Production NixOS servers consume the exported
+`base + server + agent-tools` profile from their infrastructure flake instead
+of appearing in this personal host registry. Compatibility aliases such as
+`alex`, `alex-linux`, `alex-darwin`, and `alex-linux-desktop` remain available. See
 [Hosts and capabilities](docs/hosts.md) for the identity contract and the
 add/rename/retire workflow.
+
+[Portable Home Manager profiles](docs/portable-profiles.md) documents the
+external NixOS interface, one-way infrastructure dependency, server manifest,
+closure budget, and pin/update workflow.
 
 [The `atyrode` CLI](docs/atyrode.md) documents deterministic application,
 machine-readable capability discovery, diagnostics, and the `zconf`

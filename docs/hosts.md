@@ -22,7 +22,8 @@ points; OMP and Codex profiles remain harness-specific mutable-state boundaries.
 - `containers`: container clients and inspection tools; the daemon is
   system-owned.
 - `security`: declared scanning and network diagnostics.
-- `server`: marks the reviewed headless composition consumed by #28.
+- `server`: marks a Linux-only headless composition. The reviewed portable
+  server selection combines it with `base` and `agent-tools`.
 
 Project compilers and runtimes are owned by committed dev shells, `mise.toml`,
 and native manifests. See [Package ownership](package-ownership.md) for the
@@ -34,6 +35,10 @@ Each activated Home Manager configuration exposes its canonical identity in
 `~/.config/atyrode/host.json`. The same pure projection is available to flake
 consumers as `lib.hostRegistry`; `lib.capabilities` lists valid capability
 names.
+
+Production NixOS hosts do not belong in this registry. Their infrastructure
+flake supplies identity and system facts while importing the same capability
+modules through the [portable profile contract](portable-profiles.md).
 
 ## Adding a host
 
@@ -48,8 +53,9 @@ names.
 
 Registry evaluation refuses unsupported systems, platform mismatches, empty
 users, relative home directories, missing base capabilities, server/desktop
-conflicts, duplicate or unknown capabilities, duplicate aliases, and aliases
-that collide with canonical host IDs.
+or server/development conflicts, non-Linux server selections, duplicate or
+unknown capabilities, duplicate aliases, and aliases that collide with
+canonical host IDs.
 
 ## Renaming or retiring a host
 

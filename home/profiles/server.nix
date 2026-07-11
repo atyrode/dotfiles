@@ -1,4 +1,4 @@
 {
-  # Marker for the reviewed headless composition. Issue #18 owns package
-  # placement and #28 owns the exported NixOS/Home Manager server interface.
+  # Marker for a headless composition. Privileged system policy, services,
+  # networking, filesystems, and secrets remain owned by the NixOS consumer.
 }

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 readonly registry='@registry@'
+readonly capability_inventory='@capabilities@'
 readonly tool_inventory='@tools@'
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
@@ -121,9 +122,9 @@ capabilities() {
   case "$action" in
     list)
       if [[ "$json" == 1 ]]; then
-        jq -c '[.[].capabilities[]] | unique' "$registry"
+        jq -c 'sort | unique' "$capability_inventory"
       else
-        jq -r '[.[].capabilities[]] | unique[]' "$registry"
+        jq -r 'sort | unique[]' "$capability_inventory"
       fi
       ;;
     show)

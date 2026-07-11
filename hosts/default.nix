@@ -78,21 +78,4 @@
     ];
     aliases = [ "alex-linux-desktop" ];
   };
-
-  "alex@ubuntu-4gb-nbg1-1" = {
-    system = "x86_64-linux";
-    platform = "linux";
-    username = "alex";
-    homeDirectory = "/home/alex";
-    hostname = "ubuntu-4gb-nbg1-1";
-    capabilities = [
-      "base"
-      "development"
-      "agent-tools"
-      "server"
-      "containers"
-      "security"
-    ];
-    aliases = [ ];
-  };
 }

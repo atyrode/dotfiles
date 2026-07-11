@@ -47,24 +47,28 @@ owners, and missing-capability remediation without reading authentication state.
 ## Closure review
 
 The matrix records a stable coarse contribution so large additions are visible
-in review. Exact sizes vary by platform and nixpkgs revision. Measure the pinned
-host closure without activating it:
+in review. Exact sizes vary by platform and nixpkgs revision. Measure a pinned
+workstation closure without activating it, and build the portable server
+manifest for its enforced budget:
 
 ```sh
 nix build --no-link .#homeConfigurations.alex-x86_64-linux.activationPackage
 nix path-info -Sh .#homeConfigurations.alex-x86_64-linux.activationPackage
 
-nix build --no-link '.#homeConfigurations.alex@ubuntu-4gb-nbg1-1.activationPackage'
-nix path-info -Sh '.#homeConfigurations.alex@ubuntu-4gb-nbg1-1.activationPackage'
+nix build .#server-profile-manifest
+jq . result/manifest.json
 ```
 
 Use the same commands for each canonical host before accepting a large package
 or capability. The shared Nix store deduplicates identical dependencies across
 hosts and workspaces; a binary cache can be added without changing ownership.
 
-At the pinned 2026-07-10 revision, realized x86_64-linux closures measure 2.5
-GiB for `alex-x86_64-linux` and 3.1 GiB for the server composition. The server
-delta is the declared `containers` and `security` capabilities, chiefly Docker
-clients and ClamAV—not workstation language stacks or desktop software. Darwin
-and aarch64 sizes must be measured on compatible builders; CI evaluates those
-compositions structurally on every change.
+At the pinned 2026-07-10 revision, the portable x86_64-linux server profile
+delivers 36 top-level packages and measures 2,108,944,256 NAR bytes across 396
+store paths. Its enforced ceilings are 40 packages, 2,348,810,240 bytes, and 440
+paths. The profile deliberately excludes development, containers, security,
+media, mobile, and desktop capabilities; it therefore contains neither
+workstation language stacks nor Docker/ClamAV. The aarch64 ceilings are 40
+packages, 2.5 GiB, and 500 paths and are enforced by the native CI runner. See
+[Portable Home Manager profiles](portable-profiles.md) for the manifest schema
+and pin/update workflow.

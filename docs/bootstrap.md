@@ -13,9 +13,11 @@ single command. This example selects the ordinary x86_64 Linux profile:
 git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
 ```
 
-Substitute the exact registered host for a Mac, desktop Linux machine, or VPS.
-Bootstrap never infers a profile from architecture alone: x86_64 Linux could be
-the base development machine, the desktop profile, or the server profile.
+Substitute the exact registered host for a Mac or desktop Linux machine.
+Bootstrap never infers a profile from architecture alone: x86_64 Linux can be
+the base development machine or the desktop profile. Production NixOS servers
+instead import the [portable Home Manager profile](portable-profiles.md) from
+their infrastructure flake.
 
 The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
 `sha256sum` or `shasum`. The command clones inspectable code before executing

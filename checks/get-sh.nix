@@ -1,5 +1,17 @@
 { pkgs }:
 
+let
+  # The picker filters presets by the build platform, so the refusal
+  # message names a different host per system.
+  expectedPickerHost =
+    {
+      "aarch64-darwin" = "alex-aarch64-darwin";
+      "aarch64-linux" = "alex-aarch64-linux";
+      "x86_64-darwin" = "alex-x86_64-darwin";
+      "x86_64-linux" = "alex-x86_64-linux";
+    }
+    .${pkgs.stdenv.hostPlatform.system};
+in
 pkgs.runCommand "check-get-entrypoint" { } ''
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME" "$TMPDIR/bin"
@@ -71,8 +83,8 @@ pkgs.runCommand "check-get-entrypoint" { } ''
     echo 'host-less run without a terminal unexpectedly succeeded' >&2
     exit 1
   fi
-  grep -F 'alex-x86_64-linux' "$TMPDIR/picker-err" >/dev/null
-  grep -F 'alex-x86_64-linux-desktop' "$TMPDIR/picker-err" >/dev/null
+  grep -F 'pass one of:' "$TMPDIR/picker-err" >/dev/null
+  grep -F '${expectedPickerHost}' "$TMPDIR/picker-err" >/dev/null
   test ! -e "$INSTALL_ARGS_FILE"
 
   # DOTFILES_DIR relocates the clone and forwards extra install arguments.

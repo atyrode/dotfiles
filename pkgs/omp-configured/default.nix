@@ -979,6 +979,37 @@ let
   ompBudget = mkOmpCommand "ompb" [ presets.budget ];
   ompFable = mkOmpCommand "ompf" [ presets.fable ];
   ompGpt = mkOmpCommand "ompg" [ presets.gpt ];
+  routeSpecs = [
+    "ompb|Cost-conscious routine work|${presets.budget}"
+    "ompg|OpenAI-only difficult work|${presets.gpt}"
+    "ompf|Fable-first work with predictable routing|${presets.fable}"
+  ];
+  routesHelp =
+    runCommand "omp-routes-help-${lib.getVersion omp}"
+      {
+        nativeBuildInputs = [
+          jq
+          yq-go
+        ];
+      }
+      ''
+        mkdir -p "$out/share/omp"
+        OMP_ROUTES_COLOR=1 bash ${./render-omp-routes.sh} '${lib.getVersion omp}' \
+          ${omp-agents}/share/omp/agents ${defaultsConfig} \
+          ${lib.escapeShellArgs routeSpecs} > "$out/share/omp/routes.ansi"
+        OMP_ROUTES_COLOR=0 bash ${./render-omp-routes.sh} '${lib.getVersion omp}' \
+          ${omp-agents}/share/omp/agents ${defaultsConfig} \
+          ${lib.escapeShellArgs routeSpecs} > "$out/share/omp/routes.plain"
+      '';
+  ompHelp = writeShellApplication {
+    name = "omph";
+    text = ''
+      if [[ -t 1 && -z ''${NO_COLOR:-} ]]; then
+        exec cat ${routesHelp}/share/omp/routes.ansi
+      fi
+      exec cat ${routesHelp}/share/omp/routes.plain
+    '';
+  };
   trustedUntrustedPath = lib.makeBinPath [
     bash
     coreutils
@@ -1213,6 +1244,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     ln -s ${lib.getExe ompBudget} "$out/bin/ompb"
     ln -s ${lib.getExe ompFable} "$out/bin/ompf"
     ln -s ${lib.getExe ompGpt} "$out/bin/ompg"
+    ln -s ${lib.getExe ompHelp} "$out/bin/omph"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"
   ''

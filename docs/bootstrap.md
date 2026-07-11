@@ -6,11 +6,11 @@ managed environment is known to work.
 
 ## Fresh-machine command
 
-Choose the host from [`hosts/default.nix`](../hosts/default.nix), then run this
-single command. This example selects the ordinary x86_64 Linux profile:
+Choose the host from [`hosts/default.nix`](../hosts/default.nix), then run one
+command. This example selects the ordinary x86_64 Linux profile:
 
 ```sh
-git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
 ```
 
 Substitute the exact registered host for a Mac or desktop Linux machine.
@@ -19,9 +19,23 @@ the base development machine or the desktop profile. Production NixOS servers
 instead import the [portable Home Manager profile](portable-profiles.md) from
 their infrastructure flake.
 
+`get.sh` is deliberately thin: it verifies Git is present, clones the
+repository to `~/nix-dotfiles` (`DOTFILES_DIR` overrides it; an existing
+directory is reused only when its origin is this repository), and hands off to
+the cloned `install.sh`, which owns every mutation. The 2026-07-10 decision to
+support no `curl | shell` path was revised on 2026-07-11 with these
+mitigations: the fetched script is function-wrapped so a truncated download
+executes nothing, the confirmation prompt reads from the terminal and a
+non-interactive run requires an explicit `--yes`, and the transactional
+bootstrap below still executes only from cloned, inspectable code. The
+clone-first command remains supported and equivalent:
+
+```sh
+git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
+```
+
 The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
-`sha256sum` or `shasum`. The command clones inspectable code before executing
-it; there is no supported `curl | shell` path.
+`sha256sum` or `shasum`.
 
 ## Phases and source policy
 
@@ -156,3 +170,9 @@ failure, interruption before and after transaction publication, resumable
 migration, collisions, corrupt and dual receipts, missing backups, symlinked
 state namespaces, rollback, receipt privacy, and idempotence. The same check
 runs natively in all four CI jobs.
+
+`checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
+failures, refusal to reuse a foreign target directory, the streamed
+piped-stdin handoff to the cloned `install.sh` with `--yes` and recorded
+arguments, the refusal to proceed without a terminal or `--yes`, and the
+`DOTFILES_DIR` override with forwarded install arguments.

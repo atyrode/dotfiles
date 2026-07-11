@@ -15,8 +15,12 @@ cd ~/nix-dotfiles
 **Supported fresh-machine command:**
 
 ```bash
-git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
 ```
+
+The fetched `get.sh` only clones the repository and hands off to the cloned
+`install.sh`; cloning first and running `./install.sh apply --config <host>`
+yourself remains equivalent.
 
 Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
 will not guess between desktop, development, or Mac profiles. It uses

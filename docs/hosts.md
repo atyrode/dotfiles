@@ -21,7 +21,8 @@ points; OMP and Codex profiles remain harness-specific mutable-state boundaries.
 - `media`: audio/video conversion and inspection.
 - `containers`: container clients and inspection tools; the daemon is
   system-owned.
-- `security`: declared scanning and network diagnostics.
+- `security`: network diagnostics. ClamAV is intentionally absent because no
+  registered host owns signature updates or a scanning workflow.
 - `server`: marks a Linux-only headless composition. The reviewed portable
   server selection combines it with `base` and `agent-tools`.
 
@@ -39,6 +40,8 @@ names.
 Production NixOS hosts do not belong in this registry. Their infrastructure
 flake supplies identity and system facts while importing the same capability
 modules through the [portable profile contract](portable-profiles.md).
+The full Home Manager, nix-darwin, and NixOS ownership matrix is documented in
+[Home Manager and system boundary](system-boundary.md).
 
 ## Adding a host
 

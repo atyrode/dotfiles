@@ -4,6 +4,10 @@ set -euo pipefail
 
 readonly registry='@registry@'
 readonly capability_inventory='@capabilities@'
+readonly homebrew_brewfile='@homebrew_brewfile@'
+readonly homebrew_cask_inventory='@homebrew_casks@'
+readonly system_policy='@system_policy@'
+readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
@@ -21,6 +25,7 @@ Usage:
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode doctor host [HOST] [--json]
+  atyrode doctor system [HOST] [--json]
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
 
@@ -31,7 +36,7 @@ EOF
 }
 
 actual_system() {
-  if [[ -n "${_ATYRODE_TEST_SYSTEM:-}" ]]; then
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_SYSTEM:-}" ]]; then
     printf '%s\n' "$_ATYRODE_TEST_SYSTEM"
     return
   fi
@@ -45,11 +50,15 @@ actual_system() {
 }
 
 actual_user() {
-  printf '%s\n' "${_ATYRODE_TEST_USER:-$(id -un)}"
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_USER:-}" ]]; then
+    printf '%s\n' "$_ATYRODE_TEST_USER"
+  else
+    id -un
+  fi
 }
 
 actual_hostname() {
-  if [[ -n "${_ATYRODE_TEST_HOSTNAME:-}" ]]; then
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_HOSTNAME:-}" ]]; then
     printf '%s\n' "$_ATYRODE_TEST_HOSTNAME"
   else
     hostname -s 2>/dev/null || hostname
@@ -163,6 +172,506 @@ doctor_tools() {
   jq -e 'all(.[]; (.expected | not) or .status == "ok")' <<<"$rows" >/dev/null
 }
 
+system_checks='[]'
+system_fixture='{}'
+
+system_check_add() {
+  local id="$1" owner="$2" required="$3" status="$4" code="$5"
+  local summary="$6" remediation="$7" expected="$8" actual="$9"
+
+  system_checks="$(jq -c \
+    --arg id "$id" \
+    --arg owner "$owner" \
+    --argjson required "$required" \
+    --arg status "$status" \
+    --arg code "$code" \
+    --arg summary "$summary" \
+    --arg remediation "$remediation" \
+    --argjson expected "$expected" \
+    --argjson actual "$actual" \
+    '. + [{
+      id: $id,
+      owner: $owner,
+      required: $required,
+      status: $status,
+      code: (if $code == "" then null else $code end),
+      summary: $summary,
+      remediation: (if $remediation == "" then null else $remediation end),
+      expected: $expected,
+      actual: $actual
+    }]' <<<"$system_checks")"
+}
+
+load_system_fixture() {
+  local fixture_path="${_ATYRODE_TEST_SYSTEM_FIXTURE:-}"
+
+  if [[ "$test_hooks" != 1 || -z "$fixture_path" ]]; then
+    printf '{}\n'
+    return
+  fi
+  [[ -f "$fixture_path" && ! -L "$fixture_path" ]] ||
+    die "$EX_DATAERR" "system diagnostic fixture must be a regular file"
+  jq -ec 'select(type == "object")' "$fixture_path" ||
+    die "$EX_DATAERR" "system diagnostic fixture is not a JSON object"
+}
+
+has_system_fixture() {
+  [[ "$system_fixture" != '{}' ]]
+}
+
+has_capability() {
+  local data="$1" capability="$2"
+  jq -e --arg capability "$capability" '.capabilities | index($capability)' <<<"$data" >/dev/null
+}
+
+nix_system_owner() {
+  local data="$1" platform="$2"
+
+  if [[ "$platform" == darwin ]]; then
+    printf 'nix-darwin\n'
+  elif has_capability "$data" server; then
+    printf 'nixos\n'
+  else
+    printf 'system\n'
+  fi
+}
+
+portable_system_owner() {
+  local data="$1"
+
+  if has_capability "$data" server; then
+    printf 'nixos\n'
+  else
+    printf 'system\n'
+  fi
+}
+
+word_in_list() {
+  local needle="$1" words="$2"
+  case " $words " in
+    *" $needle "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+probe_login_shell() {
+  local data="$1" platform="$2" user="$3"
+  local owner expected current="" executable=false listed=false status code summary remediation
+  local expected_json actual_json
+
+  if [[ "$platform" == darwin ]]; then
+    owner=nix-darwin
+    expected="$(jq -r '.loginShell.darwinPath' "$system_policy")"
+  elif has_capability "$data" server; then
+    owner=nixos
+    expected="$(jq -r '.loginShell.nixosPath' "$system_policy")"
+  else
+    owner=bootstrap
+    expected="$HOME/.nix-profile/bin/zsh"
+  fi
+
+  if has_system_fixture; then
+    current="$(jq -r '.loginShell.path // empty' <<<"$system_fixture")"
+    executable="$(jq -r '.loginShell.executable // false' <<<"$system_fixture")"
+    listed="$(jq -r '.loginShell.listed // false' <<<"$system_fixture")"
+  else
+    if [[ "$platform" == darwin ]]; then
+      current="$(/usr/bin/dscl . -read "/Users/$user" UserShell 2>/dev/null | awk '{ print $2 }')"
+    elif command -v getent >/dev/null 2>&1; then
+      current="$(getent passwd "$user" 2>/dev/null | awk -F: 'NR == 1 { print $7 }')"
+    fi
+    [[ -x "$expected" ]] && executable=true
+    grep -Fqx -- "$expected" /etc/shells 2>/dev/null && listed=true
+  fi
+
+  expected_json="$(jq -nc --arg path "$expected" '{program:"zsh",path:$path,listed:true,executable:true}')"
+  actual_json="$(jq -nc --arg path "$current" --argjson executable "$executable" \
+    --argjson listed "$listed" '{path:$path,executable:$executable,listed:$listed,source:"account-database"}')"
+  if [[ "$current" == "$expected" && "$executable" == true && "$listed" == true ]]; then
+    status=ok; code=""; summary="account login shell is the managed Zsh path"; remediation=""
+  else
+    status=incomplete; code="login-shell-mismatch"
+    summary="Zsh is installed but the account login shell is not operationally configured"
+    if [[ "$platform" == darwin ]]; then
+      remediation="apply nix-darwin again; its activation owns the primary account UserShell"
+    elif [[ "$owner" == nixos ]]; then
+      remediation="configure programs.zsh and users.users.<name>.shell in the NixOS infrastructure"
+    else
+      remediation="rerun install.sh apply with privilege to register and select the managed Zsh path"
+    fi
+  fi
+  system_check_add login-shell "$owner" true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+probe_nix_daemon() {
+  local data="$1" platform="$2" reachable=false owner status code summary remediation expected_json actual_json
+
+  owner="$(nix_system_owner "$data" "$platform")"
+  if has_system_fixture; then
+    reachable="$(jq -r '.nix.daemonReachable // false' <<<"$system_fixture")"
+  elif nix store info --store daemon --json >/dev/null 2>&1; then
+    reachable=true
+  fi
+  expected_json='{"store":"daemon","reachable":true}'
+  actual_json="$(jq -nc --argjson reachable "$reachable" '{store:"daemon",reachable:$reachable}')"
+  if [[ "$reachable" == true ]]; then
+    status=ok; code=""; summary="the system-owned Nix daemon is reachable"; remediation=""
+  else
+    status=incomplete; code="nix-daemon-unreachable"; summary="the Nix client cannot reach the daemon"
+    remediation="repair the system Nix service; Home Manager cannot own or restart it"
+  fi
+  system_check_add nix-daemon "$owner" true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+probe_nix_policy() {
+  local data="$1" platform="$2" owner config_json='{}'
+  local trusted_exact=false official_cache=false official_key=false signatures=false optimiser=false
+  local status code summary remediation expected_json actual_json expected_users
+
+  owner="$(nix_system_owner "$data" "$platform")"
+  expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
+  if has_system_fixture; then
+    trusted_exact="$(jq -r '.nix.trustedUsersExact // false' <<<"$system_fixture")"
+    official_cache="$(jq -r '.nix.officialCacheOnly // false' <<<"$system_fixture")"
+    official_key="$(jq -r '.nix.officialKeyOnly // false' <<<"$system_fixture")"
+    signatures="$(jq -r '.nix.signaturesRequired // false' <<<"$system_fixture")"
+    optimiser="$(jq -r '.nix.optimiserScheduled // false' <<<"$system_fixture")"
+  else
+    config_json="$(nix config show --json 2>/dev/null || printf '{}')"
+    jq -e --argjson expected "$expected_users" \
+      '.["trusted-users"].value | sort == $expected' <<<"$config_json" >/dev/null && trusted_exact=true
+    jq -e --arg expected "$(jq -r '.nix.substituter' "$system_policy")" \
+      '.["substituters"].value == [$expected]' <<<"$config_json" >/dev/null && official_cache=true
+    jq -e --arg expected "$(jq -r '.nix.trustedPublicKey' "$system_policy")" \
+      '.["trusted-public-keys"].value == [$expected]' <<<"$config_json" >/dev/null && official_key=true
+    jq -e '.["require-sigs"].value == true' <<<"$config_json" >/dev/null && signatures=true
+    if [[ "$platform" == darwin ]] && /bin/launchctl print \
+      "system/$(jq -r '.nix.darwinOptimiserLabel' "$system_policy")" >/dev/null 2>&1; then
+      optimiser=true
+    fi
+  fi
+
+  expected_json="$(jq -nc --argjson trustedUsers "$expected_users" \
+    --argjson scheduled "$([[ "$platform" == darwin ]] && echo true || echo false)" \
+    '{trustedUsers:$trustedUsers,officialSignedCacheOnly:true,signaturesRequired:true,optimiserScheduled:$scheduled}')"
+  actual_json="$(jq -nc --argjson trustedUsersExact "$trusted_exact" \
+    --argjson officialCacheOnly "$official_cache" --argjson officialKeyOnly "$official_key" \
+    --argjson signaturesRequired "$signatures" --argjson optimiserScheduled "$optimiser" \
+    '{trustedUsersExact:$trustedUsersExact,officialCacheOnly:$officialCacheOnly,
+      officialKeyOnly:$officialKeyOnly,signaturesRequired:$signaturesRequired,
+      optimiserScheduled:$optimiserScheduled}')"
+  if [[ "$trusted_exact" == true && "$official_cache" == true && "$official_key" == true \
+    && "$signatures" == true && ( "$platform" != darwin || "$optimiser" == true ) ]]; then
+    status=ok; code=""; summary="Nix trust, signed cache, and optimisation ownership match policy"; remediation=""
+  else
+    status=incomplete; code="nix-policy-drift"
+    summary="effective Nix daemon policy differs from the reviewed system boundary"
+    remediation="repair the owning nix-darwin or NixOS/Nix-daemon configuration; do not use a user nix.conf override"
+  fi
+  system_check_add nix-policy "$owner" true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+probe_container_engine() {
+  local data="$1" platform="$2" user="$3" required=false groups="" docker_group=false mode=unavailable
+  local owner status code summary remediation expected_json actual_json uid socket security
+
+  owner="$(portable_system_owner "$data")"
+  has_capability "$data" containers && required=true
+  if has_system_fixture; then
+    docker_group="$(jq -r '.container.dockerGroup // false' <<<"$system_fixture")"
+    mode="$(jq -r '.container.mode // "unavailable"' <<<"$system_fixture")"
+  else
+    groups="$(id -Gn "$user" 2>/dev/null || true)"
+    word_in_list docker "$groups" && docker_group=true
+    if [[ "$required" == true && "$platform" == darwin ]]; then
+      if docker --context "$(jq -r '.containers.darwin.context' "$system_policy")" \
+        info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+        mode=orbstack
+      fi
+    elif [[ "$required" == true ]]; then
+      uid="$(id -u "$user" 2>/dev/null || true)"
+      socket="$(jq -r '.containers.linux.socketTemplate' "$system_policy")"
+      socket="${socket//\{uid\}/$uid}"
+      security="$(docker --host "unix://$socket" info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
+      grep -qi "$(jq -r '.containers.linux.requiredSecurityOption' "$system_policy")" \
+        <<<"$security" && mode=rootless
+    fi
+  fi
+
+  if [[ "$platform" == darwin ]]; then
+    expected_json='{"mode":"orbstack","dockerGroup":false}'
+  else
+    expected_json='{"mode":"rootless","dockerGroup":false}'
+  fi
+  actual_json="$(jq -nc --arg mode "$mode" --argjson dockerGroup "$docker_group" \
+    '{mode:$mode,dockerGroup:$dockerGroup}')"
+  if [[ "$docker_group" == true ]]; then
+    status=incomplete; code="docker-group-membership"
+    summary="the account belongs to the root-equivalent Docker group"
+    remediation="remove Docker-group membership and use a rootless user engine; this command never changes groups"
+  elif [[ "$required" != true ]]; then
+    status=not-applicable; code="capability-not-selected"
+    summary="the containers capability is not selected"; remediation=""
+  elif [[ ( "$platform" == darwin && "$mode" == orbstack ) \
+    || ( "$platform" != darwin && "$mode" == rootless ) ]]; then
+    status=ok; code=""; summary="the declared container engine is reachable without root-equivalent membership"
+    remediation=""
+  else
+    status=incomplete; code="container-engine-unavailable"
+    summary="container clients are installed but the declared engine policy is not operational"
+    if [[ "$platform" == darwin ]]; then
+      remediation="start and repair the nix-darwin-selected OrbStack engine"
+    else
+      remediation="configure a rootless Docker engine at the per-user socket; never add the user to the Docker group"
+    fi
+  fi
+  system_check_add container-engine "$owner" "$required" "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+probe_antivirus() {
+  local data="$1" owner present=false binary status code summary remediation
+  local expected_json actual_json reason
+
+  owner="$(portable_system_owner "$data")"
+  reason="$(jq -r '.antivirus.reason' "$system_policy")"
+  if has_system_fixture; then
+    present="$(jq -r '.antivirus.binariesPresent // false' <<<"$system_fixture")"
+  else
+    for binary in clamscan freshclam; do
+      if command -v "$binary" >/dev/null 2>&1; then
+        present=true
+        break
+      fi
+    done
+  fi
+  expected_json='{"managed":false,"binariesPresent":false}'
+  actual_json="$(jq -nc --argjson binariesPresent "$present" \
+    '{managed:false,binariesPresent:$binariesPresent,signatures:null,scanningWorkflow:null}')"
+  if [[ "$present" == true ]]; then
+    status=incomplete; code="unmanaged-antivirus-present"
+    summary="ClamAV binaries are present without owned signatures or a scanning workflow"
+    remediation="remove the undeclared binaries, or first define a system-owned update, scan, and response policy"
+  else
+    status=not-applicable; code="not-configured"
+    summary="ClamAV is intentionally absent because no host owns signatures and scanning"
+    remediation="$reason"
+  fi
+  system_check_add antivirus-data "$owner" false "$status" "$code" \
+    "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+android_rule_roots() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_UDEV_ROOT:-}" ]]; then
+    printf '%s\n' "$_ATYRODE_TEST_UDEV_ROOT"
+  else
+    jq -r '.android.linuxRuleRoots[]' "$system_policy"
+  fi
+}
+
+probe_android_policy() {
+  local groups="$1" root file group base rule
+
+  while IFS= read -r root; do
+    [[ -d "$root" ]] || continue
+    for file in "$root"/*.rules; do
+      [[ -f "$file" && -r "$file" ]] || continue
+      base="${file##*/}"
+      case "$base" in
+        *android*|*Android*|*adb*|*ADB*) ;;
+        *) continue ;;
+      esac
+      while IFS= read -r rule || [[ -n "$rule" ]]; do
+        [[ ! "$rule" =~ ^[[:space:]]*# ]] || continue
+        grep -Eq 'ATTR(S)?\{idVendor\}' <<<"$rule" 2>/dev/null || continue
+        if grep -Eq 'TAG\+?=[[:space:]]*"uaccess"' <<<"$rule" 2>/dev/null; then
+          printf 'uaccess\n'
+          return
+        fi
+        while IFS= read -r group; do
+          if grep -Eq "GROUP\\+?=[[:space:]]*\"$group\"" <<<"$rule" 2>/dev/null \
+            && word_in_list "$group" "$groups"; then
+            printf 'group:%s\n' "$group"
+            return
+          fi
+        done < <(jq -r '.android.acceptedGroups[]' "$system_policy")
+      done < "$file"
+    done
+  done < <(android_rule_roots)
+  printf 'missing\n'
+}
+
+probe_device_permissions() {
+  local data="$1" platform="$2" user="$3" required=false adb_available=false policy=not-applicable
+  local owner groups status code summary remediation expected_json actual_json
+
+  owner="$(portable_system_owner "$data")"
+  has_capability "$data" mobile && required=true
+  if [[ "$required" != true ]]; then
+    expected_json='{"policy":null}'
+    actual_json='{"adbAvailable":null,"policy":null}'
+    system_check_add device-permissions "$owner" false not-applicable capability-not-selected \
+      "the mobile capability is not selected" "" "$expected_json" "$actual_json"
+    return
+  fi
+  if [[ "$platform" == darwin ]]; then
+    if has_system_fixture && jq -e 'has("device")' <<<"$system_fixture" >/dev/null; then
+      adb_available="$(jq -r '.device.adbAvailable // false' <<<"$system_fixture")"
+    elif command -v adb >/dev/null 2>&1; then
+      adb_available=true
+    fi
+    expected_json='{"policy":"macos-user-authorization"}'
+    actual_json="$(jq -nc --argjson adbAvailable "$adb_available" \
+      '{adbAvailable:$adbAvailable,policy:"macos-user-authorization"}')"
+    if [[ "$adb_available" == true ]]; then
+      status=ok; code=""
+      summary="ADB is installed; macOS owns per-device authorization at connection time"
+      remediation=""
+    else
+      status=incomplete; code="android-tools-missing"
+      summary="the mobile capability is selected but ADB is unavailable"
+      remediation="reapply the registered host so Home Manager provides Android platform tools"
+    fi
+    system_check_add device-permissions "$owner" true "$status" "$code" \
+      "$summary" "$remediation" "$expected_json" "$actual_json"
+    return
+  fi
+
+  if has_system_fixture && jq -e '.device | has("adbAvailable")' <<<"$system_fixture" >/dev/null; then
+    adb_available="$(jq -r '.device.adbAvailable // false' <<<"$system_fixture")"
+  else
+    command -v adb >/dev/null 2>&1 && adb_available=true
+  fi
+  if has_system_fixture && jq -e '.device | has("policy")' <<<"$system_fixture" >/dev/null; then
+    policy="$(jq -r '.device.policy // "missing"' <<<"$system_fixture")"
+  else
+    groups="$(id -Gn "$user" 2>/dev/null || true)"
+    policy="$(probe_android_policy "$groups")"
+  fi
+  expected_json='{"adbAvailable":true,"policy":["uaccess","reviewed-user-group"]}'
+  actual_json="$(jq -nc --argjson adbAvailable "$adb_available" --arg policy "$policy" \
+    '{adbAvailable:$adbAvailable,policy:$policy}')"
+  if [[ "$adb_available" == true && ( "$policy" == uaccess || "$policy" == group:* ) ]]; then
+    status=ok; code=""; summary="ADB is installed and a reviewed udev access policy is present"; remediation=""
+  else
+    status=incomplete; code="android-device-permissions"
+    summary="Android binaries are installed but Linux device access is not operationally configured"
+    remediation="add a system-owned Android udev uaccess rule or reviewed adbusers/plugdev rule; do not run privileged ADB"
+  fi
+  system_check_add device-permissions "$owner" true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+probe_homebrew_drift() {
+  local platform="$1" available=false drift=true probe_failed=false
+  local check_status=127 cleanup_status=127
+  local status code summary remediation
+  local expected_count expected_json actual_json
+
+  expected_count="$(jq 'length' "$homebrew_cask_inventory")"
+  expected_json="$(jq -nc --argjson casks "$expected_count" '{cleanup:"check",expectedCasks:$casks}')"
+  if [[ "$platform" != darwin ]]; then
+    actual_json='{"available":null,"drift":null}'
+    system_check_add homebrew-drift nix-darwin false not-applicable platform-not-darwin \
+      "Homebrew is not part of the Linux ownership boundary" "" "$expected_json" "$actual_json"
+    return
+  fi
+  if has_system_fixture; then
+    available="$(jq -r '.homebrew.available // false' <<<"$system_fixture")"
+    drift="$(jq -r 'if .homebrew | has("drift") then .homebrew.drift else true end' \
+      <<<"$system_fixture")"
+    probe_failed="$(jq -r '.homebrew.probeFailed // false' <<<"$system_fixture")"
+  elif command -v brew >/dev/null 2>&1; then
+    available=true
+    check_status=0
+    cleanup_status=0
+    env -u HOMEBREW_BUNDLE_FILE HOMEBREW_NO_AUTO_UPDATE=1 \
+      brew bundle check --no-upgrade --file "$homebrew_brewfile" </dev/null >/dev/null 2>&1 || check_status=$?
+    env -u HOMEBREW_BUNDLE_FILE HOMEBREW_NO_AUTO_UPDATE=1 \
+      brew bundle cleanup --file "$homebrew_brewfile" </dev/null >/dev/null 2>&1 || cleanup_status=$?
+    if [[ "$check_status" -gt 1 || "$cleanup_status" -gt 1 ]]; then
+      probe_failed=true
+    fi
+    [[ "$check_status" -eq 0 && "$cleanup_status" -eq 0 ]] && drift=false
+  fi
+  actual_json="$(jq -nc --argjson available "$available" --argjson drift "$drift" \
+    --argjson probeFailed "$probe_failed" \
+    '{available:$available,drift:$drift,probeFailed:$probeFailed,
+      probe:"brew-bundle-check-and-cleanup-without-force"}')"
+  if [[ "$available" != true ]]; then
+    status=incomplete; code="homebrew-unavailable"; summary="nix-darwin expects Homebrew but brew is unavailable"
+    remediation="repair the nix-homebrew installation, then re-run the non-destructive drift check"
+  elif [[ "$probe_failed" == true ]]; then
+    status=incomplete; code="homebrew-probe-failed"
+    summary="Homebrew state could not be compared with the immutable Brewfile"
+    remediation="repair Homebrew or Brew Bundle, then rerun the read-only drift check"
+  elif [[ "$drift" == false ]]; then
+    status=ok; code=""; summary="Homebrew matches the immutable nix-darwin Brewfile"; remediation=""
+  else
+    status=incomplete; code="homebrew-drift"; summary="Homebrew has missing or extra state relative to the generated Brewfile"
+    remediation="review the drift and either declare or manually remove it; automatic uninstall and zap are forbidden"
+  fi
+  system_check_add homebrew-drift nix-darwin true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
+doctor_system() {
+  local requested="" json=0 host data platform user system capabilities ok result
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --*) die "$EX_USAGE" "unknown doctor system option: $1" ;;
+      *)
+        [[ -z "$requested" ]] || die "$EX_USAGE" "doctor system accepts at most one host"
+        requested="$1"
+        shift
+        ;;
+    esac
+  done
+  host="$(resolve_host "$requested")"
+  doctor_host "$host" 1 >/dev/null || return $?
+  data="$(host_json "$host")"
+  platform="$(jq -r '.platform' <<<"$data")"
+  user="$(jq -r '.username' <<<"$data")"
+  system="$(jq -r '.system' <<<"$data")"
+  capabilities="$(jq -c '.capabilities' <<<"$data")"
+  system_fixture="$(load_system_fixture)"
+  system_checks='[]'
+
+  jq -e '.schemaVersion == 1' "$system_policy" >/dev/null ||
+    die "$EX_SOFTWARE" "unsupported system policy schema"
+  probe_login_shell "$data" "$platform" "$user"
+  probe_nix_daemon "$data" "$platform"
+  probe_nix_policy "$data" "$platform"
+  probe_container_engine "$data" "$platform" "$user"
+  probe_antivirus "$data"
+  probe_device_permissions "$data" "$platform" "$user"
+  probe_homebrew_drift "$platform"
+  jq -e --argjson expected "$(jq -c '.checkOrder' "$system_policy")" \
+    'map(.id) == $expected' <<<"$system_checks" >/dev/null ||
+    die "$EX_SOFTWARE" "system diagnostics do not match the policy order"
+
+  ok=false
+  jq -e 'all(.[]; .status != "incomplete")' <<<"$system_checks" >/dev/null && ok=true
+  result="$(jq -nc --argjson ok "$ok" --arg host "$host" --arg system "$system" \
+    --arg platform "$platform" --argjson capabilities "$capabilities" \
+    --argjson checks "$system_checks" \
+    '{schemaVersion:1,command:"doctor system",ok:$ok,host:$host,system:$system,
+      platform:$platform,capabilities:$capabilities,checks:$checks,mutationBoundary:"read-only probes"}')"
+  if [[ "$json" == 1 ]]; then
+    printf '%s\n' "$result"
+  else
+    jq -r '.checks[] | "\(.id): \(.status) — \(.summary)"' <<<"$result"
+    jq -r '"status: \(if .ok then "ready" else "incomplete" end)"' <<<"$result"
+  fi
+  [[ "$ok" == true ]] || return "$EX_UNAVAILABLE"
+}
+
 apply_config() {
   local requested="" repo="" plan=0 dry=0 json=0 restart=0
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
@@ -179,7 +688,10 @@ apply_config() {
   done
 
   local host data expected_system expected_user expected_hostname platform default_repo revision dirty backend installable
-  local git_command="${ATYRODE_GIT:-git}"
+  local git_command=git
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
+    git_command="$ATYRODE_GIT"
+  fi
   host="$(resolve_host "$requested")"
   data="$(host_json "$host")"
   expected_system="$(jq -r '.system' <<<"$data")"
@@ -211,7 +723,10 @@ apply_config() {
   [[ "$plan" == 0 ]] || return 0
 
   local -a nh_args
-  local nh_command="${ATYRODE_NH:-nh}"
+  local nh_command=nh
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_NH:-}" ]]; then
+    nh_command="$ATYRODE_NH"
+  fi
   if [[ "$platform" == darwin ]]; then nh_args=("$nh_command" darwin switch "$installable" --diff always)
   else nh_args=("$nh_command" home switch "$installable" --configuration "$host" --backup-extension backup --diff always); fi
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
@@ -239,8 +754,9 @@ main() {
     doctor)
       case "${1:-}" in
         host) shift; local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
+        system) shift; doctor_system "$@" ;;
         tools) shift; doctor_tools "$@" ;;
-        *) die "$EX_USAGE" "doctor expects host or tools" ;;
+        *) die "$EX_USAGE" "doctor expects host, system, or tools" ;;
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;

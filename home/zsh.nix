@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ ... }:
 
 {
   programs.zsh = {
@@ -20,6 +20,4 @@
       source ${./shell/startup.zsh}
     '';
   };
-
-  home.sessionVariables.SHELL = "${pkgs.zsh}/bin/zsh";
 }

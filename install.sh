@@ -8,6 +8,7 @@ readonly REPO_HTTPS_URL="https://github.com/atyrode/dotfiles.git"
 readonly REPO_SSH_URL="git@github.com:atyrode/dotfiles.git"
 readonly NIX_VERSION="2.34.7"
 readonly BOOTSTRAP_SCHEMA="1"
+readonly BOOTSTRAP_TEST_HOOKS=0
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 COMMAND="${1:-}"
@@ -110,7 +111,7 @@ select_nix_artifact() {
 source_nix() {
   local profile=""
 
-  if [[ "${BOOTSTRAP_NIX_PROFILE_SCRIPT+x}" == x ]]; then
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_NIX_PROFILE_SCRIPT+x}" == x ]]; then
     profile="${BOOTSTRAP_NIX_PROFILE_SCRIPT:-}"
   elif [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]]; then
     profile="/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
@@ -266,6 +267,12 @@ print_plan() {
   printf '  %s. Activate %s through atyrode/nh.\n' "$step" "$FLAKE_CONFIG"
   step=$((step + 1))
   printf '  %s. Verify host state and complete the migration and bootstrap receipts.\n' "$step"
+  step=$((step + 1))
+  if [[ "$SYSTEM" == *-darwin ]]; then
+    printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$step"
+  else
+    printf '  %s. Register and select the managed Zsh login shell with explicit privilege, then verify the account database.\n' "$step"
+  fi
   printf '\nNo changes were made. apply will show this plan again before confirmation.\n'
 }
 
@@ -309,6 +316,19 @@ ensure_safe_state_root() {
   chmod 700 "$root" "$transactions"
 }
 
+ensure_safe_login_shell_marker() {
+  local marker
+
+  marker="$(bootstrap_state_root)/login-shell.incomplete"
+  if [[ -L "$marker" ]]; then
+    die "unsafe login-shell prerequisite marker"
+  elif [[ -f "$marker" || ! -e "$marker" ]]; then
+    return
+  else
+    die "login-shell prerequisite marker has an unsupported type"
+  fi
+}
+
 append_transaction() {
   [[ $# -eq 2 ]] || die "internal receipt error"
   printf '%s\t%s\n' "$1" "$2" >> "$TRANSACTION/receipt.tsv"
@@ -348,6 +368,7 @@ begin_transaction() {
   fi
 
   ensure_safe_state_root "$root"
+  ensure_safe_login_shell_marker
   archive_abandoned_transactions "$root"
   pending="$root/apply.pending"
   [[ ! -e "$pending" && ! -L "$pending" ]] ||
@@ -382,7 +403,7 @@ begin_transaction() {
     chmod 600 "$TRANSACTION/backup/dotfiles-config"
   fi
   append_transaction state-before "$state_status"
-  if [[ "${BOOTSTRAP_FAILPOINT:-}" == before-transaction-publish ]]; then
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-transaction-publish ]]; then
     printf 'bootstrap: interrupted at test failpoint before-transaction-publish\n' >&2
     exit 75
   fi
@@ -660,6 +681,118 @@ verify_installation() {
   printf 'Verification passed for %s on %s\n' "$FLAKE_CONFIG" "$SYSTEM"
 }
 
+account_login_shell() {
+  local user="$1"
+  local fixture=""
+
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_ACCOUNT_SHELL_FILE:-}" ]]; then
+    fixture="$BOOTSTRAP_ACCOUNT_SHELL_FILE"
+  fi
+
+  if [[ -n "$fixture" ]]; then
+    [[ -f "$fixture" && ! -L "$fixture" ]] || return 1
+    cat "$fixture"
+  elif command_exists getent; then
+    getent passwd "$user" 2>/dev/null | awk -F: 'NR == 1 { print $7 }'
+  else
+    return 1
+  fi
+}
+
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  elif command_exists sudo; then
+    sudo -- "$@"
+  else
+    printf 'bootstrap: system prerequisite incomplete: sudo is required to configure the Linux login shell\n' >&2
+    return 1
+  fi
+}
+
+configure_linux_login_shell() {
+  local user target shells_file current
+
+  [[ "$SYSTEM" == *-linux ]] || return 0
+  user="$(id -un)"
+  target="$HOME/.nix-profile/bin/zsh"
+  shells_file=/etc/shells
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_SHELLS_FILE:-}" ]]; then
+    shells_file="$BOOTSTRAP_SHELLS_FILE"
+  fi
+  [[ -x "$target" ]] || {
+    printf 'bootstrap: system prerequisite incomplete: managed Zsh is not executable at %s\n' "$target" >&2
+    return 1
+  }
+  [[ -f "$shells_file" && ! -L "$shells_file" ]] || {
+    printf 'bootstrap: system prerequisite incomplete: %s must be a regular file\n' "$shells_file" >&2
+    return 1
+  }
+  if ! grep -Fqx -- "$target" "$shells_file"; then
+    # shellcheck disable=SC2016 # Positional parameters expand in the privileged shell.
+    run_privileged sh -c \
+      'grep -Fqx -- "$1" "$2" || printf "%s\n" "$1" >> "$2"' \
+      sh "$target" "$shells_file" || {
+        printf 'bootstrap: system prerequisite incomplete: could not register managed Zsh in %s\n' \
+          "$shells_file" >&2
+        return 1
+      }
+  fi
+  current="$(account_login_shell "$user" || true)"
+  if [[ "$current" != "$target" ]]; then
+    command_exists chsh || {
+      printf 'bootstrap: system prerequisite incomplete: chsh is unavailable\n' >&2
+      return 1
+    }
+    run_privileged chsh -s "$target" "$user" || {
+      printf 'bootstrap: system prerequisite incomplete: chsh could not update the account database\n' >&2
+      return 1
+    }
+  fi
+  current="$(account_login_shell "$user" || true)"
+  [[ "$current" == "$target" ]] || {
+    printf 'bootstrap: system prerequisite incomplete: account login shell remains %s\n' \
+      "${current:-unknown}" >&2
+    return 1
+  }
+}
+
+mark_login_shell_incomplete() {
+  local root temporary marker
+
+  root="$(bootstrap_state_root)"
+  marker="$root/login-shell.incomplete"
+  ensure_safe_login_shell_marker
+  temporary="$(mktemp "$root/.login-shell.incomplete.XXXXXX")"
+  {
+    printf 'version\t1\n'
+    printf 'status\tincomplete\n'
+    printf 'owner\tsystem-prerequisite\n'
+  } > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$marker"
+}
+
+clear_login_shell_incomplete() {
+  local marker
+
+  marker="$(bootstrap_state_root)/login-shell.incomplete"
+  ensure_safe_login_shell_marker
+  if [[ -f "$marker" ]]; then
+    rm "$marker"
+  fi
+}
+
+verify_system_login_shell() {
+  local diagnostics
+
+  diagnostics="$(run_atyrode doctor system "$FLAKE_CONFIG" 2>/dev/null || true)"
+  if ! grep -q '^login-shell: ok ' <<<"$diagnostics"; then
+    printf 'bootstrap: system prerequisite incomplete: atyrode could not verify the real account login shell\n' >&2
+    return 1
+  fi
+}
+
 apply_configuration() {
   local migration_status
 
@@ -701,7 +834,7 @@ apply_configuration() {
   append_transaction phase preparing-migration
   migration_command prepare
 
-  if [[ "${BOOTSTRAP_FAILPOINT:-}" == after-migration-prepare ]]; then
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == after-migration-prepare ]]; then
     printf 'bootstrap: interrupted at test failpoint after-migration-prepare\n' >&2
     exit 75
   fi
@@ -716,9 +849,23 @@ apply_configuration() {
   append_transaction phase verifying
   verify_installation
   trap - ERR INT TERM
+  mark_login_shell_incomplete
   finish_transaction complete
 
-  printf '\nBootstrap complete. Start the managed login shell with: exec zsh -l\n'
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == after-login-shell-receipt ]]; then
+    printf 'bootstrap: interrupted at test failpoint after-login-shell-receipt\n' >&2
+    exit 75
+  fi
+
+  if ! configure_linux_login_shell || ! verify_system_login_shell; then
+    printf 'Home Manager activation completed, but the login-shell system prerequisite is incomplete.\n' >&2
+    printf 'Fix the reported system boundary and run ./install.sh verify --config %s.\n' \
+      "$FLAKE_CONFIG" >&2
+    return 69
+  fi
+  clear_login_shell_incomplete
+
+  printf '\nBootstrap complete. Open a new terminal or run: exec zsh -l\n'
 }
 
 rollback_interrupted() {
@@ -764,7 +911,13 @@ case "$COMMAND" in
   preflight) preflight ;;
   plan) preflight; print_plan ;;
   apply) apply_configuration ;;
-  verify) preflight; enable_flakes_for_process; verify_installation ;;
+  verify)
+    preflight
+    enable_flakes_for_process
+    verify_installation
+    verify_system_login_shell || die "login-shell system prerequisite is incomplete"
+    clear_login_shell_incomplete
+    ;;
   rollback) rollback_interrupted ;;
   -h|--help|help) usage ;;
   '') usage >&2; exit 64 ;;

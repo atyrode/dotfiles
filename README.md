@@ -54,7 +54,7 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 - **dive** - Docker image inspector
 - **fastfetch** - Explicit system information command (not a startup side effect)
 - **Explicit capabilities** - ffmpeg (`media`), Android tools/scrcpy (`mobile`),
-  and nmap/socat/ClamAV (`security`)
+  and nmap/socat (`security`)
 
 ### macOS Apps
 - **Nix app bundles** - ChatGPT, Godot, Lichess, Obsidian, OrbStack, Postman,
@@ -77,6 +77,7 @@ Use the packaged `atyrode` interface, or check these highlights:
 atyrode apply --plan  # Inspect the exact host, source, and backend
 zconf                 # Compatibility wrapper for `atyrode apply`
 atyrode doctor host   # Validate the managed machine identity
+atyrode doctor system # Audit system-owned operational prerequisites
 ```
 
 ### Agent Tools
@@ -134,7 +135,8 @@ dotfiles/
 ├── agents/                  # Generic cross-project skills
 ├── checks/                  # Nix package and migration checks
 ├── darwin/                # nix-darwin and Homebrew configuration
-│   └── default.nix        # macOS system and cask definitions
+│   ├── casks.nix          # Shared declarative Homebrew cask list
+│   └── default.nix        # macOS system ownership and activation
 ├── docs/                    # Architecture and maintenance guides
 ├── flake.nix              # Main flake configuration
 ├── install.sh             # Phased, transactional bootstrap
@@ -189,6 +191,10 @@ compatibility boundary.
 baseline, optional capabilities, project-owned runtimes, harness boundaries,
 and closure review workflow.
 
+[Home Manager and system boundary](docs/system-boundary.md) records which
+layer owns login shells, the Nix daemon, containers, device access, antivirus,
+and Homebrew, plus the read-only operational readiness checks.
+
 [Shell surface](docs/shell.md) records every retained and removed function,
 alias, startup side effect, and Oh My Zsh plugin.
 
@@ -235,7 +241,8 @@ package inventory, then run `atyrode apply`.
 
 ### Add macOS Homebrew Apps
 
-Edit `darwin/default.nix` and add cask names to `homebrew.casks`, then run `zconf` on macOS.
+Edit `darwin/casks.nix`, then run `zconf` on macOS. nix-darwin generates the
+matching Brewfile and checks for non-destructive Homebrew drift.
 
 ### Modify Shell Functions
 

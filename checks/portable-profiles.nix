@@ -98,6 +98,11 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   fixtureIdentity.username == "fixture"
 ) "NixOS consumer identity did not retain its fixture user";
+assert lib.assertMsg externalConfig.config.programs.zsh.enable
+  "NixOS consumer must own system Zsh enablement";
+assert lib.assertMsg (
+  lib.getName externalConfig.config.users.users.fixture.shell == "zsh"
+) "NixOS consumer must own the account login shell";
 assert lib.assertMsg (
   !(selectionSucceeds [ "server" ] system)
 ) "a portable composition without base unexpectedly validated";

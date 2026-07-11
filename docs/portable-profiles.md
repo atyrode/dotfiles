@@ -8,8 +8,11 @@ configuration.
 The dependency is deliberately one-way: infrastructure pins this flake;
 dotfiles never imports the infrastructure repository. NixOS owns privileged
 filesystems, networking, the firewall, the Nix daemon, system services,
-container runtimes, backups, and production secrets. The consuming flake also
-owns hostnames, provider identifiers, user names, and home paths.
+container runtimes, account login shells, device rules, backups, and production
+secrets. The consuming flake also owns hostnames, provider identifiers, user
+names, and home paths. The cross-platform ownership matrix and readiness
+diagnostics are documented in [Home Manager and system
+boundary](system-boundary.md).
 
 ## Exported contract
 
@@ -72,13 +75,16 @@ example intentionally leaves every production system option in the consumer:
         system = host.system;
         modules = [
           dotfiles.nixosModules.dotfiles-home
-          {
+          ({ pkgs, ... }: {
             atyrode.dotfiles.hostRegistry.${hostId} = host;
 
             users.users.${host.username} = {
               isNormalUser = true;
               home = host.homeDirectory;
+              shell = pkgs.zsh;
             };
+
+            programs.zsh.enable = true;
 
             home-manager.users.${host.username} = {
               imports = [
@@ -95,8 +101,9 @@ example intentionally leaves every production system option in the consumer:
               };
             };
 
-            # networking, filesystems, services, secrets, and backups live here
-          }
+            # Nix daemon policy, networking, filesystems, services, device
+            # rules, container engines, secrets, and backups live here.
+          })
         ];
       };
     };

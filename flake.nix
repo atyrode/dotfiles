@@ -75,6 +75,7 @@
         "vscode"
         "whatsapp-for-mac"
       ];
+      homebrewCasks = import ./darwin/casks.nix;
 
       rawCapabilityModules = import ./home/profiles;
 
@@ -252,6 +253,7 @@
             omp-configured = final.callPackage ./pkgs/omp-configured { };
             atyrode = final.callPackage ./pkgs/atyrode {
               capabilities = knownCapabilities;
+              inherit homebrewCasks;
               hostRegistry = publicRegistry;
             };
           })
@@ -467,6 +469,39 @@
               }
             else
               null;
+          systemDoctorAtyrode = pkgs.atyrode.override {
+            enableTestHooks = true;
+            hostRegistry = publicHosts // {
+              fixture-server = {
+                id = "fixture-server";
+                aliases = [ ];
+                capabilities = [
+                  "base"
+                  "server"
+                ];
+                dotfilesDirectory = "/home/fixture/nix-dotfiles";
+                homeDirectory = "/home/fixture";
+                hostname = null;
+                platform = "linux";
+                system = "x86_64-linux";
+                username = "fixture";
+              };
+              fixture-security = {
+                id = "fixture-security";
+                aliases = [ ];
+                capabilities = [
+                  "base"
+                  "security"
+                ];
+                dotfilesDirectory = "/home/fixture/nix-dotfiles";
+                homeDirectory = "/home/fixture";
+                hostname = null;
+                platform = "linux";
+                system = "x86_64-linux";
+                username = "fixture";
+              };
+            };
+          };
           systemHomeConfigs = lib.filterAttrs (
             name: _config: hosts.${name}.system == system
           ) canonicalHomeConfigs;
@@ -521,7 +556,19 @@
         in
         import ./checks/agent-tools.nix { inherit lib pkgs; }
         // {
-          atyrode-cli = import ./checks/atyrode-cli.nix { inherit pkgs; };
+          atyrode-cli = import ./checks/atyrode-cli.nix {
+            inherit pkgs;
+            atyrode = systemDoctorAtyrode;
+            productionAtyrode = pkgs.atyrode;
+            productionHost =
+              {
+                "aarch64-darwin" = "alex-aarch64-darwin";
+                "x86_64-darwin" = "alex-x86_64-darwin";
+                "aarch64-linux" = "alex-aarch64-linux";
+                "x86_64-linux" = "alex-x86_64-linux";
+              }
+              .${system};
+          };
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
           codex-use = import ./checks/codex-use.nix {
             inherit lib pkgs;
@@ -536,6 +583,13 @@
           shell-surface = import ./checks/shell-surface.nix {
             inherit lib pkgs;
             hostConfigs = canonicalHomeConfigs;
+          };
+          system-boundary = import ./checks/system-boundary.nix {
+            inherit lib pkgs system;
+            homeConfigs = systemHomeConfigs;
+            serverConfig = if isLinux then serverHomeConfig.config else null;
+            externalFixture = if isLinux then externalServerFixture else null;
+            darwinConfigs = systemDarwinConfigs;
           };
         }
         // lib.optionalAttrs isLinux {

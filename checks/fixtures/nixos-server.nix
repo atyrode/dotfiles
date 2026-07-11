@@ -41,16 +41,19 @@ in
 
     modules = [
       dotfiles.nixosModules.dotfiles-home
-      {
+      ({ pkgs, ... }: {
         boot.isContainer = true;
         nixpkgs.hostPlatform = system;
         system.stateVersion = "26.05";
+
+        programs.zsh.enable = true;
 
         atyrode.dotfiles.hostRegistry = registry;
 
         users.users.${username} = {
           home = homeDirectory;
           isNormalUser = true;
+          shell = pkgs.zsh;
         };
 
         home-manager.users.${username} = {
@@ -68,7 +71,7 @@ in
             inherit homeDirectory username;
           };
         };
-      }
+      })
     ];
   };
 }

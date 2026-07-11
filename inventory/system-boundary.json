@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "checkOrder": [
+    "login-shell",
+    "nix-daemon",
+    "nix-policy",
+    "container-engine",
+    "antivirus-data",
+    "device-permissions",
+    "homebrew-drift"
+  ],
+  "loginShell": {
+    "program": "zsh",
+    "linuxPath": "$HOME/.nix-profile/bin/zsh",
+    "darwinPath": "/run/current-system/sw/bin/zsh",
+    "nixosPath": "/run/current-system/sw/bin/zsh"
+  },
+  "nix": {
+    "store": "daemon",
+    "trustedUsers": ["root"],
+    "substituter": "https://cache.nixos.org/",
+    "trustedPublicKey": "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+    "darwinOptimiserLabel": "org.nixos.nix-optimise"
+  },
+  "containers": {
+    "linux": {
+      "socketTemplate": "/run/user/{uid}/docker.sock",
+      "requiredSecurityOption": "rootless",
+      "forbiddenGroups": ["docker"]
+    },
+    "darwin": {
+      "context": "orbstack"
+    }
+  },
+  "antivirus": {
+    "managed": false,
+    "reason": "No registered host owns signature updates and a scanning workflow."
+  },
+  "android": {
+    "linuxRuleRoots": [
+      "/etc/udev/rules.d",
+      "/run/udev/rules.d",
+      "/usr/lib/udev/rules.d",
+      "/lib/udev/rules.d"
+    ],
+    "acceptedAccessPolicies": ["uaccess", "reviewed-user-group"],
+    "ruleIdentification": "filename-mentions-android-or-adb",
+    "acceptedGroups": ["adbusers", "plugdev"]
+  },
+  "homebrew": {
+    "cleanup": "check",
+    "forbiddenAutomaticModes": ["uninstall", "zap"]
+  }
+}

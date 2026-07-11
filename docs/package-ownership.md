@@ -17,7 +17,9 @@ from the server composition.
   mutable and harness-owned outside derivations.
 - `desktop`, `mobile`, `media`, `containers`, and `security` are explicit host
   capabilities. Container daemons and Homebrew application state remain
-  system-owned.
+  system-owned. The `security` capability contains network diagnostics; ClamAV
+  is intentionally unowned because there is no signature-update and scanning
+  workflow.
 - Python/Pillow/uv, Node/Bun/Deno, Go, Rust, and GCC are project-owned. A Nix
   project commits a dev shell and `.envrc`; other projects commit `mise.toml`
   plus their native manifest. Nix and mise must not own the same project runtime.
@@ -43,6 +45,11 @@ and #30; neither is pulled into the baseline for harness symmetry.
 
 `atyrode doctor tools --json` reports these versions, launch modes, paths,
 owners, and missing-capability remediation without reading authentication state.
+Package presence is separate from system readiness. `atyrode doctor system
+[HOST] [--json]` verifies the system-owned login shell, daemon policy,
+container engine, Android access policy, antivirus disposition, and Homebrew
+drift without changing them. See [Home Manager and system
+boundary](system-boundary.md).
 
 ## Closure review
 
@@ -68,7 +75,8 @@ delivers 36 top-level packages and measures 2,108,944,256 NAR bytes across 396
 store paths. Its enforced ceilings are 40 packages, 2,348,810,240 bytes, and 440
 paths. The profile deliberately excludes development, containers, security,
 media, mobile, and desktop capabilities; it therefore contains neither
-workstation language stacks nor Docker/ClamAV. The aarch64 ceilings are 40
+workstation language stacks, container clients, nor antivirus software. The
+aarch64 ceilings are 40
 packages, 2.5 GiB, and 500 paths and are enforced by the native CI runner. See
 [Portable Home Manager profiles](portable-profiles.md) for the manifest schema
 and pin/update workflow.

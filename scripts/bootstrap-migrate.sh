@@ -4,6 +4,8 @@ set -euo pipefail
 # This script deliberately uses only Bash 3.2-era features and platform tools:
 # it runs before Nix is guaranteed to exist, including on macOS.
 
+readonly BOOTSTRAP_MIGRATION_TEST_HOOKS=0
+
 migration_id="migration-v1-shell-entrypoints"
 state_root="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/migrations"
 pending="$state_root/$migration_id.pending"
@@ -225,7 +227,8 @@ resume_prepare() {
     [[ "$(path_kind "$source")" == "$kind" ]] ||
       die "$relative changed type before it could be backed up"
     mv "$source" "$backup"
-    if [[ "${BOOTSTRAP_MIGRATION_FAILPOINT:-}" == "after-${relative#.}" ]]; then
+    if [[ "$BOOTSTRAP_MIGRATION_TEST_HOOKS" == 1 \
+      && "${BOOTSTRAP_MIGRATION_FAILPOINT:-}" == "after-${relative#.}" ]]; then
       printf 'bootstrap migration: interrupted at test failpoint after-%s\n' "${relative#.}" >&2
       exit 75
     fi

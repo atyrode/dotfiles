@@ -2,8 +2,11 @@
 
 `hosts/default.nix` is the authoritative registry for supported dotfiles
 configurations. A host entry contains stable, non-secret facts: its canonical
-configuration ID, system, platform, user, home directory, optional hostname,
-compatibility aliases, and selected capabilities.
+configuration ID, a one-line description, system, platform, user, home
+directory, optional hostname, compatibility aliases, and selected
+capabilities. Hosts are the offered presets: `inventory/hosts.tsv` is the
+committed flat projection the bootstrap picker reads before Nix exists, and
+the host-registry check keeps it identical to the registry.
 
 Capabilities are declarative Home Manager modules, not imperative `nix
 profile` state. Home Manager generations remain activation history and rollback
@@ -25,6 +28,14 @@ points; OMP and Codex profiles remain harness-specific mutable-state boundaries.
 - `server`: marks a Linux-only headless composition. The reviewed portable
   server selection combines it with `base` and `agent-tools`.
 
+The same descriptions live as data in `home/profiles/descriptions.nix`
+(checked to cover the capability set exactly), surface in
+`atyrode capabilities list` — which marks the resolved host's active
+capabilities — and in `atyrode capabilities show`, and export to flake
+consumers as `lib.capabilityDescriptions`. Adding a capability to a machine is
+a registry edit: extend the host's `capabilities` list, merge, and run
+`atyrode apply` on that machine.
+
 Project compilers and runtimes are owned by committed dev shells, `mise.toml`,
 and native manifests. See [Package ownership](package-ownership.md) for the
 checked matrix and harness boundaries.
@@ -44,18 +55,22 @@ modules through the [portable profile contract](portable-profiles.md).
 
 1. Add one canonical entry to `hosts/default.nix`.
 2. Declare a supported `system`, matching `platform`, non-empty `username`,
-   absolute `homeDirectory`, and at least one valid capability.
+   absolute `homeDirectory`, a non-empty one-line `description`, and at least
+   one valid capability.
 3. Add only compatibility names that must remain accepted to `aliases`.
 4. Add or reuse capability modules under `home/profiles/`; do not put
    host-specific packages directly in the registry.
-5. Run `nix flake check --all-systems --no-build --show-trace`. The aggregate
+5. Regenerate `inventory/hosts.tsv` to match (the host-registry check diffs
+   it against the registry).
+6. Run `nix flake check --all-systems --no-build --show-trace`. The aggregate
    home and Darwin checks evaluate every canonical host on its native system.
 
 Registry evaluation refuses unsupported systems, platform mismatches, empty
 users, relative home directories, missing base capabilities, server/desktop
 or server/development conflicts, non-Linux server selections, duplicate or
 unknown capabilities, duplicate aliases, and aliases that collide with
-canonical host IDs.
+canonical host IDs. Portable consumers may omit `description`; for this
+repository's own registry the host-registry check requires it non-empty.
 
 ## Renaming or retiring a host
 

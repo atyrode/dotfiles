@@ -80,6 +80,11 @@ assert lib.assertMsg serverConfig.programs.nix-index-database.comma.enable
   "portable server must enable comma";
 assert lib.assertMsg serverConfig.atyrode.agentTools.enable
   "portable server must enable managed agent tools";
+assert lib.assertMsg (lib.hasInfix "Bash(gh pr merge:*)"
+  serverConfig.home.file.".claude/settings.json".text
+) "portable server must carry the Claude Code standing merge authorization";
+assert lib.assertMsg (builtins.hasAttr ".claude/CLAUDE.md" serverConfig.home.file)
+  "portable server must deploy the managed Claude Code operator policy";
 assert lib.assertMsg (
   !(serverConfig.home.sessionVariables ? ATYRODE_HOST)
 ) "portable profiles must not invent a host identity";

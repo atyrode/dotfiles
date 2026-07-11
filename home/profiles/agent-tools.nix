@@ -2,6 +2,7 @@
 {
   imports = [
     ../../modules/home/agent-tools.nix
+    ../claude.nix
     ../codex.nix
   ];
 

@@ -14,6 +14,8 @@ Nix owns:
 - the patched bundled agents, custom deep agents, global generic skills, and
   managed-settings guard extension;
 - the `omp`, `ompb`, `ompf`, `ompg`, `ompo`, and restricted `ompu` launchers; and
+- Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
+  instructions and `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
 OMP and Herdr continue to own mutable runtime data such as authentication,

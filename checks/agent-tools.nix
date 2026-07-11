@@ -105,15 +105,17 @@ in
           --config ${policyConfig} \
           --json >/dev/null
 
-        test "$(yq eval '.modelRoles.default' ${defaultsConfig})" = "openai-codex/gpt-5.6-terra:medium"
+        test "$(yq eval '.modelRoles.default' ${defaultsConfig})" = "openai-codex/gpt-5.6-sol:medium"
+        test "$(yq eval '.modelRoles.task' ${defaultsConfig})" = "openai-codex/gpt-5.6-terra:medium"
         test "$(yq eval '.tools.approvalMode' ${defaultsConfig})" = "null"
         test "$(yq eval '.secrets.enabled' ${defaultsConfig})" = "null"
-        test "$(yq eval '.tools.approvalMode' ${policyConfig})" = "write"
+        test "$(yq eval '.tools.approvalMode' ${policyConfig})" = "yolo"
         test "$(yq eval '.secrets.enabled' ${policyConfig})" = "true"
         test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "secrets,task,tools"
         test "$(yq eval '.tools | keys | sort | join(",")' ${policyConfig})" = "approval,approvalMode"
         for tool in bash eval browser task github; do
-          test "$(yq eval ".tools.approval.$tool" ${policyConfig})" = "prompt"
+          test "$(yq eval ".tools.approval.$tool" ${policyConfig})" = "allow"
+          test "$(yq eval ".tools.approval.$tool" ${yoloConfig})" = "allow"
         done
         test "$(yq eval '.secrets | keys | join(",")' ${policyConfig})" = "enabled"
         test "$(yq eval '.task.isolation.mode' ${policyConfig})" = "auto"
@@ -124,7 +126,7 @@ in
         test "$(yq eval '.tools.approval.browser' ${untrustedConfig})" = "deny"
         test "$(yq eval '.tools.approval.github' ${untrustedConfig})" = "deny"
         test "$(yq eval '.tools.approval.eval' ${untrustedConfig})" = "deny"
-        test "$(yq eval '.tools.approval.bash' ${yoloConfig})" = "allow"
+        test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
         test "$(yq eval '.retry.modelFallback' ${fablePreset})" = "false"
 
         for command in omp ompb ompf ompg ompo ompu; do
@@ -153,7 +155,7 @@ in
         jq -e '.models | type == "array"' "$TMPDIR/models.json" >/dev/null
 
         set +e
-        ${pkgs.omp-configured}/bin/omp acp \
+        ${pkgs.omp-configured}/bin/ompg acp \
           --config "$TMPDIR/missing-one-shot.yml" \
           > "$TMPDIR/acp.out" 2> "$TMPDIR/acp.err"
         acp_status=$?
@@ -431,8 +433,8 @@ in
             printf 'models\n--json\n' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompo --profile work config path > "$TMPDIR/actual"
-            printf '%s\n' '--profile' 'work' 'config' 'path' > "$TMPDIR/expected"
+            ${configuredStub}/bin/ompo config path > "$TMPDIR/actual"
+            printf '%s\n' 'config' 'path' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
             ${configuredStub}/bin/ompo --no-extensions models --json > "$TMPDIR/actual"
@@ -440,14 +442,14 @@ in
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
             set +e
-            ${configuredStub}/bin/omp --no-extensions --mode rpc \
+            ${configuredStub}/bin/ompg --no-extensions --mode rpc \
               > "$TMPDIR/no-extensions.out" 2> "$TMPDIR/no-extensions.err"
             no_extensions_status=$?
             set -e
             test "$no_extensions_status" -eq 2
             grep -q 'Nix-owned settings guard' "$TMPDIR/no-extensions.err"
 
-            ${configuredStub}/bin/omp --resume models > "$TMPDIR/actual"
+            ${configuredStub}/bin/ompg --resume models > "$TMPDIR/actual"
             cat > "$TMPDIR/expected" <<EOF
         --extension
         ${configuredStub.platformRoot}
@@ -460,11 +462,43 @@ in
         --config
         $XDG_CONFIG_HOME/omp/local.yml
         --config
+        ${configuredStub.presets.gpt}
+        --config
         ${configuredStub.policyConfig}
         --resume
         models
         EOF
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+
+            # Plain omp is deliberately unmanaged: every user argument passes
+            # through verbatim, and only the Nix-owned update path is blocked.
+            ${configuredStub}/bin/omp \
+              --config "$TMPDIR/plain.yml" \
+              --extension user-extension \
+              --profile work \
+              --resume models -- --config literal > "$TMPDIR/actual"
+            cat > "$TMPDIR/expected" <<EOF
+        --config
+        $TMPDIR/plain.yml
+        --extension
+        user-extension
+        --profile
+        work
+        --resume
+        models
+        --
+        --config
+        literal
+        EOF
+            diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+
+            set +e
+            ${configuredStub}/bin/omp update \
+              > "$TMPDIR/plain-update.out" 2> "$TMPDIR/plain-update.err"
+            plain_update_status=$?
+            set -e
+            test "$plain_update_status" -eq 2
+            grep -q 'managed by Nix' "$TMPDIR/plain-update.err"
 
             ${configuredStub}/bin/omp --help config > "$TMPDIR/actual"
             printf '%s\n' '--help' 'config' > "$TMPDIR/expected"
@@ -484,7 +518,7 @@ in
             do
               read -r -a args <<< "$invocation"
               set +e
-              ${configuredStub}/bin/omp "''${args[@]}" \
+              ${configuredStub}/bin/ompg "''${args[@]}" \
                 > "$TMPDIR/refused.out" 2> "$TMPDIR/refused.err"
               refused_status=$?
               set -e
@@ -502,9 +536,9 @@ in
               "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.modelRoles["machine-only"] == "machine/model:low"' \
               "$TMPDIR/managed.json" >/dev/null
-            jq -e '.effectiveManaged.tools.approvalMode == "write"' "$TMPDIR/managed.json" >/dev/null
+            jq -e '.effectiveManaged.tools.approvalMode == "yolo"' "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.tools.approval == {
-              "bash":"prompt","eval":"prompt","browser":"prompt","task":"prompt","github":"prompt"
+              "bash":"allow","eval":"allow","browser":"allow","task":"allow","github":"allow"
             }' "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.secrets.enabled == true' "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.task.isolation == {
@@ -513,8 +547,8 @@ in
             jq -e '.effectiveManaged.privateToken == null' "$TMPDIR/managed.json" >/dev/null
             ! grep -q 'do-not-print' "$TMPDIR/managed.json"
             jq -e '.enforcedPolicy == {
-              "tools":{"approvalMode":"write","approval":{
-                "bash":"prompt","eval":"prompt","browser":"prompt","task":"prompt","github":"prompt"
+              "tools":{"approvalMode":"yolo","approval":{
+                "bash":"allow","eval":"allow","browser":"allow","task":"allow","github":"allow"
               }},
               "secrets":{"enabled":true},
               "task":{"isolation":{"mode":"auto","merge":"patch","commits":"generic"}}
@@ -533,7 +567,18 @@ in
               '.sources[] | select(.kind == "one-shot-config") | .path == $oneShot' \
               "$TMPDIR/managed.json" >/dev/null
 
-            PI_SMOL_MODEL=env/smol:low ${configuredStub}/bin/omp \
+            # Model-preset launchers are routing overlays only: all of them
+            # share the default profile and the normal persisted state root,
+            # so switching launchers never requires re-authentication.
+            for launcher in ompb ompf ompg ompo; do
+              ${configuredStub}/bin/"$launcher" config managed --json \
+                > "$TMPDIR/launcher-state.json"
+              jq -e '.profile == "default"' "$TMPDIR/launcher-state.json" >/dev/null
+              jq -e '.statePath == $ENV.HOME + "/.omp/agent"' \
+                "$TMPDIR/launcher-state.json" >/dev/null
+            done
+
+            PI_SMOL_MODEL=env/smol:low ${configuredStub}/bin/ompg \
               --approval-mode yolo \
               --model runtime/default:high \
               --smol runtime/smol:medium \
@@ -571,14 +616,14 @@ in
             jq -e '[.sources[].kind] | index("one-session-unattended-policy") != null' \
               "$TMPDIR/runtime-managed.json" >/dev/null
 
-            ${configuredStub}/bin/omp --yolo --mode rpc \
+            ${configuredStub}/bin/ompg --yolo --mode rpc \
               > "$TMPDIR/yolo.out" 2> "$TMPDIR/yolo.err"
             grep -q 'unattended yolo mode is enabled for this process only' "$TMPDIR/yolo.err"
             grep -Fx -- '--config' "$TMPDIR/yolo.out" >/dev/null
             grep -Fx -- '${configuredStub.yoloConfig}' "$TMPDIR/yolo.out" >/dev/null
 
             PI_SMOL_MODEL=env/smol:low PI_SLOW_MODEL=env/slow:high PI_PLAN_MODEL=env/plan:medium \
-              ${configuredStub}/bin/omp config managed --json > "$TMPDIR/runtime-env.json"
+              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/runtime-env.json"
             jq -e '
               .effectiveManaged.modelRoles.smol == "env/smol:low"
               and .effectiveManaged.modelRoles.slow == "env/slow:high"
@@ -586,11 +631,11 @@ in
             ' "$TMPDIR/runtime-env.json" >/dev/null
 
             PI_CODING_AGENT_DIR="$TMPDIR/custom-agent" \
-              ${configuredStub}/bin/omp config managed --json > "$TMPDIR/custom-state.json"
+              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/custom-state.json"
             jq -e --arg state "$TMPDIR/custom-agent" '.statePath == $state' \
               "$TMPDIR/custom-state.json" >/dev/null
 
-            ${configuredStub}/bin/omp --profile work \
+            ${configuredStub}/bin/ompg --profile work \
               config managed --json > "$TMPDIR/profile-state.json"
             jq -e --arg state "$HOME/.omp/profiles/work/agent" \
               '.profile == "work" and .statePath == $state' \
@@ -598,13 +643,13 @@ in
 
             OMP_PROFILE=default PI_PROFILE=work \
               PI_CODING_AGENT_DIR="$HOME/.omp/profiles/work/agent" \
-              ${configuredStub}/bin/omp config managed --json > "$TMPDIR/default-profile-state.json"
+              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/default-profile-state.json"
             jq -e --arg state "$HOME/.omp/agent" \
               '.profile == "default" and .statePath == $state' \
               "$TMPDIR/default-profile-state.json" >/dev/null
 
             set +e
-            ${configuredStub}/bin/omp --profile ../../escape config managed --json \
+            ${configuredStub}/bin/ompg --profile ../../escape config managed --json \
               > "$TMPDIR/invalid-profile.out" 2> "$TMPDIR/invalid-profile.err"
             invalid_profile_status=$?
             set -e
@@ -612,7 +657,7 @@ in
             grep -q 'Invalid OMP profile' "$TMPDIR/invalid-profile.err"
 
             PI_CONFIG_DIR=.custom-omp \
-              ${configuredStub}/bin/omp config managed --json > "$TMPDIR/config-root.json"
+              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/config-root.json"
             jq -e --arg state "$HOME/.custom-omp/agent" '.statePath == $state' \
               "$TMPDIR/config-root.json" >/dev/null
 
@@ -623,7 +668,7 @@ in
           yaml-machine: machine/yaml:low
         EOF
             HOME="$yaml_home" XDG_CONFIG_HOME="$yaml_home/.config" \
-              ${configuredStub}/bin/omp --cwd "$project" config managed --json \
+              ${configuredStub}/bin/ompg --cwd "$project" config managed --json \
                 > "$TMPDIR/yaml-state.json"
             jq -e --arg path "$yaml_home/.omp/agent/config.yaml" '
               .sources[0].path == $path
@@ -631,7 +676,7 @@ in
               and .effectiveManaged.modelRoles["yaml-machine"] == "machine/yaml:low"
             ' "$TMPDIR/yaml-state.json" >/dev/null
 
-            ${configuredStub}/bin/omp --system-prompt --cwd \
+            ${configuredStub}/bin/ompg --system-prompt --cwd \
               config managed --json > "$TMPDIR/arity.json"
             jq -e --arg project "$project/.omp/config.yml" \
               '.sources[] | select(.format == "config.yml") | .path == $project' \
@@ -640,24 +685,24 @@ in
             mkdir -p "$HOME/tmp/.omp" "$HOME/.omp"
             cat > "$HOME/.omp/config.yml" <<'EOF'
         modelRoles:
-          default: home/project:high
+          workspace-role: home/project:high
         EOF
             cat > "$HOME/tmp/.omp/config.yml" <<'EOF'
         modelRoles:
-          default: tmp/project:low
+          workspace-role: tmp/project:low
         EOF
             (
               cd "$HOME"
               XDG_CONFIG_HOME="$TMPDIR/auto-xdg" \
-                ${configuredStub}/bin/omp config managed --json > "$TMPDIR/home-auto.json"
+                ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/home-auto.json"
               XDG_CONFIG_HOME="$TMPDIR/auto-xdg" \
-                ${configuredStub}/bin/omp --allow-home config managed --json > "$TMPDIR/home-allowed.json"
+                ${configuredStub}/bin/ompg --allow-home config managed --json > "$TMPDIR/home-allowed.json"
             )
             jq -e --arg cwd "$HOME/tmp" '
-              .effectiveCwd == $cwd and .effectiveManaged.modelRoles.default == "tmp/project:low"
+              .effectiveCwd == $cwd and .effectiveManaged.modelRoles["workspace-role"] == "tmp/project:low"
             ' "$TMPDIR/home-auto.json" >/dev/null
             jq -e --arg cwd "$HOME" '
-              .effectiveCwd == $cwd and .effectiveManaged.modelRoles.default == "home/project:high"
+              .effectiveCwd == $cwd and .effectiveManaged.modelRoles["workspace-role"] == "home/project:high"
             ' "$TMPDIR/home-allowed.json" >/dev/null
 
             legacy_project="$TMPDIR/legacy-project"
@@ -673,7 +718,7 @@ in
         modelRoles:
           default: relative/one-shot:high
         EOF
-            ${configuredStub}/bin/omp \
+            ${configuredStub}/bin/ompg \
               --cwd "$legacy_project" \
               --config relative.yml \
               config managed --json > "$TMPDIR/legacy-managed.json"
@@ -686,23 +731,24 @@ in
             ' "$TMPDIR/legacy-managed.json" >/dev/null
 
             set +e
-            ${configuredStub}/bin/omp config get modelRoles --json \
+            ${configuredStub}/bin/ompg config get modelRoles --json \
               > "$TMPDIR/get.out" 2> "$TMPDIR/get.err"
             get_status=$?
             set -e
             test "$get_status" -eq 2
             grep -q 'only reads writable machine state' "$TMPDIR/get.err"
 
-            ${configuredStub}/bin/omp config list > "$TMPDIR/list.out" 2> "$TMPDIR/list.err"
+            ${configuredStub}/bin/ompg config list > "$TMPDIR/list.out" 2> "$TMPDIR/list.err"
             grep -q 'shows writable machine state' "$TMPDIR/list.err"
 
-            ${configuredStub}/bin/omp setup --help > "$TMPDIR/setup.out" 2> "$TMPDIR/setup.err"
+            ${configuredStub}/bin/ompg setup --help > "$TMPDIR/setup.out" 2> "$TMPDIR/setup.err"
             printf '%s\n' setup --help > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/setup.out"
             grep -q 'writes writable machine state' "$TMPDIR/setup.err"
 
+            # Plain omp is unmanaged and has no Nix-declared default model;
+            # the managed defaults file is asserted directly with yq above.
             declare -A expected_default_models=(
-              [omp]='openai-codex/gpt-5.6-terra:medium'
               [ompb]='openai-codex/gpt-5.6-terra:low'
               [ompf]='anthropic/claude-fable-5:high'
               [ompg]='openai-codex/gpt-5.6-sol:high'
@@ -711,7 +757,7 @@ in
             policy_home="$TMPDIR/policy-home"
             policy_project="$TMPDIR/policy-project"
             mkdir -p "$policy_home" "$policy_project"
-            for command in omp ompb ompf ompg ompo; do
+            for command in ompb ompf ompg ompo; do
               HOME="$policy_home" XDG_CONFIG_HOME="$policy_home/.config" \
                 ${configuredStub}/bin/"$command" --cwd "$policy_project" \
                   config managed --json > "$TMPDIR/$command-policy.json"

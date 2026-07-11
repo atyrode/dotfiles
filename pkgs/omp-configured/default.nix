@@ -966,7 +966,16 @@ let
       '';
     };
 
-  ompDefault = mkOmpCommand "omp" [ ];
+  ompDefault = writeShellApplication {
+    name = "omp";
+    text = ''
+      if [[ "''${1:-}" == update ]]; then
+        printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+        exit 2
+      fi
+      exec ${lib.getExe omp} "$@"
+    '';
+  };
   ompBudget = mkOmpCommand "ompb" [ presets.budget ];
   ompFable = mkOmpCommand "ompf" [ presets.fable ];
   ompGpt = mkOmpCommand "ompg" [ presets.gpt ];

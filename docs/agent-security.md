@@ -6,19 +6,25 @@ repository trustworthy, and it is not an operating-system sandbox.
 
 ## Normal sessions
 
-Normal launchers use workspace-write approval, secret filtering, and explicit
-prompts for shell/eval, browser, task spawning, and GitHub capabilities. Task
-isolation uses OMP's automatic backend selection and patch merging. A managed
-extension fails closed when a `task` call that can write omits
-`isolated: true`, including any item in a task batch.
+Managed preset launchers (`ompb`, `ompf`, `ompg`, `ompo`) use the
+trusted-machine unattended approval policy: workspace edits, shell/eval,
+browser, task spawning, and GitHub operations do not prompt. Secret filtering
+remains enabled, and task isolation uses OMP's automatic backend selection and
+patch merging. A managed extension fails closed when a `task` call that can
+write omits `isolated: true`, including any item in a task batch.
 
 The policy overlay is applied after writable machine, project, preset, and
 one-shot configuration. Repositories can still choose non-security settings,
-but cannot persistently weaken managed approvals, secret filtering, or task
-isolation. The untrusted profile additionally fixes MCP and integration policy.
-Explicit yolo flags are the sole normal-session exception: they apply an allow
-overlay for that process, print a warning, and must be chosen again for every
-session.
+but cannot change managed approvals, secret filtering, or task isolation.
+Explicit yolo flags remain accepted for compatibility, but do not grant these
+sessions additional tool approval.
+
+Plain `omp` is deliberately outside this policy: it runs upstream OMP with the
+operator's mutable configuration and no Nix overlay, as the tinkering surface
+for a machine the operator already trusts. Its approval posture, extensions,
+and integrations are whatever that mutable configuration says, so every
+launcher in this table is appropriate only for repositories the operator has
+reviewed; use `ompu` for untrusted repositories.
 
 ## Untrusted projects
 

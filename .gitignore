@@ -24,3 +24,6 @@ result-*
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent session state and worktrees
+.claude/

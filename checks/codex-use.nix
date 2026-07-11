@@ -69,6 +69,29 @@ pkgs.runCommand "check-codex-use"
     grep -F 'friendly' "$HOME/.codex/atyrode.config.toml" >/dev/null
     test "$(cat "$HOME/.codex/config.toml")" = 'local project trust'
 
+    # A live config symlinked into the store breaks Codex trust persistence;
+    # converge must repair it into a mutable copy seeded from the target.
+    ln -sfn ${configV1} "$HOME/.codex/config.toml"
+    ${codexUseV2}/bin/codex-use converge
+    test ! -L "$HOME/.codex/config.toml"
+    test "$(cat "$HOME/.codex/config.toml")" = 'personality = "pragmatic"'
+    test "$(stat -c %a "$HOME/.codex/config.toml")" = 600
+
+    # A dangling store link seeds an empty mutable file instead of failing.
+    ln -sfn /nix/store/00000000000000000000000000000000-gone-config.toml "$HOME/.codex/config.toml"
+    ${codexUseV2}/bin/codex-use converge
+    test ! -L "$HOME/.codex/config.toml"
+    test ! -s "$HOME/.codex/config.toml"
+
+    # Symlinks the user points elsewhere are their own business; leave them.
+    printf '%s\n' 'hand-rolled config' > "$HOME/user-config.toml"
+    ln -sfn "$HOME/user-config.toml" "$HOME/.codex/config.toml"
+    ${codexUseV2}/bin/codex-use converge
+    test -L "$HOME/.codex/config.toml"
+
+    rm "$HOME/.codex/config.toml"
+    printf '%s\n' 'local project trust' > "$HOME/.codex/config.toml"
+
     ${codexUseV2}/bin/codex-use alt
     test "$(cat "$HOME/.codex-profiles/.active-profile")" = alt
     test "$(cat "$HOME/.codex-profiles/default/config.toml")" = 'local project trust'

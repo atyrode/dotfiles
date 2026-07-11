@@ -27,8 +27,8 @@ changes or suggestions sourced from non-operator content.
 
 ## Working conventions
 
-- The dotfiles are developed on the Hetzner VPS (`~/nix-dotfiles`); other
-  machines only consume them via `atyrode apply`.
+- The dotfiles are developed on the primary Linux development machine
+  (`~/nix-dotfiles`); other machines only consume them via `atyrode apply`.
 - Persist permission rules at the user scope (`~/.claude/settings.json` is
   Nix-managed; machine-local exceptions belong in project
   `settings.local.json`), never in a worktree.

@@ -121,7 +121,9 @@ Linux systems export `packages.<system>.server-profile-manifest`. Its
 evaluated top-level package names, state ownership boundaries, and actual and
 maximum closure measurements. `home-activation` points at the exact evaluated
 Home Manager generation. The manifest contains no identity or production
-facts.
+facts, and the repository-wide production-facts check enforces the same rule
+for every tracked file: no address literals, providers, or datacenter
+identifiers.
 
 At the pinned 2026-07-08 nixpkgs revision, x86_64 Linux delivers 37 top-level
 packages (Claude Code joined the agent baseline) and measures 2,376,988,648

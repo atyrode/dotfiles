@@ -88,7 +88,7 @@ atyrode doctor system # Audit system-owned operational prerequisites
 
 ### Agent Tools
 ```bash
-omp           # Balanced GPT-5.6 Terra profile
+omp           # Mutable user-owned OMP; unmanaged except the blocked update
 ompb          # Budget profile
 ompg          # OpenAI-only high-capability profile
 ompo          # GPT profile with selected Opus fallbacks

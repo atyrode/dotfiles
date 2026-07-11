@@ -1,11 +1,11 @@
 tools:
-  approvalMode: write
+  approvalMode: yolo
   approval:
-    bash: prompt
-    eval: prompt
-    browser: prompt
-    task: prompt
-    github: prompt
+    bash: allow
+    eval: allow
+    browser: allow
+    task: allow
+    github: allow
 
 secrets:
   enabled: true

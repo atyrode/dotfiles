@@ -44,24 +44,30 @@ rewriting the Bun executable with `patchelf`.
 
 | Command | Intended use | Primary route |
 | --- | --- | --- |
-| `omp` | Balanced daily work | GPT-5.6 Terra at medium thinking |
+| `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
 | `ompb` | Cost-conscious routine work | GPT-5.6 Terra/Luna at lower thinking |
 | `ompg` | OpenAI-only difficult work | GPT-5.6 Sol with Terra/Luna fallbacks |
 | `ompo` | Expensive review and deep reasoning | GPT-5.6 with Opus fallbacks for selected roles |
 | `ompf` | Fable-first work with predictable routing | Fable for primary/deliberative roles, with automatic fallback disabled |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 
-The balanced profile keeps cheap, fast roles on Luna or low-thinking Terra,
-uses Sol for the hardest debugging and testing, and reserves Fable/Opus for
-planning, design, architecture, and review where their higher cost is most
-useful. The presets are policy, not provider pricing data; revisit the routes
-when model quality or pricing changes.
+Plain `omp` executes upstream OMP directly: no extension, defaults, preset, or
+policy overlay is injected, so its models, approvals, and interface belong to
+the operator's mutable configuration and can change on the fly. Only
+`omp update` is blocked, so nothing shadows the Nix-pinned binary.
+
+The managed defaults use Sol for interactive daily work, keep cheap, fast
+roles on Luna or low-thinking Terra, and reserve Fable/Opus for planning,
+design, architecture, and review where their higher cost is most useful. The
+presets are policy, not provider pricing data; revisit the routes when model
+quality or pricing changes.
 
 The balanced routing rationale is:
 
 | Role or role group | Capability and intended use | Thinking | Cost posture and fallback rationale |
 | --- | --- | --- | --- |
-| `default`, `task` | General implementation on Terra | Medium | Mid-cost default; Sonnet then Sol covers provider or capability failures |
+| `default` | Interactive daily work on Sol | Medium | Sol is the user-selected default; Sonnet then Terra preserve cross-provider fallback |
+| `task` | General implementation on Terra | Medium | Mid-cost worker route; Sonnet then Sol covers provider or capability failures |
 | `librarian` | Repository and documentation research on Terra | Medium | Sonnet adds cross-provider depth; Luna is the economical final fallback |
 | `advisor`, `smol`, `sonic`, `tiny`, `commit` | Fast review, lookup, naming, and commit-message work on Luna | Minimal–low | Cheapest recurring work; Terra is the first quality step-up |
 | `explore` | Repository exploration on Terra | Low | Keeps discovery economical; Luna or Sonnet can take over when needed |
@@ -77,7 +83,7 @@ The balanced routing rationale is:
 the preset files intentionally change parts of this table for budget,
 OpenAI-only, Fable-first, and Opus-assisted sessions.
 
-Normal sessions load configuration in this order:
+Managed preset launchers load configuration in this order:
 
 1. OMP's writable machine config at `~/.omp/agent/config.yml`, with
    `config.yaml` accepted as OMP's legacy fallback when `config.yml` is absent;
@@ -91,23 +97,25 @@ Normal sessions load configuration in this order:
 7. the Nix-managed enforced policy; and
 8. explicit runtime flags such as `--model` or `--approval-mode`.
 
-Later layers win. The enforced policy fixes workspace-write approval, secret
-obfuscation, explicit prompts for shell/eval, browser, task spawning, and
-GitHub capabilities, plus automatic task isolation with patch merging. Machine,
-project, preset, and one-shot config files cannot weaken those controls. `omp
-acp` receives the same layers in the same order, with the overlays placed after
-the `acp` subcommand as required by OMP's parser.
+Later layers win. The enforced policy fixes trusted-machine yolo approvals for
+workspace edits, shell/eval, browser, task spawning, and GitHub capabilities,
+plus secret obfuscation and automatic task isolation with patch merging.
+Machine, project, preset, and one-shot config files cannot change those
+controls. `omp acp` receives the same layers in the same order, with the
+overlays placed after the `acp` subcommand as required by OMP's parser.
 
-Unattended yolo mode is available only through an explicit `--yolo`,
-`--auto-approve`, or `--approval-mode yolo` runtime flag. The wrapper prints a
-warning and applies a one-process approval overlay after the enforced policy.
-There is intentionally no persistent yolo config, profile, or alias.
+Managed preset launchers are unattended trusted-machine profiles. Explicit
+`--yolo`, `--auto-approve`, and `--approval-mode yolo` flags remain supported
+for compatibility, but do not grant those sessions additional tool approval.
+Plain `omp` carries none of these layers: its approval posture is whatever the
+operator's mutable configuration selects. Use `ompu` for deliberately
+untrusted repositories.
 
 OMP maintenance subcommands are passed directly to OMP because their parsers do
 not consistently accept interactive launch flags. Preset launchers preserve
-that passthrough instead of prepending their preset to a maintenance command.
-`omp setup` warns that it writes lower-priority machine state and points back to
-the effective diagnostic.
+that passthrough instead of prepending their preset to a maintenance command,
+and their `setup` warns that it writes lower-priority machine state and points
+back to the effective diagnostic.
 `omp update` and `herdr update` are refused so they cannot shadow the
 Nix-managed versions.
 

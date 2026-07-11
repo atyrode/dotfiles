@@ -3,6 +3,7 @@
   cacert,
   coreutils,
   findutils,
+  fzf,
   gitMinimal,
   gnugrep,
   jq,
@@ -1292,9 +1293,11 @@ let
     runtimeInputs = [
       jq
       coreutils
+      fzf
     ];
     text = ''
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
+      routes_plain=${routesHelp}/share/omp/routes.plain
       names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
       leads=( ${lib.escapeShellArgs (map (p: p.lead) paletteProfiles)} )
       blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
@@ -1302,6 +1305,25 @@ let
       exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )
       count=''${#names[@]}
       show_usage_panel=1
+
+      # Nerd Font glyphs by precise codepoint (FontAwesome range, in every Nerd
+      # Font) and 24-bit truecolor accents, used by the fzf picker.
+      esc=$(printf '\033')
+      g_openai=$(printf '')     # bolt
+      g_claude=$(printf '')     # lightbulb
+      g_yours=$(printf '')      # user
+      g_untrusted=$(printf '')  # lock
+      g_point=$(printf '')      # chevron-right
+      g_search=$(printf '')     # search
+      c_openai="''${esc}[38;2;98;167;255m"
+      c_claude="''${esc}[38;2;255;159;82m"
+      c_yours="''${esc}[38;2;120;200;170m"
+      c_untrusted="''${esc}[38;2;230;130;90m"
+      c_dim="''${esc}[38;2;120;130;145m"
+      c_ok="''${esc}[38;2;80;200;120m"
+      c_warn="''${esc}[38;2;235;120;90m"
+      c_bold="''${esc}[1m"
+      c_rst="''${esc}[0m"
 
       lead_tag() {
         case "$1" in
@@ -1335,15 +1357,34 @@ let
         esac
       }
 
+      # Green (low use) -> red (near capacity), as an "r;g;b" triple.
+      bar_rgb() {
+        local p="$1" r g
+        if (( p <= 50 )); then
+          r=$(( 90 + p * 3 ))
+          g=200
+        else
+          r=235
+          g=$(( 200 - (p - 50) * 3 ))
+        fi
+        (( r > 235 )) && r=235
+        (( g < 60 )) && g=60
+        printf '%d;%d;70' "$r" "$g"
+      }
+
+      # A 10-cell bar: filled cells in the usage gradient, empty cells dim.
       bar() {
         local pct="$1"
         local fill=$(( (pct * 10 + 50) / 100 ))
-        local k out=""
         (( fill > 10 )) && fill=10
         (( fill < 0 )) && fill=0
-        for (( k = 0; k < 10; k++ )); do
-          if (( k < fill )); then out+='█'; else out+='░'; fi
-        done
+        local k rgb
+        rgb="$(bar_rgb "$pct")"
+        local out="''${esc}[38;2;''${rgb}m"
+        for (( k = 0; k < fill; k++ )); do out+='█'; done
+        out+="$c_dim"
+        for (( k = fill; k < 10; k++ )); do out+='░'; done
+        out+="$c_rst"
         printf '%s' "$out"
       }
 
@@ -1383,9 +1424,9 @@ let
                 last_provider="$a"
               fi
               note=""
-              (( c >= 80 )) && note=" tight"
-              [[ "$d" == spark && "$c" -eq 0 ]] && note=" free"
-              usagep+=( "$(printf '  %-8s %s %3d%%%s' \
+              (( c >= 80 )) && note=" · ''${c_warn}tight''${c_rst}"
+              [[ "$d" == spark && "$c" -eq 0 ]] && note=" · ''${c_ok}free''${c_rst}"
+              usagep+=( "$(printf '  %-8s %s %3d%% used%s' \
                 "$(short_window "$b")" "$(bar "$c")" "$c" "$note")" )
               ;;
           esac
@@ -1432,6 +1473,81 @@ let
         local i="$1"
         printf '\n  %s  %s\n  %s\n\n' \
           "''${names[$i]}" "$(lead_tag "''${leads[$i]}")" "''${details[$i]}"
+      }
+
+      lead_glyph() {
+        case "$1" in
+          openai) printf '%s' "$g_openai" ;;
+          claude) printf '%s' "$g_claude" ;;
+          yours) printf '%s' "$g_yours" ;;
+          untrusted) printf '%s' "$g_untrusted" ;;
+          *) printf ' ' ;;
+        esac
+      }
+      lead_color() {
+        case "$1" in
+          openai) printf '%s' "$c_openai" ;;
+          claude) printf '%s' "$c_claude" ;;
+          yours) printf '%s' "$c_yours" ;;
+          untrusted) printf '%s' "$c_untrusted" ;;
+          *) printf '%s' "$c_dim" ;;
+        esac
+      }
+
+      # Arrow-key picker via fzf: a truecolor list with Nerd Font provider
+      # glyphs at the top, the usage panel in the footer, and each profile's
+      # detail + live role -> model routing in the preview. Sets picked_idx, or
+      # leaves it empty when cancelled.
+      picked_idx=""
+      fzf_pick() {
+        picked_idx=""
+        build_usage
+        local footer=""
+        local -a footer_args=()
+        if (( ''${#usagep[@]} > 0 )); then
+          printf -v footer '%s\n' "''${usagep[@]}"
+          footer="''${footer%$'\n'}"
+          footer_args=( --footer="$footer" --footer-border=top )
+        fi
+        local prevdir
+        prevdir="$(mktemp -d)"
+        local i col gly rows="" block
+        for (( i = 0; i < count; i++ )); do
+          col="$(lead_color "''${leads[$i]}")"
+          gly="$(lead_glyph "''${leads[$i]}")"
+          rows+="$(printf '%s\t%s%s%s  %s%-5s%s  %s%s%s' \
+            "''${names[$i]}" "$col" "$gly" "$c_rst" \
+            "$c_bold" "''${names[$i]}" "$c_rst" "$c_dim" "''${blurbs[$i]}" "$c_rst")"$'\n'
+          {
+            printf '%s%s  %s%s%s\n\n' "$col" "$gly" "$c_bold" "''${names[$i]}" "$c_rst"
+            printf '%s%s%s\n\n' "$c_dim" "''${blurbs[$i]}" "$c_rst"
+            printf '%s\n' "''${details[$i]}"
+            if [[ -f "$routes_plain" ]]; then
+              block="$(sed -n "/^''${names[$i]}  /,/^\$/p" "$routes_plain")"
+              [[ -n "$block" ]] && printf '\n%s%s%s\n' "$c_dim" "$block" "$c_rst"
+            fi
+          } > "$prevdir/''${names[$i]}"
+        done
+        local theme chosen cmd
+        theme='fg:-1,bg:-1,fg+:#ffffff,bg+:#1b212b,hl:#62a7ff,hl+:#8ec7ff'
+        theme+=',pointer:#ff9f52,marker:#ff9f52,prompt:#ff9f52,spinner:#ff9f52'
+        theme+=',border:#3a4453,label:#9aa4b1,info:#69727e'
+        theme+=',footer:#9aa4b1,footer-border:#3a4453'
+        theme+=',gutter:-1,preview-border:#3a4453'
+        chosen="$(printf '%s' "$rows" | fzf \
+          --ansi --layout=reverse --height=100% --border=rounded \
+          --border-label=" code $g_point pick a launcher " \
+          --prompt="$g_search  " --pointer="$g_point" --marker='+' --info=inline \
+          --delimiter=$'\t' --with-nth=2 \
+          --preview="cat $prevdir/{1}" --preview-window='right:50%:wrap:border-left' \
+          "''${footer_args[@]}" \
+          --color="$theme" || true)"
+        rm -rf "$prevdir"
+        cmd="''${chosen%%$'\t'*}"
+        [[ -n "$cmd" ]] || return 0
+        for (( i = 0; i < count; i++ )); do
+          [[ "''${names[$i]}" == "$cmd" ]] && { picked_idx="$i"; return 0; }
+        done
       }
 
       # Print a 0-based index for a selector, or return non-zero when unmatched.
@@ -1515,6 +1631,14 @@ let
         printf 'code: no profile given and no interactive terminal.\n\n' >&2
         printf '%s\n' "''${palette[@]}" >&2
         exit 2
+      fi
+
+      # Prefer the fzf arrow-key picker; fall back to the typed menu when fzf is
+      # unavailable or CODE_NO_FZF is set.
+      if command -v fzf >/dev/null 2>&1 && [[ -z "''${CODE_NO_FZF:-}" ]]; then
+        fzf_pick
+        [[ -n "$picked_idx" ]] && exec "''${exes[$picked_idx]}" "$@"
+        exit 0
       fi
 
       render_screen

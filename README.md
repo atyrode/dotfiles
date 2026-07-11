@@ -91,7 +91,6 @@ atyrode doctor system # Audit system-owned operational prerequisites
 omp           # Mutable user-owned OMP; unmanaged except the blocked update
 ompb          # Budget profile
 ompg          # OpenAI-only high-capability profile
-ompo          # GPT profile with selected Opus fallbacks
 ompf          # Fable-first profile with fallback disabled
 ompu          # Restricted launcher for deliberately untrusted repositories
 herdr         # Persistent terminal workspace manager

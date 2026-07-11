@@ -11,9 +11,9 @@ Nix owns:
 - the pinned OMP binary and generated Zsh completion;
 - the pinned Herdr flake input and generated OMP integration;
 - the managed OMP defaults, enforced policy, and model presets;
-- the patched bundled agents, custom deep agents, global generic skills, and
-  managed-settings guard extension;
-- the `omp`, `ompb`, `ompf`, `ompg`, `ompo`, and restricted `ompu` launchers; and
+- the pinned bundled agents, global generic skills, and managed-settings guard
+  extension;
+- the `omp`, `ompb`, `ompf`, `ompg`, and restricted `ompu` launchers; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
   instructions and `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
@@ -25,7 +25,7 @@ belong in this repository or the Nix store.
 This subsystem deliberately owns neither a `pi` executable nor a `.pi`
 mutable-state namespace. The bounded Pi experiment in #29 may therefore install
 alongside OMP without an executable collision, shared authentication/session
-state, or any parity requirement. The package check asserts the exact six OMP
+state, or any parity requirement. The package check asserts the exact five OMP
 launcher names and verifies that an OMP clean-home startup does not create
 `.pi` state. Security boundaries and the untrusted-project launcher are
 documented in [Agent security](agent-security.md).
@@ -49,7 +49,6 @@ rewriting the Bun executable with `patchelf`.
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
 | `ompb` | Cost-conscious routine work | GPT-5.6 Terra/Luna at lower thinking |
 | `ompg` | OpenAI-only difficult work | GPT-5.6 Sol with Terra/Luna fallbacks |
-| `ompo` | Expensive review and deep reasoning | GPT-5.6 with Opus fallbacks for selected roles |
 | `ompf` | Fable-first work with predictable routing | Fable for primary/deliberative roles, with automatic fallback disabled |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 
@@ -72,18 +71,19 @@ The balanced routing rationale is:
 | `task` | General implementation on Terra | Medium | Mid-cost worker route; Sonnet then Sol covers provider or capability failures |
 | `librarian` | Repository and documentation research on Terra | Medium | Sonnet adds cross-provider depth; Luna is the economical final fallback |
 | `advisor`, `smol`, `sonic`, `tiny`, `commit` | Fast review, lookup, naming, and commit-message work on Luna | Minimal–low | Cheapest recurring work; Terra is the first quality step-up |
-| `explore` | Repository exploration on Terra | Low | Keeps discovery economical; Luna or Sonnet can take over when needed |
 | `designer` | Product and interface design on Sonnet | Medium | Pays for stronger visual judgment; Sol and Fable provide cross-provider fallbacks |
 | `reviewer` | High-scrutiny review on Sonnet | High | Higher-cost quality gate; Opus then Sol preserve depth if the primary is unavailable |
-| `Tester` | Test design and adversarial verification on Terra | High | Strong reasoning without defaulting to the most expensive tier; Sonnet and Sol back it up |
-| `plan`, `architect-deep`, `designer-deep` | Architecture, planning, and deep design on Fable | High | Premium reasoning is intentional for decisions with broad downstream impact; Opus or Sol are the escape routes |
-| `slow`, `debugger-deep` | Hard debugging and deliberate reasoning on Sol | Xhigh | Expensive OpenAI reasoning is reserved for difficult failures; Opus and high-thinking Terra provide diversity |
-| `tester-deep` | Exhaustive verification on Sol | High | Sonnet then Opus provide independent Anthropic verification if Sol is unavailable |
-| `reviewer-deep` | Final deep review on Opus | Xhigh | Highest-cost route is restricted to the strongest review pass; Sol and Fable remain available |
+| `plan` | Architecture and planning on Fable | High | Premium reasoning is intentional for decisions with broad downstream impact; Opus or Sol are the escape routes |
+| `slow` | Hard debugging and deliberate reasoning on Sol | Xhigh | Expensive OpenAI reasoning is reserved for difficult failures; Opus and high-thinking Terra provide diversity |
+
+The bundled `scout` agent (upstream's rename of `explore`) is deliberately not
+pinned: its frontmatter declares the `smol` model role, so repository
+exploration follows the smol route and its fallback chain without a separate
+entry that could go stale.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the preset files intentionally change parts of this table for budget,
-OpenAI-only, Fable-first, and Opus-assisted sessions.
+OpenAI-only, and Fable-first sessions.
 
 Managed preset launchers load configuration in this order:
 
@@ -250,8 +250,11 @@ below remains valid for hand-driven updates:
 5. Apply the profile with `zconf`.
 
 `omp-agents` regenerates the upstream bundled agents from the pinned OMP
-binary and reapplies `omp/agents/escalation.patch`, so an OMP update fails
-during the build if the patch no longer applies cleanly.
+binary, and the `omp-agent-references` check asserts that every agent name
+referenced by `task.agentModelOverrides`, `task.disabledAgents`, or an
+agent-named `retry.fallbackChains` key in the managed defaults and presets
+still exists in that unpacked set, so an upstream agent rename or removal
+fails the build instead of silently misrouting models.
 
 GitHub Actions runs the same flake checks natively on x86_64 and aarch64 Linux
 and macOS.

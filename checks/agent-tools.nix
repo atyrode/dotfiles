@@ -13,7 +13,6 @@ let
   budgetPreset = ../omp/presets/budget.yml;
   fablePreset = ../omp/presets/fable-primary.yml;
   gptPreset = ../omp/presets/gpt56.yml;
-  opusPreset = ../omp/presets/opus-fallback.yml;
 
   stubOmp =
     pkgs.runCommand "omp-stub"
@@ -98,13 +97,6 @@ in
           "$raw_omp" models --config "$config" --json >/dev/null
         done
 
-        "$raw_omp" models \
-          --config ${defaultsConfig} \
-          --config ${gptPreset} \
-          --config ${opusPreset} \
-          --config ${policyConfig} \
-          --json >/dev/null
-
         test "$(yq eval '.modelRoles.default' ${defaultsConfig})" = "openai-codex/gpt-5.6-sol:medium"
         test "$(yq eval '.modelRoles.task' ${defaultsConfig})" = "openai-codex/gpt-5.6-terra:medium"
         test "$(yq eval '.tools.approvalMode' ${defaultsConfig})" = "null"
@@ -129,14 +121,14 @@ in
         test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
         test "$(yq eval '.retry.modelFallback' ${fablePreset})" = "false"
 
-        for command in omp ompb ompf ompg ompo ompu; do
+        for command in omp ompb ompf ompg ompu; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
           test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
         done
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-        )" = "omp,ompb,ompf,ompg,ompo,ompu"
+        )" = "omp,ompb,ompf,ompg,ompu"
         test "$(${pkgs.herdr-configured}/bin/herdr --version)" = "herdr 0.7.3"
 
         for invocation in 'update' '--handoff update' 'update --handoff'; do
@@ -308,13 +300,67 @@ in
 
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
-        )" -eq 11
+        )" -eq 6
         grep -q 'HERDR_INTEGRATION_ID=omp' \
           ${pkgs.herdr-omp-integration}/share/omp/extensions/herdr-omp-agent-state.ts
-        test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 11
+        test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 6
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md
+
+        mkdir "$out"
+      '';
+
+  # Upstream agent renames and removals must fail the build instead of
+  # silently misrouting models (#62): every agent name referenced by the
+  # managed defaults and presets has to exist in the pinned unpacked set.
+  omp-agent-references =
+    pkgs.runCommand "check-omp-agent-references"
+      {
+        nativeBuildInputs = [
+          pkgs.findutils
+          pkgs.yq-go
+        ];
+      }
+      ''
+        find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' -printf '%f\n' \
+          | sed 's/\.md$//' > "$TMPDIR/agents"
+
+        # Model roles with no backing agent file; every other routing key must
+        # name an unpacked agent.
+        printf '%s\n' default advisor smol slow plan tiny commit > "$TMPDIR/roles"
+
+        status=0
+        for config in \
+          ${defaultsConfig} \
+          ${budgetPreset} \
+          ${fablePreset} \
+          ${gptPreset} \
+          ${untrustedConfig} \
+          ${yoloConfig} \
+          ${policyConfig}
+        do
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if ! grep -qxF "$name" "$TMPDIR/agents"; then
+              printf 'unknown agent %s referenced by %s\n' "$name" "$config" >&2
+              status=1
+            fi
+          done < <(
+            yq eval \
+              '(.task.agentModelOverrides // {} | keys | .[]), (.task.disabledAgents // [] | .[])' \
+              "$config"
+          )
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if ! grep -qxF "$name" "$TMPDIR/roles" && ! grep -qxF "$name" "$TMPDIR/agents"; then
+              printf 'fallback chain %s in %s names neither a role nor an agent\n' \
+                "$name" "$config" >&2
+              status=1
+            fi
+          done < <(yq eval '.retry.fallbackChains // {} | keys | .[]' "$config")
+        done
+        test "$status" -eq 0
 
         mkdir "$out"
       '';
@@ -368,7 +414,7 @@ in
         EOF
             cd "$project"
 
-            ${configuredStub}/bin/ompo \
+            ${configuredStub}/bin/ompg \
               --config "$TMPDIR/one-shot.yml" \
               --model custom \
               -- \
@@ -387,8 +433,6 @@ in
         --config
         ${configuredStub.presets.gpt}
         --config
-        ${configuredStub.presets.opusFallback}
-        --config
         $TMPDIR/one-shot.yml
         --config
         ${configuredStub.policyConfig}
@@ -400,7 +444,7 @@ in
         EOF
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompo acp \
+            ${configuredStub}/bin/ompg acp \
               --config="$TMPDIR/acp-one-shot.yml" \
               --approval-mode yolo > "$TMPDIR/actual"
             cat > "$TMPDIR/expected" <<EOF
@@ -418,8 +462,6 @@ in
         --config
         ${configuredStub.presets.gpt}
         --config
-        ${configuredStub.presets.opusFallback}
-        --config
         $TMPDIR/acp-one-shot.yml
         --config
         ${configuredStub.policyConfig}
@@ -430,15 +472,15 @@ in
         EOF
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompo models --json > "$TMPDIR/actual"
+            ${configuredStub}/bin/ompg models --json > "$TMPDIR/actual"
             printf 'models\n--json\n' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompo config path > "$TMPDIR/actual"
+            ${configuredStub}/bin/ompg config path > "$TMPDIR/actual"
             printf '%s\n' 'config' 'path' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompo --no-extensions models --json > "$TMPDIR/actual"
+            ${configuredStub}/bin/ompg --no-extensions models --json > "$TMPDIR/actual"
             printf '%s\n' '--no-extensions' 'models' '--json' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
@@ -571,7 +613,7 @@ in
             # Model-preset launchers are routing overlays only: all of them
             # share the default profile and the normal persisted state root,
             # so switching launchers never requires re-authentication.
-            for launcher in ompb ompf ompg ompo; do
+            for launcher in ompb ompf ompg; do
               ${configuredStub}/bin/"$launcher" config managed --json \
                 > "$TMPDIR/launcher-state.json"
               jq -e '.profile == "default"' "$TMPDIR/launcher-state.json" >/dev/null
@@ -753,12 +795,11 @@ in
               [ompb]='openai-codex/gpt-5.6-terra:low'
               [ompf]='anthropic/claude-fable-5:high'
               [ompg]='openai-codex/gpt-5.6-sol:high'
-              [ompo]='openai-codex/gpt-5.6-sol:high'
             )
             policy_home="$TMPDIR/policy-home"
             policy_project="$TMPDIR/policy-project"
             mkdir -p "$policy_home" "$policy_project"
-            for command in ompb ompf ompg ompo; do
+            for command in ompb ompf ompg; do
               HOME="$policy_home" XDG_CONFIG_HOME="$policy_home/.config" \
                 ${configuredStub}/bin/"$command" --cwd "$policy_project" \
                   config managed --json > "$TMPDIR/$command-policy.json"
@@ -772,10 +813,8 @@ in
               .effectiveManaged.providers.anthropic.serverSideFallback == false
               and (.ownership.presets | index("providers.anthropic.serverSideFallback")) != null
             ' "$TMPDIR/ompf-policy.json" >/dev/null
-            jq -e '.effectiveManaged.retry.fallbackChains["reviewer-deep"][0] == "anthropic/claude-opus-4-8:xhigh"' \
-              "$TMPDIR/ompo-policy.json" >/dev/null
 
-            for command in omp ompb ompf ompg ompo; do
+            for command in omp ompb ompf ompg; do
               set +e
               ${configuredStub}/bin/"$command" update \
                 > "$TMPDIR/update.out" 2> "$TMPDIR/update.err"

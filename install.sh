@@ -82,7 +82,6 @@ parse_options() {
 detect_system() {
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64) printf 'aarch64-darwin\n' ;;
-    Darwin:x86_64) printf 'x86_64-darwin\n' ;;
     Linux:arm64|Linux:aarch64) printf 'aarch64-linux\n' ;;
     Linux:x86_64) printf 'x86_64-linux\n' ;;
     *) die "unsupported system: $(uname -s) $(uname -m)" ;;
@@ -93,9 +92,6 @@ select_nix_artifact() {
   case "$SYSTEM" in
     aarch64-darwin)
       NIX_SHA256="1e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b"
-      ;;
-    x86_64-darwin)
-      NIX_SHA256="bf3dadfd65be182ad3141b1224bbc82e0f2a61d4f36781938b5e6ede029c2a37"
       ;;
     aarch64-linux)
       NIX_SHA256="1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b088"

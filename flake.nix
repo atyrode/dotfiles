@@ -47,7 +47,6 @@
 
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
       ];
@@ -555,7 +554,7 @@
               }
               ''
                 jq -e '
-                  length >= 5
+                  length >= 4
                   and all(.[];
                     (.id | type == "string")
                     and (.system | type == "string")
@@ -591,7 +590,6 @@
             productionHost =
               {
                 "aarch64-darwin" = "alex-aarch64-darwin";
-                "x86_64-darwin" = "alex-x86_64-darwin";
                 "aarch64-linux" = "alex-aarch64-linux";
                 "x86_64-linux" = "alex-x86_64-linux";
               }

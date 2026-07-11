@@ -171,7 +171,6 @@ The installer detects the current system and selects the matching configuration:
 
 ```bash
 alex-aarch64-darwin
-alex-x86_64-darwin
 alex-aarch64-linux
 alex-x86_64-linux
 alex-x86_64-linux-desktop

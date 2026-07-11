@@ -17,24 +17,6 @@
     aliases = [ "alex-darwin" ];
   };
 
-  "alex-x86_64-darwin" = {
-    description = "Intel Mac variant of the primary Mac profile";
-    system = "x86_64-darwin";
-    platform = "darwin";
-    username = "alex";
-    homeDirectory = "/Users/alex";
-    capabilities = [
-      "base"
-      "development"
-      "agent-tools"
-      "desktop"
-      "mobile"
-      "media"
-      "containers"
-    ];
-    aliases = [ ];
-  };
-
   "alex-aarch64-linux" = {
     description = "Headless arm64 Linux development machine with agent tooling";
     system = "aarch64-linux";

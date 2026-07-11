@@ -141,7 +141,7 @@ jq . result/manifest.json
 
 ## Pin and update workflow
 
-1. Select a dotfiles commit whose four native CI jobs pass.
+1. Select a dotfiles commit whose three native CI jobs pass.
 2. Build and inspect its server manifest for the target architecture.
 3. Replace the `dotfiles.url` revision with that full immutable commit SHA, then
    run `nix flake update dotfiles` and review both `flake.nix` and `flake.lock`.

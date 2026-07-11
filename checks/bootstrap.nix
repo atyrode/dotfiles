@@ -5,7 +5,6 @@ let
   expectedHash =
     {
       "aarch64-darwin" = "1e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b";
-      "x86_64-darwin" = "bf3dadfd65be182ad3141b1224bbc82e0f2a61d4f36781938b5e6ede029c2a37";
       "aarch64-linux" = "1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b088";
       "x86_64-linux" = "eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560ef";
     }

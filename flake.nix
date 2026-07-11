@@ -263,8 +263,15 @@
         in
         lib.composeManyExtensions [
           herdr.overlays.default
-          (final: _previous: {
+          (final: previous: {
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+            # nixpkgs codex depends on livekit-libwebrtc, which fails to build
+            # on aarch64-darwin; the official release binary stands in there.
+            codex =
+              if final.stdenv.hostPlatform.system == "aarch64-darwin" then
+                final.callPackage ./pkgs/codex-bin { }
+              else
+                previous.codex;
             codex-configured = final.callPackage ./pkgs/codex-configured { };
             codex-use = final.callPackage ./pkgs/codex-use { };
             herdr-configured = final.callPackage ./pkgs/herdr-configured { };

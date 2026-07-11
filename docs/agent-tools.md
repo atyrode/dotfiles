@@ -11,6 +11,7 @@ Nix owns:
 - the pinned OMP binary and generated Zsh completion;
 - the pinned Herdr flake input and generated OMP integration;
 - the managed OMP defaults, enforced policy, and model presets;
+- the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings guard
   extension;
 - the `omp`, `ompb`, `ompf`, `ompg`, and restricted `ompu` launchers; and
@@ -55,7 +56,10 @@ rewriting the Bun executable with `patchelf`.
 Plain `omp` executes upstream OMP directly: no extension, defaults, preset, or
 policy overlay is injected, so its models, approvals, and interface belong to
 the operator's mutable configuration and can change on the fly. Only
-`omp update` is blocked, so nothing shadows the Nix-pinned binary.
+`omp update` is blocked, so nothing shadows the Nix-pinned binary. Its
+starting point is not empty, though: activation seeds the curated defaults
+from `omp/plain-seed.yml` into the writable configuration with local edits
+always winning; see [Seeded plain-omp defaults](#seeded-plain-omp-defaults).
 
 The managed defaults use Sol for interactive daily work, keep cheap, fast
 roles on Luna or low-thinking Terra, and reserve Fable/Opus for planning,
@@ -157,6 +161,51 @@ instead.
 The readable managed copies are linked under `~/.config/omp/`. Edit their
 sources in this repository instead of editing the links.
 
+## Seeded plain-omp defaults
+
+`omp/plain-seed.yml` holds the operator's agreed defaults for plain `omp` —
+the trusted-machine guardrails (secret obfuscation, automatic task isolation),
+the bundled-role model map and fallback chains, and interface preferences. It
+is deliberately not a managed layer: OMP's `--config` overlays always outrank
+the writable machine configuration, so a "defaults that lose to local edits"
+layer cannot exist at launch time. Instead, `atyrode-omp-seed apply` runs
+during activation (after the legacy migration) and three-way merges the seed
+into `~/.omp/agent/config.yml` against the last-applied seed recorded in
+`~/.local/state/atyrode/omp-plain-seed/`:
+
+- a key the operator never touched is written and later follows repository
+  updates;
+- a key the operator changed or deleted is left alone and reported as drift,
+  including across later seed updates;
+- unmanaged keys are never modified.
+
+`atyrode apply` prints the drift report after a successful activation and, on
+a terminal, offers a per-key keep-or-reset review; `atyrode-omp-seed status
+[--json]` and `atyrode-omp-seed resolve [--reset-all]` are available directly.
+This keeps the tinkering loop intact: change anything on the fly in plain
+`omp`, then either adopt the change into `omp/plain-seed.yml` or reset it at
+the next apply. `AGENT_TOOLS_DRY_RUN=1` (or a Home Manager dry run) prints the
+plan without writing.
+
+The seed may overlap keys the managed launchers own: managed sessions layer
+`defaults.yml` and `policy.yml` above the machine configuration, so seeded
+values never change managed behavior, and the flake check asserts that seeded
+values agree with the enforced policy wherever they overlap it. One caveat:
+the managed-settings guard restores managed paths in the writable file to
+their session-start state, so reseeding an overlapping key while a managed
+session is running can be reverted and will then surface as drift — resolve
+it at the next apply, or apply while managed sessions are closed.
+
+Known, accepted limits: the writable configuration is machine-formatted (OMP
+itself rewrites it without comments, and so does the seeder); a write aborts
+rather than merges when the file changed between read and write (rerun to
+pick up the new state); a seed path blocked by a local scalar reports drift
+instead of writing; and on the first activation of a legacy machine the v2
+migration removes managed-key copies before seeding writes the repository
+values — the original file survives in the migration backup receipt.
+`ATYRODE_SEED_REVIEW=0` suppresses the interactive apply-time review for
+pty-backed automation.
+
 ## Skills
 
 Generic, cross-project skills belong in `agents/skills/` and Home Manager links
@@ -244,8 +293,8 @@ below remains valid for hand-driven updates:
    (or run `scripts/update-pins.sh`).
 2. Update the Herdr input revision in `flake.nix`, then run
    `nix flake lock --update-input herdr`.
-3. Review model identifiers and routing in `omp/defaults.yml` and
-   `omp/presets/`.
+3. Review model identifiers and routing in `omp/defaults.yml`,
+   `omp/presets/`, and `omp/plain-seed.yml`.
 4. Run `nix flake check --show-trace`.
 5. Apply the profile with `zconf`.
 

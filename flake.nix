@@ -274,6 +274,7 @@
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
+            omp-seed = final.callPackage ./pkgs/omp-seed { };
             atyrode = final.callPackage ./pkgs/atyrode {
               capabilities = capabilityInventory;
               inherit homebrewCasks;
@@ -463,6 +464,7 @@
             omp
             omp-agents
             omp-configured
+            omp-seed
             ;
         }
         // lib.optionalAttrs (lib.hasSuffix "-linux" system) {
@@ -603,6 +605,7 @@
             baseConfig = baseOnlyConfig;
           };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
+          omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;

@@ -36,6 +36,13 @@ pkgs.runCommand "check-shell-surface"
     zsh -dfi -c 'source ${../home/shell/startup.zsh}; [[ -e "$HOME/local-loaded" ]]' </dev/null
     test ! -e "$HOME/fastfetch-ran"
 
+    COLORTERM= TERM=xterm-ghostty zsh -dfc \
+      'source ${../home/shell/colorterm.zsh}; [[ "$COLORTERM" == truecolor ]]'
+    COLORTERM=16color TERM=xterm-ghostty zsh -dfc \
+      'source ${../home/shell/colorterm.zsh}; [[ "$COLORTERM" == 16color ]]'
+    COLORTERM= TERM=vt100 zsh -dfc \
+      'source ${../home/shell/colorterm.zsh}; [[ -z "$COLORTERM" ]]'
+
     zsh -dfc '
       source ${../home/shell/nix.zsh}
       whence -w zconf >/dev/null

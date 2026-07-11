@@ -88,8 +88,9 @@ atyrode doctor system # Audit system-owned operational prerequisites
 
 ### Agent Tools
 ```bash
-code          # Umbrella picker: list the launchers, pick one, forward your args
+code          # fzf picker: arrow-key select over the grouped launcher palette
 omp           # Mutable user-owned OMP; unmanaged except the blocked update
+ompz          # Fast, mixed — fastest tiers both providers, low thinking
 ompb          # Cost-conscious routine work (OpenAI-led; nano background)
 omps          # Everyday value (Anthropic-led; Sonnet leads, Haiku background)
 ompg          # Difficult work, GPT-led (Sol drives, Claude is the net)

@@ -4,6 +4,7 @@
   coreutils,
   findutils,
   fzf,
+  gawk,
   gitMinimal,
   gnugrep,
   jq,
@@ -56,6 +57,7 @@ let
     sonnet = ../../omp/presets/sonnet-value.yml;
     claude = ../../omp/presets/claude-hard.yml;
     context = ../../omp/presets/context-1m.yml;
+    fast = ../../omp/presets/fast-mixed.yml;
   };
 
   managedDefaultPaths = [
@@ -986,47 +988,55 @@ let
   ompGpt = mkOmpCommand "ompg" [ presets.gpt ];
   ompClaude = mkOmpCommand "ompc" [ presets.claude ];
   ompContext = mkOmpCommand "ompx" [ presets.context ];
+  ompFast = mkOmpCommand "ompz" [ presets.fast ];
 
-  # Single source of truth for the launcher palette. The `code` picker lists
-  # every entry; `omph` renders the role -> model routing for the preset-backed
-  # ones (those carrying a `preset`). `omp` and `ompu` are special builders, so
-  # they appear in the picker but not in the routing view.
+  # Single source of truth for the launcher palette, ordered into soft groups
+  # (mixed, then gpt-led, then claude-led, then specialists) and faster -> smarter
+  # within each. The `code` picker lists every entry and labels the groups; `omph`
+  # renders the routing for the preset-backed ones (those carrying a `preset`).
+  # `omp`/`ompu` are special builders (no preset), shown in the picker only.
   paletteProfiles = [
     {
-      cmd = "omp";
-      exe = lib.getExe ompDefault;
-      lead = "yours";
-      blurb = "Your mutable daily driver (unmanaged)";
-      detail = "Runs upstream OMP with whatever your writable ~/.omp config selects. No managed defaults, preset, or policy overlay beyond the blocked update.";
+      cmd = "ompz";
+      exe = lib.getExe ompFast;
+      lead = "mixed";
+      group = "mix";
+      blurb = "Fast, mixed, latency-first";
+      detail = "The fastest competent tiers across both providers at low thinking (Luna/nano/Spark + Sonnet/Haiku), with light single-hop fallbacks. For snappy interactive work; nothing reaches for Sol/Fable/Opus. Mixed pool.";
+      preset = presets.fast;
     }
     {
       cmd = "ompb";
       exe = lib.getExe ompBudget;
       lead = "openai";
+      group = "gpt";
       blurb = "Cost-conscious routine work";
       detail = "Terra/Luna lead at low thinking; every background role rides gpt-5.4-nano (~5x under Luna). Only the live thread and task worker get a net. Advisor, branch summaries, and autolearn off.";
       preset = presets.budget;
     }
     {
-      cmd = "omps";
-      exe = lib.getExe ompSonnet;
-      lead = "claude";
-      blurb = "Everyday value, Sonnet-led";
-      detail = "Sonnet 5 (intro pricing) leads all but plan/slow, where Opus earns its leverage. Haiku carries background. Chains cross to Terra, Sonnet's price-twin. All-Anthropic pool; features on.";
-      preset = presets.sonnet;
-    }
-    {
       cmd = "ompg";
       exe = lib.getExe ompGpt;
       lead = "openai";
+      group = "gpt";
       blurb = "Difficult work, GPT-led";
       detail = "Sol leads the deliberative roles; a GPT sibling absorbs a capacity blip, then every substantive chain crosses to Fable/Opus. commit/tiny on nano. All-OpenAI lead pool.";
       preset = presets.gpt;
     }
     {
+      cmd = "omps";
+      exe = lib.getExe ompSonnet;
+      lead = "claude";
+      group = "claude";
+      blurb = "Everyday value, Sonnet-led";
+      detail = "Sonnet 5 (intro pricing) leads all but plan/slow, where Opus earns its leverage. Haiku carries background. Chains cross to Terra, Sonnet's price-twin. All-Anthropic pool; features on.";
+      preset = presets.sonnet;
+    }
+    {
       cmd = "ompc";
       exe = lib.getExe ompClaude;
       lead = "claude";
+      group = "claude";
       blurb = "Difficult work, Claude-led";
       detail = "ompg's mirror. Fable drives, Opus is the sibling (and leads review), Sonnet/Haiku carry workers, every chain reaches back to Sol/Terra. Load this when OpenAI is dark or Codex credits are spent.";
       preset = presets.claude;
@@ -1035,14 +1045,24 @@ let
       cmd = "ompf";
       exe = lib.getExe ompFable;
       lead = "claude";
+      group = "claude";
       blurb = "Fable-first, deterministic routing";
       detail = "Fable for the primary and deliberative roles with retry and server-side fallback OFF. The contract is: give me Fable, predictably, never silently swap. Background on cheap OpenAI rungs.";
       preset = presets.fable;
     }
     {
+      cmd = "omp";
+      exe = lib.getExe ompDefault;
+      lead = "yours";
+      group = "special";
+      blurb = "Your mutable daily driver (unmanaged)";
+      detail = "Runs upstream OMP with whatever your writable ~/.omp config selects. No managed defaults, preset, or policy overlay beyond the blocked update.";
+    }
+    {
       cmd = "ompx";
       exe = lib.getExe ompContext;
       lead = "claude";
+      group = "special";
       blurb = "Huge-context (1M) work";
       detail = "For work beyond 372K. Fable/Opus/Sonnet lead (Anthropic owns 1M); gpt-5.4 is the only OpenAI 1M card, used as the cross-net and librarian lead. Haiku (200K) only touches background trivia.";
       preset = presets.context;
@@ -1051,6 +1071,7 @@ let
       cmd = "ompu";
       exe = lib.getExe ompUntrusted;
       lead = "untrusted";
+      group = "special";
       blurb = "Untrusted repositories (isolated)";
       detail = "Dedicated sanitized state, stripped credentials, restricted tools and approvals for deliberately untrusted repositories. Inherits the managed defaults routing.";
     }
@@ -1294,6 +1315,7 @@ let
       jq
       coreutils
       fzf
+      gawk
     ];
     text = ''
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
@@ -1303,12 +1325,14 @@ let
       blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
       details=( ${lib.escapeShellArgs (map (p: p.detail) paletteProfiles)} )
       exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )
+      groups=( ${lib.escapeShellArgs (map (p: p.group) paletteProfiles)} )
       count=''${#names[@]}
       show_usage_panel=1
 
       # Nerd Font glyphs by precise codepoint (FontAwesome range, in every Nerd
       # Font) and 24-bit truecolor accents, used by the fzf picker.
       esc=$(printf '\033')
+      g_mixed=$(printf '')  # random / shuffle (mixed pool)
       g_openai=$(printf '')     # bolt
       g_claude=$(printf '')     # lightbulb
       g_yours=$(printf '')      # user
@@ -1319,6 +1343,7 @@ let
       c_claude="''${esc}[38;2;255;159;82m"
       c_yours="''${esc}[38;2;120;200;170m"
       c_untrusted="''${esc}[38;2;230;130;90m"
+      c_mixed="''${esc}[38;2;170;150;225m"
       c_dim="''${esc}[38;2;120;130;145m"
       c_ok="''${esc}[38;2;80;200;120m"
       c_warn="''${esc}[38;2;235;120;90m"
@@ -1335,12 +1360,28 @@ let
         esac
       }
 
-      # Fill the `palette` array with one plain-ASCII line per launcher.
+      group_label() {
+        case "$1" in
+          mix) printf 'mixed' ;;
+          gpt) printf 'gpt-led' ;;
+          claude) printf 'claude-led' ;;
+          special) printf 'specialists' ;;
+          *) printf '%s' "$1" ;;
+        esac
+      }
+
+      # Fill the `palette` array with one plain-ASCII line per launcher, split
+      # into soft groups with a header before each.
       palette=()
       build_palette() {
         palette=( "OMP launchers" "" )
-        local i
+        local i last_group=""
         for (( i = 0; i < count; i++ )); do
+          if [[ "''${groups[$i]}" != "$last_group" ]]; then
+            [[ -n "$last_group" ]] && palette+=( "" )
+            palette+=( "  $(group_label "''${groups[$i]}")" )
+            last_group="''${groups[$i]}"
+          fi
           palette+=( "$(printf '  %d) %-5s %-11s %s' \
             "$(( i + 1 ))" "''${names[$i]}" "$(lead_tag "''${leads[$i]}")" "''${blurbs[$i]}")" )
         done
@@ -1479,6 +1520,7 @@ let
         case "$1" in
           openai) printf '%s' "$g_openai" ;;
           claude) printf '%s' "$g_claude" ;;
+          mixed) printf '%s' "$g_mixed" ;;
           yours) printf '%s' "$g_yours" ;;
           untrusted) printf '%s' "$g_untrusted" ;;
           *) printf ' ' ;;
@@ -1488,16 +1530,45 @@ let
         case "$1" in
           openai) printf '%s' "$c_openai" ;;
           claude) printf '%s' "$c_claude" ;;
+          mixed) printf '%s' "$c_mixed" ;;
           yours) printf '%s' "$c_yours" ;;
           untrusted) printf '%s' "$c_untrusted" ;;
           *) printf '%s' "$c_dim" ;;
         esac
       }
 
+      # Recolour model tokens in a routing block: provider hue (muted blue for
+      # OpenAI, muted orange for Anthropic) with brightness scaled by the
+      # thinking level, so low -> xhigh reads as dim -> bright.
+      colorize_routes() {
+        gawk -v dim="$c_dim" '
+          function lvl(l) { return l=="minimal"?0:l=="low"?1:l=="medium"?2:l=="high"?3:l=="xhigh"?4:5 }
+          function clamp(x) { return x>255?255:(x<0?0:int(x)) }
+          function paint(tok,   idx, level, f, br, bg, bb) {
+            idx = match(tok, /:(minimal|low|medium|high|xhigh|max)$/)
+            if (idx == 0) return tok
+            level = substr(tok, idx + 1)
+            if (tok ~ /^gpt/) { br = 110; bg = 170; bb = 240 }
+            else if (tok ~ /^claude/) { br = 240; bg = 160; bb = 105 }
+            else return tok
+            f = 0.60 + lvl(level) * 0.088
+            return sprintf("\033[38;2;%d;%d;%dm%s%s", clamp(br*f), clamp(bg*f), clamp(bb*f), tok, dim)
+          }
+          {
+            line = $0; out = ""
+            while (match(line, /(gpt|claude)[A-Za-z0-9._-]*:(minimal|low|medium|high|xhigh|max)/)) {
+              out = out substr(line, 1, RSTART - 1) paint(substr(line, RSTART, RLENGTH))
+              line = substr(line, RSTART + RLENGTH)
+            }
+            print out line
+          }
+        '
+      }
+
       # Arrow-key picker via fzf: a truecolor list with Nerd Font provider
-      # glyphs at the top, the usage panel in the footer, and each profile's
-      # detail + live role -> model routing in the preview. Sets picked_idx, or
-      # leaves it empty when cancelled.
+      # glyphs and soft group labels at the top, the usage panel in the footer,
+      # and each profile's detail + colourised role -> model routing in the
+      # preview. Sets picked_idx, or leaves it empty when cancelled.
       picked_idx=""
       fzf_pick() {
         picked_idx=""
@@ -1511,20 +1582,30 @@ let
         fi
         local prevdir
         prevdir="$(mktemp -d)"
-        local i col gly rows="" block
+        local i col gly rows="" block glabel labelcol last_group=""
         for (( i = 0; i < count; i++ )); do
           col="$(lead_color "''${leads[$i]}")"
           gly="$(lead_glyph "''${leads[$i]}")"
-          rows+="$(printf '%s\t%s%s%s  %s%-5s%s  %s%s%s' \
-            "''${names[$i]}" "$col" "$gly" "$c_rst" \
-            "$c_bold" "''${names[$i]}" "$c_rst" "$c_dim" "''${blurbs[$i]}" "$c_rst")"$'\n'
+          glabel=""
+          if [[ "''${groups[$i]}" != "$last_group" ]]; then
+            glabel="$(group_label "''${groups[$i]}")"
+            last_group="''${groups[$i]}"
+          fi
+          labelcol="$(printf '%-10s' "$glabel")"
+          rows+="$(printf '%s\t%s%s%s  %s%s%s  %s%-5s%s  %s%s%s' \
+            "''${names[$i]}" \
+            "$c_dim" "$labelcol" "$c_rst" \
+            "$col" "$gly" "$c_rst" \
+            "$c_bold" "''${names[$i]}" "$c_rst" \
+            "$c_dim" "''${blurbs[$i]}" "$c_rst")"$'\n'
           {
             printf '%s%s  %s%s%s\n\n' "$col" "$gly" "$c_bold" "''${names[$i]}" "$c_rst"
             printf '%s%s%s\n\n' "$c_dim" "''${blurbs[$i]}" "$c_rst"
             printf '%s\n' "''${details[$i]}"
             if [[ -f "$routes_plain" ]]; then
               block="$(sed -n "/^''${names[$i]}  /,/^\$/p" "$routes_plain")"
-              [[ -n "$block" ]] && printf '\n%s%s%s\n' "$c_dim" "$block" "$c_rst"
+              [[ -n "$block" ]] && printf '\n%s%s%s\n' \
+                "$c_dim" "$(printf '%s' "$block" | colorize_routes)" "$c_rst"
             fi
           } > "$prevdir/''${names[$i]}"
         done
@@ -1709,6 +1790,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     ln -s ${lib.getExe ompClaude} "$out/bin/ompc"
     ln -s ${lib.getExe ompFable} "$out/bin/ompf"
     ln -s ${lib.getExe ompContext} "$out/bin/ompx"
+    ln -s ${lib.getExe ompFast} "$out/bin/ompz"
     ln -s ${lib.getExe ompHelp} "$out/bin/omph"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
     ln -s ${lib.getExe codeLauncher} "$out/bin/code"

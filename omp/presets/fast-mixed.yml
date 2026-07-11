@@ -1,0 +1,45 @@
+# ompz — speed-first, mixed. The fastest competent tiers across both providers
+# at low thinking, with light fast fallbacks, for snappy interactive work where
+# latency beats depth. Luna/nano/Spark (OpenAI) and Sonnet/Haiku (Anthropic) are
+# all fast; nothing here reaches for Sol/Fable/Opus. Mixed pool by design.
+#
+# Note: unlike the drain-the-bucket profiles, task/background run Spark at :low
+# here — this profile optimises for latency, not for emptying the Spark quota.
+modelRoles:
+  default: openai-codex/gpt-5.6-luna:low
+  advisor: openai-codex/gpt-5.4-nano:low
+  smol: openai-codex/gpt-5.4-nano:low
+  task: openai-codex/gpt-5.3-codex-spark:low
+  sonic: openai-codex/gpt-5.4-nano:low
+  librarian: openai-codex/gpt-5.6-luna:low
+  designer: anthropic/claude-sonnet-5:low
+  reviewer: anthropic/claude-sonnet-5:low
+  plan: openai-codex/gpt-5.6-terra:medium
+  slow: openai-codex/gpt-5.6-terra:high
+  tiny: openai-codex/gpt-5.4-nano:low
+  commit: openai-codex/gpt-5.4-nano:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Fast, single-hop nets: cross to the other provider's fast tier (Haiku), or a
+  # cheap sibling. plan/slow get one step up in capability, still capped.
+  fallbackChains:
+    default: [anthropic/claude-haiku-4-5:low]
+    task: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    librarian: [anthropic/claude-haiku-4-5:low]
+    designer: [openai-codex/gpt-5.6-terra:low]
+    reviewer: [openai-codex/gpt-5.6-terra:low]
+    plan: [anthropic/claude-sonnet-5:medium]
+    slow: [anthropic/claude-sonnet-5:high]
+
+task:
+  agentModelOverrides:
+    designer: anthropic/claude-sonnet-5:low
+    librarian: openai-codex/gpt-5.6-luna:low
+    reviewer: anthropic/claude-sonnet-5:low
+    sonic: openai-codex/gpt-5.4-nano:low
+    task: openai-codex/gpt-5.3-codex-spark:low
+
+defaultThinkingLevel: low

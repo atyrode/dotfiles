@@ -14,9 +14,9 @@ Nix owns:
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings guard
   extension;
-- the `omp`, `ompb`, `omps`, `ompg`, `ompc`, `ompf`, `ompx`, and restricted
-  `ompu` launchers, plus the `omph` routing view and the `code` launcher
-  picker; and
+- the `omp`, `ompz`, `ompb`, `omps`, `ompg`, `ompc`, `ompf`, `ompx`, and
+  restricted `ompu` launchers, plus the `omph` routing view and the `code`
+  launcher picker; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
   instructions and `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
@@ -29,7 +29,7 @@ This subsystem deliberately owns neither a `pi` executable nor a `.pi`
 mutable-state namespace. The bounded Pi experiment in #29 may therefore install
 alongside OMP without an executable collision, shared authentication/session
 state, or any parity requirement. The package check asserts the exact managed
-OMP binary set — eight launchers plus the `omph` routing view and the `code`
+OMP binary set — nine launchers plus the `omph` routing view and the `code`
 picker — and verifies that an OMP clean-home startup does not create `.pi`
 state. Security boundaries and the untrusted-project launcher are
 documented in [Agent security](agent-security.md).
@@ -48,15 +48,17 @@ rewriting the Bun executable with `patchelf`.
 
 ## OMP launchers
 
-The launchers form a palette: two everyday profiles per subscription pool
-(cheap and hard), two specialists, and a base layer. `code` is an umbrella
-picker over all of them (see below). The design rationale — the model catalog,
-the fallback principles, and the per-profile reasoning — lives in
-[`omp/PROFILES.md`](../omp/PROFILES.md).
+The launchers form a palette: a fast mixed profile, two everyday profiles per
+subscription pool (cheap and hard), specialists, and a base layer. The `code`
+picker (see below) groups them softly — mixed, then gpt-led, then claude-led,
+then specialists — sorted faster → smarter within each group. The design
+rationale — the model catalog, the fallback principles, and the per-profile
+reasoning — lives in [`omp/PROFILES.md`](../omp/PROFILES.md).
 
 | Command | Intended use | Primary route |
 | --- | --- | --- |
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
+| `ompz` | Fast, mixed — latency over depth | Luna/nano/Spark + Sonnet/Haiku at low thinking, light single-hop fallbacks; nothing reaches for Sol/Fable/Opus |
 | `ompb` | Cost-conscious routine work (OpenAI-led) | GPT-5.6 Terra/Luna at low thinking; `task`+background lead on GPT-5.3-codex-spark (free bucket) → nano |
 | `omps` | Everyday value (Anthropic-led) | Sonnet 5 leads; Opus for plan/slow; background on GPT-5.3-codex-spark (free bucket) → Haiku |
 | `ompg` | Difficult work, GPT-led | GPT-5.6 Sol drives; a GPT sibling absorbs a blip, then Claude is the net |
@@ -117,20 +119,22 @@ package build time from the same defaults and preset files, so it always
 matches the deployed configuration. Provider is encoded as a colorblind-safe
 blue/orange pair; piped or `NO_COLOR` output falls back to plain text.
 
-`code` is an umbrella picker over the whole palette. With no arguments it lists
-the launchers with one-line descriptions and prompts for a choice; `?N` shows a
-longer description for entry `N`. The interactive picker also renders a compact
-`omp usage` panel beside the palette (best-effort and bounded, so it never
-blocks; `code --no-usage` skips it), marking each provider's quota windows
-`free` when idle and `tight` at ≥80% — a glance at which meter has room before
-you pick. A selector can also be passed directly by
-name, menu number, or single suffix letter (`code ompg`, `code 4`, `code g`),
-with any remaining arguments forwarded to the chosen launcher. If the first
-argument is not a known profile, the picker opens and then forwards every
-argument to the choice, so `code --resume` picks a profile first, then resumes.
-`code --list` and `code --help` are non-interactive. It is a thin wrapper: the
-chosen launcher receives the arguments unchanged and applies its own managed
-overlays.
+`code` is an umbrella picker over the whole palette. With no arguments it opens
+an `fzf` picker: arrow keys and Enter to select (type to filter), a truecolor
+list with Nerd Font provider glyphs and soft group labels (mixed / gpt-led /
+claude-led / specialists), the `omp usage` panel in a bottom footer (per-window
+`N% used` with green→red gradient bars, `free` on an idle bucket and `tight` at
+≥80%), and a preview pane showing the highlighted profile's detail and its live
+role → model routing — with model names coloured by provider (blue/orange) and
+brightness scaled by thinking level. It falls back to a typed menu when `fzf` is
+unavailable or `CODE_NO_FZF=1`, and `code --no-usage` skips the usage fetch. A
+selector can also be passed directly by name, menu number, or single suffix
+letter (`code ompg`, `code 4`, `code z`), with any remaining arguments forwarded
+to the chosen launcher. If the first argument is not a known profile, the picker
+opens and then forwards every argument to the choice, so `code --resume` picks a
+profile first, then resumes. `code --list` and `code --help` are
+non-interactive. It is a thin wrapper: the chosen launcher receives the
+arguments unchanged and applies its own managed overlays.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the preset files intentionally change parts of this table for the budget

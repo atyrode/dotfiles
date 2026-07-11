@@ -17,6 +17,7 @@ let
     sonnet = ../../omp/presets/sonnet-value.yml;
     claude = ../../omp/presets/claude-hard.yml;
     context = ../../omp/presets/context-1m.yml;
+    fast = ../../omp/presets/fast-mixed.yml;
   };
 
   herdrCompletions = pkgs.runCommand "herdr-completions-${lib.getVersion cfg.herdrPackage}" { } ''
@@ -71,6 +72,7 @@ in
       "omp/presets/sonnet-value.yml".source = presets.sonnet;
       "omp/presets/claude-hard.yml".source = presets.claude;
       "omp/presets/context-1m.yml".source = presets.context;
+      "omp/presets/fast-mixed.yml".source = presets.fast;
     };
 
     home.file = {

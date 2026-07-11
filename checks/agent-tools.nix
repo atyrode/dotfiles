@@ -122,20 +122,21 @@ in
         test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
         test "$(yq eval '.retry.modelFallback' ${fablePreset})" = "false"
 
-        for command in omp ompb ompc ompf ompg omps ompu ompx; do
+        for command in omp ompb ompc ompf ompg omps ompu ompx ompz; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
           test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
         done
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-        )" = "code,omp,ompb,ompc,ompf,ompg,omph,omps,ompu,ompx"
+        )" = "code,omp,ompb,ompc,ompf,ompg,omph,omps,ompu,ompx,ompz"
         test "$(${pkgs.herdr-configured}/bin/herdr --version)" = "herdr 0.7.3"
 
         ${pkgs.omp-configured}/bin/omph > "$TMPDIR/omph.txt"
         ! grep -q $'\e' "$TMPDIR/omph.txt"
         grep -q "OMP managed routing — oh-my-pi ${lib.getVersion pkgs.omp}" "$TMPDIR/omph.txt"
         grep -q 'bundled agents: designer librarian reviewer scout sonic task' "$TMPDIR/omph.txt"
+        grep -q '^ompz  Fast, mixed, latency-first$' "$TMPDIR/omph.txt"
         grep -q '^ompb  Cost-conscious routine work$' "$TMPDIR/omph.txt"
         grep -q '^omps  Everyday value, Sonnet-led$' "$TMPDIR/omph.txt"
         grep -q '^ompg  Difficult work, GPT-led$' "$TMPDIR/omph.txt"
@@ -152,7 +153,9 @@ in
         # `code` umbrella picker: lists the palette non-interactively and
         # resolves selectors without opening the interactive prompt.
         ${pkgs.omp-configured}/bin/code --list > "$TMPDIR/code.txt"
-        grep -q '1) omp' "$TMPDIR/code.txt"
+        grep -q 'ompz' "$TMPDIR/code.txt"
+        grep -q '^  mixed$' "$TMPDIR/code.txt"
+        grep -q '^  specialists$' "$TMPDIR/code.txt"
         grep -q 'omps' "$TMPDIR/code.txt"
         grep -q 'ompc' "$TMPDIR/code.txt"
         grep -q 'ompx' "$TMPDIR/code.txt"
@@ -643,7 +646,7 @@ in
             # Model-preset launchers are routing overlays only: all of them
             # share the default profile and the normal persisted state root,
             # so switching launchers never requires re-authentication.
-            for launcher in ompb omps ompg ompc ompf ompx; do
+            for launcher in ompz ompb omps ompg ompc ompf ompx; do
               ${configuredStub}/bin/"$launcher" config managed --json \
                 > "$TMPDIR/launcher-state.json"
               jq -e '.profile == "default"' "$TMPDIR/launcher-state.json" >/dev/null
@@ -822,6 +825,7 @@ in
             # Plain omp is unmanaged and has no Nix-declared default model;
             # the managed defaults file is asserted directly with yq above.
             declare -A expected_default_models=(
+              [ompz]='openai-codex/gpt-5.6-luna:low'
               [ompb]='openai-codex/gpt-5.6-terra:low'
               [omps]='anthropic/claude-sonnet-5:medium'
               [ompg]='openai-codex/gpt-5.6-sol:high'
@@ -832,7 +836,7 @@ in
             policy_home="$TMPDIR/policy-home"
             policy_project="$TMPDIR/policy-project"
             mkdir -p "$policy_home" "$policy_project"
-            for command in ompb omps ompg ompc ompf ompx; do
+            for command in ompz ompb omps ompg ompc ompf ompx; do
               HOME="$policy_home" XDG_CONFIG_HOME="$policy_home/.config" \
                 ${configuredStub}/bin/"$command" --cwd "$policy_project" \
                   config managed --json > "$TMPDIR/$command-policy.json"
@@ -847,7 +851,7 @@ in
               and (.ownership.presets | index("providers.anthropic.serverSideFallback")) != null
             ' "$TMPDIR/ompf-policy.json" >/dev/null
 
-            for command in omp ompb omps ompg ompc ompf ompx; do
+            for command in omp ompb omps ompg ompc ompf ompx ompz; do
               set +e
               ${configuredStub}/bin/"$command" update \
                 > "$TMPDIR/update.out" 2> "$TMPDIR/update.err"

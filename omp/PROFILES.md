@@ -124,12 +124,14 @@ which bucket is tight before you choose a harness.
 
 ## The palette
 
-Two everyday profiles per pool (cheap and hard), two specialists, and a base
-layer. `code` (see [below](#the-code-picker)) is an umbrella picker over all of
-them.
+A fast mixed profile, two everyday profiles per pool (cheap and hard), two
+specialists, and a base layer. `code` (see [below](#the-code-picker)) is an
+umbrella picker over all of them, grouped mixed → gpt-led → claude-led →
+specialists and sorted faster → smarter within each.
 
 | | OpenAI-led (Codex meter) | Anthropic-led (Claude meter) |
 | --- | --- | --- |
+| **fast (mixed)** | `ompz` — fastest tiers of both providers, low thinking, light fallbacks | *(uses both meters)* |
 | **cheap** | `ompb` — routine work, nano background, features off | `omps` — everyday value, Sonnet-led, features on |
 | **hard** | `ompg` — Sol drives, Claude is the net | `ompc` — Fable drives, GPT is the net |
 | **specialist** | — | `ompf` deterministic Fable · `ompx` huge-context (1M) |
@@ -143,6 +145,13 @@ posture (approvals, secrets, isolation), not models.
 Routing detail is in the YAML; each file's header comment states its thesis.
 Summary:
 
+- **`ompz`** ([fast-mixed.yml](presets/fast-mixed.yml)) — speed-first, mixed. The
+  fastest competent tiers across both providers at low thinking (Luna/nano/Spark
+  + Sonnet/Haiku), with light single-hop fallbacks (cross to Haiku, or a cheap
+  sibling). Nothing reaches for Sol/Fable/Opus; plan/slow get one capped step up.
+  For snappy interactive work where latency beats depth. Note: unlike the
+  drain-the-bucket profiles, Spark runs at `:low` here — this profile optimises
+  for latency, not for emptying the Spark quota.
 - **`ompb`** ([budget.yml](presets/budget.yml)) — minimum burn. Terra/Luna lead
   the interactive and deliberative roles at low thinking. `task` and the
   background roles lead on Spark to drain the free Codex bucket, falling back to
@@ -184,19 +193,25 @@ Summary:
 
 ## The `code` picker
 
-`code` lists the palette, resolves a selector (menu number, launcher name,
-alias like `plain`, or a single suffix letter — `code ompg`, `code 4`,
-`code g`), and execs the matching launcher, forwarding every remaining argument.
-If the first argument is not a known profile, the picker opens and then forwards
-all arguments to the choice, so `code --resume` picks first, then resumes.
-`code --list` / `code --help` are non-interactive. It is a thin wrapper: the
-chosen launcher applies its own managed overlays unchanged.
+`code` resolves a selector (menu number, launcher name, alias like `plain`, or a
+single suffix letter — `code ompg`, `code 4`, `code z`) and execs the matching
+launcher, forwarding every remaining argument. If the first argument is not a
+known profile, the picker opens and then forwards all arguments to the choice,
+so `code --resume` picks first, then resumes. `code --list` / `code --help` are
+non-interactive. It is a thin wrapper: the chosen launcher applies its own
+managed overlays unchanged.
 
-The interactive picker also renders a compact `omp usage` panel beside the
-palette (best-effort, ~2s from cache; bounded so it never blocks the picker —
-`code --no-usage` skips it). Each provider's quota windows show a bar and
-percent, with `free` on an idle bucket and `tight` at ≥80%, so you can see which
-meter has room before you pick. See [Separate rate buckets](#separate-rate-buckets--an-underused-lever).
+With no (profile) argument it opens an `fzf` picker — arrow keys + Enter, fuzzy
+filtering — with a truecolor list, Nerd Font provider glyphs, and soft group
+labels (mixed → gpt-led → claude-led → specialists, faster → smarter within).
+The preview pane shows the highlighted profile's detail and its live routing,
+with model names coloured by provider (blue/orange) and shaded by thinking level
+(dim `low` → bright `xhigh`). The `omp usage` panel sits in a bottom footer
+(best-effort, ~2s from cache, bounded; `code --no-usage` skips it): each quota
+window shows a green→red bar, `N% used`, and `free`/`tight` tags, so you see
+which meter has room before you pick (see [Separate rate
+buckets](#separate-rate-buckets--an-underused-lever)). It falls back to a plain
+typed menu when `fzf` is absent or `CODE_NO_FZF=1`.
 
 It is defined in [`pkgs/omp-configured/default.nix`](../pkgs/omp-configured/default.nix)
 from a single `paletteProfiles` list that also feeds the `omph` route view, so

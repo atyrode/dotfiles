@@ -129,8 +129,19 @@ in
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-        )" = "omp,ompb,ompf,ompg,ompu"
+        )" = "omp,ompb,ompf,ompg,omph,ompu"
         test "$(${pkgs.herdr-configured}/bin/herdr --version)" = "herdr 0.7.3"
+
+        ${pkgs.omp-configured}/bin/omph > "$TMPDIR/omph.txt"
+        ! grep -q $'\e' "$TMPDIR/omph.txt"
+        grep -q "OMP managed routing — oh-my-pi ${lib.getVersion pkgs.omp}" "$TMPDIR/omph.txt"
+        grep -q 'bundled agents: designer librarian reviewer scout sonic task' "$TMPDIR/omph.txt"
+        grep -q '^ompb  Cost-conscious routine work$' "$TMPDIR/omph.txt"
+        grep -q '^ompg  OpenAI-only difficult work$' "$TMPDIR/omph.txt"
+        grep -q '^ompf  Fable-first work with predictable routing$' "$TMPDIR/omph.txt"
+        grep -q 'gpt-5.6-sol:high' "$TMPDIR/omph.txt"
+        grep -q 'claude-fable-5:high' "$TMPDIR/omph.txt"
+        grep -q 'scout is deliberately unpinned' "$TMPDIR/omph.txt"
 
         for invocation in 'update' '--handoff update' 'update --handoff'; do
           read -r -a args <<< "$invocation"

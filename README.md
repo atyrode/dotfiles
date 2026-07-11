@@ -92,6 +92,7 @@ omp           # Mutable user-owned OMP; unmanaged except the blocked update
 ompb          # Budget profile
 ompg          # OpenAI-only high-capability profile
 ompf          # Fable-first profile with fallback disabled
+omph          # Show the managed routing: roles, models, fallbacks per profile
 ompu          # Restricted launcher for deliberately untrusted repositories
 herdr         # Persistent terminal workspace manager
 ```

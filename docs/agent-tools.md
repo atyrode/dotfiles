@@ -14,7 +14,8 @@ Nix owns:
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings guard
   extension;
-- the `omp`, `ompb`, `ompf`, `ompg`, and restricted `ompu` launchers; and
+- the `omp`, `ompb`, `ompf`, `ompg`, and restricted `ompu` launchers, plus the
+  `omph` routing view; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
   instructions and `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
@@ -26,9 +27,9 @@ belong in this repository or the Nix store.
 This subsystem deliberately owns neither a `pi` executable nor a `.pi`
 mutable-state namespace. The bounded Pi experiment in #29 may therefore install
 alongside OMP without an executable collision, shared authentication/session
-state, or any parity requirement. The package check asserts the exact five OMP
-launcher names and verifies that an OMP clean-home startup does not create
-`.pi` state. Security boundaries and the untrusted-project launcher are
+state, or any parity requirement. The package check asserts the exact managed
+OMP binary set — five launchers plus the `omph` routing view — and verifies
+that an OMP clean-home startup does not create `.pi` state. Security boundaries and the untrusted-project launcher are
 documented in [Agent security](agent-security.md).
 
 Agents, rules, the settings guard, and the Herdr extension are assembled into
@@ -84,6 +85,13 @@ The bundled `scout` agent (upstream's rename of `explore`) is deliberately not
 pinned: its frontmatter declares the `smol` model role, so repository
 exploration follows the smol route and its fallback chain without a separate
 entry that could go stale.
+
+`omph` prints the effective routing as a terminal page: for each preset
+launcher, every role's primary model, its fallback chain, and any diverging
+task-agent override, with agent-backed roles marked. The page is rendered at
+package build time from the same defaults and preset files, so it always
+matches the deployed configuration. Provider is encoded as a colorblind-safe
+blue/orange pair; piped or `NO_COLOR` output falls back to plain text.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the preset files intentionally change parts of this table for budget,

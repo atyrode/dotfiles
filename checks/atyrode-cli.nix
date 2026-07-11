@@ -21,6 +21,7 @@ pkgs.runCommand "check-atyrode-cli"
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
       *diff\ --quiet*) exit 0 ;;
+      *ls-remote*) printf 'feedfacefeedfacefeedfacefeedfacefeedface\trefs/heads/main\n' ;;
       *) exit 1 ;;
     esac
     EOF
@@ -51,6 +52,7 @@ pkgs.runCommand "check-atyrode-cli"
     atyrode apply --repo "$HOME/nix-dotfiles" --plan --json | jq -e '
       .host == "alex-x86_64-linux"
       and .backend == "nh-home"
+      and .source == "local"
       and .revision == "0123456789ab"
       and .mutationBoundary == "activation only after preflight"
     ' >/dev/null
@@ -73,6 +75,29 @@ pkgs.runCommand "check-atyrode-cli"
     grep -F -- 'home switch ' "$TMPDIR/nh-args" >/dev/null
     grep -F -- '--dry' "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+
+    atyrode apply --plan --json | jq -e '
+      .source == "remote"
+      and .revision == "feedfacefeed"
+      and .installable == "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#alex-x86_64-linux"
+      and (.dirty | not)
+      and .repository == "github:atyrode/dotfiles"
+    ' >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+
+    atyrode apply >/dev/null
+    grep -F -- 'github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#alex-x86_64-linux' \
+      "$TMPDIR/nh-args" >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
+
+    atyrode apply --ref 0123456789012345678901234567890123456789 --plan --json | jq -e '
+      .source == "remote" and .revision == "012345678901"
+    ' >/dev/null
+
+    if atyrode apply --ref main --repo "$HOME/nix-dotfiles" --plan >/dev/null 2>&1; then
+      echo '--ref with --repo unexpectedly succeeded' >&2
+      exit 1
+    fi
 
     if atyrode apply alex-aarch64-linux --plan >/dev/null 2>&1; then
       echo 'cross-system host selection unexpectedly succeeded' >&2

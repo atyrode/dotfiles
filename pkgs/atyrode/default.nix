@@ -3,6 +3,9 @@
   capabilities,
   codex,
   coreutils,
+  # Published flake activated by `atyrode apply` without --repo. Must stay a
+  # github: ref; the CLI derives the ls-remote URL from it.
+  flakeRef ? "github:atyrode/dotfiles",
   gitMinimal,
   herdr-configured,
   hostname,
@@ -153,6 +156,7 @@ stdenvNoCC.mkDerivation {
     install -D -m755 "$src" "$out/bin/atyrode"
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
+      --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
       --replace-fail '@tools@' '${tools}'

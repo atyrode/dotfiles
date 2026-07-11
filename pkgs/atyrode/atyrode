@@ -714,7 +714,7 @@ apply_config() {
   done
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
 
-  local host data expected_system expected_user expected_hostname platform source repository revision dirty backend installable
+  local host data expected_system expected_user expected_hostname platform source repository flake_source revision dirty backend installable
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -739,6 +739,7 @@ apply_config() {
     revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
     dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
     repository="$repo"
+    flake_source="$repo"
     installable="$repo#$host"
   else
     source="remote"
@@ -756,6 +757,7 @@ apply_config() {
     revision="${rev:0:12}"
     dirty=false
     repository="$flake_ref"
+    flake_source="$flake_ref/$rev"
     installable="$flake_ref/$rev#$host"
   fi
   backend="nh-home"; [[ "$platform" != darwin ]] || backend="nh-darwin"
@@ -774,8 +776,11 @@ apply_config() {
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_NH:-}" ]]; then
     nh_command="$ATYRODE_NH"
   fi
+  # nh home passes a #fragment through to nix verbatim instead of treating
+  # it as the configuration name, so the flake reference goes bare and
+  # --configuration carries the host; nh darwin resolves the fragment itself.
   if [[ "$platform" == darwin ]]; then nh_args=("$nh_command" darwin switch "$installable" --diff always)
-  else nh_args=("$nh_command" home switch "$installable" --configuration "$host" --backup-extension backup --diff always); fi
+  else nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always); fi
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
   if [[ "$dry" == 0 ]]; then

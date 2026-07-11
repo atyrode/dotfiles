@@ -106,7 +106,8 @@ pkgs.runCommand "check-atyrode-cli"
     unset ATYRODE_NH_FAIL
 
     atyrode apply --repo "$HOME/nix-dotfiles" --dry-run >/dev/null
-    grep -F -- 'home switch ' "$TMPDIR/nh-args" >/dev/null
+    grep -F -- "home switch $HOME/nix-dotfiles --configuration alex-x86_64-linux" \
+      "$TMPDIR/nh-args" >/dev/null
     grep -F -- '--dry' "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
@@ -120,7 +121,9 @@ pkgs.runCommand "check-atyrode-cli"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
     atyrode apply >/dev/null
-    grep -F -- 'github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#alex-x86_64-linux' \
+    # nh home must receive the bare flake reference; a #fragment form is
+    # passed to nix verbatim and fails attribute resolution.
+    grep -F -- 'home switch github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface --configuration alex-x86_64-linux' \
       "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
 

@@ -1,0 +1,54 @@
+# ompc — difficult work, Claude-led. ompg's mirror at the same stakes, opposite
+# pool: Fable drives the deliberative roles, Opus is the sibling (and leads
+# review, its strength), Sonnet/Haiku carry the workers, and every substantive
+# chain reaches back to OpenAI. Load this when OpenAI is dark or the Codex meter
+# is empty and the work is still hard. Unlike ompf, nothing here strands on a
+# single model.
+#
+# Background leads on gpt-5.3-codex-spark to drain its separate idle Codex bucket
+# (see omp/PROFILES.md). The bucket is free, so sonic/advisor run at :xhigh
+# (best output, faster drain) while tiny/commit stay :low; each falls back to
+# Haiku when exhausted. The substantive roles stay pool-pure on Claude.
+modelRoles:
+  default: anthropic/claude-fable-5:high
+  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  smol: anthropic/claude-haiku-4-5:low
+  task: anthropic/claude-sonnet-5:medium
+  sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+  librarian: anthropic/claude-sonnet-5:medium
+  designer: anthropic/claude-fable-5:high
+  reviewer: anthropic/claude-opus-4-8:high
+  plan: anthropic/claude-fable-5:high
+  slow: anthropic/claude-fable-5:xhigh
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Claude sibling first, then cross to OpenAI. Sol out-prices Opus per output
+  # token, so the crossing is the expensive step; it only fires when Anthropic
+  # is actually down provider-wide. Background drains Spark, then Haiku.
+  fallbackChains:
+    default: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high]
+    task: [anthropic/claude-haiku-4-5:medium, openai-codex/gpt-5.6-terra:medium]
+    plan: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high]
+    slow: [anthropic/claude-opus-4-8:xhigh, openai-codex/gpt-5.6-sol:xhigh]
+    designer: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high]
+    reviewer: [anthropic/claude-sonnet-5:high, openai-codex/gpt-5.6-sol:high]
+    librarian: [anthropic/claude-haiku-4-5:medium, openai-codex/gpt-5.6-terra:medium]
+    sonic: [anthropic/claude-haiku-4-5:low]
+    advisor: [anthropic/claude-haiku-4-5:low]
+    tiny: [anthropic/claude-haiku-4-5:low]
+    commit: [anthropic/claude-haiku-4-5:low]
+
+task:
+  agentModelOverrides:
+    designer: anthropic/claude-fable-5:high
+    librarian: anthropic/claude-sonnet-5:medium
+    reviewer: anthropic/claude-opus-4-8:high
+    sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+    task: anthropic/claude-sonnet-5:medium
+
+defaultThinkingLevel: medium

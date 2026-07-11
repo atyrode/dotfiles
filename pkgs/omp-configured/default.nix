@@ -52,6 +52,9 @@ let
     budget = ../../omp/presets/budget.yml;
     fable = ../../omp/presets/fable-primary.yml;
     gpt = ../../omp/presets/gpt56.yml;
+    sonnet = ../../omp/presets/sonnet-value.yml;
+    claude = ../../omp/presets/claude-hard.yml;
+    context = ../../omp/presets/context-1m.yml;
   };
 
   managedDefaultPaths = [
@@ -977,13 +980,82 @@ let
     '';
   };
   ompBudget = mkOmpCommand "ompb" [ presets.budget ];
+  ompSonnet = mkOmpCommand "omps" [ presets.sonnet ];
   ompFable = mkOmpCommand "ompf" [ presets.fable ];
   ompGpt = mkOmpCommand "ompg" [ presets.gpt ];
-  routeSpecs = [
-    "ompb|Cost-conscious routine work|${presets.budget}"
-    "ompg|OpenAI-only difficult work|${presets.gpt}"
-    "ompf|Fable-first work with predictable routing|${presets.fable}"
+  ompClaude = mkOmpCommand "ompc" [ presets.claude ];
+  ompContext = mkOmpCommand "ompx" [ presets.context ];
+
+  # Single source of truth for the launcher palette. The `code` picker lists
+  # every entry; `omph` renders the role -> model routing for the preset-backed
+  # ones (those carrying a `preset`). `omp` and `ompu` are special builders, so
+  # they appear in the picker but not in the routing view.
+  paletteProfiles = [
+    {
+      cmd = "omp";
+      exe = lib.getExe ompDefault;
+      lead = "yours";
+      blurb = "Your mutable daily driver (unmanaged)";
+      detail = "Runs upstream OMP with whatever your writable ~/.omp config selects. No managed defaults, preset, or policy overlay beyond the blocked update.";
+    }
+    {
+      cmd = "ompb";
+      exe = lib.getExe ompBudget;
+      lead = "openai";
+      blurb = "Cost-conscious routine work";
+      detail = "Terra/Luna lead at low thinking; every background role rides gpt-5.4-nano (~5x under Luna). Only the live thread and task worker get a net. Advisor, branch summaries, and autolearn off.";
+      preset = presets.budget;
+    }
+    {
+      cmd = "omps";
+      exe = lib.getExe ompSonnet;
+      lead = "claude";
+      blurb = "Everyday value, Sonnet-led";
+      detail = "Sonnet 5 (intro pricing) leads all but plan/slow, where Opus earns its leverage. Haiku carries background. Chains cross to Terra, Sonnet's price-twin. All-Anthropic pool; features on.";
+      preset = presets.sonnet;
+    }
+    {
+      cmd = "ompg";
+      exe = lib.getExe ompGpt;
+      lead = "openai";
+      blurb = "Difficult work, GPT-led";
+      detail = "Sol leads the deliberative roles; a GPT sibling absorbs a capacity blip, then every substantive chain crosses to Fable/Opus. commit/tiny on nano. All-OpenAI lead pool.";
+      preset = presets.gpt;
+    }
+    {
+      cmd = "ompc";
+      exe = lib.getExe ompClaude;
+      lead = "claude";
+      blurb = "Difficult work, Claude-led";
+      detail = "ompg's mirror. Fable drives, Opus is the sibling (and leads review), Sonnet/Haiku carry workers, every chain reaches back to Sol/Terra. Load this when OpenAI is dark or Codex credits are spent.";
+      preset = presets.claude;
+    }
+    {
+      cmd = "ompf";
+      exe = lib.getExe ompFable;
+      lead = "claude";
+      blurb = "Fable-first, deterministic routing";
+      detail = "Fable for the primary and deliberative roles with retry and server-side fallback OFF. The contract is: give me Fable, predictably, never silently swap. Background on cheap OpenAI rungs.";
+      preset = presets.fable;
+    }
+    {
+      cmd = "ompx";
+      exe = lib.getExe ompContext;
+      lead = "claude";
+      blurb = "Huge-context (1M) work";
+      detail = "For work beyond 372K. Fable/Opus/Sonnet lead (Anthropic owns 1M); gpt-5.4 is the only OpenAI 1M card, used as the cross-net and librarian lead. Haiku (200K) only touches background trivia.";
+      preset = presets.context;
+    }
+    {
+      cmd = "ompu";
+      exe = lib.getExe ompUntrusted;
+      lead = "untrusted";
+      blurb = "Untrusted repositories (isolated)";
+      detail = "Dedicated sanitized state, stripped credentials, restricted tools and approvals for deliberately untrusted repositories. Inherits the managed defaults routing.";
+    }
   ];
+  presetProfiles = builtins.filter (p: p ? preset) paletteProfiles;
+  routeSpecs = map (p: "${p.cmd}|${p.blurb}|${p.preset}") presetProfiles;
   routesHelp =
     runCommand "omp-routes-help-${lib.getVersion omp}"
       {
@@ -1209,6 +1281,272 @@ let
       run_isolated "$raw_omp" "''${managed_args[@]}" "''${forwarded_args[@]}"
     '';
   };
+
+  # `code` — the umbrella picker. Lists the launcher palette, resolves a
+  # selector (number, name, alias, or single suffix letter) and execs the
+  # matching launcher, forwarding every remaining argument. If the first
+  # argument is not a known profile it opens the picker and then forwards all
+  # arguments to the choice, so `code --resume` picks first, then resumes.
+  codeLauncher = writeShellApplication {
+    name = "code";
+    runtimeInputs = [
+      jq
+      coreutils
+    ];
+    text = ''
+      omp_bin=${lib.escapeShellArg (lib.getExe omp)}
+      names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
+      leads=( ${lib.escapeShellArgs (map (p: p.lead) paletteProfiles)} )
+      blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
+      details=( ${lib.escapeShellArgs (map (p: p.detail) paletteProfiles)} )
+      exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )
+      count=''${#names[@]}
+      show_usage_panel=1
+
+      lead_tag() {
+        case "$1" in
+          openai) printf '[openai]' ;;
+          claude) printf '[claude]' ;;
+          yours) printf '[yours]' ;;
+          untrusted) printf '[untrusted]' ;;
+          *) printf '[%s]' "$1" ;;
+        esac
+      }
+
+      # Fill the `palette` array with one plain-ASCII line per launcher.
+      palette=()
+      build_palette() {
+        palette=( "OMP launchers" "" )
+        local i
+        for (( i = 0; i < count; i++ )); do
+          palette+=( "$(printf '  %d) %-5s %-11s %s' \
+            "$(( i + 1 ))" "''${names[$i]}" "$(lead_tag "''${leads[$i]}")" "''${blurbs[$i]}")" )
+        done
+      }
+
+      short_window() {
+        case "$1" in
+          "5 hours" | "Claude 5 Hour") printf '5h' ;;
+          "7 days" | "Claude 7 Day") printf '7d' ;;
+          "5 hours (Spark)") printf '5h spark' ;;
+          "7 days (Spark)") printf '7d spark' ;;
+          "Claude 7 Day (Fable)") printf '7d fable' ;;
+          *) printf '%s' "$1" ;;
+        esac
+      }
+
+      bar() {
+        local pct="$1"
+        local fill=$(( (pct * 10 + 50) / 100 ))
+        local k out=""
+        (( fill > 10 )) && fill=10
+        (( fill < 0 )) && fill=0
+        for (( k = 0; k < 10; k++ )); do
+          if (( k < fill )); then out+='█'; else out+='░'; fi
+        done
+        printf '%s' "$out"
+      }
+
+      # Fill the `usagep` array with a compact per-provider quota panel from
+      # `omp usage --json`. Best-effort: on any failure (offline, timeout, not
+      # authed, --no-usage) it is left empty and the picker shows just the list.
+      usagep=()
+      build_usage() {
+        usagep=()
+        (( show_usage_panel == 1 )) || return 0
+        local json rows
+        json="$(timeout 8 "$omp_bin" usage --json 2>/dev/null)" || return 0
+        [[ -n "$json" ]] || return 0
+        rows="$(printf '%s' "$json" | jq -r '
+            ( "HDR\t" + ((now - (.generatedAt / 1000)) | floor | tostring) ),
+            ( .reports[] | .provider as $p | .limits[]
+              | "ROW\t" + $p + "\t" + .label + "\t"
+                + ((.amount.usedFraction * 100) | round | tostring) + "\t"
+                + (.scope.tier // "-") )
+          ' 2>/dev/null)" || return 0
+        [[ -n "$rows" ]] || return 0
+        local kind a b c d last_provider="" pname when note
+        while IFS=$'\t' read -r kind a b c d; do
+          case "$kind" in
+            HDR)
+              if (( a >= 60 )); then when="$(( a / 60 ))m ago"; else when="''${a}s ago"; fi
+              usagep+=( "usage · $when" "" )
+              ;;
+            ROW)
+              case "$a" in
+                openai-codex) pname="Codex" ;;
+                anthropic) pname="Claude" ;;
+                *) pname="$a" ;;
+              esac
+              if [[ "$a" != "$last_provider" ]]; then
+                usagep+=( "$pname" )
+                last_provider="$a"
+              fi
+              note=""
+              (( c >= 80 )) && note=" tight"
+              [[ "$d" == spark && "$c" -eq 0 ]] && note=" free"
+              usagep+=( "$(printf '  %-8s %s %3d%%%s' \
+                "$(short_window "$b")" "$(bar "$c")" "$c" "$note")" )
+              ;;
+          esac
+        done <<< "$rows"
+      }
+
+      term_cols() {
+        local rows cols
+        if read -r rows cols < <(stty size 2>/dev/null) && [[ -n "''${cols:-}" ]]; then
+          printf '%s' "$cols"
+        else
+          printf '%s' "''${COLUMNS:-80}"
+        fi
+      }
+
+      # Print the palette, with the usage panel beside it when the terminal is
+      # wide enough, otherwise stacked above it.
+      render_screen() {
+        build_palette
+        build_usage
+        if (( ''${#usagep[@]} == 0 )); then
+          printf '%s\n' "''${palette[@]}"
+          return 0
+        fi
+        local leftw=0 line
+        for line in "''${palette[@]}"; do (( ''${#line} > leftw )) && leftw=''${#line}; done
+        local cols
+        cols="$(term_cols)"
+        if (( cols < leftw + 24 )); then
+          printf '%s\n' "''${usagep[@]}" "" "''${palette[@]}"
+          return 0
+        fi
+        local n=''${#palette[@]}
+        (( ''${#usagep[@]} > n )) && n=''${#usagep[@]}
+        local i l r
+        for (( i = 0; i < n; i++ )); do
+          l="''${palette[$i]:-}"
+          r="''${usagep[$i]:-}"
+          printf '%-*s  %s\n' "$leftw" "$l" "$r"
+        done
+      }
+
+      show_detail() {
+        local i="$1"
+        printf '\n  %s  %s\n  %s\n\n' \
+          "''${names[$i]}" "$(lead_tag "''${leads[$i]}")" "''${details[$i]}"
+      }
+
+      # Print a 0-based index for a selector, or return non-zero when unmatched.
+      resolve() {
+        local sel="$1" i n
+        case "$sel" in
+          plain | bare) sel=omp ;;
+        esac
+        if [[ "$sel" =~ ^[0-9]+$ ]]; then
+          if (( sel >= 1 && sel <= count )); then
+            printf '%d' "$(( sel - 1 ))"
+            return 0
+          fi
+          return 1
+        fi
+        for (( i = 0; i < count; i++ )); do
+          if [[ "$sel" == "''${names[$i]}" ]]; then
+            printf '%d' "$i"
+            return 0
+          fi
+        done
+        if [[ "$sel" =~ ^[a-z]$ ]]; then
+          for (( i = 0; i < count; i++ )); do
+            n="''${names[$i]}"
+            if [[ "$n" == omp? && "''${n: -1}" == "$sel" ]]; then
+              printf '%d' "$i"
+              return 0
+            fi
+          done
+        fi
+        return 1
+      }
+
+      usage() {
+        printf '%s\n' \
+          'code - pick an OMP launcher and run it' \
+          "" \
+          'usage:' \
+          '  code                    open the picker (with a live usage panel)' \
+          '  code <profile>          run that launcher (name, number, or letter)' \
+          '  code <profile> [args]   run it, forwarding all extra args' \
+          '  code -l, --list         print the palette and exit' \
+          '  code -U, --no-usage     open the picker without fetching usage' \
+          '  code -h, --help         this help' \
+          "" \
+          'Profiles: omp (bare) - ompb omps ompg ompc ompf ompx - ompu (untrusted).' \
+          'A first argument that is not a profile opens the picker, then forwards all' \
+          'args to your choice, so code --resume picks, then resumes.' \
+          'The picker shows a live omp-usage panel beside the options (best-effort);' \
+          'for the full role/model routing of each managed profile, run omph.'
+      }
+
+      case "''${1:-}" in
+        -U | --no-usage)
+          show_usage_panel=0
+          shift
+          ;;
+      esac
+
+      idx=""
+      if (( $# > 0 )); then
+        case "$1" in
+          -h | --help)
+            usage
+            exit 0
+            ;;
+          -l | --list)
+            build_palette
+            printf '%s\n' "''${palette[@]}"
+            exit 0
+            ;;
+        esac
+        if idx="$(resolve "$1")"; then
+          shift
+          exec "''${exes[$idx]}" "$@"
+        fi
+      fi
+
+      if [[ ! -t 0 || ! -t 1 ]]; then
+        build_palette
+        printf 'code: no profile given and no interactive terminal.\n\n' >&2
+        printf '%s\n' "''${palette[@]}" >&2
+        exit 2
+      fi
+
+      render_screen
+      while true; do
+        printf '\npick [1-%d - name - ?N for details - q]: ' "$count"
+        if ! read -r reply; then
+          printf '\n'
+          exit 0
+        fi
+        case "$reply" in
+          q | quit | "")
+            exit 0
+            ;;
+          \?*)
+            sel="''${reply#\?}"
+            sel="''${sel# }"
+            if di="$(resolve "$sel")"; then
+              show_detail "$di"
+            else
+              printf '  no such profile: %s\n\n' "$sel"
+            fi
+            ;;
+          *)
+            if idx="$(resolve "$reply")"; then
+              exec "''${exes[$idx]}" "$@"
+            fi
+            printf '  no such profile: %s\n\n' "$reply"
+            ;;
+        esac
+      done
+    '';
+  };
 in
 runCommand "omp-configured-${lib.getVersion omp}"
   {
@@ -1242,9 +1580,13 @@ runCommand "omp-configured-${lib.getVersion omp}"
     mkdir -p "$out/bin" "$out/share/zsh/site-functions"
     ln -s ${lib.getExe ompDefault} "$out/bin/omp"
     ln -s ${lib.getExe ompBudget} "$out/bin/ompb"
-    ln -s ${lib.getExe ompFable} "$out/bin/ompf"
+    ln -s ${lib.getExe ompSonnet} "$out/bin/omps"
     ln -s ${lib.getExe ompGpt} "$out/bin/ompg"
+    ln -s ${lib.getExe ompClaude} "$out/bin/ompc"
+    ln -s ${lib.getExe ompFable} "$out/bin/ompf"
+    ln -s ${lib.getExe ompContext} "$out/bin/ompx"
     ln -s ${lib.getExe ompHelp} "$out/bin/omph"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
+    ln -s ${lib.getExe codeLauncher} "$out/bin/code"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"
   ''

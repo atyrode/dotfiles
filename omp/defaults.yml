@@ -15,46 +15,37 @@ modelRoles:
   reviewer: anthropic/claude-sonnet-5:high
   plan: anthropic/claude-fable-5:high
   slow: openai-codex/gpt-5.6-sol:xhigh
-  tiny: openai-codex/gpt-5.6-luna:minimal
-  commit: openai-codex/gpt-5.6-luna:low
+  tiny: openai-codex/gpt-5.4-nano:low
+  commit: openai-codex/gpt-5.4-nano:low
 
 retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
+  # Sibling first (rules out one model at capacity for free), cross last (the
+  # load-bearing step reaches the other provider). Trivial roles carry no chain:
+  # a blip on commit/tiny/sonic is harmless and crossing them is wasteful.
   fallbackChains:
     default:
-      - anthropic/claude-sonnet-5:medium
       - openai-codex/gpt-5.6-terra:medium
-    advisor:
-      - openai-codex/gpt-5.6-terra:low
       - anthropic/claude-sonnet-5:medium
-    smol:
-      - openai-codex/gpt-5.6-terra:low
     task:
+      - openai-codex/gpt-5.6-luna:medium
       - anthropic/claude-sonnet-5:medium
-      - openai-codex/gpt-5.6-sol:medium
-    sonic:
-      - openai-codex/gpt-5.6-terra:low
-    librarian:
-      - anthropic/claude-sonnet-5:medium
-      - openai-codex/gpt-5.6-luna:high
-    designer:
-      - openai-codex/gpt-5.6-sol:high
-      - anthropic/claude-fable-5:medium
-    reviewer:
-      - anthropic/claude-opus-4-8:high
-      - openai-codex/gpt-5.6-sol:high
     plan:
       - anthropic/claude-opus-4-8:high
       - openai-codex/gpt-5.6-sol:high
     slow:
-      - anthropic/claude-opus-4-8:high
       - openai-codex/gpt-5.6-terra:xhigh
-    tiny:
-      - openai-codex/gpt-5.6-terra:low
-    commit:
-      - openai-codex/gpt-5.6-terra:low
+      - anthropic/claude-opus-4-8:xhigh
+    designer:
+      - openai-codex/gpt-5.6-terra:medium
+    reviewer:
+      - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-sol:high
+    librarian:
+      - openai-codex/gpt-5.6-luna:medium
+      - anthropic/claude-sonnet-5:medium
 
 personality: pragmatic
 

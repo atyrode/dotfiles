@@ -14,8 +14,9 @@ Nix owns:
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings guard
   extension;
-- the `omp`, `ompb`, `ompf`, `ompg`, and restricted `ompu` launchers, plus the
-  `omph` routing view; and
+- the `omp`, `ompb`, `omps`, `ompg`, `ompc`, `ompf`, `ompx`, and restricted
+  `ompu` launchers, plus the `omph` routing view and the `code` launcher
+  picker; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
   instructions and `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
@@ -28,8 +29,9 @@ This subsystem deliberately owns neither a `pi` executable nor a `.pi`
 mutable-state namespace. The bounded Pi experiment in #29 may therefore install
 alongside OMP without an executable collision, shared authentication/session
 state, or any parity requirement. The package check asserts the exact managed
-OMP binary set — five launchers plus the `omph` routing view — and verifies
-that an OMP clean-home startup does not create `.pi` state. Security boundaries and the untrusted-project launcher are
+OMP binary set — eight launchers plus the `omph` routing view and the `code`
+picker — and verifies that an OMP clean-home startup does not create `.pi`
+state. Security boundaries and the untrusted-project launcher are
 documented in [Agent security](agent-security.md).
 
 Agents, rules, the settings guard, and the Herdr extension are assembled into
@@ -46,13 +48,31 @@ rewriting the Bun executable with `patchelf`.
 
 ## OMP launchers
 
+The launchers form a palette: two everyday profiles per subscription pool
+(cheap and hard), two specialists, and a base layer. `code` is an umbrella
+picker over all of them (see below). The design rationale — the model catalog,
+the fallback principles, and the per-profile reasoning — lives in
+[`omp/PROFILES.md`](../omp/PROFILES.md).
+
 | Command | Intended use | Primary route |
 | --- | --- | --- |
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
-| `ompb` | Cost-conscious routine work | GPT-5.6 Terra/Luna at lower thinking |
-| `ompg` | OpenAI-only difficult work | GPT-5.6 Sol with Terra/Luna fallbacks |
+| `ompb` | Cost-conscious routine work (OpenAI-led) | GPT-5.6 Terra/Luna at low thinking; `task`+background lead on GPT-5.3-codex-spark (free bucket) → nano |
+| `omps` | Everyday value (Anthropic-led) | Sonnet 5 leads; Opus for plan/slow; background on GPT-5.3-codex-spark (free bucket) → Haiku |
+| `ompg` | Difficult work, GPT-led | GPT-5.6 Sol drives; a GPT sibling absorbs a blip, then Claude is the net |
+| `ompc` | Difficult work, Claude-led | Fable drives; Opus absorbs a blip, then GPT is the net (ompg's mirror) |
 | `ompf` | Fable-first work with predictable routing | Fable for primary/deliberative roles, with automatic fallback disabled |
+| `ompx` | Huge-context (1M) work | Fable/Opus/Sonnet lead; GPT-5.4 is the 1M cross-net; every substantive hop holds 1M |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
+
+Each profile commits to one subscription pool for its lead and substantive
+roles, so switching launchers also switches which meter burns (Codex credits vs
+the Claude plan); the fallback net is the other pool. The exception is the
+fast-execution and background roles, which lead on `gpt-5.3-codex-spark` — its
+5h/7d Codex quota is a separate, normally-idle bucket, so draining it costs
+nothing on the main meters, and each role falls back to the per-pool cheap rung
+(nano or Haiku) the moment that bucket is exhausted. See
+[`omp/PROFILES.md`](../omp/PROFILES.md) for the full rationale.
 
 Plain `omp` executes upstream OMP directly: no extension, defaults, preset, or
 policy overlay is injected, so its models, approvals, and interface belong to
@@ -62,24 +82,28 @@ starting point is not empty, though: activation seeds the curated defaults
 from `omp/plain-seed.yml` into the writable configuration with local edits
 always winning; see [Seeded plain-omp defaults](#seeded-plain-omp-defaults).
 
-The managed defaults use Sol for interactive daily work, keep cheap, fast
-roles on Luna or low-thinking Terra, and reserve Fable/Opus for planning,
-design, architecture, and review where their higher cost is most useful. The
-presets are policy, not provider pricing data; revisit the routes when model
-quality or pricing changes.
+The managed defaults use Sol for interactive daily work, keep cheap, fast roles
+on Luna, drop the text-trivial `commit`/`tiny` roles to GPT-5.4-nano, and
+reserve Fable/Opus for planning and the deliberative fallback tier. Fallback
+chains follow one rule: try a same-provider sibling first (it rules out a single
+model at capacity for free), then make the last, load-bearing hop cross to the
+other provider; trivial background roles carry no chain at all. The presets are
+policy, not provider pricing data; revisit the routes when model quality or
+pricing changes.
 
 The balanced routing rationale is:
 
 | Role or role group | Capability and intended use | Thinking | Cost posture and fallback rationale |
 | --- | --- | --- | --- |
-| `default` | Interactive daily work on Sol | Medium | Sol is the user-selected default; Sonnet then Terra preserve cross-provider fallback |
-| `task` | General implementation on Terra | Medium | Mid-cost worker route; Sonnet then Sol covers provider or capability failures |
-| `librarian` | Repository and documentation research on Terra | Medium | Sonnet adds cross-provider depth; Luna is the economical final fallback |
-| `advisor`, `smol`, `sonic`, `tiny`, `commit` | Fast review, lookup, naming, and commit-message work on Luna | Minimal–low | Cheapest recurring work; Terra is the first quality step-up |
-| `designer` | Product and interface design on Sonnet | Medium | Pays for stronger visual judgment; Sol and Fable provide cross-provider fallbacks |
-| `reviewer` | High-scrutiny review on Sonnet | High | Higher-cost quality gate; Opus then Sol preserve depth if the primary is unavailable |
-| `plan` | Architecture and planning on Fable | High | Premium reasoning is intentional for decisions with broad downstream impact; Opus or Sol are the escape routes |
-| `slow` | Hard debugging and deliberate reasoning on Sol | Xhigh | Expensive OpenAI reasoning is reserved for difficult failures; Opus and high-thinking Terra provide diversity |
+| `default` | Interactive daily work on Sol | Medium | Sol is the user-selected default; a Terra sibling absorbs a Sol blip, then Sonnet is the cross-provider net |
+| `task` | General implementation on Terra | Medium | Mid-cost worker; a Luna sibling first, then Sonnet crosses providers |
+| `librarian` | Repository and documentation research on Terra | Medium | A Luna sibling keeps the read-heavy role cheap, then Sonnet crosses for depth |
+| `advisor`, `smol`, `sonic` | Fast review, lookup, and naming on Luna | Minimal–low | Cheapest recurring work; no fallback chain — a blip is harmless and crossing them is wasteful |
+| `tiny`, `commit` | Labels and commit messages on GPT-5.4-nano | Low | The cheapest rung for text-trivial, always-on work; no fallback chain |
+| `designer` | Product and interface design on Sonnet | Medium | Crosses straight to Terra, Sonnet's price-twin (Sonnet has no lateral Anthropic sibling) |
+| `reviewer` | High-scrutiny review on Sonnet | High | Higher-cost quality gate; escalates to Opus, then Sol, if the primary is unavailable |
+| `plan` | Architecture and planning on Fable | High | Premium reasoning is intentional for decisions with broad downstream impact; Opus then Sol are the escape routes |
+| `slow` | Hard debugging and deliberate reasoning on Sol | Xhigh | Expensive OpenAI reasoning is reserved for difficult failures; a Terra sibling, then Opus crosses providers |
 
 The bundled `scout` agent (upstream's rename of `explore`) is deliberately not
 pinned: its frontmatter declares the `smol` model role, so repository
@@ -93,9 +117,25 @@ package build time from the same defaults and preset files, so it always
 matches the deployed configuration. Provider is encoded as a colorblind-safe
 blue/orange pair; piped or `NO_COLOR` output falls back to plain text.
 
+`code` is an umbrella picker over the whole palette. With no arguments it lists
+the launchers with one-line descriptions and prompts for a choice; `?N` shows a
+longer description for entry `N`. The interactive picker also renders a compact
+`omp usage` panel beside the palette (best-effort and bounded, so it never
+blocks; `code --no-usage` skips it), marking each provider's quota windows
+`free` when idle and `tight` at ≥80% — a glance at which meter has room before
+you pick. A selector can also be passed directly by
+name, menu number, or single suffix letter (`code ompg`, `code 4`, `code g`),
+with any remaining arguments forwarded to the chosen launcher. If the first
+argument is not a known profile, the picker opens and then forwards every
+argument to the choice, so `code --resume` picks a profile first, then resumes.
+`code --list` and `code --help` are non-interactive. It is a thin wrapper: the
+chosen launcher receives the arguments unchanged and applies its own managed
+overlays.
+
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
-the preset files intentionally change parts of this table for budget,
-OpenAI-only, and Fable-first sessions.
+the preset files intentionally change parts of this table for the budget
+(`ompb`), Sonnet-value (`omps`), GPT-led (`ompg`), Claude-led (`ompc`),
+Fable-first (`ompf`), and huge-context (`ompx`) sessions.
 
 Managed preset launchers load configuration in this order:
 

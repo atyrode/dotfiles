@@ -1,0 +1,55 @@
+# omps — everyday value, Anthropic-led. Sonnet 5 (intro pricing) is the best
+# capability-per-dollar model on hand, so it leads everything but plan/slow,
+# where low-volume Opus earns its leverage. All-Anthropic lead pool: this is
+# also the "Codex credits are spent" everyday driver. Unlike ompb, features
+# stay on — only the models are modest.
+#
+# Background leads on gpt-5.3-codex-spark to drain its separate idle Codex bucket
+# (see omp/PROFILES.md) rather than spend the Claude plan on trivia. The bucket
+# is free, so sonic/advisor run at :xhigh (best output, faster drain) while the
+# tiny/commit one-liners stay :low; each falls back to Haiku when Spark is
+# exhausted. The substantive roles stay pool-pure on Claude.
+modelRoles:
+  default: anthropic/claude-sonnet-5:medium
+  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  smol: anthropic/claude-haiku-4-5:low
+  task: anthropic/claude-sonnet-5:medium
+  sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+  librarian: anthropic/claude-sonnet-5:low
+  designer: anthropic/claude-sonnet-5:high
+  reviewer: anthropic/claude-sonnet-5:high
+  plan: anthropic/claude-opus-4-8:high
+  slow: anthropic/claude-opus-4-8:xhigh
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Sonnet has no price-lateral Anthropic sibling (Opus is 2.5x up, Haiku a
+  # class down), so its chains cross straight to Terra/Luna, its OpenAI price
+  # twins. plan/slow lead on Opus and take a Sonnet sibling before crossing.
+  # Background drains Spark, then falls back to Haiku.
+  fallbackChains:
+    default: [openai-codex/gpt-5.6-terra:medium]
+    task: [openai-codex/gpt-5.6-terra:medium]
+    plan: [anthropic/claude-sonnet-5:high, openai-codex/gpt-5.6-terra:high]
+    slow: [anthropic/claude-sonnet-5:xhigh, openai-codex/gpt-5.6-terra:xhigh]
+    designer: [openai-codex/gpt-5.6-terra:high]
+    reviewer: [openai-codex/gpt-5.6-terra:high]
+    librarian: [openai-codex/gpt-5.6-luna:medium]
+    sonic: [anthropic/claude-haiku-4-5:low]
+    advisor: [anthropic/claude-haiku-4-5:low]
+    tiny: [anthropic/claude-haiku-4-5:low]
+    commit: [anthropic/claude-haiku-4-5:low]
+
+task:
+  agentModelOverrides:
+    designer: anthropic/claude-sonnet-5:high
+    librarian: anthropic/claude-sonnet-5:low
+    reviewer: anthropic/claude-sonnet-5:high
+    sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+    task: anthropic/claude-sonnet-5:medium
+
+defaultThinkingLevel: medium

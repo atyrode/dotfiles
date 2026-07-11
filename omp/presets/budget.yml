@@ -1,34 +1,49 @@
+# Fast-execution roles lead on gpt-5.3-codex-spark, which draws from its own
+# idle 5h/7d Codex quota (see omp/PROFILES.md "Separate rate buckets"). The
+# bucket is free and the goal is to drain it, so the roles that do real work
+# (task/sonic/advisor) run at :xhigh — best output and faster drain — while the
+# boilerplate one-liners (tiny/commit) stay at :low (xhigh buys them nothing but
+# latency). Each role falls back to the normal cheap rung the moment Spark's
+# bucket is exhausted, so the drain is transparent. Thinking roles
+# (plan/slow/designer/reviewer) and smol/scout stay off Spark.
 modelRoles:
   default: openai-codex/gpt-5.6-terra:low
-  advisor: openai-codex/gpt-5.6-luna:minimal
-  smol: openai-codex/gpt-5.6-luna:minimal
-  task: openai-codex/gpt-5.6-terra:low
-  sonic: openai-codex/gpt-5.6-luna:minimal
-  librarian: openai-codex/gpt-5.6-terra:low
+  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  smol: openai-codex/gpt-5.4-nano:low
+  task: openai-codex/gpt-5.3-codex-spark:xhigh
+  sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+  librarian: openai-codex/gpt-5.6-luna:medium
   designer: openai-codex/gpt-5.6-terra:medium
   reviewer: openai-codex/gpt-5.6-terra:medium
   plan: openai-codex/gpt-5.6-terra:high
   slow: openai-codex/gpt-5.6-terra:high
-  tiny: openai-codex/gpt-5.6-luna:minimal
-  commit: openai-codex/gpt-5.6-luna:minimal
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
 
 retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
+  # task drains Spark first, then the old terra/luna worker chain, then crosses
+  # to Haiku. Background drains Spark, then nano. The deliberative roles keep no
+  # net (defaults.yml defines chains for them, so they are cleared with []).
   fallbackChains:
-    default: [openai-codex/gpt-5.6-luna:medium]
-    advisor: [openai-codex/gpt-5.6-terra:low]
-    smol: [openai-codex/gpt-5.6-terra:low]
-    task: [openai-codex/gpt-5.6-luna:medium]
-    sonic: [openai-codex/gpt-5.6-terra:low]
-    librarian: [openai-codex/gpt-5.6-luna:medium]
-    designer: [openai-codex/gpt-5.6-luna:high]
-    reviewer: [openai-codex/gpt-5.6-luna:high]
-    plan: [openai-codex/gpt-5.6-luna:high]
-    slow: [openai-codex/gpt-5.6-luna:xhigh]
-    tiny: [openai-codex/gpt-5.6-terra:low]
-    commit: [openai-codex/gpt-5.6-terra:low]
+    default:
+      - openai-codex/gpt-5.6-luna:medium
+      - anthropic/claude-sonnet-5:medium
+    task:
+      - openai-codex/gpt-5.6-terra:low
+      - openai-codex/gpt-5.6-luna:medium
+      - anthropic/claude-haiku-4-5:medium
+    sonic: [openai-codex/gpt-5.4-nano:low]
+    advisor: [openai-codex/gpt-5.4-nano:low]
+    tiny: [openai-codex/gpt-5.4-nano:low]
+    commit: [openai-codex/gpt-5.4-nano:low]
+    plan: []
+    slow: []
+    designer: []
+    reviewer: []
+    librarian: []
 
 advisor:
   enabled: false
@@ -43,9 +58,9 @@ autolearn:
 task:
   agentModelOverrides:
     designer: openai-codex/gpt-5.6-terra:medium
-    librarian: openai-codex/gpt-5.6-terra:low
+    librarian: openai-codex/gpt-5.6-luna:medium
     reviewer: openai-codex/gpt-5.6-terra:medium
-    sonic: openai-codex/gpt-5.6-luna:minimal
-    task: openai-codex/gpt-5.6-terra:low
+    sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+    task: openai-codex/gpt-5.3-codex-spark:xhigh
 
 defaultThinkingLevel: low

@@ -71,7 +71,6 @@
         "steam-unwrapped"
         "steamcmd"
         "vital"
-        "vscode"
         "whatsapp-for-mac"
       ];
       homebrewCasks = import ./darwin/casks.nix;

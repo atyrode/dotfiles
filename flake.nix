@@ -59,6 +59,7 @@
       allowedUnfreePackages = [
         "arduino-ide"
         "chatgpt"
+        "claude-code"
         "codex"
         "obsidian"
         "orbstack"

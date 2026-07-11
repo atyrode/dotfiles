@@ -10,6 +10,7 @@
 
   home.packages =
     (with pkgs; [
+      claude-code
       codex-configured
       codex-use
       tmux

@@ -23,11 +23,11 @@
     "owner": "agent-tools",
     "deliveryLayer": "home-manager and repository overlays",
     "selectedBy": ["agent-tools"],
-    "consumer": "Codex, OMP isolation, and Herdr workspaces",
+    "consumer": "Claude Code, Codex, OMP isolation, and Herdr workspaces",
     "versionOwner": "pinned nixpkgs or repository package derivation",
     "mutableState": "separate harness-owned auth, sessions, MCP state, and caches under the user home",
     "closureClass": "large",
-    "packages": ["bubblewrap", "codex-configured", "codex-use", "herdr-configured", "omp-configured", "tmux"]
+    "packages": ["bubblewrap", "claude-code", "codex-configured", "codex-use", "herdr-configured", "omp-configured", "tmux"]
   },
   {
     "owner": "desktop",
@@ -97,7 +97,7 @@
     "versionOwner": "immutable Homebrew taps pinned by the flake",
     "mutableState": "application-owned user data; Homebrew state outside Nix derivations",
     "closureClass": "outside-nix-store",
-    "packages": ["bitwarden", "codex-app", "display-pilot", "discord", "parsec", "sonos", "zen"]
+    "packages": ["bitwarden", "claude", "codex-app", "display-pilot", "discord", "parsec", "sonos", "zen"]
   },
   {
     "owner": "experimental",

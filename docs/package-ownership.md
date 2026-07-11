@@ -12,9 +12,9 @@ from the server composition.
   direnv with nix-direnv, mise, diagnostics, `nh`, nix-index, and comma.
 - `development` contains cross-repository Nix and shell quality tools. It does
   not provide application language versions.
-- `agent-tools` owns Codex, OMP, Herdr, their launch adapters, tmux, and the
-  Linux isolation backend. Authentication, sessions, trust, and caches remain
-  mutable and harness-owned outside derivations.
+- `agent-tools` owns Claude Code, Codex, OMP, Herdr, their launch adapters,
+  tmux, and the Linux isolation backend. Authentication, sessions, trust, and
+  caches remain mutable and harness-owned outside derivations.
 - `desktop`, `mobile`, `media`, `containers`, and `security` are explicit host
   capabilities. Container daemons and Homebrew application state remain
   system-owned. The `security` capability contains network diagnostics; ClamAV
@@ -35,6 +35,7 @@ and #30; neither is pulled into the baseline for harness symmetry.
 
 | Harness/surface | Hosts | Version owner | Mutable state | Supported launch modes |
 |---|---|---|---|---|
+| Claude Code CLI | `agent-tools` | pinned nixpkgs | `~/.claude`, `~/.claude.json` | interactive, print |
 | Codex CLI | `agent-tools` | pinned nixpkgs | `~/.codex`, isolated profiles | interactive, exec |
 | OMP | `agent-tools` | repository derivation | profile-scoped auth, sessions, MCP, caches | normal, preset, untrusted, ACP |
 | Herdr + tmux adapter | `agent-tools` | repository derivation + pinned nixpkgs | workspace registry and tmux server | workspace, agent |
@@ -70,10 +71,10 @@ Use the same commands for each canonical host before accepting a large package
 or capability. The shared Nix store deduplicates identical dependencies across
 hosts and workspaces; a binary cache can be added without changing ownership.
 
-At the pinned 2026-07-10 revision, the portable x86_64-linux server profile
-delivers 36 top-level packages and measures 2,108,944,256 NAR bytes across 396
-store paths. Its enforced ceilings are 40 packages, 2,348,810,240 bytes, and 440
-paths. The profile deliberately excludes development, containers, security,
+At the pinned 2026-07-08 nixpkgs revision, the portable x86_64-linux server
+profile delivers 37 top-level packages and measures 2,376,988,648 NAR bytes
+across 406 store paths. Its enforced ceilings are 40 packages, 2,617,245,696
+bytes, and 450 paths. The profile deliberately excludes development, containers, security,
 media, mobile, and desktop capabilities; it therefore contains neither
 workstation language stacks, container clients, nor antivirus software. The
 aarch64 ceilings are 40

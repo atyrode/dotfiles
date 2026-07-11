@@ -65,7 +65,7 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 ### macOS Apps
 - **Nix app bundles** - ChatGPT, Godot, Lichess, Obsidian, OrbStack, Postman,
   Prism Launcher, REAPER, Signal, Spotify, VLC, VS Code, and WhatsApp
-- **Homebrew casks** - Arduino IDE, Bitwarden, Codex Desktop, Discord, Display
+- **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop, Discord, Display
   Pilot, Parsec, PlugData, Sonos, Steam, and Zen Browser, managed through
   nix-darwin
 - **Manual/vendor-managed macOS apps** - ROLI Connect, ROLI Dashboard, ROLI

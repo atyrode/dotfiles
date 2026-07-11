@@ -36,7 +36,7 @@ and #30; neither is pulled into the baseline for harness symmetry.
 | Harness/surface | Hosts | Version owner | Mutable state | Supported launch modes |
 |---|---|---|---|---|
 | Claude Code CLI | `agent-tools` | pinned nixpkgs | `~/.claude`, `~/.claude.json` | interactive, print |
-| Codex CLI | `agent-tools` | pinned nixpkgs; pinned upstream release binary on aarch64-darwin | `~/.codex`, isolated profiles | interactive, exec |
+| Codex CLI | `agent-tools` | pinned upstream release binaries (repository derivation) | `~/.codex`, isolated profiles | interactive, exec |
 | OMP | `agent-tools` | repository derivation | profile-scoped auth, sessions, MCP, caches | normal, preset, untrusted, ACP |
 | Herdr + tmux adapter | `agent-tools` | repository derivation + pinned nixpkgs | workspace registry and tmux server | workspace, agent |
 | bubblewrap backend | Linux `agent-tools` | pinned nixpkgs | none | OMP task isolation |

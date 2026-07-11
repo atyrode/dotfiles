@@ -89,7 +89,7 @@ let
         command = "codex";
         capability = "agent-tools";
         version = lib.getVersion codex;
-        versionOwner = "pinned nixpkgs";
+        versionOwner = "repository package derivation";
         mutableState = "~/.codex and ~/.codex-profiles";
         launchModes = [
           "interactive"

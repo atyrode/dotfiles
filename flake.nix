@@ -59,7 +59,6 @@
         "arduino-ide"
         "chatgpt"
         "claude-code"
-        "codex"
         "obsidian"
         "orbstack"
         "parsec-bin"
@@ -265,13 +264,9 @@
           herdr.overlays.default
           (final: previous: {
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
-            # nixpkgs codex depends on livekit-libwebrtc, which fails to build
-            # on aarch64-darwin; the official release binary stands in there.
-            codex =
-              if final.stdenv.hostPlatform.system == "aarch64-darwin" then
-                final.callPackage ./pkgs/codex-bin { }
-              else
-                previous.codex;
+            # Repository-owned on every platform: upstream releases outpace
+            # nixpkgs, which also cannot build codex on aarch64-darwin.
+            codex = final.callPackage ./pkgs/codex-bin { };
             codex-configured = final.callPackage ./pkgs/codex-configured { };
             codex-use = final.callPackage ./pkgs/codex-use { };
             herdr-configured = final.callPackage ./pkgs/herdr-configured { };

@@ -19,6 +19,7 @@ single retained Oh My Zsh `git` plugin. Projects own language environments.
 | large `zconf` workflow | replaced by #7 | `atyrode apply`; a thin `zconf` compatibility function remains until 2026-10-01. |
 | Python/venv helpers | removed by #20 | Project dev shell, `mise.toml`, or native manifest. |
 | `local.zsh` | retained, narrow | Interactive machine-local behavior only; no portable project, runtime, credential, or shared tool policy. |
+| `COLORTERM` derivation | added | sshd's default `AcceptEnv` drops Ghostty's forwarded `COLORTERM`; `colorterm.zsh` restates `truecolor` when `TERM=xterm-ghostty` and never overrides an existing value. |
 | Oh My Zsh `git` | retained | Transparent Git aliases/completion used by the interactive shell. |
 | Oh My Zsh tmux/docker plugins | removed | Herdr and explicit container capabilities own those workflows; plugins were loaded on unrelated hosts. |
 
@@ -29,8 +30,9 @@ compatibility surface and has a recorded removal date.
 
 The checked smoke test proves that non-interactive shells do not load
 `local.zsh`, interactive shells do, fastfetch is not executed, removed aliases
-and functions are unavailable, completion remains enabled, and fzf, zoxide,
-and nix-direnv are Home Manager-owned.
+and functions are unavailable, completion remains enabled, fzf, zoxide,
+and nix-direnv are Home Manager-owned, and `COLORTERM` is derived only for
+`xterm-ghostty` sessions that arrive without one.
 
 On 2026-07-10, ten clean source-tree interactive runs measured with Hyperfine
 before this refactor averaged **26.9 ms ± 2.6 ms**. The equivalent command after

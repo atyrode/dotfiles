@@ -23,7 +23,6 @@ in
       signal-desktop
       spotify
       vlc-bin
-      vscode
       whatsapp-for-mac
     ])
     ++ [ lichess ]

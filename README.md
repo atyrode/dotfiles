@@ -64,7 +64,7 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 
 ### macOS Apps
 - **Nix app bundles** - ChatGPT, Godot, Lichess, Obsidian, OrbStack, Postman,
-  Prism Launcher, REAPER, Signal, Spotify, VLC, VS Code, and WhatsApp
+  Prism Launcher, REAPER, Signal, Spotify, VLC, and WhatsApp
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop, Discord, Display
   Pilot, Parsec, PlugData, Sonos, Steam, and Zen Browser, managed through
   nix-darwin
@@ -88,14 +88,21 @@ atyrode doctor system # Audit system-owned operational prerequisites
 
 ### Agent Tools
 ```bash
+code          # Umbrella picker: list the launchers, pick one, forward your args
 omp           # Mutable user-owned OMP; unmanaged except the blocked update
-ompb          # Budget profile
-ompg          # OpenAI-only high-capability profile
+ompb          # Cost-conscious routine work (OpenAI-led; nano background)
+omps          # Everyday value (Anthropic-led; Sonnet leads, Haiku background)
+ompg          # Difficult work, GPT-led (Sol drives, Claude is the net)
+ompc          # Difficult work, Claude-led (Fable drives, GPT is the net)
 ompf          # Fable-first profile with fallback disabled
+ompx          # Huge-context (1M) work; GPT-5.4 is the 1M cross-net
 omph          # Show the managed routing: roles, models, fallbacks per profile
 ompu          # Restricted launcher for deliberately untrusted repositories
 herdr         # Persistent terminal workspace manager
 ```
+
+See [`omp/PROFILES.md`](omp/PROFILES.md) for the model catalog and the
+reasoning behind each profile.
 
 OMP, Herdr, their integration, shared skills, and mise are installed by `zconf`
 with the rest of the Home Manager profile. See

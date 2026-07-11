@@ -14,6 +14,9 @@ let
     budget = ../../omp/presets/budget.yml;
     fable = ../../omp/presets/fable-primary.yml;
     gpt = ../../omp/presets/gpt56.yml;
+    sonnet = ../../omp/presets/sonnet-value.yml;
+    claude = ../../omp/presets/claude-hard.yml;
+    context = ../../omp/presets/context-1m.yml;
   };
 
   herdrCompletions = pkgs.runCommand "herdr-completions-${lib.getVersion cfg.herdrPackage}" { } ''
@@ -65,6 +68,9 @@ in
       "omp/presets/budget.yml".source = presets.budget;
       "omp/presets/fable-primary.yml".source = presets.fable;
       "omp/presets/gpt56.yml".source = presets.gpt;
+      "omp/presets/sonnet-value.yml".source = presets.sonnet;
+      "omp/presets/claude-hard.yml".source = presets.claude;
+      "omp/presets/context-1m.yml".source = presets.context;
     };
 
     home.file = {

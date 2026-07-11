@@ -1,39 +1,52 @@
+# Sol drives the thinking roles; the fast-execution roles (task + background)
+# lead on gpt-5.3-codex-spark to drain its separate idle 5h/7d Codex bucket (see
+# omp/PROFILES.md "Separate rate buckets"). The bucket is free, so the roles
+# that do real work (task/sonic/advisor) run at :xhigh — best output and faster
+# drain — while boilerplate (tiny/commit) stays :low. Each falls back the
+# instant its bucket is exhausted — task to the terra/luna chain, background to
+# nano. The substantive chains still end on Anthropic. smol/scout stay off Spark
+# (exploration context can exceed 128K).
 modelRoles:
   default: openai-codex/gpt-5.6-sol:high
-  advisor: openai-codex/gpt-5.6-terra:low
+  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
   smol: openai-codex/gpt-5.6-luna:low
-  task: openai-codex/gpt-5.6-terra:medium
-  sonic: openai-codex/gpt-5.6-luna:minimal
+  task: openai-codex/gpt-5.3-codex-spark:xhigh
+  sonic: openai-codex/gpt-5.3-codex-spark:xhigh
   librarian: openai-codex/gpt-5.6-terra:medium
   designer: openai-codex/gpt-5.6-sol:high
   reviewer: openai-codex/gpt-5.6-sol:high
   plan: openai-codex/gpt-5.6-sol:high
   slow: openai-codex/gpt-5.6-sol:xhigh
-  tiny: openai-codex/gpt-5.6-luna:minimal
-  commit: openai-codex/gpt-5.6-luna:low
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
 
 retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
+  # Substantive roles run GPT -> GPT -> Claude (sibling absorbs a blip, last hop
+  # crosses). task leads on Spark, then the old terra/luna worker chain, then
+  # crosses to Sonnet. Background drains Spark, then nano.
   fallbackChains:
-    default: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    advisor: [openai-codex/gpt-5.6-luna:medium]
-    smol: [openai-codex/gpt-5.6-terra:low]
-    task: [openai-codex/gpt-5.6-luna:medium, openai-codex/gpt-5.6-sol:medium]
-    sonic: [openai-codex/gpt-5.6-terra:low]
-    librarian: [openai-codex/gpt-5.6-luna:high]
-    designer: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    reviewer: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    plan: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    slow: [openai-codex/gpt-5.6-terra:xhigh, openai-codex/gpt-5.6-luna:xhigh]
-    tiny: [openai-codex/gpt-5.6-terra:low]
-    commit: [openai-codex/gpt-5.6-terra:low]
+    default: [openai-codex/gpt-5.6-terra:high, anthropic/claude-fable-5:high]
+    task:
+      - openai-codex/gpt-5.6-terra:medium
+      - openai-codex/gpt-5.6-luna:medium
+      - anthropic/claude-sonnet-5:medium
+    plan: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high]
+    slow: [openai-codex/gpt-5.6-terra:xhigh, anthropic/claude-opus-4-8:xhigh]
+    designer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-fable-5:high]
+    reviewer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high]
+    librarian: [openai-codex/gpt-5.6-luna:medium, anthropic/claude-sonnet-5:medium]
+    sonic: [openai-codex/gpt-5.4-nano:low]
+    advisor: [openai-codex/gpt-5.4-nano:low]
+    tiny: [openai-codex/gpt-5.4-nano:low]
+    commit: [openai-codex/gpt-5.4-nano:low]
 
 task:
   agentModelOverrides:
     designer: openai-codex/gpt-5.6-sol:high
     librarian: openai-codex/gpt-5.6-terra:medium
     reviewer: openai-codex/gpt-5.6-sol:high
-    sonic: openai-codex/gpt-5.6-luna:minimal
-    task: openai-codex/gpt-5.6-terra:medium
+    sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+    task: openai-codex/gpt-5.3-codex-spark:xhigh

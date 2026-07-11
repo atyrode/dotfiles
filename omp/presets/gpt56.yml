@@ -4,18 +4,11 @@ modelRoles:
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-terra:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
-  explore: openai-codex/gpt-5.6-terra:low
   librarian: openai-codex/gpt-5.6-terra:medium
   designer: openai-codex/gpt-5.6-sol:high
   reviewer: openai-codex/gpt-5.6-sol:high
-  Tester: openai-codex/gpt-5.6-terra:high
   plan: openai-codex/gpt-5.6-sol:high
   slow: openai-codex/gpt-5.6-sol:xhigh
-  architect-deep: openai-codex/gpt-5.6-sol:high
-  reviewer-deep: openai-codex/gpt-5.6-sol:xhigh
-  debugger-deep: openai-codex/gpt-5.6-sol:xhigh
-  designer-deep: openai-codex/gpt-5.6-sol:high
-  tester-deep: openai-codex/gpt-5.6-sol:high
   tiny: openai-codex/gpt-5.6-luna:minimal
   commit: openai-codex/gpt-5.6-luna:low
 
@@ -29,33 +22,18 @@ retry:
     smol: [openai-codex/gpt-5.6-terra:low]
     task: [openai-codex/gpt-5.6-luna:medium, openai-codex/gpt-5.6-sol:medium]
     sonic: [openai-codex/gpt-5.6-terra:low]
-    explore: [openai-codex/gpt-5.6-luna:medium]
     librarian: [openai-codex/gpt-5.6-luna:high]
     designer: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
     reviewer: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    Tester: [openai-codex/gpt-5.6-luna:high, openai-codex/gpt-5.6-sol:medium]
     plan: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
     slow: [openai-codex/gpt-5.6-terra:xhigh, openai-codex/gpt-5.6-luna:xhigh]
-    architect-deep: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    reviewer-deep: [openai-codex/gpt-5.6-terra:xhigh, openai-codex/gpt-5.6-luna:xhigh]
-    debugger-deep: [openai-codex/gpt-5.6-terra:xhigh, openai-codex/gpt-5.6-luna:xhigh]
-    designer-deep: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
-    tester-deep: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
     tiny: [openai-codex/gpt-5.6-terra:low]
     commit: [openai-codex/gpt-5.6-terra:low]
 
 task:
   agentModelOverrides:
-    architect-deep: openai-codex/gpt-5.6-sol:high
-    debugger-deep: openai-codex/gpt-5.6-sol:xhigh
     designer: openai-codex/gpt-5.6-sol:high
-    designer-deep: openai-codex/gpt-5.6-sol:high
-    explore: openai-codex/gpt-5.6-terra:low
     librarian: openai-codex/gpt-5.6-terra:medium
-    plan: openai-codex/gpt-5.6-sol:high
     reviewer: openai-codex/gpt-5.6-sol:high
-    reviewer-deep: openai-codex/gpt-5.6-sol:xhigh
     sonic: openai-codex/gpt-5.6-luna:minimal
     task: openai-codex/gpt-5.6-terra:medium
-    Tester: openai-codex/gpt-5.6-terra:high
-    tester-deep: openai-codex/gpt-5.6-sol:high

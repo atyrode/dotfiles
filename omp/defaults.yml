@@ -10,18 +10,11 @@ modelRoles:
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-terra:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
-  explore: openai-codex/gpt-5.6-terra:low
   librarian: openai-codex/gpt-5.6-terra:medium
   designer: anthropic/claude-sonnet-5:medium
   reviewer: anthropic/claude-sonnet-5:high
-  Tester: openai-codex/gpt-5.6-terra:high
   plan: anthropic/claude-fable-5:high
   slow: openai-codex/gpt-5.6-sol:xhigh
-  architect-deep: anthropic/claude-fable-5:high
-  reviewer-deep: anthropic/claude-opus-4-8:xhigh
-  debugger-deep: openai-codex/gpt-5.6-sol:xhigh
-  designer-deep: anthropic/claude-fable-5:high
-  tester-deep: openai-codex/gpt-5.6-sol:high
   tiny: openai-codex/gpt-5.6-luna:minimal
   commit: openai-codex/gpt-5.6-luna:low
 
@@ -43,9 +36,6 @@ retry:
       - openai-codex/gpt-5.6-sol:medium
     sonic:
       - openai-codex/gpt-5.6-terra:low
-    explore:
-      - openai-codex/gpt-5.6-luna:medium
-      - anthropic/claude-sonnet-5:medium
     librarian:
       - anthropic/claude-sonnet-5:medium
       - openai-codex/gpt-5.6-luna:high
@@ -55,30 +45,12 @@ retry:
     reviewer:
       - anthropic/claude-opus-4-8:high
       - openai-codex/gpt-5.6-sol:high
-    Tester:
-      - anthropic/claude-sonnet-5:high
-      - openai-codex/gpt-5.6-sol:high
     plan:
       - anthropic/claude-opus-4-8:high
       - openai-codex/gpt-5.6-sol:high
     slow:
       - anthropic/claude-opus-4-8:high
       - openai-codex/gpt-5.6-terra:xhigh
-    architect-deep:
-      - anthropic/claude-opus-4-8:high
-      - openai-codex/gpt-5.6-sol:high
-    reviewer-deep:
-      - openai-codex/gpt-5.6-sol:xhigh
-      - anthropic/claude-fable-5:high
-    debugger-deep:
-      - anthropic/claude-opus-4-8:high
-      - openai-codex/gpt-5.6-terra:xhigh
-    designer-deep:
-      - anthropic/claude-opus-4-8:high
-      - openai-codex/gpt-5.6-sol:high
-    tester-deep:
-      - anthropic/claude-sonnet-5:high
-      - anthropic/claude-opus-4-8:high
     tiny:
       - openai-codex/gpt-5.6-terra:low
     commit:
@@ -129,19 +101,11 @@ codexResets:
 task:
   showResolvedModelBadge: true
   agentModelOverrides:
-    architect-deep: anthropic/claude-fable-5:high
-    debugger-deep: openai-codex/gpt-5.6-sol:xhigh
     designer: anthropic/claude-sonnet-5:medium
-    designer-deep: anthropic/claude-fable-5:high
-    explore: openai-codex/gpt-5.6-terra:low
     librarian: openai-codex/gpt-5.6-terra:medium
-    plan: anthropic/claude-fable-5:high
     reviewer: anthropic/claude-sonnet-5:high
-    reviewer-deep: anthropic/claude-opus-4-8:xhigh
     sonic: openai-codex/gpt-5.6-luna:minimal
     task: openai-codex/gpt-5.6-terra:medium
-    Tester: openai-codex/gpt-5.6-terra:high
-    tester-deep: openai-codex/gpt-5.6-sol:high
   disabledAgents: []
 
 memory:

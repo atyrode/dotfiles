@@ -6,7 +6,7 @@ repository trustworthy, and it is not an operating-system sandbox.
 
 ## Normal sessions
 
-Managed preset launchers (`ompb`, `ompf`, `ompg`, `ompo`) use the
+Managed preset launchers (`ompb`, `ompf`, `ompg`) use the
 trusted-machine unattended approval policy: workspace edits, shell/eval,
 browser, task spawning, and GitHub operations do not prompt. Secret filtering
 remains enabled, and task isolation uses OMP's automatic backend selection and

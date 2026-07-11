@@ -52,7 +52,6 @@ let
     budget = ../../omp/presets/budget.yml;
     fable = ../../omp/presets/fable-primary.yml;
     gpt = ../../omp/presets/gpt56.yml;
-    opusFallback = ../../omp/presets/opus-fallback.yml;
   };
 
   managedDefaultPaths = [
@@ -980,10 +979,6 @@ let
   ompBudget = mkOmpCommand "ompb" [ presets.budget ];
   ompFable = mkOmpCommand "ompf" [ presets.fable ];
   ompGpt = mkOmpCommand "ompg" [ presets.gpt ];
-  ompOpus = mkOmpCommand "ompo" [
-    presets.gpt
-    presets.opusFallback
-  ];
   trustedUntrustedPath = lib.makeBinPath [
     bash
     coreutils
@@ -1218,7 +1213,6 @@ runCommand "omp-configured-${lib.getVersion omp}"
     ln -s ${lib.getExe ompBudget} "$out/bin/ompb"
     ln -s ${lib.getExe ompFable} "$out/bin/ompf"
     ln -s ${lib.getExe ompGpt} "$out/bin/ompg"
-    ln -s ${lib.getExe ompOpus} "$out/bin/ompo"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"
   ''

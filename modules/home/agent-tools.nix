@@ -14,7 +14,6 @@ let
     budget = ../../omp/presets/budget.yml;
     fable = ../../omp/presets/fable-primary.yml;
     gpt = ../../omp/presets/gpt56.yml;
-    opusFallback = ../../omp/presets/opus-fallback.yml;
   };
 
   herdrCompletions = pkgs.runCommand "herdr-completions-${lib.getVersion cfg.herdrPackage}" { } ''
@@ -55,7 +54,6 @@ in
       "omp/presets/budget.yml".source = presets.budget;
       "omp/presets/fable-primary.yml".source = presets.fable;
       "omp/presets/gpt56.yml".source = presets.gpt;
-      "omp/presets/opus-fallback.yml".source = presets.opusFallback;
     };
 
     home.file = {

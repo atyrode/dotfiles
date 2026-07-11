@@ -257,4 +257,4 @@ still exists in that unpacked set, so an upstream agent rename or removal
 fails the build instead of silently misrouting models.
 
 GitHub Actions runs the same flake checks natively on x86_64 and aarch64 Linux
-and macOS.
+and aarch64 macOS.

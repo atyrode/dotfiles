@@ -41,6 +41,12 @@ revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
 path. A successful real activation records the canonical host atomically;
 failures and dry runs do not update state.
 
+After a successful activation, apply reports plain-omp settings that drifted
+from the seeded repository defaults (see
+[Agent tools](agent-tools.md#seeded-plain-omp-defaults)) and, when running on
+a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
+never resolved automatically; skipping the review keeps every local value.
+
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
 selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.

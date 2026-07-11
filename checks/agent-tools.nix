@@ -13,6 +13,7 @@ let
   budgetPreset = ../omp/presets/budget.yml;
   fablePreset = ../omp/presets/fable-primary.yml;
   gptPreset = ../omp/presets/gpt56.yml;
+  plainSeedConfig = ../omp/plain-seed.yml;
 
   stubOmp =
     pkgs.runCommand "omp-stub"
@@ -338,7 +339,8 @@ in
           ${gptPreset} \
           ${untrustedConfig} \
           ${yoloConfig} \
-          ${policyConfig}
+          ${policyConfig} \
+          ${plainSeedConfig}
         do
           while IFS= read -r name; do
             [ -n "$name" ] || continue

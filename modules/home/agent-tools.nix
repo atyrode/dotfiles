@@ -33,11 +33,21 @@ in
       description = "Back up conflicting legacy agent-tool paths before Home Manager links managed files.";
     };
 
+    seedPlainConfig = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Seed the curated plain-omp defaults into the writable machine
+        configuration with drift reporting. Local edits always win.
+      '';
+    };
+
     ompPackage = lib.mkPackageOption pkgs "omp-configured" { };
     herdrPackage = lib.mkPackageOption pkgs "herdr-configured" { };
     ompAgentsPackage = lib.mkPackageOption pkgs "omp-agents" { };
     herdrIntegrationPackage = lib.mkPackageOption pkgs "herdr-omp-integration" { };
     migrationPackage = lib.mkPackageOption pkgs "agent-tools-migrate" { };
+    seedPackage = lib.mkPackageOption pkgs "omp-seed" { };
   };
 
   config = lib.mkIf cfg.enable {
@@ -45,7 +55,8 @@ in
       cfg.herdrPackage
       herdrCompletions
       cfg.ompPackage
-    ];
+    ]
+    ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 
     xdg.configFile = {
       "omp/defaults.yml".source = defaultsConfig;
@@ -63,20 +74,39 @@ in
       };
     };
 
-    home.activation = lib.mkIf cfg.migrateLegacy {
-      migrateLegacyAgentTools = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
-        if [[ -v DRY_RUN ]]; then
-          export AGENT_TOOLS_DRY_RUN=1
-        fi
-        ${lib.getExe cfg.migrationPackage} prepare
-      '';
+    home.activation = lib.mkMerge [
+      (lib.mkIf cfg.migrateLegacy {
+        migrateLegacyAgentTools = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
+          if [[ -v DRY_RUN ]]; then
+            export AGENT_TOOLS_DRY_RUN=1
+          fi
+          ${lib.getExe cfg.migrationPackage} prepare
+        '';
 
-      finalizeLegacyAgentTools = lib.hm.dag.entryAfter [ "installPackages" "linkGeneration" ] ''
-        if [[ -v DRY_RUN ]]; then
-          export AGENT_TOOLS_DRY_RUN=1
-        fi
-        ${lib.getExe cfg.migrationPackage} finalize "$newGenPath/home-files"
-      '';
-    };
+        finalizeLegacyAgentTools = lib.hm.dag.entryAfter [ "installPackages" "linkGeneration" ] ''
+          if [[ -v DRY_RUN ]]; then
+            export AGENT_TOOLS_DRY_RUN=1
+          fi
+          ${lib.getExe cfg.migrationPackage} finalize "$newGenPath/home-files"
+        '';
+      })
+      (lib.mkIf cfg.seedPlainConfig {
+        # Runs after the legacy migration so a first activation seeds the
+        # transformed configuration, never the pre-migration backup source.
+        # Seeding is a convenience: a failure (for example unparseable
+        # operator YAML) warns instead of failing the whole activation.
+        seedPlainOmpConfig =
+          lib.hm.dag.entryAfter
+            ([ "installPackages" "linkGeneration" ] ++ lib.optional cfg.migrateLegacy "finalizeLegacyAgentTools")
+            ''
+              if [[ -v DRY_RUN ]]; then
+                export AGENT_TOOLS_DRY_RUN=1
+              fi
+              if ! ${lib.getExe cfg.seedPackage} apply; then
+                echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
+              fi
+            '';
+      })
+    ];
   };
 }

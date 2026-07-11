@@ -148,7 +148,7 @@ dotfiles/
 ├── modules/                 # Reusable Home Manager modules
 ├── omp/                     # Managed config, presets, agents, and rules
 ├── pkgs/                    # Pinned custom derivations and wrappers
-├── scripts/                 # Activation-time migration logic
+├── scripts/                 # Activation-time migration and seeding logic
 └── home/                  # Home Manager modules
     ├── default.nix        # Main configuration
     ├── linux-desktop.nix  # Optional Linux desktop packages

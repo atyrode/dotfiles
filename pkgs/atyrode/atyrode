@@ -34,8 +34,10 @@ Usage:
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
 to an exact commit first; --repo switches to a local checkout for development.
-apply validates everything before invoking nh. Commands reserved for later
-issues: workspace, agent, generations, rollback, and clean.
+apply validates everything before invoking nh, and afterwards reports plain-omp
+settings that drifted from the seeded defaults, offering an interactive
+keep-or-reset review on a terminal. Commands reserved for later issues:
+workspace, agent, generations, rollback, and clean.
 EOF
 }
 
@@ -791,9 +793,30 @@ apply_config() {
     temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
     printf '%s\n' "$host" >"$temp"
     mv -f "$temp" "$state_file"
+    review_seed_drift "$json"
   fi
   if [[ "$restart" == 1 ]]; then
     printf 'Activation completed. Restart the current shell with: exec zsh -l\n' >&2
+  fi
+}
+
+# After a successful activation, surface plain-omp settings that drifted from
+# the seeded repository defaults and, on a terminal, offer to keep or reset
+# each one. The seeder itself never overwrites local edits; this review is the
+# only place a default is restored, and only on explicit request.
+review_seed_drift() {
+  local json="$1" seed_status drift_count
+  command -v atyrode-omp-seed >/dev/null 2>&1 || return 0
+  seed_status="$(atyrode-omp-seed status --json 2>/dev/null)" || return 0
+  drift_count="$(jq -r '.drift | length' <<<"$seed_status" 2>/dev/null)" || return 0
+  [[ "$drift_count" != 0 ]] || return 0
+  jq -r '"omp seed drift: \(.drift | length) setting(s) kept over the repository defaults",
+    (.drift[] | "  ~ \(.key): local \(.live | tojson) / default \(.seed | tojson)")' \
+    <<<"$seed_status" >&2
+  if [[ "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 && -t 0 && -t 1 ]]; then
+    atyrode-omp-seed resolve || true
+  else
+    printf 'review with: atyrode-omp-seed resolve\n' >&2
   fi
 }
 

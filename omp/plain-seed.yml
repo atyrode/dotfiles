@@ -1,0 +1,149 @@
+# Curated defaults for plain `omp`, seeded into the writable machine
+# configuration (`~/.omp/agent/config.yml`) by `atyrode-omp-seed` during
+# activation. Unlike `defaults.yml`, nothing here is enforced: the operator
+# may change any of these values on the fly, local edits always win over a
+# reseed, and drift is reported by `atyrode apply` instead of overwritten.
+#
+# Decision log: operator settings review, 2026-07-11 (issue #61).
+
+# Trusted-machine autonomy with the two cheap guardrails kept on: secret
+# obfuscation in outbound requests and copy-on-write task isolation.
+tools:
+  approvalMode: yolo
+secrets:
+  enabled: true
+task:
+  isolation:
+    mode: auto
+    merge: patch
+  showResolvedModelBadge: true
+
+# Sol for interactive work; cheap Luna/Terra routes for recurring background
+# roles so commit messages, titles, and subtasks never bill at the main tier.
+# Only bundled roles are pinned; custom agents are a managed-launcher concern.
+modelRoles:
+  default: openai-codex/gpt-5.6-sol:medium
+  advisor: openai-codex/gpt-5.6-luna:medium
+  smol: openai-codex/gpt-5.6-luna:low
+  slow: openai-codex/gpt-5.6-sol:xhigh
+  task: openai-codex/gpt-5.6-terra:medium
+  plan: anthropic/claude-fable-5:high
+  tiny: openai-codex/gpt-5.6-luna:minimal
+  commit: openai-codex/gpt-5.6-luna:low
+
+# Cross-provider fallback first for the roles that matter, so a provider-wide
+# outage or a long rate-limit window degrades instead of killing the session.
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  fallbackChains:
+    default:
+      - anthropic/claude-sonnet-5:medium
+      - openai-codex/gpt-5.6-terra:medium
+    task:
+      - anthropic/claude-sonnet-5:medium
+      - openai-codex/gpt-5.6-sol:medium
+    advisor:
+      - openai-codex/gpt-5.6-terra:low
+    smol:
+      - openai-codex/gpt-5.6-terra:low
+    slow:
+      - anthropic/claude-sonnet-5:high
+      - openai-codex/gpt-5.6-terra:xhigh
+    plan:
+      - openai-codex/gpt-5.6-sol:high
+      - anthropic/claude-sonnet-5:high
+    tiny:
+      - openai-codex/gpt-5.6-terra:low
+    commit:
+      - openai-codex/gpt-5.6-terra:low
+
+# Advisor on a cheap fast model. xhigh thinking on a per-turn watchdog buys
+# latency, not much review quality; subagent advisors multiply calls and can
+# derail cheap mechanical agents (2026-07 advisor drift cost ~$265/day).
+advisor:
+  enabled: true
+  subagents: false
+  syncBacklog: "3"
+
+autolearn:
+  enabled: true
+  # One extra billed self-reflection turn at every session end is not a
+  # default; capture lessons deliberately instead.
+  autoContinue: false
+
+branchSummary:
+  enabled: true
+checkpoint:
+  enabled: true
+github:
+  enabled: true
+
+# Local-first memory: mnemopi SQLite banks, one global bank so recall works
+# across projects (provenance stays in each memory's metadata). Extraction
+# runs on the hosted tiny role (Luna minimal) — better facts than a local
+# 1.2B model, no new provider involved. Storage never leaves the machine.
+memory:
+  backend: mnemopi
+mnemopi:
+  llmMode: smol
+  scoping: global
+  retainEveryNTurns: 3
+providers:
+  anthropic:
+    serverSideFallback: false
+  memoryModel: online
+  webSearch: auto
+
+# Never spend scarce weekly reset credits without the operator.
+codexResets:
+  autoRedeem: "no"
+
+compaction:
+  idleEnabled: true
+features:
+  unexpectedStopDetection: true
+
+defaultThinkingLevel: auto
+personality: pragmatic
+edit:
+  mode: hashline
+
+# Interaction posture.
+steeringMode: one-at-a-time
+doubleEscapeAction: tree
+treeFilterMode: default
+todo:
+  eager: preferred
+stt:
+  enabled: true
+  submitTrigger: say-submit
+speechgen:
+  enabled: true
+inspect_image:
+  enabled: true
+
+# Obsidian integration is deferred work; keep it out of the system prompt.
+vault:
+  enabled: false
+
+# Presentation. The update check stays on as a manual pin-bump reminder.
+theme:
+  dark: titanium
+colorBlindMode: true
+display:
+  shimmer: classic
+  showTokenUsage: false
+  cacheMissMarker: true
+statusLine:
+  sessionAccent: true
+  showHookStatus: true
+terminal:
+  showProgress: true
+startup:
+  checkUpdate: true
+power:
+  sleepPrevention: idle
+collab:
+  displayName: atyrode

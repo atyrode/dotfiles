@@ -71,7 +71,9 @@ branchSummary:
 
 autolearn:
   enabled: true
-  autoContinue: true
+  # One extra billed self-reflection turn at every session end is not a
+  # default; capture lessons deliberately instead (operator review 2026-07-11).
+  autoContinue: false
 
 github:
   enabled: true
@@ -112,7 +114,7 @@ memory:
   backend: local
 
 theme:
-  dark: dark
+  dark: titanium
 
 browser:
   headless: true

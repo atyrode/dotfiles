@@ -22,7 +22,10 @@ sessions additional tool approval.
 Plain `omp` is deliberately outside this policy: it runs upstream OMP with the
 operator's mutable configuration and no Nix overlay, as the tinkering surface
 for a machine the operator already trusts. Its approval posture, extensions,
-and integrations are whatever that mutable configuration says, so every
+and integrations are whatever that mutable configuration says. The seeded
+defaults start that configuration with secret obfuscation and automatic task
+isolation enabled, but unlike the managed policy the operator can change or
+remove them on the fly — the next apply only reports the drift. Every
 launcher in this table is appropriate only for repositories the operator has
 reviewed; use `ompu` for untrusted repositories.
 

@@ -3,11 +3,16 @@
   capabilities,
   codex,
   coreutils,
+  enableTestHooks ? false,
+  findutils,
   # Published flake activated by `atyrode apply` without --repo. Must stay a
   # github: ref; the CLI derives the ls-remote URL from it.
   flakeRef ? "github:atyrode/dotfiles",
+  gawk,
   gitMinimal,
+  gnugrep,
   herdr-configured,
+  homebrewCasks,
   hostname,
   hostRegistry,
   jq,
@@ -24,7 +29,21 @@
 
 let
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
+  homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
+    builtins.toJSON homebrewCasks
+  );
+  homebrewBrewfile = builtins.toFile "atyrode-Brewfile" (
+    lib.concatStringsSep "\n" (
+      [
+        ''tap "homebrew/homebrew-core"''
+        ''tap "homebrew/homebrew-cask"''
+      ]
+      ++ map (cask: ''cask "${cask}"'') homebrewCasks
+    )
+    + "\n"
+  );
   registry = builtins.toFile "atyrode-host-registry.json" (builtins.toJSON hostRegistry);
+  systemPolicy = ../../inventory/system-boundary.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
       {
@@ -157,17 +176,25 @@ stdenvNoCC.mkDerivation {
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
+      --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \
+      --replace-fail '@homebrew_casks@' '${homebrewCaskInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
+      --replace-fail '@system_policy@' '${systemPolicy}' \
+      --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}'
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils
+          findutils
+          gawk
           gitMinimal
+          gnugrep
           hostname
           jq
           nh
+          nix
         ]
       }
   '';

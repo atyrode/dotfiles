@@ -57,10 +57,16 @@ session variables and leaves full startup to `exec zsh -l` or a new terminal.
 atyrode capabilities list --json
 atyrode capabilities show alex-linux --json
 atyrode doctor host --json
+atyrode doctor system --json
 atyrode doctor tools --json
 ```
 
 Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.
+`doctor system [HOST] [--json]` audits the boundary that package installation
+alone cannot satisfy: the real login shell, Nix daemon and trust policy,
+container engine, antivirus ownership, Android device policy, and Homebrew
+drift. Its stable check IDs, row schema, statuses, exits, and read-only probe
+contract are documented in [Home Manager and system boundary](system-boundary.md).
 The `workspace`, `agent`, `generations`, `rollback`, and `clean` namespaces are
 reserved for their owning follow-up issues and currently fail clearly.

@@ -37,7 +37,7 @@
     "versionOwner": "pinned nixpkgs",
     "mutableState": "application-owned user data and caches",
     "closureClass": "very-large",
-    "packages": ["arduino-ide", "chatgpt", "ghostty-bin", "godot", "lichess", "obsidian", "orbstack", "parsec-bin", "plugdata", "postman", "prismlauncher", "reaper", "signal-desktop", "spotify", "steam", "steamcmd", "vital", "vlc", "vlc-bin", "vscode", "whatsapp-for-mac"]
+    "packages": ["arduino-ide", "chatgpt", "ghostty-bin", "godot", "lichess", "obsidian", "parsec-bin", "plugdata", "postman", "prismlauncher", "reaper", "signal-desktop", "spotify", "steam", "steamcmd", "vital", "vlc", "vlc-bin", "vscode", "whatsapp-for-mac"]
   },
   {
     "owner": "mobile",
@@ -67,17 +67,17 @@
     "versionOwner": "pinned nixpkgs",
     "mutableState": "daemon-owned images and volumes outside Home Manager",
     "closureClass": "medium",
-    "packages": ["dive", "docker", "docker-compose"]
+    "packages": ["dive", "docker", "docker-compose", "orbstack"]
   },
   {
     "owner": "security",
     "deliveryLayer": "home-manager",
     "selectedBy": ["security"],
-    "consumer": "declared server diagnostics and scanning",
+    "consumer": "declared network diagnostics",
     "versionOwner": "pinned nixpkgs",
-    "mutableState": "ClamAV signatures and tool caches",
-    "closureClass": "large",
-    "packages": ["clamav", "nmap", "socat"]
+    "mutableState": "tool-specific caches only",
+    "closureClass": "small",
+    "packages": ["nmap", "socat"]
   },
   {
     "owner": "project",

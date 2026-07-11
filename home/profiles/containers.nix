@@ -1,7 +1,8 @@
 { lib, pkgs, ... }:
 {
   # This capability installs clients and inspection tools only. Daemon and
-  # desktop-engine ownership remains with the system/desktop layers.
+  # rootless-engine ownership remains with the system layer on Linux. OrbStack
+  # is the selected Darwin engine and retains its own runtime state.
   home.packages = [
     pkgs.dive
   ]
@@ -11,5 +12,6 @@
       docker
       docker-compose
     ]
-  );
+  )
+  ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.orbstack ];
 }

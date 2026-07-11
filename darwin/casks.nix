@@ -1,0 +1,12 @@
+[
+  "arduino-ide"
+  "bitwarden"
+  "codex-app"
+  "display-pilot"
+  "discord"
+  "parsec"
+  "plugdata"
+  "sonos"
+  "steam"
+  "zen"
+]

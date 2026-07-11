@@ -17,7 +17,6 @@ in
       chatgpt
       godot
       obsidian
-      orbstack
       postman
       prismlauncher
       reaper

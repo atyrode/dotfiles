@@ -64,7 +64,9 @@ downloading an artifact, fetching Git, or moving a file.
 uses the packaged `atyrode apply` plan and activation, so the host registry and
 the `nh` backend remain the only activation contract. Flakes are enabled only
 through the process-scoped `NIX_CONFIG`; bootstrap does not append to a
-user-owned `nix.conf`.
+user-owned `nix.conf`. After the Home Manager transaction succeeds, bootstrap
+also verifies the system-owned login-shell prerequisite described in [Home
+Manager and system boundary](system-boundary.md).
 
 Use `--update` to explicitly fetch the verified origin and fast-forward main.
 If source changes, bootstrap re-enters the fetched `install.sh` before opening
@@ -117,6 +119,7 @@ Bootstrap state lives under:
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/
 ├── apply.pending/
+├── login-shell.incomplete
 ├── migrations/
 │   └── migration-v1-shell-entrypoints.{pending,complete,rolled-back}
 └── transactions/
@@ -164,6 +167,21 @@ This rollback restores bootstrap-owned filesystem moves and the active-host
 receipt. It does not uninstall Nix or roll back a successfully activated Nix or
 nix-darwin generation. Those are separate, explicit system operations.
 
+The login shell is deliberately outside the Home Manager transaction. On
+standalone Linux, bootstrap verifies the managed Zsh executable, registers it
+once in `/etc/shells` with explicit privilege, selects it with `chsh`, and
+reads the account database back. On macOS, nix-darwin owns the equivalent
+`UserShell` activation and bootstrap verifies its result. `$SHELL` is never
+accepted as proof because an inherited environment can be stale or forged.
+
+If this post-activation prerequisite cannot be completed, bootstrap returns
+`69` but leaves the successful Home Manager activation and completed receipt
+intact. It atomically publishes `login-shell.incomplete` before archiving the
+completed receipt, and clears it only after account-database verification, so
+an interruption cannot look like a fully ready machine. Fix the system
+prerequisite and run `./install.sh verify --config <host>`, or rerun `apply`
+with the required privilege. A passing verification removes the marker.
+
 ## Verification coverage
 
 `checks/bootstrap.nix` uses temporary homes and repositories. It covers a clean
@@ -172,8 +190,9 @@ wrong and rewritten origins, dirty/staged/non-main revisions, download and
 checksum failure, partial installer failure, activation and verification
 failure, interruption before and after transaction publication, resumable
 migration, collisions, corrupt and dual receipts, missing backups, symlinked
-state namespaces, rollback, receipt privacy, and idempotence. The same check
-runs natively in all four CI jobs.
+state namespaces, rollback, receipt privacy, login-shell marker interruption,
+unsafe marker types, privilege failure and recovery, production-only test-hook
+gating, and idempotence. The same check runs natively in all four CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

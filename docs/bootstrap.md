@@ -13,9 +13,13 @@ command. This example selects the ordinary x86_64 Linux profile:
 curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
 ```
 
-Substitute the exact registered host for a Mac or desktop Linux machine.
-Bootstrap never infers a profile from architecture alone: x86_64 Linux can be
-the base development machine or the desktop profile. Production NixOS servers
+Substitute the exact registered host for a Mac or desktop Linux machine, or
+omit the host entirely: `get.sh` then lists the registered presets for this
+machine's system — each with its description and capability breakdown from
+`inventory/hosts.tsv` — and prompts for an explicit choice on the terminal
+(without one, it refuses and names the valid IDs). Bootstrap never infers a
+profile from architecture alone: x86_64 Linux can be the base development
+machine or the desktop profile. Production NixOS servers
 instead import the [portable Home Manager profile](portable-profiles.md) from
 their infrastructure flake.
 

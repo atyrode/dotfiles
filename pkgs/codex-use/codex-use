@@ -58,9 +58,25 @@ install_link() {
   temp="$path.next.$$"; rm -f "$temp"; ln -s "$source" "$temp"; mv -f "$temp" "$path"
 }
 
+# Codex persists trust decisions and settings edits into config.toml and
+# follows symlinks to the write target, so a live config linked into the
+# read-only Nix store fails every such write. Repair that state into the
+# mutable real file the layout promises, seeded from the link target.
+ensure_mutable_config() {
+  local path="$1/config.toml" target temp
+  [[ -L "$path" ]] || return 0
+  target="$(readlink -f "$path" || true)"
+  [[ "$target" == /nix/store/* ]] || return 0
+  temp="$path.next.$$"; rm -f "$temp"
+  if [[ -r "$target" ]]; then cp "$target" "$temp"; else : >"$temp"; fi
+  chmod 600 "$temp"; mv -f "$temp" "$path"
+  printf 'Replaced store-symlinked %s with a mutable copy\n' "$path" >&2
+}
+
 install_managed_files() {
   install_link "$1" AGENTS.md "$managed_agents"
   install_link "$1" "$profile_name.config.toml" "$managed_config"
+  ensure_mutable_config "$1"
 }
 
 clear_journal() { [[ ! -d "$journal" ]] || { rm -f "$journal"/*; rmdir "$journal"; }; }

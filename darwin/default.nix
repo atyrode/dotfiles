@@ -15,6 +15,15 @@
     stateVersion = 7;
   };
 
+  # nh's system-profile step runs nix under sudo, where the process-scoped
+  # NIX_CONFIG from bootstrap does not reach; root falls back to
+  # /etc/nix/nix.conf, which the upstream installer writes without flakes.
+  # Owning the setting here keeps every activation phase self-sufficient.
+  nix.settings.experimental-features = [
+    "flakes"
+    "nix-command"
+  ];
+
   users.users.${username}.home = homeDirectory;
 
   home-manager = {

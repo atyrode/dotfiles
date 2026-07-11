@@ -28,6 +28,9 @@ in
   };
 
   nix.settings = {
+    # nh's system-profile step runs nix under sudo, where the process-scoped
+    # NIX_CONFIG from bootstrap does not reach; root falls back to
+    # /etc/nix/nix.conf, so the managed file must carry the features itself.
     experimental-features = [
       "nix-command"
       "flakes"

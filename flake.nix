@@ -161,7 +161,6 @@
         host
         // {
           inherit aliases capabilities;
-          dotfilesDirectory = host.dotfilesDirectory or "${host.homeDirectory}/nix-dotfiles";
           hostname = host.hostname or null;
         };
 
@@ -187,7 +186,6 @@
         inherit (host)
           aliases
           capabilities
-          dotfilesDirectory
           homeDirectory
           hostname
           platform
@@ -574,6 +572,7 @@
             inherit lib pkgs;
             baseConfig = baseOnlyConfig;
           };
+          get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {

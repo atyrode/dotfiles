@@ -16,6 +16,7 @@
     # Load custom shell functions (in order)
     initContent = ''
       # Load shell configuration modules
+      source ${./shell/colorterm.zsh}
       source ${./shell/nix.zsh}
       source ${./shell/startup.zsh}
     '';

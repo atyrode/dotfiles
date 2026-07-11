@@ -9,6 +9,8 @@ readonly homebrew_cask_inventory='@homebrew_casks@'
 readonly system_policy='@system_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
+readonly flake_ref='@flakeRef@'
+readonly flake_remote_url="https://github.com/${flake_ref#github:}"
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
 die() {
@@ -21,7 +23,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  atyrode apply [HOST] [--repo PATH] [--plan|--dry-run] [--json] [--restart-shell]
+  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run] [--json] [--restart-shell]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode doctor host [HOST] [--json]
@@ -29,9 +31,11 @@ Usage:
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
 
-The host registry is the authority for identity, platform, capabilities, and
-the default checkout. apply validates everything before invoking nh. Commands
-reserved for later issues: workspace, agent, generations, rollback, and clean.
+The host registry is the authority for identity, platform, and capabilities.
+apply activates the published flake by default, resolving REF (default main)
+to an exact commit first; --repo switches to a local checkout for development.
+apply validates everything before invoking nh. Commands reserved for later
+issues: workspace, agent, generations, rollback, and clean.
 EOF
 }
 
@@ -673,11 +677,12 @@ doctor_system() {
 }
 
 apply_config() {
-  local requested="" repo="" plan=0 dry=0 json=0 restart=0
+  local requested="" repo="" ref="" plan=0 dry=0 json=0 restart=0
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) [[ $# -ge 2 ]] || die "$EX_USAGE" "--repo requires a path"; repo="$2"; shift 2 ;;
+      --ref) [[ $# -ge 2 ]] || die "$EX_USAGE" "--ref requires a branch, tag, or full commit"; ref="$2"; shift 2 ;;
       --plan) plan=1; shift ;;
       --dry-run) dry=1; shift ;;
       --json) json=1; shift ;;
@@ -686,8 +691,9 @@ apply_config() {
       *) die "$EX_USAGE" "unknown apply option: $1" ;;
     esac
   done
+  [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
 
-  local host data expected_system expected_user expected_hostname platform default_repo revision dirty backend installable
+  local host data expected_system expected_user expected_hostname platform source repository revision dirty backend installable
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -698,28 +704,48 @@ apply_config() {
   expected_user="$(jq -r '.username' <<<"$data")"
   expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
   platform="$(jq -r '.platform' <<<"$data")"
-  default_repo="$(jq -r '.dotfilesDirectory' <<<"$data")"
-  repo="${repo:-$default_repo}"
-  [[ "$repo" == /* ]] || die "$EX_USAGE" "repository path must be absolute: $repo"
-  [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
   [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
   [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
   [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
   command -v nh >/dev/null || die "$EX_UNAVAILABLE" "nh is unavailable"
   command -v "$git_command" >/dev/null || die "$EX_UNAVAILABLE" "git is unavailable"
-  "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
-  revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
-  dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
+
+  if [[ -n "$repo" ]]; then
+    source="local"
+    [[ "$repo" == /* ]] || die "$EX_USAGE" "repository path must be absolute: $repo"
+    [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
+    "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
+    revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
+    dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
+    repository="$repo"
+    installable="$repo#$host"
+  else
+    source="remote"
+    ref="${ref:-main}"
+    # Resolving the ref to an exact commit keeps the activation deterministic
+    # and bypasses the flake tarball cache, which can serve a branch name
+    # stale for up to an hour.
+    local rev=""
+    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+      rev="$ref"
+    else
+      rev="$("$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref" | head -n 1 | cut -f 1)" || true
+      [[ -n "$rev" ]] || die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
+    fi
+    revision="${rev:0:12}"
+    dirty=false
+    repository="$flake_ref"
+    installable="$flake_ref/$rev#$host"
+  fi
   backend="nh-home"; [[ "$platform" != darwin ]] || backend="nh-darwin"
-  installable="$repo#$host"
 
   local output
-  output="$(jq -nc --arg host "$host" --arg repo "$repo" --arg system "$expected_system" \
-    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" \
+  output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
+    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg source "$source" \
     --arg installable "$installable" --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
-    '{host:$host,installable:$installable,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,dirty:$dirty,repository:$repo,mutationBoundary:"activation only after preflight"}')"
+    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
   if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
-  else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
+  else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
   [[ "$plan" == 0 ]] || return 0
 
   local -a nh_args

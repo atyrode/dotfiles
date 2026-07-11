@@ -5,6 +5,9 @@
   coreutils,
   enableTestHooks ? false,
   findutils,
+  # Published flake activated by `atyrode apply` without --repo. Must stay a
+  # github: ref; the CLI derives the ls-remote URL from it.
+  flakeRef ? "github:atyrode/dotfiles",
   gawk,
   gitMinimal,
   gnugrep,
@@ -172,6 +175,7 @@ stdenvNoCC.mkDerivation {
     install -D -m755 "$src" "$out/bin/atyrode"
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
+      --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \
       --replace-fail '@homebrew_casks@' '${homebrewCaskInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \

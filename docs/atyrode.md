@@ -8,28 +8,43 @@ or maintain a second mutable profile database.
 ## Applying a configuration
 
 ```sh
+atyrode apply            # activate the latest published main; no checkout needed
 atyrode apply --plan
 atyrode apply --dry-run
-atyrode apply
 ```
 
 The default host comes from `ATYRODE_HOST`, then the managed host identity file,
-then an unambiguous user/system/hostname match. The checkout is the host's
-declared `dotfilesDirectory`. Selecting either differently is intentional:
+then an unambiguous user/system/hostname match.
+
+Without `--repo`, apply activates the published flake. It resolves the
+requested ref (default `main`) to an exact commit with `git ls-remote`, then
+activates the pinned `github:atyrode/dotfiles/<commit>`. No local checkout is
+involved, so the command behaves identically from any directory on any
+machine, and pinning the resolved commit bypasses the flake tarball cache: an
+apply immediately after a merge activates that merge. `--ref` selects a
+branch, tag, or full commit instead of `main`:
+
+```sh
+atyrode apply --ref feature-branch --plan
+```
+
+`--repo PATH` switches to a local checkout for development, for example to
+activate work in progress before pushing. It additionally validates the
+checkout and Git repository and reports a dirty tree:
 
 ```sh
 atyrode apply alex-x86_64-linux-desktop --repo /home/alex/nix-dotfiles --plan
 ```
 
-Before calling `nh`, the CLI validates the host, user, system, checkout, Git
-repository, backend, and revision. `--plan` performs no activation. `--dry-run`
-uses `nh`'s build-only path. A successful real activation records the canonical
-host atomically; failures and dry runs do not update state.
+Before calling `nh`, the CLI validates the host, user, system, backend, and
+revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
+path. A successful real activation records the canonical host atomically;
+failures and dry runs do not update state.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
-selected host and capabilities, installable, backend, revision, dirty-tree
-state, and mutation boundary. Add `--json` for automation. Activation shows a
-generation package diff.
+selected host and capabilities, installable, source, backend, revision,
+dirty-tree state, and mutation boundary. Add `--json` for automation.
+Activation shows a generation package diff.
 
 `--restart-shell` only prints the explicit restart action after success. It
 never replaces an embedded terminal. The historical `zconf` command is now a

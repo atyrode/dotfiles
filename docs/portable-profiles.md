@@ -123,10 +123,11 @@ maximum closure measurements. `home-activation` points at the exact evaluated
 Home Manager generation. The manifest contains no identity or production
 facts.
 
-At the pinned 2026-07-10 revision, x86_64 Linux delivers 36 top-level packages
-and measures 2,108,944,256 NAR bytes across 396 store paths. Its review ceilings
-are 40 packages, 2,348,810,240 bytes, and 440 paths: roughly ten percent
-headroom, with bytes rounded up to a 64 MiB boundary. The aarch64 Linux ceilings
+At the pinned 2026-07-08 nixpkgs revision, x86_64 Linux delivers 37 top-level
+packages (Claude Code joined the agent baseline) and measures 2,376,988,648
+NAR bytes across 406 store paths. Its review ceilings are 40 packages,
+2,617,245,696 bytes, and 450 paths: roughly ten percent headroom, with bytes
+rounded up to a 64 MiB boundary. The aarch64 Linux ceilings
 are 40 packages, 2.5 GiB, and 500 paths and are enforced on the native CI
 runner. A dependency update that exceeds a ceiling must explain the growth and
 deliberately update `inventory/server-profile.json`.
@@ -140,7 +141,7 @@ jq . result/manifest.json
 
 ## Pin and update workflow
 
-1. Select a dotfiles commit whose four native CI jobs pass.
+1. Select a dotfiles commit whose three native CI jobs pass.
 2. Build and inspect its server manifest for the target architecture.
 3. Replace the `dotfiles.url` revision with that full immutable commit SHA, then
    run `nix flake update dotfiles` and review both `flake.nix` and `flake.lock`.

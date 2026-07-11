@@ -1,6 +1,7 @@
 {
   bubblewrap,
   capabilities,
+  claude-code,
   codex,
   coreutils,
   enableTestHooks ? false,
@@ -69,6 +70,18 @@ let
         launchModes = [
           "home"
           "darwin"
+        ];
+      }
+      {
+        name = "Claude Code";
+        command = "claude";
+        capability = "agent-tools";
+        version = lib.getVersion claude-code;
+        versionOwner = "pinned nixpkgs";
+        mutableState = "~/.claude and ~/.claude.json";
+        launchModes = [
+          "interactive"
+          "print"
         ];
       }
       {

@@ -47,7 +47,6 @@
 
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
       ];
@@ -59,6 +58,7 @@
       allowedUnfreePackages = [
         "arduino-ide"
         "chatgpt"
+        "claude-code"
         "codex"
         "obsidian"
         "orbstack"
@@ -263,8 +263,15 @@
         in
         lib.composeManyExtensions [
           herdr.overlays.default
-          (final: _previous: {
+          (final: previous: {
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+            # nixpkgs codex depends on livekit-libwebrtc, which fails to build
+            # on aarch64-darwin; the official release binary stands in there.
+            codex =
+              if final.stdenv.hostPlatform.system == "aarch64-darwin" then
+                final.callPackage ./pkgs/codex-bin { }
+              else
+                previous.codex;
             codex-configured = final.callPackage ./pkgs/codex-configured { };
             codex-use = final.callPackage ./pkgs/codex-use { };
             herdr-configured = final.callPackage ./pkgs/herdr-configured { };
@@ -554,7 +561,7 @@
               }
               ''
                 jq -e '
-                  length >= 5
+                  length >= 4
                   and all(.[];
                     (.id | type == "string")
                     and (.system | type == "string")
@@ -590,7 +597,6 @@
             productionHost =
               {
                 "aarch64-darwin" = "alex-aarch64-darwin";
-                "x86_64-darwin" = "alex-x86_64-darwin";
                 "aarch64-linux" = "alex-aarch64-linux";
                 "x86_64-linux" = "alex-x86_64-linux";
               }

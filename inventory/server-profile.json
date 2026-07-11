@@ -16,6 +16,7 @@
     "bat",
     "btop",
     "bubblewrap",
+    "claude-code",
     "codex",
     "codex-use",
     "direnv",
@@ -100,8 +101,8 @@
       "maxTopLevelPackages": 40
     },
     "x86_64-linux": {
-      "maxNarBytes": 2348810240,
-      "maxStorePaths": 440,
+      "maxNarBytes": 2617245696,
+      "maxStorePaths": 450,
       "maxTopLevelPackages": 40
     }
   },

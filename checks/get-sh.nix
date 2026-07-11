@@ -7,7 +7,6 @@ let
     {
       "aarch64-darwin" = "alex-aarch64-darwin";
       "aarch64-linux" = "alex-aarch64-linux";
-      "x86_64-darwin" = "alex-x86_64-darwin";
       "x86_64-linux" = "alex-x86_64-linux";
     }
     .${pkgs.stdenv.hostPlatform.system};

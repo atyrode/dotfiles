@@ -1,6 +1,7 @@
 [
   "arduino-ide"
   "bitwarden"
+  "claude"
   "codex-app"
   "display-pilot"
   "discord"

@@ -78,8 +78,8 @@ rewrite cannot redirect the accepted GitHub origin unnoticed.
 ## Nix installer decision
 
 Fresh machines install upstream Nix 2.34.7 from the official
-`releases.nixos.org` archive. The four archive SHA-256 values are embedded in
-`install.sh` for x86_64/aarch64 Linux and Darwin. Bootstrap downloads into a
+`releases.nixos.org` archive. The three archive SHA-256 values are embedded in
+`install.sh` for x86_64/aarch64 Linux and aarch64 Darwin. Bootstrap downloads into a
 private temporary directory, verifies the complete archive before extraction,
 checks the expected installer path, and only then runs the upstream multi-user
 installer. Existing Nix installations are reused.
@@ -87,8 +87,9 @@ installer. Existing Nix installations are reused.
 This choice was reviewed on 2026-07-10:
 
 - [Upstream Nix](https://nix.dev/manual/nix/latest/) keeps the existing runtime,
-  supports all four repository targets (including the Intel Mac while it
-  remains registered), and provides official versioned release archives. Its
+  supports all three repository targets (the Intel Mac was retired with
+  nixpkgs 26.11, which dropped x86_64-darwin), and provides official
+  versioned release archives. Its
   multi-user uninstall is manual and OS-specific rather than receipt-driven.
 - The [Lix installer](https://git.lix.systems/lix-project/lix-installer) has
   strong plan, receipt, recovery, and uninstall behavior without diagnostic
@@ -192,7 +193,7 @@ failure, interruption before and after transaction publication, resumable
 migration, collisions, corrupt and dual receipts, missing backups, symlinked
 state namespaces, rollback, receipt privacy, login-shell marker interruption,
 unsafe marker types, privilege failure and recovery, production-only test-hook
-gating, and idempotence. The same check runs natively in all four CI jobs.
+gating, and idempotence. The same check runs natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

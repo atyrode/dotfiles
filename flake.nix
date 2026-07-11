@@ -602,6 +602,7 @@
             baseConfig = baseOnlyConfig;
           };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
+          production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {

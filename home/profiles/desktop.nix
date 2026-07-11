@@ -5,7 +5,10 @@ let
   };
 in
 {
-  imports = [ ../linux-desktop.nix ];
+  imports = [
+    ../ghostty.nix
+    ../linux-desktop.nix
+  ];
 
   # Retention of desktop applications reflects operator use, not the agent
   # baseline. Homebrew-owned applications remain in the nix-darwin module.

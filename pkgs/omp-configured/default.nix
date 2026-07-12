@@ -1642,7 +1642,131 @@ let
           (( fetching )) && usagep+=( "''${c_dim}fetching usage…''${c_rst}" )
           return 0
         fi
+        usage_rows_cache="$rows"
         mapfile -t usagep < <(render_usage_panel <<< "$rows")
+      }
+
+      # ── Provider availability ────────────────────────────────────────────────
+      # Derived from the same usage rows that fill the panel. A provider is
+      # `unauthed` when it never appears (omp usage only reports authed accounts),
+      # `maxed` when its main (non-tier) window is >=100% used, else `ok`. With no
+      # usage data at all nothing is known, so nothing is dimmed.
+      known_providers=(openai-codex anthropic)
+      provider_avail=""
+      build_provider_avail() {
+        provider_avail=""
+        local rows="$usage_rows_cache" p
+        if [[ -z "$rows" ]]; then
+          for p in "''${known_providers[@]}"; do provider_avail+="$p=ok:0"$'\n'; done
+          return 0
+        fi
+        for p in "''${known_providers[@]}"; do
+          local maxpct=-1 secs=0 pr pct tier s
+          while IFS=$'\t' read -r pr _ pct tier s _; do
+            [[ "$pr" == "$p" && "$tier" == "-" ]] || continue
+            if (( pct > maxpct )); then maxpct=$pct; secs=$s; fi
+          done <<< "$rows"
+          if (( maxpct < 0 )); then
+            provider_avail+="$p=unauthed:0"$'\n'
+          elif (( maxpct >= 100 )); then
+            provider_avail+="$p=maxed:$secs"$'\n'
+          else
+            provider_avail+="$p=ok:0"$'\n'
+          fi
+        done
+      }
+      provider_status() {
+        local l
+        l="$(grep "^$1=" <<< "$provider_avail" | head -1)"
+        l="''${l#*=}"
+        printf '%s' "''${l%%:*}"
+      }
+      provider_reset_secs() {
+        local l
+        l="$(grep "^$1=" <<< "$provider_avail" | head -1)"
+        printf '%s' "''${l##*:}"
+      }
+      provider_down() {
+        local st
+        st="$(provider_status "$1")"
+        [[ "$st" == unauthed || "$st" == maxed ]]
+      }
+      down_providers_csv() {
+        local p out=""
+        for p in "''${known_providers[@]}"; do
+          if provider_down "$p"; then out+="$p,"; fi
+        done
+        printf '%s' "''${out%,}"
+      }
+      # Compact "2h" / "45m" / "30s" from a seconds count.
+      fmt_secs() {
+        local s="$1"
+        if (( s <= 0 )); then printf 'now'
+        elif (( s >= 3600 )); then printf '%dh' "$(( s / 3600 ))"
+        elif (( s >= 60 )); then printf '%dm' "$(( s / 60 ))"
+        else printf '%ds' "$s"; fi
+      }
+      # Human label for a down provider, e.g. "Codex maxed · 2h" or "needs Claude".
+      provider_note() {
+        local p="$1" label st
+        case "$p" in openai-codex) label="Codex" ;; anthropic) label="Claude" ;; *) label="$p" ;; esac
+        st="$(provider_status "$p")"
+        case "$st" in
+          maxed) printf '%s maxed · %s' "$label" "$(fmt_secs "$(provider_reset_secs "$p")")" ;;
+          unauthed) printf 'needs %s' "$label" ;;
+          *) printf '%s' "" ;;
+        esac
+      }
+
+      # ── Per-profile impact ───────────────────────────────────────────────────
+      # name<TAB>impact (ok|degraded|broken), judged on each profile's substantive
+      # lead roles in the routes page against the currently-down providers.
+      profile_impacts=""
+      build_profile_impacts() {
+        profile_impacts=""
+        [[ -f "$routes_plain" ]] || return 0
+        local down
+        down="$(down_providers_csv)"
+        profile_impacts="$(awk -v down="$down" '
+          BEGIN {
+            split(down, d, ","); for (i in d) if (d[i] != "") dmap[d[i]] = 1
+            split("default task plan slow designer reviewer librarian", s, " ")
+            for (i in s) smap[s[i]] = 1
+          }
+          function prov(m) { sub(/:.*/, "", m); return (m ~ /claude|sonnet|haiku|opus|fable/) ? "anthropic" : "openai-codex" }
+          function emit(   p, nlead, ndown, impact) {
+            if (name == "") return
+            nlead = 0; ndown = 0
+            for (p in leads) { nlead++; if (p in dmap) ndown++ }
+            if (nlead > 0 && ndown == nlead) impact = "broken"
+            else if (ndown > 0)              impact = "degraded"
+            else                             impact = "ok"
+            printf "%s\t%s\n", name, impact
+          }
+          /^[a-z][a-z0-9-]*  / { emit(); name = $1; delete leads; next }
+          /^  *●? *[a-z]+ +[A-Za-z0-9.-]+:/ {
+            role = $1; if (role == "●") role = $2
+            lead = $0; sub(/^[^A-Za-z0-9]*[a-z]+ +/, "", lead); sub(/ .*/, "", lead)
+            if (role in smap) leads[prov(lead)] = 1
+          }
+          END { emit() }
+        ' "$routes_plain")"
+      }
+      profile_impact() {
+        awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' <<< "$profile_impacts"
+      }
+      # Annotation for an impacted profile: the note(s) of the down provider(s) it
+      # actually leads on. Cheap approximation — at most one provider is usually
+      # down, so the global down-note is accurate; both-down falls back to a join.
+      down_annotation() {
+        local p out=""
+        for p in "''${known_providers[@]}"; do
+          if provider_down "$p"; then
+            local n; n="$(provider_note "$p")"
+            [[ -n "$n" ]] && out+="''${out:+ · }$n"
+          fi
+        done
+        printf '%s' "$out"
       }
 
       term_cols() {
@@ -1951,6 +2075,8 @@ let
         picked_idx=""
         _prof entry
         build_usage
+        build_provider_avail
+        build_profile_impacts
         # Kick a background refresh of the bare-omp routing cache when stale (~0.9s;
         # never blocks — the omp preview reads whatever is cached, agents until then).
         local rt_age=""
@@ -1992,6 +2118,7 @@ let
         # so the hot loop stays subshell-free.
         local -a fblurbs=()
         mapfile -t fblurbs < <(printf '%s\n' "''${blurbs[@]}" | flavorize)
+        local down_anno; down_anno="$(down_annotation)"
         # Colour by lane, glyph by intended use, both inlined; the category label
         # is printed once on each group's first row.
         for (( i = 0; i < count; i++ )); do
@@ -2019,13 +2146,24 @@ let
             glabel="$(group_label "''${groups[$i]}")"
             last_group="''${groups[$i]}"
           fi
+          # Provider availability: dim a profile whose substantive leads are all on
+          # a down provider, and annotate any profile a down provider touches.
+          # (ctrl-p reveals the full routing for the focused profile in the
+          # preview — the list itself always reflects what's usable now.)
+          local namestyle="$c_bold" anno="" impact=""
+          impact="$(profile_impact "''${names[$i]}")"
+          if [[ "$impact" == broken ]]; then col="$c_dim"; namestyle="$c_dim"; fi
+          if [[ "$impact" == broken || "$impact" == degraded ]]; then
+            anno="  ''${c_dim}· $down_anno''${c_rst}"
+          fi
           printf -v labelcol '%-10s' "$glabel"
-          printf -v row '%s\t%s%s%s  %s%s%s  %s%-5s%s  %s%s%s' \
+          printf -v row '%s\t%s%s%s  %s%s%s  %s%-5s%s  %s%s%s%s' \
             "''${names[$i]}" \
             "$c_dim" "$labelcol" "$c_rst" \
             "$col" "$gly" "$c_rst" \
-            "$c_bold" "''${names[$i]}" "$c_rst" \
-            "$c_dim" "''${fblurbs[$i]}" "$c_rst"
+            "$namestyle" "''${names[$i]}" "$c_rst" \
+            "$c_dim" "''${fblurbs[$i]}" "$c_rst" \
+            "$anno"
           rows+="$row"$'\n'
         done
         _prof rows

@@ -1348,6 +1348,7 @@ let
       c_dim="''${esc}[38;2;120;130;145m"
       c_ok="''${esc}[38;2;80;200;120m"
       c_warn="''${esc}[38;2;235;120;90m"
+      c_near="''${esc}[38;2;235;238;242m"
       c_bold="''${esc}[1m"
       c_rst="''${esc}[0m"
 
@@ -1441,6 +1442,15 @@ let
         else printf '%dm' "$(( s / 60 ))"; fi
       }
 
+      # Nearer resets stand out: bold + bright under an hour, bright under four
+      # hours, dim beyond that.
+      reset_style() {
+        local s="$1"
+        if (( s < 3600 )); then printf '%s%s' "$c_bold" "$c_near"
+        elif (( s < 14400 )); then printf '%s' "$c_near"
+        else printf '%s' "$c_dim"; fi
+      }
+
       # Per-provider quota panel: a coloured provider header, then each window's
       # bar, percent used, and time until reset. No redundant "usage" label.
       usagep=()
@@ -1471,10 +1481,10 @@ let
           fi
           note=""
           (( c >= 80 )) && note="  ''${c_warn}tight''${c_rst}"
-          [[ "$d" == spark && "$c" -eq 0 ]] && note="  ''${c_ok}free''${c_rst}"
+          [[ "$d" == spark && "$c" -eq 0 ]] && note="  ''${c_ok}idle''${c_rst}"
           usagep+=( "$(printf '  %-8s %s %3d%% used  %s%s %s%s%s' \
             "$(short_window "$b")" "$(bar "$c")" "$c" \
-            "$c_dim" "$g_reset" "$(fmt_reset "$e")" "$c_rst" "$note")" )
+            "$(reset_style "$e")" "$g_reset" "$(fmt_reset "$e")" "$c_rst" "$note")" )
         done <<< "$rows"
       }
 

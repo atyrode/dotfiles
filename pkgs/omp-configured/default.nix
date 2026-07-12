@@ -1789,6 +1789,16 @@ let
       profile_impact() {
         awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' <<< "$profile_impacts"
       }
+      # Compute availability once per process. The preview runs as its own process
+      # (see __preview), so it recomputes; cheap — reads the cached usage rows.
+      avail_built=0
+      ensure_avail() {
+        (( avail_built )) && return 0
+        build_usage
+        build_bucket_avail
+        build_profile_impacts
+        avail_built=1
+      }
       # Annotation for impacted profiles: the note(s) of the currently-down
       # bucket(s), de-duplicated (an unauthed provider downs two buckets that
       # share one "needs X" note). Usually one bucket is down, so this is short.
@@ -2007,6 +2017,7 @@ let
           [[ "''${names[$i]}" == "$profile" ]] && { idx=$i; break; }
         done
         (( idx >= 0 )) || return 0
+        ensure_avail
         col="$(lane_color "''${names[$idx]}")"
         gly="$(icon_glyph "''${names[$idx]}")"
         fdetail="$(printf '%s' "''${details[$idx]}" | flavorize)"
@@ -2029,6 +2040,15 @@ let
             return 0
             ;;
         esac
+        # Availability banner: flag the focused launcher when a quota bucket its
+        # routing leads on is down. Broken = its default has no live fallback
+        # (unusable until reset); degraded = it runs, on a fallback model.
+        local pimpact; pimpact="$(profile_impact "$profile")"
+        if [[ "$pimpact" == broken ]]; then
+          printf '\n%s✗ %s — default has no live fallback%s\n' "$c_untrusted" "$(down_annotation)" "$c_rst"
+        elif [[ "$pimpact" == degraded ]]; then
+          printf '\n%s⚠ %s — runs on a fallback model%s\n' "$c_claude" "$(down_annotation)" "$c_rst"
+        fi
         [[ -f "$routes_plain" ]] || return 0
         # Behaviour summary (thinking baseline / fallback / advisor), lifted from
         # the 2nd line of the profile's block in the generated routes page so it
@@ -2156,7 +2176,6 @@ let
         # so the hot loop stays subshell-free.
         local -a fblurbs=()
         mapfile -t fblurbs < <(printf '%s\n' "''${blurbs[@]}" | flavorize)
-        local down_anno; down_anno="$(down_annotation)"
         # Colour by lane, glyph by intended use, both inlined; the category label
         # is printed once on each group's first row.
         for (( i = 0; i < count; i++ )); do
@@ -2184,24 +2203,23 @@ let
             glabel="$(group_label "''${groups[$i]}")"
             last_group="''${groups[$i]}"
           fi
-          # Provider availability: dim a profile whose substantive leads are all on
-          # a down provider, and annotate any profile a down provider touches.
-          # (ctrl-p reveals the full routing for the focused profile in the
-          # preview — the list itself always reflects what's usable now.)
-          local namestyle="$c_bold" anno="" impact=""
+          # Provider availability: mark a profile whose interactive default can't
+          # run (broken → red ✗, also dimmed) or that a down bucket merely touches
+          # (degraded → amber ⚠). The full reason lives in the preview banner.
+          local namestyle="$c_bold" mark=" " impact=""
           impact="$(profile_impact "''${names[$i]}")"
-          if [[ "$impact" == broken ]]; then col="$c_dim"; namestyle="$c_dim"; fi
-          if [[ "$impact" == broken || "$impact" == degraded ]]; then
-            anno="  ''${c_dim}· $down_anno''${c_rst}"
-          fi
+          case "$impact" in
+            broken)   mark="''${c_untrusted}✗''${c_rst}"; col="$c_dim"; namestyle="$c_dim" ;;
+            degraded) mark="''${c_claude}⚠''${c_rst}" ;;
+          esac
           printf -v labelcol '%-10s' "$glabel"
-          printf -v row '%s\t%s%s%s  %s%s%s  %s%-5s%s  %s%s%s%s' \
+          printf -v row '%s\t%s%s%s  %s%s%s  %s%-5s%s %s  %s%s%s' \
             "''${names[$i]}" \
             "$c_dim" "$labelcol" "$c_rst" \
             "$col" "$gly" "$c_rst" \
             "$namestyle" "''${names[$i]}" "$c_rst" \
-            "$c_dim" "''${fblurbs[$i]}" "$c_rst" \
-            "$anno"
+            "$mark" \
+            "$c_dim" "''${fblurbs[$i]}" "$c_rst"
           rows+="$row"$'\n'
         done
         _prof rows

@@ -461,6 +461,27 @@ const (
 	genView
 )
 
+// layout modes, chosen from the terminal size (unless the user collapses):
+//
+//	stacked   — wide+tall: generator on top, profiles below, preview on the right
+//	split     — medium:    the focused list on the left, preview on the right
+//	collapsed — narrow/‹p›: one full-width pane (list, or the result with showResult)
+const (
+	modeStacked = iota
+	modeSplit
+	modeCollapsed
+)
+
+func (m model) mode() int {
+	if m.w < 62 || m.collapse {
+		return modeCollapsed
+	}
+	if m.w >= 92 && m.h >= 34 {
+		return modeStacked
+	}
+	return modeSplit
+}
+
 type model struct {
 	profiles  []profile
 	routes    map[string][]string
@@ -468,10 +489,11 @@ type model struct {
 	avail     availability
 	glyphs    map[string]string
 
-	view     viewKind
-	cursor   int
-	depth    int // 0 lead · 1 full
-	collapse bool
+	view       viewKind
+	cursor     int
+	depth      int // 0 lead · 1 full
+	collapse   bool
+	showResult bool // in collapsed mode: show the preview full-width
 
 	facets []facet
 	fcur   int
@@ -500,10 +522,7 @@ func fetchUsageCmd(cmd string) tea.Cmd {
 func (m model) Init() tea.Cmd { return tea.Batch(fetchUsageCmd(m.usageCmd), m.spin.Tick) }
 
 func (m model) listW() int {
-	if m.collapse {
-		return m.w
-	}
-	if m.w < 96 {
+	if m.w < 108 {
 		return m.w / 3
 	}
 	return 42
@@ -666,6 +685,9 @@ func (m *model) syncPreview() {
 
 func (m *model) relayout() {
 	pw := m.w - m.listW() - 3
+	if m.mode() == modeCollapsed {
+		pw = m.w
+	}
 	if pw < 10 {
 		pw = 10
 	}
@@ -712,7 +734,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.syncPreview()
 		case "p":
-			m.collapse = !m.collapse
+			if m.w >= 62 {
+				m.collapse = !m.collapse // hide/show the side preview
+			} else {
+				m.showResult = !m.showResult // narrow: swap list ↔ result full-screen
+			}
 			m.relayout()
 		case "f":
 			m.depth = (m.depth + 1) % 2
@@ -780,44 +806,74 @@ func (m *model) cycleFacet(dir int) {
 	m.syncPreview()
 }
 
+func (m model) previewPane() string {
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(lipgloss.Color(cBord)).PaddingLeft(2).
+		Width(m.w - m.listW() - 3).Height(m.vp.Height).
+		Render(m.vp.View())
+}
+
+func (m model) header() string {
+	tab := func(label string, on bool) string {
+		if on {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Bold(true).Render(label)
+		}
+		return stDim.Render(label)
+	}
+	hint := "tab switch · f depth · p collapse · enter launch · q quit"
+	switch m.mode() {
+	case modeStacked:
+		hint = "tab move focus · f depth · enter launch · q quit"
+	case modeCollapsed:
+		if m.w < 62 {
+			swap := "result"
+			if m.showResult {
+				swap = "list"
+			}
+			hint = "tab switch · p " + swap + " · enter launch · q"
+		}
+	}
+	return "  " + tab("profiles", m.view == pickerView) + stDim.Render(" · ") +
+		tab("generator", m.view == genView) + stDim.Render("    "+hint)
+}
+
 func (m model) View() string {
 	if !m.rdy {
 		return "loading…"
 	}
-	var left string
-	if m.view == pickerView {
-		left = m.pickerList()
-	} else {
-		left = m.genList()
-	}
 	var body string
-	if m.collapse {
-		body = left
-	} else {
-		right := lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(lipgloss.Color(cBord)).PaddingLeft(2).
-			Width(m.w - m.listW() - 3).Height(m.vp.Height).
-			Render(m.vp.View())
-		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(m.listW()).Render(left), right)
+	switch m.mode() {
+	case modeStacked:
+		stack := m.genList(m.view == genView) + "\n" + m.pickerList(m.view == pickerView)
+		left := lipgloss.NewStyle().Width(m.listW()).Render(stack)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, left, m.previewPane())
+	case modeSplit:
+		var l string
+		if m.view == pickerView {
+			l = m.pickerList(true)
+		} else {
+			l = m.genList(true)
+		}
+		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(m.listW()).Render(l), m.previewPane())
+	default: // collapsed
+		switch {
+		case m.showResult && m.w < 62:
+			body = m.vp.View()
+		case m.view == pickerView:
+			body = m.pickerList(true)
+		default:
+			body = m.genList(true)
+		}
 	}
-	tabP, tabG := stDim.Render("profiles"), stDim.Render("generator")
-	if m.view == pickerView {
-		tabP = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Bold(true).Render("profiles")
-	} else {
-		tabG = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Bold(true).Render("generator")
-	}
-	head := "  " + tabP + stDim.Render(" · ") + tabG +
-		stDim.Render("    tab switch · f depth · p collapse · enter launch · q quit")
-	foot := m.usagePanel()
-	out := head + "\n" + body
-	if foot != "" {
+	out := m.header() + "\n" + body
+	if foot := m.usagePanel(); foot != "" {
 		out += "\n" + foot
 	}
 	return out
 }
 
-func (m model) pickerList() string {
+func (m model) pickerList(focused bool) string {
 	trunc := lipgloss.NewStyle().MaxWidth(m.listW()).Inline(true)
 	var b strings.Builder
 	lastGroup := ""
@@ -838,14 +894,18 @@ func (m model) pickerList() string {
 		row := fmt.Sprintf("%s%s %-6s %s", mark, gly, nm, flavorize(p.blurb))
 		row = trunc.Render(row)
 		if i == m.cursor {
-			row = lipgloss.NewStyle().Background(lipgloss.Color(cSelBg)).Width(m.listW()).Render(row)
+			bg := cSelBg
+			if !focused {
+				bg = "#141922"
+			}
+			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Width(m.listW()).Render(row)
 		}
 		b.WriteString(row + "\n")
 	}
 	return b.String()
 }
 
-func (m model) genList() string {
+func (m model) genList(focused bool) string {
 	var b strings.Builder
 	b.WriteString(stGrp.Render("build a profile") + "\n\n")
 	for i, f := range m.facets {
@@ -872,7 +932,11 @@ func (m model) genList() string {
 			row += "   " + stDim.Render("— n/a for this lane")
 		}
 		if i == m.fcur {
-			row = lipgloss.NewStyle().Background(lipgloss.Color(cSelBg)).Render(row)
+			bg := cSelBg
+			if !focused {
+				bg = "#141922"
+			}
+			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Render(row)
 		}
 		b.WriteString(row + "\n")
 	}
@@ -908,6 +972,7 @@ func main() {
 		usageCmd:  os.Getenv("CODE_USAGE"),
 		spin:      sp,
 		glyphs:    glyphs,
+		view:      genView, // generator is the default view
 		facets:    facetDefs(glyphs),
 		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "on", "fable": "off"},
 	}

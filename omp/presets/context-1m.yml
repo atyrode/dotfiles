@@ -25,16 +25,18 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
-  # Every substantive hop is an Anthropic 1M model — the window never shrinks.
-  # Background is exempt (it never sees the big context): Spark, then Luna, then
-  # Haiku.
+  # Every substantive hop stays on Anthropic's 1M line — the window never
+  # shrinks, and there is no cross-provider 1M net, so redundancy is Opus/Sonnet
+  # siblings only. Fable is the deliberate elite lead (plan/slow); it is never an
+  # automatic net. Background is exempt (never sees the big context): Spark, then
+  # Luna, then Haiku.
   fallbackChains:
-    default: [anthropic/claude-sonnet-5:medium, anthropic/claude-fable-5:medium]
+    default: [anthropic/claude-sonnet-5:medium]
     task: [anthropic/claude-opus-4-8:medium]
     plan: [anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
     slow: [anthropic/claude-opus-4-8:xhigh, anthropic/claude-sonnet-5:xhigh]
-    designer: [anthropic/claude-fable-5:high]
-    reviewer: [anthropic/claude-fable-5:high]
+    designer: [anthropic/claude-sonnet-5:high]
+    reviewer: [anthropic/claude-sonnet-5:high]
     librarian: [anthropic/claude-opus-4-8:medium]
     sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
     advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]

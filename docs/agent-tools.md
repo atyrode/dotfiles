@@ -58,13 +58,19 @@ reasoning — lives in [`omp/PROFILES.md`](../omp/PROFILES.md).
 | Command | Intended use | Primary route |
 | --- | --- | --- |
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
-| `ompz` | Fast, mixed — latency over depth | Luna/Spark + Sonnet/Haiku at low thinking, light single-hop fallbacks; nothing reaches for Sol/Fable/Opus |
-| `ompb` | Cost-conscious routine work (OpenAI-led) | GPT-5.6 Terra/Luna at low thinking; `task`+background lead on GPT-5.3-codex-spark (free bucket) → Luna |
-| `omps` | Everyday value (Anthropic-led) | Sonnet 5 leads; Opus for plan/slow; background on GPT-5.3-codex-spark (free bucket) → Haiku |
-| `ompg` | Difficult work, GPT-led | GPT-5.6 Sol drives; a GPT sibling absorbs a blip, then Claude is the net |
-| `ompc` | Difficult work, Claude-led | Fable drives; Opus absorbs a blip, then GPT is the net (ompg's mirror) |
+| `ompz` | Mixed · speed — latency over depth | Luna/Spark + Sonnet/Haiku at low thinking, light single-hop crosses; nothing reaches for Sol/Fable/Opus |
+| `ompn` | Mixed · regular — balanced daily driver | Claude leads judgment, GPT leads execution, at medium thinking; full same-bucket-then-cross redundancy |
+| `ompm` | Mixed · smart — hardest work, best per task | Sol on GPT-strength roles, Fable/Opus on Claude-strength ones (design/plan/review); full redundancy |
+| `ompl` | GPT · speed — fast Codex | Luna at low thinking, `task` drains Spark, single fast hops to Haiku |
+| `ompb` | GPT · regular — routine Codex work | Terra at medium thinking, kept off premium tiers (Luna/Terra + Haiku/Sonnet, never Sol/Opus); background drains Spark |
+| `ompg` | GPT · smart — difficult work, GPT-led | Sol drives; a GPT sibling absorbs a blip, then Claude is the net |
+| `ompo` | GPT-only — never crosses to Anthropic | Sol → Terra → Luna internal redundancy; background drains Spark; keeps every token on Codex |
+| `ompk` | Claude · speed — fast Claude | Haiku at low thinking, background drains Spark, single fast hops to Luna |
+| `omps` | Claude · regular — everyday value | Sonnet 5 leads; Opus for plan/slow; background on Spark → Haiku |
+| `ompc` | Claude · smart — difficult work, Claude-led | Fable drives; Opus absorbs a blip, then GPT is the net (ompg's mirror) |
+| `ompe` | Claude-only — never crosses to OpenAI | Opus → Sonnet → Haiku internal redundancy, no Spark/Fable; keeps every token on the Claude plan |
 | `ompf` | Fable-first work with predictable routing | Fable for primary/deliberative roles, with automatic fallback disabled |
-| `ompx` | Huge-context (1M) work | Fable/Opus/Sonnet lead; GPT-5.4 is the 1M cross-net; every substantive hop holds 1M |
+| `ompx` | Huge-context (1M) work | Anthropic's 1M line (Fable/Opus/Sonnet) leads and is the only redundancy; no OpenAI 1M on a ChatGPT account, so no cross-net |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 
 Each profile commits to one subscription pool for its lead and substantive

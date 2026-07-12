@@ -27,19 +27,20 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
-  # Claude sibling first, then cross to OpenAI. Sol out-prices Opus per output
-  # token, so the crossing is the expensive step; it only fires when Anthropic
-  # is actually down provider-wide. Background drains Spark, then Haiku.
+  # Redundancy first: a same-provider sibling before the cross (the Claude pair,
+  # then the matched OpenAI pair), so a single-model outage never leaves its
+  # bucket, and chains never drop below the lead's tier. Fable is the deliberate
+  # elite lead (default/plan/slow/designer) and falls back to main-plan Opus —
+  # it is never an automatic net. Background drains Spark, then Haiku.
   fallbackChains:
-    default: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high]
-    task: [anthropic/claude-haiku-4-5:medium, openai-codex/gpt-5.6-terra:medium]
-    plan: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high]
-    slow: [anthropic/claude-opus-4-8:xhigh, openai-codex/gpt-5.6-sol:xhigh]
-    designer: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high]
-    reviewer: [anthropic/claude-sonnet-5:high, openai-codex/gpt-5.6-sol:high]
-    librarian: [anthropic/claude-haiku-4-5:medium, openai-codex/gpt-5.6-terra:medium]
-    # Spark is a Codex model, so it falls back to a regular GPT rung before
-    # crossing to Haiku (drain free Spark, then cheap nano, then Claude).
+    default: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high, openai-codex/gpt-5.6-terra:high]
+    task: [anthropic/claude-opus-4-8:medium, openai-codex/gpt-5.6-terra:medium, openai-codex/gpt-5.6-sol:medium]
+    plan: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high, openai-codex/gpt-5.6-terra:high]
+    slow: [anthropic/claude-opus-4-8:xhigh, openai-codex/gpt-5.6-sol:xhigh, openai-codex/gpt-5.6-terra:xhigh]
+    designer: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-sol:high, openai-codex/gpt-5.6-terra:high]
+    reviewer: [anthropic/claude-sonnet-5:high, openai-codex/gpt-5.6-sol:high, openai-codex/gpt-5.6-terra:high]
+    librarian: [anthropic/claude-opus-4-8:medium, openai-codex/gpt-5.6-terra:medium, openai-codex/gpt-5.6-sol:medium]
+    # Background drains the free Spark bucket, then a cheap Codex rung, then Haiku.
     sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
     advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
     tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]

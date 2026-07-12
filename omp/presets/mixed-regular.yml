@@ -1,0 +1,47 @@
+# ompn — mixed·regular. A balanced daily driver across both pools at medium
+# thinking: Claude leads judgment (default/designer/reviewer/plan), GPT leads
+# execution (task/librarian/slow), background drains Spark. Full redundancy —
+# every substantive lead carries a same-bucket sibling, then crosses to the
+# capability-matched model on the other provider (+ its sibling).
+modelRoles:
+  default: anthropic/claude-sonnet-5:medium
+  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  smol: openai-codex/gpt-5.6-luna:low
+  task: openai-codex/gpt-5.6-terra:medium
+  sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+  librarian: openai-codex/gpt-5.6-terra:medium
+  designer: anthropic/claude-sonnet-5:high
+  reviewer: anthropic/claude-sonnet-5:high
+  plan: anthropic/claude-opus-4-8:high
+  slow: openai-codex/gpt-5.6-sol:high
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Same-bucket sibling first, then the matched cross (+ its sibling). Background
+  # drains Spark, then Luna, then Haiku.
+  fallbackChains:
+    default: [anthropic/claude-opus-4-8:medium, openai-codex/gpt-5.6-terra:medium, openai-codex/gpt-5.6-sol:medium]
+    task: [openai-codex/gpt-5.6-sol:medium, anthropic/claude-sonnet-5:medium, anthropic/claude-opus-4-8:medium]
+    plan: [anthropic/claude-sonnet-5:high, openai-codex/gpt-5.6-sol:high, openai-codex/gpt-5.6-terra:high]
+    slow: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
+    designer: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-sol:high]
+    reviewer: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-sol:high]
+    librarian: [openai-codex/gpt-5.6-sol:medium, anthropic/claude-sonnet-5:medium, anthropic/claude-opus-4-8:medium]
+    sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+
+task:
+  agentModelOverrides:
+    designer: anthropic/claude-sonnet-5:high
+    librarian: openai-codex/gpt-5.6-terra:medium
+    reviewer: anthropic/claude-sonnet-5:high
+    sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+    task: openai-codex/gpt-5.6-terra:medium
+
+defaultThinkingLevel: medium

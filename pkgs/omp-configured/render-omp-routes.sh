@@ -131,8 +131,8 @@ done
 
 printf '%s' "$dim"
 printf 'scout is deliberately unpinned: it rides the smol route via its upstream frontmatter.\n'
-printf 'omp runs your own mutable config, unmanaged; ompu is the untrusted launcher\n'
-printf '(defaults routing, isolated state, restricted tools).\n'
+printf 'omp runs your own mutable config, unmanaged, so it is not listed above.\n'
+printf 'ompu adds isolated state and restricted tools over the defaults routing shown.\n'
 printf "pick a launcher interactively with 'code'; design rationale in omp/PROFILES.md.\n"
 printf 'source: omp/defaults.yml + omp/presets/*.yml — edit in the dotfiles repo, then zconf.\n'
 printf '%s' "$reset"

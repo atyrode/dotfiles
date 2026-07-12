@@ -1,0 +1,44 @@
+# ompk — claude·speed. The fastest, cheapest Claude tier at low thinking: Haiku
+# leads, background drains the free Spark bucket, and fallbacks are single fast
+# hops to GPT's cheap tier (Luna). Latency-first — this is Haiku's home.
+modelRoles:
+  default: anthropic/claude-haiku-4-5:low
+  advisor: openai-codex/gpt-5.3-codex-spark:low
+  smol: anthropic/claude-haiku-4-5:low
+  task: anthropic/claude-haiku-4-5:low
+  sonic: openai-codex/gpt-5.3-codex-spark:low
+  librarian: anthropic/claude-haiku-4-5:low
+  designer: anthropic/claude-sonnet-5:low
+  reviewer: anthropic/claude-sonnet-5:low
+  plan: anthropic/claude-sonnet-5:medium
+  slow: anthropic/claude-sonnet-5:high
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Single fast hop across to Luna. Background drains Spark first, then Luna.
+  fallbackChains:
+    default: [openai-codex/gpt-5.6-luna:low]
+    task: [openai-codex/gpt-5.6-luna:low]
+    plan: [openai-codex/gpt-5.6-terra:medium]
+    slow: [openai-codex/gpt-5.6-terra:high]
+    designer: [openai-codex/gpt-5.6-luna:low]
+    reviewer: [openai-codex/gpt-5.6-luna:low]
+    librarian: [openai-codex/gpt-5.6-luna:low]
+    sonic: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
+    tiny: [openai-codex/gpt-5.6-luna:low]
+    commit: [openai-codex/gpt-5.6-luna:low]
+
+task:
+  agentModelOverrides:
+    designer: anthropic/claude-sonnet-5:low
+    librarian: anthropic/claude-haiku-4-5:low
+    reviewer: anthropic/claude-sonnet-5:low
+    sonic: openai-codex/gpt-5.3-codex-spark:low
+    task: anthropic/claude-haiku-4-5:low
+
+defaultThinkingLevel: low

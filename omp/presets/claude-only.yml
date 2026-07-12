@@ -1,0 +1,46 @@
+# ompe — claude-only. Pure Anthropic, never crosses to OpenAI and never touches
+# the separate Spark/Fable buckets: Opus drives, redundancy stays inside the
+# Claude plan (Opus -> Sonnet -> Haiku). Load this to keep every token on
+# Anthropic — draining the Claude plan, or when Codex is down or off-limits.
+modelRoles:
+  default: anthropic/claude-opus-4-8:high
+  advisor: anthropic/claude-haiku-4-5:low
+  smol: anthropic/claude-haiku-4-5:low
+  task: anthropic/claude-sonnet-5:medium
+  sonic: anthropic/claude-haiku-4-5:low
+  librarian: anthropic/claude-sonnet-5:medium
+  designer: anthropic/claude-opus-4-8:high
+  reviewer: anthropic/claude-opus-4-8:high
+  plan: anthropic/claude-opus-4-8:high
+  slow: anthropic/claude-opus-4-8:xhigh
+  tiny: anthropic/claude-haiku-4-5:low
+  commit: anthropic/claude-haiku-4-5:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Claude-internal only — Opus -> Sonnet -> Haiku, never crossing to OpenAI and
+  # never reaching for the separate Spark/Fable buckets.
+  fallbackChains:
+    default: [anthropic/claude-sonnet-5:high, anthropic/claude-haiku-4-5:high]
+    task: [anthropic/claude-opus-4-8:medium, anthropic/claude-haiku-4-5:medium]
+    plan: [anthropic/claude-sonnet-5:high, anthropic/claude-haiku-4-5:high]
+    slow: [anthropic/claude-sonnet-5:xhigh, anthropic/claude-haiku-4-5:xhigh]
+    designer: [anthropic/claude-sonnet-5:high, anthropic/claude-haiku-4-5:high]
+    reviewer: [anthropic/claude-sonnet-5:high, anthropic/claude-haiku-4-5:high]
+    librarian: [anthropic/claude-opus-4-8:medium, anthropic/claude-haiku-4-5:medium]
+    sonic: [anthropic/claude-sonnet-5:low]
+    advisor: [anthropic/claude-sonnet-5:low]
+    tiny: [anthropic/claude-sonnet-5:low]
+    commit: [anthropic/claude-sonnet-5:low]
+
+task:
+  agentModelOverrides:
+    designer: anthropic/claude-opus-4-8:high
+    librarian: anthropic/claude-sonnet-5:medium
+    reviewer: anthropic/claude-opus-4-8:high
+    sonic: anthropic/claude-haiku-4-5:low
+    task: anthropic/claude-sonnet-5:medium
+
+defaultThinkingLevel: medium

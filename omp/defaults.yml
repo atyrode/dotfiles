@@ -22,30 +22,41 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
-  # Sibling first (rules out one model at capacity for free), cross last (the
-  # load-bearing step reaches the other provider). Trivial roles carry no chain:
-  # a blip on commit/tiny/sonic is harmless and crossing them is wasteful.
+  # Redundancy first: a same-provider sibling backs each lead before the cross,
+  # so a single-model outage never leaves its bucket; then the matched pair on
+  # the other provider. Chains never route below the lead's tier. Spark (drain)
+  # and Fable (elite) draw separate quota and never appear as a net — plan leads
+  # on Fable deliberately and falls back to main-plan Opus. Trivial roles carry
+  # no chain: a blip on commit/tiny/sonic is harmless.
   fallbackChains:
     default:
       - openai-codex/gpt-5.6-terra:medium
+      - anthropic/claude-opus-4-8:medium
       - anthropic/claude-sonnet-5:medium
     task:
-      - openai-codex/gpt-5.6-luna:medium
+      - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
+      - anthropic/claude-opus-4-8:medium
     plan:
       - anthropic/claude-opus-4-8:high
       - openai-codex/gpt-5.6-sol:high
+      - openai-codex/gpt-5.6-terra:high
     slow:
       - openai-codex/gpt-5.6-terra:xhigh
       - anthropic/claude-opus-4-8:xhigh
+      - anthropic/claude-sonnet-5:xhigh
     designer:
+      - anthropic/claude-opus-4-8:medium
       - openai-codex/gpt-5.6-terra:medium
+      - openai-codex/gpt-5.6-sol:medium
     reviewer:
       - anthropic/claude-opus-4-8:high
+      - openai-codex/gpt-5.6-terra:high
       - openai-codex/gpt-5.6-sol:high
     librarian:
-      - openai-codex/gpt-5.6-luna:medium
+      - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
+      - anthropic/claude-opus-4-8:medium
 
 personality: pragmatic
 

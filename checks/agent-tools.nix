@@ -122,27 +122,35 @@ in
         test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
         test "$(yq eval '.retry.modelFallback' ${fablePreset})" = "false"
 
-        for command in omp ompb ompc ompf ompg omps ompu ompx ompz; do
+        for command in omp ompb ompc ompe ompf ompg ompk ompl ompm ompn ompo omps ompu ompx ompz; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
           test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
         done
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-        )" = "code,omp,ompb,ompc,ompf,ompg,omph,omps,ompu,ompx,ompz"
+        )" = "code,omp,ompb,ompc,ompe,ompf,ompg,omph,ompk,ompl,ompm,ompn,ompo,omps,ompu,ompx,ompz"
         test "$(${pkgs.herdr-configured}/bin/herdr --version)" = "herdr 0.7.3"
 
         ${pkgs.omp-configured}/bin/omph > "$TMPDIR/omph.txt"
         ! grep -q $'\e' "$TMPDIR/omph.txt"
         grep -q "OMP managed routing — oh-my-pi ${lib.getVersion pkgs.omp}" "$TMPDIR/omph.txt"
         grep -q 'bundled agents: designer librarian reviewer scout sonic task' "$TMPDIR/omph.txt"
-        grep -q '^ompz  Fast, mixed, latency-first$' "$TMPDIR/omph.txt"
-        grep -q '^ompb  Cost-conscious routine work$' "$TMPDIR/omph.txt"
-        grep -q '^omps  Everyday value, Sonnet-led$' "$TMPDIR/omph.txt"
-        grep -q '^ompg  Difficult work, GPT-led$' "$TMPDIR/omph.txt"
-        grep -q '^ompc  Difficult work, Claude-led$' "$TMPDIR/omph.txt"
-        grep -q '^ompf  Fable-first, deterministic routing$' "$TMPDIR/omph.txt"
-        grep -q '^ompx  Huge-context (1M) work$' "$TMPDIR/omph.txt"
+        grep -q '^ompz  Luna + Haiku, low thinking$' "$TMPDIR/omph.txt"
+        grep -q '^ompb  Terra, off the premium tiers$' "$TMPDIR/omph.txt"
+        grep -q '^omps  Sonnet value, Opus for depth$' "$TMPDIR/omph.txt"
+        grep -q '^ompg  Sol drives, Claude is the net$' "$TMPDIR/omph.txt"
+        grep -q '^ompc  Fable drives, Opus reviews$' "$TMPDIR/omph.txt"
+        grep -q '^ompf  Fable, deterministic (no net)$' "$TMPDIR/omph.txt"
+        grep -q '^ompx  Beyond 372K — Anthropic 1M$' "$TMPDIR/omph.txt"
+        grep -q '^ompl  Luna; task drains Spark$' "$TMPDIR/omph.txt"
+        grep -q '^ompk  Haiku, fast and cheap$' "$TMPDIR/omph.txt"
+        grep -q '^ompn  Claude judges, GPT executes$' "$TMPDIR/omph.txt"
+        grep -q '^ompm  Best model per task$' "$TMPDIR/omph.txt"
+        grep -q '^ompo  Codex only, never crosses$' "$TMPDIR/omph.txt"
+        grep -q '^ompe  Claude only, never crosses$' "$TMPDIR/omph.txt"
+        # ompu inherits the managed defaults routing, so it is rendered like a preset
+        grep -q '^ompu  Sandboxed, restricted tools$' "$TMPDIR/omph.txt"
         grep -q 'gpt-5.6-sol:high' "$TMPDIR/omph.txt"
         grep -q 'claude-fable-5:high' "$TMPDIR/omph.txt"
         grep -q 'gpt-5.6-luna:low' "$TMPDIR/omph.txt"

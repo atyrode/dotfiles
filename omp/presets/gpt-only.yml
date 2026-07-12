@@ -1,0 +1,46 @@
+# ompo — gpt-only. Pure Codex, never crosses to Anthropic: Sol drives, redundancy
+# stays inside the Codex bucket (Sol -> Terra -> Luna), background drains the free
+# Spark bucket. Load this to keep every token on OpenAI — draining Codex, or when
+# the Claude plan is down or off-limits.
+modelRoles:
+  default: openai-codex/gpt-5.6-sol:high
+  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  smol: openai-codex/gpt-5.6-luna:low
+  task: openai-codex/gpt-5.3-codex-spark:xhigh
+  sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+  librarian: openai-codex/gpt-5.6-terra:medium
+  designer: openai-codex/gpt-5.6-sol:high
+  reviewer: openai-codex/gpt-5.6-sol:high
+  plan: openai-codex/gpt-5.6-sol:high
+  slow: openai-codex/gpt-5.6-sol:xhigh
+  tiny: openai-codex/gpt-5.3-codex-spark:low
+  commit: openai-codex/gpt-5.3-codex-spark:low
+
+retry:
+  enabled: true
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  # Codex-internal only — Sol -> Terra -> Luna, never crossing to Anthropic.
+  # Background drains Spark, then Luna.
+  fallbackChains:
+    default: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
+    task: [openai-codex/gpt-5.6-terra:medium, openai-codex/gpt-5.6-luna:medium]
+    plan: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
+    slow: [openai-codex/gpt-5.6-terra:xhigh, openai-codex/gpt-5.6-luna:xhigh]
+    designer: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
+    reviewer: [openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-luna:high]
+    librarian: [openai-codex/gpt-5.6-sol:medium, openai-codex/gpt-5.6-luna:medium]
+    sonic: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
+    tiny: [openai-codex/gpt-5.6-luna:low]
+    commit: [openai-codex/gpt-5.6-luna:low]
+
+task:
+  agentModelOverrides:
+    designer: openai-codex/gpt-5.6-sol:high
+    librarian: openai-codex/gpt-5.6-terra:medium
+    reviewer: openai-codex/gpt-5.6-sol:high
+    sonic: openai-codex/gpt-5.3-codex-spark:xhigh
+    task: openai-codex/gpt-5.3-codex-spark:xhigh
+
+defaultThinkingLevel: medium

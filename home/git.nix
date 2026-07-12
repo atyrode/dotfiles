@@ -9,7 +9,8 @@
       user.email = "alex@tyrode.dev";
       user.signingKey = "${config.home.homeDirectory}/.ssh/id_ed25519_git_signing.pub";
       
-      credential.helper = "store";
+      # Never persist Git credentials in plaintext; use SSH remotes/agents or
+      # a platform credential manager instead.
       gpg.format = "ssh";
       gpg.ssh.allowedSignersFile = "${config.home.homeDirectory}/.config/git/allowed_signers";
       

@@ -155,7 +155,7 @@ in
         ${pkgs.omp-configured}/bin/code --list > "$TMPDIR/code.txt"
         grep -q 'ompz' "$TMPDIR/code.txt"
         grep -q '^  mixed$' "$TMPDIR/code.txt"
-        grep -q '^  specialists$' "$TMPDIR/code.txt"
+        grep -q '^  special$' "$TMPDIR/code.txt"
         grep -q 'omps' "$TMPDIR/code.txt"
         grep -q 'ompc' "$TMPDIR/code.txt"
         grep -q 'ompx' "$TMPDIR/code.txt"

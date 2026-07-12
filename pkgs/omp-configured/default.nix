@@ -1366,7 +1366,7 @@ let
           mix) printf 'mixed' ;;
           gpt) printf 'gpt-led' ;;
           claude) printf 'claude-led' ;;
-          special) printf 'specialists' ;;
+          special) printf 'special' ;;
           *) printf '%s' "$1" ;;
         esac
       }
@@ -1548,7 +1548,7 @@ let
       # level (low -> xhigh reads as dim -> bright). Kept narrow so fzf's preview
       # (nowrap) never has to wrap ANSI lines, which it renders incorrectly.
       colorize_routes() {
-        gawk -v dim="$c_dim" -v ok="$c_ok" -v bold="$c_bold" -v rst="$c_rst" '
+        gawk -v dim="$c_dim" '
           function lvl(l) { return l=="minimal"?0:l=="low"?1:l=="medium"?2:l=="high"?3:l=="xhigh"?4:5 }
           function clamp(x) { return x>255?255:(x<0?0:int(x)) }
           function short(name,   a, n) {
@@ -1569,15 +1569,11 @@ let
           }
           {
             line = $0
-            # Reformat the metadata line: bold the thinking level, green/dim the
-            # on/off states, so it parses at a glance.
-            if (line ~ /^  thinking .* fallback /) {
-              match(line, /thinking ([a-z]+)/, m); tl = m[1]
-              fb = (line ~ /fallback enabled/) ? "on" : "off"; fbc = (fb == "on") ? ok : dim
-              ad = (line ~ /advisor on/) ? "on" : "off"; adc = (ad == "on") ? ok : dim
-              print dim "  thinking " bold tl rst dim "    fallback " fbc fb dim "    advisor " adc ad rst
-              next
-            }
+            # Drop the redundant profile header (col 0) — the preview shows the
+            # name/blurb itself — and the profile-level thinking/fallback/advisor
+            # line, which is redundant with the per-role levels and chains.
+            if (line ~ /^[a-z]/) next
+            if (line ~ /thinking .* fallback/) next
             gsub(/ +→/, " →", line)
             out = ""
             # paint() calls match() internally, which clobbers RSTART/RLENGTH, so
@@ -1618,7 +1614,7 @@ let
             glabel="$(group_label "''${groups[$i]}")"
             last_group="''${groups[$i]}"
           fi
-          labelcol="$(printf '%-10s' "$glabel")"
+          labelcol="$(printf '%-11s' "$glabel")"
           rows+="$(printf '%s\t%s%s%s  %s%s%s  %s%-5s%s  %s%s%s' \
             "''${names[$i]}" \
             "$c_dim" "$labelcol" "$c_rst" \
@@ -1626,13 +1622,13 @@ let
             "$c_bold" "''${names[$i]}" "$c_rst" \
             "$c_dim" "''${blurbs[$i]}" "$c_rst")"$'\n'
           {
-            printf '%s%s  %s%s%s\n\n' "$col" "$gly" "$c_bold" "''${names[$i]}" "$c_rst"
-            printf '%s%s%s\n\n' "$c_dim" "''${blurbs[$i]}" "$c_rst"
-            printf '%s\n' "''${details[$i]}"
+            printf '%s%s %s%s%s\n' "$col" "$gly" "$c_bold" "''${names[$i]}" "$c_rst"
+            printf '%s%s%s\n\n' "$col" "''${blurbs[$i]}" "$c_rst"
+            printf '%s%s%s\n' "$c_dim" "''${details[$i]}" "$c_rst"
             if [[ -f "$routes_plain" ]]; then
-              block="$(sed -n "/^''${names[$i]}  /,/^\$/p" "$routes_plain")"
-              [[ -n "$block" ]] && printf '\n%s%s%s\n' \
-                "$c_dim" "$(printf '%s' "$block" | colorize_routes)" "$c_rst"
+              block="$(sed -n "/^''${names[$i]}  /,/^\$/p" "$routes_plain" | colorize_routes)"
+              [[ -n "$block" ]] && printf '\n%s── routing ────────────────%s\n%s%s%s\n' \
+                "$c_dim" "$c_rst" "$c_dim" "$block" "$c_rst"
             fi
           } > "$prevdir/''${names[$i]}"
         done

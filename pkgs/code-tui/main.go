@@ -873,10 +873,23 @@ func (m model) previewPane() string {
 		Render(m.vp.View())
 }
 
+// accent is the context colour — the selected lane in the generator, or the
+// focused profile's lane colour in the picker. Blue / purple / orange.
+func (m model) accent() string {
+	if m.view == genView {
+		return laneColor(m.sel["lane"])
+	}
+	if m.cursor < len(m.profiles) {
+		return m.profiles[m.cursor].color
+	}
+	return cAcc
+}
+
 func (m model) header() string {
+	acc := m.accent()
 	tab := func(label string, on bool) string {
 		if on {
-			return lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Bold(true).Render(label)
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render(label)
 		}
 		return stDim.Render(label)
 	}
@@ -897,33 +910,68 @@ func (m model) header() string {
 		tab("generator", m.view == genView) + stDim.Render("    "+hint)
 }
 
+// windowLines clips a rendered list to h lines, scrolled to keep the cursor line
+// visible, then fixes it to width w — so the column can never exceed the body.
+func windowLines(lines []string, cursor, h, w int) string {
+	if h < 1 {
+		h = 1
+	}
+	if len(lines) > h {
+		start := 0
+		if cursor >= h {
+			start = cursor - h + 1
+		}
+		if start+h > len(lines) {
+			start = len(lines) - h
+		}
+		if start < 0 {
+			start = 0
+		}
+		lines = lines[start : start+h]
+	}
+	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
+}
+
+func (m model) leftColumn(full bool) string {
+	w := m.listW()
+	if full {
+		w = m.w
+	}
+	var lines []string
+	cursor := 0
+	if m.mode() == modeStacked {
+		g, gci := m.genLines(m.view == genView)
+		p, pci := m.pickerLines(m.view == pickerView, w)
+		lines = append(lines, g...)
+		lines = append(lines, stDim.Render(strings.Repeat("─", w)))
+		off := len(lines)
+		lines = append(lines, p...)
+		if m.view == genView {
+			cursor = gci
+		} else {
+			cursor = off + pci
+		}
+	} else if m.view == pickerView {
+		lines, cursor = m.pickerLines(true, w)
+	} else {
+		lines, cursor = m.genLines(true)
+	}
+	return windowLines(lines, cursor, m.vp.Height, w)
+}
+
 func (m model) View() string {
 	if !m.rdy {
 		return "loading…"
 	}
 	var body string
 	switch m.mode() {
-	case modeStacked:
-		sep := stDim.Render(strings.Repeat("─", m.listW()))
-		stack := m.genList(m.view == genView) + "\n" + sep + "\n" + m.pickerList(m.view == pickerView)
-		left := lipgloss.NewStyle().Width(m.listW()).Render(stack)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, left, m.previewPane())
-	case modeSplit:
-		var l string
-		if m.view == pickerView {
-			l = m.pickerList(true)
-		} else {
-			l = m.genList(true)
-		}
-		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(m.listW()).Render(l), m.previewPane())
+	case modeStacked, modeSplit:
+		body = lipgloss.JoinHorizontal(lipgloss.Top, m.leftColumn(false), m.previewPane())
 	default: // collapsed
-		switch {
-		case m.showResult && m.w < 62:
+		if m.showResult && m.w < 62 {
 			body = m.vp.View()
-		case m.view == pickerView:
-			body = m.pickerList(true)
-		default:
-			body = m.genList(true)
+		} else {
+			body = m.leftColumn(true)
 		}
 	}
 	rule := stDim.Render(strings.Repeat("─", m.w))
@@ -931,19 +979,19 @@ func (m model) View() string {
 	if foot := m.usagePanel(); foot != "" {
 		out += "\n" + rule + "\n" + foot
 	}
-	// Hard clamp every line to the terminal width so no stray overflow (a long
-	// chain, a wide glyph) can wrap and shift the whole layout.
-	return lipgloss.NewStyle().MaxWidth(m.w).Render(out)
+	// Hard clamp the frame to the terminal box so nothing can overflow and
+	// garble the alt-screen renderer.
+	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(out)
 }
 
-func (m model) pickerList(focused bool) string {
-	trunc := lipgloss.NewStyle().MaxWidth(m.listW()).Inline(true)
-	var b strings.Builder
-	b.WriteString(sectionTitle("profiles", focused) + "\n\n")
+func (m model) pickerLines(focused bool, w int) ([]string, int) {
+	trunc := lipgloss.NewStyle().MaxWidth(w).Inline(true)
+	lines := []string{sectionTitle("profiles", focused, m.accent()), ""}
+	cursor := 0
 	lastGroup := ""
 	for i, p := range m.profiles {
 		if p.group != lastGroup {
-			b.WriteString(stGrp.Render(p.group) + "\n")
+			lines = append(lines, stGrp.Render(p.group))
 			lastGroup = p.group
 		}
 		mark := "  "
@@ -960,30 +1008,31 @@ func (m model) pickerList(focused bool) string {
 		}
 		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Render(p.glyph)
 		nm := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Bold(focused).Render(p.name)
-		row := fmt.Sprintf("%s%s %-6s %s", mark, gly, nm, blurb)
-		row = trunc.Render(row)
+		row := trunc.Render(fmt.Sprintf("%s%s %-6s %s", mark, gly, nm, blurb))
 		if i == m.cursor {
 			bg := cSelBg
 			if !focused {
 				bg = "#141922"
 			}
-			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Width(m.listW()).Render(row)
+			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Width(w).Render(row)
+			cursor = len(lines)
 		}
-		b.WriteString(row + "\n")
+		lines = append(lines, row)
 	}
-	return b.String()
+	return lines, cursor
 }
 
-func sectionTitle(name string, focused bool) string {
+func sectionTitle(name string, focused bool, accent string) string {
 	if focused {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Bold(true).Render("▍ " + name)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(accent)).Bold(true).Render("▍ " + name)
 	}
 	return stDim.Render("  " + name)
 }
 
-func (m model) genList(focused bool) string {
-	var b strings.Builder
-	b.WriteString(sectionTitle("generator", focused) + "\n\n")
+func (m model) genLines(focused bool) ([]string, int) {
+	acc := m.accent()
+	lines := []string{sectionTitle("generator", focused, acc), ""}
+	cursor := 0
 	for i, f := range m.facets {
 		na := (f.key == "fable" && m.sel["lane"] == "gpt-only") || (f.key == "spark" && m.sel["lane"] == "claude-only")
 		onRow := i == m.fcur && focused
@@ -994,7 +1043,8 @@ func (m model) genList(focused bool) string {
 		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(glyCol)).Render(f.glyph)
 		ptr := "  "
 		if onRow {
-			ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Render("▸ ")
+			ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Render("▸ ")
+			cursor = len(lines)
 		}
 		row := fmt.Sprintf("%s%s %s", ptr, gly, stDim.Render(pad(f.key, 9)))
 		for _, v := range f.values {
@@ -1002,7 +1052,7 @@ func (m model) genList(focused bool) string {
 			case na:
 				row += "   " + stDim.Render(v)
 			case v == m.sel[f.key]:
-				col := cAcc
+				col := acc
 				if f.key == "lane" {
 					col = laneColor(v)
 				} else if (f.key == "spark" || f.key == "fable") && v == "on" {
@@ -1036,9 +1086,9 @@ func (m model) genList(focused bool) string {
 				row += "   " + stWarn.Render(gWarn+" "+w+" — no usage left")
 			}
 		}
-		b.WriteString(row + "\n")
+		lines = append(lines, row)
 	}
-	return b.String()
+	return lines, cursor
 }
 
 func pad(s string, n int) string {

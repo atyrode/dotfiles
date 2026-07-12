@@ -1868,6 +1868,12 @@ let
             ;;
         esac
         [[ -f "$routes_plain" ]] || return 0
+        # Behaviour summary (thinking baseline / fallback / advisor), lifted from
+        # the 2nd line of the profile's block in the generated routes page so it
+        # cannot drift from the deployed config.
+        local cfg
+        cfg="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | sed -n '2s/^  *//p')"
+        [[ -n "$cfg" ]] && printf '\n%s%s%s\n' "$c_dim" "$cfg" "$c_rst"
         case "$s" in
           0)
             block="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | colorize_routes lead)"

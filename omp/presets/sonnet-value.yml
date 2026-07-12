@@ -42,10 +42,10 @@ retry:
     # Spark is a Codex model, so it falls back to a regular GPT rung before
     # crossing to Haiku — drain the free Spark bucket, then cheap main-Codex
     # nano, then the Claude plan only if OpenAI is fully down.
-    sonic: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
-    advisor: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
-    tiny: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
-    commit: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
+    sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
 
 task:
   agentModelOverrides:

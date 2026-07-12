@@ -7,17 +7,17 @@
 # here — this profile optimises for latency, not for emptying the Spark quota.
 modelRoles:
   default: openai-codex/gpt-5.6-luna:low
-  advisor: openai-codex/gpt-5.4-nano:low
-  smol: openai-codex/gpt-5.4-nano:low
+  advisor: openai-codex/gpt-5.6-luna:low
+  smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.3-codex-spark:low
-  sonic: openai-codex/gpt-5.4-nano:low
+  sonic: openai-codex/gpt-5.6-luna:low
   librarian: openai-codex/gpt-5.6-luna:low
   designer: anthropic/claude-sonnet-5:low
   reviewer: anthropic/claude-sonnet-5:low
   plan: openai-codex/gpt-5.6-terra:medium
   slow: openai-codex/gpt-5.6-terra:high
-  tiny: openai-codex/gpt-5.4-nano:low
-  commit: openai-codex/gpt-5.4-nano:low
+  tiny: openai-codex/gpt-5.6-luna:low
+  commit: openai-codex/gpt-5.6-luna:low
 
 retry:
   enabled: true
@@ -39,7 +39,7 @@ task:
     designer: anthropic/claude-sonnet-5:low
     librarian: openai-codex/gpt-5.6-luna:low
     reviewer: anthropic/claude-sonnet-5:low
-    sonic: openai-codex/gpt-5.4-nano:low
+    sonic: openai-codex/gpt-5.6-luna:low
     task: openai-codex/gpt-5.3-codex-spark:low
 
 defaultThinkingLevel: low

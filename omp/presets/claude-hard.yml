@@ -40,10 +40,10 @@ retry:
     librarian: [anthropic/claude-haiku-4-5:medium, openai-codex/gpt-5.6-terra:medium]
     # Spark is a Codex model, so it falls back to a regular GPT rung before
     # crossing to Haiku (drain free Spark, then cheap nano, then Claude).
-    sonic: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
-    advisor: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
-    tiny: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
-    commit: [openai-codex/gpt-5.4-nano:low, anthropic/claude-haiku-4-5:low]
+    sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
 
 task:
   agentModelOverrides:

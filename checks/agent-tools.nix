@@ -145,7 +145,7 @@ in
         grep -q '^ompx  Huge-context (1M) work$' "$TMPDIR/omph.txt"
         grep -q 'gpt-5.6-sol:high' "$TMPDIR/omph.txt"
         grep -q 'claude-fable-5:high' "$TMPDIR/omph.txt"
-        grep -q 'gpt-5.4-nano:low' "$TMPDIR/omph.txt"
+        grep -q 'gpt-5.6-luna:low' "$TMPDIR/omph.txt"
         grep -q 'gpt-5.3-codex-spark:xhigh' "$TMPDIR/omph.txt"
         grep -q 'claude-haiku-4-5:low' "$TMPDIR/omph.txt"
         grep -q 'scout is deliberately unpinned' "$TMPDIR/omph.txt"

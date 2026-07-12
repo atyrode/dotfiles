@@ -15,8 +15,8 @@ modelRoles:
   reviewer: anthropic/claude-sonnet-5:high
   plan: anthropic/claude-fable-5:high
   slow: openai-codex/gpt-5.6-sol:xhigh
-  tiny: openai-codex/gpt-5.4-nano:low
-  commit: openai-codex/gpt-5.4-nano:low
+  tiny: openai-codex/gpt-5.6-luna:low
+  commit: openai-codex/gpt-5.6-luna:low
 
 retry:
   enabled: true

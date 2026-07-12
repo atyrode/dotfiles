@@ -58,8 +58,8 @@ reasoning — lives in [`omp/PROFILES.md`](../omp/PROFILES.md).
 | Command | Intended use | Primary route |
 | --- | --- | --- |
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
-| `ompz` | Fast, mixed — latency over depth | Luna/nano/Spark + Sonnet/Haiku at low thinking, light single-hop fallbacks; nothing reaches for Sol/Fable/Opus |
-| `ompb` | Cost-conscious routine work (OpenAI-led) | GPT-5.6 Terra/Luna at low thinking; `task`+background lead on GPT-5.3-codex-spark (free bucket) → nano |
+| `ompz` | Fast, mixed — latency over depth | Luna/Spark + Sonnet/Haiku at low thinking, light single-hop fallbacks; nothing reaches for Sol/Fable/Opus |
+| `ompb` | Cost-conscious routine work (OpenAI-led) | GPT-5.6 Terra/Luna at low thinking; `task`+background lead on GPT-5.3-codex-spark (free bucket) → Luna |
 | `omps` | Everyday value (Anthropic-led) | Sonnet 5 leads; Opus for plan/slow; background on GPT-5.3-codex-spark (free bucket) → Haiku |
 | `ompg` | Difficult work, GPT-led | GPT-5.6 Sol drives; a GPT sibling absorbs a blip, then Claude is the net |
 | `ompc` | Difficult work, Claude-led | Fable drives; Opus absorbs a blip, then GPT is the net (ompg's mirror) |
@@ -73,7 +73,7 @@ the Claude plan); the fallback net is the other pool. The exception is the
 fast-execution and background roles, which lead on `gpt-5.3-codex-spark` — its
 5h/7d Codex quota is a separate, normally-idle bucket, so draining it costs
 nothing on the main meters, and each role falls back to the per-pool cheap rung
-(nano or Haiku) the moment that bucket is exhausted. See
+(Luna or Haiku) the moment that bucket is exhausted. See
 [`omp/PROFILES.md`](../omp/PROFILES.md) for the full rationale.
 
 Plain `omp` executes upstream OMP directly: no extension, defaults, preset, or
@@ -85,7 +85,7 @@ from `omp/plain-seed.yml` into the writable configuration with local edits
 always winning; see [Seeded plain-omp defaults](#seeded-plain-omp-defaults).
 
 The managed defaults use Sol for interactive daily work, keep cheap, fast roles
-on Luna, drop the text-trivial `commit`/`tiny` roles to GPT-5.4-nano, and
+on Luna, keep the text-trivial `commit`/`tiny` roles on GPT-5.6-luna, and
 reserve Fable/Opus for planning and the deliberative fallback tier. Fallback
 chains follow one rule: try a same-provider sibling first (it rules out a single
 model at capacity for free), then make the last, load-bearing hop cross to the
@@ -101,7 +101,7 @@ The balanced routing rationale is:
 | `task` | General implementation on Terra | Medium | Mid-cost worker; a Luna sibling first, then Sonnet crosses providers |
 | `librarian` | Repository and documentation research on Terra | Medium | A Luna sibling keeps the read-heavy role cheap, then Sonnet crosses for depth |
 | `advisor`, `smol`, `sonic` | Fast review, lookup, and naming on Luna | Minimal–low | Cheapest recurring work; no fallback chain — a blip is harmless and crossing them is wasteful |
-| `tiny`, `commit` | Labels and commit messages on GPT-5.4-nano | Low | The cheapest rung for text-trivial, always-on work; no fallback chain |
+| `tiny`, `commit` | Labels and commit messages on GPT-5.6-luna | Low | The cheapest supported Codex rung for text-trivial, always-on work; no fallback chain |
 | `designer` | Product and interface design on Sonnet | Medium | Crosses straight to Terra, Sonnet's price-twin (Sonnet has no lateral Anthropic sibling) |
 | `reviewer` | High-scrutiny review on Sonnet | High | Higher-cost quality gate; escalates to Opus, then Sol, if the primary is unavailable |
 | `plan` | Architecture and planning on Fable | High | Premium reasoning is intentional for decisions with broad downstream impact; Opus then Sol are the escape routes |

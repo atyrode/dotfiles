@@ -9,7 +9,7 @@
 modelRoles:
   default: openai-codex/gpt-5.6-terra:low
   advisor: openai-codex/gpt-5.3-codex-spark:xhigh
-  smol: openai-codex/gpt-5.4-nano:low
+  smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.3-codex-spark:xhigh
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
   librarian: openai-codex/gpt-5.6-luna:medium
@@ -35,10 +35,10 @@ retry:
       - openai-codex/gpt-5.6-terra:low
       - openai-codex/gpt-5.6-luna:medium
       - anthropic/claude-haiku-4-5:medium
-    sonic: [openai-codex/gpt-5.4-nano:low]
-    advisor: [openai-codex/gpt-5.4-nano:low]
-    tiny: [openai-codex/gpt-5.4-nano:low]
-    commit: [openai-codex/gpt-5.4-nano:low]
+    sonic: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
+    tiny: [openai-codex/gpt-5.6-luna:low]
+    commit: [openai-codex/gpt-5.6-luna:low]
     plan: []
     slow: []
     designer: []

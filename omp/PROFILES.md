@@ -23,9 +23,8 @@ deliver less per dollar than the 5.6 tiers, so nothing routes to them today.
 | --- | --- | --- | --- | --- |
 | `gpt-5.6-sol` | $5 / $30 | 372K | low→max | Flagship. Leads `ompg` and the base default. Out-prices Opus 4.8 per output token. |
 | `gpt-5.6-terra` | $2.50 / $15 | 372K | low→max | Balanced workhorse. Leads `ompb` and the task/librarian roles. Sonnet's price-twin. |
-| `gpt-5.6-luna` | $1 / $6 | 372K | low→max | Fast, high-volume. Sibling hop and cheap worker across the OpenAI-led maps. |
-| `gpt-5.4` | $2.50 / $15 | **1M** | low→xhigh | The only OpenAI 1M card. `ompx`'s cross-net and librarian lead. |
-| `gpt-5.4-nano` | **$0.20 / $1.25** | 272K | low→xhigh | Cheapest model on hand (~5× under Luna). Background trivia (`commit`/`tiny`, all of `ompb`'s background). No `minimal` level — floor is `low`. |
+| `gpt-5.6-luna` | $1 / $6 | 372K | low→max | Fast, high-volume — the cheapest **supported** Codex tier. Sibling hops, cheap workers, and non-Spark background across the maps. |
+| `gpt-5.3-codex-spark` | $1.75 / $14 | 128K | low→xhigh | Coding-tuned and fast. Draws from a **separate, usually-idle** 5h/7d Codex bucket, so the fast-execution roles lead on it (see [Separate rate buckets](#separate-rate-buckets--an-underused-lever)). |
 
 ### Anthropic (provider `anthropic`)
 
@@ -39,7 +38,11 @@ deliver less per dollar than the 5.6 tiers, so nothing routes to them today.
 † Sonnet 5 is at introductory pricing through **2026-08-31**, then $3 / $15 —
 dearer than Terra. See [Revisit triggers](#revisit-triggers).
 
-Not routed: `gpt-5.4-mini` (squeezed between nano and Luna with no niche),
+**Unusable on a ChatGPT/Codex account:** the whole `gpt-5.4` family (`gpt-5.4`,
+`gpt-5.4-nano`, `gpt-5.4-mini`) returns `invalid_request` ("not supported when
+using Codex with a ChatGPT account"), so nothing routes to it — Luna is the
+cheap floor, and there is **no OpenAI 1M model available**, which is why `ompx`
+is Anthropic-1M-only for its substantive roles. Also not routed:
 `gpt-5.1-codex-mini` (cheap but narrow thinking), the rest of the GPT-5.x
 back-catalog, and `claude-mythos-5` (gated private program, not usable).
 
@@ -68,7 +71,7 @@ back-catalog, and `claude-mythos-5` (gated private program, not usable).
    **`:xhigh`** — best output *and* faster drain — while the boilerplate
    one-liners (`tiny`/`commit`) stay at `:low`, where xhigh reasoning would only
    add latency. When the bucket is exhausted each role falls back to the cheap
-   rung: `gpt-5.4-nano` ($0.20/$1.25) under OpenAI-led profiles, `claude-haiku-4-5`
+   rung: `gpt-5.6-luna` ($1/$6) under OpenAI-led profiles, `claude-haiku-4-5`
    ($1/$5) under Anthropic-led ones. Spark stays off `smol`/scout (exploration
    can exceed its 128K window), the thinking roles, and `ompf`.
 5. **Trivial roles carry at most one cheap fallback.** Background is never
@@ -86,7 +89,7 @@ and the providers meter more than one bucket per account. `omp usage` shows them
 (and the `code` picker renders a compact panel of them beside the palette):
 
 - **OpenAI Codex has two independent buckets.** The main 5h/7d window is shared
-  by `sol`/`terra`/`luna`/`gpt-5.4`/`nano`. But `gpt-5.3-codex-spark` draws from
+  by `sol`/`terra`/`luna`. But `gpt-5.3-codex-spark` draws from
   a **separate** 5h/7d "Spark" bucket that is usually sitting at 0%. That idle
   Spark allowance is effectively **free extra Codex capacity every 5h/7d** — in
   an ideal world we drain it too, rather than let it reset unused. Routing some
@@ -99,9 +102,9 @@ and the providers meter more than one bucket per account. `omp usage` shows them
     so the drain is transparent:
     - OpenAI-led (`ompb`, `ompg`): `task` **and** `sonic`/`advisor`/`tiny`/`commit`
       lead on Spark. `task` falls back to its old terra/luna worker chain (then
-      crosses); background falls back to `nano`.
+      crosses); background falls back to `luna`.
     - Anthropic-led (`omps`, `ompc`, `ompx`): the background roles lead on Spark.
-      Because Spark is itself a Codex model, they fall back to `nano` (a regular
+      Because Spark is itself a Codex model, they fall back to `luna` (a regular
       Codex rung) before crossing to `haiku` — drain the free Spark bucket, then
       cheap main-Codex, then the Claude plan only if OpenAI is fully down.
       `task` stays pool-pure on Claude — draining the free Codex bucket for
@@ -134,7 +137,7 @@ specialists and sorted faster → smarter within each.
 | | OpenAI-led (Codex meter) | Anthropic-led (Claude meter) |
 | --- | --- | --- |
 | **fast (mixed)** | `ompz` — fastest tiers of both providers, low thinking, light fallbacks | *(uses both meters)* |
-| **cheap** | `ompb` — routine work, nano background, features off | `omps` — everyday value, Sonnet-led, features on |
+| **cheap** | `ompb` — routine work, Spark/Luna background, features off | `omps` — everyday value, Sonnet-led, features on |
 | **hard** | `ompg` — Sol drives, Claude is the net | `ompc` — Fable drives, GPT is the net |
 | **specialist** | — | `ompf` deterministic Fable · `ompx` huge-context (1M) |
 
@@ -148,7 +151,7 @@ Routing detail is in the YAML; each file's header comment states its thesis.
 Summary:
 
 - **`ompz`** ([fast-mixed.yml](presets/fast-mixed.yml)) — speed-first, mixed. The
-  fastest competent tiers across both providers at low thinking (Luna/nano/Spark
+  fastest competent tiers across both providers at low thinking (Luna/Spark
   + Sonnet/Haiku), with light single-hop fallbacks (cross to Haiku, or a cheap
   sibling). Nothing reaches for Sol/Fable/Opus; plan/slow get one capped step up.
   For snappy interactive work where latency beats depth. Note: unlike the
@@ -157,7 +160,7 @@ Summary:
 - **`ompb`** ([budget.yml](presets/budget.yml)) — minimum burn. Terra/Luna lead
   the interactive and deliberative roles at low thinking. `task` and the
   background roles lead on Spark to drain the free Codex bucket, falling back to
-  their old rungs (`task`→terra→luna→Haiku; background→nano). `default` keeps a
+  their old rungs (`task`→terra→luna→Haiku; background→luna). `default` keeps a
   Luna→Sonnet net; the deliberative roles keep none. Advisor, branch summaries,
   and autolearn off.
 - **`omps`** ([sonnet-value.yml](presets/sonnet-value.yml)) — the profile `ompb`
@@ -172,7 +175,7 @@ Summary:
   overload for free, then the last hop crosses to Fable/Opus so a full OpenAI
   outage still lands on a live vendor. `task` and the background roles lead on
   Spark (fast execution, draining the free Codex bucket), falling back to the
-  terra/luna chain and nano respectively.
+  terra/luna chain and luna respectively.
 - **`ompc`** ([claude-hard.yml](presets/claude-hard.yml)) — `ompg`'s mirror,
   opposite pool. Fable drives, Opus is the sibling (and leads review, its
   strength), Sonnet/Haiku carry workers, every chain reaches back to Sol/Terra.
@@ -186,11 +189,12 @@ Summary:
   burned on commit messages (the mixed pool is the accepted price of
   determinism).
 - **`ompx`** ([context-1m.yml](presets/context-1m.yml)) — work beyond the 372K
-  ceiling of the 5.6 family. Anthropic owns 1M, so Fable/Opus/Sonnet lead;
-  `gpt-5.4` is the only OpenAI 1M card, used as the universal cross-net and the
-  librarian lead (putting the read-everything role on the Codex meter splits the
-  burn). **Invariant: a fallback never shrinks the window mid-job** on a
-  substantive role. Background trivia never sees the big context, so it leads on
+  ceiling of the 5.6 family. Anthropic owns 1M, and OpenAI has no 1M model that
+  runs on a ChatGPT/Codex account, so every substantive role — primary *and*
+  fallback — stays on Anthropic's 1M line (Fable/Opus/Sonnet). **Invariant: a
+  fallback never shrinks the window mid-job**; there is simply no cross-provider
+  net at 1M, so if Anthropic is down, huge-context work waits. Background trivia
+  never sees the big context, so it leads on
   Spark (free Codex bucket) → Haiku.
 
 ## The `code` picker
@@ -236,18 +240,15 @@ the picker, the routing page, and the launchers never drift.
 
 ## Revisit triggers
 
-- **The nano bet.** `commit`/`tiny` and all of `ompb`'s background run on
-  `gpt-5.4-nano` — the ~5× saving is the biggest here, and the only quality
-  gamble. If commit messages or labels degrade, the revert is one line back to
-  Luna per role. Worth a week's trial before judging.
+- **The 5.4 family is out.** `gpt-5.4`/`-nano`/`-mini` aren't usable on a
+  ChatGPT/Codex account (`invalid_request`), so the cheap `nano` background rung
+  is gone — trivia now leads on Spark and falls to Luna — and `ompx` lost its
+  only OpenAI 1M card (its substantive roles are Anthropic-1M-only). If OpenAI
+  ships a ChatGPT-usable cheap or 1M tier, revisit both.
 - **Sonnet's price cliff.** `omps` is built on introductory pricing ($2/$10). On
   **2026-08-31** it steps to $3/$15 — dearer than Terra. The profile stays
   coherent (pool separation still justifies it), but the "cheapest
   premium-adjacent" pitch expires; recheck against Terra then.
-- **`ompx` librarian pool-split.** `gpt-5.4` leads `ompx`'s librarian to spread
-  the read-everything burn onto the Codex meter and give the 1M card a real job.
-  If a previous-gen model leading a role feels wrong, the alternative is
-  all-Anthropic (Sonnet lead, `gpt-5.4` as net only).
 - **How hard to push Spark.** Spark now leads the fast-execution roles (see
   [Separate rate buckets](#separate-rate-buckets--an-underused-lever)). Two dials
   remain: whether `task` should also lead on Spark in the Anthropic-led profiles

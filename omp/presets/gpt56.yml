@@ -38,10 +38,10 @@ retry:
     designer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-fable-5:high]
     reviewer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high]
     librarian: [openai-codex/gpt-5.6-luna:medium, anthropic/claude-sonnet-5:medium]
-    sonic: [openai-codex/gpt-5.4-nano:low]
-    advisor: [openai-codex/gpt-5.4-nano:low]
-    tiny: [openai-codex/gpt-5.4-nano:low]
-    commit: [openai-codex/gpt-5.4-nano:low]
+    sonic: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
+    tiny: [openai-codex/gpt-5.6-luna:low]
+    commit: [openai-codex/gpt-5.6-luna:low]
 
 task:
   agentModelOverrides:

@@ -1653,7 +1653,7 @@ let
           --border-label=" code $g_point pick a launcher " \
           --prompt="$g_search  " --pointer="$g_point" --marker='+' --info=inline \
           --delimiter=$'\t' --with-nth=2 \
-          --preview="cat $prevdir/{1}" --preview-window='right:52%:nowrap:border-left' \
+          --preview="cat $prevdir/{1}" --preview-window='right:52%:wrap:border-left' \
           "''${footer_args[@]}" \
           --color="$theme" || true)"
         rm -rf "$prevdir"

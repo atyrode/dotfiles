@@ -41,6 +41,7 @@
       "base"
       "development"
       "agent-tools"
+      "containers"
     ];
     aliases = [
       "alex"

@@ -76,9 +76,16 @@ render_profile() {
   advisor_enabled=$(jq -r '.advisor.enabled // false' <<<"$merged")
   fallback=$(jq -r '(.retry.enabled // false) and (.retry.modelFallback // false)' <<<"$merged")
 
-  local advisor_note='advisor off' fallback_note='fallback disabled'
-  [[ $advisor_enabled == true ]] && advisor_note='advisor on'
-  [[ $fallback == true ]] && fallback_note='fallback enabled'
+  local advisor_note fallback_note
+  if [[ $advisor_enabled == true ]]; then
+    local advisor_model
+    advisor_model=$(jq -r '.modelRoles.advisor // "?"' <<<"$merged")
+    advisor_note="advisor $(short_model "$advisor_model")"
+  else
+    advisor_note='advisor off'
+  fi
+  fallback_note='fallback off'
+  [[ $fallback == true ]] && fallback_note='fallback on'
 
   printf '%s%s%s  %s\n' "$bold" "$name" "$reset" "$description"
   printf '  %sthinking %s · %s · %s%s\n' "$dim" "$thinking" "$fallback_note" "$advisor_note" "$reset"
@@ -132,6 +139,10 @@ for spec in "$@"; do
 done
 
 printf '%s' "$dim"
+printf 'the per-profile line reads: thinking baseline · fallback · advisor. A role'"'"'s :level\n'
+printf 'always wins; "thinking" is only the default for unpinned/ad-hoc calls ("auto" = a\n'
+printf 'per-turn classifier). All managed launchers share the enforced posture: approvals\n'
+printf 'yolo · task isolation auto · secrets on.\n'
 printf 'scout is deliberately unpinned: it rides the smol route via its upstream frontmatter.\n'
 printf 'omp runs your own mutable config, unmanaged, so it is not listed above.\n'
 printf 'ompu adds isolated state and restricted tools over the defaults routing shown.\n'

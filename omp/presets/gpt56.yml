@@ -1,14 +1,15 @@
 # Sol drives the thinking roles; the fast-execution roles (task + background)
 # lead on gpt-5.3-codex-spark to drain its separate idle 5h/7d Codex bucket (see
-# omp/PROFILES.md "Separate rate buckets"). The bucket is free, so the roles
-# that do real work (task/sonic/advisor) run at :xhigh — best output and faster
-# drain — while boilerplate (tiny/commit) stays :low. Each falls back the
-# instant its bucket is exhausted — task to the terra/luna chain, background to
-# nano. The substantive chains still end on Anthropic. smol/scout stay off Spark
-# (exploration context can exceed 128K).
+# omp/PROFILES.md "Separate rate buckets"). The bucket is free, so the coding
+# roles that drain it (task/sonic) run at :xhigh — best output and faster drain —
+# while boilerplate (tiny/commit) stays :low. The advisor is a judgment role, not
+# a drain target, so it runs on Sonnet 5 (cheaper than the Sol main) rather than
+# Spark. Each falls back the instant its bucket is exhausted — task to the
+# terra/luna chain, background to nano. The substantive chains still end on
+# Anthropic. smol/scout stay off Spark (exploration context can exceed 128K).
 modelRoles:
   default: openai-codex/gpt-5.6-sol:high
-  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  advisor: anthropic/claude-sonnet-5:high
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.3-codex-spark:xhigh
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
@@ -44,7 +45,7 @@ retry:
     reviewer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
     librarian: [openai-codex/gpt-5.6-sol:medium, anthropic/claude-sonnet-5:medium, anthropic/claude-opus-4-8:medium]
     sonic: [openai-codex/gpt-5.6-luna:low]
-    advisor: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-terra:medium, anthropic/claude-haiku-4-5:low]
     tiny: [openai-codex/gpt-5.6-luna:low]
     commit: [openai-codex/gpt-5.6-luna:low]
 
@@ -55,3 +56,8 @@ task:
     reviewer: openai-codex/gpt-5.6-sol:high
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: openai-codex/gpt-5.3-codex-spark:xhigh
+
+# Smart tier: fresh, responsive advice on high-stakes work.
+advisor:
+  syncBacklog: "3"
+  immuneTurns: 2

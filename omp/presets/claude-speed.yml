@@ -1,6 +1,7 @@
 # ompk — claude·speed. The fastest, cheapest Claude tier at low thinking: Haiku
 # leads, background drains the free Spark bucket, and fallbacks are single fast
-# hops to GPT's cheap tier (Luna). Latency-first — this is Haiku's home.
+# hops to GPT's cheap tier (Luna). The advisor is off — a per-turn reviewer would
+# cost as much as the Haiku main it shadows. Latency-first — this is Haiku's home.
 modelRoles:
   default: anthropic/claude-haiku-4-5:low
   advisor: openai-codex/gpt-5.3-codex-spark:low
@@ -40,5 +41,9 @@ task:
     reviewer: anthropic/claude-sonnet-5:low
     sonic: openai-codex/gpt-5.3-codex-spark:low
     task: anthropic/claude-haiku-4-5:low
+
+# Speed tier: advisor off — its ~2x token cost rivals the cheap main model.
+advisor:
+  enabled: false
 
 defaultThinkingLevel: low

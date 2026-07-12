@@ -1,11 +1,12 @@
 # ompn — mixed·regular. A balanced daily driver across both pools at medium
 # thinking: Claude leads judgment (default/designer/reviewer/plan), GPT leads
-# execution (task/librarian/slow), background drains Spark. Full redundancy —
-# every substantive lead carries a same-bucket sibling, then crosses to the
-# capability-matched model on the other provider (+ its sibling).
+# execution (task/librarian/slow), background drains Spark, and a light Haiku
+# advisor watches at low cadence. Full redundancy — every substantive lead
+# carries a same-bucket sibling, then crosses to the capability-matched model on
+# the other provider (+ its sibling).
 modelRoles:
   default: anthropic/claude-sonnet-5:medium
-  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  advisor: anthropic/claude-haiku-4-5:low
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-terra:medium
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
@@ -32,7 +33,7 @@ retry:
     reviewer: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.6-terra:high, openai-codex/gpt-5.6-sol:high]
     librarian: [openai-codex/gpt-5.6-sol:medium, anthropic/claude-sonnet-5:medium, anthropic/claude-opus-4-8:medium]
     sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
-    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
     tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
     commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
 
@@ -43,5 +44,10 @@ task:
     reviewer: anthropic/claude-sonnet-5:high
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: openai-codex/gpt-5.6-terra:medium
+
+# Regular tier: a lighter-touch advisor — lower sync, longer anti-nag debounce.
+advisor:
+  syncBacklog: "1"
+  immuneTurns: 4
 
 defaultThinkingLevel: medium

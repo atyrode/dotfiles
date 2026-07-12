@@ -6,12 +6,13 @@
 #
 # Background leads on gpt-5.3-codex-spark to drain its separate idle Codex bucket
 # (see omp/PROFILES.md) rather than spend the Claude plan on trivia. The bucket
-# is free, so sonic/advisor run at :xhigh (best output, faster drain) while the
+# is free, so sonic runs at :xhigh (best output, faster drain) while the
 # tiny/commit one-liners stay :low; each falls back to Haiku when Spark is
-# exhausted. The substantive roles stay pool-pure on Claude.
+# exhausted. The substantive roles stay pool-pure on Claude — and the advisor
+# judges on Haiku (a class under the Sonnet main), not Spark.
 modelRoles:
   default: anthropic/claude-sonnet-5:medium
-  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  advisor: anthropic/claude-haiku-4-5:low
   smol: anthropic/claude-haiku-4-5:low
   task: anthropic/claude-sonnet-5:medium
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
@@ -44,7 +45,7 @@ retry:
     # Haiku. Left lean on purpose — a blip on background trivia is harmless, and
     # Spark is a separate drain bucket, not a redundancy target.
     sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
-    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
     tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
     commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
 
@@ -55,5 +56,10 @@ task:
     reviewer: anthropic/claude-sonnet-5:high
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: anthropic/claude-sonnet-5:medium
+
+# Regular tier: a lighter-touch advisor — lower sync, longer anti-nag debounce.
+advisor:
+  syncBacklog: "1"
+  immuneTurns: 4
 
 defaultThinkingLevel: medium

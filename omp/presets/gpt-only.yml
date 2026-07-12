@@ -1,10 +1,11 @@
 # ompo — gpt-only. Pure Codex, never crosses to Anthropic: Sol drives, redundancy
 # stays inside the Codex bucket (Sol -> Terra -> Luna), background drains the free
-# Spark bucket. Load this to keep every token on OpenAI — draining Codex, or when
-# the Claude plan is down or off-limits.
+# Spark bucket, and the advisor judges on Terra (Spark is too shallow to review,
+# and staying in-pool keeps this a single-auth profile). Load this to keep every
+# token on OpenAI — draining Codex, or when the Claude plan is down or off-limits.
 modelRoles:
   default: openai-codex/gpt-5.6-sol:high
-  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  advisor: openai-codex/gpt-5.6-terra:high
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.3-codex-spark:xhigh
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
@@ -42,5 +43,10 @@ task:
     reviewer: openai-codex/gpt-5.6-sol:high
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: openai-codex/gpt-5.3-codex-spark:xhigh
+
+# Smart tier: fresh, responsive advice on high-stakes work.
+advisor:
+  syncBacklog: "3"
+  immuneTurns: 2
 
 defaultThinkingLevel: medium

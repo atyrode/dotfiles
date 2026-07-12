@@ -6,7 +6,7 @@ colorBlindMode: true
 
 modelRoles:
   default: openai-codex/gpt-5.6-sol:medium
-  advisor: openai-codex/gpt-5.6-luna:low
+  advisor: anthropic/claude-haiku-4-5:low
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-terra:medium
   sonic: openai-codex/gpt-5.6-luna:minimal

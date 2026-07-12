@@ -4,7 +4,7 @@
 # Anthropic — draining the Claude plan, or when Codex is down or off-limits.
 modelRoles:
   default: anthropic/claude-opus-4-8:high
-  advisor: anthropic/claude-haiku-4-5:low
+  advisor: anthropic/claude-sonnet-5:high
   smol: anthropic/claude-haiku-4-5:low
   task: anthropic/claude-sonnet-5:medium
   sonic: anthropic/claude-haiku-4-5:low
@@ -31,7 +31,7 @@ retry:
     reviewer: [anthropic/claude-sonnet-5:high, anthropic/claude-haiku-4-5:high]
     librarian: [anthropic/claude-opus-4-8:medium, anthropic/claude-haiku-4-5:medium]
     sonic: [anthropic/claude-sonnet-5:low]
-    advisor: [anthropic/claude-sonnet-5:low]
+    advisor: [anthropic/claude-haiku-4-5:low]
     tiny: [anthropic/claude-sonnet-5:low]
     commit: [anthropic/claude-sonnet-5:low]
 
@@ -42,5 +42,10 @@ task:
     reviewer: anthropic/claude-opus-4-8:high
     sonic: anthropic/claude-haiku-4-5:low
     task: anthropic/claude-sonnet-5:medium
+
+# Smart tier: fresh, responsive advice on high-stakes work.
+advisor:
+  syncBacklog: "3"
+  immuneTurns: 2
 
 defaultThinkingLevel: medium

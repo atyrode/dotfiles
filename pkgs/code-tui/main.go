@@ -429,6 +429,7 @@ func facetDefs(glyphs map[string]string) []facet {
 		{"thinking", []string{"low", "medium", "high", "xhigh"}, glyphs["thinking"]},
 		{"spark", []string{"on", "off"}, glyphs["spark"]},
 		{"fable", []string{"on", "off"}, glyphs["fable"]},
+		{"fast", []string{"off", "on"}, glyphs["fast"]},
 	}
 }
 
@@ -459,6 +460,66 @@ func laneColor(lane string) string {
 		return "#aa96e1"
 	}
 	return "#ff9f52"
+}
+
+func prefixed(model string) string {
+	if strings.HasPrefix(model, "claude") {
+		return "anthropic/" + model
+	}
+	return "openai-codex/" + model
+}
+
+// genConfigYAML reconstructs an omp config (modelRoles, fallback chains,
+// thinking, advisor, and the priority tier when fast is on) from the generated
+// routing block for the current facets — what Enter launches omp with.
+func (m model) genConfigYAML() string {
+	rows := m.generated[comboID(m.sel)]
+	var mr, fc strings.Builder
+	advisorOn := false
+	for _, r := range rows {
+		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
+		i := 0
+		if len(f) > 0 && f[0] == "●" {
+			i = 1
+		}
+		if i >= len(f) {
+			continue
+		}
+		role := f[i]
+		var models []string
+		for _, t := range f[i+1:] {
+			if modelRe.MatchString(t) {
+				models = append(models, t)
+			}
+		}
+		if len(models) == 0 {
+			continue
+		}
+		if role == "advisor" {
+			advisorOn = true
+		}
+		mr.WriteString("  " + role + ": " + prefixed(models[0]) + "\n")
+		if len(models) > 1 {
+			var fbs []string
+			for _, x := range models[1:] {
+				fbs = append(fbs, prefixed(x))
+			}
+			fc.WriteString("    " + role + ": [" + strings.Join(fbs, ", ") + "]\n")
+		}
+	}
+	var b strings.Builder
+	b.WriteString("modelRoles:\n" + mr.String())
+	b.WriteString("retry:\n  enabled: true\n  modelFallback: true\n  fallbackRevertPolicy: cooldown-expiry\n  fallbackChains:\n" + fc.String())
+	b.WriteString("defaultThinkingLevel: " + m.sel["thinking"] + "\n")
+	if advisorOn {
+		b.WriteString("advisor:\n  enabled: true\n")
+	} else {
+		b.WriteString("advisor:\n  enabled: false\n")
+	}
+	if m.sel["fast"] == "on" {
+		b.WriteString("tier:\n  openai: priority\n")
+	}
+	return b.String()
 }
 
 // ── model ────────────────────────────────────────────────────────────────────
@@ -532,7 +593,8 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
-	chosen string
+	chosen    string
+	genConfig string // generated config YAML to launch omp with (generator Enter)
 }
 
 // usageMsg carries availability fetched off the main thread so startup never
@@ -719,7 +781,11 @@ func (m *model) syncPreview() {
 	} else {
 		id := comboID(m.sel)
 		b.WriteString(lipgloss.NewStyle().Bold(true).Render("generated profile") + "\n")
-		b.WriteString(stDim.Render(strings.ReplaceAll(id, "_", " ")) + "\n\n")
+		b.WriteString(stDim.Render(strings.ReplaceAll(id, "_", " ")) + "\n")
+		if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
+			b.WriteString(stDim.Render("+ ") + lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff")).Render("priority tier — faster OpenAI") + "\n")
+		}
+		b.WriteString("\n")
 		if rows, ok := m.generated[id]; ok {
 			b.WriteString(stDim.Render("── routing ─────────────────") + "\n")
 			b.WriteString(renderRoute(rows, m.depth))
@@ -808,8 +874,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.view == pickerView {
 				m.chosen = m.profiles[m.cursor].exe
-				return m, tea.Quit
+			} else {
+				m.genConfig = m.genConfigYAML()
 			}
+			return m, tea.Quit
 		}
 	case tea.MouseMsg:
 		switch msg.Button {
@@ -1034,7 +1102,8 @@ func (m model) genLines(focused bool) ([]string, int) {
 	lines := []string{sectionTitle("generator", focused, acc), ""}
 	cursor := 0
 	for i, f := range m.facets {
-		na := (f.key == "fable" && m.sel["lane"] == "gpt-only") || (f.key == "spark" && m.sel["lane"] == "claude-only")
+		na := (f.key == "fable" && m.sel["lane"] == "gpt-only") ||
+			((f.key == "spark" || f.key == "fast") && m.sel["lane"] == "claude-only")
 		onRow := i == m.fcur && focused
 		glyCol := laneColor(m.sel["lane"])
 		if !focused {
@@ -1122,18 +1191,56 @@ func main() {
 		glyphs:    glyphs,
 		view:      genView, // generator is the default view
 		facets:    facetDefs(glyphs),
-		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "on", "fable": "off"},
+		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "on", "fable": "off", "fast": "off"},
 	}
 	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
 		os.Exit(1)
 	}
-	if fm, ok := final.(model); ok && fm.chosen != "" {
+	fm, _ := final.(model)
+	if fm.chosen != "" {
 		args := append([]string{fm.chosen}, os.Args[1:]...)
 		if err := syscall.Exec(fm.chosen, args, os.Environ()); err != nil {
 			fmt.Fprintln(os.Stderr, "code: exec:", err)
 			os.Exit(1)
 		}
+	}
+	if fm.genConfig != "" {
+		launchGenerated(fm.genConfig)
+	}
+}
+
+// launchGenerated writes the generated config to a temp file and execs omp with
+// the managed layering (defaults → generated → policy), like a preset launcher.
+func launchGenerated(cfg string) {
+	tmp, err := os.CreateTemp("", "code-gen-*.yml")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "code:", err)
+		os.Exit(1)
+	}
+	tmp.WriteString(cfg)
+	tmp.Close()
+	omp := os.Getenv("CODE_OMP")
+	if omp == "" {
+		omp = "omp"
+	}
+	path, err := exec.LookPath(omp)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "code: omp not found:", err)
+		os.Exit(1)
+	}
+	args := []string{path}
+	if d := os.Getenv("CODE_DEFAULTS"); d != "" {
+		args = append(args, "--config", d)
+	}
+	args = append(args, "--config", tmp.Name())
+	if p := os.Getenv("CODE_POLICY"); p != "" {
+		args = append(args, "--config", p)
+	}
+	args = append(args, os.Args[1:]...)
+	if err := syscall.Exec(path, args, os.Environ()); err != nil {
+		fmt.Fprintln(os.Stderr, "code: exec:", err)
+		os.Exit(1)
 	}
 }

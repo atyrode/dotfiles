@@ -1651,69 +1651,90 @@ let
       # `unauthed` when it never appears (omp usage only reports authed accounts),
       # `maxed` when its main (non-tier) window is >=100% used, else `ok`. With no
       # usage data at all nothing is known, so nothing is dimmed.
-      known_providers=(openai-codex anthropic)
-      provider_avail=""
-      build_provider_avail() {
-        provider_avail=""
-        local rows="$usage_rows_cache" p
+      # Quota buckets: name:provider:usage-tier. Fable and Spark draw SEPARATE
+      # quota from their provider's main bucket, so availability is tracked per
+      # bucket — a maxed Fable window takes down the Fable-led profiles even while
+      # the main Claude bucket sits at 65%.
+      bucket_defs=(codex-main:openai-codex:- codex-spark:openai-codex:spark claude-main:anthropic:- claude-fable:anthropic:fable)
+      bucket_avail=""
+      build_bucket_avail() {
+        bucket_avail=""
+        local rows="$usage_rows_cache" def name rest prov tier
         if [[ -z "$rows" ]]; then
-          for p in "''${known_providers[@]}"; do provider_avail+="$p=ok:0"$'\n'; done
+          for def in "''${bucket_defs[@]}"; do bucket_avail+="''${def%%:*}=ok:0"$'\n'; done
           return 0
         fi
-        for p in "''${known_providers[@]}"; do
-          local maxpct=-1 secs=0 pr pct tier s
-          while IFS=$'\t' read -r pr _ pct tier s _; do
-            [[ "$pr" == "$p" && "$tier" == "-" ]] || continue
+        for def in "''${bucket_defs[@]}"; do
+          name="''${def%%:*}"; rest="''${def#*:}"; prov="''${rest%%:*}"; tier="''${rest##*:}"
+          # Provider entirely absent from usage => unauthed (all its buckets).
+          if ! grep -q "^$prov"$'\t' <<< "$rows"; then
+            bucket_avail+="$name=unauthed:0"$'\n'
+            continue
+          fi
+          local maxpct=-1 secs=0 pr pct t s
+          while IFS=$'\t' read -r pr _ pct t s _; do
+            [[ "$pr" == "$prov" && "$t" == "$tier" ]] || continue
             if (( pct > maxpct )); then maxpct=$pct; secs=$s; fi
           done <<< "$rows"
-          if (( maxpct < 0 )); then
-            provider_avail+="$p=unauthed:0"$'\n'
-          elif (( maxpct >= 100 )); then
-            provider_avail+="$p=maxed:$secs"$'\n'
+          # maxpct < 0 means the bucket window never appeared (idle/unreported) —
+          # treat as available rather than dimming on missing data.
+          if (( maxpct >= 100 )); then
+            bucket_avail+="$name=maxed:$secs"$'\n'
           else
-            provider_avail+="$p=ok:0"$'\n'
+            bucket_avail+="$name=ok:0"$'\n'
           fi
         done
       }
-      provider_status() {
+      bucket_status() {
         local l
-        l="$(grep "^$1=" <<< "$provider_avail" | head -1)"
+        l="$(grep "^$1=" <<< "$bucket_avail" | head -1)"
         l="''${l#*=}"
         printf '%s' "''${l%%:*}"
       }
-      provider_reset_secs() {
+      bucket_reset_secs() {
         local l
-        l="$(grep "^$1=" <<< "$provider_avail" | head -1)"
+        l="$(grep "^$1=" <<< "$bucket_avail" | head -1)"
         printf '%s' "''${l##*:}"
       }
-      provider_down() {
+      bucket_down() {
         local st
-        st="$(provider_status "$1")"
+        st="$(bucket_status "$1")"
         [[ "$st" == unauthed || "$st" == maxed ]]
       }
-      down_providers_csv() {
-        local p out=""
-        for p in "''${known_providers[@]}"; do
-          if provider_down "$p"; then out+="$p,"; fi
+      down_buckets_csv() {
+        local def name out=""
+        for def in "''${bucket_defs[@]}"; do
+          name="''${def%%:*}"
+          if bucket_down "$name"; then out+="$name,"; fi
         done
         printf '%s' "''${out%,}"
       }
-      # Compact "2h" / "45m" / "30s" from a seconds count.
+      # Compact "5d" / "2h" / "45m" from a seconds count.
       fmt_secs() {
         local s="$1"
         if (( s <= 0 )); then printf 'now'
+        elif (( s >= 86400 )); then printf '%dd' "$(( s / 86400 ))"
         elif (( s >= 3600 )); then printf '%dh' "$(( s / 3600 ))"
         elif (( s >= 60 )); then printf '%dm' "$(( s / 60 ))"
         else printf '%ds' "$s"; fi
       }
-      # Human label for a down provider, e.g. "Codex maxed · 2h" or "needs Claude".
-      provider_note() {
-        local p="$1" label st
-        case "$p" in openai-codex) label="Codex" ;; anthropic) label="Claude" ;; *) label="$p" ;; esac
-        st="$(provider_status "$p")"
+      # Human note for a down bucket: "Fable maxed · 5d" / "Codex maxed · 2h", or
+      # "needs Claude" when the whole provider is unauthed.
+      bucket_note() {
+        local b="$1" label st
+        case "$b" in
+          codex-main) label="Codex" ;; codex-spark) label="Spark" ;;
+          claude-main) label="Claude" ;; claude-fable) label="Fable" ;; *) label="$b" ;;
+        esac
+        st="$(bucket_status "$b")"
         case "$st" in
-          maxed) printf '%s maxed · %s' "$label" "$(fmt_secs "$(provider_reset_secs "$p")")" ;;
-          unauthed) printf 'needs %s' "$label" ;;
+          maxed) printf '%s maxed · %s' "$label" "$(fmt_secs "$(bucket_reset_secs "$b")")" ;;
+          unauthed)
+            case "$b" in
+              codex-*) printf 'needs Codex' ;;
+              claude-*) printf 'needs Claude' ;;
+              *) printf 'needs %s' "$label" ;;
+            esac ;;
           *) printf '%s' "" ;;
         esac
       }
@@ -1726,28 +1747,41 @@ let
         profile_impacts=""
         [[ -f "$routes_plain" ]] || return 0
         local down
-        down="$(down_providers_csv)"
+        down="$(down_buckets_csv)"
         profile_impacts="$(awk -v down="$down" '
           BEGIN {
             split(down, d, ","); for (i in d) if (d[i] != "") dmap[d[i]] = 1
             split("default task plan slow designer reviewer librarian", s, " ")
             for (i in s) smap[s[i]] = 1
           }
-          function prov(m) { sub(/:.*/, "", m); return (m ~ /claude|sonnet|haiku|opus|fable/) ? "anthropic" : "openai-codex" }
-          function emit(   p, nlead, ndown, impact) {
-            if (name == "") return
-            nlead = 0; ndown = 0
-            for (p in leads) { nlead++; if (p in dmap) ndown++ }
-            if (nlead > 0 && ndown == nlead) impact = "broken"
-            else if (ndown > 0)              impact = "degraded"
-            else                             impact = "ok"
-            printf "%s\t%s\n", name, impact
+          function bucket(m) {
+            sub(/:.*/, "", m)
+            if (m ~ /fable/) return "claude-fable"
+            if (m ~ /spark/) return "codex-spark"
+            if (m ~ /claude|sonnet|haiku|opus/) return "claude-main"
+            return "codex-main"
           }
-          /^[a-z][a-z0-9-]*  / { emit(); name = $1; delete leads; next }
-          /^  *●? *[a-z]+ +[A-Za-z0-9.-]+:/ {
-            role = $1; if (role == "●") role = $2
-            lead = $0; sub(/^[^A-Za-z0-9]*[a-z]+ +/, "", lead); sub(/ .*/, "", lead)
-            if (role in smap) leads[prov(lead)] = 1
+          function ismodel(t) { return t ~ /^[A-Za-z0-9.-]+:(minimal|low|medium|high|xhigh|max)$/ }
+          function emit(   im) {
+            if (name == "") return
+            # broken: the interactive default cannot run — its lead and every
+            # displayed fallback bucket is down (a no-fallback profile has only
+            # its lead). degraded: default runs, but a substantive lead is down.
+            im = (default_seen && !default_runnable) ? "broken" : (any_lead_down ? "degraded" : "ok")
+            printf "%s\t%s\n", name, im
+          }
+          /^[a-z][a-z0-9-]*  / { emit(); name = $1; any_lead_down = 0; default_seen = 0; default_runnable = 0; next }
+          {
+            role = ""; lead = ""
+            for (i = 1; i <= NF; i++) {
+              if ($i == "●") continue
+              if (role == "" && $i ~ /^[a-z]+$/) { role = $i; continue }
+              if (ismodel($i)) {
+                if (lead == "") lead = $i
+                if (role == "default") { default_seen = 1; if (!(bucket($i) in dmap)) default_runnable = 1 }
+              }
+            }
+            if (role in smap && lead != "" && (bucket(lead) in dmap)) any_lead_down = 1
           }
           END { emit() }
         ' "$routes_plain")"
@@ -1755,15 +1789,19 @@ let
       profile_impact() {
         awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' <<< "$profile_impacts"
       }
-      # Annotation for an impacted profile: the note(s) of the down provider(s) it
-      # actually leads on. Cheap approximation — at most one provider is usually
-      # down, so the global down-note is accurate; both-down falls back to a join.
+      # Annotation for impacted profiles: the note(s) of the currently-down
+      # bucket(s), de-duplicated (an unauthed provider downs two buckets that
+      # share one "needs X" note). Usually one bucket is down, so this is short.
       down_annotation() {
-        local p out=""
-        for p in "''${known_providers[@]}"; do
-          if provider_down "$p"; then
-            local n; n="$(provider_note "$p")"
-            [[ -n "$n" ]] && out+="''${out:+ · }$n"
+        local def name n out="" seen=""
+        for def in "''${bucket_defs[@]}"; do
+          name="''${def%%:*}"
+          if bucket_down "$name"; then
+            n="$(bucket_note "$name")"
+            [[ -n "$n" ]] || continue
+            case "$seen" in *"|$n|"*) continue ;; esac
+            seen+="|$n|"
+            out+="''${out:+ · }$n"
           fi
         done
         printf '%s' "$out"
@@ -2075,7 +2113,7 @@ let
         picked_idx=""
         _prof entry
         build_usage
-        build_provider_avail
+        build_bucket_avail
         build_profile_impacts
         # Kick a background refresh of the bare-omp routing cache when stale (~0.9s;
         # never blocks — the omp preview reads whatever is cached, agents until then).

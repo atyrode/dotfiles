@@ -51,4 +51,11 @@ task:
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: anthropic/claude-sonnet-5:medium
 
+# Advisor off on ompx: it mirrors the full transcript every turn, so on a 1M
+# session each advise call would ingest up to a million tokens — a per-turn
+# watchdog that costs more than the huge-context work it shadows. Spend the
+# quota on the actual audit, not on shadowing it.
+advisor:
+  enabled: false
+
 defaultThinkingLevel: medium

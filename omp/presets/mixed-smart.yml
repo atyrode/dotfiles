@@ -1,10 +1,11 @@
 # ompm — mixed·smart. The hardest work, best model per task across both pools at
 # high thinking: Sol drives the GPT-strength roles, Fable/Opus the Claude-strength
-# ones (design, planning, review), Spark drains in the background. Full redundancy
-# on every substantive lead. When only the best will do, from either provider.
+# ones (design, planning, review), Spark drains the background, and a Sonnet 5
+# sidecar advises. Full redundancy on every substantive lead. When only the best
+# will do, from either provider.
 modelRoles:
   default: openai-codex/gpt-5.6-sol:high
-  advisor: openai-codex/gpt-5.3-codex-spark:xhigh
+  advisor: anthropic/claude-sonnet-5:high
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-sol:high
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
@@ -32,7 +33,7 @@ retry:
     reviewer: [anthropic/claude-sonnet-5:high, openai-codex/gpt-5.6-sol:high, openai-codex/gpt-5.6-terra:high]
     librarian: [openai-codex/gpt-5.6-sol:medium, anthropic/claude-sonnet-5:medium, anthropic/claude-opus-4-8:medium]
     sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
-    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-terra:medium, anthropic/claude-haiku-4-5:low]
     tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
     commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
 
@@ -43,5 +44,10 @@ task:
     reviewer: anthropic/claude-opus-4-8:high
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: openai-codex/gpt-5.6-sol:high
+
+# Smart tier: fresh, responsive advice on high-stakes work.
+advisor:
+  syncBacklog: "3"
+  immuneTurns: 2
 
 defaultThinkingLevel: high

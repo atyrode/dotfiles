@@ -76,16 +76,27 @@ Also not routed: the GPT-5.x back-catalog and the `-codex`-tuned variants.
 6. **Fast-execution roles drain the free Spark bucket first.** `gpt-5.3-codex-spark`
    has a separate, normally-idle 5h/7d Codex quota (see [Separate rate
    buckets](#separate-rate-buckets)), so execution/background roles lead on it.
-   Because the bucket is free and the goal is to empty it, the real-work roles
-   (`task`/`sonic`/`advisor`) run at **`:xhigh`** — best output *and* faster
-   drain — while boilerplate (`tiny`/`commit`) stays `:low`. The `speed` profiles
-   are the exception: they run Spark at `:low`, optimising latency over drain.
-   Spark stays off `smol`/scout (exploration can exceed its 128K window), the
-   thinking roles, `ompf`, and the claude-only pure pool.
-7. **Trivial roles stay lean.** Background gets at most a short cheap chain
+   Because the bucket is free and the goal is to empty it, the real-work coding
+   roles (`task`/`sonic`) run at **`:xhigh`** — best output *and* faster drain —
+   while boilerplate (`tiny`/`commit`) stays `:low`. The `speed` profiles are the
+   exception: they run Spark at `:low`, optimising latency over drain. Spark stays
+   off `smol`/scout (exploration can exceed its 128K window), the thinking roles,
+   `ompf`, the claude-only pure pool, and the `advisor` (principle 7).
+7. **The advisor is a judge, not a drain target.** It shadows every turn as a peer
+   reviewer, so it is a *judgment* role — matched to a model that reviews well,
+   never to whatever is cheap or idle (Spark is "coding-tuned and fast," a poor
+   reviewer). It scales with stakes: `smart` profiles run **Sonnet 5** (best
+   judgment-per-token, cheaper than their premium main; `gpt-only` stays on Terra
+   to remain single-auth), `regular` profiles a lighter **Haiku 4.5** at lower
+   cadence, and `speed`/`budget` turn it **off** — its ~2× token cost rivals their
+   cheap main, so those tokens buy a better main instead. `ompx` (1M context) also
+   runs it off: mirroring a million-token transcript every turn would cost more
+   than the work it shadows. Never the main model itself; cadence
+   (`advisor.syncBacklog`/`immuneTurns`) tightens on `smart`, loosens on `regular`.
+8. **Trivial roles stay lean.** Background gets at most a short cheap chain
    (Spark → a cheap rung → Haiku); a blip on a commit message is harmless. The
    full `A → A → B → B` redundancy is reserved for the substantive roles.
-8. **Thinking scales with stakes.** high/xhigh for `plan`/`slow`/`reviewer`/
+9. **Thinking scales with stakes.** high/xhigh for `plan`/`slow`/`reviewer`/
    `designer` and the `smart` leads; medium for the `regular` interactive default
    and workers; low/minimal for the `speed` leads and background.
 

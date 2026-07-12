@@ -97,6 +97,8 @@ render_profile() {
   local primary override marker line step
   local -a chain
   for role in "${roles[@]}"; do
+    # A disabled advisor never runs; don't list it as a route.
+    [[ $role == advisor && $advisor_enabled != true ]] && continue
     primary=$(jq -r --arg role "$role" '.modelRoles[$role]' <<<"$merged")
     marker=' '
     if is_agent "$role"; then

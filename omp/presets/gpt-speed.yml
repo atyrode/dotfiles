@@ -1,8 +1,9 @@
 # ompl — gpt·speed. The fastest, cheapest Codex tier at low thinking: Luna leads,
 # task drains the free Spark bucket, and fallbacks are single fast hops to
 # Claude's cheap tier (Haiku) — no same-bucket sibling detour (that would mean a
-# slower model). Latency-first; nothing reaches for Sol or high thinking. ompz's
-# pure-GPT sibling.
+# slower model). Latency-first; nothing reaches for Sol or high thinking. The
+# advisor is off — a per-turn reviewer would cost as much as the Luna main it
+# shadows, so those tokens go to the work instead. ompz's pure-GPT sibling.
 modelRoles:
   default: openai-codex/gpt-5.6-luna:low
   advisor: openai-codex/gpt-5.6-luna:low
@@ -38,5 +39,9 @@ task:
     reviewer: openai-codex/gpt-5.6-terra:low
     sonic: openai-codex/gpt-5.6-luna:low
     task: openai-codex/gpt-5.3-codex-spark:low
+
+# Speed tier: advisor off — its ~2x token cost rivals the cheap main model.
+advisor:
+  enabled: false
 
 defaultThinkingLevel: low

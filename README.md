@@ -88,14 +88,21 @@ atyrode doctor system # Audit system-owned operational prerequisites
 
 ### Agent Tools
 ```bash
-code          # Umbrella picker: list the launchers, pick one, forward your args
+code          # fzf picker: arrow-key select over the grouped launcher palette
 omp           # Mutable user-owned OMP; unmanaged except the blocked update
-ompb          # Cost-conscious routine work (OpenAI-led; nano background)
-omps          # Everyday value (Anthropic-led; Sonnet leads, Haiku background)
-ompg          # Difficult work, GPT-led (Sol drives, Claude is the net)
-ompc          # Difficult work, Claude-led (Fable drives, GPT is the net)
+ompz          # Mixed · speed — fastest tiers both providers, low thinking
+ompn          # Mixed · regular — balanced daily driver, both pools
+ompm          # Mixed · smart — hardest work, best model per task
+ompl          # GPT · speed — fast Codex (Luna; task drains Spark)
+ompb          # GPT · regular — routine Codex work (Terra, off premium tiers)
+ompg          # GPT · smart — difficult work, GPT-led (Sol drives, Claude net)
+ompo          # GPT-only — never crosses to Anthropic (drain Codex)
+ompk          # Claude · speed — fast Claude (Haiku)
+omps          # Claude · regular — everyday value (Sonnet leads)
+ompc          # Claude · smart — difficult work, Claude-led (Fable drives)
+ompe          # Claude-only — never crosses to OpenAI (drain the Claude plan)
 ompf          # Fable-first profile with fallback disabled
-ompx          # Huge-context (1M) work; GPT-5.4 is the 1M cross-net
+ompx          # Huge-context (1M) work; Anthropic's 1M line, no cross-net
 omph          # Show the managed routing: roles, models, fallbacks per profile
 ompu          # Restricted launcher for deliberately untrusted repositories
 herdr         # Persistent terminal workspace manager

@@ -24,24 +24,29 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
-  # Substantive roles run GPT -> GPT -> Claude (sibling absorbs a blip, last hop
-  # crosses). task leads on Spark, then the old terra/luna worker chain, then
-  # crosses to Sonnet. Background drains Spark, then nano.
+  # Redundancy first: same-provider sibling before the cross (the GPT pair, then
+  # the capability-matched Claude pair), so a single-model outage never leaves
+  # its bucket and chains never route below the lead's tier. Fable is a separate
+  # elite bucket spent deliberately (see ompf/ompc), never an automatic net — so
+  # the Claude side here is main-plan Opus/Sonnet. Spark is the separate drain
+  # bucket, exempt for the same reason; task's Spark tail is unchanged pending
+  # the spark-depth decision, and background stays lean (a blip on trivia is
+  # harmless).
   fallbackChains:
-    default: [openai-codex/gpt-5.6-terra:high, anthropic/claude-fable-5:high]
+    default: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
     task:
       - openai-codex/gpt-5.6-terra:medium
       - openai-codex/gpt-5.6-luna:medium
       - anthropic/claude-sonnet-5:medium
-    plan: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high]
-    slow: [openai-codex/gpt-5.6-terra:xhigh, anthropic/claude-opus-4-8:xhigh]
-    designer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-fable-5:high]
-    reviewer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high]
-    librarian: [openai-codex/gpt-5.6-luna:medium, anthropic/claude-sonnet-5:medium]
-    sonic: [openai-codex/gpt-5.4-nano:low]
-    advisor: [openai-codex/gpt-5.4-nano:low]
-    tiny: [openai-codex/gpt-5.4-nano:low]
-    commit: [openai-codex/gpt-5.4-nano:low]
+    plan: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
+    slow: [openai-codex/gpt-5.6-terra:xhigh, anthropic/claude-opus-4-8:xhigh, anthropic/claude-sonnet-5:xhigh]
+    designer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
+    reviewer: [openai-codex/gpt-5.6-terra:high, anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
+    librarian: [openai-codex/gpt-5.6-sol:medium, anthropic/claude-sonnet-5:medium, anthropic/claude-opus-4-8:medium]
+    sonic: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
+    tiny: [openai-codex/gpt-5.6-luna:low]
+    commit: [openai-codex/gpt-5.6-luna:low]
 
 task:
   agentModelOverrides:

@@ -1,21 +1,19 @@
 # ompx — huge-context work: monorepo audits, log forensics, marathon sessions
-# that outgrow the 372K ceiling of the 5.6 family. Anthropic owns 1M across its
-# line, so Fable/Opus/Sonnet lead; gpt-5.4 is the only OpenAI 1M card, used as
-# the universal cross-net and the librarian lead (putting the read-everything
-# role on the Codex meter splits the burn across pools).
+# that outgrow the 372K ceiling of the 5.6 family. OpenAI has no 1M model that
+# runs on a ChatGPT/Codex account, so every substantive role — primary and
+# fallback — stays on Anthropic's 1M line (Fable/Opus/Sonnet). The window never
+# contracts on a fallback; there is simply no cross-provider net at 1M, so if
+# Anthropic is down, huge-context work waits.
 #
-# Invariant: a fallback never shrinks the window mid-job on a substantive role.
-# Background trivia never sees the big context, so it leads on gpt-5.3-codex-spark
-# (128K) to drain the separate idle Codex bucket (see omp/PROFILES.md). The
-# bucket is free, so sonic/advisor run at :xhigh (best output, faster drain)
-# while tiny/commit stay :low; each falls back to Haiku when exhausted.
+# Background trivia never sees the big context, so it drains the free Spark
+# bucket, then falls back to Luna (Codex), then Haiku.
 modelRoles:
   default: anthropic/claude-opus-4-8:medium
   advisor: openai-codex/gpt-5.3-codex-spark:xhigh
   smol: anthropic/claude-haiku-4-5:low
   task: anthropic/claude-sonnet-5:medium
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
-  librarian: openai-codex/gpt-5.4:medium
+  librarian: anthropic/claude-sonnet-5:medium
   designer: anthropic/claude-opus-4-8:high
   reviewer: anthropic/claude-opus-4-8:high
   plan: anthropic/claude-fable-5:high
@@ -27,26 +25,28 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
-  # Every substantive hop is a 1M model: Fable/Opus/Sonnet (Anthropic) or
-  # gpt-5.4 (the sole OpenAI 1M). The window never contracts on a fallback.
-  # Background is exempt (it never sees the big context): Spark, then Haiku.
+  # Every substantive hop stays on Anthropic's 1M line — the window never
+  # shrinks, and there is no cross-provider 1M net, so redundancy is Opus/Sonnet
+  # siblings only. Fable is the deliberate elite lead (plan/slow); it is never an
+  # automatic net. Background is exempt (never sees the big context): Spark, then
+  # Luna, then Haiku.
   fallbackChains:
-    default: [anthropic/claude-sonnet-5:medium, openai-codex/gpt-5.4:medium]
-    task: [openai-codex/gpt-5.4:medium]
-    plan: [anthropic/claude-opus-4-8:high, openai-codex/gpt-5.4:high]
-    slow: [anthropic/claude-opus-4-8:xhigh, openai-codex/gpt-5.4:xhigh]
-    designer: [openai-codex/gpt-5.4:high]
-    reviewer: [openai-codex/gpt-5.4:high]
-    librarian: [anthropic/claude-sonnet-5:medium]
-    sonic: [anthropic/claude-haiku-4-5:low]
-    advisor: [anthropic/claude-haiku-4-5:low]
-    tiny: [anthropic/claude-haiku-4-5:low]
-    commit: [anthropic/claude-haiku-4-5:low]
+    default: [anthropic/claude-sonnet-5:medium]
+    task: [anthropic/claude-opus-4-8:medium]
+    plan: [anthropic/claude-opus-4-8:high, anthropic/claude-sonnet-5:high]
+    slow: [anthropic/claude-opus-4-8:xhigh, anthropic/claude-sonnet-5:xhigh]
+    designer: [anthropic/claude-sonnet-5:high]
+    reviewer: [anthropic/claude-sonnet-5:high]
+    librarian: [anthropic/claude-opus-4-8:medium]
+    sonic: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    advisor: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    tiny: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
+    commit: [openai-codex/gpt-5.6-luna:low, anthropic/claude-haiku-4-5:low]
 
 task:
   agentModelOverrides:
     designer: anthropic/claude-opus-4-8:high
-    librarian: openai-codex/gpt-5.4:medium
+    librarian: anthropic/claude-sonnet-5:medium
     reviewer: anthropic/claude-opus-4-8:high
     sonic: openai-codex/gpt-5.3-codex-spark:xhigh
     task: anthropic/claude-sonnet-5:medium

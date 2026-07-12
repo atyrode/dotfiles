@@ -9,7 +9,7 @@
 modelRoles:
   default: openai-codex/gpt-5.6-terra:low
   advisor: openai-codex/gpt-5.3-codex-spark:xhigh
-  smol: openai-codex/gpt-5.4-nano:low
+  smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.3-codex-spark:xhigh
   sonic: openai-codex/gpt-5.3-codex-spark:xhigh
   librarian: openai-codex/gpt-5.6-luna:medium
@@ -24,26 +24,44 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
-  # task drains Spark first, then the old terra/luna worker chain, then crosses
-  # to Haiku. Background drains Spark, then nano. The deliberative roles keep no
-  # net (defaults.yml defines chains for them, so they are cleared with []).
+  # Redundancy first, but anchored low — this is the budget pool, so a failover
+  # never climbs to Sol/Opus. Each lead gets its cheaper same-provider sibling,
+  # then crosses to the other provider's cheap rung (+ sibling). Spark is the
+  # separate drain bucket (task/background lead on it and stay lean); a blip on
+  # background trivia is harmless.
   fallbackChains:
     default:
-      - openai-codex/gpt-5.6-luna:medium
-      - anthropic/claude-sonnet-5:medium
+      - openai-codex/gpt-5.6-luna:low
+      - anthropic/claude-haiku-4-5:low
+      - anthropic/claude-sonnet-5:low
     task:
       - openai-codex/gpt-5.6-terra:low
       - openai-codex/gpt-5.6-luna:medium
       - anthropic/claude-haiku-4-5:medium
-    sonic: [openai-codex/gpt-5.4-nano:low]
-    advisor: [openai-codex/gpt-5.4-nano:low]
-    tiny: [openai-codex/gpt-5.4-nano:low]
-    commit: [openai-codex/gpt-5.4-nano:low]
-    plan: []
-    slow: []
-    designer: []
-    reviewer: []
-    librarian: []
+    plan:
+      - openai-codex/gpt-5.6-luna:high
+      - anthropic/claude-haiku-4-5:high
+      - anthropic/claude-sonnet-5:high
+    slow:
+      - openai-codex/gpt-5.6-luna:high
+      - anthropic/claude-haiku-4-5:high
+      - anthropic/claude-sonnet-5:high
+    designer:
+      - openai-codex/gpt-5.6-luna:medium
+      - anthropic/claude-haiku-4-5:medium
+      - anthropic/claude-sonnet-5:medium
+    reviewer:
+      - openai-codex/gpt-5.6-luna:medium
+      - anthropic/claude-haiku-4-5:medium
+      - anthropic/claude-sonnet-5:medium
+    librarian:
+      - openai-codex/gpt-5.6-terra:medium
+      - anthropic/claude-haiku-4-5:medium
+      - anthropic/claude-sonnet-5:medium
+    sonic: [openai-codex/gpt-5.6-luna:low]
+    advisor: [openai-codex/gpt-5.6-luna:low]
+    tiny: [openai-codex/gpt-5.6-luna:low]
+    commit: [openai-codex/gpt-5.6-luna:low]
 
 advisor:
   enabled: false

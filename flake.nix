@@ -265,6 +265,7 @@
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
             # Repository-owned on every platform: upstream releases outpace
             # nixpkgs, which also cannot build codex on aarch64-darwin.
+            code-tui = final.callPackage ./pkgs/code-tui { };
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-configured = final.callPackage ./pkgs/codex-configured { };
             codex-use = final.callPackage ./pkgs/codex-use { };
@@ -455,6 +456,7 @@
           inherit (pkgs)
             agent-tools-migrate
             atyrode
+            code-tui
             codex-configured
             codex-use
             herdr

@@ -2326,6 +2326,26 @@ let
           spark | fable) printf 'on off' ;;
         esac
       }
+      # Base colour for an option — lane by provider, on-toggles green, else none.
+      facet_opt_color() {
+        case "$1:$2" in
+          lane:gpt-only | lane:gpt-led) printf '%s' "$c_openai" ;;
+          lane:mixed) printf '%s' "$c_mixed" ;;
+          lane:claude-led | lane:claude-only) printf '%s' "$c_claude" ;;
+          spark:on | fable:on) printf '%s' "$c_yours" ;;
+          *) printf '%s' "" ;;
+        esac
+      }
+      # A Nerd Font icon per facet to anchor the eye.
+      facet_icon() {
+        case "$1" in
+          lane) printf '%s' "$g_unlink" ;;
+          model) printf '%s' "$g_cogs" ;;
+          thinking) printf '%s' "$g_claude" ;;
+          spark) printf '%s' "$g_openai" ;;
+          fable) printf '%s' "$g_pin" ;;
+        esac
+      }
       facet_combo_id() {
         local d="$1" lane model th sp fb spid=nosp faid=nofa
         lane="$(cat "$d/lane")"; model="$(cat "$d/model")"; th="$(cat "$d/thinking")"
@@ -2337,15 +2357,29 @@ let
         printf '%s_%s_%s_%s_%s' "$lane" "$model" "$th" "$spid" "$faid"
       }
       facet_rows() {
-        local d="$1" key val na lane
+        local d="$1" key val lane icon line o color na
+        local -a opts
         lane="$(cat "$d/lane")"
         for key in "''${facet_order[@]}"; do
           val="$(cat "$d/$key" 2>/dev/null)"
+          icon="$(facet_icon "$key")"
           na=""
-          [[ "$key" == fable && "$lane" == gpt-only ]] && na="  ''${c_dim}n/a on gpt-only''${c_rst}"
-          [[ "$key" == spark && "$lane" == claude-only ]] && na="  ''${c_dim}n/a on claude-only''${c_rst}"
-          printf '%s\t  %s%-10s%s  ‹ %s%s%s ›%s\n' \
-            "$key" "$c_dim" "$key" "$c_rst" "$c_bold" "$val" "$c_rst" "$na"
+          [[ "$key" == fable && "$lane" == gpt-only ]] && na=1
+          [[ "$key" == spark && "$lane" == claude-only ]] && na=1
+          read -ra opts <<< "$(facet_values "$key")"
+          line=""
+          for o in "''${opts[@]}"; do
+            if [[ -n "$na" ]]; then
+              line+="   ''${c_dim}$o''${c_rst}"                       # facet doesn't apply here
+            elif [[ "$o" == "$val" ]]; then
+              color="$(facet_opt_color "$key" "$o")"
+              line+="  ''${c_bold}''${color}[$o]''${c_rst}"           # selected
+            else
+              line+="   ''${c_dim}$o''${c_rst}"                       # unselected
+            fi
+          done
+          [[ -n "$na" ]] && line+="   ''${c_dim}— n/a for this lane''${c_rst}"
+          printf '%s\t %s %s%-9s%s%s\n' "$key" "$icon" "$c_dim" "$key" "$c_rst" "$line"
         done
       }
       facet_cycle() {
@@ -2369,13 +2403,13 @@ let
         else
           printf '\n%sno profile for this combination%s\n' "$c_dim" "$c_rst"
         fi
-        printf '\n%s←/→ change facet · ↑/↓ move · tab: hand-made list%s\n' "$c_dim" "$c_rst"
+        printf '\n%s←/→ pick option · ↑/↓ change facet · tab: hand-made list%s\n' "$c_dim" "$c_rst"
       }
       facet_pick() {
         local fdir self
         fdir="$(mktemp -d)"
-        printf mixed > "$fdir/lane"; printf smart > "$fdir/model"; printf high > "$fdir/thinking"
-        printf on > "$fdir/spark"; printf on > "$fdir/fable"
+        printf mixed > "$fdir/lane"; printf normal > "$fdir/model"; printf medium > "$fdir/thinking"
+        printf on > "$fdir/spark"; printf off > "$fdir/fable"
         self="$(command -v -- "$0" 2>/dev/null)" || self="$0"
         facet_rows "$fdir" | fzf \
           --ansi --layout=reverse --height=99% --border=rounded \

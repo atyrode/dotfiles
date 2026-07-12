@@ -1,4 +1,4 @@
 alex-aarch64-darwin	aarch64-darwin	base,development,agent-tools,desktop,mobile,media,containers	Primary Apple Silicon Mac with the full development, agent, and desktop stack
 alex-aarch64-linux	aarch64-linux	base,development,agent-tools	Headless arm64 Linux development machine with agent tooling
-alex-x86_64-linux	x86_64-linux	base,development,agent-tools	Headless x86_64 Linux development machine with agent tooling
+alex-x86_64-linux	x86_64-linux	base,development,agent-tools,containers	Headless x86_64 Linux development machine with agent tooling
 alex-x86_64-linux-desktop	x86_64-linux	base,development,agent-tools,desktop,mobile,media,containers	x86_64 Linux workstation adding the desktop, mobile, media, and container stack

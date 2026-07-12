@@ -997,6 +997,14 @@ let
   # `omp`/`ompu` are special builders (no preset), shown in the picker only.
   paletteProfiles = [
     {
+      cmd = "omp";
+      exe = lib.getExe ompDefault;
+      lead = "yours";
+      group = "";
+      blurb = "Your mutable daily driver (unmanaged)";
+      detail = "Runs upstream OMP with whatever your writable ~/.omp config selects. No managed defaults, preset, or policy overlay beyond the blocked update.";
+    }
+    {
       cmd = "ompz";
       exe = lib.getExe ompFast;
       lead = "mixed";
@@ -1049,14 +1057,6 @@ let
       blurb = "Fable-first, deterministic routing";
       detail = "Fable for the primary and deliberative roles with retry and server-side fallback OFF. The contract is: give me Fable, predictably, never silently swap. Background on cheap OpenAI rungs.";
       preset = presets.fable;
-    }
-    {
-      cmd = "omp";
-      exe = lib.getExe ompDefault;
-      lead = "yours";
-      group = "special";
-      blurb = "Your mutable daily driver (unmanaged)";
-      detail = "Runs upstream OMP with whatever your writable ~/.omp config selects. No managed defaults, preset, or policy overlay beyond the blocked update.";
     }
     {
       cmd = "ompx";
@@ -1537,28 +1537,42 @@ let
         esac
       }
 
-      # Recolour model tokens in a routing block: provider hue (muted blue for
-      # OpenAI, muted orange for Anthropic) with brightness scaled by the
-      # thinking level, so low -> xhigh reads as dim -> bright.
+      # Compact + recolour a routing block for the preview: shorten model names
+      # to their tier (gpt-5.6-sol -> sol, claude-fable-5 -> fable), collapse the
+      # column padding, and colour each token by provider hue (muted blue for
+      # OpenAI, muted orange for Anthropic) with brightness scaled by thinking
+      # level (low -> xhigh reads as dim -> bright). Kept narrow so fzf's preview
+      # (nowrap) never has to wrap ANSI lines, which it renders incorrectly.
       colorize_routes() {
         gawk -v dim="$c_dim" '
           function lvl(l) { return l=="minimal"?0:l=="low"?1:l=="medium"?2:l=="high"?3:l=="xhigh"?4:5 }
           function clamp(x) { return x>255?255:(x<0?0:int(x)) }
-          function paint(tok,   idx, level, f, br, bg, bb) {
+          function short(name,   a, n) {
+            if (name == "gpt-5.4") return "gpt-5.4"
+            n = split(name, a, "-")
+            if (name ~ /^claude/) return a[2]
+            return a[n]
+          }
+          function paint(tok,   idx, name, level, f, br, bg, bb) {
             idx = match(tok, /:(minimal|low|medium|high|xhigh|max)$/)
             if (idx == 0) return tok
-            level = substr(tok, idx + 1)
+            name = substr(tok, 1, idx - 1); level = substr(tok, idx + 1)
             if (tok ~ /^gpt/) { br = 110; bg = 170; bb = 240 }
             else if (tok ~ /^claude/) { br = 240; bg = 160; bb = 105 }
             else return tok
             f = 0.60 + lvl(level) * 0.088
-            return sprintf("\033[38;2;%d;%d;%dm%s%s", clamp(br*f), clamp(bg*f), clamp(bb*f), tok, dim)
+            return sprintf("\033[38;2;%d;%d;%dm%s:%s%s", clamp(br*f), clamp(bg*f), clamp(bb*f), short(name), level, dim)
           }
           {
-            line = $0; out = ""
+            line = $0
+            gsub(/ +→/, " →", line)
+            out = ""
+            # paint() calls match() internally, which clobbers RSTART/RLENGTH, so
+            # snapshot them before each call.
             while (match(line, /(gpt|claude)[A-Za-z0-9._-]*:(minimal|low|medium|high|xhigh|max)/)) {
-              out = out substr(line, 1, RSTART - 1) paint(substr(line, RSTART, RLENGTH))
-              line = substr(line, RSTART + RLENGTH)
+              s = RSTART; l = RLENGTH
+              out = out substr(line, 1, s - 1) paint(substr(line, s, l))
+              line = substr(line, s + l)
             }
             print out line
           }
@@ -1620,7 +1634,7 @@ let
           --border-label=" code $g_point pick a launcher " \
           --prompt="$g_search  " --pointer="$g_point" --marker='+' --info=inline \
           --delimiter=$'\t' --with-nth=2 \
-          --preview="cat $prevdir/{1}" --preview-window='right:50%:wrap:border-left' \
+          --preview="cat $prevdir/{1}" --preview-window='right:52%:nowrap:border-left' \
           "''${footer_args[@]}" \
           --color="$theme" || true)"
         rm -rf "$prevdir"

@@ -13,6 +13,7 @@
   omp,
   omp-agents,
   patch,
+  python3,
   runCommand,
   writeShellApplication,
   yq-go,
@@ -1169,6 +1170,16 @@ let
           ${omp-agents}/share/omp/agents ${defaultsConfig} \
           ${lib.escapeShellArgs routeSpecs} > "$out/share/omp/routes.plain"
       '';
+  # First-principles facet grid: the generator (a models.yml + routing rules,
+  # see generate-profiles.py) emits a rendered routing block for every valid
+  # (lane, model-tier, thinking, spark, fable) combination, baked at build time
+  # so the generator view stays immutable and reviewable like the presets.
+  generatedProfiles =
+    runCommand "omp-generated-profiles" { nativeBuildInputs = [ python3 ]; }
+      ''
+        mkdir -p "$out/share/omp"
+        python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
+      '';
   ompHelp = writeShellApplication {
     name = "omph";
     text = ''
@@ -1394,6 +1405,7 @@ let
     text = ''
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
       routes_plain=${routesHelp}/share/omp/routes.plain
+      generated_plain=${generatedProfiles}/share/omp/generated.plain
       names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
       leads=( ${lib.escapeShellArgs (map (p: p.lead) paletteProfiles)} )
       blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
@@ -2301,6 +2313,95 @@ let
           'for the full role/model routing of each managed profile, run omph.'
       }
 
+      # ── Generator view (code gen) ────────────────────────────────────────────
+      # Build a profile by browsing facets. Each facet is a file under a temp dir;
+      # ←/→ cycles the focused facet, and the preview renders the baked profile
+      # for the current combination (generated.plain, keyed by combo id).
+      facet_order=(lane model thinking spark fable)
+      facet_values() {
+        case "$1" in
+          lane) printf 'gpt-only gpt-led mixed claude-led claude-only' ;;
+          model) printf 'fast normal smart' ;;
+          thinking) printf 'low medium high xhigh' ;;
+          spark | fable) printf 'on off' ;;
+        esac
+      }
+      facet_combo_id() {
+        local d="$1" lane model th sp fb spid=nosp faid=nofa
+        lane="$(cat "$d/lane")"; model="$(cat "$d/model")"; th="$(cat "$d/thinking")"
+        sp="$(cat "$d/spark")"; fb="$(cat "$d/fable")"
+        [[ "$lane" == gpt-only ]] && fb=off        # Fable is Anthropic-only
+        [[ "$lane" == claude-only ]] && sp=off     # Spark is OpenAI-only
+        [[ "$sp" == on ]] && spid=sp
+        [[ "$fb" == on ]] && faid=fa
+        printf '%s_%s_%s_%s_%s' "$lane" "$model" "$th" "$spid" "$faid"
+      }
+      facet_rows() {
+        local d="$1" key val na lane
+        lane="$(cat "$d/lane")"
+        for key in "''${facet_order[@]}"; do
+          val="$(cat "$d/$key" 2>/dev/null)"
+          na=""
+          [[ "$key" == fable && "$lane" == gpt-only ]] && na="  ''${c_dim}n/a on gpt-only''${c_rst}"
+          [[ "$key" == spark && "$lane" == claude-only ]] && na="  ''${c_dim}n/a on claude-only''${c_rst}"
+          printf '%s\t  %s%-10s%s  ‹ %s%s%s ›%s\n' \
+            "$key" "$c_dim" "$key" "$c_rst" "$c_bold" "$val" "$c_rst" "$na"
+        done
+      }
+      facet_cycle() {
+        local d="$1" key="$2" dir="$3" cur i n
+        local -a arr
+        cur="$(cat "$d/$key" 2>/dev/null)"
+        read -ra arr <<< "$(facet_values "$key")"
+        n=''${#arr[@]}
+        for i in "''${!arr[@]}"; do [[ "''${arr[$i]}" == "$cur" ]] && break; done
+        if [[ "$dir" == fwd ]]; then i=$(( (i + 1) % n )); else i=$(( (i - 1 + n) % n )); fi
+        printf '%s' "''${arr[$i]}" > "$d/$key"
+      }
+      facet_preview() {
+        local d="$1" id block
+        id="$(facet_combo_id "$d")"
+        block="$(sed -n "/^$id  /,/^\$/p" "$generated_plain" | colorize_routes base)"
+        printf '%sgenerated profile%s\n' "$c_bold" "$c_rst"
+        printf '%s%s%s\n' "$c_dim" "$(printf '%s' "$id" | tr _ ' ')" "$c_rst"
+        if [[ -n "$block" ]]; then
+          printf '\n%s── routing ─────────────────%s\n%s%s%s\n' "$c_dim" "$c_rst" "$c_dim" "$block" "$c_rst"
+        else
+          printf '\n%sno profile for this combination%s\n' "$c_dim" "$c_rst"
+        fi
+        printf '\n%s←/→ change facet · ↑/↓ move · tab: hand-made list%s\n' "$c_dim" "$c_rst"
+      }
+      facet_pick() {
+        local fdir self
+        fdir="$(mktemp -d)"
+        printf mixed > "$fdir/lane"; printf smart > "$fdir/model"; printf high > "$fdir/thinking"
+        printf on > "$fdir/spark"; printf on > "$fdir/fable"
+        self="$(command -v -- "$0" 2>/dev/null)" || self="$0"
+        facet_rows "$fdir" | fzf \
+          --ansi --layout=reverse --height=99% --border=rounded \
+          --border-label=" build a profile " \
+          --delimiter=$'\t' --with-nth=2 --no-mouse --info=hidden --pointer="$g_point" \
+          --preview="$self __facet_preview $fdir" \
+          --preview-window='right:56%:wrap:border-left' \
+          --bind="left:execute-silent($self __facet_cycle $fdir {1} back)+reload($self __facet_rows $fdir)+refresh-preview" \
+          --bind="right:execute-silent($self __facet_cycle $fdir {1} fwd)+reload($self __facet_rows $fdir)+refresh-preview" \
+          --bind="tab:become(CODE_NO_FZF= $self)" \
+          >/dev/null 2>&1 || true
+      }
+
+      if [[ "''${1:-}" == __facet_rows ]]; then
+        facet_rows "$2"
+        exit 0
+      fi
+      if [[ "''${1:-}" == __facet_cycle ]]; then
+        facet_cycle "$2" "$3" "$4"
+        exit 0
+      fi
+      if [[ "''${1:-}" == __facet_preview ]]; then
+        facet_preview "$2"
+        exit 0
+      fi
+
       if [[ "''${1:-}" == __preview ]]; then
         render_preview "$2" "$3"
         exit 0
@@ -2327,6 +2428,16 @@ let
           -l | --list)
             build_palette
             printf '%s\n' "''${palette[@]}"
+            exit 0
+            ;;
+          gen)
+            # Generator view: browse facets, preview the synthesised profile.
+            if command -v fzf >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
+              facet_pick
+            else
+              printf 'code gen needs fzf and an interactive terminal.\n' >&2
+              exit 2
+            fi
             exit 0
             ;;
         esac

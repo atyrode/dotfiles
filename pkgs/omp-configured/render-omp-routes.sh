@@ -76,14 +76,10 @@ render_profile() {
   advisor_enabled=$(jq -r '.advisor.enabled // false' <<<"$merged")
   fallback=$(jq -r '(.retry.enabled // false) and (.retry.modelFallback // false)' <<<"$merged")
 
-  local advisor_note fallback_note
-  if [[ $advisor_enabled == true ]]; then
-    local advisor_model
-    advisor_model=$(jq -r '.modelRoles.advisor // "?"' <<<"$merged")
-    advisor_note="advisor $(short_model "$advisor_model")"
-  else
-    advisor_note='advisor off'
-  fi
+  # advisor on/off only — the model itself is shown once, in the advisor route
+  # row below (which is hidden entirely when the advisor is off).
+  local advisor_note='advisor off' fallback_note
+  [[ $advisor_enabled == true ]] && advisor_note='advisor on'
   fallback_note='fallback off'
   [[ $fallback == true ]] && fallback_note='fallback on'
 

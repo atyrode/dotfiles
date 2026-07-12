@@ -910,8 +910,13 @@ func (m model) genList(focused bool) string {
 	b.WriteString(stGrp.Render("build a profile") + "\n\n")
 	for i, f := range m.facets {
 		na := (f.key == "fable" && m.sel["lane"] == "gpt-only") || (f.key == "spark" && m.sel["lane"] == "claude-only")
+		onRow := i == m.fcur && focused
 		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(laneColor(m.sel["lane"]))).Render(f.glyph)
-		row := fmt.Sprintf(" %s %s%-9s", gly, stDim.Render(""), pad(f.key, 9))
+		ptr := "  "
+		if onRow {
+			ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Render("▸ ")
+		}
+		row := fmt.Sprintf("%s%s %-9s", ptr, gly, pad(f.key, 9))
 		for _, v := range f.values {
 			switch {
 			case na:
@@ -923,20 +928,17 @@ func (m model) genList(focused bool) string {
 				} else if (f.key == "spark" || f.key == "fable") && v == "on" {
 					col = cGreen
 				}
-				row += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render("["+v+"]")
+				st := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
+				if onRow { // the cursor sits on the selected value of the focused row
+					st = st.Background(lipgloss.Color(cSelBg))
+				}
+				row += "  " + st.Render(" "+v+" ")
 			default:
 				row += "   " + stDim.Render(v)
 			}
 		}
 		if na {
 			row += "   " + stDim.Render("— n/a for this lane")
-		}
-		if i == m.fcur {
-			bg := cSelBg
-			if !focused {
-				bg = "#141922"
-			}
-			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Render(row)
 		}
 		b.WriteString(row + "\n")
 	}

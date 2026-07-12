@@ -473,14 +473,26 @@ type model struct {
 	fcur   int
 	sel    map[string]string
 
-	vp   viewport.Model
-	w, h int
-	rdy  bool
+	vp       viewport.Model
+	w, h     int
+	rdy      bool
+	usageCmd string
 
 	chosen string
 }
 
-func (m model) Init() tea.Cmd { return nil }
+// usageMsg carries availability fetched off the main thread so startup never
+// blocks on `omp usage --json` (a network call).
+type usageMsg availability
+
+func fetchUsageCmd(cmd string) tea.Cmd {
+	if cmd == "" {
+		return nil
+	}
+	return func() tea.Msg { return usageMsg(loadAvailability(cmd)) }
+}
+
+func (m model) Init() tea.Cmd { return fetchUsageCmd(m.usageCmd) }
 
 func (m model) listW() int {
 	if m.collapse {
@@ -579,6 +591,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.relayout()
+	case usageMsg:
+		m.avail = availability(msg)
+		m.syncPreview()
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
@@ -781,7 +796,8 @@ func main() {
 		profiles:  profiles,
 		routes:    loadBlocks(os.Getenv("CODE_ROUTES")),
 		generated: loadBlocks(os.Getenv("CODE_GENERATED")),
-		avail:     loadAvailability(os.Getenv("CODE_USAGE")),
+		avail:     availability{bucket: map[string]string{}, reset: map[string]int64{}},
+		usageCmd:  os.Getenv("CODE_USAGE"),
 		glyphs:    glyphs,
 		facets:    facetDefs(glyphs),
 		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "on", "fable": "off"},

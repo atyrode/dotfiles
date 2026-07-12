@@ -472,11 +472,30 @@ const (
 	modeCollapsed
 )
 
+// genRowWidth is the width needed to render the widest generator facet row (all
+// options) on a single line — the minimum for the left panel.
+func (m model) genRowWidth() int {
+	max := 30
+	for _, f := range m.facets {
+		w := 14 // ▸ + glyph + spaces + padded label
+		for _, v := range f.values {
+			w += len(v) + 4
+		}
+		if w > max {
+			max = w
+		}
+	}
+	return max + 2
+}
+
 func (m model) mode() int {
-	if m.w < 62 || m.collapse {
+	if m.collapse {
 		return modeCollapsed
 	}
-	if m.w >= 92 && m.h >= 34 {
+	if m.w < m.genRowWidth()+33 { // no room for the gen list + a useful preview
+		return modeCollapsed
+	}
+	if m.h >= 34 {
 		return modeStacked
 	}
 	return modeSplit
@@ -522,10 +541,16 @@ func fetchUsageCmd(cmd string) tea.Cmd {
 func (m model) Init() tea.Cmd { return tea.Batch(fetchUsageCmd(m.usageCmd), m.spin.Tick) }
 
 func (m model) listW() int {
-	if m.w < 108 {
-		return m.w / 3
+	// wide enough for the generator options on one line; capped so a very wide
+	// terminal doesn't stretch the list needlessly.
+	w := m.genRowWidth()
+	if w > m.w-33 {
+		w = m.w - 33
 	}
-	return 42
+	if w > 80 {
+		w = 80
+	}
+	return w
 }
 
 // gradient bar (green→red), 10 cells, matching the fzf panel.
@@ -710,9 +735,9 @@ func (m *model) relayout() {
 	}
 	panelH := 0
 	if p := m.usagePanel(); p != "" {
-		panelH = strings.Count(p, "\n") + 1
+		panelH = strings.Count(p, "\n") + 2 // + the rule above the panel
 	}
-	vh := m.h - 2 - panelH
+	vh := m.h - 2 - panelH // header + its rule
 	if vh < 3 {
 		vh = 3
 	}
@@ -790,9 +815,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) moveUp() {
+	stacked := m.mode() == modeStacked
 	if m.view == pickerView {
 		if m.cursor > 0 {
 			m.cursor--
+			m.syncPreview()
+		} else if stacked { // flow up into the generator
+			m.view = genView
+			m.fcur = len(m.facets) - 1
 			m.syncPreview()
 		}
 	} else if m.fcur > 0 {
@@ -800,6 +830,7 @@ func (m *model) moveUp() {
 	}
 }
 func (m *model) moveDown() {
+	stacked := m.mode() == modeStacked
 	if m.view == pickerView {
 		if m.cursor < len(m.profiles)-1 {
 			m.cursor++
@@ -807,6 +838,9 @@ func (m *model) moveDown() {
 		}
 	} else if m.fcur < len(m.facets)-1 {
 		m.fcur++
+	} else if stacked { // flow down into the profiles
+		m.view = pickerView
+		m.syncPreview()
 	}
 }
 func (m *model) cycleFacet(dir int) {
@@ -862,7 +896,8 @@ func (m model) View() string {
 	var body string
 	switch m.mode() {
 	case modeStacked:
-		stack := m.genList(m.view == genView) + "\n" + m.pickerList(m.view == pickerView)
+		sep := stDim.Render(strings.Repeat("─", m.listW()))
+		stack := m.genList(m.view == genView) + "\n" + sep + "\n" + m.pickerList(m.view == pickerView)
 		left := lipgloss.NewStyle().Width(m.listW()).Render(stack)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, left, m.previewPane())
 	case modeSplit:
@@ -883,9 +918,10 @@ func (m model) View() string {
 			body = m.genList(true)
 		}
 	}
-	out := m.header() + "\n" + body
+	rule := stDim.Render(strings.Repeat("─", m.w))
+	out := m.header() + "\n" + rule + "\n" + body
 	if foot := m.usagePanel(); foot != "" {
-		out += "\n" + foot
+		out += "\n" + rule + "\n" + foot
 	}
 	return out
 }

@@ -185,9 +185,12 @@ pkgs.runCommand "check-atyrode-cli"
     fi
 
     minimal_result="$(atyrode doctor system alex-x86_64-linux --json)"
+    # alex-x86_64-linux carries the containers capability but not mobile, so
+    # container-engine resolves against the rootless fixture (ok) while
+    # device-permissions stays not-applicable — a mixed host, unlike the desktop.
     jq -e '
       .ok
-      and (.checks[] | select(.id == "container-engine") | .status) == "not-applicable"
+      and (.checks[] | select(.id == "container-engine") | .status) == "ok"
       and (.checks[] | select(.id == "device-permissions") | .status) == "not-applicable"
     ' <<< "$minimal_result" >/dev/null
 

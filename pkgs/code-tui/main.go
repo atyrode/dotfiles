@@ -617,33 +617,50 @@ func (m *model) usagePanel() string {
 		}
 		return wins[i].dur < wins[j].dur
 	})
-	var b strings.Builder
-	last := ""
+	blocks := map[string][]string{}
+	var order []string
 	for _, w := range wins {
-		if w.prov != last {
+		if _, ok := blocks[w.prov]; !ok {
+			order = append(order, w.prov)
 			pcol, pname := "#62a7ff", "Codex"
 			if w.prov == "anthropic" {
 				pcol, pname = "#ff9f52", "Claude"
 			}
-			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname) + "\n")
-			last = w.prov
+			blocks[w.prov] = []string{lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname)}
 		}
-		note := ""
-		if w.pct >= 80 {
-			note = "  " + stWarn.Render("tight")
-		}
-		if w.tier == "spark" && w.pct == 0 {
-			note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
-		}
-		reset := stDim.Render("↻" + fmtReset(w.secs))
-		if w.dur > 0 && w.secs*10 < w.dur {
-			reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render("↻" + fmtReset(w.secs))
-		} else if w.dur > 0 && w.secs*4 < w.dur {
-			reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render("↻" + fmtReset(w.secs))
-		}
-		b.WriteString(fmt.Sprintf("  %-9s %s %3d%% used  %s%s\n", shortWin(w.label), barStr(w.pct), w.pct, reset, note))
+		blocks[w.prov] = append(blocks[w.prov], m.usageRow(w))
 	}
-	return strings.TrimRight(b.String(), "\n")
+	// side-by-side when there's horizontal room, else stacked.
+	const colW = 46
+	if len(order) > 1 && m.w >= colW*len(order) {
+		var cols []string
+		for _, p := range order {
+			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[p], "\n")))
+		}
+		return lipgloss.JoinHorizontal(lipgloss.Top, cols...)
+	}
+	var lines []string
+	for _, p := range order {
+		lines = append(lines, blocks[p]...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) usageRow(w usageWin) string {
+	note := ""
+	if w.pct >= 80 {
+		note = "  " + stWarn.Render("tight")
+	}
+	if w.tier == "spark" && w.pct == 0 {
+		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
+	}
+	reset := stDim.Render("↻" + fmtReset(w.secs))
+	if w.dur > 0 && w.secs*10 < w.dur {
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render("↻" + fmtReset(w.secs))
+	} else if w.dur > 0 && w.secs*4 < w.dur {
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render("↻" + fmtReset(w.secs))
+	}
+	return fmt.Sprintf("  %-9s %s %3d%% used  %s%s", shortWin(w.label), barStr(w.pct), w.pct, reset, note)
 }
 
 func (m *model) syncPreview() {

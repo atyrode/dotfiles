@@ -40,6 +40,14 @@ const (
 	cGreen   = "#78c8aa"
 )
 
+// Emoji-presentation glyphs pinned to text presentation (U+FE0E) so terminals
+// render them 1-cell — matching the width the layout math assumes.
+const (
+	gWarn   = "⚠︎"
+	gBroken = "✗︎"
+	gReset  = "↻︎"
+)
+
 var (
 	stDim  = lipgloss.NewStyle().Foreground(lipgloss.Color(cDim))
 	stGrp  = lipgloss.NewStyle().Foreground(lipgloss.Color(cGrp))
@@ -257,7 +265,7 @@ func loadAvailability(cmd string) availability {
 			}
 			if pct >= 100 {
 				a.bucket[bkt] = "maxed"
-				a.reset[bkt] = l.Window.ResetsAt / 1000
+				a.reset[bkt] = l.Window.ResetsAt/1000 - now
 			} else if a.bucket[bkt] != "maxed" {
 				a.bucket[bkt] = "ok"
 			}
@@ -679,11 +687,11 @@ func (m *model) usageRow(w usageWin) string {
 	if w.tier == "spark" && w.pct == 0 {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
 	}
-	reset := stDim.Render("↻" + fmtReset(w.secs))
+	reset := stDim.Render(gReset + fmtReset(w.secs))
 	if w.dur > 0 && w.secs*10 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render("↻" + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(gReset + fmtReset(w.secs))
 	} else if w.dur > 0 && w.secs*4 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render("↻" + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + fmtReset(w.secs))
 	}
 	return fmt.Sprintf("  %-9s %s %3d%% used  %s%s", shortWin(w.label), barStr(w.pct), w.pct, reset, note)
 }
@@ -701,9 +709,9 @@ func (m *model) syncPreview() {
 		if imp := m.avail.impact(m.routes[p.name]); imp != "" {
 			b.WriteString("\n")
 			if imp == "broken" {
-				b.WriteString(stBrk.Render("✗ "+m.avail.note()+" — default has no live fallback") + "\n")
+				b.WriteString(stBrk.Render(gBroken+" "+m.avail.note()+" — default has no live fallback") + "\n")
 			} else {
-				b.WriteString(stWarn.Render("⚠ "+m.avail.note()+" — runs on a fallback") + "\n")
+				b.WriteString(stWarn.Render(gWarn+" "+m.avail.note()+" — runs on a fallback") + "\n")
 			}
 		}
 		b.WriteString("\n" + stDim.Render("── routing ─────────────────") + "\n")
@@ -923,7 +931,9 @@ func (m model) View() string {
 	if foot := m.usagePanel(); foot != "" {
 		out += "\n" + rule + "\n" + foot
 	}
-	return out
+	// Hard clamp every line to the terminal width so no stray overflow (a long
+	// chain, a wide glyph) can wrap and shift the whole layout.
+	return lipgloss.NewStyle().MaxWidth(m.w).Render(out)
 }
 
 func (m model) pickerList(focused bool) string {
@@ -939,9 +949,9 @@ func (m model) pickerList(focused bool) string {
 		mark := "  "
 		switch m.avail.impact(m.routes[p.name]) {
 		case "broken":
-			mark = stBrk.Render("✗ ")
+			mark = stBrk.Render(gBroken + " ")
 		case "degraded":
-			mark = stWarn.Render("⚠ ")
+			mark = stWarn.Render(gWarn + " ")
 		}
 		nameCol := p.color
 		blurb := flavorize(p.blurb)
@@ -1023,7 +1033,7 @@ func (m model) genList(focused bool) string {
 				if m.avail.bucket[bkt] == "unauthed" {
 					w = lbl + " unavailable"
 				}
-				row += "   " + stWarn.Render("⚠ "+w+" — no usage left")
+				row += "   " + stWarn.Render(gWarn+" "+w+" — no usage left")
 			}
 		}
 		b.WriteString(row + "\n")

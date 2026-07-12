@@ -15,9 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -197,7 +200,8 @@ type usageWin struct {
 	label string
 	pct   int
 	tier  string
-	secs  int64
+	secs  int64 // seconds until reset (relative)
+	dur   int64 // window length in seconds
 	prov  string
 }
 
@@ -241,12 +245,12 @@ func loadAvailability(cmd string) availability {
 	}
 	a.ok = true
 	provSeen := map[string]bool{}
-	// nowMs approximated from the soonest resetsAt is unreliable; use max pct only.
+	now := time.Now().Unix()
 	for _, r := range doc.Reports {
 		provSeen[r.Provider] = true
 		for _, l := range r.Limits {
 			pct := int(l.Amount.UsedFraction*100 + 0.5)
-			a.wins = append(a.wins, usageWin{l.Label, pct, l.Scope.Tier, l.Window.ResetsAt / 1000, r.Provider})
+			a.wins = append(a.wins, usageWin{l.Label, pct, l.Scope.Tier, l.Window.ResetsAt/1000 - now, l.Window.DurationMs / 1000, r.Provider})
 			bkt := bucketForProviderTier(r.Provider, l.Scope.Tier)
 			if bkt == "" {
 				continue
@@ -474,6 +478,7 @@ type model struct {
 	sel    map[string]string
 
 	vp       viewport.Model
+	spin     spinner.Model
 	w, h     int
 	rdy      bool
 	usageCmd string
@@ -492,7 +497,7 @@ func fetchUsageCmd(cmd string) tea.Cmd {
 	return func() tea.Msg { return usageMsg(loadAvailability(cmd)) }
 }
 
-func (m model) Init() tea.Cmd { return fetchUsageCmd(m.usageCmd) }
+func (m model) Init() tea.Cmd { return tea.Batch(fetchUsageCmd(m.usageCmd), m.spin.Tick) }
 
 func (m model) listW() int {
 	if m.collapse {
@@ -504,31 +509,122 @@ func (m model) listW() int {
 	return 42
 }
 
-func (m *model) usageBar() string {
-	if !m.avail.ok || len(m.avail.wins) == 0 {
+// gradient bar (green→red), 10 cells, matching the fzf panel.
+func barStr(p int) string {
+	var r, g float64
+	if p <= 50 {
+		r, g = 90+float64(p)*3, 200
+	} else {
+		r, g = 235, 200-float64(p-50)*3
+	}
+	if r > 235 {
+		r = 235
+	}
+	if g < 60 {
+		g = 60
+	}
+	fill := (p*10 + 50) / 100
+	if fill > 10 {
+		fill = 10
+	}
+	if fill < 0 {
+		fill = 0
+	}
+	filled := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("#%02x%02x46", clampByte(r), clampByte(g)))).Render(strings.Repeat("█", fill))
+	return filled + stDim.Render(strings.Repeat("░", 10-fill))
+}
+
+func fmtReset(s int64) string {
+	if s < 0 {
+		s = 0
+	}
+	switch {
+	case s >= 86400:
+		return fmt.Sprintf("%dd%dh", s/86400, (s%86400)/3600)
+	case s >= 3600:
+		return fmt.Sprintf("%dh%dm", s/3600, (s%3600)/60)
+	}
+	return fmt.Sprintf("%dm", s/60)
+}
+
+func shortWin(l string) string {
+	switch l {
+	case "5 hours", "Claude 5 Hour":
+		return "5h"
+	case "7 days", "Claude 7 Day":
+		return "7d"
+	case "5 hours (Spark)":
+		return "5h spark"
+	case "7 days (Spark)":
+		return "7d spark"
+	case "Claude 7 Day (Fable)":
+		return "7d fable"
+	}
+	return l
+}
+
+func (m *model) usagePanel() string {
+	if !m.avail.ok {
+		if m.usageCmd != "" {
+			return stDim.Render("  " + m.spin.View() + " fetching usage…")
+		}
 		return ""
 	}
-	var parts []string
-	for _, wdw := range m.avail.wins {
-		if wdw.pct < 0 {
-			continue
-		}
-		filled := wdw.pct / 10
-		if filled > 10 {
-			filled = 10
-		}
-		bar := strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
-		col := cGreen
-		if wdw.pct >= 100 {
-			col = cRed
-		} else if wdw.pct >= 80 {
-			col = cAcc
-		}
-		seg := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Render(bar) +
-			stDim.Render(fmt.Sprintf(" %s %d%%", wdw.label, wdw.pct))
-		parts = append(parts, seg)
+	if len(m.avail.wins) == 0 {
+		return ""
 	}
-	return stDim.Render("  usage  ") + strings.Join(parts, stDim.Render("   "))
+	wins := append([]usageWin(nil), m.avail.wins...)
+	provOrder := func(p string) int {
+		switch p {
+		case "openai-codex":
+			return 0
+		case "anthropic":
+			return 1
+		}
+		return 2
+	}
+	tierOrder := func(t string) int {
+		if t == "" || t == "-" {
+			return 0
+		}
+		return 1
+	}
+	sort.SliceStable(wins, func(i, j int) bool {
+		if o := provOrder(wins[i].prov) - provOrder(wins[j].prov); o != 0 {
+			return o < 0
+		}
+		if o := tierOrder(wins[i].tier) - tierOrder(wins[j].tier); o != 0 {
+			return o < 0
+		}
+		return wins[i].dur < wins[j].dur
+	})
+	var b strings.Builder
+	last := ""
+	for _, w := range wins {
+		if w.prov != last {
+			pcol, pname := "#62a7ff", "Codex"
+			if w.prov == "anthropic" {
+				pcol, pname = "#ff9f52", "Claude"
+			}
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname) + "\n")
+			last = w.prov
+		}
+		note := ""
+		if w.pct >= 80 {
+			note = "  " + stWarn.Render("tight")
+		}
+		if w.tier == "spark" && w.pct == 0 {
+			note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
+		}
+		reset := stDim.Render("↻" + fmtReset(w.secs))
+		if w.dur > 0 && w.secs*10 < w.dur {
+			reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render("↻" + fmtReset(w.secs))
+		} else if w.dur > 0 && w.secs*4 < w.dur {
+			reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render("↻" + fmtReset(w.secs))
+		}
+		b.WriteString(fmt.Sprintf("  %-9s %s %3d%% used  %s%s\n", shortWin(w.label), barStr(w.pct), w.pct, reset, note))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m *model) syncPreview() {
@@ -573,7 +669,11 @@ func (m *model) relayout() {
 	if pw < 10 {
 		pw = 10
 	}
-	vh := m.h - 3
+	panelH := 0
+	if p := m.usagePanel(); p != "" {
+		panelH = strings.Count(p, "\n") + 1
+	}
+	vh := m.h - 2 - panelH
 	if vh < 3 {
 		vh = 3
 	}
@@ -593,7 +693,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.relayout()
 	case usageMsg:
 		m.avail = availability(msg)
-		m.syncPreview()
+		m.relayout()
+	case spinner.TickMsg:
+		if !m.avail.ok {
+			var cmd tea.Cmd
+			m.spin, cmd = m.spin.Update(msg)
+			return m, cmd
+		}
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
@@ -691,7 +797,7 @@ func (m model) View() string {
 		right := lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, false, true).
 			BorderForeground(lipgloss.Color(cBord)).PaddingLeft(2).
-			Width(m.w - m.listW() - 3).Height(m.h - 3).
+			Width(m.w - m.listW() - 3).Height(m.vp.Height).
 			Render(m.vp.View())
 		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(m.listW()).Render(left), right)
 	}
@@ -703,7 +809,7 @@ func (m model) View() string {
 	}
 	head := "  " + tabP + stDim.Render(" · ") + tabG +
 		stDim.Render("    tab switch · f depth · p collapse · enter launch · q quit")
-	foot := m.usageBar()
+	foot := m.usagePanel()
 	out := head + "\n" + body
 	if foot != "" {
 		out += "\n" + foot
@@ -792,12 +898,15 @@ func main() {
 			glyphs[p[0]] = p[1]
 		}
 	}
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
 	m := model{
 		profiles:  profiles,
 		routes:    loadBlocks(os.Getenv("CODE_ROUTES")),
 		generated: loadBlocks(os.Getenv("CODE_GENERATED")),
 		avail:     availability{bucket: map[string]string{}, reset: map[string]int64{}},
 		usageCmd:  os.Getenv("CODE_USAGE"),
+		spin:      sp,
 		glyphs:    glyphs,
 		facets:    facetDefs(glyphs),
 		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "on", "fable": "off"},

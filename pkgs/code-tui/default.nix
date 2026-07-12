@@ -7,7 +7,7 @@ buildGoModule {
   pname = "code-tui";
   version = "0.1.0";
   src = lib.cleanSource ./.;
-  vendorHash = "sha256-wIVrg3i68YjoGvByl48Hpryzn9nj5ONnrkOXfJ8sDCw=";
+  vendorHash = "sha256-Ldy6/HYzMlF3FpviWzM1PLUgfuBkMuynQjXSMErJeEQ=";
 
   # The launcher picker is invoked as `code`.
   postInstall = ''

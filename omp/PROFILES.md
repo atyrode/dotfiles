@@ -100,10 +100,12 @@ and the providers meter more than one bucket per account. `omp usage` shows them
     - OpenAI-led (`ompb`, `ompg`): `task` **and** `sonic`/`advisor`/`tiny`/`commit`
       lead on Spark. `task` falls back to its old terra/luna worker chain (then
       crosses); background falls back to `nano`.
-    - Anthropic-led (`omps`, `ompc`, `ompx`): the background roles lead on Spark
-      and fall back to `haiku`. `task` stays pool-pure on Claude — draining the
-      free Codex bucket for trivia is worth a small pool impurity, but the
-      substantial worker is not.
+    - Anthropic-led (`omps`, `ompc`, `ompx`): the background roles lead on Spark.
+      Because Spark is itself a Codex model, they fall back to `nano` (a regular
+      Codex rung) before crossing to `haiku` — drain the free Spark bucket, then
+      cheap main-Codex, then the Claude plan only if OpenAI is fully down.
+      `task` stays pool-pure on Claude — draining the free Codex bucket for
+      trivia is worth a small pool impurity, but the substantial worker is not.
   - *Deliberately kept off Spark:* `smol`/scout (exploration can exceed the 128K
     window — truncation risk), every thinking role (`plan`/`slow`/`reviewer`/
     `designer`/`default` — Spark is fast, not a reasoner), and all of `ompf`

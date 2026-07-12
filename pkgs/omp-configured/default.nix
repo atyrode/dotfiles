@@ -1332,6 +1332,7 @@ let
       # Nerd Font glyphs by precise codepoint (FontAwesome range, in every Nerd
       # Font) and 24-bit truecolor accents, used by the fzf picker.
       esc=$(printf '\033')
+      g_reset=$(printf '')  # refresh (time until reset)
       g_mixed=$(printf '')  # random / shuffle (mixed pool)
       g_openai=$(printf '')     # bolt
       g_claude=$(printf '')     # lightbulb
@@ -1432,6 +1433,16 @@ let
       # Fill the `usagep` array with a compact per-provider quota panel from
       # `omp usage --json`. Best-effort: on any failure (offline, timeout, not
       # authed, --no-usage) it is left empty and the picker shows just the list.
+      fmt_reset() {
+        local s="$1"
+        (( s < 0 )) && s=0
+        if (( s >= 86400 )); then printf '%dd%dh' "$(( s / 86400 ))" "$(( (s % 86400) / 3600 ))"
+        elif (( s >= 3600 )); then printf '%dh%dm' "$(( s / 3600 ))" "$(( (s % 3600) / 60 ))"
+        else printf '%dm' "$(( s / 60 ))"; fi
+      }
+
+      # Per-provider quota panel: a coloured provider header, then each window's
+      # bar, percent used, and time until reset. No redundant "usage" label.
       usagep=()
       build_usage() {
         usagep=()
@@ -1440,37 +1451,30 @@ let
         json="$(timeout 8 "$omp_bin" usage --json 2>/dev/null)" || return 0
         [[ -n "$json" ]] || return 0
         rows="$(printf '%s' "$json" | jq -r '
-            ( "HDR\t" + ((now - (.generatedAt / 1000)) | floor | tostring) ),
-            ( .reports[] | .provider as $p | .limits[]
-              | "ROW\t" + $p + "\t" + .label + "\t"
-                + ((.amount.usedFraction * 100) | round | tostring) + "\t"
-                + (.scope.tier // "-") )
+            .reports[] | .provider as $p | .limits[]
+            | $p + "\t" + .label + "\t"
+              + ((.amount.usedFraction * 100) | round | tostring) + "\t"
+              + (.scope.tier // "-") + "\t"
+              + (((.window.resetsAt / 1000) - now) | floor | tostring)
           ' 2>/dev/null)" || return 0
         [[ -n "$rows" ]] || return 0
-        local kind a b c d last_provider="" pname when note
-        while IFS=$'\t' read -r kind a b c d; do
-          case "$kind" in
-            HDR)
-              if (( a >= 60 )); then when="$(( a / 60 ))m ago"; else when="''${a}s ago"; fi
-              usagep+=( "usage · $when" "" )
-              ;;
-            ROW)
-              case "$a" in
-                openai-codex) pname="Codex" ;;
-                anthropic) pname="Claude" ;;
-                *) pname="$a" ;;
-              esac
-              if [[ "$a" != "$last_provider" ]]; then
-                usagep+=( "$pname" )
-                last_provider="$a"
-              fi
-              note=""
-              (( c >= 80 )) && note=" · ''${c_warn}tight''${c_rst}"
-              [[ "$d" == spark && "$c" -eq 0 ]] && note=" · ''${c_ok}free''${c_rst}"
-              usagep+=( "$(printf '  %-8s %s %3d%% used%s' \
-                "$(short_window "$b")" "$(bar "$c")" "$c" "$note")" )
-              ;;
+        local a b c d e last_provider="" pname pcol note
+        while IFS=$'\t' read -r a b c d e; do
+          case "$a" in
+            openai-codex) pname="Codex"; pcol="$c_openai" ;;
+            anthropic) pname="Claude"; pcol="$c_claude" ;;
+            *) pname="$a"; pcol="$c_dim" ;;
           esac
+          if [[ "$a" != "$last_provider" ]]; then
+            usagep+=( "''${pcol}''${c_bold}$pname''${c_rst}" )
+            last_provider="$a"
+          fi
+          note=""
+          (( c >= 80 )) && note="  ''${c_warn}tight''${c_rst}"
+          [[ "$d" == spark && "$c" -eq 0 ]] && note="  ''${c_ok}free''${c_rst}"
+          usagep+=( "$(printf '  %-8s %s %3d%% used  %s%s %s%s%s' \
+            "$(short_window "$b")" "$(bar "$c")" "$c" \
+            "$c_dim" "$g_reset" "$(fmt_reset "$e")" "$c_rst" "$note")" )
         done <<< "$rows"
       }
 
@@ -1544,7 +1548,7 @@ let
       # level (low -> xhigh reads as dim -> bright). Kept narrow so fzf's preview
       # (nowrap) never has to wrap ANSI lines, which it renders incorrectly.
       colorize_routes() {
-        gawk -v dim="$c_dim" '
+        gawk -v dim="$c_dim" -v ok="$c_ok" -v bold="$c_bold" -v rst="$c_rst" '
           function lvl(l) { return l=="minimal"?0:l=="low"?1:l=="medium"?2:l=="high"?3:l=="xhigh"?4:5 }
           function clamp(x) { return x>255?255:(x<0?0:int(x)) }
           function short(name,   a, n) {
@@ -1565,6 +1569,15 @@ let
           }
           {
             line = $0
+            # Reformat the metadata line: bold the thinking level, green/dim the
+            # on/off states, so it parses at a glance.
+            if (line ~ /^  thinking .* fallback /) {
+              match(line, /thinking ([a-z]+)/, m); tl = m[1]
+              fb = (line ~ /fallback enabled/) ? "on" : "off"; fbc = (fb == "on") ? ok : dim
+              ad = (line ~ /advisor on/) ? "on" : "off"; adc = (ad == "on") ? ok : dim
+              print dim "  thinking " bold tl rst dim "    fallback " fbc fb dim "    advisor " adc ad rst
+              next
+            }
             gsub(/ +→/, " →", line)
             out = ""
             # paint() calls match() internally, which clobbers RSTART/RLENGTH, so

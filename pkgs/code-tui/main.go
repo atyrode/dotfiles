@@ -876,6 +876,7 @@ func (m model) View() string {
 func (m model) pickerList(focused bool) string {
 	trunc := lipgloss.NewStyle().MaxWidth(m.listW()).Inline(true)
 	var b strings.Builder
+	b.WriteString(sectionTitle("profiles", focused) + "\n\n")
 	lastGroup := ""
 	for i, p := range m.profiles {
 		if p.group != lastGroup {
@@ -889,9 +890,14 @@ func (m model) pickerList(focused bool) string {
 		case "degraded":
 			mark = stWarn.Render("⚠ ")
 		}
-		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(p.color)).Render(p.glyph)
-		nm := lipgloss.NewStyle().Foreground(lipgloss.Color(p.color)).Bold(true).Render(p.name)
-		row := fmt.Sprintf("%s%s %-6s %s", mark, gly, nm, flavorize(p.blurb))
+		nameCol := p.color
+		blurb := flavorize(p.blurb)
+		if !focused {
+			nameCol, blurb = cDim, stDim.Render(p.blurb)
+		}
+		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Render(p.glyph)
+		nm := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Bold(focused).Render(p.name)
+		row := fmt.Sprintf("%s%s %-6s %s", mark, gly, nm, blurb)
 		row = trunc.Render(row)
 		if i == m.cursor {
 			bg := cSelBg
@@ -905,18 +911,29 @@ func (m model) pickerList(focused bool) string {
 	return b.String()
 }
 
+func sectionTitle(name string, focused bool) string {
+	if focused {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Bold(true).Render("▍ " + name)
+	}
+	return stDim.Render("  " + name)
+}
+
 func (m model) genList(focused bool) string {
 	var b strings.Builder
-	b.WriteString(stGrp.Render("build a profile") + "\n\n")
+	b.WriteString(sectionTitle("generator", focused) + "\n\n")
 	for i, f := range m.facets {
 		na := (f.key == "fable" && m.sel["lane"] == "gpt-only") || (f.key == "spark" && m.sel["lane"] == "claude-only")
 		onRow := i == m.fcur && focused
-		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(laneColor(m.sel["lane"]))).Render(f.glyph)
+		glyCol := laneColor(m.sel["lane"])
+		if !focused {
+			glyCol = cDim
+		}
+		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(glyCol)).Render(f.glyph)
 		ptr := "  "
 		if onRow {
 			ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc)).Render("▸ ")
 		}
-		row := fmt.Sprintf("%s%s %-9s", ptr, gly, pad(f.key, 9))
+		row := fmt.Sprintf("%s%s %s", ptr, gly, stDim.Render(pad(f.key, 9)))
 		for _, v := range f.values {
 			switch {
 			case na:
@@ -928,7 +945,10 @@ func (m model) genList(focused bool) string {
 				} else if (f.key == "spark" || f.key == "fable") && v == "on" {
 					col = cGreen
 				}
-				st := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
+				if !focused {
+					col = cGrp // grayed but legible when the section is unfocused
+				}
+				st := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(focused)
 				if onRow { // the cursor sits on the selected value of the focused row
 					st = st.Background(lipgloss.Color(cSelBg))
 				}
@@ -937,8 +957,21 @@ func (m model) genList(focused bool) string {
 				row += "   " + stDim.Render(v)
 			}
 		}
-		if na {
+		switch {
+		case na:
 			row += "   " + stDim.Render("— n/a for this lane")
+		case focused && (f.key == "fable" || f.key == "spark") && m.sel[f.key] == "on":
+			bkt, lbl := "claude-fable", "Fable"
+			if f.key == "spark" {
+				bkt, lbl = "codex-spark", "Spark"
+			}
+			if m.avail.down(bkt) {
+				w := lbl + " maxed · " + fmtReset(m.avail.reset[bkt])
+				if m.avail.bucket[bkt] == "unauthed" {
+					w = lbl + " unavailable"
+				}
+				row += "   " + stWarn.Render("⚠ "+w+" — no usage left")
+			}
 		}
 		b.WriteString(row + "\n")
 	}

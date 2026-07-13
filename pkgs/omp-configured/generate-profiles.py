@@ -39,6 +39,25 @@ for _k, _v in CATALOG.items():
         LADDER[_v["pool"]][_v["tier"]] = _k
 CHEAP = {p: LADDER[p][1] for p in ("O", "A")}
 
+# Per-model thinking range, parsed from the catalog's `thinking: lo→hi` field
+# (mirrors omp's vocabulary: minimal < low < medium < high < xhigh < max). Each
+# model supports a contiguous slice of that scale, so clamping any level into
+# [lo, hi] resolves the extremes per model for free: 'minimal' → the model's floor
+# (minimal for haiku, low for the rest) and 'max' → its ceiling (max for most,
+# xhigh for spark/haiku). It also keeps every emitted level one the model actually
+# offers — e.g. luna has no 'minimal', so luna:minimal clamps to luna:low.
+SCALE = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+SIDX = {lv: i for i, lv in enumerate(SCALE)}
+TH_RANGE = {}
+for _k, _v in CATALOG.items():
+    _lo, _hi = (s.strip() for s in _v["thinking"].split('→'))
+    TH_RANGE[_k] = (SIDX[_lo], SIDX[_hi])
+
+
+def clamp_th(model, level):
+    lo, hi = TH_RANGE[model]
+    return SCALE[max(lo, min(hi, SIDX[level]))]
+
 
 def other(p):
     return 'A' if p == 'O' else 'O'
@@ -131,7 +150,11 @@ TMAP = {'fast': 1, 'normal': 2, 'smart': 3}
 BUMP = {'minimal': 'low', 'low': 'medium', 'medium': 'high', 'high': 'xhigh', 'xhigh': 'xhigh'}
 LANES = ['gpt-only', 'gpt-led', 'mixed', 'claude-led', 'claude-only']
 MTIERS = ['fast', 'normal', 'smart']
-THINKING = ['low', 'medium', 'high', 'xhigh']
+# The middle levels scale per role (deliberation bumps up, utilities stay modest);
+# the two extremes are uniform overrides — 'minimal' floors every role, 'max' tops
+# every role — each clamped to what its model actually supports (see clamp_th).
+THINKING = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+EXTREMES = {'minimal', 'max'}
 
 
 def primary(lane):
@@ -147,6 +170,7 @@ def gen(lane, mtier, thinking, spark, fable):
     P = primary(lane)
     base = TMAP[mtier]
     isp = pure(lane)
+    extreme = thinking in EXTREMES  # 'minimal'/'max' override every role uniformly
 
     def rprov(r):
         if isp:
@@ -161,10 +185,12 @@ def gen(lane, mtier, thinking, spark, fable):
         if r in UTIL:
             rp = rprov(r)
             t = UTIL_MODEL[r][mtier]
-            th = UTIL_THINK[r][thinking]
+            th = thinking if extreme else UTIL_THINK[r][thinking]
             spark_here = spark and (r in ('tiny', 'commit') or (r == 'sonic' and mtier == 'fast'))
             if spark_here:
-                lead, th = 'spark', 'low'      # fast codex tier; keep it snappy
+                lead = 'spark'                 # fast codex tier; keep it snappy
+                if not extreme:
+                    th = 'low'
                 fb = [LADDER[rp][t]]           # fall to the role's normal model
             else:
                 lead = LADDER[rp][t]
@@ -181,12 +207,13 @@ def gen(lane, mtier, thinking, spark, fable):
             # the pure lanes) — the minimum diversity guarantee for any profile.
             AP = P if isp else other(P)
             amod = (LADDER[AP][2] if AP == 'A' else 'terra') if mtier == 'smart' else CHEAP[AP]
-            lvl = 'high' if mtier == 'smart' else 'low'
-            out[r] = (amod, lvl, [(m, 'low') for m in build_chain(amod, isp)])
+            lvl = thinking if extreme else ('high' if mtier == 'smart' else 'low')
+            fbl = thinking if extreme else 'low'
+            out[r] = (amod, lvl, [(m, fbl) for m in build_chain(amod, isp)])
             continue
         rp = rprov(r)
         t = min(3, base + 1) if r in DELIB else base
-        th = BUMP[thinking] if r in DELIB else thinking
+        th = thinking if extreme else (BUMP[thinking] if r in DELIB else thinking)
         lead = 'fable' if (fable and r in DELIB and rp == 'A' and mtier in ('smart', 'normal')) else LADDER[rp][t]
         out[r] = (lead, th, [(m, th) for m in build_chain(lead, isp)])
     return out
@@ -212,10 +239,10 @@ def render(lane, mtier, thinking, spark, fable):
         if lead is None:  # advisor off — no row (matches render-omp-routes skip)
             continue
         marker = '●' if r in AGENT_ROLES else ' '
-        model = f"{ID[lead]}:{lvl}"
+        model = f"{ID[lead]}:{clamp_th(lead, lvl)}"
         row = f"  {marker} {r:<10} {model:<24}"
         for (m, ml) in chain:
-            row += f" → {ID[m]}:{ml}"
+            row += f" → {ID[m]}:{clamp_th(m, ml)}"
         lines.append(row.rstrip())
     lines.append("")
     return "\n".join(lines)
@@ -227,7 +254,7 @@ def render_advisors():
     lines = ["__advisors__  advisor dial (level context → chain)"]
     for ctx in ('gpt', 'claude'):
         for level in ('glance', 'review', 'audit'):
-            chain = ' → '.join(f"{ID[k]}:{lv}" for k, lv in ADVISOR[ctx][level])
+            chain = ' → '.join(f"{ID[k]}:{clamp_th(k, lv)}" for k, lv in ADVISOR[ctx][level])
             lines.append(f"  {level} {ctx} {chain}")
     lines.append("")
     return "\n".join(lines)

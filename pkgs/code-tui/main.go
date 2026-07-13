@@ -523,7 +523,7 @@ func facetDefs(glyphs map[string]string) []facet {
 	return []facet{
 		{"lane", []string{"gpt-only", "gpt-led", "mixed", "claude-led", "claude-only"}, glyphs["lane"]},
 		{"model", []string{"fast", "normal", "smart"}, glyphs["model"]},
-		{"thinking", []string{"low", "medium", "high", "xhigh"}, glyphs["thinking"]},
+		{"thinking", []string{"minimal", "low", "medium", "high", "xhigh", "max"}, glyphs["thinking"]},
 		// advisor as a power/cost dial: a quick glance, a proper review, or a
 		// deep (expensive) audit — off spends nothing.
 		{"advisor", []string{"off", "glance", "review", "audit"}, glyphs["advisor"]},

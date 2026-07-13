@@ -5,6 +5,7 @@
   "codex-app"
   "display-pilot"
   "discord"
+  "godot"
   "parsec"
   "plugdata"
   "sonos"

@@ -204,6 +204,30 @@ validate_receipt() {
     fail "$receipt is incomplete"
 }
 
+validate_completed_receipt() {
+  local transaction_dir="$1"
+  local receipt="$transaction_dir/receipt.tsv"
+
+  if [[ -f "$receipt" && ! -L "$receipt" && ! -s "$receipt" ]]; then
+    local receipt_dir
+    [[ -d "$transaction_dir" && ! -L "$transaction_dir" ]] ||
+      fail "$transaction_dir is not a migration receipt directory"
+    for receipt_dir in "$transaction_dir/backup" "$transaction_dir/work"; do
+      [[ -d "$receipt_dir" && ! -L "$receipt_dir" ]] ||
+        fail "$receipt_dir is not a safe receipt directory"
+      local -a entries=()
+      shopt -s dotglob nullglob
+      entries=("$receipt_dir"/*)
+      shopt -u dotglob nullglob
+      [[ "${#entries[@]}" -eq 0 ]] ||
+        fail "$transaction_dir has an empty receipt with retained migration data"
+    done
+    return 0
+  fi
+
+  validate_receipt "$transaction_dir"
+}
+
 validate_terminal_state() {
   if path_exists "$pending" && path_exists "$complete"; then
     fail "both pending and completed migration state exist under $state_root"
@@ -213,7 +237,7 @@ validate_terminal_state() {
     if [[ -f "$complete" && ! -L "$complete" ]]; then
       [[ "$(cat "$complete")" == "completed" ]] || fail "$complete is not a recognized legacy marker"
     else
-      validate_receipt "$complete"
+      validate_completed_receipt "$complete"
     fi
     return 0
   fi

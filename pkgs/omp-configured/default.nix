@@ -1543,7 +1543,7 @@ let
           '  code <profile>          run that launcher (name, number, or letter)' \
           '  code <profile> [args]   run it, forwarding all extra args' \
           '  code -l, --list         print the launcher palette and exit' \
-          '  code -w, --wiki         open the browsable profiles wiki' \
+          '  code -w, --wiki         serve the profiles wiki on localhost' \
           '  code -U, --no-usage     open without fetching the usage panel' \
           '  code -h, --help         this help' \
           "" \
@@ -1552,15 +1552,26 @@ let
           'profile opens the picker and forwards all args to your choice.'
       }
 
+      # Serve the wiki over HTTP on localhost rather than handing back a file
+      # path — so it also works on a headless VPS (forward the port over SSH).
+      # Bound to 127.0.0.1 only; set CODE_WIKI_PORT to change the port.
       open_wiki() {
         local wiki=${profilesWiki}/share/omp/routes.html
+        local port="''${CODE_WIKI_PORT:-8765}"
+        local dir
+        dir="$(mktemp -d)"
+        cp "$wiki" "$dir/index.html"
+        trap 'rm -rf "$dir"' EXIT
+        local url="http://127.0.0.1:$port/"
+        printf 'code: serving the profiles wiki at %s\n' "$url"
+        printf 'code: from another machine, forward it:  ssh -L %s:127.0.0.1:%s <this-host>\n' "$port" "$port"
+        printf 'code: Ctrl-C to stop.\n'
         if command -v xdg-open >/dev/null 2>&1; then
-          xdg-open "$wiki" >/dev/null 2>&1 &
+          xdg-open "$url" >/dev/null 2>&1 &
         elif command -v open >/dev/null 2>&1; then
-          open "$wiki"
-        else
-          printf '%s\n' "$wiki"
+          open "$url" >/dev/null 2>&1 &
         fi
+        ${python3}/bin/python3 -m http.server "$port" --bind 127.0.0.1 --directory "$dir" || true
       }
 
       case "''${1:-}" in

@@ -982,7 +982,9 @@ cmd_rollback() {
 
   if [[ "$platform" == nix-darwin ]]; then
     command -v darwin-rebuild >/dev/null || die "$EX_UNAVAILABLE" "darwin-rebuild is unavailable"
-    sudo darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
+    # darwin-rebuild owns its own privilege elevation (as nh does for apply);
+    # atyrode never self-elevates. Run `sudo atyrode rollback` if a setup needs it.
+    darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
   else
     local genpath
     genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" || die "$EX_DATAERR" "cannot resolve generation $target"

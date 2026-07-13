@@ -1022,7 +1022,7 @@ func (m model) launchFooter() []string {
 	cs, ss := m.costScore(), m.speedScore()
 	return []string{
 		"",
-		m.meter("cost", "$", meterRamp[cs], cs),    // dear → red, cheap → green
+		m.meter("cost", "$", meterRamp[cs], cs), // dear → red, cheap → green
 		m.meter("speed", "»", meterRamp[6-ss], ss), // fast → green, slow → red
 		lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("  ⏎ launch this profile"),
 	}

@@ -11,7 +11,8 @@ import (
 )
 
 func TestOmpArgs(t *testing.T) {
-	got := ompArgs("claude-haiku-4-5", "grounding docs", "why is the sky blue?")
+	// Ask style: append the docs, no thinking override.
+	got := ompArgs("claude-haiku-4-5", "", false, "grounding docs", "why is the sky blue?")
 	want := []string{
 		"-p", "--mode", "text", "--no-session", "--no-tools",
 		"--model", "claude-haiku-4-5",
@@ -19,14 +20,25 @@ func TestOmpArgs(t *testing.T) {
 		"why is the sky blue?",
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Errorf("ompArgs = %v\nwant %v", got, want)
+		t.Errorf("ompArgs(ask) = %v\nwant %v", got, want)
 	}
 
-	// No model and no docs: those flags are omitted, prompt still last.
-	got = ompArgs("", "", "hi")
+	// Commander style: replace the system prompt and pin thinking.
+	got = ompArgs("gpt-5.6-luna", "off", true, "schema", "do a thing")
+	want = []string{
+		"-p", "--mode", "text", "--no-session", "--no-tools",
+		"--model", "gpt-5.6-luna", "--thinking", "off",
+		"--system-prompt", "schema", "do a thing",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("ompArgs(commander) = %v\nwant %v", got, want)
+	}
+
+	// No model/thinking/docs: those flags are omitted, prompt still last.
+	got = ompArgs("", "", false, "", "hi")
 	want = []string{"-p", "--mode", "text", "--no-session", "--no-tools", "hi"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Errorf("ompArgs(no model/docs) = %v\nwant %v", got, want)
+		t.Errorf("ompArgs(bare) = %v\nwant %v", got, want)
 	}
 }
 

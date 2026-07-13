@@ -79,6 +79,10 @@ func newHost(app App) host {
 		if isCmd { // Act mode takes precedence when both are present
 			h.box.SetCommander(commandable.Commander())
 		}
+		// Optional: let the app title the box (e.g. show the evaluator model).
+		if t, ok := app.(interface{ BoxTitle() string }); ok {
+			h.box.SetTitle(t.BoxTitle())
+		}
 	}
 	return h
 }

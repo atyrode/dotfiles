@@ -27,16 +27,26 @@ func NewOmpAsker(docs DocCorpus) OmpAsker {
 	return OmpAsker{Bin: "omp", Model: DefaultEvaluatorModel, Docs: docs}
 }
 
-// ompArgs assembles the headless, read-only invocation: process one prompt and
-// exit (-p), plain streamed text, no session, no tools, grounded by the docs.
-// Kept pure so the exact command line is unit-testable.
-func ompArgs(model string, docs DocCorpus, prompt string) []string {
+// ompArgs assembles the headless invocation: process one prompt and exit (-p),
+// plain streamed text, no session, no tools. thinking (if set) pins the reasoning
+// level. When replaceSystem is true the docs REPLACE omp's default coding-agent
+// system prompt (--system-prompt) — the right choice for a classifier/evaluator,
+// which should follow the instructions verbatim rather than act like a coder;
+// otherwise they are appended. Kept pure so the command line is unit-testable.
+func ompArgs(model, thinking string, replaceSystem bool, docs DocCorpus, prompt string) []string {
 	args := []string{"-p", "--mode", "text", "--no-session", "--no-tools"}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	if thinking != "" {
+		args = append(args, "--thinking", thinking)
+	}
 	if docs != "" {
-		args = append(args, "--append-system-prompt", string(docs))
+		flag := "--append-system-prompt"
+		if replaceSystem {
+			flag = "--system-prompt"
+		}
+		args = append(args, flag, string(docs))
 	}
 	return append(args, prompt)
 }
@@ -52,7 +62,7 @@ func (o OmpAsker) Ask(ctx context.Context, prompt string) (<-chan string, error)
 	if model == "" {
 		model = DefaultEvaluatorModel
 	}
-	cmd := exec.CommandContext(ctx, bin, ompArgs(model, o.Docs, prompt)...)
+	cmd := exec.CommandContext(ctx, bin, ompArgs(model, "", false, o.Docs, prompt)...)
 	return streamCmd(ctx, cmd)
 }
 

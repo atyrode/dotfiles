@@ -26,11 +26,13 @@ type Action struct {
 	Value string
 }
 
-// Commander turns a prompt into a closed set of typed actions the host validates
-// and applies (through the same code path as a manual change), then previews as a
-// diff before confirming. Cancelling ctx stops the work.
+// Commander proposes changes for a prompt in two parts so the box can show the
+// model working: Propose streams the model's raw output (rationale + result) for
+// live display, and Parse turns the completed output into a closed set of typed
+// actions the host validates and applies. Cancelling ctx stops the work.
 type Commander interface {
-	Actions(ctx context.Context, prompt string) ([]Action, error)
+	Propose(ctx context.Context, prompt string) (<-chan string, error)
+	Parse(output string) ([]Action, error)
 }
 
 // DocCorpus is grounding text a Documented host exposes; a real Asker backend

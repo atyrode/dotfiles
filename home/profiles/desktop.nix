@@ -15,7 +15,6 @@ in
   home.packages = lib.optionals pkgs.stdenv.isDarwin (
     (with pkgs; [
       chatgpt
-      godot
       obsidian
       postman
       prismlauncher

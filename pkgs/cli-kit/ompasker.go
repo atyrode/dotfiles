@@ -30,12 +30,17 @@ func NewOmpAsker(docs DocCorpus) OmpAsker {
 
 // ompArgs assembles the headless invocation: process one prompt and exit (-p),
 // plain streamed text, no session, no tools. thinking (if set) pins the reasoning
-// level. When replaceSystem is true the docs REPLACE omp's default coding-agent
-// system prompt (--system-prompt) — the right choice for a classifier/evaluator,
-// which should follow the instructions verbatim rather than act like a coder;
-// otherwise they are appended. Kept pure so the command line is unit-testable.
+// level. When replaceSystem is true this is BARE-CLASSIFIER mode: the docs REPLACE
+// omp's default system prompt (--system-prompt) AND omp's agent scaffolding
+// (rules, skills, extensions loaded from the managed ~/.omp) is stripped —
+// otherwise omp behaves like a coding agent and answers the prompt instead of
+// classifying it. When false the docs are appended and the agent stays intact.
+// Kept pure so the command line is unit-testable.
 func ompArgs(model, thinking string, replaceSystem bool, docs DocCorpus, prompt string) []string {
 	args := []string{"-p", "--mode", "text", "--no-session", "--no-tools"}
+	if replaceSystem {
+		args = append(args, "--no-rules", "--no-skills", "--no-extensions")
+	}
 	if model != "" {
 		args = append(args, "--model", model)
 	}

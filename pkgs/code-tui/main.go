@@ -946,8 +946,9 @@ func (m *model) usagePanel() string {
 		}
 		blocks[w.prov] = append(blocks[w.prov], m.usageRow(w))
 	}
-	// side-by-side when there's horizontal room, else stacked.
-	const colW = 46
+	// side-by-side when there's horizontal room, else stacked. colW must fit the
+	// widest row (label · bar · pct · ↻reset · note) without wrapping the note.
+	const colW = 49
 	if len(order) > 1 && m.w >= colW*len(order) {
 		var cols []string
 		for _, p := range order {
@@ -1458,13 +1459,6 @@ func (m model) genLines(focused bool) ([]string, int) {
 			}
 		case focused && f.key == "fast" && m.sel["fast"] == "on":
 			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
-		case focused && f.key == "advisor" && m.sel["advisor"] != "off":
-			blurb := map[string]string{
-				"glance": "quick, cheap second opinion",
-				"review": "a proper review — mid cost",
-				"audit":  "deep critique — most capable, priciest",
-			}[m.sel["advisor"]]
-			row += "   " + stDim.Render(blurb)
 		}
 		lines = append(lines, row)
 	}

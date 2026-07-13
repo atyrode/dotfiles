@@ -19,6 +19,7 @@
 #
 # Consumed by generate-profiles.py (the facet grid) and generate-wiki.py (the
 # browsable profiles wiki).
+refreshed: '2026-07-13'
 models:
   luna:
     id: gpt-5.6-luna
@@ -123,10 +124,12 @@ models:
     bucket: claude-fable
     cost_in: 10
     cost_out: 50
-    # speed/ttft: ESTIMATE — its bucket was maxed at refresh time so `omp bench`
-    # couldn't measure it; re-run the refresh once the Fable quota resets.
-    speed: 30
-    ttft: 4.0
+    # speed/ttft: from `omp stats` history (what `/model` shows), NOT `omp bench` —
+    # Fable's bucket was maxed so it couldn't be benched live. Stats are thinking-
+    # blended so not perfectly bench-comparable; re-run the refresh once the Fable
+    # quota resets to replace these with a clean benchmark.
+    speed: 54
+    ttft: 6.9
     context: 1000000
     thinking: low→max
     role: >-

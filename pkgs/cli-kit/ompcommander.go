@@ -19,7 +19,12 @@ type OmpCommander struct {
 	Bin      string    // omp binary; defaults to "omp"
 	Model    string    // evaluator model; defaults to DefaultEvaluatorModel
 	Thinking string    // reasoning level; defaults to "off" for speed
-	Docs     DocCorpus // system prompt: describes the options, demands a JSON reply
+	Docs     DocCorpus // system prompt: the classifier's role/identity
+	// Wrap, if set, turns the raw user prompt into the message actually sent to
+	// omp. Hosts use it to frame the task as classification and embed the prompt
+	// as inert data — since omp is an agent, a bare prompt is treated as a task to
+	// perform, but a "produce this config for the following data" message is not.
+	Wrap func(prompt string) string
 }
 
 // NewOmpCommander builds an OmpCommander with the default binary, evaluator, and
@@ -41,7 +46,11 @@ func (o OmpCommander) Propose(ctx context.Context, prompt string) (<-chan string
 	if model == "" {
 		model = DefaultEvaluatorModel
 	}
-	cmd := execCommandContext(ctx, bin, ompArgs(model, o.Thinking, true, o.Docs, prompt)...)
+	msg := prompt
+	if o.Wrap != nil {
+		msg = o.Wrap(prompt)
+	}
+	cmd := execCommandContext(ctx, bin, ompArgs(model, o.Thinking, true, o.Docs, msg)...)
 	return streamCmd(ctx, cmd)
 }
 

@@ -640,8 +640,20 @@ const (
 
 // weightedModels walks the current config's rows and calls fn(weight, id, level)
 // for each role's lead model — the shared basis for both meters.
-func (m model) weightedModels(fn func(w float64, id, lvl string)) {
-	rows := m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
+// currentRows is the routing block the cost/speed meters score: the generator's
+// facet combo (advisor applied) in the generator, or the highlighted profile's
+// managed routing in the picker — so both views meter what's under the cursor.
+func (m model) currentRows() []string {
+	if m.view == pickerView {
+		if m.cursor < len(m.profiles) {
+			return m.routes[m.profiles[m.cursor].name]
+		}
+		return nil
+	}
+	return m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
+}
+
+func (m model) weightedModels(rows []string, fn func(w float64, id, lvl string)) {
 	for _, r := range rows {
 		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
 		i := 0
@@ -676,9 +688,9 @@ func logScore(idx, lnLo, lnHi float64) int {
 
 // costScore rates the current config from 1 (cheap) to 5 (dear).
 func (m model) costScore() int {
-	fast := m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
+	fast := m.view == genView && m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
 	var num, den float64
-	m.weightedModels(func(w float64, id, lvl string) {
+	m.weightedModels(m.currentRows(), func(w float64, id, lvl string) {
 		c, ok := m.facts[id]
 		if !ok {
 			return
@@ -702,9 +714,9 @@ func (m model) costScore() int {
 
 // speedScore rates the current config from 1 (slow) to 5 (fast).
 func (m model) speedScore() int {
-	fast := m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
+	fast := m.view == genView && m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
 	var num, den float64
-	m.weightedModels(func(w float64, id, lvl string) {
+	m.weightedModels(m.currentRows(), func(w float64, id, lvl string) {
 		c, ok := m.facts[id]
 		if !ok || c.speed == 0 {
 			return
@@ -925,6 +937,8 @@ const (
 	gut      = 2
 	topGap   = 1
 	headRows = 2
+	// the launch footer pinned under the list: blank + cost + speed + ⏎ launch.
+	launchFooterRows = 4
 )
 
 // genRowWidth is the width needed to render the widest generator facet row (all
@@ -951,8 +965,9 @@ func (m model) mode() int {
 		return modeSplit
 	}
 	// too narrow for side-by-side; stack the preview below the list if the
-	// terminal is tall enough to give both panes a usable share, else collapse.
-	if m.bodyH() >= 15 {
+	// terminal is tall enough to give the list, footer, and preview a usable
+	// share, else collapse.
+	if m.bodyH() >= 17 {
 		return modeStacked
 	}
 	return modeCollapsed
@@ -985,12 +1000,26 @@ func (m model) bodyLines(w int) ([]string, int) {
 	return m.genLines(true)
 }
 
+// launchFooter is the cost/speed meters for whatever is highlighted plus the
+// enter-to-launch call to action — shared by both the generator and the profile
+// list, so either view shows what the choice costs, how fast it is, and how to
+// launch it.
+func (m model) launchFooter() []string {
+	cs, ss := m.costScore(), m.speedScore()
+	return []string{
+		"",
+		m.meter("cost", "$", meterRamp[cs], cs),    // dear → red, cheap → green
+		m.meter("speed", "»", meterRamp[6-ss], ss), // fast → green, slow → red
+		lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("  ⏎ launch this profile"),
+	}
+}
+
 // stackedSplit divides the inner body height (minus the section head and the
 // 1-line divider) between the list and the preview: the list takes what its
 // content needs, capped at ~60% and floored so the preview keeps ≥ minPrev rows.
 func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
 	const sep, minPrev, minList = 1, 6, 3
-	inner := bodyH - headRows - sep
+	inner := bodyH - headRows - launchFooterRows - sep
 	listH = bodyLen
 	if c := inner * 3 / 5; listH > c {
 		listH = c
@@ -1525,11 +1554,13 @@ func (m model) sectionHead() string {
 func (m model) leftColumn(w, totalH int) string {
 	iw := w - gut
 	body, bcur := m.bodyLines(iw)
-	listH := totalH - headRows
+	listH := totalH - headRows - launchFooterRows
 	if listH < 1 {
 		listH = 1
 	}
-	return m.sectionHead() + padLeft(windowList(body, bcur, listH, iw), gut)
+	list := padLeft(windowList(body, bcur, listH, iw), gut)
+	footer := padLeft(strings.Join(m.launchFooter(), "\n"), gut)
+	return m.sectionHead() + list + "\n" + footer
 }
 
 // stackedContent is the narrow-but-tall layout: head + list on top, a full-width
@@ -1538,7 +1569,7 @@ func (m model) leftColumn(w, totalH int) string {
 func (m model) stackedContent(bodyH int) string {
 	body, _ := m.bodyLines(m.w - gut)
 	listH, prevH := stackedSplit(bodyH, len(body))
-	top := m.leftColumn(m.w, headRows+listH)
+	top := m.leftColumn(m.w, headRows+listH+launchFooterRows)
 	div := stDim.Render(strings.Repeat("─", m.w))
 	preview := lipgloss.NewStyle().MaxHeight(prevH).Render(padLeft(m.vp.View(), gut))
 	return lipgloss.JoinVertical(lipgloss.Left, top, div, preview)
@@ -1672,15 +1703,6 @@ func (m model) genLines(focused bool) ([]string, int) {
 			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
 		}
 		lines = append(lines, row)
-	}
-	// launch call-to-action under the facets — the "configure → launch" flow
-	// lives with the generator; the routing detail stays on the right.
-	if focused {
-		cs, ss := m.costScore(), m.speedScore()
-		lines = append(lines, "",
-			m.meter("cost", "$", meterRamp[cs], cs),      // dear → red, cheap → green
-			m.meter("speed", "»", meterRamp[6-ss], ss),   // fast → green, slow → red
-			lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render("  ⏎ launch this profile"))
 	}
 	return lines, cursor
 }

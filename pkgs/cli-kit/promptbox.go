@@ -12,8 +12,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// errNoChanges is shown when a Commander returns an empty proposal.
-var errNoChanges = errors.New("no changes proposed")
+// errNoProposal is shown when the backend didn't return a usable proposal —
+// whether it errored, answered in prose, or proposed nothing. The raw output is
+// displayed above it (see View), which carries the actual reason.
+var errNoProposal = errors.New("no settings proposal in the output above")
 
 // PromptBox is the shared "smart prompt box": type a prompt, watch the agent
 // think, and read a streamed answer. It is a self-contained Bubble Tea component
@@ -263,10 +265,11 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			if b.acting && b.cmd != nil { // Act: parse the streamed output
 				actions, err := b.cmd.Parse(b.answer)
 				switch {
-				case err != nil:
-					b.state, b.err = boxDone, err
-				case len(actions) == 0:
-					b.state, b.err = boxDone, errNoChanges
+				case err != nil || len(actions) == 0:
+					// The output (shown above) wasn't a usable proposal — an omp
+					// error, a prose answer, or nothing. Don't surface the JSON
+					// parser's cryptic message; point at the output instead.
+					b.state, b.err = boxDone, errNoProposal
 				default:
 					// Apply the proposal live (host previews it) and await keep/revert.
 					b.proposed, b.state = actions, boxProposed

@@ -248,6 +248,17 @@ def render(lane, mtier, thinking, spark, fable):
     return "\n".join(lines)
 
 
+def render_costs():
+    """Emit the per-model cost table as a pseudo-block the picker parses, so the
+    generator's $ meter reads pricing from the catalog (not a second copy). Cost
+    is $ per 1M tokens, mirrored from `omp models` (see models.yml)."""
+    lines = ["__costs__  model cost table (id in out — $ per 1M tokens)"]
+    for k, v in CATALOG.items():
+        lines.append(f"  {ID[k]} {v['cost_in']} {v['cost_out']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_advisors():
     """Emit the advisor dial as a pseudo-block the picker parses (level context
     → chain), so the advisor model names live here, not duplicated in the TUI."""
@@ -272,6 +283,7 @@ def main():
     print("OMP generated routing — first-principles facet grid")
     print("bundled agents: designer librarian reviewer sonic task — ● marks an agent-backed role\n")
     print(render_advisors())
+    print(render_costs())
     for lane in LANES:
         for mtier in MTIERS:
             for thinking in THINKING:

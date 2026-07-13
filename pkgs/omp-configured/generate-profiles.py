@@ -70,7 +70,31 @@ ROLE_ORDER = ['default', 'task', 'plan', 'slow', 'designer', 'reviewer',
               'librarian', 'sonic', 'advisor', 'smol', 'tiny', 'commit']
 AGENT_ROLES = {'designer', 'librarian', 'reviewer', 'sonic', 'task'}  # ● marker
 DELIB = {'plan', 'slow', 'designer', 'reviewer'}
-BG = {'sonic', 'tiny', 'commit'}
+
+# Utility roles all respond to the sliders, but each to a degree that fits its
+# job — model tier is capped so none can ever become expensive. Provider comes
+# from rprov(); tier indexes LADDER (1 cheapest sibling .. 2 mid). Purposes:
+#   commit — commit messages (text-trivial):        always cheapest
+#   tiny   — labels (text-trivial):                  cheapest, a touch on smart
+#   smol   — fast lookup/naming + repo exploration:  rises at normal
+#   sonic  — the fast interactive agent:             rises at normal, keeps a net
+UTIL = {'sonic', 'smol', 'tiny', 'commit'}
+# gpt-5.3-codex-spark is very fast but low-capability, so it only belongs where
+# dumbness is harmless: commit/tiny (formulaic text) whenever spark is on, and
+# sonic only on a 'fast' model-tier (an explicit speed-over-smarts choice). smol
+# backs repo exploration, so it never uses spark.
+UTIL_MODEL = {
+    'commit': {'fast': 1, 'normal': 1, 'smart': 1},
+    'tiny':   {'fast': 1, 'normal': 1, 'smart': 2},
+    'smol':   {'fast': 1, 'normal': 2, 'smart': 2},
+    'sonic':  {'fast': 1, 'normal': 2, 'smart': 2},
+}
+UTIL_THINK = {  # kept low — these roles must stay fast/cheap even on deep profiles
+    'commit': {'low': 'minimal', 'medium': 'minimal', 'high': 'minimal', 'xhigh': 'low'},
+    'tiny':   {'low': 'minimal', 'medium': 'low', 'high': 'low', 'xhigh': 'low'},
+    'smol':   {'low': 'low', 'medium': 'low', 'high': 'medium', 'xhigh': 'medium'},
+    'sonic':  {'low': 'low', 'medium': 'medium', 'high': 'medium', 'xhigh': 'medium'},
+}
 TMAP = {'fast': 1, 'normal': 2, 'smart': 3}
 BUMP = {'minimal': 'low', 'low': 'medium', 'medium': 'high', 'high': 'xhigh', 'xhigh': 'xhigh'}
 LANES = ['gpt-only', 'gpt-led', 'mixed', 'claude-led', 'claude-only']
@@ -102,13 +126,19 @@ def gen(lane, mtier, thinking, spark, fable):
 
     out = {}
     for r in ROLE_ORDER:
-        if r in BG:
-            lead = 'spark' if spark else CHEAP[P]
-            fb = ([CHEAP[P]] if spark else []) + ([] if isp else [CHEAP[S]])
-            out[r] = (lead, 'low', [(m, 'low') for m in dedup(fb, lead)])
-            continue
-        if r == 'smol':
-            out[r] = (CHEAP[P], 'low', [])
+        if r in UTIL:
+            rp = rprov(r)
+            t = UTIL_MODEL[r][mtier]
+            th = UTIL_THINK[r][thinking]
+            spark_here = spark and (r in ('tiny', 'commit') or (r == 'sonic' and mtier == 'fast'))
+            if spark_here:
+                lead, th = 'spark', 'low'      # fast codex tier; keep it snappy
+                fb = [LADDER[rp][t]]           # fall to the role's normal model
+            else:
+                lead = LADDER[rp][t]
+                sd = sib_down(lead) if r == 'sonic' else None  # only sonic keeps a net
+                fb = [sd] if sd else []
+            out[r] = (lead, th, [(m, th) for m in dedup(fb, lead)])
             continue
         if r == 'advisor':
             if mtier == 'fast':

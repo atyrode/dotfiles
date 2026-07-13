@@ -1022,16 +1022,6 @@ func (m *model) syncPreview() {
 		if base, ok := m.generated[id]; ok {
 			_, roles := splitMeta(base)
 			roles = applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
-			// "will launch" summary — what Enter does, before you press it.
-			parts := []string{fmt.Sprintf("%d roles", len(roles))}
-			if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
-				parts = append(parts, "priority tier")
-			}
-			if m.sel["advisor"] != "off" {
-				parts = append(parts, "advisor "+m.sel["advisor"])
-			}
-			acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true)
-			b.WriteString(acc.Render("⏎ launches") + stDim.Render("  "+strings.Join(parts, " · ")) + "\n\n")
 			// meta line rebuilt from the facets, so it always reflects the
 			// advisor dial and fast toggle (both live outside the baked grid).
 			line := stDim.Render("thinking " + m.sel["thinking"] + " · fallback on · advisor " + m.sel["advisor"])
@@ -1461,6 +1451,11 @@ func (m model) genLines(focused bool) ([]string, int) {
 			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
 		}
 		lines = append(lines, row)
+	}
+	// launch call-to-action under the facets — the "configure → launch" flow
+	// lives with the generator; the routing detail stays on the right.
+	if focused {
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render("  ⏎ launch this profile"))
 	}
 	return lines, cursor
 }

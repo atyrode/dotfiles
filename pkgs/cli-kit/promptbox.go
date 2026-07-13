@@ -310,10 +310,13 @@ func (b PromptBox) View() string {
 			parts = append(parts, b.vp.View())
 		}
 	case boxDone:
+		// Always keep the raw output visible — on an Act parse-failure it's the
+		// diagnostic (what the model/omp actually said), not just the terse error.
+		if b.answer != "" {
+			parts = append(parts, b.vp.View())
+		}
 		if b.err != nil {
 			parts = append(parts, StBrk.Render(GBroken+" "+b.err.Error()))
-		} else {
-			parts = append(parts, b.vp.View())
 		}
 	case boxProposed:
 		lines := []string{StHead.Render("proposed changes")}

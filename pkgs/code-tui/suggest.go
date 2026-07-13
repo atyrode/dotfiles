@@ -39,10 +39,11 @@ func actDocs(facets []facet) clikit.DocCorpus {
 	return clikit.DocCorpus(b.String())
 }
 
-// defaultEvalModel is a fast, cheap evaluator (leads the speed GPT tier, lowest
-// ttft). Override with CODE_EVAL_MODEL; thinking is off by default (a quick
-// classification) and tunable via CODE_EVAL_THINKING.
-const defaultEvalModel = "gpt-5.6-luna"
+// defaultEvalModel is a fast, cheap evaluator — Anthropic's cheapest tier, which
+// is reliably authed and strong at instruction-following/JSON. With thinking off
+// (below) it's quick. Override with CODE_EVAL_MODEL (e.g. gpt-5.6-luna if your
+// Codex is authed); thinking is tunable via CODE_EVAL_THINKING.
+const defaultEvalModel = "claude-haiku-4-5"
 
 func evalModel() string {
 	if v := os.Getenv("CODE_EVAL_MODEL"); v != "" {

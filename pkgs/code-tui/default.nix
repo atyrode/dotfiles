@@ -17,7 +17,7 @@ buildGoModule {
   # so any change to pkgs/cli-kit/*.go shifts this hash — bump it on cli-kit edits.
   # A plain build can reuse a cached FOD and hide the change; get the true value
   # from a fake-hash build (set to sha256-AAA…, read the reported `got:`) or CI.
-  vendorHash = "sha256-hd2ETLUwygR3SRwfypxOuiG/O4DO/e6HkBz3hN2VCl8=";
+  vendorHash = "sha256-VPItyMn5FvX9W+BBTyJQ0o8CZ3o0B7lQLQbKqZxJBnU=";
 
   # The launcher picker is invoked as `code`.
   postInstall = ''

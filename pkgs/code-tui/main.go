@@ -631,8 +631,20 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
+	fetching    bool      // a usage fetch is in flight (manual or auto)
+	nextRefresh time.Time // when the next auto-refresh fires
+
 	chosen    string
 	genConfig string // generated config YAML to launch omp with (generator Enter)
+}
+
+// usage auto-refreshes on this cadence; a 1s tick drives the countdown.
+const refreshEvery = 5 * time.Minute
+
+type refreshTickMsg struct{}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return refreshTickMsg{} })
 }
 
 // usageMsg carries availability fetched off the main thread so startup never
@@ -646,7 +658,12 @@ func fetchUsageCmd(cmd string) tea.Cmd {
 	return func() tea.Msg { return usageMsg(loadAvailability(cmd)) }
 }
 
-func (m model) Init() tea.Cmd { return tea.Batch(fetchUsageCmd(m.usageCmd), m.spin.Tick) }
+func (m model) Init() tea.Cmd {
+	if m.usageCmd == "" {
+		return nil
+	}
+	return tea.Batch(fetchUsageCmd(m.usageCmd), m.spin.Tick, tickCmd())
+}
 
 func (m model) listW() int {
 	// wide enough for the generator options on one line; capped so a very wide
@@ -715,6 +732,21 @@ func shortWin(l string) string {
 	return l
 }
 
+// refreshLine shows either the live countdown to the next auto-refresh or, while
+// a fetch is in flight, a refreshing marker — plus the manual-refresh hint.
+func (m *model) refreshLine() string {
+	if m.fetching {
+		return stDim.Render("  usage · ") + stWarn.Render(gReset+" refreshing…")
+	}
+	rem := time.Until(m.nextRefresh)
+	if rem < 0 {
+		rem = 0
+	}
+	s := int(rem.Seconds())
+	return stDim.Render(fmt.Sprintf("  usage · next refresh %d:%02d · ", s/60, s%60)) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("r") + stDim.Render(" now")
+}
+
 func (m *model) usagePanel() string {
 	if !m.avail.ok {
 		if m.usageCmd != "" {
@@ -770,13 +802,13 @@ func (m *model) usagePanel() string {
 		for _, p := range order {
 			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[p], "\n")))
 		}
-		return lipgloss.JoinHorizontal(lipgloss.Top, cols...)
+		return m.refreshLine() + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	}
 	var lines []string
 	for _, p := range order {
 		lines = append(lines, blocks[p]...)
 	}
-	return strings.Join(lines, "\n")
+	return m.refreshLine() + "\n" + strings.Join(lines, "\n")
 }
 
 func (m *model) usageRow(w usageWin) string {
@@ -869,7 +901,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.relayout()
 	case usageMsg:
 		m.avail = availability(msg)
+		m.fetching = false
+		m.nextRefresh = time.Now().Add(refreshEvery)
 		m.relayout()
+	case refreshTickMsg:
+		// re-arm the 1s tick; auto-refresh once the interval elapses.
+		cmds := []tea.Cmd{tickCmd()}
+		if !m.fetching && !m.nextRefresh.IsZero() && !time.Now().Before(m.nextRefresh) {
+			m.fetching = true
+			cmds = append(cmds, fetchUsageCmd(m.usageCmd))
+		}
+		return m, tea.Batch(cmds...)
 	case spinner.TickMsg:
 		if !m.avail.ok {
 			var cmd tea.Cmd
@@ -897,6 +939,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f":
 			m.depth = (m.depth + 1) % 2
 			m.syncPreview()
+		case "r":
+			if m.usageCmd != "" && !m.fetching {
+				m.fetching = true
+				return m, fetchUsageCmd(m.usageCmd)
+			}
 		case "up", "k":
 			m.moveUp()
 		case "down", "j":

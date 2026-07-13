@@ -54,6 +54,9 @@ var (
 	stHead = lipgloss.NewStyle().Foreground(lipgloss.Color(cHead))
 	stWarn = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc))
 	stBrk  = lipgloss.NewStyle().Foreground(lipgloss.Color(cRed))
+	// a maxed/unauthed model in a chain: struck through + dimmed, so you can
+	// see at a glance which lead gets skipped for the fallback beneath it.
+	stStruck = lipgloss.NewStyle().Strikethrough(true).Faint(true).Foreground(lipgloss.Color(cDim))
 
 	modelRe = regexp.MustCompile(`(gpt|claude)[A-Za-z0-9._-]*:(minimal|low|medium|high|xhigh|max)`)
 	gptRe   = regexp.MustCompile(`\b(GPT|gpt|OpenAI|Codex|Spark|spark|Sol|Terra|Luna|Nano|nano)\b`)
@@ -400,17 +403,46 @@ func (a availability) impact(rows []string) string {
 }
 
 // ── routing render (depth: 0 lead · 1 full) ──────────────────────────────────
-func renderRoute(rows []string, depth int) string {
+// styleSeg colourises one chain segment; if the segment's model is down
+// (maxed/unauthed) its token is struck through so the skip is visible.
+func styleSeg(seg string, down bool) string {
+	if !down {
+		return colorizeRoute(seg)
+	}
+	return modelRe.ReplaceAllStringFunc(seg, func(tok string) string { return stStruck.Render(tok) })
+}
+
+func renderRoute(rows []string, depth int, a availability) string {
 	var b strings.Builder
 	for _, r := range rows {
-		line := r
-		if depth == 0 {
-			// keep only the primary (drop the fallback chain)
-			if i := strings.Index(line, "→"); i >= 0 {
-				line = strings.TrimRight(line[:i], " ")
+		segs := strings.Split(r, "→")
+		down := make([]bool, len(segs))
+		for i, s := range segs {
+			if m := modelRe.FindString(s); m != "" && a.ok && a.down(bucketOf(m)) {
+				down[i] = true
 			}
 		}
-		b.WriteString(colorizeRoute(line) + "\n")
+		// how far down the chain to render:
+		//  full  → the whole chain
+		//  lead  → just the primary, UNLESS it is down; then reveal fallbacks
+		//          up to and including the first live one (the model that runs).
+		last := len(segs) - 1
+		if depth == 0 {
+			last = 0
+			for i, s := range segs {
+				if modelRe.MatchString(s) {
+					last = i
+					if !down[i] {
+						break
+					}
+				}
+			}
+		}
+		var parts []string
+		for i := 0; i <= last && i < len(segs); i++ {
+			parts = append(parts, styleSeg(segs[i], down[i]))
+		}
+		b.WriteString(strings.TrimRight(strings.Join(parts, stDim.Render("→")), " ") + "\n")
 	}
 	return b.String()
 }
@@ -783,7 +815,7 @@ func (m *model) syncPreview() {
 			}
 		}
 		b.WriteString("\n" + stDim.Render("── routing ─────────────────") + "\n")
-		b.WriteString(renderRoute(m.routes[p.name], m.depth))
+		b.WriteString(renderRoute(m.routes[p.name], m.depth, m.avail))
 	} else {
 		id := comboID(m.sel)
 		b.WriteString(lipgloss.NewStyle().Bold(true).Render("generated profile") + "\n")
@@ -794,7 +826,7 @@ func (m *model) syncPreview() {
 		b.WriteString("\n")
 		if rows, ok := m.generated[id]; ok {
 			b.WriteString(stDim.Render("── routing ─────────────────") + "\n")
-			b.WriteString(renderRoute(rows, m.depth))
+			b.WriteString(renderRoute(rows, m.depth, m.avail))
 		} else {
 			b.WriteString(stDim.Render("no profile for this combination") + "\n")
 		}

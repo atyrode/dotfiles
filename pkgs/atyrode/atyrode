@@ -30,14 +30,18 @@ Usage:
   atyrode doctor system [HOST] [--json]
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
+  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes]
 
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
 to an exact commit first; --repo switches to a local checkout for development.
 apply validates everything before invoking nh, and afterwards reports plain-omp
 settings that drifted from the seeded defaults, offering an interactive
-keep-or-reset review on a terminal. Commands reserved for later issues:
-workspace, agent, generations, rollback, and clean.
+keep-or-reset review on a terminal.
+clean reclaims disk from generations the config no longer references, always
+keeping the current one and a rollback window (--keep / --keep-since); on macOS
+it also sweeps stale Home Manager Apps aliases. Commands reserved for later
+issues: workspace, agent, generations, and rollback.
 EOF
 }
 
@@ -794,6 +798,11 @@ apply_config() {
     printf '%s\n' "$host" >"$temp"
     mv -f "$temp" "$state_file"
     review_seed_drift "$json"
+    # apply owns removing packages from the environment, not reclaiming their
+    # residue; surface the follow-up so dropped apps don't linger on disk.
+    if [[ "$json" == 0 && -t 1 ]]; then
+      printf 'atyrode: reclaim old generations + dropped-app residue with: atyrode clean\n' >&2
+    fi
   fi
   if [[ "$restart" == 1 ]]; then
     printf 'Activation completed. Restart the current shell with: exec zsh -l\n' >&2
@@ -820,11 +829,85 @@ review_seed_drift() {
   fi
 }
 
+# Ask a yes/no question; default no, and no on a non-interactive stream.
+confirm() {
+  local reply
+  [[ -t 0 && -t 1 ]] || return 1
+  printf 'atyrode: %s [y/N] ' "$1" >&2
+  read -r reply || return 1
+  [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]]
+}
+
+# On macOS, home-manager links GUI apps into ~/Applications/Home Manager Apps as
+# symlinks into the store. When a package is dropped it sometimes leaves the link
+# behind pointing at a garbage-collected target (a broken symlink) — the stale
+# "Visual Studio Code.app" kind of leftover. Removing a link is safe and
+# reversible (the next apply recreates the valid ones); app *data* is app-owned
+# and Nix never managed it, so we only point at it.
+clean_macos_residue() {
+  local dry="$1" assume_yes="$2"
+  local hm_apps="$HOME/Applications/Home Manager Apps"
+  [[ -d "$hm_apps" ]] || return 0
+  local -a stale=()
+  local f
+  while IFS= read -r f; do
+    [[ -e "$f" ]] || stale+=("$f") # a link whose store target is gone
+  done < <(find "$hm_apps" -mindepth 1 -maxdepth 1 -type l)
+  if [[ "${#stale[@]}" -eq 0 ]]; then
+    printf 'atyrode: no stale Home Manager Apps aliases.\n' >&2
+  else
+    printf 'atyrode: %s stale app alias(es) left by removed packages:\n' "${#stale[@]}" >&2
+    for f in "${stale[@]}"; do printf '  %s\n' "$(basename "$f")" >&2; done
+    for f in "${stale[@]}"; do
+      [[ -L "$f" && "$f" == "$hm_apps/"* ]] || continue # never touch anything but a link under this dir
+      if [[ "$dry" == 1 ]]; then
+        printf '  would remove: %s\n' "$(basename "$f")" >&2
+      elif [[ "$assume_yes" == 1 ]] || confirm "remove stale alias $(basename "$f")?"; then
+        rm -f "$f" && printf '  removed %s\n' "$(basename "$f")" >&2
+      fi
+    done
+  fi
+  printf 'atyrode: note — app data (e.g. ~/Library/Application Support/<App>) is\n' >&2
+  printf '  app-owned, not Nix-managed, so a dropped app leaves it behind; remove by hand.\n' >&2
+}
+
+# clean — reclaim disk from generations the config no longer references, always
+# keeping the current generation and a rollback window (never an auto-wipe of the
+# safety net). Also sweeps stale macOS app aliases (see clean_macos_residue).
+cmd_clean() {
+  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n | --dry-run) dry=1 ;;
+      --keep) shift; keep="${1:-}" ;;
+      --keep-since) shift; keep_since="${1:-}" ;;
+      --all) scope=all ;; # also the system profile (nix-darwin); needs elevation
+      -y | --yes) assume_yes=1 ;;
+      *) die "$EX_USAGE" "unknown clean option: $1" ;;
+    esac
+    shift || true
+  done
+  [[ "$keep" =~ ^[0-9]+$ ]] || die "$EX_USAGE" "--keep expects a number"
+  command -v nh >/dev/null || die "$EX_UNAVAILABLE" "nh is unavailable"
+  local nh_command=nh
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_NH:-}" ]] || nh_command="$ATYRODE_NH"
+
+  printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
+  local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since")
+  [[ "$dry" == 0 ]] || nh_args+=(--dry)
+  "${nh_args[@]}" || die "$EX_SOFTWARE" "nh clean failed"
+
+  if [[ "$(uname -s)" == Darwin ]]; then
+    clean_macos_residue "$dry" "$assume_yes"
+  fi
+}
+
 main() {
   local subcommand="${1:-help}"
   shift || true
   case "$subcommand" in
     apply) apply_config "$@" ;;
+    clean) cmd_clean "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in
@@ -835,7 +918,7 @@ main() {
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
-    workspace|agent|generations|rollback|clean) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
+    workspace|agent|generations|rollback) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;
     *) die "$EX_USAGE" "unknown command: $subcommand" ;;
   esac

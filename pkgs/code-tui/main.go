@@ -440,9 +440,18 @@ func renderRoute(rows []string, depth int, a availability) string {
 		}
 		var parts []string
 		for i := 0; i <= last && i < len(segs); i++ {
-			parts = append(parts, styleSeg(segs[i], down[i]))
+			// keep the role-label indent on the first segment, but drop the
+			// column-alignment padding around the arrows — otherwise a struck
+			// lead leaves a long trailing gap before the fallback.
+			seg := segs[i]
+			if i == 0 {
+				seg = strings.TrimRight(seg, " ")
+			} else {
+				seg = strings.TrimSpace(seg)
+			}
+			parts = append(parts, styleSeg(seg, down[i]))
 		}
-		b.WriteString(strings.TrimRight(strings.Join(parts, stDim.Render("→")), " ") + "\n")
+		b.WriteString(strings.Join(parts, stDim.Render(" → ")) + "\n")
 	}
 	return b.String()
 }
@@ -1159,17 +1168,19 @@ func (m model) pickerLines(focused bool, w int) ([]string, int) {
 		if !focused {
 			nameCol, blurb = cDim, stDim.Render(p.blurb)
 		}
-		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Width(2).Render(p.glyph)
-		nm := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Bold(focused).Render(p.name)
-		row := trunc.Render(fmt.Sprintf("%s%s%-6s %s", mark, gly, nm, blurb))
+		// selection is a pointer (like the generator), not a background block.
+		ptr := "  "
 		if i == m.cursor {
-			bg := cSelBg
-			if !focused {
-				bg = "#141922"
-			}
-			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Width(w).Inline(true).Render(row)
 			cursor = len(lines)
+			if focused {
+				ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("▸ ")
+			} else {
+				ptr = stDim.Render("▸ ")
+			}
 		}
+		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Width(2).Render(p.glyph)
+		nm := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Bold(focused).Render(pad(p.name, 5))
+		row := trunc.Render(ptr + mark + gly + nm + stDim.Render("— ") + blurb)
 		lines = append(lines, row)
 	}
 	return lines, cursor

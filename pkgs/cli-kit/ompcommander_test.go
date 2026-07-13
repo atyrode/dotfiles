@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -41,10 +42,10 @@ func TestParseActionsNoJSON(t *testing.T) {
 	}
 }
 
-func TestOmpCommanderActions(t *testing.T) {
-	o := OmpCommander{Bin: os.Args[0]}
-	// Point Bin at the helper, but Actions builds its own args; the helper ignores
-	// them and prints a fixed JSON object.
+func TestOmpCommanderProposeParse(t *testing.T) {
+	o := OmpCommander{Bin: "x", Model: "m"}
+	// Substitute a stand-in for omp that streams a fixed JSON object; Propose
+	// builds its own args, which the helper ignores.
 	orig := execCommandContext
 	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		c := exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperProcess")
@@ -53,11 +54,19 @@ func TestOmpCommanderActions(t *testing.T) {
 	}
 	defer func() { execCommandContext = orig }()
 
-	got, err := o.Actions(context.Background(), "quick but precise")
+	ch, err := o.Propose(context.Background(), "quick but precise")
 	if err != nil {
-		t.Fatalf("Actions: %v", err)
+		t.Fatalf("Propose: %v", err)
+	}
+	var out strings.Builder
+	for s := range ch {
+		out.WriteString(s)
+	}
+	got, err := o.Parse(out.String())
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
 	}
 	if len(got) != 2 || got[0] != (Action{"model", "fast"}) || got[1] != (Action{"thinking", "high"}) {
-		t.Errorf("Actions = %v, want [{model fast} {thinking high}]", got)
+		t.Errorf("proposal = %v, want [{model fast} {thinking high}]", got)
 	}
 }

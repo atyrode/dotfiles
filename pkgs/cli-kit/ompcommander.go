@@ -10,27 +10,29 @@ import (
 )
 
 // OmpCommander is the Act backend: it runs a headless omp turn whose system
-// prompt (Docs) instructs the model to reply with a JSON object of the changes to
-// make, then parses that object into a sorted, deterministic Action set. Like
-// OmpAsker it depends only on os/exec and cancels via the context.
+// prompt (Docs) REPLACES omp's default agent prompt and instructs the model to
+// reply with a JSON object of the changes to make. Propose streams that output so
+// the box shows the model working; Parse turns it into a sorted, deterministic
+// Action set. Thinking defaults off — this is a fast classification, not deep
+// reasoning. Depends only on os/exec and cancels via the context.
 type OmpCommander struct {
-	Bin   string    // omp binary; defaults to "omp"
-	Model string    // evaluator model; defaults to DefaultEvaluatorModel
-	Docs  DocCorpus // system prompt describing the options and demanding a JSON reply
+	Bin      string    // omp binary; defaults to "omp"
+	Model    string    // evaluator model; defaults to DefaultEvaluatorModel
+	Thinking string    // reasoning level; defaults to "off" for speed
+	Docs     DocCorpus // system prompt: describes the options, demands a JSON reply
 }
 
-// NewOmpCommander builds an OmpCommander with the default binary and evaluator.
-// Docs must instruct the model to answer with a JSON object (see the host's
-// action schema).
+// NewOmpCommander builds an OmpCommander with the default binary, evaluator, and
+// thinking off. Docs must instruct the model to answer with a JSON object.
 func NewOmpCommander(docs DocCorpus) OmpCommander {
-	return OmpCommander{Bin: "omp", Model: DefaultEvaluatorModel, Docs: docs}
+	return OmpCommander{Bin: "omp", Model: DefaultEvaluatorModel, Thinking: "off", Docs: docs}
 }
 
 // execCommandContext is indirected so tests can substitute a stand-in for omp.
 var execCommandContext = exec.CommandContext
 
-// Actions runs omp and parses its JSON reply into proposed changes.
-func (o OmpCommander) Actions(ctx context.Context, prompt string) ([]Action, error) {
+// Propose runs omp and streams its output for live display.
+func (o OmpCommander) Propose(ctx context.Context, prompt string) (<-chan string, error) {
 	bin := o.Bin
 	if bin == "" {
 		bin = "omp"
@@ -39,11 +41,13 @@ func (o OmpCommander) Actions(ctx context.Context, prompt string) ([]Action, err
 	if model == "" {
 		model = DefaultEvaluatorModel
 	}
-	out, err := execCommandContext(ctx, bin, ompArgs(model, o.Docs, prompt)...).Output()
-	if err != nil {
-		return nil, err
-	}
-	return parseActions(out)
+	cmd := execCommandContext(ctx, bin, ompArgs(model, o.Thinking, true, o.Docs, prompt)...)
+	return streamCmd(ctx, cmd)
+}
+
+// Parse turns the model's completed output into proposed changes.
+func (o OmpCommander) Parse(output string) ([]Action, error) {
+	return parseActions([]byte(output))
 }
 
 // parseActions extracts the JSON object from a model's output (tolerating any

@@ -49,13 +49,6 @@ type promptToken struct {
 	ok  bool
 }
 
-// actionsReady carries a Commander's proposal back to the UI thread (Act mode).
-type actionsReady struct {
-	seq     int
-	actions []Action
-	err     error
-}
-
 // BoxCloseMsg is emitted when the user dismisses an idle box (esc while editing).
 // A host (see Run) listens for it to hide the box.
 type BoxCloseMsg struct{}
@@ -79,7 +72,9 @@ type PromptBox struct {
 	cmd   Commander
 
 	w, h     int
+	title    string // optional header (e.g. the evaluator model in use)
 	state    boxState
+	acting   bool // the current stream is an Act proposal (parse on close)
 	answer   string
 	prompt   string   // the submitted prompt (carried into ActionsConfirmedMsg)
 	proposed []Action // Act mode: the actions awaiting confirmation
@@ -110,9 +105,13 @@ func NewPromptBox() PromptBox {
 func (b *PromptBox) SetAsker(a Asker) { b.asker = a }
 
 // SetCommander wires the Act-mode backend. When set, submitting asks the
-// Commander for a proposal (shown for confirmation) instead of streaming an
-// answer; it takes precedence over an Asker.
+// Commander for a proposal (streamed live, then shown for confirmation) instead
+// of streaming a plain answer; it takes precedence over an Asker.
 func (b *PromptBox) SetCommander(c Commander) { b.cmd = c }
+
+// SetTitle sets an optional header line (e.g. "prompt → profile · gpt-5.6-luna")
+// so the user can see what the box is doing / which model it uses.
+func (b *PromptBox) SetTitle(s string) { b.title = s }
 
 // SetSize lays the box out within w×h (outer cells). A border + one column of
 // padding sit inside, so the inner widgets get w-4.
@@ -166,13 +165,15 @@ func (b *PromptBox) submit() tea.Cmd {
 	// The spinner keeps ticking on its own (see the TickMsg case); submit only
 	// kicks off the backend, in a Cmd so a slow start never blocks the UI.
 	switch {
-	case b.cmd != nil: // Act mode
+	case b.cmd != nil: // Act mode — stream the proposal, parse on close
+		b.acting = true
 		cmder := b.cmd
 		return func() tea.Msg {
-			actions, err := cmder.Actions(ctx, prompt)
-			return actionsReady{seq: seq, actions: actions, err: err}
+			ch, err := cmder.Propose(ctx, prompt)
+			return streamStarted{seq: seq, ch: ch, err: err}
 		}
 	case b.asker != nil: // Ask mode
+		b.acting = false
 		asker := b.asker
 		return func() tea.Msg {
 			ch, err := asker.Ask(ctx, prompt)
@@ -252,28 +253,26 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		if msg.seq != b.seq {
 			return b, nil // stale (cancelled or superseded)
 		}
-		if !msg.ok {
-			b.state = boxDone
+		if !msg.ok { // stream closed
+			if b.acting && b.cmd != nil { // Act: parse the streamed output
+				actions, err := b.cmd.Parse(b.answer)
+				switch {
+				case err != nil:
+					b.state, b.err = boxDone, err
+				case len(actions) == 0:
+					b.state, b.err = boxDone, errNoChanges
+				default:
+					b.proposed, b.state = actions, boxProposed
+				}
+			} else {
+				b.state = boxDone
+			}
 			return b, nil
 		}
 		b.answer += msg.tok
 		b.vp.SetContent(b.wrapAnswer())
 		b.vp.GotoBottom()
 		return b, readToken(msg.seq, msg.ch)
-
-	case actionsReady:
-		if msg.seq != b.seq {
-			return b, nil // stale
-		}
-		switch {
-		case msg.err != nil:
-			b.state, b.err = boxDone, msg.err
-		case len(msg.actions) == 0:
-			b.state, b.err = boxDone, errNoChanges
-		default:
-			b.proposed, b.state = msg.actions, boxProposed
-		}
-		return b, nil
 	}
 
 	// Everything else (mouse, etc.) goes to whichever pane is live.
@@ -298,6 +297,9 @@ func (b PromptBox) wrapAnswer() string {
 // streamed answer, or an error.
 func (b PromptBox) View() string {
 	var parts []string
+	if b.title != "" {
+		parts = append(parts, StHead.Render(b.title))
+	}
 	parts = append(parts, b.ta.View())
 
 	switch b.state {

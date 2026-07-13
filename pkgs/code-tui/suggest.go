@@ -30,10 +30,25 @@ func actDocs(facets []facet) clikit.DocCorpus {
 		b.WriteString(fmt.Sprintf("- %s: one of [%s] — %s\n",
 			f.key, strings.Join(f.values, ", "), facetGuide[f.key]))
 	}
-	b.WriteString("\nReply with ONLY a JSON object mapping the options you want to CHANGE " +
-		"to their chosen values (omit options left at default). No prose, no code fence. " +
-		"Example: {\"model\":\"fast\",\"thinking\":\"high\"}")
+	b.WriteString("\nRespond with one short sentence explaining your pick, then a JSON " +
+		"object (on its own line) mapping ONLY the options you want to CHANGE to their " +
+		"chosen values — omit options left at default, and use exactly the option names " +
+		"and values listed above. Example:\n" +
+		"Quick but precise task, so a fast model with more thinking.\n" +
+		"{\"model\":\"fast\",\"thinking\":\"high\"}")
 	return clikit.DocCorpus(b.String())
+}
+
+// defaultEvalModel is a fast, cheap evaluator (leads the speed GPT tier, lowest
+// ttft). Override with CODE_EVAL_MODEL; thinking is off by default (a quick
+// classification) and tunable via CODE_EVAL_THINKING.
+const defaultEvalModel = "gpt-5.6-luna"
+
+func evalModel() string {
+	if v := os.Getenv("CODE_EVAL_MODEL"); v != "" {
+		return v
+	}
+	return defaultEvalModel
 }
 
 // Commander implements clikit.Commandable: a cheap omp-backed evaluator that
@@ -44,8 +59,16 @@ func (m model) Commander() clikit.Commander {
 	if bin := os.Getenv("CODE_OMP_EVAL"); bin != "" {
 		c.Bin = bin
 	}
+	c.Model = evalModel()
+	if v := os.Getenv("CODE_EVAL_THINKING"); v != "" {
+		c.Thinking = v
+	}
 	return c
 }
+
+// BoxTitle labels the suggest box with its purpose and the model in use, so the
+// user knows what they're invoking.
+func (m model) BoxTitle() string { return "prompt → profile · " + evalModel() }
 
 // validFacetActions keeps only the actions that name a real facet with a value
 // that facet offers — the whitelist that makes an agent proposal no more powerful

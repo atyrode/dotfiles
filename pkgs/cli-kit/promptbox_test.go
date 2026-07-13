@@ -120,12 +120,27 @@ func TestHostMountsBoxForAskable(t *testing.T) {
 	}
 }
 
-// stubCommander proposes a fixed action set.
-type stubCommander struct{ actions []Action }
-
-func (s stubCommander) Actions(ctx context.Context, prompt string) ([]Action, error) {
-	return s.actions, nil
+// stubCommander streams optional output and parses to a fixed action set.
+type stubCommander struct {
+	actions []Action
+	output  string
 }
+
+func (s stubCommander) Propose(ctx context.Context, prompt string) (<-chan string, error) {
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		if s.output != "" {
+			select {
+			case ch <- s.output:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	return ch, nil
+}
+
+func (s stubCommander) Parse(output string) ([]Action, error) { return s.actions, nil }
 
 type commandableApp struct{ tea.Model }
 

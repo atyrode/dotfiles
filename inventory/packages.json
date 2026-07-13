@@ -37,7 +37,7 @@
     "versionOwner": "pinned nixpkgs",
     "mutableState": "application-owned user data and caches",
     "closureClass": "very-large",
-    "packages": ["arduino-ide", "chatgpt", "ghostty-bin", "godot", "lichess", "obsidian", "parsec-bin", "plugdata", "postman", "prismlauncher", "reaper", "signal-desktop", "spotify", "steam", "steamcmd", "vital", "vlc", "vlc-bin", "vscode", "whatsapp-for-mac"]
+    "packages": ["arduino-ide", "chatgpt", "ghostty-bin", "godot", "lichess", "obsidian", "parsec-bin", "plugdata", "postman", "prismlauncher", "reaper", "signal-desktop", "spotify", "steam", "steamcmd", "vital", "vlc", "vlc-bin", "whatsapp-for-mac"]
   },
   {
     "owner": "mobile",

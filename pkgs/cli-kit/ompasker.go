@@ -2,6 +2,7 @@ package clikit
 
 import (
 	"context"
+	"os"
 	"os/exec"
 )
 
@@ -66,35 +67,43 @@ func (o OmpAsker) Ask(ctx context.Context, prompt string) (<-chan string, error)
 	return streamCmd(ctx, cmd)
 }
 
-// streamCmd starts cmd and streams its stdout in chunks. It is separate from Ask
-// so the streaming/cancellation machinery can be tested with any command.
+// streamCmd starts cmd and streams its combined stdout+stderr in chunks. Merging
+// stderr matters: omp reports failures (bad model, auth, rejected flags) there,
+// so without it a failed run streams nothing and the box can't show what went
+// wrong. It is separate from Ask so the streaming/cancellation machinery can be
+// tested with any command.
 func streamCmd(ctx context.Context, cmd *exec.Cmd) (<-chan string, error) {
-	stdout, err := cmd.StdoutPipe()
+	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
+	cmd.Stdout = w
+	cmd.Stderr = w
 	if err := cmd.Start(); err != nil {
+		w.Close()
+		r.Close()
 		return nil, err
 	}
+	w.Close() // the child holds its own dup of the write end
 	ch := make(chan string)
 	go func() {
 		defer close(ch)
+		defer r.Close()
+		defer func() { _ = cmd.Wait() }()
 		buf := make([]byte, 512)
 		for {
-			n, rerr := stdout.Read(buf)
+			n, rerr := r.Read(buf)
 			if n > 0 {
 				select {
 				case ch <- string(buf[:n]):
-				case <-ctx.Done():
-					_ = cmd.Wait() // process already being killed by the context
+				case <-ctx.Done(): // process already being killed by the context
 					return
 				}
 			}
 			if rerr != nil {
-				break
+				return
 			}
 		}
-		_ = cmd.Wait()
 	}()
 	return ch, nil
 }

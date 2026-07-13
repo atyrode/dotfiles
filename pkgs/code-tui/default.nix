@@ -13,7 +13,7 @@ buildGoModule {
     fileset = lib.fileset.unions [ ./. ../cli-kit ];
   };
   modRoot = "code-tui";
-  vendorHash = "sha256-GEnl88M2KszTcv4mxjrLipR+Ne+16NdfhMK6+wJTIL0=";
+  vendorHash = "sha256-8XsBCnE5cyYf6oU+oGXhWAhNJjFUXMsxY4p+HbzxueQ=";
 
   # The launcher picker is invoked as `code`.
   postInstall = ''

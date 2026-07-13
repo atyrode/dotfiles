@@ -152,6 +152,19 @@ func TestHostMountsBoxForCommandable(t *testing.T) {
 	}
 }
 
+// driveToProposal runs submit's Cmd chain until the box emits ActionsProposedMsg,
+// returning the box (now in boxProposed) and that message.
+func driveToProposal(b PromptBox, cmd tea.Cmd) (PromptBox, ActionsProposedMsg, bool) {
+	for cmd != nil {
+		msg := cmd()
+		if pm, ok := msg.(ActionsProposedMsg); ok {
+			return b, pm, true
+		}
+		b, cmd = b.Update(msg)
+	}
+	return b, ActionsProposedMsg{}, false
+}
+
 func TestPromptBoxActProposeThenConfirm(t *testing.T) {
 	want := []Action{{"model", "fast"}, {"thinking", "high"}}
 	b := NewPromptBox()
@@ -159,49 +172,52 @@ func TestPromptBoxActProposeThenConfirm(t *testing.T) {
 	b.SetSize(60, 20)
 	b.ta.SetValue("quick but precise")
 
-	// Submit → the Commander proposes → box enters the proposed state.
+	// Submit → stream → the box proposes and emits the actions for live preview.
 	b, cmd := b.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	b = follow(b, cmd)
-	if b.state != boxProposed {
-		t.Fatalf("expected boxProposed after Commander returns, got %d", b.state)
+	b, proposed, ok := driveToProposal(b, cmd)
+	if !ok {
+		t.Fatal("expected an ActionsProposedMsg once the proposal parses")
 	}
-	if !strings.Contains(b.View(), "proposed changes") || !strings.Contains(b.View(), "fast") {
-		t.Errorf("proposed view should list the actions, got:\n%s", b.View())
+	if b.state != boxProposed {
+		t.Fatalf("expected boxProposed, got %d", b.state)
+	}
+	if len(proposed.Actions) != 2 || proposed.Actions[0] != want[0] {
+		t.Errorf("proposed actions = %v, want %v", proposed.Actions, want)
+	}
+	if !strings.Contains(b.View(), "fast") || !strings.Contains(b.View(), "keep") {
+		t.Errorf("proposed view should list the actions + keep/revert, got:\n%s", b.View())
 	}
 
-	// Enter accepts → emits ActionsConfirmedMsg with the proposal, box back to editing.
+	// Enter keeps → ActionsConfirmedMsg carrying the prompt, box back to editing.
 	b, cmd = b.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if b.state != boxEditing {
-		t.Errorf("after accept, expected boxEditing, got %d", b.state)
-	}
-	if cmd == nil {
-		t.Fatal("accept should emit a Cmd")
+		t.Errorf("after keep, expected boxEditing, got %d", b.state)
 	}
 	msg, ok := cmd().(ActionsConfirmedMsg)
 	if !ok {
-		t.Fatalf("accept should emit ActionsConfirmedMsg, got %T", cmd())
-	}
-	if len(msg.Actions) != 2 || msg.Actions[0] != want[0] {
-		t.Errorf("confirmed actions = %v, want %v", msg.Actions, want)
+		t.Fatalf("keep should emit ActionsConfirmedMsg, got %T", cmd())
 	}
 	if msg.Prompt != "quick but precise" {
 		t.Errorf("confirmed prompt = %q, want the submitted text", msg.Prompt)
 	}
 }
 
-func TestPromptBoxActEscRejects(t *testing.T) {
+func TestPromptBoxActEscReverts(t *testing.T) {
 	b := NewPromptBox()
 	b.SetCommander(stubCommander{actions: []Action{{"model", "fast"}}})
 	b.SetSize(60, 20)
 	b.ta.SetValue("x")
 
 	b, cmd := b.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	b = follow(b, cmd)
-	if b.state != boxProposed {
-		t.Fatalf("expected boxProposed, got %d", b.state)
+	b, _, ok := driveToProposal(b, cmd)
+	if !ok || b.state != boxProposed {
+		t.Fatalf("expected boxProposed, got state %d ok %v", b.state, ok)
 	}
-	b, _ = b.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	b, cmd = b.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if b.state != boxEditing || b.proposed != nil {
-		t.Errorf("esc should reject the proposal and clear it; state=%d proposed=%v", b.state, b.proposed)
+		t.Errorf("esc should clear the proposal; state=%d proposed=%v", b.state, b.proposed)
+	}
+	if _, ok := cmd().(ActionsRevertedMsg); !ok {
+		t.Errorf("esc should emit ActionsRevertedMsg, got %T", cmd())
 	}
 }

@@ -13,7 +13,9 @@ buildGoModule {
     fileset = lib.fileset.unions [ ./. ../cli-kit ];
   };
   modRoot = "code-tui";
-  vendorHash = "sha256-8XsBCnE5cyYf6oU+oGXhWAhNJjFUXMsxY4p+HbzxueQ=";
+  # cli-kit is a local `replace` whose source lives in this build's src (above),
+  # so any change to pkgs/cli-kit/*.go shifts this hash — bump it on cli-kit edits.
+  vendorHash = "sha256-Kw9KeayOAbWlOQxVszD5W/qzaI0qbF6L+h4zVjONbOg=";
 
   # The launcher picker is invoked as `code`.
   postInstall = ''

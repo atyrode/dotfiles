@@ -113,7 +113,6 @@ def pure(lane):
 def gen(lane, mtier, thinking, spark, fable):
     """Return {role: (lead_key, level, [chain (key, level)...])}."""
     P = primary(lane)
-    S = other(P)
     base = TMAP[mtier]
     isp = pure(lane)
 

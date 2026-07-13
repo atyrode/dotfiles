@@ -1,10 +1,9 @@
 {
   bash,
   cacert,
+  code-tui,
   coreutils,
   findutils,
-  fzf,
-  gawk,
   gitMinimal,
   gnugrep,
   jq,
@@ -16,6 +15,7 @@
   python3,
   runCommand,
   writeShellApplication,
+  writeText,
   yq-go,
 }:
 
@@ -1002,6 +1002,11 @@ let
   ompMixedSmart = mkOmpCommand "ompm" [ presets.mixedSmart ];
   ompGptOnly = mkOmpCommand "ompo" [ presets.gptOnly ];
   ompClaudeOnly = mkOmpCommand "ompe" [ presets.claudeOnly ];
+  # Zero-preset managed launcher: applies the platform extensions + managed
+  # defaults + policy to an arbitrary one-shot `--config`, with no preset
+  # overlay. The code picker's generator points CODE_OMP here so a synthesised
+  # profile launches through the same managed layering as a preset.
+  ompManaged = mkOmpCommand "omp-managed" [ ];
 
   # Single source of truth for the launcher palette, ordered into soft groups
   # (mixed, then gpt-led, then claude-led, then specialists) and faster -> smarter
@@ -1394,876 +1399,85 @@ let
   # matching launcher, forwarding every remaining argument. If the first
   # argument is not a known profile it opens the picker and then forwards all
   # arguments to the choice, so `code --resume` picks first, then resumes.
+  # code-tui manifest: accent colour (by lane/provider) and glyph (by intended
+  # use), mirrored from the retired fzf picker. nfGlyph decodes a Nerd Font
+  # codepoint via JSON so no raw private-use bytes live in this file.
+  nfGlyph = cp: builtins.fromJSON ''"\u${cp}"'';
+  profileColor =
+    cmd:
+    if builtins.elem cmd [ "ompz" "ompn" "ompm" ] then
+      "#aa96e1" # mixed — purple
+    else if builtins.elem cmd [ "ompl" "ompb" "ompg" "ompo" ] then
+      "#62a7ff" # gpt-led — blue
+    else if builtins.elem cmd [ "ompk" "omps" "ompc" "ompe" ] then
+      "#ff9f52" # claude-led — orange
+    else if builtins.elem cmd [ "ompf" "ompx" ] then
+      "#46bec8" # specialist — teal
+    else if cmd == "ompu" then
+      "#d05c60" # untrusted — red
+    else
+      "#78c8aa"; # yours — green
+  profileGlyph =
+    cmd:
+    if builtins.elem cmd [ "ompz" "ompl" "ompk" ] then
+      nfGlyph "f0e7" # bolt — speed
+    else if builtins.elem cmd [ "ompn" "ompb" "omps" ] then
+      nfGlyph "f085" # cogs — routine
+    else if builtins.elem cmd [ "ompm" "ompg" "ompc" ] then
+      nfGlyph "f0eb" # lightbulb — smart
+    else if builtins.elem cmd [ "ompo" "ompe" ] then
+      nfGlyph "f127" # broken link — pure pool
+    else if cmd == "ompf" then
+      nfGlyph "f08d" # thumbtack — deterministic
+    else if cmd == "ompx" then
+      nfGlyph "f02d" # book — huge context
+    else if cmd == "ompu" then
+      nfGlyph "f023" # lock — untrusted
+    else if cmd == "omp" then
+      nfGlyph "f007" # user — yours
+    else
+      nfGlyph "f074"; # shuffle
+  groupLabel =
+    g:
+    {
+      mix = "mixed";
+      gpt = "gpt-led";
+      claude = "claude-led";
+      special = "special";
+    }
+    .${g} or g;
+  codeProfilesTsv = writeText "code-profiles.tsv" (
+    lib.concatMapStringsSep "\n" (
+      p:
+      lib.concatStringsSep "\t" [
+        p.cmd
+        p.blurb
+        p.detail
+        (groupLabel p.group)
+        p.exe
+        (profileColor p.cmd)
+        (profileGlyph p.cmd)
+      ]
+    ) paletteProfiles
+  );
+
   codeLauncher = writeShellApplication {
     name = "code";
-    runtimeInputs = [
-      jq
-      coreutils
-      fzf
-      gawk
-    ];
+    runtimeInputs = [ coreutils ];
     text = ''
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
-      routes_plain=${routesHelp}/share/omp/routes.plain
-      generated_plain=${generatedProfiles}/share/omp/generated.plain
+      export CODE_PROFILES=${codeProfilesTsv}
+      export CODE_ROUTES=${routesHelp}/share/omp/routes.plain
+      export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
+      export CODE_OMP=${lib.getExe ompManaged}
+      export CODE_USAGE="$omp_bin usage --json"
+
       names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
-      leads=( ${lib.escapeShellArgs (map (p: p.lead) paletteProfiles)} )
-      blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
-      details=( ${lib.escapeShellArgs (map (p: p.detail) paletteProfiles)} )
       exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )
-      groups=( ${lib.escapeShellArgs (map (p: p.group) paletteProfiles)} )
+      blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
       count=''${#names[@]}
-      show_usage_panel=1
 
-      # Nerd Font glyphs by precise codepoint (FontAwesome range, in every Nerd
-      # Font) and 24-bit truecolor accents, used by the fzf picker.
-      esc=$(printf '\033')
-      g_cogs=$(printf '')    # cogs — regular / routine work
-      g_unlink=$(printf '')  # broken link — pure-pool, never crosses
-      g_pin=$(printf '')     # thumbtack — deterministic (ompf)
-      g_book=$(printf '')    # book — huge context (ompx)
-      g_reset=$(printf '')  # refresh (time until reset)
-      g_mixed=$(printf '')  # random / shuffle (mixed pool)
-      g_openai=$(printf '')     # bolt
-      g_claude=$(printf '')     # lightbulb
-      g_yours=$(printf '')      # user
-      g_untrusted=$(printf '')  # lock
-      g_point=$(printf '')      # chevron-right
-      g_search=$(printf '')     # search
-      c_openai="''${esc}[38;2;98;167;255m"
-      c_claude="''${esc}[38;2;255;159;82m"
-      c_yours="''${esc}[38;2;120;200;170m"
-      c_untrusted="''${esc}[38;2;208;92;96m"    # clear red (warning) — not the claude orange
-      c_mixed="''${esc}[38;2;170;150;225m"
-      c_special="''${esc}[38;2;70;190;200m"      # teal — special-purpose group
-      c_dim="''${esc}[38;2;120;130;145m"
-      c_ok="''${esc}[38;2;80;200;120m"
-      c_warn="''${esc}[38;2;235;120;90m"
-      c_near="''${esc}[38;2;235;238;242m"
-      c_bold="''${esc}[1m"
-      c_rst="''${esc}[0m"
-      c_gpt_soft="''${esc}[38;2;110;145;190m"     # muted, grayed blue for flavour text
-      c_claude_soft="''${esc}[38;2;195;160;120m"  # muted, grayed orange for flavour text
-
-      lead_tag() {
-        case "$1" in
-          openai) printf '[openai]' ;;
-          claude) printf '[claude]' ;;
-          yours) printf '[yours]' ;;
-          untrusted) printf '[untrusted]' ;;
-          *) printf '[%s]' "$1" ;;
-        esac
-      }
-
-      group_label() {
-        case "$1" in
-          mix) printf 'mixed' ;;
-          gpt) printf 'gpt-led' ;;
-          claude) printf 'claude-led' ;;
-          special) printf 'special' ;;
-          *) printf '%s' "$1" ;;
-        esac
-      }
-
-      # Fill the `palette` array with one plain-ASCII line per launcher, split
-      # into soft groups with a header before each.
-      palette=()
-      build_palette() {
-        palette=( "OMP launchers" "" )
-        local i last_group=""
-        for (( i = 0; i < count; i++ )); do
-          if [[ "''${groups[$i]}" != "$last_group" ]]; then
-            [[ -n "$last_group" ]] && palette+=( "" )
-            palette+=( "  $(group_label "''${groups[$i]}")" )
-            last_group="''${groups[$i]}"
-          fi
-          palette+=( "$(printf '  %d) %-5s %-11s %s' \
-            "$(( i + 1 ))" "''${names[$i]}" "$(lead_tag "''${leads[$i]}")" "''${blurbs[$i]}")" )
-        done
-      }
-
-      # Render the usage rows (provider TAB label TAB pct TAB tier TAB secs TAB
-      # windowSecs) into the coloured panel in a single gawk pass — a provider
-      # header, then each window's gradient bar, percent used, and time to reset.
-      # "Near reset" is relative to the window length (bold within the last tenth,
-      # bright within the last quarter) so a barely-used 5h window resetting in
-      # ~4h no longer reads as urgent.
-      render_usage_panel() {
-        gawk -F'\t' \
-          -v c_openai="$c_openai" -v c_claude="$c_claude" -v c_dim="$c_dim" \
-          -v c_bold="$c_bold" -v c_rst="$c_rst" -v c_near="$c_near" \
-          -v c_ok="$c_ok" -v c_warn="$c_warn" -v esc="$esc" -v greset="$g_reset" '
-          function shortwin(l) {
-            if (l == "5 hours" || l == "Claude 5 Hour") return "5h"
-            if (l == "7 days" || l == "Claude 7 Day") return "7d"
-            if (l == "5 hours (Spark)") return "5h spark"
-            if (l == "7 days (Spark)") return "7d spark"
-            if (l == "Claude 7 Day (Fable)") return "7d fable"
-            return l
-          }
-          function barstr(p,   r, g, fill, k, o) {
-            if (p <= 50) { r = 90 + p * 3; g = 200 } else { r = 235; g = 200 - (p - 50) * 3 }
-            if (r > 235) r = 235
-            if (g < 60) g = 60
-            fill = int((p * 10 + 50) / 100)
-            if (fill > 10) fill = 10
-            if (fill < 0) fill = 0
-            o = esc "[38;2;" r ";" g ";70m"
-            for (k = 0; k < fill; k++) o = o "█"
-            o = o c_dim
-            for (k = fill; k < 10; k++) o = o "░"
-            return o c_rst
-          }
-          function fmtreset(s,   d, h, m) {
-            if (s < 0) s = 0
-            if (s >= 86400) return int(s / 86400) "d" int((s % 86400) / 3600) "h"
-            if (s >= 3600) return int(s / 3600) "h" int((s % 3600) / 60) "m"
-            return int(s / 60) "m"
-          }
-          function rstyle(s, dur) {
-            if (dur > 0 && s * 10 < dur) return c_bold c_near
-            if (dur > 0 && s * 4 < dur) return c_near
-            return c_dim
-          }
-          {
-            prov = $1; label = $2; pct = $3 + 0; tier = $4; rs = $5 + 0; dur = $6 + 0
-            if (prov != last) {
-              pcol = (prov == "openai-codex") ? c_openai : ((prov == "anthropic") ? c_claude : c_dim)
-              pname = (prov == "openai-codex") ? "Codex" : ((prov == "anthropic") ? "Claude" : prov)
-              print pcol c_bold pname c_rst
-              last = prov
-            }
-            note = ""
-            if (pct >= 80) note = "  " c_warn "tight" c_rst
-            if (tier == "spark" && pct == 0) note = "  " c_ok "idle" c_rst
-            printf "  %-8s %s %3d%% used  %s%s %s%s%s\n", shortwin(label), barstr(pct), pct, rstyle(rs, dur), greset, fmtreset(rs), c_rst, note
-          }
-        '
-      }
-
-      # Per-provider quota panel, filled without blocking the picker. Source
-      # preference: (1) the tyrode.dev collector snapshot when present and recent
-      # — refreshed continuously, so instant and always fresh; (2) a local cache
-      # of `omp usage --json`, repopulated in the background so the next open is
-      # warm; (3) a "fetching…" note while the first background fetch lands.
-      usage_snapshot="''${TYRODE_MODEL_USAGE_SNAPSHOT:-/opt/tyrode/runtime/model-usage/snapshot.json}"
-      usage_cache="''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/code-usage.json"
-
-      # Seconds since a file's mtime, or non-zero when it is missing.
-      file_age() {
-        local m now
-        m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
-        [[ -n "$m" ]] || return 1
-        now="$(date +%s)"
-        printf '%d' "$(( now - m ))"
-      }
-
-      # Both sources normalise to provider<TAB>label<TAB>pct<TAB>tier<TAB>secs<TAB>
-      # windowSecs, sorted so a provider's regular buckets come before its
-      # separate-quota ones (Spark after Codex, Fable after Claude).
-      usage_rows_from_omp() {
-        jq -r '
-            .reports[] | .provider as $p
-            | .limits
-            | sort_by((if (.scope.tier // "-") == "-" then 0 else 1 end), .window.durationMs)[]
-            | $p + "\t" + .label + "\t"
-              + ((.amount.usedFraction * 100) | round | tostring) + "\t"
-              + (.scope.tier // "-") + "\t"
-              + (((.window.resetsAt / 1000) - now) | floor | tostring) + "\t"
-              + ((.window.durationMs / 1000) | floor | tostring)
-          ' 2>/dev/null
-      }
-      usage_rows_from_snapshot() {
-        jq -r '
-            .providers | to_entries[]
-            | (if .key == "openai" then "openai-codex" else .key end) as $p
-            | (.value.lastGood.limits // [])
-            | sort_by((if (.id | test("spark|fable")) then 1 else 0 end), .durationMs)[]
-            | (.id | test("spark")) as $spark
-            | (.id | test("fable")) as $fable
-            | (.durationMs == 18000000) as $h5
-            | $p + "\t"
-              + (if $p == "openai-codex"
-                   then (if $spark then (if $h5 then "5 hours (Spark)" else "7 days (Spark)" end)
-                                   else (if $h5 then "5 hours" else "7 days" end) end)
-                   else (if $fable then "Claude 7 Day (Fable)"
-                                   else (if $h5 then "Claude 5 Hour" else "Claude 7 Day" end) end)
-                 end) + "\t"
-              + ((.usedFraction * 100) | round | tostring) + "\t"
-              + (if $spark then "spark" elif $fable then "fable" else "-" end) + "\t"
-              + (((.resetsAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) - now) | floor | tostring) + "\t"
-              + ((.durationMs / 1000) | floor | tostring)
-          ' 2>/dev/null
-      }
-      # Detached refresh of the local cache — only reached when no fresh snapshot.
-      refresh_usage_cache() {
-        mkdir -p "$(dirname "$usage_cache")" 2>/dev/null || return 0
-        {
-          tmp="$(mktemp "$usage_cache.XXXXXX" 2>/dev/null)" || exit 0
-          if timeout 8 "$omp_bin" usage --json > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
-            mv -f "$tmp" "$usage_cache" 2>/dev/null
-          else
-            rm -f "$tmp" 2>/dev/null
-          fi
-        } &
-      }
-
-      # The bare `omp` runs the user's unmanaged ~/.omp. Resolve its role→model map
-      # (`omp config list` is ~0.9s) into a routes.plain lead block, refreshed in the
-      # background and cached, so the preview shows the *real* routing — the same as
-      # the managed profiles — without ever blocking the picker.
-      omp_routes_cache="''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/code-omp-routes"
-      refresh_omp_routes() {
-        mkdir -p "$(dirname "$omp_routes_cache")" 2>/dev/null || return 0
-        {
-          tmp="$(mktemp "$omp_routes_cache.XXXXXX" 2>/dev/null)" || exit 0
-          if timeout 8 "$omp_bin" config get modelRoles --json 2>/dev/null \
-            | jq -r '
-                (.value // .) as $r
-                | ["default","task","plan","slow","designer","reviewer","librarian","sonic","advisor","smol","tiny","commit"] as $ord
-                | ([$ord[] | select($r[.])] + (($r | keys) - $ord))
-                | .[] | "\(.)\t\($r[.])"' 2>/dev/null \
-            | awk -F'\t' '{ m = $2; sub(/^[a-z-]+\//, "", m);
-                mark = ($1 ~ /^(designer|librarian|reviewer|scout|sonic|task)$/) ? "  ● " : "    ";
-                printf "%s%-10s %s\n", mark, $1, m }' > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
-            mv -f "$tmp" "$omp_routes_cache" 2>/dev/null
-          else
-            rm -f "$tmp" 2>/dev/null
-          fi
-        } &
-      }
-
-      # Per-provider quota panel: a coloured provider header, then each window's
-      # bar, percent used, and time until reset. No redundant "usage" label.
-      usagep=()
-      build_usage() {
-        usagep=()
-        (( show_usage_panel == 1 )) || return 0
-        local rows="" fetching=0 age
-        if [[ -r "$usage_snapshot" ]] && age="$(file_age "$usage_snapshot")" && (( age < 1800 )); then
-          rows="$(usage_rows_from_snapshot < "$usage_snapshot")"
-        fi
-        if [[ -z "$rows" ]]; then
-          if ! age="$(file_age "$usage_cache")" || (( age >= 120 )); then
-            refresh_usage_cache
-            fetching=1
-          fi
-          [[ -r "$usage_cache" ]] && rows="$(usage_rows_from_omp < "$usage_cache")"
-        fi
-        if [[ -z "$rows" ]]; then
-          (( fetching )) && usagep+=( "''${c_dim}fetching usage…''${c_rst}" )
-          return 0
-        fi
-        usage_rows_cache="$rows"
-        mapfile -t usagep < <(render_usage_panel <<< "$rows")
-      }
-
-      # ── Provider availability ────────────────────────────────────────────────
-      # Derived from the same usage rows that fill the panel. A provider is
-      # `unauthed` when it never appears (omp usage only reports authed accounts),
-      # `maxed` when its main (non-tier) window is >=100% used, else `ok`. With no
-      # usage data at all nothing is known, so nothing is dimmed.
-      # Quota buckets: name:provider:usage-tier. Fable and Spark draw SEPARATE
-      # quota from their provider's main bucket, so availability is tracked per
-      # bucket — a maxed Fable window takes down the Fable-led profiles even while
-      # the main Claude bucket sits at 65%.
-      bucket_defs=(codex-main:openai-codex:- codex-spark:openai-codex:spark claude-main:anthropic:- claude-fable:anthropic:fable)
-      bucket_avail=""
-      build_bucket_avail() {
-        bucket_avail=""
-        local rows="$usage_rows_cache" def name rest prov tier
-        if [[ -z "$rows" ]]; then
-          for def in "''${bucket_defs[@]}"; do bucket_avail+="''${def%%:*}=ok:0"$'\n'; done
-          return 0
-        fi
-        for def in "''${bucket_defs[@]}"; do
-          name="''${def%%:*}"; rest="''${def#*:}"; prov="''${rest%%:*}"; tier="''${rest##*:}"
-          # Provider entirely absent from usage => unauthed (all its buckets).
-          if ! grep -q "^$prov"$'\t' <<< "$rows"; then
-            bucket_avail+="$name=unauthed:0"$'\n'
-            continue
-          fi
-          local maxpct=-1 secs=0 pr pct t s
-          while IFS=$'\t' read -r pr _ pct t s _; do
-            [[ "$pr" == "$prov" && "$t" == "$tier" ]] || continue
-            if (( pct > maxpct )); then maxpct=$pct; secs=$s; fi
-          done <<< "$rows"
-          # maxpct < 0 means the bucket window never appeared (idle/unreported) —
-          # treat as available rather than dimming on missing data.
-          if (( maxpct >= 100 )); then
-            bucket_avail+="$name=maxed:$secs"$'\n'
-          else
-            bucket_avail+="$name=ok:0"$'\n'
-          fi
-        done
-      }
-      bucket_status() {
-        local l
-        l="$(grep "^$1=" <<< "$bucket_avail" | head -1)"
-        l="''${l#*=}"
-        printf '%s' "''${l%%:*}"
-      }
-      bucket_reset_secs() {
-        local l
-        l="$(grep "^$1=" <<< "$bucket_avail" | head -1)"
-        printf '%s' "''${l##*:}"
-      }
-      bucket_down() {
-        local st
-        st="$(bucket_status "$1")"
-        [[ "$st" == unauthed || "$st" == maxed ]]
-      }
-      down_buckets_csv() {
-        local def name out=""
-        for def in "''${bucket_defs[@]}"; do
-          name="''${def%%:*}"
-          if bucket_down "$name"; then out+="$name,"; fi
-        done
-        printf '%s' "''${out%,}"
-      }
-      # Compact "5d" / "2h" / "45m" from a seconds count.
-      fmt_secs() {
-        local s="$1"
-        if (( s <= 0 )); then printf 'now'
-        elif (( s >= 86400 )); then printf '%dd' "$(( s / 86400 ))"
-        elif (( s >= 3600 )); then printf '%dh' "$(( s / 3600 ))"
-        elif (( s >= 60 )); then printf '%dm' "$(( s / 60 ))"
-        else printf '%ds' "$s"; fi
-      }
-      # Human note for a down bucket: "Fable maxed · 5d" / "Codex maxed · 2h", or
-      # "needs Claude" when the whole provider is unauthed.
-      bucket_note() {
-        local b="$1" label st
-        case "$b" in
-          codex-main) label="Codex" ;; codex-spark) label="Spark" ;;
-          claude-main) label="Claude" ;; claude-fable) label="Fable" ;; *) label="$b" ;;
-        esac
-        st="$(bucket_status "$b")"
-        case "$st" in
-          maxed) printf '%s maxed · %s' "$label" "$(fmt_secs "$(bucket_reset_secs "$b")")" ;;
-          unauthed)
-            case "$b" in
-              codex-*) printf 'needs Codex' ;;
-              claude-*) printf 'needs Claude' ;;
-              *) printf 'needs %s' "$label" ;;
-            esac ;;
-          *) printf '%s' "" ;;
-        esac
-      }
-
-      # ── Per-profile impact ───────────────────────────────────────────────────
-      # name<TAB>impact (ok|degraded|broken), judged on each profile's substantive
-      # lead roles in the routes page against the currently-down providers.
-      profile_impacts=""
-      build_profile_impacts() {
-        profile_impacts=""
-        [[ -f "$routes_plain" ]] || return 0
-        local down
-        down="$(down_buckets_csv)"
-        profile_impacts="$(awk -v down="$down" '
-          BEGIN {
-            split(down, d, ","); for (i in d) if (d[i] != "") dmap[d[i]] = 1
-            split("default task plan slow designer reviewer librarian", s, " ")
-            for (i in s) smap[s[i]] = 1
-          }
-          function bucket(m) {
-            sub(/:.*/, "", m)
-            if (m ~ /fable/) return "claude-fable"
-            if (m ~ /spark/) return "codex-spark"
-            if (m ~ /claude|sonnet|haiku|opus/) return "claude-main"
-            return "codex-main"
-          }
-          function ismodel(t) { return t ~ /^[A-Za-z0-9.-]+:(minimal|low|medium|high|xhigh|max)$/ }
-          function emit(   im) {
-            if (name == "") return
-            # broken: the interactive default cannot run — its lead and every
-            # displayed fallback bucket is down (a no-fallback profile has only
-            # its lead). degraded: default runs, but a substantive lead is down.
-            im = (default_seen && !default_runnable) ? "broken" : (any_lead_down ? "degraded" : "ok")
-            printf "%s\t%s\n", name, im
-          }
-          /^[a-z][a-z0-9-]*  / { emit(); name = $1; any_lead_down = 0; default_seen = 0; default_runnable = 0; next }
-          {
-            role = ""; lead = ""
-            for (i = 1; i <= NF; i++) {
-              if ($i == "●") continue
-              if (role == "" && $i ~ /^[a-z]+$/) { role = $i; continue }
-              if (ismodel($i)) {
-                if (lead == "") lead = $i
-                if (role == "default") { default_seen = 1; if (!(bucket($i) in dmap)) default_runnable = 1 }
-              }
-            }
-            if (role in smap && lead != "" && (bucket(lead) in dmap)) any_lead_down = 1
-          }
-          END { emit() }
-        ' "$routes_plain")"
-      }
-      profile_impact() {
-        awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' <<< "$profile_impacts"
-      }
-      # Compute availability once per process. The preview runs as its own process
-      # (see __preview), so it recomputes; cheap — reads the cached usage rows.
-      avail_built=0
-      ensure_avail() {
-        (( avail_built )) && return 0
-        build_usage
-        build_bucket_avail
-        build_profile_impacts
-        avail_built=1
-      }
-      # Annotation for impacted profiles: the note(s) of the currently-down
-      # bucket(s), de-duplicated (an unauthed provider downs two buckets that
-      # share one "needs X" note). Usually one bucket is down, so this is short.
-      down_annotation() {
-        local def name n out="" seen=""
-        for def in "''${bucket_defs[@]}"; do
-          name="''${def%%:*}"
-          if bucket_down "$name"; then
-            n="$(bucket_note "$name")"
-            [[ -n "$n" ]] || continue
-            case "$seen" in *"|$n|"*) continue ;; esac
-            seen+="|$n|"
-            out+="''${out:+ · }$n"
-          fi
-        done
-        printf '%s' "$out"
-      }
-
-      term_cols() {
-        local rows cols
-        if read -r rows cols < <(stty size 2>/dev/null) && [[ -n "''${cols:-}" ]]; then
-          printf '%s' "$cols"
-        else
-          printf '%s' "''${COLUMNS:-80}"
-        fi
-      }
-
-      # Print the palette, with the usage panel beside it when the terminal is
-      # wide enough, otherwise stacked above it.
-      render_screen() {
-        build_palette
-        build_usage
-        if (( ''${#usagep[@]} == 0 )); then
-          printf '%s\n' "''${palette[@]}"
-          return 0
-        fi
-        local leftw=0 line
-        for line in "''${palette[@]}"; do (( ''${#line} > leftw )) && leftw=''${#line}; done
-        local cols
-        cols="$(term_cols)"
-        if (( cols < leftw + 24 )); then
-          printf '%s\n' "''${usagep[@]}" "" "''${palette[@]}"
-          return 0
-        fi
-        local n=''${#palette[@]}
-        (( ''${#usagep[@]} > n )) && n=''${#usagep[@]}
-        local i l r
-        for (( i = 0; i < n; i++ )); do
-          l="''${palette[$i]:-}"
-          r="''${usagep[$i]:-}"
-          printf '%-*s  %s\n' "$leftw" "$l" "$r"
-        done
-      }
-
-      show_detail() {
-        local i="$1"
-        printf '\n  %s  %s\n  %s\n\n' \
-          "''${names[$i]}" "$(lead_tag "''${leads[$i]}")" "''${details[$i]}"
-      }
-
-      # Colour by lane (mixed/gpt/claude/special/bare) and glyph by intended use
-      # (speed/regular/smart/pure-pool + per-special icons), keyed on the launcher
-      # name so the icon matches what the profile is for, not just its provider.
-      lane_color() {
-        case "$1" in
-          ompz | ompn | ompm) printf '%s' "$c_mixed" ;;
-          ompl | ompb | ompg | ompo) printf '%s' "$c_openai" ;;
-          ompk | omps | ompc | ompe) printf '%s' "$c_claude" ;;
-          ompf | ompx) printf '%s' "$c_special" ;;
-          ompu) printf '%s' "$c_untrusted" ;;
-          *) printf '%s' "$c_yours" ;;
-        esac
-      }
-      icon_glyph() {
-        case "$1" in
-          ompz | ompl | ompk) printf '%s' "$g_openai" ;;
-          ompn | ompb | omps) printf '%s' "$g_cogs" ;;
-          ompm | ompg | ompc) printf '%s' "$g_claude" ;;
-          ompo | ompe) printf '%s' "$g_unlink" ;;
-          ompf) printf '%s' "$g_pin" ;;
-          ompx) printf '%s' "$g_book" ;;
-          ompu) printf '%s' "$g_untrusted" ;;
-          omp) printf '%s' "$g_yours" ;;
-          *) printf '%s' "$g_mixed" ;;
-        esac
-      }
-
-      # Compact + recolour a routing block for the preview. Mode selects depth:
-      # "lead" keeps only the primary per role, "base" collapses same-provider
-      # redundancy siblings to show just the cross-provider net, "full" keeps the
-      # whole chain (the picker cycles lead -> base -> full on ctrl-f). Names
-      # shorten to their tier (gpt-5.6-sol -> sol) and colour by provider hue with
-      # brightness scaled by thinking level (low -> xhigh reads as dim -> bright).
-      colorize_routes() {
-        local mode="''${1:-base}"
-        gawk -v dim="$c_dim" -v mode="$mode" '
-          function lvl(l) { return l=="minimal"?0:l=="low"?1:l=="medium"?2:l=="high"?3:l=="xhigh"?4:5 }
-          function clamp(x) { return x>255?255:(x<0?0:int(x)) }
-          function short(name,   a, n) {
-            if (name == "gpt-5.4") return "gpt-5.4"
-            n = split(name, a, "-")
-            if (name ~ /^claude/) return a[2]
-            return a[n]
-          }
-          function paint(tok,   idx, name, level, f, br, bg, bb) {
-            idx = match(tok, /:(minimal|low|medium|high|xhigh|max)$/)
-            if (idx == 0) return tok
-            name = substr(tok, 1, idx - 1); level = substr(tok, idx + 1)
-            if (tok ~ /^gpt/) { br = 110; bg = 170; bb = 240 }
-            else if (tok ~ /^claude/) { br = 240; bg = 160; bb = 105 }
-            else return tok
-            f = 0.60 + lvl(level) * 0.088
-            return sprintf("\033[38;2;%d;%d;%dm%s:%s%s", clamp(br*f), clamp(bg*f), clamp(bb*f), short(name), level, dim)
-          }
-          function prov_of(s) {
-            # Spark and Fable draw separate quota, so they are their own bucket —
-            # a hop off them is a real fallback (different rate), never a
-            # same-bucket redundancy sibling to collapse.
-            if (s ~ /spark/) return "s"
-            if (s ~ /fable/) return "f"
-            return s ~ /claude/ ? "c" : (s ~ /gpt/ ? "g" : "x")
-          }
-          {
-            line = $0
-            # Drop the redundant profile header (col 0) — the preview shows the
-            # name/blurb itself — and the profile-level thinking/fallback/advisor
-            # line, which is redundant with the per-role levels.
-            if (line ~ /^[a-z]/) next
-            if (line ~ /thinking .* fallback/) next
-            # Split off any trailing task override so it never confuses the
-            # provider walk, then re-append it before painting.
-            ov = ""
-            if (match(line, / +\(task override:/)) {
-              ov = substr(line, RSTART); line = substr(line, 1, RSTART - 1)
-            }
-            # Normalise the padded arrow gaps to a single space either side.
-            gsub(/ +→ +/, " → ", line)
-            if (mode == "lead") {
-              # Primary only — drop the whole chain.
-              sub(/ +→.*$/, "", line)
-            } else if (mode == "base") {
-              # Collapse consecutive same-bucket models (the redundancy siblings)
-              # so only the lead and each bucket transition remain — Spark and
-              # Fable are their own bucket, so a hop off them is always kept.
-              n = split(line, parts, / +→ +/)
-              line = parts[1]
-              lastprov = prov_of(parts[1])
-              for (j = 2; j <= n; j++) {
-                if (prov_of(parts[j]) != lastprov) {
-                  line = line " → " parts[j]; lastprov = prov_of(parts[j])
-                }
-              }
-            }
-            line = line ov
-            out = ""
-            # paint() calls match() internally, which clobbers RSTART/RLENGTH, so
-            # snapshot them before each call.
-            while (match(line, /(gpt|claude)[A-Za-z0-9._-]*:(minimal|low|medium|high|xhigh|max)/)) {
-              s = RSTART; l = RLENGTH
-              out = out substr(line, 1, s - 1) paint(substr(line, s, l))
-              line = substr(line, s + l)
-            }
-            print out line
-          }
-        '
-      }
-
-      # Colour provider/model mentions in flavour text with a muted, grayed
-      # version of the provider hue, restoring to the surrounding dim gray.
-      flavorize() {
-        gawk -v g="$c_gpt_soft" -v c="$c_claude_soft" -v dim="$c_dim" '
-          {
-            line = $0
-            gsub(/\<(GPT|gpt|OpenAI|Codex|Spark|spark|Sol|Terra|Luna|Nano|nano)\>/, g "&" dim, line)
-            gsub(/\<(Claude|claude|Anthropic|Opus|opus|Sonnet|sonnet|Haiku|haiku|Fable|fable)\>/, c "&" dim, line)
-            print line
-          }
-        '
-      }
-
-      # Arrow-key picker via fzf: a truecolor list with Nerd Font provider
-      # glyphs and soft group labels at the top, the usage panel in the footer,
-      # and each profile's detail + colourised role -> model routing in the
-      # preview. Sets picked_idx, or leaves it empty when cancelled.
-      # Render profile <name> at depth <state> (0/1/2) to stdout. Shared by the
-      # on-demand fzf preview and the background preloader, so startup pre-renders
-      # nothing and navigation is still instant once the cache is warm.
-      # Bundled OMP subagents shown in the preview for the profiles with no managed
-      # routing to display (bare omp, ompu). Built once from the pinned agents dir.
-      agents_block=""
-      build_agents_block() {
-        [[ -n "$agents_block" ]] && return 0
-        local f n d line
-        for f in ${omp-agents}/share/omp/agents/*.md; do
-          [[ -e "$f" ]] || continue
-          n="''${f##*/}"; n="''${n%.md}"
-          case "$n" in
-            designer)  d="UI/UX design & visual refinement" ;;
-            librarian) d="reads external libraries & APIs" ;;
-            reviewer)  d="code quality & security review" ;;
-            scout)     d="fast codebase exploration" ;;
-            sonic)     d="mechanical, low-reasoning edits" ;;
-            task)      d="general multi-step delegation" ;;
-            *)         d="" ;;
-          esac
-          printf -v line '  %s●%s %s%-10s%s %s%s%s' \
-            "$c_dim" "$c_rst" "$c_bold" "$n" "$c_rst" "$c_dim" "$d" "$c_rst"
-          agents_block+="$line"$'\n'
-        done
-        agents_block="''${agents_block%$'\n'}"
-      }
-
-      render_one() {
-        local profile="$1" s="$2" i idx=-1 col gly fdetail block why
-        for (( i = 0; i < count; i++ )); do
-          [[ "''${names[$i]}" == "$profile" ]] && { idx=$i; break; }
-        done
-        (( idx >= 0 )) || return 0
-        ensure_avail
-        col="$(lane_color "''${names[$idx]}")"
-        gly="$(icon_glyph "''${names[$idx]}")"
-        fdetail="$(printf '%s' "''${details[$idx]}" | flavorize)"
-        printf '%s%s %s%s%s\n' "$col" "$gly" "$c_bold" "''${names[$idx]}" "$c_rst"
-        printf '%s%s%s\n\n' "$col" "''${blurbs[$idx]}" "$c_rst"
-        printf '%s%s%s\n' "$c_dim" "$fdetail" "$c_rst"
-        # the bare omp has no managed routing — show the user's own resolved ~/.omp
-        # routing (cached, refreshed in the background), or its bundled subagents until
-        # the first resolve lands. ompu falls through: its routing is in routes.plain.
-        case "''${names[$idx]}" in
-          omp)
-            local orblock=""
-            [[ -r "$omp_routes_cache" ]] && orblock="$(colorize_routes lead < "$omp_routes_cache")"
-            if [[ -n "$orblock" ]]; then
-              printf '\n%s── routing · your ~/.omp ────%s\n%s%s%s\n' "$c_dim" "$c_rst" "$c_dim" "$orblock" "$c_rst"
-            else
-              build_agents_block
-              printf '\n%s── agents ──────────────────%s\n%s\n' "$c_dim" "$c_rst" "$agents_block"
-            fi
-            return 0
-            ;;
-        esac
-        # Availability banner: flag the focused launcher when a quota bucket its
-        # routing leads on is down. Broken = its default has no live fallback
-        # (unusable until reset); degraded = it runs, on a fallback model.
-        local pimpact; pimpact="$(profile_impact "$profile")"
-        if [[ "$pimpact" == broken ]]; then
-          printf '\n%s✗ %s — default has no live fallback%s\n' "$c_untrusted" "$(down_annotation)" "$c_rst"
-        elif [[ "$pimpact" == degraded ]]; then
-          printf '\n%s⚠ %s — runs on a fallback model%s\n' "$c_claude" "$(down_annotation)" "$c_rst"
-        fi
-        [[ -f "$routes_plain" ]] || return 0
-        # Behaviour summary (thinking baseline / fallback / advisor), lifted from
-        # the 2nd line of the profile's block in the generated routes page so it
-        # cannot drift from the deployed config.
-        local cfg
-        cfg="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | sed -n '2s/^  *//p')"
-        [[ -n "$cfg" ]] && printf '\n%s%s%s\n' "$c_dim" "$cfg" "$c_rst"
-        case "$s" in
-          0)
-            block="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | colorize_routes lead)"
-            [[ -n "$block" ]] || return 0
-            printf '\n%s── routing ─────────────────%s\n%s%s%s\n' "$c_dim" "$c_rst" "$c_dim" "$block" "$c_rst"
-            printf '\n%sctrl-f · show fallback route · shift↑↓ scroll%s\n' "$c_dim" "$c_rst"
-            ;;
-          2)
-            block="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | colorize_routes full)"
-            [[ -n "$block" ]] || return 0
-            why="$(printf '%s' 'why the extra hops: each lead keeps a same-provider backup before it crosses providers, so a single-model outage or fault is absorbed in its own bucket first (gpt→gpt→claude→claude). Spark and Fable draw separate quota, so they sit out.' | flavorize)"
-            printf '\n%s── routing + redundancy ────%s\n%s%s%s\n' "$c_dim" "$c_rst" "$c_dim" "$block" "$c_rst"
-            printf '\n%s%s%s\n' "$c_dim" "$why" "$c_rst"
-            printf '\n%sctrl-f · hide fallbacks · shift↑↓ scroll%s\n' "$c_dim" "$c_rst"
-            ;;
-          *)
-            block="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | colorize_routes base)"
-            [[ -n "$block" ]] || return 0
-            printf '\n%s── routing + fallback ──────%s\n%s%s%s\n' "$c_dim" "$c_rst" "$c_dim" "$block" "$c_rst"
-            printf '\n%sctrl-f · show sibling redundancy · shift↑↓ scroll%s\n' "$c_dim" "$c_rst"
-            ;;
-        esac
-      }
-      # On-demand preview for fzf: render at the current depth from the state file.
-      render_preview() {
-        render_one "$2" "$(cat "$1/.state" 2>/dev/null || echo 0)"
-      }
-      # Warm every profile × depth into the cache (run in the background on start).
-      render_all() {
-        local prevdir="$1" i st
-        for (( i = 0; i < count; i++ )); do
-          for st in 0 1 2; do
-            render_one "''${names[$i]}" "$st" > "$prevdir/''${names[$i]}.s$st.part" 2>/dev/null \
-              && mv -f "$prevdir/''${names[$i]}.s$st.part" "$prevdir/''${names[$i]}.s$st" 2>/dev/null
-          done
-        done
-      }
-
-      # Full-screen "starting" card held across omp's cold start (see the launch
-      # path): the profile, its description, and its lead-only routing, so the
-      # hand-off amplifies the picker instead of dropping to a bare terminal.
-      starting_card() {
-        local idx="$1" rows="" cols="" col gly block nlines top margin width r line
-        read -r rows cols < <(stty size 2>/dev/null) || true
-        [[ "$rows" =~ ^[0-9]+$ ]] && (( rows >= 8 )) || rows=24
-        [[ "$cols" =~ ^[0-9]+$ ]] && (( cols >= 24 )) || cols=80
-        col="$(lane_color "''${names[$idx]}")"
-        gly="$(icon_glyph "''${names[$idx]}")"
-        margin=$(( (cols - 56) / 2 )); (( margin < 2 )) && margin=2
-        width=$(( cols - margin - 2 )); (( width < 20 )) && width=20
-        local -a dlines=() rlines=()
-        mapfile -t dlines < <(printf '%s' "''${details[$idx]}" | fold -s -w "$width" | flavorize)
-        block=""
-        [[ -f "$routes_plain" ]] && block="$(sed -n "/^''${names[$idx]}  /,/^\$/p" "$routes_plain" | colorize_routes lead)"
-        [[ -n "$block" ]] && mapfile -t rlines <<< "$block"
-        nlines=$(( 3 + ''${#dlines[@]} + ''${#rlines[@]} ))
-        top=$(( (rows - nlines) / 2 )); (( top < 1 )) && top=1
-        printf '\e[2J\e[H\e[?25l'
-        printf '\e[%d;%dH%s%s %s%s%s  %s⟳ starting…%s' "$top" "$margin" \
-          "$col" "$gly" "$c_bold" "''${names[$idx]}" "$c_rst" "$c_dim" "$c_rst"
-        r=$(( top + 2 ))
-        for line in "''${dlines[@]}"; do
-          printf '\e[%d;%dH%s%s%s' "$r" "$margin" "$c_dim" "$line" "$c_rst"; r=$(( r + 1 ))
-        done
-        r=$(( r + 1 ))
-        for line in "''${rlines[@]}"; do
-          printf '\e[%d;%dH%s%s%s' "$r" "$margin" "$c_dim" "$line" "$c_rst"; r=$(( r + 1 ))
-        done
-      }
-
-      # Optional startup profiler: CODE_PROFILE=1 prints section timestamps.
-      _prof() { [[ -z "''${CODE_PROFILE:-}" ]] || printf 'PROF %-10s %s\n' "$1" "$EPOCHREALTIME" >&2; }
-      picked_idx=""
-      fzf_pick() {
-        picked_idx=""
-        _prof entry
-        build_usage
-        build_bucket_avail
-        build_profile_impacts
-        # Kick a background refresh of the bare-omp routing cache when stale (~0.9s;
-        # never blocks — the omp preview reads whatever is cached, agents until then).
-        local rt_age=""
-        if ! rt_age="$(file_age "$omp_routes_cache")" || (( rt_age >= 3600 )); then
-          refresh_omp_routes
-        fi
-        _prof usage
-        local footer=""
-        local -a footer_args=()
-        if (( ''${#usagep[@]} > 0 )); then
-          printf -v footer '%s\n' "''${usagep[@]}"
-          footer="''${footer%$'\n'}"
-          footer_args=( --footer="$footer" --footer-border=top )
-        fi
-        local prevdir self
-        prevdir="$(mktemp -d)"
-        self="$(command -v -- "$0" 2>/dev/null)" || self="$0"
-        # Previews cache under $prevdir as <name>.s<depth>. fzf calls `show`, which
-        # cats the cached file when ready or renders on demand via `code __preview`;
-        # a background `code __preload` (kicked on fzf start) warms them all so
-        # navigation is instant. `cycle` bumps the depth (0 hidden · 1 net · 2 full).
-        # shellcheck disable=SC2016
-        printf '%s\n' \
-          '#!/bin/sh' \
-          "self=$self" \
-          'd=''${0%/*}' \
-          's=$(cat "$d/.state" 2>/dev/null || echo 0)' \
-          'f="$d/$1.s$s"' \
-          '[ -f "$f" ] && cat "$f" || "$self" __preview "$d" "$1"' > "$prevdir/show"
-        # shellcheck disable=SC2016
-        printf '%s\n' \
-          '#!/bin/sh' \
-          'd=''${0%/*}' \
-          's=$(cat "$d/.state" 2>/dev/null || echo 0)' \
-          'echo "$(( (s + 1) % 3 ))" > "$d/.state"' > "$prevdir/cycle"
-        chmod +x "$prevdir/show" "$prevdir/cycle"
-        local i col gly rows="" row glabel labelcol last_group=""
-        # Flavour-tint the blurbs (openai/claude/model mentions) in one gawk pass
-        # so the hot loop stays subshell-free.
-        local -a fblurbs=()
-        mapfile -t fblurbs < <(printf '%s\n' "''${blurbs[@]}" | flavorize)
-        # Colour by lane, glyph by intended use, both inlined; the category label
-        # is printed once on each group's first row.
-        for (( i = 0; i < count; i++ )); do
-          case "''${names[$i]}" in
-            ompz | ompn | ompm) col="$c_mixed" ;;
-            ompl | ompb | ompg | ompo) col="$c_openai" ;;
-            ompk | omps | ompc | ompe) col="$c_claude" ;;
-            ompf | ompx) col="$c_special" ;;
-            ompu) col="$c_untrusted" ;;
-            *) col="$c_yours" ;;
-          esac
-          case "''${names[$i]}" in
-            ompz | ompl | ompk) gly="$g_openai" ;;
-            ompn | ompb | omps) gly="$g_cogs" ;;
-            ompm | ompg | ompc) gly="$g_claude" ;;
-            ompo | ompe) gly="$g_unlink" ;;
-            ompf) gly="$g_pin" ;;
-            ompx) gly="$g_book" ;;
-            ompu) gly="$g_untrusted" ;;
-            omp) gly="$g_yours" ;;
-            *) gly="$g_mixed" ;;
-          esac
-          glabel=""
-          if [[ "''${groups[$i]}" != "$last_group" ]]; then
-            glabel="$(group_label "''${groups[$i]}")"
-            last_group="''${groups[$i]}"
-          fi
-          # Provider availability: mark a profile whose interactive default can't
-          # run (broken → red ✗, also dimmed) or that a down bucket merely touches
-          # (degraded → amber ⚠). The full reason lives in the preview banner.
-          local namestyle="$c_bold" mark=" " impact=""
-          impact="$(profile_impact "''${names[$i]}")"
-          case "$impact" in
-            broken)   mark="''${c_untrusted}✗''${c_rst}"; col="$c_dim"; namestyle="$c_dim" ;;
-            degraded) mark="''${c_claude}⚠''${c_rst}" ;;
-          esac
-          printf -v labelcol '%-10s' "$glabel"
-          printf -v row '%s\t%s%s%s  %s%s%s  %s%-5s%s %s  %s%s%s' \
-            "''${names[$i]}" \
-            "$c_dim" "$labelcol" "$c_rst" \
-            "$col" "$gly" "$c_rst" \
-            "$namestyle" "''${names[$i]}" "$c_rst" \
-            "$mark" \
-            "$c_dim" "''${fblurbs[$i]}" "$c_rst"
-          rows+="$row"$'\n'
-        done
-        _prof rows
-        local theme chosen cmd
-        theme='fg:-1,bg:-1,fg+:#ffffff,bg+:#1b212b,hl:#62a7ff,hl+:#8ec7ff'
-        theme+=',pointer:#ff9f52,marker:#ff9f52,prompt:#ff9f52,spinner:#ff9f52'
-        theme+=',border:#3a4453,label:#9aa4b1,info:#69727e'
-        theme+=',footer:#9aa4b1,footer-border:#3a4453'
-        theme+=',gutter:-1,preview-border:#3a4453'
-        _prof fzf
-        chosen="$(printf '%s' "$rows" | fzf \
-          --ansi --layout=reverse --height=99% --border=rounded \
-          --border-label=" pick a launcher " \
-          --prompt="$g_search  " --pointer="$g_point" --marker='+' --info=inline --no-mouse \
-          --delimiter=$'\t' --with-nth=2 \
-          --preview="$prevdir/show {1}" \
-          --preview-window='right:52%:wrap:border-left' \
-          --bind="start:execute-silent($self __preload $prevdir &)" \
-          --bind="ctrl-f:execute-silent($prevdir/cycle)+refresh-preview" \
-          --bind="shift-up:preview-up,shift-down:preview-down" \
-          --bind="alt-up:preview-half-page-up,alt-down:preview-half-page-down" \
-          "''${footer_args[@]}" \
-          --color="$theme" || true)"
-        rm -rf "$prevdir"
-        cmd="''${chosen%%$'\t'*}"
-        [[ -n "$cmd" ]] || return 0
-        for (( i = 0; i < count; i++ )); do
-          [[ "''${names[$i]}" == "$cmd" ]] && { picked_idx="$i"; return 0; }
-        done
-      }
-
-      # Print a 0-based index for a selector, or return non-zero when unmatched.
+      # Map a selector (bare|name|1-based number|single letter) to a 0-based index.
       resolve() {
         local sel="$1" i n
         case "$sel" in
@@ -2294,241 +1508,50 @@ let
         return 1
       }
 
-      usage() {
-        printf '%s\n' \
-          'code - pick an OMP launcher and run it' \
-          "" \
-          'usage:' \
-          '  code                    open the picker (with a live usage panel)' \
-          '  code <profile>          run that launcher (name, number, or letter)' \
-          '  code <profile> [args]   run it, forwarding all extra args' \
-          '  code -l, --list         print the palette and exit' \
-          '  code -U, --no-usage     open the picker without fetching usage' \
-          '  code -h, --help         this help' \
-          "" \
-          'Profiles: omp (bare) - ompb omps ompg ompc ompf ompx - ompu (untrusted).' \
-          'A first argument that is not a profile opens the picker, then forwards all' \
-          'args to your choice, so code --resume picks, then resumes.' \
-          'The picker shows a live omp-usage panel beside the options (best-effort);' \
-          'for the full role/model routing of each managed profile, run omph.'
-      }
-
-      # ── Generator view (code gen) ────────────────────────────────────────────
-      # Build a profile by browsing facets. Each facet is a file under a temp dir;
-      # ←/→ cycles the focused facet, and the preview renders the baked profile
-      # for the current combination (generated.plain, keyed by combo id).
-      facet_order=(lane model thinking spark fable)
-      facet_values() {
-        case "$1" in
-          lane) printf 'gpt-only gpt-led mixed claude-led claude-only' ;;
-          model) printf 'fast normal smart' ;;
-          thinking) printf 'low medium high xhigh' ;;
-          spark | fable) printf 'on off' ;;
-        esac
-      }
-      # Base colour for an option — lane by provider, on-toggles green, else none.
-      facet_opt_color() {
-        case "$1:$2" in
-          lane:gpt-only | lane:gpt-led) printf '%s' "$c_openai" ;;
-          lane:mixed) printf '%s' "$c_mixed" ;;
-          lane:claude-led | lane:claude-only) printf '%s' "$c_claude" ;;
-          spark:on | fable:on) printf '%s' "$c_yours" ;;
-          *) printf '%s' "" ;;
-        esac
-      }
-      # A Nerd Font icon per facet to anchor the eye.
-      facet_icon() {
-        case "$1" in
-          lane) printf '%s' "$g_unlink" ;;
-          model) printf '%s' "$g_cogs" ;;
-          thinking) printf '%s' "$g_claude" ;;
-          spark) printf '%s' "$g_openai" ;;
-          fable) printf '%s' "$g_pin" ;;
-        esac
-      }
-      facet_combo_id() {
-        local d="$1" lane model th sp fb spid=nosp faid=nofa
-        lane="$(cat "$d/lane")"; model="$(cat "$d/model")"; th="$(cat "$d/thinking")"
-        sp="$(cat "$d/spark")"; fb="$(cat "$d/fable")"
-        [[ "$lane" == gpt-only ]] && fb=off        # Fable is Anthropic-only
-        [[ "$lane" == claude-only ]] && sp=off     # Spark is OpenAI-only
-        [[ "$sp" == on ]] && spid=sp
-        [[ "$fb" == on ]] && faid=fa
-        printf '%s_%s_%s_%s_%s' "$lane" "$model" "$th" "$spid" "$faid"
-      }
-      facet_rows() {
-        local d="$1" key val lane icon line o color na
-        local -a opts
-        lane="$(cat "$d/lane")"
-        for key in "''${facet_order[@]}"; do
-          val="$(cat "$d/$key" 2>/dev/null)"
-          icon="$(facet_icon "$key")"
-          na=""
-          [[ "$key" == fable && "$lane" == gpt-only ]] && na=1
-          [[ "$key" == spark && "$lane" == claude-only ]] && na=1
-          read -ra opts <<< "$(facet_values "$key")"
-          line=""
-          for o in "''${opts[@]}"; do
-            if [[ -n "$na" ]]; then
-              line+="   ''${c_dim}$o''${c_rst}"                       # facet doesn't apply here
-            elif [[ "$o" == "$val" ]]; then
-              color="$(facet_opt_color "$key" "$o")"
-              line+="  ''${c_bold}''${color}[$o]''${c_rst}"           # selected
-            else
-              line+="   ''${c_dim}$o''${c_rst}"                       # unselected
-            fi
-          done
-          [[ -n "$na" ]] && line+="   ''${c_dim}— n/a for this lane''${c_rst}"
-          printf '%s\t %s %s%-9s%s%s\n' "$key" "$icon" "$c_dim" "$key" "$c_rst" "$line"
+      print_list() {
+        local i
+        for (( i = 0; i < count; i++ )); do
+          printf '  %-6s %s\n' "''${names[$i]}" "''${blurbs[$i]}"
         done
       }
-      facet_cycle() {
-        local d="$1" key="$2" dir="$3" cur i n
-        local -a arr
-        cur="$(cat "$d/$key" 2>/dev/null)"
-        read -ra arr <<< "$(facet_values "$key")"
-        n=''${#arr[@]}
-        for i in "''${!arr[@]}"; do [[ "''${arr[$i]}" == "$cur" ]] && break; done
-        if [[ "$dir" == fwd ]]; then i=$(( (i + 1) % n )); else i=$(( (i - 1 + n) % n )); fi
-        printf '%s' "''${arr[$i]}" > "$d/$key"
-      }
-      facet_preview() {
-        local d="$1" id block
-        id="$(facet_combo_id "$d")"
-        block="$(sed -n "/^$id  /,/^\$/p" "$generated_plain" | colorize_routes base)"
-        printf '%sgenerated profile%s\n' "$c_bold" "$c_rst"
-        printf '%s%s%s\n' "$c_dim" "$(printf '%s' "$id" | tr _ ' ')" "$c_rst"
-        if [[ -n "$block" ]]; then
-          printf '\n%s── routing ─────────────────%s\n%s%s%s\n' "$c_dim" "$c_rst" "$c_dim" "$block" "$c_rst"
-        else
-          printf '\n%sno profile for this combination%s\n' "$c_dim" "$c_rst"
-        fi
-        printf '\n%s←/→ pick option · ↑/↓ change facet · tab: hand-made list%s\n' "$c_dim" "$c_rst"
-      }
-      facet_pick() {
-        local fdir self
-        fdir="$(mktemp -d)"
-        printf mixed > "$fdir/lane"; printf normal > "$fdir/model"; printf medium > "$fdir/thinking"
-        printf on > "$fdir/spark"; printf off > "$fdir/fable"
-        self="$(command -v -- "$0" 2>/dev/null)" || self="$0"
-        facet_rows "$fdir" | fzf \
-          --ansi --layout=reverse --height=99% --border=rounded \
-          --border-label=" build a profile " \
-          --delimiter=$'\t' --with-nth=2 --no-mouse --info=hidden --pointer="$g_point" \
-          --preview="$self __facet_preview $fdir" \
-          --preview-window='right:56%:wrap:border-left' \
-          --bind="left:execute-silent($self __facet_cycle $fdir {1} back)+reload($self __facet_rows $fdir)+refresh-preview" \
-          --bind="right:execute-silent($self __facet_cycle $fdir {1} fwd)+reload($self __facet_rows $fdir)+refresh-preview" \
-          --bind="tab:become(CODE_NO_FZF= $self)" \
-          >/dev/null 2>&1 || true
-      }
 
-      if [[ "''${1:-}" == __facet_rows ]]; then
-        facet_rows "$2"
-        exit 0
-      fi
-      if [[ "''${1:-}" == __facet_cycle ]]; then
-        facet_cycle "$2" "$3" "$4"
-        exit 0
-      fi
-      if [[ "''${1:-}" == __facet_preview ]]; then
-        facet_preview "$2"
-        exit 0
-      fi
-
-      if [[ "''${1:-}" == __preview ]]; then
-        render_preview "$2" "$3"
-        exit 0
-      fi
-      if [[ "''${1:-}" == __preload ]]; then
-        render_all "$2"
-        exit 0
-      fi
+      usage() {
+        printf '%s\n' \
+          'code - pick an OMP launcher (or build one) and run it' \
+          "" \
+          'usage:' \
+          '  code                    open the picker / profile generator' \
+          '  code <profile>          run that launcher (name, number, or letter)' \
+          '  code <profile> [args]   run it, forwarding all extra args' \
+          '  code -l, --list         print the launcher palette and exit' \
+          '  code -U, --no-usage     open without fetching the usage panel' \
+          '  code -h, --help         this help' \
+          "" \
+          'In the picker: Tab switches profiles <-> generator, arrows move,' \
+          '? shows all keys, Enter launches. A first argument that is not a' \
+          'profile opens the picker and forwards all args to your choice.'
+      }
 
       case "''${1:-}" in
-        -U | --no-usage)
-          show_usage_panel=0
-          shift
-          ;;
+        -h | --help) usage; exit 0 ;;
+        -l | --list) print_list; exit 0 ;;
+        -U | --no-usage) export CODE_USAGE=""; shift ;;
       esac
 
-      idx=""
-      if (( $# > 0 )); then
-        case "$1" in
-          -h | --help)
-            usage
-            exit 0
-            ;;
-          -l | --list)
-            build_palette
-            printf '%s\n' "''${palette[@]}"
-            exit 0
-            ;;
-          gen)
-            # Generator view: browse facets, preview the synthesised profile.
-            if command -v fzf >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
-              facet_pick
-            else
-              printf 'code gen needs fzf and an interactive terminal.\n' >&2
-              exit 2
-            fi
-            exit 0
-            ;;
-        esac
-        if idx="$(resolve "$1")"; then
-          shift
-          exec "''${exes[$idx]}" "$@"
-        fi
+      # A resolvable first arg launches that profile directly (forwarding the
+      # rest); anything else opens the picker with the args passed through.
+      if (( $# > 0 )) && idx="$(resolve "$1")"; then
+        shift
+        exec "''${exes[$idx]}" "$@"
       fi
 
       if [[ ! -t 0 || ! -t 1 ]]; then
-        build_palette
         printf 'code: no profile given and no interactive terminal.\n\n' >&2
-        printf '%s\n' "''${palette[@]}" >&2
+        print_list >&2
         exit 2
       fi
 
-      # Prefer the fzf arrow-key picker; fall back to the typed menu when fzf is
-      # unavailable or CODE_NO_FZF is set.
-      if command -v fzf >/dev/null 2>&1 && [[ -z "''${CODE_NO_FZF:-}" ]]; then
-        fzf_pick
-        if [[ -n "$picked_idx" ]]; then
-          # Hold the starting card across omp's ~0.6s cold start (it clears + draws
-          # inline once ready) so the picker never flashes back to the terminal.
-          starting_card "$picked_idx"
-          exec "''${exes[$picked_idx]}" "$@"
-        fi
-        exit 0
-      fi
-
-      render_screen
-      while true; do
-        printf '\npick [1-%d - name - ?N for details - q]: ' "$count"
-        if ! read -r reply; then
-          printf '\n'
-          exit 0
-        fi
-        case "$reply" in
-          q | quit | "")
-            exit 0
-            ;;
-          \?*)
-            sel="''${reply#\?}"
-            sel="''${sel# }"
-            if di="$(resolve "$sel")"; then
-              show_detail "$di"
-            else
-              printf '  no such profile: %s\n\n' "$sel"
-            fi
-            ;;
-          *)
-            if idx="$(resolve "$reply")"; then
-              exec "''${exes[$idx]}" "$@"
-            fi
-            printf '  no such profile: %s\n\n' "$reply"
-            ;;
-        esac
-      done
+      exec ${lib.getExe code-tui} "$@"
     '';
   };
 in

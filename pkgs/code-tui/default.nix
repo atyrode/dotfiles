@@ -6,8 +6,14 @@
 buildGoModule {
   pname = "code-tui";
   version = "0.1.0";
-  src = lib.cleanSource ./.;
-  vendorHash = "sha256-nBY2GVBHUXy1oNpOS83eS3i1ODGMIiRyEUJ+/rkpUEE=";
+  # code-tui builds on the shared cli-kit (../cli-kit, via a local replace), so
+  # the source must carry both module dirs; modRoot points the build at code-tui.
+  src = lib.fileset.toSource {
+    root = ./..;
+    fileset = lib.fileset.unions [ ./. ../cli-kit ];
+  };
+  modRoot = "code-tui";
+  vendorHash = "sha256-GEnl88M2KszTcv4mxjrLipR+Ne+16NdfhMK6+wJTIL0=";
 
   # The launcher picker is invoked as `code`.
   postInstall = ''

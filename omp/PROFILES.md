@@ -12,29 +12,16 @@ Claude plan) they read as **relative burn rates** rather than direct dollars.
 
 ## The model catalog
 
-Only the models actually used in routing are listed. `omp models` shows the full
-registry, including previous GPT generations that are cheaper per token but
-deliver less per dollar than the 5.6 tiers, so nothing routes to them today.
+Only the models actually used in routing matter here. The catalog — short key,
+pool, tier, quota bucket, cost ($ per 1M in / out), context, thinking range, and
+role — is structured data in [`models.yml`](models.yml), the single source the
+tooling reads; its cost figures mirror `omp models` (the authority). Browse it
+**sorted and filterable in the profiles wiki** (`code --wiki`), which also renders
+every launcher's routing and rationale. `omp models` shows the full registry,
+including previous GPT generations that cost less per token but deliver less per
+dollar than the 5.6 tiers, so nothing routes to them today.
 
-### OpenAI (provider `openai-codex`)
-
-| Model | $ in/out | Context | Thinking | Role in routing |
-| --- | --- | --- | --- | --- |
-| `gpt-5.6-sol` | $5 / $30 | 372K | low→max | Flagship. Leads the `smart` GPT tier (`ompg`, `ompm`, `ompo`). |
-| `gpt-5.6-terra` | $2.50 / $15 | 372K | low→max | Balanced workhorse. Leads the `regular` GPT tier (`ompb`) and the mixed workers. Sonnet's price-twin. |
-| `gpt-5.6-luna` | $1 / $6 | 372K | low→max | Fast, high-volume — the cheapest **supported** Codex tier. Leads the `speed` GPT tier (`ompl`); the cheap rung and same-bucket sibling everywhere. |
-| `gpt-5.3-codex-spark` | $1.75 / $14 | 128K | low→xhigh | Coding-tuned and fast. Draws a **separate, usually-idle** 5h/7d Codex bucket, so the fast-execution/background roles lead on it to drain it (see [Separate rate buckets](#separate-rate-buckets)). |
-
-### Anthropic (provider `anthropic`)
-
-| Model | $ in/out | Context | Thinking | Role in routing |
-| --- | --- | --- | --- | --- |
-| `claude-fable-5` | $10 / $50 | 1M | low→max | Most capable, and its own **scarce** bucket. A *deliberate* elite lead only (`ompc`, `ompf`, `ompm` judgment roles, `ompx` plan) — never an automatic fallback net. |
-| `claude-opus-4-8` | $5 / $25 | 1M | low→max | Top Opus tier. Leads the `smart` Claude tier's judgment roles and `ompe` (claude-only); the main-plan deliberative sibling across the maps. |
-| `claude-sonnet-5` | $2 / $10 † | 1M | low→max | The value pick — near-Opus quality at a fraction of the cost. Leads the `regular` Claude tier (`omps`) and the mixed judgment roles. |
-| `claude-haiku-4-5` | $1 / $5 | 200K | minimal→xhigh | Fastest/cheapest Anthropic tier. Leads the `speed` Claude tier (`ompk`); the Anthropic cheap rung and background hum. |
-
-† Sonnet 5 is at introductory pricing through **2026-08-31**, then $3 / $15 —
+† **Sonnet 5** is at introductory pricing through **2026-08-31**, then $3 / $15 —
 dearer than Terra. See [Revisit triggers](#revisit-triggers).
 
 **Availability on a ChatGPT/Codex account:** `gpt-5.4` and `gpt-5.4-nano` return

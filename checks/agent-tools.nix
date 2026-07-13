@@ -170,6 +170,17 @@ in
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
 
+        # Profiles wiki (#79): a self-contained HTML page rendered from
+        # models.yml + `omp models` (cost/context) + routes.plain + PROFILES.md.
+        wiki=${pkgs.omp-configured}/share/omp/routes.html
+        test -f "$wiki"
+        grep -q 'gpt-5.6-sol' "$wiki"          # a catalog model
+        grep -q '$30' "$wiki"                  # Sol output cost, live from omp models
+        grep -q 'data-name="ompm"' "$wiki"     # a profile row
+        grep -q 'full fallback chains' "$wiki" # the depth toggle
+        # self-contained — no external scripts/styles/images
+        ! grep -qE '<(script|link|img|iframe)[^>]*(src|href)=' "$wiki"
+
         ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
         test ! -s "$TMPDIR/models.err"
         jq -e '.models | type == "array"' "$TMPDIR/models.json" >/dev/null

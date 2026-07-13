@@ -33,16 +33,16 @@ import (
 
 // ── keybindings (drive both input handling and the bubbles/help footer) ───────
 type keyMap struct {
-	Switch, Move, Change, Depth, Refresh, Collapse, Launch, Help, Quit key.Binding
+	Switch, Move, Change, Reset, Depth, Refresh, Collapse, Launch, Help, Quit key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Switch, k.Move, k.Change, k.Launch, k.Help, k.Quit}
+	return []key.Binding{k.Switch, k.Move, k.Change, k.Reset, k.Launch, k.Help, k.Quit}
 }
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Switch, k.Move, k.Change},
-		{k.Depth, k.Refresh, k.Collapse},
+		{k.Depth, k.Refresh, k.Collapse, k.Reset},
 		{k.Launch, k.Help, k.Quit},
 	}
 }
@@ -51,12 +51,19 @@ var keys = keyMap{
 	Switch:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "generator ⇄ profiles")),
 	Move:     key.NewBinding(key.WithKeys("up", "down", "j", "k"), key.WithHelp("↑↓", "move")),
 	Change:   key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp("←→", "change")),
+	Reset:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", gReset+" defaults")),
 	Depth:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "primary ⇄ full chains")),
 	Refresh:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh usage")),
 	Collapse: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "collapse")),
 	Launch:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
 	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "more")),
 	Quit:     key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
+}
+
+// defaultSel returns a fresh copy of the generator's default facet selection —
+// used both to seed the model and to restore it via the reset key.
+func defaultSel() map[string]string {
+	return map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "fast": "off"}
 }
 
 // ── palette ──────────────────────────────────────────────────────────────────
@@ -1426,6 +1433,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.help.ShowAll = !m.help.ShowAll
 			m.relayout() // the taller/shorter footer changes the body height
+		case "d":
+			if m.view == genView { // facets only exist in the generator
+				m.sel = defaultSel()
+				m.syncPreview()
+			}
 		case "f":
 			m.depth = (m.depth + 1) % 2
 			m.syncPreview()
@@ -1741,7 +1753,7 @@ func main() {
 		glyphs:    glyphs,
 		view:      genView, // generator is the default view
 		facets:    facetDefs(glyphs),
-		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "fast": "off"},
+		sel:       defaultSel(),
 	}
 	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {

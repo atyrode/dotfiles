@@ -23,10 +23,12 @@ func TestOmpArgs(t *testing.T) {
 		t.Errorf("ompArgs(ask) = %v\nwant %v", got, want)
 	}
 
-	// Commander style: replace the system prompt and pin thinking.
+	// Commander style: bare-classifier — strip scaffolding, replace the system
+	// prompt, pin thinking.
 	got = ompArgs("gpt-5.6-luna", "off", true, "schema", "do a thing")
 	want = []string{
 		"-p", "--mode", "text", "--no-session", "--no-tools",
+		"--no-rules", "--no-skills", "--no-extensions",
 		"--model", "gpt-5.6-luna", "--thinking", "off",
 		"--system-prompt", "schema", "do a thing",
 	}

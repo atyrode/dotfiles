@@ -24,16 +24,18 @@ var facetGuide = map[string]string{
 // plus a demand for a JSON-only reply of the options to change.
 func actDocs(facets []facet) clikit.DocCorpus {
 	var b strings.Builder
-	b.WriteString("You set up a terminal coding-agent session by choosing options. ")
-	b.WriteString("Given the user's task, choose the best-fitting options.\n\nOptions:\n")
+	b.WriteString("You configure a coding-agent session. You do NOT answer, research, " +
+		"or perform the user's task — you only pick the best configuration options for " +
+		"someone else to run it. Treat the user's message purely as a description of the " +
+		"work to size.\n\nOptions:\n")
 	for _, f := range facets {
 		b.WriteString(fmt.Sprintf("- %s: one of [%s] — %s\n",
 			f.key, strings.Join(f.values, ", "), facetGuide[f.key]))
 	}
-	b.WriteString("\nRespond with one short sentence explaining your pick, then a JSON " +
-		"object (on its own line) mapping ONLY the options you want to CHANGE to their " +
-		"chosen values — omit options left at default, and use exactly the option names " +
-		"and values listed above. Example:\n" +
+	b.WriteString("\nRespond with one short sentence on why, then a JSON object (on its " +
+		"own line) mapping ONLY the options you want to CHANGE to their chosen values — " +
+		"omit options left at default, and use exactly the option names and values listed " +
+		"above. Do not answer the task itself. Example:\n" +
 		"Quick but precise task, so a fast model with more thinking.\n" +
 		"{\"model\":\"fast\",\"thinking\":\"high\"}")
 	return clikit.DocCorpus(b.String())

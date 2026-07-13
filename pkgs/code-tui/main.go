@@ -20,11 +20,41 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// ── keybindings (drive both input handling and the bubbles/help footer) ───────
+type keyMap struct {
+	Switch, Move, Change, Depth, Refresh, Collapse, Launch, Help, Quit key.Binding
+}
+
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Switch, k.Move, k.Change, k.Launch, k.Help, k.Quit}
+}
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Switch, k.Move, k.Change},
+		{k.Depth, k.Refresh, k.Collapse},
+		{k.Launch, k.Help, k.Quit},
+	}
+}
+
+var keys = keyMap{
+	Switch:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "generator ⇄ profiles")),
+	Move:     key.NewBinding(key.WithKeys("up", "down", "j", "k"), key.WithHelp("↑↓", "move")),
+	Change:   key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp("←→", "change")),
+	Depth:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "depth lead/full")),
+	Refresh:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh usage")),
+	Collapse: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "collapse")),
+	Launch:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
+	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "more")),
+	Quit:     key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
+}
 
 // ── palette ──────────────────────────────────────────────────────────────────
 const (
@@ -337,7 +367,7 @@ func (a availability) note() string {
 		}
 		var n string
 		if a.bucket[b] == "maxed" {
-			n = fmt.Sprintf("%s maxed · %s%s", label[b], gReset, fmtSecs(a.reset[b]))
+			n = fmt.Sprintf("%s maxed · %s %s", label[b], gReset, fmtSecs(a.reset[b]))
 		} else if strings.HasPrefix(b, "codex") {
 			n = "needs Codex"
 		} else {
@@ -747,6 +777,7 @@ type model struct {
 
 	vp       viewport.Model
 	spin     spinner.Model
+	help     help.Model
 	w, h     int
 	rdy      bool
 	usageCmd string
@@ -942,11 +973,11 @@ func (m *model) usageRow(w usageWin) string {
 	if w.tier == "spark" && w.pct == 0 {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
 	}
-	reset := stDim.Render(gReset + fmtReset(w.secs))
+	reset := stDim.Render(gReset + " " + fmtReset(w.secs))
 	if w.dur > 0 && w.secs*10 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(gReset + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(gReset + " " + fmtReset(w.secs))
 	} else if w.dur > 0 && w.secs*4 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + " " + fmtReset(w.secs))
 	}
 	return fmt.Sprintf("  %-9s %s %3d%% used  %s%s", shortWin(w.label), barStr(w.pct), w.pct, reset, note)
 }
@@ -956,7 +987,14 @@ func (m *model) syncPreview() {
 		return
 	}
 	rw := m.vp.Width
-	rule := stDim.Render("── routing " + strings.Repeat("─", max(4, rw-13)))
+	// routing rule carries the depth state, so `f` (lead ⇄ full) is discoverable.
+	depthLbl := "lead"
+	if m.depth == 1 {
+		depthLbl = "full"
+	}
+	rHead := "── routing · " + depthLbl + " "
+	rule := stDim.Render("── routing · ") + stHead.Render(depthLbl) +
+		stDim.Render(" "+strings.Repeat("─", max(4, rw-lipgloss.Width(rHead))))
 	var b strings.Builder
 	if m.view == pickerView {
 		p := m.profiles[m.cursor]
@@ -980,11 +1018,19 @@ func (m *model) syncPreview() {
 		b.WriteString(renderRoute(roles, m.depth, m.avail, rw))
 	} else {
 		id := comboID(m.sel)
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("generated profile") + "\n")
-		b.WriteString(stDim.Render(strings.ReplaceAll(id, "_", " ")) + "\n\n")
 		if base, ok := m.generated[id]; ok {
 			_, roles := splitMeta(base)
 			roles = applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
+			// "will launch" summary — what Enter does, before you press it.
+			parts := []string{fmt.Sprintf("%d roles", len(roles))}
+			if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
+				parts = append(parts, "priority tier")
+			}
+			if m.sel["advisor"] != "off" {
+				parts = append(parts, "advisor "+m.sel["advisor"])
+			}
+			acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true)
+			b.WriteString(acc.Render("⏎ launches") + stDim.Render("  "+strings.Join(parts, " · ")) + "\n\n")
 			// meta line rebuilt from the facets, so it always reflects the
 			// advisor dial and fast toggle (both live outside the baked grid).
 			line := stDim.Render("thinking " + m.sel["thinking"] + " · fallback on · advisor " + m.sel["advisor"])
@@ -1008,6 +1054,18 @@ func (m *model) syncPreview() {
 	m.vp.GotoTop()
 }
 
+// footer is the pinned bottom block: the usage panel (if any) then the controls
+// help, each under a rule. Built once here so relayout and View stay in sync.
+func (m *model) footer() string {
+	rule := stDim.Render(strings.Repeat("─", m.w))
+	var parts []string
+	if p := m.usagePanel(); p != "" {
+		parts = append(parts, rule, p)
+	}
+	parts = append(parts, rule, "  "+m.help.View(keys))
+	return strings.Join(parts, "\n")
+}
+
 func (m *model) relayout() {
 	pw := m.w - m.listW() - 3
 	if m.mode() == modeCollapsed {
@@ -1016,11 +1074,8 @@ func (m *model) relayout() {
 	if pw < 10 {
 		pw = 10
 	}
-	panelH := 0
-	if p := m.usagePanel(); p != "" {
-		panelH = strings.Count(p, "\n") + 2 // + the rule above the panel
-	}
-	vh := m.h - 2 - panelH // header + its rule
+	m.help.Width = m.w
+	vh := m.h - lipgloss.Height(m.footer())
 	if vh < 3 {
 		vh = 3
 	}
@@ -1075,6 +1130,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showResult = !m.showResult // narrow: swap list ↔ result full-screen
 			}
 			m.relayout()
+		case "?":
+			m.help.ShowAll = !m.help.ShowAll
+			m.relayout() // the taller/shorter footer changes the body height
 		case "f":
 			m.depth = (m.depth + 1) % 2
 			m.syncPreview()
@@ -1176,18 +1234,6 @@ func (m model) accent() string {
 	return cAcc
 }
 
-func (m model) header() string {
-	hint := "↑↓ move · ←→ change · f depth · r refresh · p collapse · enter launch · q quit"
-	if m.mode() == modeCollapsed && m.w < 62 {
-		swap := "result"
-		if m.showResult {
-			swap = "list"
-		}
-		hint = "tab switch · p " + swap + " · enter launch · q"
-	}
-	return "  " + stDim.Render(hint)
-}
-
 // sectionTabs is the prominent generator⇄profiles switcher at the top of the
 // left column — the active section is an accent pill, so Tab's effect is clear.
 func (m model) sectionTabs() string {
@@ -1200,7 +1246,7 @@ func (m model) sectionTabs() string {
 		return s.Foreground(lipgloss.Color(cDim)).Render(label)
 	}
 	return pill("generator", m.view == genView) +
-		lipgloss.NewStyle().Foreground(lipgloss.Color(cGrp)).Render(" ⇄ tab ⇄ ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color(cGrp)).Render(" ⇄ ") +
 		pill("profiles", m.view == pickerView)
 }
 
@@ -1295,39 +1341,28 @@ func (m model) View() string {
 	if !m.rdy {
 		return "loading…"
 	}
-	rule := stDim.Render(strings.Repeat("─", m.w))
-	header := m.header() + "\n" + rule
-	foot := ""
-	if p := m.usagePanel(); p != "" {
-		foot = rule + "\n" + p
-	}
-	footH := 0
-	if foot != "" {
-		footH = lipgloss.Height(foot)
-	}
-	bodyH := m.h - lipgloss.Height(header) - footH
+	foot := m.footer()
+	bodyH := m.h - lipgloss.Height(foot)
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	var body string
+	var content string
 	if m.mode() == modeCollapsed {
 		if m.showResult && m.w < 62 {
-			body = m.vp.View()
+			content = m.vp.View()
 		} else {
-			body = m.leftColumn(true)
+			content = m.leftColumn(true)
 		}
 	} else {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.leftColumn(false), m.previewPane())
+		content = lipgloss.JoinHorizontal(lipgloss.Top, m.leftColumn(false), m.previewPane())
 	}
-	// Hard-clip the body to its own region: any stray overflow (e.g. a glyph a
-	// terminal renders wider than measured) is absorbed here instead of pushing
-	// the usage panel off-screen. The footer is always pinned to the bottom.
-	body = lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(bodyH).Render(body)
-	out := header + "\n" + body
-	if foot != "" {
-		out += "\n" + foot
-	}
-	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(out)
+	// Pin the body into a fixed box (top-left) with lipgloss, then clip: any
+	// stray overflow (e.g. a glyph a terminal renders wider than measured) is
+	// absorbed here, never pushing the pinned footer off-screen.
+	body := lipgloss.NewStyle().MaxHeight(bodyH).Render(
+		lipgloss.Place(m.w, bodyH, lipgloss.Left, lipgloss.Top, content))
+	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(
+		lipgloss.JoinVertical(lipgloss.Left, body, foot))
 }
 
 func (m model) pickerLines(focused bool, w int) ([]string, int) {
@@ -1415,7 +1450,7 @@ func (m model) genLines(focused bool) ([]string, int) {
 				bkt, lbl = "codex-spark", "Spark"
 			}
 			if m.avail.down(bkt) {
-				w := lbl + " maxed · " + gReset + fmtReset(m.avail.reset[bkt])
+				w := lbl + " maxed · " + gReset + " " + fmtReset(m.avail.reset[bkt])
 				if m.avail.bucket[bkt] == "unauthed" {
 					w = lbl + " unavailable"
 				}
@@ -1470,6 +1505,7 @@ func main() {
 		avail:     availability{bucket: map[string]string{}, reset: map[string]int64{}},
 		usageCmd:  os.Getenv("CODE_USAGE"),
 		spin:      sp,
+		help:      help.New(),
 		glyphs:    glyphs,
 		view:      genView, // generator is the default view
 		facets:    facetDefs(glyphs),
@@ -1493,8 +1529,11 @@ func main() {
 	}
 }
 
-// launchGenerated writes the generated config to a temp file and execs omp with
-// the managed layering (defaults → generated → policy), like a preset launcher.
+// launchGenerated writes the generated routing to a temp file and execs the
+// managed omp wrapper with it as a single one-shot --config. The wrapper itself
+// supplies the platform extensions, managed defaults, and policy (and caps the
+// overlay), so we must NOT re-layer defaults/policy here — doing so both
+// double-applies them and breaks when their paths aren't valid from the cwd.
 func launchGenerated(cfg string) {
 	tmp, err := os.CreateTemp("", "code-gen-*.yml")
 	if err != nil {
@@ -1512,15 +1551,7 @@ func launchGenerated(cfg string) {
 		fmt.Fprintln(os.Stderr, "code: omp not found:", err)
 		os.Exit(1)
 	}
-	args := []string{path}
-	if d := os.Getenv("CODE_DEFAULTS"); d != "" {
-		args = append(args, "--config", d)
-	}
-	args = append(args, "--config", tmp.Name())
-	if p := os.Getenv("CODE_POLICY"); p != "" {
-		args = append(args, "--config", p)
-	}
-	args = append(args, os.Args[1:]...)
+	args := append([]string{path, "--config", tmp.Name()}, os.Args[1:]...)
 	if err := syscall.Exec(path, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "code: exec:", err)
 		os.Exit(1)

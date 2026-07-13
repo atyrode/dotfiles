@@ -135,22 +135,63 @@ Apps, detection via type assertions behaves, and a stubbed streaming `Asker` wit
 `ctx` cancellation runs. The shape holds; only the real backend + widget wiring
 remain (and those are gated on the open questions below).
 
+## Resolved decisions
+
+1. **`cli-kit` gains a Bubble Tea dependency — APPROVED (operator, 2026-07-13).**
+   The `PromptBox` is a real Bubble Tea bubble (`Update(tea.Msg)`) and `clikit.Run`
+   is the shared runner; `cli-kit` becomes Bubble-Tea-aware, not just lipgloss.
+   This also settles the input widget: use **`bubbles/textarea`** (multi-line,
+   proven) rather than hand-rolling.
+
+2. **The omp backend invocation — RESOLVED (researched against omp v16.4.8 /
+   `can1357/oh-my-pi`).** omp already exposes exactly what the box needs:
+
+   - `-p, --print` — non-interactive: process one prompt and exit.
+   - `--mode text|json|rpc|rpc-ui` — `text` streams answer tokens to stdout;
+     `rpc` is "NDJSON commands in, response/event frames out" (structured
+     streaming); `rpc-ui`/`acp` are the heavier permissioned tool-driving
+     protocols (reserved for future real-tool Act, not needed for `code`).
+   - `--append-system-prompt @<file>` — injects the grounding `DocCorpus`.
+   - `--no-tools` (pure text answer, cheap/safe) · `--no-session` (ephemeral) ·
+     `--model` / `--smol` (evaluator selection) · `--thinking` · `--max-time`.
+
+   **Ask** (read-only, ship first):
+   ```
+   omp -p --mode text --no-session --no-tools \
+       --model claude-haiku-4-5 \
+       --append-system-prompt @<docs> "<question>"
+   ```
+   Stream stdout tokens into the viewport; cancel = kill the process. Upgrade
+   path: `--mode rpc` (NDJSON frames) to separate thinking/answer/done, and/or a
+   single long-lived rpc subprocess per box session to avoid per-question startup.
+
+   **Act** (suggest facets): same one-shot, but the appended system prompt asks
+   for a JSON object of `{facet: value}` proposals; the host parses it, renders a
+   diff, and applies through the manual-selection path. No tools needed — the
+   Action is structured text the host applies.
+
+   Call **bare omp** (not the managed `omp-configured` wrapper) on the default
+   profile's auth (auth-broker) — no `--profile` (that would force re-auth). The
+   evaluator is a deliberate lightweight one-shot, outside the managed routing
+   matrix.
+
+   **Evaluator model = `claude-haiku-4-5` (default, configurable via `--model` /
+   `PI_SMOL_MODEL`).** Cheapest input tier (cost_in $1/1M, tied with luna — and
+   input dominates since the docs corpus is injected every call), fast (ttft 1.7s,
+   48.9 tok/s), strong structured-output instruction-following, and consistent
+   with the advisor's regular tier. Alternatives: **luna** (`gpt-5.6-luna`,
+   marginally faster ttft, Codex bucket — pick if Claude-quota-constrained);
+   **spark** (fastest generation + drains an idle bucket, but weak reasoning — only
+   for trivial classification); **tiny local models** (`omp tiny-models`, zero API
+   cost — a future path for pure classification, too weak for nuanced suggestion).
+
 ## Open questions for the operator
 
-1. **`cli-kit` gains a Bubble Tea dependency.** Today `cli-kit` is lipgloss-only;
-   its components are pure renderers and the `tea.Program` lives in each consumer.
-   A `PromptBox` with `Update(tea.Msg)` and a `clikit.Run` runner make `cli-kit`
-   Bubble-Tea-aware. Reasonable for a shared TUI kit, but it's a deliberate
-   widening of `cli-kit`'s remit — approve the direction, or keep the box as a
-   consumer-side component that only borrows `cli-kit`'s interfaces + palette?
-2. **The omp backend invocation (#115 "to be defined").** What is the headless
-   "ask omp a prompt and stream the answer" invocation, and which omp profile is
-   the evaluator (a fast/cheap one, presumably, configurable)? This is the one
-   piece I won't guess at — it touches omp integration you own. Until it's
-   defined, the `Asker` ships against a stub so the box is buildable/reviewable.
-3. **Input widget**: hand-rolled minimal input (zero new deps) for a first cut, or
-   pull in `bubbles/textarea` (multi-line, nicer, another dep)? Ties into Q1.
-4. **Act confirmation granularity**: whole proposed set accepted/rejected at once,
+1. **Process model**: one `omp -p` per question (simple, ~1.7s startup+ttft each),
+   or one long-lived `omp --mode rpc` subprocess per box session (warm, streams
+   frames, more plumbing)? Recommend starting one-shot, upgrading to rpc if the
+   per-question latency annoys.
+2. **Act confirmation granularity**: whole proposed set accepted/rejected at once,
    or per-Action toggles in the diff before applying?
 
 ## Phased plan

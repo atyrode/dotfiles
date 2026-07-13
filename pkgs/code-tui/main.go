@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	clikit "cli-kit"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -59,42 +60,43 @@ var keys = keyMap{
 }
 
 // ── palette ──────────────────────────────────────────────────────────────────
+// The palette, glyphs, and styles now live in the shared cli-kit; these are
+// ergonomic local aliases so the rest of the file reads unchanged. cli-kit is
+// the single source both `code` and `atyrode` build on.
 const (
-	cDim     = "#78829b"
-	cGrp     = "#69727e"
-	cAcc     = "#ff9f52"
-	cBord    = "#3a4453"
-	cHead    = "#9aa4b1"
-	cSelBg   = "#1b212b"
-	cGptSoft = "#6e91be"
-	cClaSoft = "#c3a078"
-	cRed     = "#d05c60"
-	cGreen   = "#78c8aa"
-	cEmpty   = "#404757" // unused meter pips — dimmer than cDim, so the fill reads
+	cDim     = clikit.CDim
+	cGrp     = clikit.CGrp
+	cAcc     = clikit.CAcc
+	cBord    = clikit.CBord
+	cHead    = clikit.CHead
+	cSelBg   = clikit.CSelBg
+	cGptSoft = clikit.CGptSoft
+	cClaSoft = clikit.CClaSoft
+	cRed     = clikit.CRed
+	cGreen   = clikit.CGreen
+	cEmpty   = clikit.CEmpty
 )
 
-// meterRamp colours the 1..5 cost/speed meters green→red; index 1 is best
-// (cheap / fast → green), 5 is worst (dear / slow → red). Speed reverses the
-// lookup so a fast profile reads green, a slow one red.
-var meterRamp = [6]string{"", cGreen, "#a6c56e", "#d8c368", "#d89a5c", cRed}
-
-// Emoji-presentation glyphs pinned to text presentation (U+FE0E) so terminals
-// render them 1-cell — matching the width the layout math assumes.
 const (
-	gWarn   = "⚠︎"
-	gBroken = "✗︎"
-	gReset  = "↻︎"
+	gWarn   = clikit.GWarn
+	gBroken = clikit.GBroken
+	gReset  = clikit.GReset
 )
 
 var (
-	stDim  = lipgloss.NewStyle().Foreground(lipgloss.Color(cDim))
-	stGrp  = lipgloss.NewStyle().Foreground(lipgloss.Color(cGrp))
-	stHead = lipgloss.NewStyle().Foreground(lipgloss.Color(cHead))
-	stWarn = lipgloss.NewStyle().Foreground(lipgloss.Color(cAcc))
-	stBrk  = lipgloss.NewStyle().Foreground(lipgloss.Color(cRed))
-	// a maxed/unauthed model in a chain: struck through + dimmed, so you can
-	// see at a glance which lead gets skipped for the fallback beneath it.
-	stStruck = lipgloss.NewStyle().Strikethrough(true).Faint(true).Foreground(lipgloss.Color(cDim))
+	meterRamp = clikit.MeterRamp
+
+	stDim    = clikit.StDim
+	stGrp    = clikit.StGrp
+	stHead   = clikit.StHead
+	stWarn   = clikit.StWarn
+	stBrk    = clikit.StBrk
+	stStruck = clikit.StStruck
+
+	// layout + meter primitives now live in cli-kit
+	padLeft    = clikit.PadLeft
+	pad        = clikit.Pad
+	windowList = clikit.WindowList
 
 	modelRe = regexp.MustCompile(`(gpt|claude)[A-Za-z0-9._-]*:(minimal|low|medium|high|xhigh|max)`)
 	gptRe   = regexp.MustCompile(`\b(GPT|gpt|OpenAI|Codex|Spark|spark|Sol|Terra|Luna|Nano|nano)\b`)
@@ -728,9 +730,7 @@ func (m model) speedScore() int {
 // the dim "empty" colour — always five glyphs so the fill (and the headroom) read
 // at a glance.
 func (m model) meter(label, glyph, fill string, n int) string {
-	on := lipgloss.NewStyle().Foreground(lipgloss.Color(fill)).Bold(true).Render(strings.Repeat(glyph, n))
-	off := lipgloss.NewStyle().Foreground(lipgloss.Color(cEmpty)).Render(strings.Repeat(glyph, 5-n))
-	return "  " + stDim.Render(pad(label, 6)) + on + off
+	return clikit.Meter(label, glyph, fill, n)
 }
 
 // advisorChain returns the advisor role's model chain for an intensity + lane,
@@ -926,17 +926,6 @@ const (
 	topGap   = 1
 	headRows = 2
 )
-
-// padLeft indents every line of s by n spaces. Safe on styled (ANSI) strings —
-// the spaces sit before any escape codes.
-func padLeft(s string, n int) string {
-	pad := strings.Repeat(" ", n)
-	lines := strings.Split(s, "\n")
-	for i := range lines {
-		lines[i] = pad + lines[i]
-	}
-	return strings.Join(lines, "\n")
-}
 
 // genRowWidth is the width needed to render the widest generator facet row (all
 // options) on a single line — the minimum for the left panel.
@@ -1525,72 +1514,6 @@ func (m model) sectionTabs() string {
 		pill("profiles", m.view == pickerView)
 }
 
-// windowList clips a list to h lines, scrolled to keep the cursor visible, fixes
-// the width, and appends a 1-column scrollbar (blank when everything fits) — so
-// the column is always exactly h lines tall and w wide, and shows its scroll pos.
-func windowList(lines []string, cursor, h, w int) string {
-	if h < 1 {
-		h = 1
-	}
-	total := len(lines)
-	start := 0
-	if total > h {
-		if cursor >= h {
-			start = cursor - h + 1
-		}
-		if start+h > total {
-			start = total - h
-		}
-		if start < 0 {
-			start = 0
-		}
-	}
-	end := start + h
-	if end > total {
-		end = total
-	}
-	vis := append([]string(nil), lines[start:end]...)
-	for len(vis) < h { // pad so the column is exactly h tall
-		vis = append(vis, "")
-	}
-	lw := w - 1 // reserve a column for the scrollbar
-	list := lipgloss.NewStyle().Width(lw).MaxWidth(lw).Render(strings.Join(vis, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, list, scrollbar(total, h, start))
-}
-
-// scrollbar renders a 1-column, h-line track with a proportional thumb; when the
-// content fits (total ≤ h) it is a blank column, keeping the layout width stable.
-func scrollbar(total, h, start int) string {
-	track := stDim.Render("│")
-	thumbCh := lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("┃")
-	pos, thumb := -1, 0
-	if total > h {
-		thumb = h * h / total
-		if thumb < 1 {
-			thumb = 1
-		}
-		pos = start * h / total
-		if pos+thumb > h {
-			pos = h - thumb
-		}
-	}
-	var b strings.Builder
-	for i := 0; i < h; i++ {
-		switch {
-		case total <= h:
-			b.WriteString(" ")
-		case i >= pos && i < pos+thumb:
-			b.WriteString(thumbCh)
-		default:
-			b.WriteString(track)
-		}
-		if i < h-1 {
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
-}
-
 // sectionHead is the gutter-inset tab switcher plus a blank separator (headRows
 // tall); it stays pinned above the scrolling list body.
 func (m model) sectionHead() string {
@@ -1760,13 +1683,6 @@ func (m model) genLines(focused bool) ([]string, int) {
 			lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render("  ⏎ launch this profile"))
 	}
 	return lines, cursor
-}
-
-func pad(s string, n int) string {
-	for len(s) < n {
-		s += " "
-	}
-	return s
 }
 
 func main() {

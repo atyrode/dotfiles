@@ -3,10 +3,13 @@ module code-tui
 go 1.22
 
 require (
+	cli-kit v0.0.0
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
 )
+
+replace cli-kit => ../cli-kit
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

@@ -70,7 +70,13 @@ const (
 	cClaSoft = "#c3a078"
 	cRed     = "#d05c60"
 	cGreen   = "#78c8aa"
+	cEmpty   = "#404757" // unused meter pips — dimmer than cDim, so the fill reads
 )
+
+// meterRamp colours the 1..5 cost/speed meters green→red; index 1 is best
+// (cheap / fast → green), 5 is worst (dear / slow → red). Speed reverses the
+// lookup so a fast profile reads green, a slow one red.
+var meterRamp = [6]string{"", cGreen, "#a6c56e", "#d8c368", "#d89a5c", cRed}
 
 // Emoji-presentation glyphs pinned to text presentation (U+FE0E) so terminals
 // render them 1-cell — matching the width the layout math assumes.
@@ -718,12 +724,13 @@ func (m model) speedScore() int {
 	return logScore(num/den, speedLnLo, speedLnHi)
 }
 
-// meter renders a labelled 1..5 scale — the score in the accent colour, the rest
-// dim — always five glyphs so the fill reads at a glance.
-func (m model) meter(label, glyph string, n int) string {
-	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render(strings.Repeat(glyph, n))
-	rest := stDim.Render(strings.Repeat(glyph, 5-n))
-	return "  " + stDim.Render(pad(label, 6)) + acc + rest
+// meter renders a labelled 1..5 scale — n glyphs in the fill colour, the rest in
+// the dim "empty" colour — always five glyphs so the fill (and the headroom) read
+// at a glance.
+func (m model) meter(label, glyph, fill string, n int) string {
+	on := lipgloss.NewStyle().Foreground(lipgloss.Color(fill)).Bold(true).Render(strings.Repeat(glyph, n))
+	off := lipgloss.NewStyle().Foreground(lipgloss.Color(cEmpty)).Render(strings.Repeat(glyph, 5-n))
+	return "  " + stDim.Render(pad(label, 6)) + on + off
 }
 
 // advisorChain returns the advisor role's model chain for an intensity + lane,
@@ -1746,9 +1753,10 @@ func (m model) genLines(focused bool) ([]string, int) {
 	// launch call-to-action under the facets — the "configure → launch" flow
 	// lives with the generator; the routing detail stays on the right.
 	if focused {
+		cs, ss := m.costScore(), m.speedScore()
 		lines = append(lines, "",
-			m.meter("cost", "$", m.costScore()),
-			m.meter("speed", "»", m.speedScore()),
+			m.meter("cost", "$", meterRamp[cs], cs),      // dear → red, cheap → green
+			m.meter("speed", "»", meterRamp[6-ss], ss),   // fast → green, slow → red
 			lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render("  ⏎ launch this profile"))
 	}
 	return lines, cursor

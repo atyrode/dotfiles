@@ -474,6 +474,24 @@ func facetDefs(glyphs map[string]string) []facet {
 	}
 }
 
+// visibleFacets drops facets that don't apply to the current lane, so the
+// generator only ever shows actionable options: no spark/fast on a Claude-only
+// pool, no fable on a GPT-only pool.
+func (m model) visibleFacets() []facet {
+	lane := m.sel["lane"]
+	var out []facet
+	for _, f := range m.facets {
+		if lane == "claude-only" && (f.key == "spark" || f.key == "fast") {
+			continue
+		}
+		if lane == "gpt-only" && f.key == "fable" {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 func comboID(sel map[string]string) string {
 	lane := sel["lane"]
 	sp, fb := sel["spark"], sel["fable"]
@@ -563,7 +581,7 @@ func (m model) genConfigYAML() string {
 	} else {
 		b.WriteString("advisor:\n  enabled: false\n")
 	}
-	if m.sel["fast"] == "on" {
+	if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
 		b.WriteString("tier:\n  openai: priority\n")
 	}
 	return b.String()
@@ -592,7 +610,7 @@ const (
 // options) on a single line — the minimum for the left panel.
 func (m model) genRowWidth() int {
 	max := 30
-	for _, f := range m.facets {
+	for _, f := range m.facets { // widest over ALL facets, so width is lane-stable
 		w := 14 // ▸ + glyph + spaces + padded label
 		for _, v := range f.values {
 			w += len(v) + 4
@@ -992,7 +1010,7 @@ func (m *model) moveUp() {
 			m.syncPreview()
 		} else if stacked { // flow up into the generator
 			m.view = genView
-			m.fcur = len(m.facets) - 1
+			m.fcur = len(m.visibleFacets()) - 1
 			m.syncPreview()
 		}
 	} else if m.fcur > 0 {
@@ -1006,7 +1024,7 @@ func (m *model) moveDown() {
 			m.cursor++
 			m.syncPreview()
 		}
-	} else if m.fcur < len(m.facets)-1 {
+	} else if m.fcur < len(m.visibleFacets())-1 {
 		m.fcur++
 	} else if stacked { // flow down into the profiles
 		m.view = pickerView
@@ -1014,7 +1032,11 @@ func (m *model) moveDown() {
 	}
 }
 func (m *model) cycleFacet(dir int) {
-	f := m.facets[m.fcur]
+	vf := m.visibleFacets()
+	if m.fcur >= len(vf) {
+		m.fcur = len(vf) - 1
+	}
+	f := vf[m.fcur]
 	cur := m.sel[f.key]
 	idx := 0
 	for i, v := range f.values {
@@ -1024,6 +1046,10 @@ func (m *model) cycleFacet(dir int) {
 	}
 	idx = (idx + dir + len(f.values)) % len(f.values)
 	m.sel[f.key] = f.values[idx]
+	// changing the lane can hide/show facets; keep the cursor in range.
+	if nv := len(m.visibleFacets()); m.fcur >= nv {
+		m.fcur = nv - 1
+	}
 	m.syncPreview()
 }
 
@@ -1197,9 +1223,7 @@ func (m model) genLines(focused bool) ([]string, int) {
 	acc := m.accent()
 	lines := []string{sectionTitle("generator", focused, acc), ""}
 	cursor := 0
-	for i, f := range m.facets {
-		na := (f.key == "fable" && m.sel["lane"] == "gpt-only") ||
-			((f.key == "spark" || f.key == "fast") && m.sel["lane"] == "claude-only")
+	for i, f := range m.visibleFacets() {
 		onRow := i == m.fcur && focused
 		glyCol := laneColor(m.sel["lane"])
 		if !focused {
@@ -1214,8 +1238,6 @@ func (m model) genLines(focused bool) ([]string, int) {
 		row := fmt.Sprintf("%s%s%s", ptr, gly, stDim.Render(pad(f.key, 9)))
 		for _, v := range f.values {
 			switch {
-			case na:
-				row += "   " + stDim.Render(v)
 			case v == m.sel[f.key]:
 				col := acc
 				if f.key == "lane" {
@@ -1236,8 +1258,6 @@ func (m model) genLines(focused bool) ([]string, int) {
 			}
 		}
 		switch {
-		case na:
-			row += "   " + stDim.Render("— n/a for this lane")
 		case focused && (f.key == "fable" || f.key == "spark") && m.sel[f.key] == "on":
 			bkt, lbl := "claude-fable", "Fable"
 			if f.key == "spark" {
@@ -1269,9 +1289,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "code: no profiles (CODE_PROFILES)")
 		os.Exit(2)
 	}
-	glyphs := map[string]string{}
+	// Facet glyphs are intrinsic to the generator, so the binary carries sane
+	// defaults (Nerd Font, FA range). CODE_FACET_GLYPHS may override any of them.
+	//   lane ⇄  model ⚙  thinking 💡  spark 🚀  fable 📖  fast ⚡
+	glyphs := map[string]string{
+		"lane": "", "model": "", "thinking": "",
+		"spark": "", "fable": "", "fast": "",
+	}
 	for _, kv := range strings.Split(os.Getenv("CODE_FACET_GLYPHS"), ",") {
-		if p := strings.SplitN(kv, "=", 2); len(p) == 2 {
+		if p := strings.SplitN(kv, "=", 2); len(p) == 2 && p[1] != "" {
 			glyphs[p[0]] = p[1]
 		}
 	}

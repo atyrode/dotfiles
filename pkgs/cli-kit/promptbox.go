@@ -2,6 +2,7 @@ package clikit
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -10,6 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// errNoChanges is shown when a Commander returns an empty proposal.
+var errNoChanges = errors.New("no changes proposed")
 
 // PromptBox is the shared "smart prompt box": type a prompt, watch the agent
 // think, and read a streamed answer. It is a self-contained Bubble Tea component
@@ -22,9 +26,10 @@ import (
 type boxState int
 
 const (
-	boxEditing boxState = iota // composing a prompt
-	boxBusy                    // request in flight / streaming
-	boxDone                    // answer complete (or errored)
+	boxEditing  boxState = iota // composing a prompt
+	boxBusy                     // request in flight / streaming
+	boxDone                     // answer complete (or errored)
+	boxProposed                 // Act mode: showing proposed actions, awaiting confirm
 )
 
 // streamStarted carries the channel back from the (possibly slow) Ask call so the
@@ -44,9 +49,20 @@ type promptToken struct {
 	ok  bool
 }
 
+// actionsReady carries a Commander's proposal back to the UI thread (Act mode).
+type actionsReady struct {
+	seq     int
+	actions []Action
+	err     error
+}
+
 // BoxCloseMsg is emitted when the user dismisses an idle box (esc while editing).
 // A host (see Run) listens for it to hide the box.
 type BoxCloseMsg struct{}
+
+// ActionsConfirmedMsg is emitted when the user accepts a Commander's proposal.
+// The host (see Run, which forwards it to the app) applies the actions.
+type ActionsConfirmedMsg struct{ Actions []Action }
 
 // PromptBox is a value type — Update returns an updated copy, matching the
 // bubbles convention.
@@ -55,11 +71,13 @@ type PromptBox struct {
 	vp    viewport.Model
 	spin  spinner.Model
 	asker Asker
+	cmd   Commander
 
-	w, h   int
-	state  boxState
-	answer string
-	err    error
+	w, h     int
+	state    boxState
+	answer   string
+	proposed []Action // Act mode: the actions awaiting confirmation
+	err      error
 
 	seq    int // identifies the current request; stale async msgs are dropped
 	cancel context.CancelFunc
@@ -84,6 +102,11 @@ func NewPromptBox() PromptBox {
 
 // SetAsker wires the read-only backend. Without one, submitting is a no-op.
 func (b *PromptBox) SetAsker(a Asker) { b.asker = a }
+
+// SetCommander wires the Act-mode backend. When set, submitting asks the
+// Commander for a proposal (shown for confirmation) instead of streaming an
+// answer; it takes precedence over an Asker.
+func (b *PromptBox) SetCommander(c Commander) { b.cmd = c }
 
 // SetSize lays the box out within w×h (outer cells). A border + one column of
 // padding sit inside, so the inner widgets get w-4.
@@ -118,26 +141,39 @@ func readToken(seq int, ch <-chan string) tea.Cmd {
 	}
 }
 
-// submit fires the current prompt at the Asker. It returns quickly: the Ask call
-// runs inside a Cmd so a slow backend start never blocks the UI.
+// submit fires the current prompt at the backend. It returns quickly: the
+// backend call runs inside a Cmd so a slow start never blocks the UI. Act mode
+// (a Commander) takes precedence over Ask (an Asker).
 func (b *PromptBox) submit() tea.Cmd {
 	prompt := strings.TrimSpace(b.ta.Value())
-	if prompt == "" || b.asker == nil {
+	if prompt == "" {
 		return nil
 	}
 	b.state = boxBusy
-	b.answer, b.err = "", nil
+	b.answer, b.err, b.proposed = "", nil, nil
 	b.seq++
 	seq := b.seq
 	ctx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
-	asker := b.asker
 	b.vp.SetContent("")
 	// The spinner keeps ticking on its own (see the TickMsg case); submit only
-	// needs to kick off the backend, in a Cmd so a slow start never blocks the UI.
-	return func() tea.Msg {
-		ch, err := asker.Ask(ctx, prompt)
-		return streamStarted{seq: seq, ch: ch, err: err}
+	// kicks off the backend, in a Cmd so a slow start never blocks the UI.
+	switch {
+	case b.cmd != nil: // Act mode
+		cmder := b.cmd
+		return func() tea.Msg {
+			actions, err := cmder.Actions(ctx, prompt)
+			return actionsReady{seq: seq, actions: actions, err: err}
+		}
+	case b.asker != nil: // Ask mode
+		asker := b.asker
+		return func() tea.Msg {
+			ch, err := asker.Ask(ctx, prompt)
+			return streamStarted{seq: seq, ch: ch, err: err}
+		}
+	default:
+		b.state = boxEditing
+		return nil
 	}
 }
 
@@ -159,18 +195,29 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter":
-			if b.state != boxBusy { // enter submits; the box is a single prompt line
+			switch b.state {
+			case boxBusy:
+				return b, nil
+			case boxProposed: // accept the proposal → hand it to the host
+				actions := b.proposed
+				b.proposed, b.state = nil, boxEditing
+				return b, func() tea.Msg { return ActionsConfirmedMsg{Actions: actions} }
+			default: // enter submits; the box is a single prompt line
 				return b, b.submit()
 			}
-			return b, nil
 		case "esc":
-			if b.state == boxBusy {
+			switch b.state {
+			case boxBusy:
 				b.stop()
 				return b, nil
+			case boxProposed: // reject the proposal, back to editing
+				b.proposed, b.state = nil, boxEditing
+				return b, nil
+			default:
+				return b, func() tea.Msg { return BoxCloseMsg{} }
 			}
-			return b, func() tea.Msg { return BoxCloseMsg{} }
 		}
-		if b.state == boxBusy { // ignore edits mid-stream
+		if b.state == boxBusy || b.state == boxProposed { // ignore edits mid-flow
 			return b, nil
 		}
 		var cmd tea.Cmd
@@ -206,6 +253,20 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		b.vp.SetContent(b.wrapAnswer())
 		b.vp.GotoBottom()
 		return b, readToken(msg.seq, msg.ch)
+
+	case actionsReady:
+		if msg.seq != b.seq {
+			return b, nil // stale
+		}
+		switch {
+		case msg.err != nil:
+			b.state, b.err = boxDone, msg.err
+		case len(msg.actions) == 0:
+			b.state, b.err = boxDone, errNoChanges
+		default:
+			b.proposed, b.state = msg.actions, boxProposed
+		}
+		return b, nil
 	}
 
 	// Everything else (mouse, etc.) goes to whichever pane is live.
@@ -245,6 +306,13 @@ func (b PromptBox) View() string {
 		} else {
 			parts = append(parts, b.vp.View())
 		}
+	case boxProposed:
+		lines := []string{StHead.Render("proposed changes")}
+		for _, a := range b.proposed {
+			lines = append(lines, "  "+a.Key+" → "+StWarn.Render(a.Value))
+		}
+		lines = append(lines, StDim.Render("enter apply · esc cancel"))
+		parts = append(parts, strings.Join(lines, "\n"))
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Left, parts...)

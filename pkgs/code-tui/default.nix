@@ -15,7 +15,9 @@ buildGoModule {
   modRoot = "code-tui";
   # cli-kit is a local `replace` whose source lives in this build's src (above),
   # so any change to pkgs/cli-kit/*.go shifts this hash — bump it on cli-kit edits.
-  vendorHash = "sha256-Kw9KeayOAbWlOQxVszD5W/qzaI0qbF6L+h4zVjONbOg=";
+  # A plain build can reuse a cached FOD and hide the change; get the true value
+  # from a fake-hash build (set to sha256-AAA…, read the reported `got:`) or CI.
+  vendorHash = "sha256-5ln5X/XTjhuaeUwzKvgFVBk3MXFE2qp4VM0kxmmaO2E=";
 
   # The launcher picker is invoked as `code`.
   postInstall = ''

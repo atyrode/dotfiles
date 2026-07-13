@@ -56,10 +56,17 @@ type host struct {
 
 func newHost(app App) host {
 	h := host{app: app, toggleKey: "ctrl+o"}
-	if a, ok := app.(Askable); ok {
+	askable, isAsk := app.(Askable)
+	commandable, isCmd := app.(Commandable)
+	if isAsk || isCmd {
 		h.box = NewPromptBox()
-		h.box.SetAsker(a.Asker())
 		h.hasBox = true
+		if isAsk {
+			h.box.SetAsker(askable.Asker())
+		}
+		if isCmd { // Act mode takes precedence when both are present
+			h.box.SetCommander(commandable.Commander())
+		}
 	}
 	return h
 }
@@ -86,6 +93,14 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BoxCloseMsg:
 		h.active = false
 		return h, nil
+
+	case ActionsConfirmedMsg:
+		// The user accepted an Act-mode proposal; hide the box and let the app
+		// apply the actions (it owns the state the actions mutate).
+		h.active = false
+		var cmd tea.Cmd
+		h.app, cmd = h.app.Update(msg)
+		return h, cmd
 
 	case tea.KeyMsg:
 		if h.hasBox && !h.active && msg.String() == h.toggleKey {

@@ -112,12 +112,16 @@ let
     let
       activation = config.system.activationScripts.postActivation.text;
       shellPaths = map toString config.environment.shells;
+      sudoPam = config.security.pam.services.${boundary.sudo.darwinService};
       configuredCasks = map (
         cask: if builtins.isString cask then cask else cask.name
       ) config.homebrew.casks;
     in
     config.programs.zsh.enable
     && builtins.elem boundary.loginShell.darwinPath shellPaths
+    && sudoPam.enable
+    && sudoPam.touchIdAuth
+    && sudoPam.reattach
     && config.users.users.${config.system.primaryUser}.shell == null
     && !(builtins.elem config.system.primaryUser config.users.knownUsers)
     && config.nix.settings.trusted-users == [ "root" ]
@@ -150,6 +154,9 @@ assert lib.assertMsg (
   && boundary.loginShell.darwinPath == "/run/current-system/sw/bin/zsh"
   && boundary.loginShell.nixosPath == "/run/current-system/sw/bin/zsh"
 ) "login-shell ownership paths differ from the reviewed boundary";
+assert lib.assertMsg (
+  boundary.sudo.darwinService == "sudo_local" && boundary.sudo.touchIdAuth && boundary.sudo.reattach
+) "Darwin sudo authentication differs from the reviewed boundary";
 assert lib.assertMsg (
   boundary.nix.store == "daemon"
   && boundary.nix.trustedUsers == [ "root" ]

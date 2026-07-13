@@ -14,6 +14,7 @@ layer and are checked separately.
 | Zsh startup, Git, CLI and agent configuration | Home Manager | Home Manager | Home Manager |
 | Home Manager generations | Home Manager | Home Manager inside the Darwin generation | Home Manager inside the NixOS generation |
 | Account and login-shell selection | Bootstrap registers `$HOME/.nix-profile/bin/zsh` in `/etc/shells` and selects it with `chsh` using explicit privilege | nix-darwin registers Zsh and sets the existing primary user's `UserShell` to `/run/current-system/sw/bin/zsh` during activation | The consuming infrastructure enables Zsh and sets `users.users.<name>.shell` |
+| `sudo` authentication | Operating system/operator | nix-darwin manages `/etc/pam.d/sudo_local`, enabling Touch ID with password fallback and reattachment for tmux sessions | The consuming infrastructure |
 | Nix daemon, store and service lifecycle | The system-wide Nix installation | nix-darwin | The consuming NixOS infrastructure |
 | Nix trust, cache and optimisation policy | System Nix configuration; never a Home Manager `nix.conf` override | nix-darwin | The consuming NixOS infrastructure |
 | Container engine and privileged access | System/operator, using a rootless per-user engine | OrbStack runtime state, outside Home Manager | The consuming infrastructure |

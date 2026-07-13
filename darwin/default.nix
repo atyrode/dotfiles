@@ -23,6 +23,12 @@ in
 
   programs.zsh.enable = true;
 
+  security.pam.services.sudo_local = {
+    touchIdAuth = true;
+    # Keep biometric sudo available inside the managed tmux sessions.
+    reattach = true;
+  };
+
   users.users.${username} = {
     home = homeDirectory;
   };

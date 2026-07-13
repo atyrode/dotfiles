@@ -15,6 +15,11 @@
     "darwinPath": "/run/current-system/sw/bin/zsh",
     "nixosPath": "/run/current-system/sw/bin/zsh"
   },
+  "sudo": {
+    "darwinService": "sudo_local",
+    "touchIdAuth": true,
+    "reattach": true
+  },
   "nix": {
     "store": "daemon",
     "trustedUsers": ["root"],

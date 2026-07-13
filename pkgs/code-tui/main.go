@@ -454,10 +454,16 @@ func comboID(sel map[string]string) string {
 
 func laneColor(lane string) string {
 	switch lane {
-	case "gpt-only", "gpt-led":
-		return "#62a7ff"
+	case "gpt-only":
+		return "#3f8ef0" // deeper blue — pure pool
+	case "gpt-led":
+		return "#7ab6ff" // lighter blue — leans GPT
 	case "mixed":
 		return "#aa96e1"
+	case "claude-led":
+		return "#ffb277" // lighter orange — leans Claude
+	case "claude-only":
+		return "#ff8534" // deeper orange — pure pool
 	}
 	return "#ff9f52"
 }
@@ -1074,15 +1080,15 @@ func (m model) pickerLines(focused bool, w int) ([]string, int) {
 		if !focused {
 			nameCol, blurb = cDim, stDim.Render(p.blurb)
 		}
-		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Render(p.glyph)
+		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Width(2).Render(p.glyph)
 		nm := lipgloss.NewStyle().Foreground(lipgloss.Color(nameCol)).Bold(focused).Render(p.name)
-		row := trunc.Render(fmt.Sprintf("%s%s %-6s %s", mark, gly, nm, blurb))
+		row := trunc.Render(fmt.Sprintf("%s%s%-6s %s", mark, gly, nm, blurb))
 		if i == m.cursor {
 			bg := cSelBg
 			if !focused {
 				bg = "#141922"
 			}
-			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Width(w).Render(row)
+			row = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Width(w).Inline(true).Render(row)
 			cursor = len(lines)
 		}
 		lines = append(lines, row)
@@ -1109,13 +1115,13 @@ func (m model) genLines(focused bool) ([]string, int) {
 		if !focused {
 			glyCol = cDim
 		}
-		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(glyCol)).Render(f.glyph)
+		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(glyCol)).Width(2).Render(f.glyph)
 		ptr := "  "
 		if onRow {
 			ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Render("▸ ")
 			cursor = len(lines)
 		}
-		row := fmt.Sprintf("%s%s %s", ptr, gly, stDim.Render(pad(f.key, 9)))
+		row := fmt.Sprintf("%s%s%s", ptr, gly, stDim.Render(pad(f.key, 9)))
 		for _, v := range f.values {
 			switch {
 			case na:

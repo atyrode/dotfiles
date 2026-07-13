@@ -842,9 +842,11 @@ const (
 
 // gut is the left gutter every panel shares, so the whole UI hangs off one
 // consistent margin instead of a ragged mix of flush-left and indented rows.
+// topGap is the matching vertical breathing room above the section tabs.
 // headRows counts the section head (tabs + blank separator) above a list body.
 const (
 	gut      = 2
+	topGap   = 1
 	headRows = 2
 )
 
@@ -899,6 +901,15 @@ func (m model) bodyH() int {
 	return h
 }
 
+// contentH is the height the panels actually fill — bodyH minus the top gap.
+func (m model) contentH() int {
+	h := m.bodyH() - topGap
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
 // bodyLines renders the active section's scrolling list (the generator facets or
 // the profile palette) and reports the cursor's line index within it.
 func (m model) bodyLines(w int) ([]string, int) {
@@ -935,7 +946,7 @@ func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
 // The full-width modes reserve the shared gutter; split leaves the preview's own
 // border + padding to do the breathing.
 func (m model) previewDims() (int, int) {
-	bodyH := m.bodyH()
+	bodyH := m.contentH()
 	switch m.mode() {
 	case modeCollapsed:
 		return m.w - gut, bodyH
@@ -1539,26 +1550,29 @@ func (m model) View() string {
 	}
 	foot := m.footer()
 	bodyH := m.bodyH()
+	ch := m.contentH()
 	var content string
 	switch m.mode() {
 	case modeCollapsed:
 		if m.showResult && m.w < 62 {
 			content = padLeft(m.vp.View(), gut)
 		} else {
-			content = m.leftColumn(m.w, bodyH)
+			content = m.leftColumn(m.w, ch)
 		}
 	case modeStacked:
-		content = m.stackedContent(bodyH)
+		content = m.stackedContent(ch)
 	default: // split
 		content = lipgloss.JoinHorizontal(lipgloss.Top,
-			m.leftColumn(m.listW(), bodyH),
-			m.previewPane(m.w-m.listW()-3, bodyH))
+			m.leftColumn(m.listW(), ch),
+			m.previewPane(m.w-m.listW()-3, ch))
 	}
 	// Pin the body into a fixed box (top-left) with lipgloss, then clip: any
 	// stray overflow (e.g. a glyph a terminal renders wider than measured) is
-	// absorbed here, never pushing the pinned footer off-screen.
+	// absorbed here, never pushing the pinned footer off-screen. A top gap above
+	// the content gives the section tabs vertical breathing room.
 	body := lipgloss.NewStyle().MaxHeight(bodyH).Render(
-		lipgloss.Place(m.w, bodyH, lipgloss.Left, lipgloss.Top, content))
+		strings.Repeat("\n", topGap) +
+			lipgloss.Place(m.w, ch, lipgloss.Left, lipgloss.Top, content))
 	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(
 		lipgloss.JoinVertical(lipgloss.Left, body, foot))
 }

@@ -12,7 +12,6 @@
   gawk,
   gitMinimal,
   gnugrep,
-  herdr-configured,
   homebrewCasks,
   hostname,
   hostRegistry,
@@ -111,18 +110,6 @@ let
         ];
       }
       {
-        name = "Herdr";
-        command = "herdr";
-        capability = "agent-tools";
-        version = lib.getVersion herdr-configured;
-        versionOwner = "repository package derivation";
-        mutableState = "Herdr workspace registry";
-        launchModes = [
-          "workspace"
-          "agent"
-        ];
-      }
-      {
         name = "tmux adapter";
         command = "tmux";
         capability = "agent-tools";
@@ -130,7 +117,6 @@ let
         versionOwner = "pinned nixpkgs";
         mutableState = "tmux server sockets and sessions";
         launchModes = [
-          "Herdr backend"
           "interactive"
         ];
       }

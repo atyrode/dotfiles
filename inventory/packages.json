@@ -23,11 +23,11 @@
     "owner": "agent-tools",
     "deliveryLayer": "home-manager and repository overlays",
     "selectedBy": ["agent-tools"],
-    "consumer": "Claude Code, Codex, OMP isolation, and Herdr workspaces",
+    "consumer": "Claude Code, Codex, and OMP isolation",
     "versionOwner": "pinned nixpkgs or repository package derivation",
     "mutableState": "separate harness-owned auth, sessions, MCP state, and caches under the user home",
     "closureClass": "large",
-    "packages": ["bubblewrap", "claude-code", "codex-configured", "codex-use", "herdr-configured", "omp-configured", "tmux"]
+    "packages": ["bubblewrap", "claude-code", "codex-configured", "codex-use", "omp-configured", "tmux"]
   },
   {
     "owner": "desktop",

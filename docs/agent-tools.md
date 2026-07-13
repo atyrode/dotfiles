@@ -1,6 +1,6 @@
 # Agent tools
 
-OMP, Herdr, the OMP–Herdr integration, model presets, agents, rules, and generic
+OMP, model presets, agents, rules, and generic
 skills are part of the Home Manager profile. `zconf` is the only
 installation or activation command; there is no separate plugin or skill sync.
 
@@ -9,7 +9,6 @@ installation or activation command; there is no separate plugin or skill sync.
 Nix owns:
 
 - the pinned OMP binary and generated Zsh completion;
-- the pinned Herdr flake input and generated OMP integration;
 - the managed OMP defaults, enforced policy, and model presets;
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings guard
@@ -21,7 +20,7 @@ Nix owns:
   instructions and `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
-OMP and Herdr continue to own mutable runtime data such as authentication,
+OMP continues to own mutable runtime data such as authentication,
 sessions, caches, onboarding state, and machine-local UI state. Secrets never
 belong in this repository or the Nix store.
 
@@ -34,7 +33,7 @@ picker — and verifies that an OMP clean-home startup does not create `.pi`
 state. Security boundaries and the untrusted-project launcher are
 documented in [Agent security](agent-security.md).
 
-Agents, rules, the settings guard, and the Herdr extension are assembled into
+Agents, rules, and the settings guard are assembled into
 a read-only OMP extension-package root in the Nix store and injected explicitly
 by every managed session. They are not copied into OMP's mutable agent
 directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the
@@ -181,8 +180,8 @@ not consistently accept interactive launch flags. Preset launchers preserve
 that passthrough instead of prepending their preset to a maintenance command,
 and their `setup` warns that it writes lower-priority machine state and points
 back to the effective diagnostic.
-`omp update` and `herdr update` are refused so they cannot shadow the
-Nix-managed versions.
+`omp update` is refused so it cannot shadow the
+Nix-managed version.
 
 When launched from `$HOME` without `--cwd` or `--allow-home`, the wrapper
 mirrors OMP's safety chdir (`$HOME/tmp`, `/tmp`, `/var/tmp`, then the platform
@@ -213,7 +212,7 @@ watches OMP's writable config and restores Nix-owned paths if another UI path,
 including follow-up submission or setup, tries to persist them; unrelated
 machine edits are retained and the session receives a warning. Managed root
 sessions refuse `--no-extensions`, because upstream would otherwise disable
-this guard together with the managed agents, rules, and Herdr integration. Use
+this guard together with the managed agents and rules. Use
 `omp config managed`, the machine-local file, or the repository sources
 instead.
 
@@ -353,12 +352,10 @@ below remains valid for hand-driven updates:
 
 1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`
    (or run `scripts/update-pins.sh`).
-2. Update the Herdr input revision in `flake.nix`, then run
-   `nix flake lock --update-input herdr`.
-3. Review model identifiers and routing in `omp/defaults.yml`,
+2. Review model identifiers and routing in `omp/defaults.yml`,
    `omp/presets/`, and `omp/plain-seed.yml`.
-4. Run `nix flake check --show-trace`.
-5. Apply the profile with `zconf`.
+3. Run `nix flake check --show-trace`.
+4. Apply the profile with `zconf`.
 
 `omp-agents` regenerates the upstream bundled agents from the pinned OMP
 binary, and the `omp-agent-references` check asserts that every agent name

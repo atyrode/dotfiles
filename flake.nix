@@ -10,9 +10,6 @@
     nix-darwin.url = "github:LnL7/nix-darwin";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
 
-    herdr.url = "github:ogulcancelik/herdr/v0.7.3";
-    herdr.inputs.nixpkgs.follows = "nixpkgs";
-
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     nix-index-database.url = "github:nix-community/nix-index-database";
@@ -34,7 +31,6 @@
       self,
       nixpkgs,
       home-manager,
-      herdr,
       nix-darwin,
       nix-homebrew,
       nix-index-database,
@@ -260,7 +256,6 @@
           publicRegistry = lib.mapAttrs publicHost (validateHostRegistry hostRegistry);
         in
         lib.composeManyExtensions [
-          herdr.overlays.default
           (final: previous: {
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
             # Repository-owned on every platform: upstream releases outpace
@@ -269,8 +264,6 @@
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-configured = final.callPackage ./pkgs/codex-configured { };
             codex-use = final.callPackage ./pkgs/codex-use { };
-            herdr-configured = final.callPackage ./pkgs/herdr-configured { };
-            herdr-omp-integration = final.callPackage ./pkgs/herdr-omp-integration { };
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
@@ -459,9 +452,6 @@
             code-tui
             codex-configured
             codex-use
-            herdr
-            herdr-configured
-            herdr-omp-integration
             omp
             omp-agents
             omp-configured

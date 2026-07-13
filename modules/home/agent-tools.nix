@@ -26,16 +26,10 @@ let
     claudeOnly = ../../omp/presets/claude-only.yml;
   };
 
-  herdrCompletions = pkgs.runCommand "herdr-completions-${lib.getVersion cfg.herdrPackage}" { } ''
-    export HOME="$TMPDIR/home"
-    mkdir -p "$HOME"
-    mkdir -p "$out/share/zsh/site-functions"
-    ${lib.getExe cfg.herdrPackage} completion zsh > "$out/share/zsh/site-functions/_herdr"
-  '';
 in
 {
   options.atyrode.agentTools = {
-    enable = lib.mkEnableOption "the declarative OMP and Herdr stack";
+    enable = lib.mkEnableOption "the declarative OMP stack";
 
     migrateLegacy = lib.mkOption {
       type = lib.types.bool;
@@ -53,17 +47,13 @@ in
     };
 
     ompPackage = lib.mkPackageOption pkgs "omp-configured" { };
-    herdrPackage = lib.mkPackageOption pkgs "herdr-configured" { };
     ompAgentsPackage = lib.mkPackageOption pkgs "omp-agents" { };
-    herdrIntegrationPackage = lib.mkPackageOption pkgs "herdr-omp-integration" { };
     migrationPackage = lib.mkPackageOption pkgs "agent-tools-migrate" { };
     seedPackage = lib.mkPackageOption pkgs "omp-seed" { };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [
-      cfg.herdrPackage
-      herdrCompletions
       cfg.ompPackage
     ]
     ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;

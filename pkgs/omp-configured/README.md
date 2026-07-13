@@ -38,10 +38,6 @@ That puts `code` and all the `ompX` launchers on your PATH. It's self-contained:
 - The usage panel prefers a private collector snapshot (`$TYRODE_MODEL_USAGE_SNAPSHOT`) and
   **falls back to `omp usage`** when it's absent, so it works anywhere.
 
-**One coupling to know about:** the package currently bakes a small
-[Herdr](https://herdr.dev) integration extension. If you don't use Herdr it's harmless; a
-fully clean standalone build would drop it (see the roadmap).
-
 ## How the managed launchers stay reliable
 
 Each `ompX` launcher runs `omp` with its profile config layered via `--config` at higher

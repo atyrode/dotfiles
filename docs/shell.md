@@ -12,7 +12,7 @@ single retained Oh My Zsh `git` plugin. Projects own language environments.
 | `cl=clear`, `htop=btop` | removed | Muscle-memory aliases provided no policy and shadowed common command names. |
 | handwritten fzf/zoxide `eval` | Home Manager | `programs.fzf` and `programs.zoxide` generate supported Zsh integration. |
 | automatic fastfetch | removed side effect | Run `fastfetch` explicitly; startup no longer launches a subprocess or prints cosmetic output. |
-| `atmux` | removed | It only wrapped `tmux attach-session -t`; use tmux directly or Herdr for persistent agent workspaces. |
+| `atmux` | removed | It only wrapped `tmux attach-session -t`; use tmux directly for persistent agent workspaces. |
 | Codex login/profile wrappers | removed | Use `codex-use <profile>` or the transactional `codex-use login <profile>` command. |
 | color helpers | removed | Their source-parsing help/activation consumers were removed by #7. |
 | `atyrode()` source parser | removed by #7 | Packaged `atyrode capabilities` and `atyrode doctor` commands. |
@@ -21,7 +21,7 @@ single retained Oh My Zsh `git` plugin. Projects own language environments.
 | `local.zsh` | retained, narrow | Interactive machine-local behavior only; no portable project, runtime, credential, or shared tool policy. |
 | `COLORTERM` derivation | added | sshd's default `AcceptEnv` drops Ghostty's forwarded `COLORTERM`; `colorterm.zsh` restates `truecolor` when `TERM=xterm-ghostty` and never overrides an existing value. |
 | Oh My Zsh `git` | retained | Transparent Git aliases/completion used by the interactive shell. |
-| Oh My Zsh tmux/docker plugins | removed | Herdr and explicit container capabilities own those workflows; plugins were loaded on unrelated hosts. |
+| Oh My Zsh tmux/docker plugins | removed | Explicit container capabilities own those workflows; plugins were loaded on unrelated hosts. |
 
 No compatibility alias shadows a common command. `zconf` is the only temporary
 compatibility surface and has a recorded removal date.

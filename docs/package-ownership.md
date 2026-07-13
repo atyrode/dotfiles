@@ -12,7 +12,7 @@ from the server composition.
   direnv with nix-direnv, mise, diagnostics, `nh`, nix-index, and comma.
 - `development` contains cross-repository Nix and shell quality tools. It does
   not provide application language versions.
-- `agent-tools` owns Claude Code, Codex, OMP, Herdr, their launch adapters,
+- `agent-tools` owns Claude Code, Codex, OMP, their launch adapters,
   tmux, and the Linux isolation backend. Authentication, sessions, trust, and
   caches remain mutable and harness-owned outside derivations.
 - `desktop`, `mobile`, `media`, `containers`, and `security` are explicit host
@@ -38,7 +38,7 @@ and #30; neither is pulled into the baseline for harness symmetry.
 | Claude Code CLI | `agent-tools` | pinned nixpkgs | `~/.claude`, `~/.claude.json` | interactive, print |
 | Codex CLI | `agent-tools` | pinned upstream release binaries (repository derivation) | `~/.codex`, isolated profiles | interactive, exec |
 | OMP | `agent-tools` | repository derivation | profile-scoped auth, sessions, MCP, caches | normal, preset, untrusted, ACP |
-| Herdr + tmux adapter | `agent-tools` | repository derivation + pinned nixpkgs | workspace registry and tmux server | workspace, agent |
+| tmux adapter | `agent-tools` | pinned nixpkgs | tmux server sockets and sessions | interactive |
 | bubblewrap backend | Linux `agent-tools` | pinned nixpkgs | none | OMP task isolation |
 | comma + nix-index | `base` | pinned flake input | immutable index/shared store | lookup, on-demand command |
 | Pi/extensions | none pending #29 | unassigned | must be isolated | evaluation only |

@@ -403,57 +403,83 @@ func (a availability) impact(rows []string) string {
 }
 
 // ── routing render (depth: 0 lead · 1 full) ──────────────────────────────────
-// styleSeg colourises one chain segment; if the segment's model is down
-// (maxed/unauthed) its token is struck through so the skip is visible.
-func styleSeg(seg string, down bool) string {
-	if !down {
-		return colorizeRoute(seg)
+// renderRoute lays out each role's chain, wrapping cleanly at `width`: when a
+// chain doesn't fit, it breaks after an arrow and the continuation is indented
+// to align under the first model, so it reads as one hanging block rather than a
+// ragged wrap. Down (maxed/unauthed) models are struck through.
+func renderRoute(rows []string, depth int, a availability, width int) string {
+	if width < 24 {
+		width = 24
 	}
-	return modelRe.ReplaceAllStringFunc(seg, func(tok string) string { return stStruck.Render(tok) })
-}
-
-func renderRoute(rows []string, depth int, a availability) string {
-	var b strings.Builder
+	arrow := stDim.Render(" → ")
+	var out []string
 	for _, r := range rows {
-		segs := strings.Split(r, "→")
-		down := make([]bool, len(segs))
-		for i, s := range segs {
-			if m := modelRe.FindString(s); m != "" && a.ok && a.down(bucketOf(m)) {
-				down[i] = true
-			}
+		locs := modelRe.FindAllStringIndex(r, -1)
+		if len(locs) == 0 { // a note/meta line with no models — pass through
+			out = append(out, colorizeRoute(r))
+			continue
 		}
-		// how far down the chain to render:
-		//  full  → the whole chain
-		//  lead  → just the primary, UNLESS it is down; then reveal fallbacks
-		//          up to and including the first live one (the model that runs).
-		last := len(segs) - 1
+		label := r[:locs[0][0]] // role + its alignment padding, kept verbatim
+		labelW := lipgloss.Width(label)
+		indent := strings.Repeat(" ", labelW)
+
+		type tok struct {
+			text string
+			down bool
+		}
+		var toks []tok
+		for _, loc := range locs {
+			mt := r[loc[0]:loc[1]]
+			toks = append(toks, tok{mt, a.ok && a.down(bucketOf(mt))})
+		}
+		// how many to show: full → all; lead → primary, or up to the first live
+		// model when the lead is down (the one that actually runs).
+		last := len(toks) - 1
 		if depth == 0 {
 			last = 0
-			for i, s := range segs {
-				if modelRe.MatchString(s) {
-					last = i
-					if !down[i] {
-						break
-					}
+			for i, t := range toks {
+				last = i
+				if !t.down {
+					break
 				}
 			}
 		}
-		var parts []string
-		for i := 0; i <= last && i < len(segs); i++ {
-			// keep the role-label indent on the first segment, but drop the
-			// column-alignment padding around the arrows — otherwise a struck
-			// lead leaves a long trailing gap before the fallback.
-			seg := segs[i]
-			if i == 0 {
-				seg = strings.TrimRight(seg, " ")
-			} else {
-				seg = strings.TrimSpace(seg)
+		// render a token as it displays (short name), returning the styled
+		// string and its display width — struck if the model is down.
+		render := func(t tok) (string, int) {
+			c := strings.LastIndexByte(t.text, ':')
+			short := shortModel(t.text[:c]) + t.text[c:]
+			if t.down {
+				s := stStruck.Render(short)
+				return s, lipgloss.Width(s)
 			}
-			parts = append(parts, styleSeg(seg, down[i]))
+			s := colorizeRoute(t.text) // paintModel shortens + colours
+			return s, lipgloss.Width(s)
 		}
-		b.WriteString(strings.Join(parts, stDim.Render(" → ")) + "\n")
+		s0, w0 := render(toks[0])
+		line, lineW := label+s0, labelW+w0
+		for i := 1; i <= last; i++ {
+			si, wi := render(toks[i])
+			if lineW+3+wi > width { // won't fit — break after a trailing arrow
+				out = append(out, line+stDim.Render(" →"))
+				line, lineW = indent+si, labelW+wi
+			} else {
+				line += arrow + si
+				lineW += 3 + wi
+			}
+		}
+		out = append(out, line)
 	}
-	return b.String()
+	return strings.Join(out, "\n") + "\n"
+}
+
+// splitMeta peels the "thinking … · fallback … · advisor …" summary line off a
+// routing block (if present), returning it trimmed plus the remaining role rows.
+func splitMeta(rows []string) (string, []string) {
+	if len(rows) > 0 && strings.Contains(rows[0], "·") && !modelRe.MatchString(rows[0]) {
+		return strings.TrimSpace(rows[0]), rows[1:]
+	}
+	return "", rows
 }
 
 // ── generator facets ─────────────────────────────────────────────────────────
@@ -628,9 +654,6 @@ func (m model) mode() int {
 	}
 	if m.w < m.genRowWidth()+33 { // no room for the gen list + a useful preview
 		return modeCollapsed
-	}
-	if m.h >= 34 {
-		return modeStacked
 	}
 	return modeSplit
 }
@@ -859,6 +882,8 @@ func (m *model) syncPreview() {
 	if !m.rdy || m.collapse {
 		return
 	}
+	rw := m.vp.Width
+	rule := stDim.Render("── routing " + strings.Repeat("─", max(4, rw-13)))
 	var b strings.Builder
 	if m.view == pickerView {
 		p := m.profiles[m.cursor]
@@ -873,25 +898,34 @@ func (m *model) syncPreview() {
 				b.WriteString(stWarn.Render(gWarn+" "+m.avail.note()+" — runs on a fallback") + "\n")
 			}
 		}
-		b.WriteString("\n" + stDim.Render("── routing ─────────────────") + "\n")
-		b.WriteString(renderRoute(m.routes[p.name], m.depth, m.avail))
+		meta, roles := splitMeta(m.routes[p.name])
+		b.WriteString("\n")
+		if meta != "" {
+			b.WriteString(stDim.Render(meta) + "\n")
+		}
+		b.WriteString(rule + "\n")
+		b.WriteString(renderRoute(roles, m.depth, m.avail, rw))
 	} else {
 		id := comboID(m.sel)
 		b.WriteString(lipgloss.NewStyle().Bold(true).Render("generated profile") + "\n")
-		b.WriteString(stDim.Render(strings.ReplaceAll(id, "_", " ")) + "\n")
-		if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
-			b.WriteString(stDim.Render("+ ") + lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff")).Render("priority tier — faster OpenAI") + "\n")
-		}
-		b.WriteString("\n")
+		b.WriteString(stDim.Render(strings.ReplaceAll(id, "_", " ")) + "\n\n")
 		if rows, ok := m.generated[id]; ok {
-			b.WriteString(stDim.Render("── routing ─────────────────") + "\n")
-			b.WriteString(renderRoute(rows, m.depth, m.avail))
+			meta, roles := splitMeta(rows)
+			if meta != "" {
+				fast := "off"
+				if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
+					fast = lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff")).Render("on")
+				}
+				b.WriteString(stDim.Render(meta+" · fast ") + fast + "\n")
+			}
+			b.WriteString(rule + "\n")
+			b.WriteString(renderRoute(roles, m.depth, m.avail, rw))
 		} else {
 			b.WriteString(stDim.Render("no profile for this combination") + "\n")
 		}
 	}
-	// wrap to pane width so a long chain can never shift the layout.
-	content := lipgloss.NewStyle().Width(m.vp.Width).Render(b.String())
+	// clip (don't wrap) to pane width — renderRoute already wrapped the chains.
+	content := lipgloss.NewStyle().MaxWidth(m.vp.Width).Render(b.String())
 	m.vp.SetContent(content)
 	m.vp.GotoTop()
 }
@@ -1003,14 +1037,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) moveUp() {
-	stacked := m.mode() == modeStacked
 	if m.view == pickerView {
 		if m.cursor > 0 {
 			m.cursor--
-			m.syncPreview()
-		} else if stacked { // flow up into the generator
-			m.view = genView
-			m.fcur = len(m.visibleFacets()) - 1
 			m.syncPreview()
 		}
 	} else if m.fcur > 0 {
@@ -1018,7 +1047,6 @@ func (m *model) moveUp() {
 	}
 }
 func (m *model) moveDown() {
-	stacked := m.mode() == modeStacked
 	if m.view == pickerView {
 		if m.cursor < len(m.profiles)-1 {
 			m.cursor++
@@ -1026,9 +1054,6 @@ func (m *model) moveDown() {
 		}
 	} else if m.fcur < len(m.visibleFacets())-1 {
 		m.fcur++
-	} else if stacked { // flow down into the profiles
-		m.view = pickerView
-		m.syncPreview()
 	}
 }
 func (m *model) cycleFacet(dir int) {
@@ -1074,50 +1099,97 @@ func (m model) accent() string {
 }
 
 func (m model) header() string {
-	acc := m.accent()
-	tab := func(label string, on bool) string {
-		if on {
-			return lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render(label)
+	hint := "↑↓ move · ←→ change · f depth · r refresh · p collapse · enter launch · q quit"
+	if m.mode() == modeCollapsed && m.w < 62 {
+		swap := "result"
+		if m.showResult {
+			swap = "list"
 		}
-		return stDim.Render(label)
+		hint = "tab switch · p " + swap + " · enter launch · q"
 	}
-	hint := "tab switch · f depth · p collapse · enter launch · q quit"
-	switch m.mode() {
-	case modeStacked:
-		hint = "tab move focus · f depth · enter launch · q quit"
-	case modeCollapsed:
-		if m.w < 62 {
-			swap := "result"
-			if m.showResult {
-				swap = "list"
-			}
-			hint = "tab switch · p " + swap + " · enter launch · q"
-		}
-	}
-	return "  " + tab("profiles", m.view == pickerView) + stDim.Render(" · ") +
-		tab("generator", m.view == genView) + stDim.Render("    "+hint)
+	return "  " + stDim.Render(hint)
 }
 
-// windowLines clips a rendered list to h lines, scrolled to keep the cursor line
-// visible, then fixes it to width w — so the column can never exceed the body.
-func windowLines(lines []string, cursor, h, w int) string {
+// sectionTabs is the prominent generator⇄profiles switcher at the top of the
+// left column — the active section is an accent pill, so Tab's effect is clear.
+func (m model) sectionTabs() string {
+	acc := m.accent()
+	pill := func(label string, active bool) string {
+		s := lipgloss.NewStyle().Padding(0, 1)
+		if active {
+			return s.Background(lipgloss.Color(acc)).Foreground(lipgloss.Color("#12161d")).Bold(true).Render(label)
+		}
+		return s.Foreground(lipgloss.Color(cDim)).Render(label)
+	}
+	return pill("generator", m.view == genView) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color(cGrp)).Render(" ⇄ tab ⇄ ") +
+		pill("profiles", m.view == pickerView)
+}
+
+// windowList clips a list to h lines, scrolled to keep the cursor visible, fixes
+// the width, and appends a 1-column scrollbar (blank when everything fits) — so
+// the column is always exactly h lines tall and w wide, and shows its scroll pos.
+func windowList(lines []string, cursor, h, w int) string {
 	if h < 1 {
 		h = 1
 	}
-	if len(lines) > h {
-		start := 0
+	total := len(lines)
+	start := 0
+	if total > h {
 		if cursor >= h {
 			start = cursor - h + 1
 		}
-		if start+h > len(lines) {
-			start = len(lines) - h
+		if start+h > total {
+			start = total - h
 		}
 		if start < 0 {
 			start = 0
 		}
-		lines = lines[start : start+h]
 	}
-	return lipgloss.NewStyle().Width(w).Render(strings.Join(lines, "\n"))
+	end := start + h
+	if end > total {
+		end = total
+	}
+	vis := append([]string(nil), lines[start:end]...)
+	for len(vis) < h { // pad so the column is exactly h tall
+		vis = append(vis, "")
+	}
+	lw := w - 1 // reserve a column for the scrollbar
+	list := lipgloss.NewStyle().Width(lw).MaxWidth(lw).Render(strings.Join(vis, "\n"))
+	return lipgloss.JoinHorizontal(lipgloss.Top, list, scrollbar(total, h, start))
+}
+
+// scrollbar renders a 1-column, h-line track with a proportional thumb; when the
+// content fits (total ≤ h) it is a blank column, keeping the layout width stable.
+func scrollbar(total, h, start int) string {
+	track := stDim.Render("│")
+	thumbCh := lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("┃")
+	pos, thumb := -1, 0
+	if total > h {
+		thumb = h * h / total
+		if thumb < 1 {
+			thumb = 1
+		}
+		pos = start * h / total
+		if pos+thumb > h {
+			pos = h - thumb
+		}
+	}
+	var b strings.Builder
+	for i := 0; i < h; i++ {
+		switch {
+		case total <= h:
+			b.WriteString(" ")
+		case i >= pos && i < pos+thumb:
+			b.WriteString(thumbCh)
+		default:
+			b.WriteString(track)
+		}
+		if i < h-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 func (m model) leftColumn(full bool) string {
@@ -1125,56 +1197,64 @@ func (m model) leftColumn(full bool) string {
 	if full {
 		w = m.w
 	}
-	var lines []string
-	cursor := 0
-	if m.mode() == modeStacked {
-		g, gci := m.genLines(m.view == genView)
-		p, pci := m.pickerLines(m.view == pickerView, w)
-		lines = append(lines, g...)
-		lines = append(lines, stDim.Render(strings.Repeat("─", w)))
-		off := len(lines)
-		lines = append(lines, p...)
-		if m.view == genView {
-			cursor = gci
-		} else {
-			cursor = off + pci
-		}
-	} else if m.view == pickerView {
-		lines, cursor = m.pickerLines(true, w)
+	var body []string
+	var bcur int
+	if m.view == pickerView {
+		body, bcur = m.pickerLines(true, w)
 	} else {
-		lines, cursor = m.genLines(true)
+		body, bcur = m.genLines(true)
 	}
-	return windowLines(lines, cursor, m.vp.Height, w)
+	// the tab switcher + a blank line stay pinned; only the body scrolls.
+	head := m.sectionTabs() + "\n\n"
+	bodyH := m.vp.Height - 2
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return head + windowList(body, bcur, bodyH, w)
 }
 
 func (m model) View() string {
 	if !m.rdy {
 		return "loading…"
 	}
+	rule := stDim.Render(strings.Repeat("─", m.w))
+	header := m.header() + "\n" + rule
+	foot := ""
+	if p := m.usagePanel(); p != "" {
+		foot = rule + "\n" + p
+	}
+	footH := 0
+	if foot != "" {
+		footH = lipgloss.Height(foot)
+	}
+	bodyH := m.h - lipgloss.Height(header) - footH
+	if bodyH < 1 {
+		bodyH = 1
+	}
 	var body string
-	switch m.mode() {
-	case modeStacked, modeSplit:
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.leftColumn(false), m.previewPane())
-	default: // collapsed
+	if m.mode() == modeCollapsed {
 		if m.showResult && m.w < 62 {
 			body = m.vp.View()
 		} else {
 			body = m.leftColumn(true)
 		}
+	} else {
+		body = lipgloss.JoinHorizontal(lipgloss.Top, m.leftColumn(false), m.previewPane())
 	}
-	rule := stDim.Render(strings.Repeat("─", m.w))
-	out := m.header() + "\n" + rule + "\n" + body
-	if foot := m.usagePanel(); foot != "" {
-		out += "\n" + rule + "\n" + foot
+	// Hard-clip the body to its own region: any stray overflow (e.g. a glyph a
+	// terminal renders wider than measured) is absorbed here instead of pushing
+	// the usage panel off-screen. The footer is always pinned to the bottom.
+	body = lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(bodyH).Render(body)
+	out := header + "\n" + body
+	if foot != "" {
+		out += "\n" + foot
 	}
-	// Hard clamp the frame to the terminal box so nothing can overflow and
-	// garble the alt-screen renderer.
 	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(out)
 }
 
 func (m model) pickerLines(focused bool, w int) ([]string, int) {
 	trunc := lipgloss.NewStyle().MaxWidth(w).Inline(true)
-	lines := []string{sectionTitle("profiles", focused, m.accent()), ""}
+	var lines []string
 	cursor := 0
 	lastGroup := ""
 	for i, p := range m.profiles {
@@ -1212,16 +1292,9 @@ func (m model) pickerLines(focused bool, w int) ([]string, int) {
 	return lines, cursor
 }
 
-func sectionTitle(name string, focused bool, accent string) string {
-	if focused {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(accent)).Bold(true).Render("▍ " + name)
-	}
-	return stDim.Render("  " + name)
-}
-
 func (m model) genLines(focused bool) ([]string, int) {
 	acc := m.accent()
-	lines := []string{sectionTitle("generator", focused, acc), ""}
+	var lines []string
 	cursor := 0
 	for i, f := range m.visibleFacets() {
 		onRow := i == m.fcur && focused

@@ -523,7 +523,7 @@ func facetDefs(glyphs map[string]string) []facet {
 	return []facet{
 		{"lane", []string{"gpt-only", "gpt-led", "mixed", "claude-led", "claude-only"}, glyphs["lane"]},
 		{"model", []string{"fast", "normal", "smart"}, glyphs["model"]},
-		{"thinking", []string{"low", "medium", "high", "xhigh"}, glyphs["thinking"]},
+		{"thinking", []string{"minimal", "low", "medium", "high", "xhigh", "max"}, glyphs["thinking"]},
 		// advisor as a power/cost dial: a quick glance, a proper review, or a
 		// deep (expensive) audit — off spends nothing.
 		{"advisor", []string{"off", "glance", "review", "audit"}, glyphs["advisor"]},
@@ -556,12 +556,14 @@ func parseAdvisors(rows []string) map[string][]string {
 	return out
 }
 
-// advisorChain returns the advisor role's model chain for an intensity + lane:
-// a pure GPT pool keeps a GPT advisor, otherwise it crosses to Claude for the
-// most independent second opinion. Sourced from the baked __advisors__ table.
+// advisorChain returns the advisor role's model chain for an intensity + lane,
+// sourced from the baked __advisors__ table. The advisor is the independent
+// second opinion, so it uses the opposite provider to the lane's preference — GPT
+// on a Claude-led (or pure-GPT) lane, Claude otherwise. Only the pure lanes stay
+// on their own provider (gpt-only keeps GPT; claude-only keeps Claude).
 func (m model) advisorChain(level, lane string) []string {
 	ctx := "claude"
-	if lane == "gpt-only" {
+	if lane == "gpt-only" || lane == "claude-led" {
 		ctx = "gpt"
 	}
 	return m.advisors[level+"/"+ctx]
@@ -729,14 +731,33 @@ const (
 
 // layout modes, chosen from the terminal size (unless the user collapses):
 //
-//	stacked   — wide+tall: generator on top, profiles below, preview on the right
-//	split     — medium:    the focused list on the left, preview on the right
-//	collapsed — narrow/‹p›: one full-width pane (list, or the result with showResult)
+//	split     — wide:            the focused list on the left, preview on the right
+//	stacked   — narrow but tall: list on top, preview stacked below it (full width)
+//	collapsed — narrow+short/‹p›: one full-width pane (list, or result w/ showResult)
 const (
-	modeStacked = iota
-	modeSplit
+	modeSplit = iota
+	modeStacked
 	modeCollapsed
 )
+
+// gut is the left gutter every panel shares, so the whole UI hangs off one
+// consistent margin instead of a ragged mix of flush-left and indented rows.
+// headRows counts the section head (tabs + blank separator) above a list body.
+const (
+	gut      = 2
+	headRows = 2
+)
+
+// padLeft indents every line of s by n spaces. Safe on styled (ANSI) strings —
+// the spaces sit before any escape codes.
+func padLeft(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
 
 // genRowWidth is the width needed to render the widest generator facet row (all
 // options) on a single line — the minimum for the left panel.
@@ -758,10 +779,73 @@ func (m model) mode() int {
 	if m.collapse {
 		return modeCollapsed
 	}
-	if m.w < m.genRowWidth()+33 { // no room for the gen list + a useful preview
-		return modeCollapsed
+	if m.w >= m.genRowWidth()+33 { // room for the list + a useful side preview
+		return modeSplit
 	}
-	return modeSplit
+	// too narrow for side-by-side; stack the preview below the list if the
+	// terminal is tall enough to give both panes a usable share, else collapse.
+	if m.bodyH() >= 15 {
+		return modeStacked
+	}
+	return modeCollapsed
+}
+
+// bodyH is the height available above the pinned footer.
+func (m model) bodyH() int {
+	h := m.h - lipgloss.Height(m.footer())
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// bodyLines renders the active section's scrolling list (the generator facets or
+// the profile palette) and reports the cursor's line index within it.
+func (m model) bodyLines(w int) ([]string, int) {
+	if m.view == pickerView {
+		return m.pickerLines(true, w)
+	}
+	return m.genLines(true)
+}
+
+// stackedSplit divides the inner body height (minus the section head and the
+// 1-line divider) between the list and the preview: the list takes what its
+// content needs, capped at ~60% and floored so the preview keeps ≥ minPrev rows.
+func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
+	const sep, minPrev, minList = 1, 6, 3
+	inner := bodyH - headRows - sep
+	listH = bodyLen
+	if c := inner * 3 / 5; listH > c {
+		listH = c
+	}
+	if listH > inner-minPrev {
+		listH = inner - minPrev
+	}
+	if listH < minList {
+		listH = minList
+	}
+	prevH = inner - listH
+	if prevH < minPrev {
+		prevH = minPrev
+	}
+	return
+}
+
+// previewDims returns the preview viewport's inner (width, height) for the mode.
+// The full-width modes reserve the shared gutter; split leaves the preview's own
+// border + padding to do the breathing.
+func (m model) previewDims() (int, int) {
+	bodyH := m.bodyH()
+	switch m.mode() {
+	case modeCollapsed:
+		return m.w - gut, bodyH
+	case modeStacked:
+		body, _ := m.bodyLines(m.w - gut)
+		_, ph := stackedSplit(bodyH, len(body))
+		return m.w - gut, ph
+	default: // split
+		return m.w - m.listW() - 3, bodyH
+	}
 }
 
 type model struct {
@@ -949,7 +1033,7 @@ func (m *model) usagePanel() string {
 			if w.prov == "anthropic" {
 				pcol, pname = "#ff9f52", "Claude"
 			}
-			blocks[w.prov] = []string{lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname)}
+			blocks[w.prov] = []string{padLeft(lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname), gut)}
 		}
 		blocks[w.prov] = append(blocks[w.prov], m.usageRow(w))
 	}
@@ -964,7 +1048,10 @@ func (m *model) usagePanel() string {
 		return m.refreshLine() + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	}
 	var lines []string
-	for _, p := range order {
+	for i, p := range order {
+		if i > 0 {
+			lines = append(lines, "") // blank line between provider groups
+		}
 		lines = append(lines, blocks[p]...)
 	}
 	return m.refreshLine() + "\n" + strings.Join(lines, "\n")
@@ -1067,23 +1154,19 @@ func (m *model) footer() string {
 }
 
 func (m *model) relayout() {
-	pw := m.w - m.listW() - 3
-	if m.mode() == modeCollapsed {
-		pw = m.w
-	}
+	m.help.Width = m.w
+	pw, ph := m.previewDims()
 	if pw < 10 {
 		pw = 10
 	}
-	m.help.Width = m.w
-	vh := m.h - lipgloss.Height(m.footer())
-	if vh < 3 {
-		vh = 3
+	if ph < 3 {
+		ph = 3
 	}
 	if !m.rdy {
-		m.vp = viewport.New(pw, vh)
+		m.vp = viewport.New(pw, ph)
 		m.rdy = true
 	} else {
-		m.vp.Width, m.vp.Height = pw, vh
+		m.vp.Width, m.vp.Height = pw, ph
 	}
 	m.syncPreview()
 }
@@ -1124,10 +1207,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.syncPreview()
 		case "p":
-			if m.w >= 62 {
-				m.collapse = !m.collapse // hide/show the side preview
-			} else {
-				m.showResult = !m.showResult // narrow: swap list ↔ result full-screen
+			switch {
+			case m.collapse:
+				m.collapse = false // restore the hidden preview
+			case m.mode() == modeCollapsed:
+				m.showResult = !m.showResult // narrow+short: swap list ↔ result full-screen
+			default:
+				m.collapse = true // split/stacked: hide the preview, list full-screen
 			}
 			m.relayout()
 		case "?":
@@ -1214,11 +1300,11 @@ func (m *model) cycleFacet(dir int) {
 	m.syncPreview()
 }
 
-func (m model) previewPane() string {
+func (m model) previewPane(w, h int) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
 		BorderForeground(lipgloss.Color(cBord)).PaddingLeft(2).
-		Width(m.w - m.listW() - 3).Height(m.vp.Height).
+		Width(w).Height(h).
 		Render(m.vp.View())
 }
 
@@ -1316,25 +1402,34 @@ func scrollbar(total, h, start int) string {
 	return b.String()
 }
 
-func (m model) leftColumn(full bool) string {
-	w := m.listW()
-	if full {
-		w = m.w
+// sectionHead is the gutter-inset tab switcher plus a blank separator (headRows
+// tall); it stays pinned above the scrolling list body.
+func (m model) sectionHead() string {
+	return padLeft(m.sectionTabs(), gut) + "\n\n"
+}
+
+// leftColumn renders the pinned section head plus the scrolling list body, the
+// whole column inset by the shared gutter, sized to totalH rows and w columns.
+func (m model) leftColumn(w, totalH int) string {
+	iw := w - gut
+	body, bcur := m.bodyLines(iw)
+	listH := totalH - headRows
+	if listH < 1 {
+		listH = 1
 	}
-	var body []string
-	var bcur int
-	if m.view == pickerView {
-		body, bcur = m.pickerLines(true, w)
-	} else {
-		body, bcur = m.genLines(true)
-	}
-	// the tab switcher + a blank line stay pinned; only the body scrolls.
-	head := m.sectionTabs() + "\n\n"
-	bodyH := m.vp.Height - 2
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	return head + windowList(body, bcur, bodyH, w)
+	return m.sectionHead() + padLeft(windowList(body, bcur, listH, iw), gut)
+}
+
+// stackedContent is the narrow-but-tall layout: head + list on top, a full-width
+// divider, then the preview stacked below. The preview keeps its own viewport, so
+// it scrolls (mouse wheel) independently of the list above it.
+func (m model) stackedContent(bodyH int) string {
+	body, _ := m.bodyLines(m.w - gut)
+	listH, prevH := stackedSplit(bodyH, len(body))
+	top := m.leftColumn(m.w, headRows+listH)
+	div := stDim.Render(strings.Repeat("─", m.w))
+	preview := lipgloss.NewStyle().MaxHeight(prevH).Render(padLeft(m.vp.View(), gut))
+	return lipgloss.JoinVertical(lipgloss.Left, top, div, preview)
 }
 
 func (m model) View() string {
@@ -1342,19 +1437,21 @@ func (m model) View() string {
 		return "loading…"
 	}
 	foot := m.footer()
-	bodyH := m.h - lipgloss.Height(foot)
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH := m.bodyH()
 	var content string
-	if m.mode() == modeCollapsed {
+	switch m.mode() {
+	case modeCollapsed:
 		if m.showResult && m.w < 62 {
-			content = m.vp.View()
+			content = padLeft(m.vp.View(), gut)
 		} else {
-			content = m.leftColumn(true)
+			content = m.leftColumn(m.w, bodyH)
 		}
-	} else {
-		content = lipgloss.JoinHorizontal(lipgloss.Top, m.leftColumn(false), m.previewPane())
+	case modeStacked:
+		content = m.stackedContent(bodyH)
+	default: // split
+		content = lipgloss.JoinHorizontal(lipgloss.Top,
+			m.leftColumn(m.listW(), bodyH),
+			m.previewPane(m.w-m.listW()-3, bodyH))
 	}
 	// Pin the body into a fixed box (top-left) with lipgloss, then clip: any
 	// stray overflow (e.g. a glyph a terminal renders wider than measured) is

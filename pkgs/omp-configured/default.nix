@@ -1177,10 +1177,12 @@ let
   # (lane, model-tier, thinking, spark, fable) combination, baked at build time
   # so the generator view stays immutable and reviewable like the presets.
   generatedProfiles =
-    runCommand "omp-generated-profiles" { nativeBuildInputs = [ python3 ]; }
+    runCommand "omp-generated-profiles"
+      { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }
       ''
         mkdir -p "$out/share/omp"
-        python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
+        MODELS_YML=${../../omp/models.yml} \
+          python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
       '';
   ompHelp = writeShellApplication {
     name = "omph";

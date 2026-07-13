@@ -1,0 +1,79 @@
+# Curated model catalog — the OPINION behind the routing: which models we use,
+# their short keys, pool, tier, and quota bucket, plus a one-line role note.
+#
+# Factual data (cost, context window, thinking range) is deliberately NOT here;
+# it is read live from `omp models --json` at build time, so it can never drift
+# from what OMP actually charges. This file carries only what OMP can't tell us:
+# our short names, how each model is used, and which quota bucket it draws.
+#
+#   pool:   O = openai-codex   ·   A = anthropic
+#   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
+#           Tiers 1..3 form the per-pool fallback ladder; 0 and 4 are special
+#           leads (spark drains an idle bucket; fable is a scarce elite lead).
+#   bucket: the quota window a model draws (see PROFILES.md → Separate rate buckets).
+#
+# Consumed by generate-profiles.py (the facet grid) and generate-wiki.py (the
+# browsable profiles wiki), so the catalog stays a single source of truth.
+models:
+  luna:
+    id: gpt-5.6-luna
+    pool: O
+    tier: 1
+    bucket: codex-main
+    role: >-
+      Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
+      tier (ompl); the cheap rung and same-bucket sibling everywhere.
+  terra:
+    id: gpt-5.6-terra
+    pool: O
+    tier: 2
+    bucket: codex-main
+    role: >-
+      Balanced workhorse. Leads the regular GPT tier (ompb) and the mixed
+      workers. Sonnet's price-twin.
+  sol:
+    id: gpt-5.6-sol
+    pool: O
+    tier: 3
+    bucket: codex-main
+    role: Flagship. Leads the smart GPT tier (ompg, ompm, ompo).
+  spark:
+    id: gpt-5.3-codex-spark
+    pool: O
+    tier: 0
+    bucket: codex-spark
+    role: >-
+      Coding-tuned and fast. Draws a separate, usually-idle Codex bucket, so the
+      fast-execution and background roles lead on it to drain it.
+  haiku:
+    id: claude-haiku-4-5
+    pool: A
+    tier: 1
+    bucket: claude-main
+    role: >-
+      Fastest/cheapest Anthropic tier. Leads the speed Claude tier (ompk); the
+      Anthropic cheap rung and background hum.
+  sonnet:
+    id: claude-sonnet-5
+    pool: A
+    tier: 2
+    bucket: claude-main
+    role: >-
+      The value pick — near-Opus quality at a fraction of the cost. Leads the
+      regular Claude tier (omps) and the mixed judgment roles.
+  opus:
+    id: claude-opus-4-8
+    pool: A
+    tier: 3
+    bucket: claude-main
+    role: >-
+      Top Opus tier. Leads the smart Claude judgment roles and ompe (claude-only);
+      the main-plan deliberative sibling across the maps.
+  fable:
+    id: claude-fable-5
+    pool: A
+    tier: 4
+    bucket: claude-fable
+    role: >-
+      Most capable, and its own scarce bucket. A deliberate elite lead only
+      (ompc, ompf, ompm judgment, ompx plan) — never an automatic fallback net.

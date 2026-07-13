@@ -130,7 +130,6 @@ in
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
         )" = "code,omp,ompb,ompc,ompe,ompf,ompg,omph,ompk,ompl,ompm,ompn,ompo,omps,ompu,ompx,ompz"
-        test "$(${pkgs.herdr-configured}/bin/herdr --version)" = "herdr 0.7.3"
 
         ${pkgs.omp-configured}/bin/omph > "$TMPDIR/omph.txt"
         ! grep -q $'\e' "$TMPDIR/omph.txt"
@@ -170,17 +169,6 @@ in
         grep -q 'ompu' "$TMPDIR/code.txt"
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
-
-        for invocation in 'update' '--handoff update' 'update --handoff'; do
-          read -r -a args <<< "$invocation"
-          set +e
-          ${pkgs.herdr-configured}/bin/herdr "''${args[@]}" \
-            > "$TMPDIR/herdr.out" 2> "$TMPDIR/herdr.err"
-          herdr_update_status=$?
-          set -e
-          test "$herdr_update_status" -eq 2
-          grep -q 'managed by Nix' "$TMPDIR/herdr.err"
-        done
 
         ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
         test ! -s "$TMPDIR/models.err"
@@ -341,8 +329,6 @@ in
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
         )" -eq 6
-        grep -q 'HERDR_INTEGRATION_ID=omp' \
-          ${pkgs.herdr-omp-integration}/share/omp/extensions/herdr-omp-agent-state.ts
         test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 6
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts

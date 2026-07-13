@@ -2,7 +2,7 @@
 # `atyrode capabilities`, the bootstrap preset picker, and flake consumers.
 # Keys must match ./default.nix exactly; the flake asserts the correspondence.
 {
-  agent-tools = "Codex, OMP, Herdr, managed agents, and their configuration";
+  agent-tools = "Codex, OMP, managed agents, and their configuration";
   base = "shell, Git/GitHub, search, direnv/nix-direnv, mise, on-demand lookup, diagnostics, and Home Manager itself";
   containers = "container clients and inspection tools; the daemon stays system-owned";
   desktop = "operator-selected graphical applications";

@@ -46,7 +46,6 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 - **tmux** - Terminal multiplexer
 - **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
 - **OMP** - Pinned coding agent, model presets, agents, and skills
-- **Herdr** - Persistent terminal workspaces for AI coding agents
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
   native compilers come from committed dev shells, `mise.toml`, or native
@@ -105,13 +104,12 @@ ompf          # Fable-first profile with fallback disabled
 ompx          # Huge-context (1M) work; Anthropic's 1M line, no cross-net
 omph          # Show the managed routing: roles, models, fallbacks per profile
 ompu          # Restricted launcher for deliberately untrusted repositories
-herdr         # Persistent terminal workspace manager
 ```
 
 See [`omp/PROFILES.md`](omp/PROFILES.md) for the model catalog and the
 reasoning behind each profile.
 
-OMP, Herdr, their integration, shared skills, and mise are installed by `zconf`
+OMP, shared skills, and mise are installed by `zconf`
 with the rest of the Home Manager profile. See
 [Agent tools](docs/agent-tools.md) for ownership, model routing, project skill
 layout, migration behavior, and updates.
@@ -142,7 +140,7 @@ nix flake update
 zconf
 ```
 
-Pinned OMP and Herdr updates have additional hash and compatibility
+Pinned OMP updates have additional hash and compatibility
 checks documented in [Agent tools](docs/agent-tools.md#updating).
 
 ---
@@ -329,5 +327,4 @@ Nix will be installed automatically if not present.
 - [nix-darwin](https://github.com/LnL7/nix-darwin)
 - [nix-homebrew](https://github.com/zhaofengli/nix-homebrew)
 - [Oh My Pi](https://github.com/can1357/oh-my-pi)
-- [Herdr](https://herdr.dev)
 - [mise](https://mise.jdx.dev)

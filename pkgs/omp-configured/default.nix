@@ -8,7 +8,6 @@
   gnugrep,
   jq,
   lib,
-  herdr-omp-integration,
   omp,
   omp-agents,
   patch,
@@ -31,7 +30,6 @@ let
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
-    cp ${herdr-omp-integration}/share/omp/extensions/herdr-omp-agent-state.ts "$out/extensions/"
     cp ${../../omp/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
     cp ${../../omp/extensions/task-isolation-guard.ts} "$out/extensions/task-isolation-guard.ts"
     cp ${../../omp/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
@@ -43,7 +41,6 @@ let
       "type": "module",
       "omp": {
         "extensions": [
-          "./extensions/herdr-omp-agent-state.ts",
           "./extensions/managed-settings-guard.ts",
           "./extensions/task-isolation-guard.ts"
         ]
@@ -931,7 +928,7 @@ let
         for arg in "''${original_args[@]}"; do
           if [[ "$arg" == --no-extensions ]]; then
             printf '%s\n' \
-              'OMP --no-extensions is unavailable for managed sessions because it disables the Nix-owned settings guard, agents, rules, and Herdr integration. Use a dedicated restricted launcher instead.' >&2
+              'OMP --no-extensions is unavailable for managed sessions because it disables the Nix-owned settings guard, agents, and rules. Use a dedicated restricted launcher instead.' >&2
             exit 2
           fi
         done

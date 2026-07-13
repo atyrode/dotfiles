@@ -323,7 +323,10 @@ finalizer verifies every retired path and transformed config, then atomically
 renames the pending directory to `migration-v2.complete`; the backups remain
 inside it for manual recovery. Existing installations with the former
 `migration-v2.complete` marker
-file remain recognized.
+file remain recognized. A zero-length receipt produced by an earlier blank-home
+activation is also recognized only when both its backup and work trees are
+empty; retained data, malformed non-empty receipts, and unsafe links still stop
+activation for manual review.
 
 Receipts, backup/work directories, lock handling, and same-directory temporary
 files are validated so symlinks cannot redirect writes outside the transaction.

@@ -1099,8 +1099,9 @@ type model struct {
 	nextRefresh time.Time // when the next auto-refresh fires
 
 	chosen      string
-	genConfig   string // generated config YAML to launch omp with (generator Enter)
-	firstPrompt string // prompt from the suggest box, forwarded as omp's first message
+	genConfig   string            // generated config YAML to launch omp with (generator Enter)
+	firstPrompt string            // prompt from the suggest box, forwarded as omp's first message
+	savedSel    map[string]string // selection snapshot before a live suggest preview (for revert)
 }
 
 // usage auto-refreshes on this cadence; a 1s tick drives the countdown.
@@ -1480,13 +1481,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-	case clikit.ActionsConfirmedMsg:
-		// The suggest box proposed facet changes and the user accepted them:
-		// apply to the generator selection (same as a manual change) and remember
-		// the prompt so the launched session receives it as the first message.
+	case clikit.ActionsProposedMsg:
+		// Live preview: snapshot the current selection, then apply the proposal to
+		// the generator so the user sees the change while deciding.
 		m.view = genView
+		m.savedSel = map[string]string{}
+		for k, v := range m.sel {
+			m.savedSel[k] = v
+		}
 		m.applyActions(msg.Actions)
+
+	case clikit.ActionsConfirmedMsg:
+		// Kept: the preview stays; remember the prompt for the launched session.
+		m.savedSel = nil
 		m.firstPrompt = msg.Prompt
+
+	case clikit.ActionsRevertedMsg:
+		// Rejected: restore the pre-preview selection.
+		if m.savedSel != nil {
+			m.sel = m.savedSel
+			m.savedSel = nil
+			m.syncPreview()
+		}
 	}
 	return m, nil
 }

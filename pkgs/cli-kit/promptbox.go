@@ -53,14 +53,20 @@ type promptToken struct {
 // A host (see Run) listens for it to hide the box.
 type BoxCloseMsg struct{}
 
-// ActionsConfirmedMsg is emitted when the user accepts a Commander's proposal.
-// The host (see Run, which forwards it to the app) applies the actions. Prompt is
-// the text the user submitted, so a host can carry it forward (e.g. as the first
-// message of the session it launches).
-type ActionsConfirmedMsg struct {
-	Actions []Action
-	Prompt  string
-}
+// ActionsProposedMsg is emitted as soon as a proposal is parsed. The host applies
+// it immediately as a live preview (saving prior state), so the change is visible
+// in the tool's own UI while the box shows keep/revert.
+type ActionsProposedMsg struct{ Actions []Action }
+
+// ActionsConfirmedMsg is emitted when the user KEEPS the applied proposal. Prompt
+// is the text they submitted, so a host can carry it forward (e.g. as the first
+// message of the session it launches). The actions were already applied via
+// ActionsProposedMsg.
+type ActionsConfirmedMsg struct{ Prompt string }
+
+// ActionsRevertedMsg is emitted when the user rejects the applied proposal; the
+// host restores the state it saved on ActionsProposedMsg.
+type ActionsRevertedMsg struct{}
 
 // PromptBox is a value type — Update returns an updated copy, matching the
 // bubbles convention.
@@ -206,10 +212,10 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			switch b.state {
 			case boxBusy:
 				return b, nil
-			case boxProposed: // accept the proposal → hand it to the host
-				actions, prompt := b.proposed, b.prompt
+			case boxProposed: // keep the (already-applied) proposal
+				prompt := b.prompt
 				b.proposed, b.state = nil, boxEditing
-				return b, func() tea.Msg { return ActionsConfirmedMsg{Actions: actions, Prompt: prompt} }
+				return b, func() tea.Msg { return ActionsConfirmedMsg{Prompt: prompt} }
 			default: // enter submits; the box is a single prompt line
 				return b, b.submit()
 			}
@@ -218,9 +224,9 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			case boxBusy:
 				b.stop()
 				return b, nil
-			case boxProposed: // reject the proposal, back to editing
+			case boxProposed: // reject → have the host revert the live preview
 				b.proposed, b.state = nil, boxEditing
-				return b, nil
+				return b, func() tea.Msg { return ActionsRevertedMsg{} }
 			default:
 				return b, func() tea.Msg { return BoxCloseMsg{} }
 			}
@@ -262,7 +268,9 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 				case len(actions) == 0:
 					b.state, b.err = boxDone, errNoChanges
 				default:
+					// Apply the proposal live (host previews it) and await keep/revert.
 					b.proposed, b.state = actions, boxProposed
+					return b, func() tea.Msg { return ActionsProposedMsg{Actions: actions} }
 				}
 			} else {
 				b.state = boxDone
@@ -319,11 +327,11 @@ func (b PromptBox) View() string {
 			parts = append(parts, StBrk.Render(GBroken+" "+b.err.Error()))
 		}
 	case boxProposed:
-		lines := []string{StHead.Render("proposed changes")}
+		lines := []string{StHead.Render("applied — review above")}
 		for _, a := range b.proposed {
 			lines = append(lines, "  "+a.Key+" → "+StWarn.Render(a.Value))
 		}
-		lines = append(lines, StDim.Render("enter apply · esc cancel"))
+		lines = append(lines, StDim.Render("enter keep · esc revert"))
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
 

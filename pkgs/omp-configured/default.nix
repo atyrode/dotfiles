@@ -1487,7 +1487,8 @@ let
       export CODE_USAGE="$omp_bin usage --json"
       # Bare omp for the picker's prompt→profile evaluator (a cheap one-shot with an
       # explicit --model): the managed launcher (CODE_OMP) would override the model.
-      export CODE_OMP_EVAL="$omp_bin"
+      # Respect a preset value so it can be pointed at a different binary/wrapper.
+      export CODE_OMP_EVAL="''${CODE_OMP_EVAL:-$omp_bin}"
 
       names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
       exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )

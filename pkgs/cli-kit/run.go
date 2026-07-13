@@ -110,9 +110,16 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.active = false
 		return h, nil
 
-	case ActionsConfirmedMsg:
-		// The user accepted an Act-mode proposal; hide the box and let the app
-		// apply the actions (it owns the state the actions mutate).
+	case ActionsProposedMsg:
+		// Live preview: let the app apply it immediately (it owns the state the
+		// actions mutate); the box stays open showing keep/revert.
+		var cmd tea.Cmd
+		h.app, cmd = h.app.Update(msg)
+		return h, cmd
+
+	case ActionsConfirmedMsg, ActionsRevertedMsg:
+		// Keep or revert the previewed proposal; either way the box closes and the
+		// app handles it (commit, or restore the saved state).
 		h.active = false
 		var cmd tea.Cmd
 		h.app, cmd = h.app.Update(msg)

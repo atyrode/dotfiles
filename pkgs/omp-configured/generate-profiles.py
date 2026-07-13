@@ -80,6 +80,13 @@ ROLE_ORDER = ['default', 'task', 'plan', 'slow', 'designer', 'reviewer',
               'librarian', 'sonic', 'advisor', 'smol', 'tiny', 'commit']
 AGENT_ROLES = {'designer', 'librarian', 'reviewer', 'sonic', 'task'}  # ● marker
 DELIB = {'plan', 'slow', 'designer', 'reviewer'}
+# Anti-tunnel-vision (issue: provider diversity). On a *-led lane the default and
+# the bulk of the profile stay on the preferred provider (strong emphasis), but a
+# couple of critique roles cross to the opposite provider so the work always gets
+# a genuinely independent second eye. The advisor always crosses too (handled in
+# its own branch); the reviewer is the other cross role — it audits the output, so
+# a different provider there is where diverse judgement pays off most.
+CROSS_LED = {'reviewer'}
 
 # Utility roles all respond to the sliders, but each to a degree that fits its
 # job — model tier is capped so none can ever become expensive. Provider comes
@@ -143,10 +150,11 @@ def gen(lane, mtier, thinking, spark, fable):
 
     def rprov(r):
         if isp:
-            return P
+            return P                       # pure lane: never cross
         if lane == 'mixed':
             return 'A' if r in DELIB else 'O'
-        return P
+        # *-led: strong primary everywhere, except the cross-provider critique roles
+        return other(P) if r in CROSS_LED else P
 
     out = {}
     for r in ROLE_ORDER:
@@ -168,7 +176,11 @@ def gen(lane, mtier, thinking, spark, fable):
             if mtier == 'fast':
                 out[r] = (None, None, [])  # advisor off
                 continue
-            amod = (LADDER[P][2] if P == 'A' else 'terra') if mtier == 'smart' else CHEAP[P]
+            # The advisor is the independent second opinion, so it leads on the
+            # opposite provider whenever the lane allows crossing (everything but
+            # the pure lanes) — the minimum diversity guarantee for any profile.
+            AP = P if isp else other(P)
+            amod = (LADDER[AP][2] if AP == 'A' else 'terra') if mtier == 'smart' else CHEAP[AP]
             lvl = 'high' if mtier == 'smart' else 'low'
             out[r] = (amod, lvl, [(m, 'low') for m in build_chain(amod, isp)])
             continue

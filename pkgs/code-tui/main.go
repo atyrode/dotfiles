@@ -337,7 +337,7 @@ func (a availability) note() string {
 		}
 		var n string
 		if a.bucket[b] == "maxed" {
-			n = fmt.Sprintf("%s maxed · %s", label[b], fmtSecs(a.reset[b]))
+			n = fmt.Sprintf("%s maxed · %s%s", label[b], gReset, fmtSecs(a.reset[b]))
 		} else if strings.HasPrefix(b, "codex") {
 			n = "needs Codex"
 		} else {
@@ -494,10 +494,80 @@ func facetDefs(glyphs map[string]string) []facet {
 		{"lane", []string{"gpt-only", "gpt-led", "mixed", "claude-led", "claude-only"}, glyphs["lane"]},
 		{"model", []string{"fast", "normal", "smart"}, glyphs["model"]},
 		{"thinking", []string{"low", "medium", "high", "xhigh"}, glyphs["thinking"]},
+		// advisor as a power/cost dial: a quick glance, a proper review, or a
+		// deep (expensive) audit — off spends nothing.
+		{"advisor", []string{"off", "glance", "review", "audit"}, glyphs["advisor"]},
+		{"fast", []string{"on", "off"}, glyphs["fast"]},
 		{"spark", []string{"on", "off"}, glyphs["spark"]},
 		{"fable", []string{"on", "off"}, glyphs["fable"]},
-		{"fast", []string{"off", "on"}, glyphs["fast"]},
 	}
+}
+
+// advisorChain synthesises the advisor role for a given intensity and lane. It
+// keeps a pure lane pure (GPT advisor on a GPT-only pool) and otherwise reaches
+// across to Claude, which gives the most independent second opinion.
+// NOTE: these model names duplicate catalog knowledge from generate-profiles.py;
+// the omp-configured wire-in should bake an advisor table there instead.
+func advisorChain(level, lane string) []string {
+	if lane == "gpt-only" {
+		switch level {
+		case "glance":
+			return []string{"gpt-5.6-luna:low"}
+		case "review":
+			return []string{"gpt-5.6-terra:medium", "gpt-5.6-luna:low"}
+		case "audit":
+			return []string{"gpt-5.6-sol:high", "gpt-5.6-terra:high", "gpt-5.6-luna:low"}
+		}
+		return nil
+	}
+	switch level {
+	case "glance":
+		return []string{"claude-haiku-4-5:low"}
+	case "review":
+		return []string{"claude-sonnet-5:medium", "claude-haiku-4-5:low"}
+	case "audit":
+		return []string{"claude-opus-4-8:high", "claude-sonnet-5:high", "claude-haiku-4-5:low"}
+	}
+	return nil
+}
+
+// roleOf returns the role name of a routing row ("● task" → "task").
+func roleOf(row string) string {
+	f := strings.Fields(row)
+	if len(f) > 0 && f[0] == "●" {
+		f = f[1:]
+	}
+	if len(f) > 0 {
+		return f[0]
+	}
+	return ""
+}
+
+// applyAdvisor replaces the baked advisor row with one synthesised from the
+// chosen intensity (dropping it entirely when off), so the generated preview and
+// the launched config both reflect the advisor facet.
+func applyAdvisor(rows []string, level, lane string) []string {
+	chain := advisorChain(level, lane)
+	newRow := ""
+	if len(chain) > 0 {
+		newRow = "    advisor    " + strings.Join(chain, " → ")
+	}
+	var out []string
+	replaced := false
+	for _, r := range rows {
+		if roleOf(r) == "advisor" {
+			replaced = true
+			if newRow != "" {
+				out = append(out, newRow)
+			}
+			continue
+		}
+		out = append(out, r)
+	}
+	if !replaced && newRow != "" {
+		out = append(out, newRow)
+	}
+	return out
 }
 
 // visibleFacets drops facets that don't apply to the current lane, so the
@@ -564,7 +634,7 @@ func prefixed(model string) string {
 // thinking, advisor, and the priority tier when fast is on) from the generated
 // routing block for the current facets — what Enter launches omp with.
 func (m model) genConfigYAML() string {
-	rows := m.generated[comboID(m.sel)]
+	rows := applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
 	var mr, fc strings.Builder
 	advisorOn := false
 	for _, r := range rows {
@@ -866,6 +936,9 @@ func (m *model) usageRow(w usageWin) string {
 	if w.pct >= 80 {
 		note = "  " + stWarn.Render("tight")
 	}
+	if w.pct >= 100 {
+		note = "  " + stBrk.Render("maxed")
+	}
 	if w.tier == "spark" && w.pct == 0 {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
 	}
@@ -909,16 +982,21 @@ func (m *model) syncPreview() {
 		id := comboID(m.sel)
 		b.WriteString(lipgloss.NewStyle().Bold(true).Render("generated profile") + "\n")
 		b.WriteString(stDim.Render(strings.ReplaceAll(id, "_", " ")) + "\n\n")
-		if rows, ok := m.generated[id]; ok {
-			meta, roles := splitMeta(rows)
-			if meta != "" {
-				fast := "off"
-				if m.sel["fast"] == "on" && m.sel["lane"] != "claude-only" {
-					fast = lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff")).Render("on")
+		if base, ok := m.generated[id]; ok {
+			_, roles := splitMeta(base)
+			roles = applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
+			// meta line rebuilt from the facets, so it always reflects the
+			// advisor dial and fast toggle (both live outside the baked grid).
+			line := stDim.Render("thinking " + m.sel["thinking"] + " · fallback on · advisor " + m.sel["advisor"])
+			if m.sel["lane"] != "claude-only" {
+				blue := lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff"))
+				state := stDim.Render("off")
+				if m.sel["fast"] == "on" {
+					state = blue.Render("on")
 				}
-				b.WriteString(stDim.Render(meta+" · fast ") + fast + "\n")
+				line += stDim.Render(" · ") + blue.Render(m.glyphs["fast"]) + stDim.Render(" fast ") + state
 			}
-			b.WriteString(rule + "\n")
+			b.WriteString(line + "\n" + rule + "\n")
 			b.WriteString(renderRoute(roles, m.depth, m.avail, rw))
 		} else {
 			b.WriteString(stDim.Render("no profile for this combination") + "\n")
@@ -1337,12 +1415,21 @@ func (m model) genLines(focused bool) ([]string, int) {
 				bkt, lbl = "codex-spark", "Spark"
 			}
 			if m.avail.down(bkt) {
-				w := lbl + " maxed · " + fmtReset(m.avail.reset[bkt])
+				w := lbl + " maxed · " + gReset + fmtReset(m.avail.reset[bkt])
 				if m.avail.bucket[bkt] == "unauthed" {
 					w = lbl + " unavailable"
 				}
 				row += "   " + stWarn.Render(gWarn+" "+w+" — no usage left")
 			}
+		case focused && f.key == "fast" && m.sel["fast"] == "on":
+			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
+		case focused && f.key == "advisor" && m.sel["advisor"] != "off":
+			blurb := map[string]string{
+				"glance": "quick, cheap second opinion",
+				"review": "a proper review — mid cost",
+				"audit":  "deep critique — most capable, priciest",
+			}[m.sel["advisor"]]
+			row += "   " + stDim.Render(blurb)
 		}
 		lines = append(lines, row)
 	}
@@ -1366,7 +1453,7 @@ func main() {
 	// defaults (Nerd Font, FA range). CODE_FACET_GLYPHS may override any of them.
 	//   lane ⇄  model ⚙  thinking 💡  spark 🚀  fable 📖  fast ⚡
 	glyphs := map[string]string{
-		"lane": "", "model": "", "thinking": "",
+		"lane": "", "model": "", "thinking": "", "advisor": "",
 		"spark": "", "fable": "", "fast": "",
 	}
 	for _, kv := range strings.Split(os.Getenv("CODE_FACET_GLYPHS"), ",") {
@@ -1386,7 +1473,7 @@ func main() {
 		glyphs:    glyphs,
 		view:      genView, // generator is the default view
 		facets:    facetDefs(glyphs),
-		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "on", "fable": "off", "fast": "off"},
+		sel:       map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "fast": "off"},
 	}
 	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {

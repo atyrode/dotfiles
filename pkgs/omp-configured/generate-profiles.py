@@ -95,6 +95,21 @@ UTIL_THINK = {  # kept low — these roles must stay fast/cheap even on deep pro
     'smol':   {'low': 'low', 'medium': 'low', 'high': 'medium', 'xhigh': 'medium'},
     'sonic':  {'low': 'low', 'medium': 'medium', 'high': 'medium', 'xhigh': 'medium'},
 }
+# Advisor power/cost dial, emitted as a table the code picker reads (so the
+# catalog stays the single source of truth). Keyed by context — 'gpt' on a pure
+# GPT pool, else 'claude' for the most independent cross-provider second opinion.
+ADVISOR = {
+    'claude': {
+        'glance': [('haiku', 'low')],
+        'review': [('sonnet', 'medium'), ('haiku', 'low')],
+        'audit': [('opus', 'high'), ('sonnet', 'high'), ('haiku', 'low')],
+    },
+    'gpt': {
+        'glance': [('luna', 'low')],
+        'review': [('terra', 'medium'), ('luna', 'low')],
+        'audit': [('sol', 'high'), ('terra', 'high'), ('luna', 'low')],
+    },
+}
 TMAP = {'fast': 1, 'normal': 2, 'smart': 3}
 BUMP = {'minimal': 'low', 'low': 'medium', 'medium': 'high', 'high': 'xhigh', 'xhigh': 'xhigh'}
 LANES = ['gpt-only', 'gpt-led', 'mixed', 'claude-led', 'claude-only']
@@ -184,6 +199,18 @@ def render(lane, mtier, thinking, spark, fable):
     return "\n".join(lines)
 
 
+def render_advisors():
+    """Emit the advisor dial as a pseudo-block the picker parses (level context
+    → chain), so the advisor model names live here, not duplicated in the TUI."""
+    lines = ["__advisors__  advisor dial (level context → chain)"]
+    for ctx in ('gpt', 'claude'):
+        for level in ('glance', 'review', 'audit'):
+            chain = ' → '.join(f"{ID[k]}:{lv}" for k, lv in ADVISOR[ctx][level])
+            lines.append(f"  {level} {ctx} {chain}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def valid(lane, mtier, thinking, spark, fable):
     if lane == 'gpt-only' and fable:
         return False       # no Fable on pure GPT
@@ -195,6 +222,7 @@ def valid(lane, mtier, thinking, spark, fable):
 def main():
     print("OMP generated routing — first-principles facet grid")
     print("bundled agents: designer librarian reviewer sonic task — ● marks an agent-backed role\n")
+    print(render_advisors())
     for lane in LANES:
         for mtier in MTIERS:
             for thinking in THINKING:

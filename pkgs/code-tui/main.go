@@ -533,32 +533,38 @@ func facetDefs(glyphs map[string]string) []facet {
 	}
 }
 
-// advisorChain synthesises the advisor role for a given intensity and lane. It
-// keeps a pure lane pure (GPT advisor on a GPT-only pool) and otherwise reaches
-// across to Claude, which gives the most independent second opinion.
-// NOTE: these model names duplicate catalog knowledge from generate-profiles.py;
-// the omp-configured wire-in should bake an advisor table there instead.
-func advisorChain(level, lane string) []string {
-	if lane == "gpt-only" {
-		switch level {
-		case "glance":
-			return []string{"gpt-5.6-luna:low"}
-		case "review":
-			return []string{"gpt-5.6-terra:medium", "gpt-5.6-luna:low"}
-		case "audit":
-			return []string{"gpt-5.6-sol:high", "gpt-5.6-terra:high", "gpt-5.6-luna:low"}
+// parseAdvisors reads the __advisors__ block (rows: "<level> <ctx> <chain>")
+// into a map keyed "level/ctx" — the advisor model table, sourced from
+// generate-profiles.py so the catalog stays a single source of truth.
+func parseAdvisors(rows []string) map[string][]string {
+	out := map[string][]string{}
+	for _, r := range rows {
+		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
+		if len(f) < 3 {
+			continue
 		}
-		return nil
+		var chain []string
+		for _, t := range f[2:] {
+			if modelRe.MatchString(t) {
+				chain = append(chain, t)
+			}
+		}
+		if len(chain) > 0 {
+			out[f[0]+"/"+f[1]] = chain
+		}
 	}
-	switch level {
-	case "glance":
-		return []string{"claude-haiku-4-5:low"}
-	case "review":
-		return []string{"claude-sonnet-5:medium", "claude-haiku-4-5:low"}
-	case "audit":
-		return []string{"claude-opus-4-8:high", "claude-sonnet-5:high", "claude-haiku-4-5:low"}
+	return out
+}
+
+// advisorChain returns the advisor role's model chain for an intensity + lane:
+// a pure GPT pool keeps a GPT advisor, otherwise it crosses to Claude for the
+// most independent second opinion. Sourced from the baked __advisors__ table.
+func (m model) advisorChain(level, lane string) []string {
+	ctx := "claude"
+	if lane == "gpt-only" {
+		ctx = "gpt"
 	}
-	return nil
+	return m.advisors[level+"/"+ctx]
 }
 
 // roleOf returns the role name of a routing row ("● task" → "task").
@@ -576,8 +582,8 @@ func roleOf(row string) string {
 // applyAdvisor replaces the baked advisor row with one synthesised from the
 // chosen intensity (dropping it entirely when off), so the generated preview and
 // the launched config both reflect the advisor facet.
-func applyAdvisor(rows []string, level, lane string) []string {
-	chain := advisorChain(level, lane)
+func (m model) applyAdvisor(rows []string, level, lane string) []string {
+	chain := m.advisorChain(level, lane)
 	newRow := ""
 	if len(chain) > 0 {
 		newRow = "    advisor    " + strings.Join(chain, " → ")
@@ -664,7 +670,7 @@ func prefixed(model string) string {
 // thinking, advisor, and the priority tier when fast is on) from the generated
 // routing block for the current facets — what Enter launches omp with.
 func (m model) genConfigYAML() string {
-	rows := applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
+	rows := m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
 	var mr, fc strings.Builder
 	advisorOn := false
 	for _, r := range rows {
@@ -762,6 +768,7 @@ type model struct {
 	profiles  []profile
 	routes    map[string][]string
 	generated map[string][]string
+	advisors  map[string][]string // "level/ctx" → advisor model chain
 	avail     availability
 	glyphs    map[string]string
 
@@ -1021,7 +1028,7 @@ func (m *model) syncPreview() {
 		id := comboID(m.sel)
 		if base, ok := m.generated[id]; ok {
 			_, roles := splitMeta(base)
-			roles = applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
+			roles = m.applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
 			// meta line rebuilt from the facets, so it always reflects the
 			// advisor dial and fast toggle (both live outside the baked grid).
 			line := stDim.Render("thinking " + m.sel["thinking"] + " · fallback on · advisor " + m.sel["advisor"])
@@ -1487,10 +1494,12 @@ func main() {
 	}
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	generated := loadBlocks(os.Getenv("CODE_GENERATED"))
 	m := model{
 		profiles:  profiles,
 		routes:    loadBlocks(os.Getenv("CODE_ROUTES")),
-		generated: loadBlocks(os.Getenv("CODE_GENERATED")),
+		generated: generated,
+		advisors:  parseAdvisors(generated["__advisors__"]),
 		avail:     availability{bucket: map[string]string{}, reset: map[string]int64{}},
 		usageCmd:  os.Getenv("CODE_USAGE"),
 		spin:      sp,

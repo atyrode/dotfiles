@@ -119,3 +119,71 @@ func TestHostMountsBoxForAskable(t *testing.T) {
 		t.Error("bare app should not get a prompt box")
 	}
 }
+
+// stubCommander proposes a fixed action set.
+type stubCommander struct{ actions []Action }
+
+func (s stubCommander) Actions(ctx context.Context, prompt string) ([]Action, error) {
+	return s.actions, nil
+}
+
+type commandableApp struct{ tea.Model }
+
+func (commandableApp) Commander() Commander { return stubCommander{} }
+
+func TestHostMountsBoxForCommandable(t *testing.T) {
+	if h := newHost(commandableApp{}); !h.hasBox {
+		t.Error("Commandable app should get a prompt box")
+	}
+}
+
+func TestPromptBoxActProposeThenConfirm(t *testing.T) {
+	want := []Action{{"model", "fast"}, {"thinking", "high"}}
+	b := NewPromptBox()
+	b.SetCommander(stubCommander{actions: want})
+	b.SetSize(60, 20)
+	b.ta.SetValue("quick but precise")
+
+	// Submit → the Commander proposes → box enters the proposed state.
+	b, cmd := b.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	b = follow(b, cmd)
+	if b.state != boxProposed {
+		t.Fatalf("expected boxProposed after Commander returns, got %d", b.state)
+	}
+	if !strings.Contains(b.View(), "proposed changes") || !strings.Contains(b.View(), "fast") {
+		t.Errorf("proposed view should list the actions, got:\n%s", b.View())
+	}
+
+	// Enter accepts → emits ActionsConfirmedMsg with the proposal, box back to editing.
+	b, cmd = b.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if b.state != boxEditing {
+		t.Errorf("after accept, expected boxEditing, got %d", b.state)
+	}
+	if cmd == nil {
+		t.Fatal("accept should emit a Cmd")
+	}
+	msg, ok := cmd().(ActionsConfirmedMsg)
+	if !ok {
+		t.Fatalf("accept should emit ActionsConfirmedMsg, got %T", cmd())
+	}
+	if len(msg.Actions) != 2 || msg.Actions[0] != want[0] {
+		t.Errorf("confirmed actions = %v, want %v", msg.Actions, want)
+	}
+}
+
+func TestPromptBoxActEscRejects(t *testing.T) {
+	b := NewPromptBox()
+	b.SetCommander(stubCommander{actions: []Action{{"model", "fast"}}})
+	b.SetSize(60, 20)
+	b.ta.SetValue("x")
+
+	b, cmd := b.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	b = follow(b, cmd)
+	if b.state != boxProposed {
+		t.Fatalf("expected boxProposed, got %d", b.state)
+	}
+	b, _ = b.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if b.state != boxEditing || b.proposed != nil {
+		t.Errorf("esc should reject the proposal and clear it; state=%d proposed=%v", b.state, b.proposed)
+	}
+}

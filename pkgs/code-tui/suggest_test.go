@@ -28,19 +28,27 @@ func TestValidFacetActions(t *testing.T) {
 	}
 }
 
-func TestActDocsSchema(t *testing.T) {
-	docs := string(actDocs(facetDefs(map[string]string{})))
-	// Every facet key and the JSON-only instruction must be present.
+func TestClassifyMessage(t *testing.T) {
+	msg := classifyMessage(facetDefs(map[string]string{}), "check the docs for X")
+	// The schema (every facet key + a representative value) must be present.
 	for _, key := range []string{"lane", "model", "thinking", "advisor", "spark", "fable", "fast"} {
-		if !strings.Contains(docs, key) {
-			t.Errorf("actDocs missing facet %q", key)
+		if !strings.Contains(msg, key) {
+			t.Errorf("classifyMessage missing facet %q", key)
 		}
 	}
-	if !strings.Contains(docs, "JSON") {
-		t.Errorf("actDocs must instruct a JSON reply")
+	if !strings.Contains(msg, "smart") {
+		t.Errorf("classifyMessage should enumerate facet values (e.g. model=smart)")
 	}
-	// A representative value should be enumerated.
-	if !strings.Contains(docs, "smart") {
-		t.Errorf("actDocs should enumerate facet values (e.g. model=smart)")
+	// The user's prompt must be embedded as delimited data, not left as a bare
+	// instruction — that's the whole fix.
+	if !strings.Contains(msg, "\"\"\"\ncheck the docs for X\n\"\"\"") {
+		t.Errorf("classifyMessage must embed the prompt as delimited data, got:\n%s", msg)
+	}
+}
+
+func TestEvalSystemPromptIsSelectorRole(t *testing.T) {
+	s := string(evalSystemPrompt)
+	if !strings.Contains(s, "never perform") || !strings.Contains(s, "settings") {
+		t.Errorf("evalSystemPrompt should pin the selector-only role, got: %q", s)
 	}
 }

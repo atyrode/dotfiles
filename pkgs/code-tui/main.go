@@ -1467,6 +1467,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == genView {
 				m.cycleFacet(1)
 			}
+		case "pgup", "ctrl+u":
+			m.vp.HalfViewUp() // scroll the preview (mouse capture is off, see main)
+		case "pgdown", "ctrl+d":
+			m.vp.HalfViewDown()
 		case "enter":
 			if m.view == pickerView {
 				m.chosen = m.profiles[m.cursor].exe
@@ -1474,13 +1478,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.genConfig = m.genConfigYAML()
 			}
 			return m, tea.Quit
-		}
-	case tea.MouseMsg:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			m.vp.LineUp(3)
-		case tea.MouseButtonWheelDown:
-			m.vp.LineDown(3)
 		}
 
 	case clikit.ActionsConfirmedMsg:
@@ -1778,7 +1775,10 @@ func main() {
 		facets:    facetDefs(glyphs),
 		sel:       defaultSel(),
 	}
-	final, err := clikit.Run(m, clikit.WithAltScreen(), clikit.WithMouseCellMotion())
+	// No mouse capture: with mouse reporting on, the terminal routes every mouse
+	// event (right-click, selection, paste) to the app, breaking native terminal
+	// behaviour. The preview scrolls via pgup/pgdown / ctrl+u/ctrl+d instead.
+	final, err := clikit.Run(m, clikit.WithAltScreen())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
 		os.Exit(1)

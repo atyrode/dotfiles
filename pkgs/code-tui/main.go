@@ -48,7 +48,7 @@ var keys = keyMap{
 	Switch:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "generator ⇄ profiles")),
 	Move:     key.NewBinding(key.WithKeys("up", "down", "j", "k"), key.WithHelp("↑↓", "move")),
 	Change:   key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp("←→", "change")),
-	Depth:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "depth lead/full")),
+	Depth:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "primary ⇄ full chains")),
 	Refresh:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh usage")),
 	Collapse: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "collapse")),
 	Launch:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
@@ -995,14 +995,16 @@ func (m *model) syncPreview() {
 		return
 	}
 	rw := m.vp.Width
-	// routing rule carries the depth state, so `f` (lead ⇄ full) is discoverable.
-	depthLbl := "lead"
+	// routing rule carries the depth state, so `f` (primary ⇄ full chain) is
+	// discoverable — "primary" = each role's lead model only, "full" = its whole
+	// fallback chain. (Avoid "lead" here; the profile list uses it for provider.)
+	depthLbl := "primary only"
 	if m.depth == 1 {
-		depthLbl = "full"
+		depthLbl = "full chains"
 	}
-	rHead := "── routing · " + depthLbl + " "
+	rHead := "── routing · " + depthLbl + " (f) "
 	rule := stDim.Render("── routing · ") + stHead.Render(depthLbl) +
-		stDim.Render(" "+strings.Repeat("─", max(4, rw-lipgloss.Width(rHead))))
+		stDim.Render(" (f) "+strings.Repeat("─", max(4, rw-lipgloss.Width(rHead))))
 	var b strings.Builder
 	if m.view == pickerView {
 		p := m.profiles[m.cursor]

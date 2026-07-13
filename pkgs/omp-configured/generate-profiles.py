@@ -248,6 +248,18 @@ def render(lane, mtier, thinking, spark, fable):
     return "\n".join(lines)
 
 
+def render_model_facts():
+    """Emit the per-model cost + speed table as a pseudo-block the picker parses,
+    so the generator's $ / speed meters read from the catalog (not a second copy):
+    cost is $ per 1M tokens (from omp), speed is our curated tok/s (see models.yml
+    — omp exposes no throughput)."""
+    lines = ["__models__  model facts (id in out speed ttft — $/1M in·out, tok/s, s)"]
+    for k, v in CATALOG.items():
+        lines.append(f"  {ID[k]} {v['cost_in']} {v['cost_out']} {v['speed']} {v['ttft']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_advisors():
     """Emit the advisor dial as a pseudo-block the picker parses (level context
     → chain), so the advisor model names live here, not duplicated in the TUI."""
@@ -272,6 +284,7 @@ def main():
     print("OMP generated routing — first-principles facet grid")
     print("bundled agents: designer librarian reviewer sonic task — ● marks an agent-backed role\n")
     print(render_advisors())
+    print(render_model_facts())
     for lane in LANES:
         for mtier in MTIERS:
             for thinking in THINKING:

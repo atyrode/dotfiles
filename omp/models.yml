@@ -1,12 +1,15 @@
-# Curated model catalog — the single source of truth for the routing tooling:
-# which models we use, their short keys, pool, tier, quota bucket, a role note,
-# and the cost/context/thinking facts.
+# Model catalog for the routing tooling: the curated fields (short key, pool,
+# tier, quota bucket, role note) plus a cache of the factual fields omp measures.
 #
-# The factual fields (cost_in, cost_out — $ per 1M tokens; context; thinking)
-# mirror `omp models --json`, which is the AUTHORITY. omp fetches its catalog
-# into ~/.omp/models.db (network + provider-gated), so it can't be read in the
-# Nix build sandbox — hence the numbers live here, copied from omp. Keep them in
-# sync when pricing changes: `omp models <key> --json` prints the current values.
+# The factual fields are NOT hand-maintained — omp is the authority for all of
+# them, and `omp/refresh-model-facts.py` (run: `nix run .#refresh-model-facts`)
+# re-pulls them, rewriting only these fields in place:
+#   cost_in / cost_out ($ per 1M tokens), context, thinking  <- `omp models --json`
+#   speed (output tok/s), ttft (time-to-first-token, seconds) <- `omp bench --json`
+# They live here only because the Nix build sandbox has no network, creds, or
+# ~/.omp and so cannot reach omp itself; this file is that committed cache. Do not
+# edit the factual fields by hand — re-run the refresh instead. (speed/ttft are a
+# live benchmark, so they drift with load; re-run when you want fresh figures.)
 #
 #   pool:   O = openai-codex   ·   A = anthropic
 #   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
@@ -16,6 +19,7 @@
 #
 # Consumed by generate-profiles.py (the facet grid) and generate-wiki.py (the
 # browsable profiles wiki).
+refreshed: '2026-07-13'
 models:
   luna:
     id: gpt-5.6-luna
@@ -24,7 +28,9 @@ models:
     bucket: codex-main
     cost_in: 1
     cost_out: 6
-    context: 372000
+    speed: 52.3
+    ttft: 1.18
+    context: 272000
     thinking: low→max
     role: >-
       Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
@@ -36,7 +42,9 @@ models:
     bucket: codex-main
     cost_in: 2.5
     cost_out: 15
-    context: 372000
+    speed: 51.8
+    ttft: 1.74
+    context: 272000
     thinking: low→max
     role: >-
       Balanced workhorse. Leads the regular GPT tier (ompb) and the mixed
@@ -48,7 +56,9 @@ models:
     bucket: codex-main
     cost_in: 5
     cost_out: 30
-    context: 372000
+    speed: 31.5
+    ttft: 4.59
+    context: 272000
     thinking: low→max
     role: Flagship. Leads the smart GPT tier (ompg, ompm, ompo).
   spark:
@@ -58,6 +68,8 @@ models:
     bucket: codex-spark
     cost_in: 1.75
     cost_out: 14
+    speed: 286.7
+    ttft: 5.56
     context: 128000
     thinking: low→xhigh
     role: >-
@@ -70,6 +82,8 @@ models:
     bucket: claude-main
     cost_in: 1
     cost_out: 5
+    speed: 48.9
+    ttft: 1.7
     context: 200000
     thinking: minimal→xhigh
     role: >-
@@ -82,6 +96,8 @@ models:
     bucket: claude-main
     cost_in: 2
     cost_out: 10
+    speed: 35.2
+    ttft: 3.84
     context: 1000000
     thinking: low→max
     role: >-
@@ -94,6 +110,8 @@ models:
     bucket: claude-main
     cost_in: 5
     cost_out: 25
+    speed: 46.6
+    ttft: 1.77
     context: 1000000
     thinking: low→max
     role: >-
@@ -106,6 +124,12 @@ models:
     bucket: claude-fable
     cost_in: 10
     cost_out: 50
+    # speed/ttft: from `omp stats` history (what `/model` shows), NOT `omp bench` —
+    # Fable's bucket was maxed so it couldn't be benched live. Stats are thinking-
+    # blended so not perfectly bench-comparable; re-run the refresh once the Fable
+    # quota resets to replace these with a clean benchmark.
+    speed: 54
+    ttft: 6.9
     context: 1000000
     thinking: low→max
     role: >-

@@ -1,0 +1,58 @@
+name: Model facts freshness
+
+# omp is the authority for the factual model data (cost/speed/ttft) cached in
+# omp/models.yml, refreshed by `nix run .#refresh-model-facts`. That refresh
+# needs omp's creds + `omp bench` (real API calls), so CI can't run it — but it
+# can watch the `refreshed:` stamp and nudge when the cache goes stale, so the
+# data gets recomputed *sometime* even though it changes rarely.
+
+on:
+  schedule:
+    - cron: "0 9 1 * *" # 09:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: model-facts-freshness
+  cancel-in-progress: false
+
+env:
+  MAX_AGE_DAYS: 90
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Nudge if the model-facts cache is stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          refreshed="$(grep -m1 '^refreshed:' omp/models.yml | sed -E "s/^refreshed:[[:space:]]*'?([0-9-]+)'?.*/\1/")"
+          if [ -z "$refreshed" ]; then
+            echo "no 'refreshed:' stamp in omp/models.yml" >&2
+            exit 1
+          fi
+          age=$(( ( $(date +%s) - $(date -d "$refreshed" +%s) ) / 86400 ))
+          echo "model facts last refreshed $refreshed ($age days ago; threshold ${MAX_AGE_DAYS})"
+          if [ "$age" -le "${MAX_AGE_DAYS}" ]; then
+            echo "fresh enough — nothing to do."
+            exit 0
+          fi
+          title="Refresh model facts (omp/models.yml is ${age} days old)"
+          body=$(printf 'omp/models.yml was last refreshed **%s** (%s days ago).\n\nRun `nix run .#refresh-model-facts` on a machine with omp auth to re-pull cost/speed/ttft, then open a PR. (CI can'\''t do it — `omp bench` needs creds + real API calls.)' "$refreshed" "$age")
+          existing="$(gh issue list --state open --search "in:title Refresh model facts" --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+            echo "updated existing reminder issue #$existing"
+          else
+            gh issue create --title "$title" --body "$body" --label "" >/dev/null || gh issue create --title "$title" --body "$body" >/dev/null
+            echo "opened a reminder issue"
+          fi

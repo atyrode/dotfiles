@@ -30,7 +30,7 @@ Usage:
   atyrode doctor system [HOST] [--json]
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
-  atyrode generations [--json]
+  atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes]
 
@@ -919,13 +919,23 @@ gen_profile() {
 
 gen_platform() { [[ "$(uname -s)" == Darwin ]] && printf 'nix-darwin' || printf 'home-manager'; }
 
+# Human closure size of a profile generation's store path, or empty when it
+# can't be resolved. A store query, so it stays behind --sizes (not the default).
+gen_size() {
+  local p
+  p="$(readlink -f "$1-$2-link" 2>/dev/null)" || return 0
+  [[ -n "$p" ]] || return 0
+  nix path-info -Sh "$p" 2>/dev/null | awk -F'\t' 'NR==1 { s = $2; gsub(/^ +| +$/, "", s); print s }'
+}
+
 # generations — list the activation profile's generations (read-only). nh only
 # exposes this for NixOS, so we read the profile natively (a tested gap per #21).
 cmd_generations() {
-  local json=0
+  local json=0 sizes=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) json=1 ;;
+      --sizes) sizes=1 ;; # closure size per generation (a store query, slower)
       *) die "$EX_USAGE" "unknown generations option: $1" ;;
     esac
     shift
@@ -933,14 +943,32 @@ cmd_generations() {
   command -v nix-env >/dev/null || die "$EX_UNAVAILABLE" "nix-env is unavailable"
   local profile; profile="$(gen_profile)"
   [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $(gen_platform) generations profile at $profile"
+
+  local line gen d t rest cur size
   if [[ "$json" == 1 ]]; then
-    nix-env -p "$profile" --list-generations 2>/dev/null | awk '
-      { cur = ($0 ~ /\(current\)/) ? "true" : "false";
-        printf "%s{\"generation\":%d,\"date\":\"%s %s\",\"current\":%s}", (NR>1 ? "," : ""), $1, $2, $3, cur }
-      END { print "" }' | (printf '['; cat; printf ']\n')
+    local first=1
+    printf '['
+    while IFS= read -r line; do
+      read -r gen d t rest <<<"$line"
+      cur=false; [[ "$line" == *"(current)"* ]] && cur=true
+      [[ "$first" == 1 ]] || printf ','
+      first=0
+      printf '{"generation":%d,"date":"%s %s","current":%s' "$gen" "$d" "$t" "$cur"
+      if [[ "$sizes" == 1 ]]; then size="$(gen_size "$profile" "$gen")"; [[ -n "$size" ]] && printf ',"closureSize":"%s"' "$size"; fi
+      printf '}'
+    done < <(nix-env -p "$profile" --list-generations 2>/dev/null)
+    printf ']\n'
   else
     printf 'atyrode: %s generations (%s)\n' "$(gen_platform)" "$profile" >&2
-    nix-env -p "$profile" --list-generations
+    while IFS= read -r line; do
+      if [[ "$sizes" == 1 ]]; then
+        read -r gen _ <<<"$line"
+        size="$(gen_size "$profile" "$gen")"
+        printf '%s%s\n' "$line" "${size:+   [${size}]}"
+      else
+        printf '%s\n' "$line"
+      fi
+    done < <(nix-env -p "$profile" --list-generations 2>/dev/null)
   fi
 }
 

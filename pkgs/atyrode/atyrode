@@ -875,6 +875,45 @@ clean_macos_residue() {
   printf '  app-owned, not Nix-managed, so a dropped app leaves it behind; remove by hand.\n' >&2
 }
 
+# collect_garbage runs the store GC that `nh clean --no-gc` deliberately skips.
+# nh runs it silently, so the last step of a clean looks frozen for however long
+# the daemon takes (often minutes). Here we own that phase: a spinner on a
+# terminal shows it is alive, and non-interactively the collector's native output
+# streams through. In test builds it is a no-op unless ATYRODE_NIX_STORE provides
+# a stand-in, so the suite never touches the real store.
+collect_garbage() {
+  local -a gc=(nix-store --gc)
+  if [[ "$test_hooks" == 1 ]]; then
+    [[ -n "${ATYRODE_NIX_STORE:-}" ]] || return 0
+    gc=("$ATYRODE_NIX_STORE" --gc)
+  fi
+
+  if [[ ! -t 2 ]]; then # non-interactive: stream the collector's own output
+    printf 'atyrode: collecting garbage…\n' >&2
+    "${gc[@]}" >&2 || printf 'atyrode: garbage collection reported an error\n' >&2
+    return 0
+  fi
+
+  local out pid rc=0 i=0
+  local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+  out="$(mktemp)"
+  "${gc[@]}" >"$out" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r  %s collecting garbage…' "${frames[$((i++ % ${#frames[@]}))]}" >&2
+    sleep 0.1
+  done
+  wait "$pid" || rc=$?
+  printf '\r\033[K' >&2
+  if [[ "$rc" == 0 ]]; then
+    printf 'atyrode: %s\n' "$(grep -iE 'freed|deleted' "$out" | tail -n1 || echo 'store collected')" >&2
+  else
+    cat "$out" >&2
+    printf 'atyrode: garbage collection failed\n' >&2
+  fi
+  rm -f "$out"
+}
+
 # clean — reclaim disk from generations the config no longer references, always
 # keeping the current generation and a rollback window (never an auto-wipe of the
 # safety net). Also sweeps stale macOS app aliases (see clean_macos_residue).
@@ -897,9 +936,14 @@ cmd_clean() {
   [[ "$test_hooks" != 1 || -z "${ATYRODE_NH:-}" ]] || nh_command="$ATYRODE_NH"
 
   printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
-  local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since")
+  # Let nh remove the stale generations and gcroots, but skip its garbage
+  # collection (--no-gc) — nh runs it silently. We collect below instead, with a
+  # progress indicator, so the slow final step isn't an unexplained freeze.
+  local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since" --no-gc)
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   "${nh_args[@]}" || die "$EX_SOFTWARE" "nh clean failed"
+
+  [[ "$dry" == 1 ]] || collect_garbage
 
   if [[ "$(uname -s)" == Darwin ]]; then
     clean_macos_residue "$dry" "$assume_yes"

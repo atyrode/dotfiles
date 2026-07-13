@@ -411,5 +411,24 @@ pkgs.runCommand "check-atyrode-cli"
     grep -F '"$test_hooks" == 1 && -n "''${ATYRODE_NH:-}"' \
       ${../pkgs/atyrode/atyrode} >/dev/null
 
+    # clean splits the GC out of nh (--no-gc) and runs it itself so the slow
+    # phase can show progress; a stub stands in for the real collector.
+    cat > "$TMPDIR/bin/fake-gc" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" > "$TMPDIR/gc-args"
+    EOF
+    chmod +x "$TMPDIR/bin/fake-gc"
+    export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
+    atyrode clean --keep 3 >/dev/null 2>&1
+    grep -F -- '--no-gc' "$TMPDIR/nh-args" >/dev/null \
+      || { echo 'clean must pass --no-gc to nh' >&2; exit 1; }
+    grep -F -- '--gc' "$TMPDIR/gc-args" >/dev/null \
+      || { echo 'clean must run the garbage collector' >&2; exit 1; }
+    rm -f "$TMPDIR/gc-args"
+    atyrode clean -n >/dev/null 2>&1
+    test ! -e "$TMPDIR/gc-args" \
+      || { echo 'dry-run clean must not collect garbage' >&2; exit 1; }
+    unset ATYRODE_NIX_STORE
+
     mkdir "$out"
   ''

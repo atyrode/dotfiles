@@ -97,5 +97,8 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Print("first chunk")
 		time.Sleep(30 * time.Second) // killed by the context long before this
 		os.Exit(0)
+	case "json":
+		fmt.Print(`{"model": "fast", "thinking": "high"}`)
+		os.Exit(0)
 	}
 }

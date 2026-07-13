@@ -169,6 +169,9 @@ func TestPromptBoxActProposeThenConfirm(t *testing.T) {
 	if len(msg.Actions) != 2 || msg.Actions[0] != want[0] {
 		t.Errorf("confirmed actions = %v, want %v", msg.Actions, want)
 	}
+	if msg.Prompt != "quick but precise" {
+		t.Errorf("confirmed prompt = %q, want the submitted text", msg.Prompt)
+	}
 }
 
 func TestPromptBoxActEscRejects(t *testing.T) {

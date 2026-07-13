@@ -25,11 +25,16 @@ func WithAltScreen() RunOption {
 	return func(h *host) { h.altScreen = true }
 }
 
-// Run starts app under a cli-kit host that auto-mounts capabilities. If app is
-// Askable, a prompt box (Ask mode) is available via the toggle key; if it is also
-// Documented, that grounding is available to the backend; Commandable is detected
-// and reserved for Act mode. An app that implements none simply runs as-is.
-func Run(app App, opts ...RunOption) error {
+// WithMouseCellMotion enables cell-motion mouse reporting (e.g. wheel scroll).
+func WithMouseCellMotion() RunOption {
+	return func(h *host) { h.mouse = true }
+}
+
+// Run starts app under a cli-kit host that auto-mounts capabilities: Askable gets
+// a prompt box in Ask mode, Commandable in Act mode (precedence), Documented
+// grounds the backend; an app implementing none simply runs as-is. It returns the
+// app's final model (unwrapped from the host) so callers can read end state.
+func Run(app App, opts ...RunOption) (tea.Model, error) {
 	h := newHost(app)
 	for _, o := range opts {
 		o(&h)
@@ -38,8 +43,14 @@ func Run(app App, opts ...RunOption) error {
 	if h.altScreen {
 		teaOpts = append(teaOpts, tea.WithAltScreen())
 	}
-	_, err := tea.NewProgram(h, teaOpts...).Run()
-	return err
+	if h.mouse {
+		teaOpts = append(teaOpts, tea.WithMouseCellMotion())
+	}
+	final, err := tea.NewProgram(h, teaOpts...).Run()
+	if fh, ok := final.(host); ok {
+		return fh.app, err
+	}
+	return nil, err
 }
 
 // host wraps a consumer App, overlaying the prompt box when active and routing
@@ -51,6 +62,7 @@ type host struct {
 	active    bool
 	toggleKey string
 	altScreen bool
+	mouse     bool
 	w, h      int
 }
 

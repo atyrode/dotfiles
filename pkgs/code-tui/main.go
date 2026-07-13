@@ -1098,8 +1098,9 @@ type model struct {
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
 
-	chosen    string
-	genConfig string // generated config YAML to launch omp with (generator Enter)
+	chosen      string
+	genConfig   string // generated config YAML to launch omp with (generator Enter)
+	firstPrompt string // prompt from the suggest box, forwarded as omp's first message
 }
 
 // usage auto-refreshes on this cadence; a 1s tick drives the countdown.
@@ -1481,6 +1482,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseButtonWheelDown:
 			m.vp.LineDown(3)
 		}
+
+	case clikit.ActionsConfirmedMsg:
+		// The suggest box proposed facet changes and the user accepted them:
+		// apply to the generator selection (same as a manual change) and remember
+		// the prompt so the launched session receives it as the first message.
+		m.view = genView
+		m.applyActions(msg.Actions)
+		m.firstPrompt = msg.Prompt
 	}
 	return m, nil
 }
@@ -1769,7 +1778,7 @@ func main() {
 		facets:    facetDefs(glyphs),
 		sel:       defaultSel(),
 	}
-	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	final, err := clikit.Run(m, clikit.WithAltScreen(), clikit.WithMouseCellMotion())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
 		os.Exit(1)
@@ -1783,7 +1792,7 @@ func main() {
 		}
 	}
 	if fm.genConfig != "" {
-		launchGenerated(fm.genConfig)
+		launchGenerated(fm.genConfig, fm.firstPrompt)
 	}
 }
 
@@ -1792,7 +1801,7 @@ func main() {
 // supplies the platform extensions, managed defaults, and policy (and caps the
 // overlay), so we must NOT re-layer defaults/policy here — doing so both
 // double-applies them and breaks when their paths aren't valid from the cwd.
-func launchGenerated(cfg string) {
+func launchGenerated(cfg, prompt string) {
 	tmp, err := os.CreateTemp("", "code-gen-*.yml")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
@@ -1810,6 +1819,9 @@ func launchGenerated(cfg string) {
 		os.Exit(1)
 	}
 	args := append([]string{path, "--config", tmp.Name()}, os.Args[1:]...)
+	if prompt != "" { // forward the suggest-box prompt as omp's first message
+		args = append(args, prompt)
+	}
 	if err := syscall.Exec(path, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, "code: exec:", err)
 		os.Exit(1)

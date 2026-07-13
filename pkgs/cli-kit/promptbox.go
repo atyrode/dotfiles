@@ -61,8 +61,13 @@ type actionsReady struct {
 type BoxCloseMsg struct{}
 
 // ActionsConfirmedMsg is emitted when the user accepts a Commander's proposal.
-// The host (see Run, which forwards it to the app) applies the actions.
-type ActionsConfirmedMsg struct{ Actions []Action }
+// The host (see Run, which forwards it to the app) applies the actions. Prompt is
+// the text the user submitted, so a host can carry it forward (e.g. as the first
+// message of the session it launches).
+type ActionsConfirmedMsg struct {
+	Actions []Action
+	Prompt  string
+}
 
 // PromptBox is a value type — Update returns an updated copy, matching the
 // bubbles convention.
@@ -76,6 +81,7 @@ type PromptBox struct {
 	w, h     int
 	state    boxState
 	answer   string
+	prompt   string   // the submitted prompt (carried into ActionsConfirmedMsg)
 	proposed []Action // Act mode: the actions awaiting confirmation
 	err      error
 
@@ -151,6 +157,7 @@ func (b *PromptBox) submit() tea.Cmd {
 	}
 	b.state = boxBusy
 	b.answer, b.err, b.proposed = "", nil, nil
+	b.prompt = prompt
 	b.seq++
 	seq := b.seq
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,9 +206,9 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			case boxBusy:
 				return b, nil
 			case boxProposed: // accept the proposal → hand it to the host
-				actions := b.proposed
+				actions, prompt := b.proposed, b.prompt
 				b.proposed, b.state = nil, boxEditing
-				return b, func() tea.Msg { return ActionsConfirmedMsg{Actions: actions} }
+				return b, func() tea.Msg { return ActionsConfirmedMsg{Actions: actions, Prompt: prompt} }
 			default: // enter submits; the box is a single prompt line
 				return b, b.submit()
 			}

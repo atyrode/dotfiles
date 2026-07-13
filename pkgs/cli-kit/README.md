@@ -38,7 +38,7 @@ type helpApp struct{ /* your tea.Model */ }
 func (helpApp) Asker() clikit.Asker { return clikit.NewOmpAsker(myDocs) }
 func (helpApp) Docs() clikit.DocCorpus { return myDocs }
 
-func main() { _ = clikit.Run(helpApp{...}, clikit.WithAltScreen()) }
+func main() { _, _ = clikit.Run(helpApp{...}, clikit.WithAltScreen()) }
 ```
 
 `NewOmpAsker` shells out to a headless omp run

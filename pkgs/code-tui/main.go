@@ -500,7 +500,14 @@ func renderRoute(rows []string, depth int, a availability, width int) string {
 		line, lineW := label+s0, labelW+w0
 		for i := 1; i <= last; i++ {
 			si, wi := render(toks[i])
-			if lineW+3+wi > width { // won't fit — break after a trailing arrow
+			// Reserve 2 cols for a trailing " →" whenever more models follow, so a
+			// break line's continuation arrow always fits within width instead of
+			// being clipped at the edge; the final model needs no such reserve.
+			budget := width
+			if i < last {
+				budget -= 2
+			}
+			if lineW+3+wi > budget { // won't fit — break after a trailing arrow
 				out = append(out, line+stDim.Render(" →"))
 				line, lineW = indent+si, labelW+wi
 			} else {
@@ -1049,8 +1056,9 @@ func (m model) previewDims() (int, int) {
 		body, _ := m.bodyLines(m.w - gut)
 		_, ph := stackedSplit(bodyH, len(body))
 		return m.w - gut, ph
-	default: // split
-		return m.w - m.listW() - 3, bodyH
+	default: // split — the pane draws a border + prevPadL inside its width, so the
+		// viewport (what renderRoute wraps to) gets the inner text area, not the box.
+		return m.w - m.listW() - 3 - prevPadL, bodyH
 	}
 }
 
@@ -1507,10 +1515,16 @@ func (m *model) cycleFacet(dir int) {
 	m.syncPreview()
 }
 
+// prevPadL is the split preview pane's left padding. Width() counts it, so the
+// viewport's usable text width is the box width minus this — the viewport must
+// be sized to that inner area (see previewDims), else lines wrap 1:1 with the
+// box and their tail overflows to the pane's left edge.
+const prevPadL = 2
+
 func (m model) previewPane(w, h int) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color(cBord)).PaddingLeft(2).
+		BorderForeground(lipgloss.Color(cBord)).PaddingLeft(prevPadL).
 		Width(w).Height(h).
 		Render(m.vp.View())
 }

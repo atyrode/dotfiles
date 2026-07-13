@@ -30,6 +30,8 @@ Usage:
   atyrode doctor system [HOST] [--json]
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
+  atyrode generations [--json]
+  atyrode rollback [--to N] [--dry-run] [--yes]
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes]
 
 The host registry is the authority for identity, platform, and capabilities.
@@ -38,10 +40,12 @@ to an exact commit first; --repo switches to a local checkout for development.
 apply validates everything before invoking nh, and afterwards reports plain-omp
 settings that drifted from the seeded defaults, offering an interactive
 keep-or-reset review on a terminal.
-clean reclaims disk from generations the config no longer references, always
-keeping the current one and a rollback window (--keep / --keep-since); on macOS
-it also sweeps stale Home Manager Apps aliases. Commands reserved for later
-issues: workspace, agent, generations, and rollback.
+generations lists the activation profile's generations (nix-darwin system on
+macOS, home-manager on Linux); rollback activates an earlier one (previous by
+default, or --to N) after confirming. clean reclaims disk from generations the
+config no longer references, always keeping the current one and a rollback
+window (--keep / --keep-since); on macOS it also sweeps stale Home Manager Apps
+aliases. Commands reserved for later issues: workspace and agent.
 EOF
 }
 
@@ -902,12 +906,102 @@ cmd_clean() {
   fi
 }
 
+# The activation profile whose generations `apply` switches: the nix-darwin
+# system profile on macOS, the home-manager profile on Linux — mirroring which
+# `nh <backend> switch` apply drives.
+gen_profile() {
+  if [[ "$(uname -s)" == Darwin ]]; then
+    printf '/nix/var/nix/profiles/system'
+  else
+    printf '%s/nix/profiles/home-manager' "${XDG_STATE_HOME:-$HOME/.local/state}"
+  fi
+}
+
+gen_platform() { [[ "$(uname -s)" == Darwin ]] && printf 'nix-darwin' || printf 'home-manager'; }
+
+# generations — list the activation profile's generations (read-only). nh only
+# exposes this for NixOS, so we read the profile natively (a tested gap per #21).
+cmd_generations() {
+  local json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown generations option: $1" ;;
+    esac
+    shift
+  done
+  command -v nix-env >/dev/null || die "$EX_UNAVAILABLE" "nix-env is unavailable"
+  local profile; profile="$(gen_profile)"
+  [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $(gen_platform) generations profile at $profile"
+  if [[ "$json" == 1 ]]; then
+    nix-env -p "$profile" --list-generations 2>/dev/null | awk '
+      { cur = ($0 ~ /\(current\)/) ? "true" : "false";
+        printf "%s{\"generation\":%d,\"date\":\"%s %s\",\"current\":%s}", (NR>1 ? "," : ""), $1, $2, $3, cur }
+      END { print "" }' | (printf '['; cat; printf ']\n')
+  else
+    printf 'atyrode: %s generations (%s)\n' "$(gen_platform)" "$profile" >&2
+    nix-env -p "$profile" --list-generations
+  fi
+}
+
+# rollback — activate an earlier generation (previous by default, or --to N).
+# A mutation, so it confirms first and --dry-run only previews; roll-forward is
+# always possible, and it refuses to "roll back" to the current generation.
+cmd_rollback() {
+  local to="" dry=0 assume_yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --to) shift; to="${1:-}" ;;
+      -n | --dry-run) dry=1 ;;
+      -y | --yes) assume_yes=1 ;;
+      *) die "$EX_USAGE" "unknown rollback option: $1" ;;
+    esac
+    shift || true
+  done
+  command -v nix-env >/dev/null || die "$EX_UNAVAILABLE" "nix-env is unavailable"
+  local profile platform; profile="$(gen_profile)"; platform="$(gen_platform)"
+  [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $platform generations profile at $profile"
+
+  local listing current target
+  listing="$(nix-env -p "$profile" --list-generations 2>/dev/null)"
+  current="$(awk '/\(current\)/{print $1}' <<<"$listing")"
+  [[ -n "$current" ]] || die "$EX_SOFTWARE" "cannot determine the current generation"
+  if [[ -n "$to" ]]; then
+    [[ "$to" =~ ^[0-9]+$ ]] || die "$EX_USAGE" "--to expects a generation number"
+    target="$to"
+    awk '{print $1}' <<<"$listing" | grep -qx "$target" || die "$EX_DATAERR" "generation $target does not exist"
+  else
+    target="$(awk -v c="$current" '$1+0 < c+0 {g=$1} END{print g}' <<<"$listing")"
+    [[ -n "$target" ]] || die "$EX_UNAVAILABLE" "no earlier generation to roll back to"
+  fi
+  [[ "$target" != "$current" ]] || die "$EX_USAGE" "generation $target is already current"
+
+  printf 'atyrode: roll %s back from generation %s to %s\n' "$platform" "$current" "$target" >&2
+  if [[ "$dry" == 1 ]]; then printf '  dry run — nothing activated\n' >&2; return 0; fi
+  [[ "$assume_yes" == 1 ]] || confirm "activate generation $target now?" || return 0
+
+  if [[ "$platform" == nix-darwin ]]; then
+    command -v darwin-rebuild >/dev/null || die "$EX_UNAVAILABLE" "darwin-rebuild is unavailable"
+    # darwin-rebuild owns its own privilege elevation (as nh does for apply);
+    # atyrode never self-elevates. Run `sudo atyrode rollback` if a setup needs it.
+    darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
+  else
+    local genpath
+    genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" || die "$EX_DATAERR" "cannot resolve generation $target"
+    [[ -x "$genpath/activate" ]] || die "$EX_DATAERR" "generation $target has no activate script"
+    "$genpath/activate" || die "$EX_SOFTWARE" "rollback activation failed"
+  fi
+  printf 'atyrode: now on generation %s\n' "$target" >&2
+}
+
 main() {
   local subcommand="${1:-help}"
   shift || true
   case "$subcommand" in
     apply) apply_config "$@" ;;
     clean) cmd_clean "$@" ;;
+    generations) cmd_generations "$@" ;;
+    rollback) cmd_rollback "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in
@@ -918,7 +1012,7 @@ main() {
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
-    workspace|agent|generations|rollback) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
+    workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;
     *) die "$EX_USAGE" "unknown command: $subcommand" ;;
   esac

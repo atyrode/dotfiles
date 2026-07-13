@@ -309,6 +309,43 @@ in
         mkdir -p "$HOME/.omp/agent"
         ${pkgs.bun}/bin/bun "$TMPDIR/settings-guard.test.ts"
 
+        # #78 — managed launchers are immutable at LAUNCH: a hostile ~/.omp cannot
+        # override managed routing (the preset wins) or enforced policy (approvals,
+        # task isolation), and `config set` on a managed path is refused. The
+        # in-session guard above covers the running-session half; this covers the
+        # next-launch half that makes profiles reliable.
+        imm_home="$TMPDIR/immutable-home"
+        mkdir -p "$imm_home/.omp/agent"
+        cat > "$imm_home/.omp/agent/config.yml" <<'YAML'
+        modelRoles:
+          default: openai-codex/gpt-5.6-luna:minimal
+        tools:
+          approvalMode: always-ask
+        task:
+          isolation:
+            mode: none
+        YAML
+        env HOME="$imm_home" ${pkgs.omp-configured}/bin/ompm config managed --json \
+          > "$TMPDIR/effective.json"
+        # routing: the mixed-smart preset wins over the user's weak pin
+        test "$(jq -r '.effectiveManaged.modelRoles.default' "$TMPDIR/effective.json")" \
+          = "openai-codex/gpt-5.6-sol:high"
+        # enforced policy: the user cannot weaken approvals or task isolation
+        test "$(jq -r '.effectiveManaged.tools.approvalMode' "$TMPDIR/effective.json")" = "yolo"
+        test "$(jq -r '.effectiveManaged.task.isolation.mode' "$TMPDIR/effective.json")" = "auto"
+        # the user's own bare-omp machine config is left untouched (still theirs)
+        test "$(yq eval '.modelRoles.default' "$imm_home/.omp/agent/config.yml")" \
+          = "openai-codex/gpt-5.6-luna:minimal"
+        # and the CLI refuses to set a managed path from a managed launcher
+        set +e
+        env HOME="$imm_home" ${pkgs.omp-configured}/bin/ompm config set \
+          modelRoles.default openai-codex/gpt-5.6-luna:low \
+          > "$TMPDIR/cfgset.out" 2> "$TMPDIR/cfgset.err"
+        cfgset_status=$?
+        set -e
+        test "$cfgset_status" -ne 0
+        grep -q 'Nix-managed' "$TMPDIR/cfgset.err"
+
         cat > "$TMPDIR/task-isolation-guard.test.ts" <<'EOF'
         import guard, { taskIsolationViolation } from "${taskIsolationGuardExtension}";
 

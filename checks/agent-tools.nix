@@ -1091,6 +1091,40 @@ in
             "$migration" finalize "$empty_home_files"
             test "$(find "$state_root" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
 
+            reboot_home="$TMPDIR/reboot-home"
+            HOME="$reboot_home" "$migration" prepare
+            reboot_complete="$reboot_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
+            HOME="$reboot_home" "$migration" finalize "$empty_home_files"
+            : > "$reboot_complete/receipt.tsv"
+            HOME="$reboot_home" "$migration" prepare
+            HOME="$reboot_home" "$migration" finalize "$empty_home_files"
+            test -d "$reboot_complete"
+            test -z "$(find "$reboot_complete/backup" "$reboot_complete/work" -mindepth 1 -print -quit)"
+
+            retained_empty_home="$TMPDIR/retained-empty-home"
+            retained_empty_complete="$retained_empty_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
+            mkdir -p "$retained_empty_complete/backup/.local/bin" "$retained_empty_complete/work"
+            : > "$retained_empty_complete/receipt.tsv"
+            printf 'unrecorded operator data\n' > "$retained_empty_complete/backup/.local/bin/omp"
+            if HOME="$retained_empty_home" "$migration" prepare \
+              > "$TMPDIR/retained-empty.out" 2> "$TMPDIR/retained-empty.err"; then
+              exit 1
+            fi
+            grep -q 'empty receipt with retained migration data' "$TMPDIR/retained-empty.err"
+
+            symlinked_complete_home="$TMPDIR/symlinked-complete-home"
+            mkdir -p "$symlinked_complete_home/state-target/backup" \
+              "$symlinked_complete_home/state-target/work" \
+              "$symlinked_complete_home/.local/state/atyrode/agent-tools-migration"
+            : > "$symlinked_complete_home/state-target/receipt.tsv"
+            ln -s "$symlinked_complete_home/state-target" \
+              "$symlinked_complete_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
+            if HOME="$symlinked_complete_home" "$migration" prepare \
+              > "$TMPDIR/symlinked-complete.out" 2> "$TMPDIR/symlinked-complete.err"; then
+              exit 1
+            fi
+            grep -q 'not a migration receipt directory' "$TMPDIR/symlinked-complete.err"
+
             dry_home="$TMPDIR/dry-home"
             mkdir -p "$dry_home/.local/bin"
             cp "$complete/backup/.local/bin/omp" "$dry_home/.local/bin/omp"

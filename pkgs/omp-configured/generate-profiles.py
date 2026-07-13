@@ -12,22 +12,32 @@ produces, so the `code` picker's colorize_routes can render it unchanged:
 
 The combo-id is `<lane>_<mtier>_<thinking>_<sp|nosp>_<fa|nofa>` — the runtime
 facet selector rebuilds the same id from the current facet state to look up the
-block. The catalog below is the future models.yml (issue #79).
+block. The model catalog is loaded from omp/models.yml (issue #79).
 """
 
-# ── model catalog ────────────────────────────────────────────────────────────
-# short key -> full model id (what routing/colorize expects), provider, bucket,
-# tier (0 trivial .. 3 smart, 4 elite). Fallback ladders are per provider by tier.
-ID = {
-    'luna': 'gpt-5.6-luna', 'terra': 'gpt-5.6-terra', 'sol': 'gpt-5.6-sol',
-    'nano': 'gpt-5.4-nano', 'spark': 'gpt-5.3-codex-spark',
-    'haiku': 'claude-haiku-4-5', 'sonnet': 'claude-sonnet-5',
-    'opus': 'claude-opus-4-8', 'fable': 'claude-fable-5',
-}
-LADDER = {'O': [None, 'luna', 'terra', 'sol'], 'A': [None, 'haiku', 'sonnet', 'opus']}
-TIER = {'luna': 1, 'terra': 2, 'sol': 3, 'haiku': 1, 'sonnet': 2, 'opus': 3, 'fable': 4}
-PROV = {k: ('O' if ID[k].startswith('gpt') else 'A') for k in ID}
-CHEAP = {'O': 'luna', 'A': 'haiku'}
+import os
+
+import yaml
+
+# ── model catalog (from omp/models.yml — the single source of truth) ──────────
+# short key -> full model id, provider pool (O/A), quota bucket, and tier
+# (0 trivial .. 3 smart, 4 elite). Fallback ladders are per pool by tier.
+_MODELS_YML = os.environ.get(
+    "MODELS_YML",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "omp", "models.yml"),
+)
+with open(_MODELS_YML) as _f:
+    CATALOG = yaml.safe_load(_f)["models"]
+
+ID = {k: v["id"] for k, v in CATALOG.items()}
+PROV = {k: v["pool"] for k, v in CATALOG.items()}
+TIER = {k: v["tier"] for k, v in CATALOG.items()}
+# LADDER[pool][tier] is the ladder rung; tiers 1..3 only (0/4 are special leads).
+LADDER = {"O": [None, None, None, None], "A": [None, None, None, None]}
+for _k, _v in CATALOG.items():
+    if 1 <= _v["tier"] <= 3:
+        LADDER[_v["pool"]][_v["tier"]] = _k
+CHEAP = {p: LADDER[p][1] for p in ("O", "A")}
 
 
 def other(p):

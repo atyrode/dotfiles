@@ -1177,10 +1177,12 @@ let
   # (lane, model-tier, thinking, spark, fable) combination, baked at build time
   # so the generator view stays immutable and reviewable like the presets.
   generatedProfiles =
-    runCommand "omp-generated-profiles" { nativeBuildInputs = [ python3 ]; }
+    runCommand "omp-generated-profiles"
+      { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }
       ''
         mkdir -p "$out/share/omp"
-        python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
+        MODELS_YML=${../../omp/models.yml} \
+          python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
       '';
   ompHelp = writeShellApplication {
     name = "omph";
@@ -1458,6 +1460,21 @@ let
     ) paletteProfiles
   );
 
+  # The browsable profiles wiki (issue #79): a self-contained routes.html
+  # rendered from models.yml (catalog + cost) + routes.plain + PROFILES.md.
+  # Built here so it can't drift; opened via `code --wiki`.
+  profilesWiki =
+    runCommand "omp-profiles-wiki"
+      { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }
+      ''
+        mkdir -p "$out/share/omp"
+        MODELS_YML=${../../omp/models.yml} \
+        ROUTES=${routesHelp}/share/omp/routes.plain \
+        PROFILES_MD=${../../omp/PROFILES.md} \
+        CODE_PROFILES=${codeProfilesTsv} \
+          python3 ${./generate-wiki.py} > "$out/share/omp/routes.html"
+      '';
+
   codeLauncher = writeShellApplication {
     name = "code";
     runtimeInputs = [ coreutils ];
@@ -1526,6 +1543,7 @@ let
           '  code <profile>          run that launcher (name, number, or letter)' \
           '  code <profile> [args]   run it, forwarding all extra args' \
           '  code -l, --list         print the launcher palette and exit' \
+          '  code -w, --wiki         open the browsable profiles wiki' \
           '  code -U, --no-usage     open without fetching the usage panel' \
           '  code -h, --help         this help' \
           "" \
@@ -1534,9 +1552,21 @@ let
           'profile opens the picker and forwards all args to your choice.'
       }
 
+      open_wiki() {
+        local wiki=${profilesWiki}/share/omp/routes.html
+        if command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "$wiki" >/dev/null 2>&1 &
+        elif command -v open >/dev/null 2>&1; then
+          open "$wiki"
+        else
+          printf '%s\n' "$wiki"
+        fi
+      }
+
       case "''${1:-}" in
         -h | --help) usage; exit 0 ;;
         -l | --list) print_list; exit 0 ;;
+        -w | --wiki) open_wiki; exit 0 ;;
         -U | --no-usage) export CODE_USAGE=""; shift ;;
       esac
 
@@ -1586,7 +1616,8 @@ runCommand "omp-configured-${lib.getVersion omp}"
     };
   }
   ''
-    mkdir -p "$out/bin" "$out/share/zsh/site-functions"
+    mkdir -p "$out/bin" "$out/share/zsh/site-functions" "$out/share/omp"
+    ln -s ${profilesWiki}/share/omp/routes.html "$out/share/omp/routes.html"
     ln -s ${lib.getExe ompDefault} "$out/bin/omp"
     ln -s ${lib.getExe ompBudget} "$out/bin/ompb"
     ln -s ${lib.getExe ompSonnet} "$out/bin/omps"

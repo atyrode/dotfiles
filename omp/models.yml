@@ -1,0 +1,113 @@
+# Curated model catalog — the single source of truth for the routing tooling:
+# which models we use, their short keys, pool, tier, quota bucket, a role note,
+# and the cost/context/thinking facts.
+#
+# The factual fields (cost_in, cost_out — $ per 1M tokens; context; thinking)
+# mirror `omp models --json`, which is the AUTHORITY. omp fetches its catalog
+# into ~/.omp/models.db (network + provider-gated), so it can't be read in the
+# Nix build sandbox — hence the numbers live here, copied from omp. Keep them in
+# sync when pricing changes: `omp models <key> --json` prints the current values.
+#
+#   pool:   O = openai-codex   ·   A = anthropic
+#   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
+#           Tiers 1..3 form the per-pool fallback ladder; 0 and 4 are special
+#           leads (spark drains an idle bucket; fable is a scarce elite lead).
+#   bucket: the quota window a model draws (see PROFILES.md → Separate rate buckets).
+#
+# Consumed by generate-profiles.py (the facet grid) and generate-wiki.py (the
+# browsable profiles wiki).
+models:
+  luna:
+    id: gpt-5.6-luna
+    pool: O
+    tier: 1
+    bucket: codex-main
+    cost_in: 1
+    cost_out: 6
+    context: 372000
+    thinking: low→max
+    role: >-
+      Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
+      tier (ompl); the cheap rung and same-bucket sibling everywhere.
+  terra:
+    id: gpt-5.6-terra
+    pool: O
+    tier: 2
+    bucket: codex-main
+    cost_in: 2.5
+    cost_out: 15
+    context: 372000
+    thinking: low→max
+    role: >-
+      Balanced workhorse. Leads the regular GPT tier (ompb) and the mixed
+      workers. Sonnet's price-twin.
+  sol:
+    id: gpt-5.6-sol
+    pool: O
+    tier: 3
+    bucket: codex-main
+    cost_in: 5
+    cost_out: 30
+    context: 372000
+    thinking: low→max
+    role: Flagship. Leads the smart GPT tier (ompg, ompm, ompo).
+  spark:
+    id: gpt-5.3-codex-spark
+    pool: O
+    tier: 0
+    bucket: codex-spark
+    cost_in: 1.75
+    cost_out: 14
+    context: 128000
+    thinking: low→xhigh
+    role: >-
+      Coding-tuned and fast. Draws a separate, usually-idle Codex bucket, so the
+      fast-execution and background roles lead on it to drain it.
+  haiku:
+    id: claude-haiku-4-5
+    pool: A
+    tier: 1
+    bucket: claude-main
+    cost_in: 1
+    cost_out: 5
+    context: 200000
+    thinking: minimal→xhigh
+    role: >-
+      Fastest/cheapest Anthropic tier. Leads the speed Claude tier (ompk); the
+      Anthropic cheap rung and background hum.
+  sonnet:
+    id: claude-sonnet-5
+    pool: A
+    tier: 2
+    bucket: claude-main
+    cost_in: 2
+    cost_out: 10
+    context: 1000000
+    thinking: low→max
+    role: >-
+      The value pick — near-Opus quality at a fraction of the cost. Leads the
+      regular Claude tier (omps) and the mixed judgment roles.
+  opus:
+    id: claude-opus-4-8
+    pool: A
+    tier: 3
+    bucket: claude-main
+    cost_in: 5
+    cost_out: 25
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Top Opus tier. Leads the smart Claude judgment roles and ompe (claude-only);
+      the main-plan deliberative sibling across the maps.
+  fable:
+    id: claude-fable-5
+    pool: A
+    tier: 4
+    bucket: claude-fable
+    cost_in: 10
+    cost_out: 50
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Most capable, and its own scarce bucket. A deliberate elite lead only
+      (ompc, ompf, ompm judgment, ompx plan) — never an automatic fallback net.

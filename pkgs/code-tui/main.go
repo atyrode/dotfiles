@@ -558,52 +558,82 @@ func parseAdvisors(rows []string) map[string][]string {
 	return out
 }
 
-// parseCosts reads the __costs__ block (rows: "<id> <in> <out>") into a model-id
-// → {cost_in, cost_out} table ($ per 1M tokens), sourced from the catalog so the
-// $ meter and the routing share one price list.
-func parseCosts(rows []string) map[string][2]float64 {
-	out := map[string][2]float64{}
+// modelFact is a model's measured facts from omp (via the catalog): pricing
+// ($/1M tokens), output throughput (tok/s), and time-to-first-token (seconds).
+type modelFact struct {
+	in, out, speed, ttft float64
+}
+
+// effTPS folds ttft into throughput — the effective tok/s for a representative
+// reply of effTokens: total time = ttft (startup) + tokens/speed (streaming), so
+// a blazing-but-slow-to-start model (spark: 287 t/s, 5.6s ttft) reads honestly.
+const effTokens = 300.0
+
+func (f modelFact) effTPS() float64 {
+	if f.speed <= 0 {
+		return 0
+	}
+	return effTokens / (f.ttft + effTokens/f.speed)
+}
+
+// parseFacts reads the __models__ block (rows: "<id> <in> <out> <speed> <ttft>")
+// into a per-model table, sourced from the catalog so meters and routing agree.
+func parseFacts(rows []string) map[string]modelFact {
+	out := map[string]modelFact{}
 	for _, r := range rows {
 		f := strings.Fields(r)
-		if len(f) < 3 {
+		if len(f) < 5 {
 			continue
 		}
 		in, e1 := strconv.ParseFloat(f[1], 64)
 		outc, e2 := strconv.ParseFloat(f[2], 64)
-		if e1 == nil && e2 == nil {
-			out[f[0]] = [2]float64{in, outc}
+		sp, e3 := strconv.ParseFloat(f[3], 64)
+		tt, e4 := strconv.ParseFloat(f[4], 64)
+		if e1 == nil && e2 == nil && e3 == nil && e4 == nil {
+			out[f[0]] = modelFact{in, outc, sp, tt}
 		}
 	}
 	return out
 }
 
-// ── cost meter ───────────────────────────────────────────────────────────────
-// A profile's price is dominated by the models on its heaviest roles, so each
-// role is weighted by the token volume it drives over a session: the default
-// agent and its task sub-agents move the needle; commit/tiny barely register — so
-// Fable-as-commit stays cheap while Fable-as-default is dear. Per role the cost
-// blends input+output pricing, scales with thinking effort, and takes OpenAI's
-// priority multiplier under fast mode. The weighted average maps onto a 1..5 log
-// scale (cost is perceived multiplicatively), calibrated across the whole grid.
+// ── cost + speed meters ──────────────────────────────────────────────────────
+// A profile's price and pace are dominated by the models on its heaviest roles,
+// so each role is weighted by the token volume it drives over a session: the
+// default agent and its task sub-agents move the needle; commit/tiny barely
+// register — so Fable-as-commit stays cheap while Fable-as-default is dear (and
+// slow). Per role, cost blends input+output pricing while speed reads the model's
+// effective throughput (tok/s folded with time-to-first-token — see effTPS); both
+// scale with thinking effort (more reasoning = pricier + slower) and take OpenAI's
+// priority tier under fast mode (pricier but quicker). The weighted averages map
+// onto 1..5 log scales (both perceived multiplicatively), calibrated across every
+// valid facet × advisor × fast combination.
 var roleWeight = map[string]float64{
 	"default": 10, "task": 6, "reviewer": 3, "sonic": 3, "plan": 3, "advisor": 4,
 	"slow": 2, "designer": 2, "librarian": 2, "smol": 1, "tiny": 0.5, "commit": 0.5,
 }
-var thinkMult = map[string]float64{
+var thinkMult = map[string]float64{ // reasoning tokens grow with effort → pricier
 	"minimal": 0.6, "low": 0.8, "medium": 1.0, "high": 1.3, "xhigh": 1.6, "max": 2.0,
 }
+var thinkSpeed = map[string]float64{ // more reasoning before the answer → slower
+	"minimal": 1.4, "low": 1.2, "medium": 1.0, "high": 0.8, "xhigh": 0.65, "max": 0.5,
+}
 
-const priorityMult = 1.9 // OpenAI priority service tier, charged under fast mode
+const (
+	priorityMult = 1.9 // OpenAI priority tier costs more under fast mode …
+	fastSpeed    = 1.3 // … but responds quicker
+)
 
-// costLnLo/Hi are ln of the grid-wide min/max weighted-cost index (calibrated
-// over every valid facet × advisor × fast combination).
-const costLnLo, costLnHi = 1.27, 4.42
+// Ln endpoints of the grid-wide min/max weighted indices, calibrated over every
+// valid facet × advisor × fast combination (cost dear→ high, speed fast→ high).
+const (
+	costLnLo, costLnHi   = 1.27, 4.42
+	speedLnLo, speedLnHi = 2.49, 4.20
+)
 
-// costScore rates the current generator config from 1 (cheap) to 5 (dear).
-func (m model) costScore() int {
+// weightedModels walks the current config's rows and calls fn(weight, id, level)
+// for each role's lead model — the shared basis for both meters.
+func (m model) weightedModels(fn func(w float64, id, lvl string)) {
 	rows := m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
-	fast := m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
-	var num, den float64
 	for _, r := range rows {
 		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
 		i := 0
@@ -625,35 +655,75 @@ func (m model) costScore() int {
 			}
 		}
 		id, lvl, _ := strings.Cut(lead, ":")
-		c, ok := m.costs[id]
+		if id != "" {
+			fn(w, id, lvl)
+		}
+	}
+}
+
+func logScore(idx, lnLo, lnHi float64) int {
+	s := 1 + 4*(math.Log(idx)-lnLo)/(lnHi-lnLo)
+	return int(math.Round(math.Max(1, math.Min(5, s))))
+}
+
+// costScore rates the current config from 1 (cheap) to 5 (dear).
+func (m model) costScore() int {
+	fast := m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
+	var num, den float64
+	m.weightedModels(func(w float64, id, lvl string) {
+		c, ok := m.facts[id]
 		if !ok {
-			continue
+			return
 		}
 		mult, ok := thinkMult[lvl]
 		if !ok {
 			mult = 1
 		}
-		cost := (0.25*c[0] + 0.75*c[1]) * mult
+		cost := (0.25*c.in + 0.75*c.out) * mult
 		if fast && strings.HasPrefix(id, "gpt-") {
 			cost *= priorityMult
 		}
 		num += w * cost
 		den += w
-	}
+	})
 	if den == 0 {
 		return 1
 	}
-	s := 1 + 4*(math.Log(num/den)-costLnLo)/(costLnHi-costLnLo)
-	return int(math.Round(math.Max(1, math.Min(5, s))))
+	return logScore(num/den, costLnLo, costLnHi)
 }
 
-// costMeter renders the 1..5 $ scale — the estimate in the accent colour, the
-// rest dim — always five glyphs so the fill reads at a glance.
-func (m model) costMeter() string {
-	n := m.costScore()
-	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render(strings.Repeat("$", n))
-	rest := stDim.Render(strings.Repeat("$", 5-n))
-	return "  " + stDim.Render("cost ") + acc + rest
+// speedScore rates the current config from 1 (slow) to 5 (fast).
+func (m model) speedScore() int {
+	fast := m.sel["fast"] == "on" && m.sel["lane"] != "claude-only"
+	var num, den float64
+	m.weightedModels(func(w float64, id, lvl string) {
+		c, ok := m.facts[id]
+		if !ok || c.speed == 0 {
+			return
+		}
+		mult, ok := thinkSpeed[lvl]
+		if !ok {
+			mult = 1
+		}
+		sp := c.effTPS() * mult
+		if fast && strings.HasPrefix(id, "gpt-") {
+			sp *= fastSpeed
+		}
+		num += w * sp
+		den += w
+	})
+	if den == 0 {
+		return 3
+	}
+	return logScore(num/den, speedLnLo, speedLnHi)
+}
+
+// meter renders a labelled 1..5 scale — the score in the accent colour, the rest
+// dim — always five glyphs so the fill reads at a glance.
+func (m model) meter(label, glyph string, n int) string {
+	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render(strings.Repeat(glyph, n))
+	rest := stDim.Render(strings.Repeat(glyph, 5-n))
+	return "  " + stDim.Render(pad(label, 6)) + acc + rest
 }
 
 // advisorChain returns the advisor role's model chain for an intensity + lane,
@@ -963,8 +1033,8 @@ type model struct {
 	profiles  []profile
 	routes    map[string][]string
 	generated map[string][]string
-	advisors  map[string][]string   // "level/ctx" → advisor model chain
-	costs     map[string][2]float64 // model id → {cost_in, cost_out} $/1M tokens
+	advisors  map[string][]string  // "level/ctx" → advisor model chain
+	facts     map[string]modelFact // model id → cost ($/1M) + curated speed (tok/s)
 	avail     availability
 	glyphs    map[string]string
 
@@ -1676,7 +1746,9 @@ func (m model) genLines(focused bool) ([]string, int) {
 	// launch call-to-action under the facets — the "configure → launch" flow
 	// lives with the generator; the routing detail stays on the right.
 	if focused {
-		lines = append(lines, "", m.costMeter(),
+		lines = append(lines, "",
+			m.meter("cost", "$", m.costScore()),
+			m.meter("speed", "»", m.speedScore()),
 			lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Bold(true).Render("  ⏎ launch this profile"))
 	}
 	return lines, cursor
@@ -1715,7 +1787,7 @@ func main() {
 		routes:    loadBlocks(os.Getenv("CODE_ROUTES")),
 		generated: generated,
 		advisors:  parseAdvisors(generated["__advisors__"]),
-		costs:     parseCosts(generated["__costs__"]),
+		facts:     parseFacts(generated["__models__"]),
 		avail:     availability{bucket: map[string]string{}, reset: map[string]int64{}},
 		usageCmd:  os.Getenv("CODE_USAGE"),
 		spin:      sp,

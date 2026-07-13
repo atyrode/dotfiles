@@ -641,10 +641,28 @@
 
       apps = forAllSystems (
         system:
+        let
+          pkgs = pkgsFor system;
+          # Re-pull the factual fields in omp/models.yml from omp (cost/context via
+          # `omp models`, speed/ttft via `omp bench`). Run from the repo root:
+          #   nix run .#refresh-model-facts [-- --skip-bench | --runs 3 | …]
+          refreshModelFacts = pkgs.writeShellApplication {
+            name = "refresh-model-facts";
+            runtimeInputs = [
+              (pkgs.python3.withPackages (ps: [ ps.ruamel-yaml ]))
+              pkgs.omp
+            ];
+            text = ''python3 ${./omp/refresh-model-facts.py} "$@"'';
+          };
+        in
         {
           home-manager = {
             type = "app";
             program = "${home-manager.packages.${system}.home-manager}/bin/home-manager";
+          };
+          refresh-model-facts = {
+            type = "app";
+            program = "${refreshModelFacts}/bin/refresh-model-facts";
           };
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {

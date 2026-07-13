@@ -195,6 +195,9 @@ def main():
         ctx_disp = f"{ctx // 1000}K" if ctx else "—"
         think_disp = v.get("thinking") or "—"
         ci, co = v.get("cost_in"), v.get("cost_out")
+        sp, tt = v.get("speed"), v.get("ttft")
+        sp_disp = f"{sp:g} t/s" if sp else "—"
+        tt_disp = f"{tt:g}s" if tt is not None else "—"
         cat_rows.append(
             f'<tr class="{model_class(v["id"])}">'
             f'<td class="key">{esc(key)}</td>'
@@ -204,6 +207,8 @@ def main():
             f'<td data-sort="{ci if ci is not None else -1}" class="num">{fmt_cost(ci)}</td>'
             f'<td data-sort="{co if co is not None else -1}" class="num">{fmt_cost(co)}</td>'
             f'<td data-sort="{ctx or 0}" class="num">{ctx_disp}</td>'
+            f'<td data-sort="{sp or 0}" class="num">{sp_disp}</td>'
+            f'<td data-sort="{tt if tt is not None else 999}" class="num">{tt_disp}</td>'
             f'<td>{esc(think_disp)}</td>'
             f'<td>{esc(v["bucket"])}</td>'
             f'<td class="role-note">{esc(v.get("role", ""))}</td>'
@@ -326,13 +331,15 @@ footer { margin-top:40px; color:var(--dim); font-size:12.5px; }
   <p class="intro">__INTRO__</p>
 
   <h2>Model catalog</h2>
-  <p class="intro">Cost ($ per 1M tokens in / out), context, and thinking range come live from
-    <span class="mono">omp models</span>; the short key, tier, bucket, and role come from
+  <p class="intro">Cost ($ per 1M tokens in / out) and context come from
+    <span class="mono">omp models</span>; speed (output tok/s) and ttft (time-to-first-token)
+    from <span class="mono">omp bench</span>; the short key, tier, bucket, and role from
     <span class="mono">models.yml</span>. Click a header to sort.</p>
   <div class="scroll"><table id="models">
     <thead><tr>
       <th>key</th><th>model</th><th>pool</th><th>tier</th>
       <th class="num">$ in</th><th class="num">$ out</th><th class="num">context</th>
+      <th class="num">speed</th><th class="num">ttft</th>
       <th>thinking</th><th>bucket</th><th>role</th>
     </tr></thead>
     <tbody>__CAT_ROWS__</tbody>

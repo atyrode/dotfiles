@@ -391,6 +391,21 @@ pkgs.runCommand "check-atyrode-cli"
       ${../pkgs/atyrode/atyrode} >/dev/null
     grep -F 'brew bundle cleanup --file "$homebrew_brewfile" </dev/null' \
       ${../pkgs/atyrode/atyrode} >/dev/null
+
+    # store-lifecycle guards (#21): cleanup keeps a rollback window, rollback
+    # refuses the current generation, and the trio is wired (not reserved) — so
+    # the current generation and the configured rollback set can't be destroyed.
+    grep -F 'keep=5 keep_since=30d' ${../pkgs/atyrode/atyrode} >/dev/null
+    grep -F 'is already current' ${../pkgs/atyrode/atyrode} >/dev/null
+    for wired in 'clean) cmd_clean' 'rollback) cmd_rollback' 'generations) cmd_generations'; do
+      grep -F "$wired" ${../pkgs/atyrode/atyrode} >/dev/null || { echo "atyrode: $wired not wired" >&2; exit 1; }
+    done
+    # cleanup must never be an implicit side effect of apply
+    if awk '/^apply_config\(\) \{/{f=1} f&&/cmd_clean|cmd_rollback/{print; hit=1} /^\}/{if(f)f=0} END{exit hit?0:1}' \
+      ${../pkgs/atyrode/atyrode}; then
+      echo 'apply invokes cleanup/rollback implicitly' >&2
+      exit 1
+    fi
     grep -F '"$test_hooks" == 1 && -n "''${ATYRODE_GIT:-}"' \
       ${../pkgs/atyrode/atyrode} >/dev/null
     grep -F '"$test_hooks" == 1 && -n "''${ATYRODE_NH:-}"' \

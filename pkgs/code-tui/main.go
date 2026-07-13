@@ -740,6 +740,25 @@ const (
 	modeCollapsed
 )
 
+// gut is the left gutter every panel shares, so the whole UI hangs off one
+// consistent margin instead of a ragged mix of flush-left and indented rows.
+// headRows counts the section head (tabs + blank separator) above a list body.
+const (
+	gut      = 2
+	headRows = 2
+)
+
+// padLeft indents every line of s by n spaces. Safe on styled (ANSI) strings —
+// the spaces sit before any escape codes.
+func padLeft(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // genRowWidth is the width needed to render the widest generator facet row (all
 // options) on a single line — the minimum for the left panel.
 func (m model) genRowWidth() int {
@@ -789,12 +808,12 @@ func (m model) bodyLines(w int) ([]string, int) {
 	return m.genLines(true)
 }
 
-// stackedSplit divides the inner body height (minus the 2-line tab head and the
+// stackedSplit divides the inner body height (minus the section head and the
 // 1-line divider) between the list and the preview: the list takes what its
 // content needs, capped at ~60% and floored so the preview keeps ≥ minPrev rows.
 func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
-	const head, sep, minPrev, minList = 2, 1, 6, 3
-	inner := bodyH - head - sep
+	const sep, minPrev, minList = 1, 6, 3
+	inner := bodyH - headRows - sep
 	listH = bodyLen
 	if c := inner * 3 / 5; listH > c {
 		listH = c
@@ -813,15 +832,17 @@ func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
 }
 
 // previewDims returns the preview viewport's inner (width, height) for the mode.
+// The full-width modes reserve the shared gutter; split leaves the preview's own
+// border + padding to do the breathing.
 func (m model) previewDims() (int, int) {
 	bodyH := m.bodyH()
 	switch m.mode() {
 	case modeCollapsed:
-		return m.w, bodyH
+		return m.w - gut, bodyH
 	case modeStacked:
-		body, _ := m.bodyLines(m.w)
+		body, _ := m.bodyLines(m.w - gut)
 		_, ph := stackedSplit(bodyH, len(body))
-		return m.w, ph
+		return m.w - gut, ph
 	default: // split
 		return m.w - m.listW() - 3, bodyH
 	}
@@ -1012,7 +1033,7 @@ func (m *model) usagePanel() string {
 			if w.prov == "anthropic" {
 				pcol, pname = "#ff9f52", "Claude"
 			}
-			blocks[w.prov] = []string{lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname)}
+			blocks[w.prov] = []string{padLeft(lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname), gut)}
 		}
 		blocks[w.prov] = append(blocks[w.prov], m.usageRow(w))
 	}
@@ -1027,7 +1048,10 @@ func (m *model) usagePanel() string {
 		return m.refreshLine() + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	}
 	var lines []string
-	for _, p := range order {
+	for i, p := range order {
+		if i > 0 {
+			lines = append(lines, "") // blank line between provider groups
+		}
 		lines = append(lines, blocks[p]...)
 	}
 	return m.refreshLine() + "\n" + strings.Join(lines, "\n")
@@ -1378,29 +1402,34 @@ func scrollbar(total, h, start int) string {
 	return b.String()
 }
 
-// leftColumn renders the pinned section tabs plus the scrolling list body,
-// clipped to bodyH rows and w columns.
-func (m model) leftColumn(w, bodyH int) string {
-	body, bcur := m.bodyLines(w)
-	// the tab switcher + a blank line stay pinned; only the body scrolls.
-	head := m.sectionTabs() + "\n\n"
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	return head + windowList(body, bcur, bodyH, w)
+// sectionHead is the gutter-inset tab switcher plus a blank separator (headRows
+// tall); it stays pinned above the scrolling list body.
+func (m model) sectionHead() string {
+	return padLeft(m.sectionTabs(), gut) + "\n\n"
 }
 
-// stackedContent is the narrow-but-tall layout: tabs + list on top, a divider,
-// then the preview stacked below — all full width. The preview keeps its own
-// viewport, so it scrolls (mouse wheel) independently of the list above it.
+// leftColumn renders the pinned section head plus the scrolling list body, the
+// whole column inset by the shared gutter, sized to totalH rows and w columns.
+func (m model) leftColumn(w, totalH int) string {
+	iw := w - gut
+	body, bcur := m.bodyLines(iw)
+	listH := totalH - headRows
+	if listH < 1 {
+		listH = 1
+	}
+	return m.sectionHead() + padLeft(windowList(body, bcur, listH, iw), gut)
+}
+
+// stackedContent is the narrow-but-tall layout: head + list on top, a full-width
+// divider, then the preview stacked below. The preview keeps its own viewport, so
+// it scrolls (mouse wheel) independently of the list above it.
 func (m model) stackedContent(bodyH int) string {
-	w := m.w
-	body, bcur := m.bodyLines(w)
+	body, _ := m.bodyLines(m.w - gut)
 	listH, prevH := stackedSplit(bodyH, len(body))
-	list := m.sectionTabs() + "\n\n" + windowList(body, bcur, listH, w)
-	div := stDim.Render(strings.Repeat("─", w))
-	preview := lipgloss.NewStyle().Width(w).Height(prevH).MaxHeight(prevH).Render(m.vp.View())
-	return lipgloss.JoinVertical(lipgloss.Left, list, div, preview)
+	top := m.leftColumn(m.w, headRows+listH)
+	div := stDim.Render(strings.Repeat("─", m.w))
+	preview := lipgloss.NewStyle().MaxHeight(prevH).Render(padLeft(m.vp.View(), gut))
+	return lipgloss.JoinVertical(lipgloss.Left, top, div, preview)
 }
 
 func (m model) View() string {
@@ -1413,15 +1442,15 @@ func (m model) View() string {
 	switch m.mode() {
 	case modeCollapsed:
 		if m.showResult && m.w < 62 {
-			content = m.vp.View()
+			content = padLeft(m.vp.View(), gut)
 		} else {
-			content = m.leftColumn(m.w, bodyH-2)
+			content = m.leftColumn(m.w, bodyH)
 		}
 	case modeStacked:
 		content = m.stackedContent(bodyH)
 	default: // split
 		content = lipgloss.JoinHorizontal(lipgloss.Top,
-			m.leftColumn(m.listW(), bodyH-2),
+			m.leftColumn(m.listW(), bodyH),
 			m.previewPane(m.w-m.listW()-3, bodyH))
 	}
 	// Pin the body into a fixed box (top-left) with lipgloss, then clip: any

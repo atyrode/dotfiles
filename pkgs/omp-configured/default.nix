@@ -1475,6 +1475,7 @@ let
       names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
       exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )
       blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
+      groups=( ${lib.escapeShellArgs (map (p: groupLabel p.group) paletteProfiles)} )
       count=''${#names[@]}
 
       # Map a selector (bare|name|1-based number|single letter) to a 0-based index.
@@ -1509,8 +1510,12 @@ let
       }
 
       print_list() {
-        local i
+        local i last=""
         for (( i = 0; i < count; i++ )); do
+          if [[ "''${groups[$i]}" != "$last" ]]; then
+            last="''${groups[$i]}"
+            [[ -n "$last" ]] && printf '  %s\n' "$last"
+          fi
           printf '  %-6s %s\n' "''${names[$i]}" "''${blurbs[$i]}"
         done
       }

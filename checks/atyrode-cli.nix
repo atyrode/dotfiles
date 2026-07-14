@@ -489,9 +489,15 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF 'skipped 2 root-owned GC root(s)' <<<"$noise_out" \
       || { echo "footer must tally skipped gcroots: $noise_out" >&2; exit 1; }
     # A non-root clean cannot unlink the daemon-owned roots, so it names the exact
-    # elevated command to reap them (atyrode never self-elevates).
-    grep -qF 'reap them via `sudo atyrode clean`' <<<"$noise_out" \
-      || { echo "footer must point a non-root clean at sudo to reap: $noise_out" >&2; exit 1; }
+    # elevated command — an ABSOLUTE nix-store path (here the fake-gc stub) plus
+    # --gc, since a bare command is off root's secure_path (atyrode never
+    # self-elevates, and the old `sudo atyrode clean` hint was unrunnable there).
+    grep -qF 'reap them via' <<<"$noise_out" \
+      || { echo "footer must point a non-root clean at an elevated reap: $noise_out" >&2; exit 1; }
+    grep -qF "sudo $TMPDIR/bin/fake-gc --gc" <<<"$noise_out" \
+      || { echo "reap hint must name an absolute nix-store path + --gc: $noise_out" >&2; exit 1; }
+    grep -qF 'sudo atyrode clean' <<<"$noise_out" \
+      && { echo 'footer must not print the old unrunnable sudo atyrode clean hint' >&2; exit 1; }
     grep -qF 'gcroots/auto/lvi04m7mn76' <<<"$noise_out" \
       && { echo 'clean must not print individual gcroots permission failures' >&2; exit 1; }
     grep -qF 'profile-9-link' <<<"$noise_out" \
@@ -525,6 +531,39 @@ pkgs.runCommand "check-atyrode-cli"
         || { echo 'clean must not remove the stray result symlink' >&2; exit 1; }
     )
     rm -f "$TMPDIR/result"
+
+    # Interactive clean previews the plan and asks first, so an accidental run can
+    # be read and declined before anything is removed (_ATYRODE_TEST_TTY forces the
+    # interactive branch under the non-tty harness). Declining changes nothing: the
+    # garbage collector is never invoked.
+    export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
+    rm -f "$TMPDIR/gc-args"
+    decline_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 1 2>&1)"
+    grep -qF 'is about to' <<<"$decline_out" \
+      || { echo "interactive clean must preview the plan: $decline_out" >&2; exit 1; }
+    grep -qF 'keep the newest 1 generation(s)' <<<"$decline_out" \
+      || { echo "preview must state the keep window: $decline_out" >&2; exit 1; }
+    grep -qF 'clean declined — nothing changed' <<<"$decline_out" \
+      || { echo "declining must abort the clean: $decline_out" >&2; exit 1; }
+    test ! -e "$TMPDIR/gc-args" \
+      || { echo 'a declined clean must not collect garbage' >&2; exit 1; }
+
+    # Accepting proceeds through the collector.
+    accept_out="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 3 2>&1)"
+    grep -qF 'is about to' <<<"$accept_out" \
+      || { echo "accepted clean must still preview: $accept_out" >&2; exit 1; }
+    test -e "$TMPDIR/gc-args" \
+      || { echo 'an accepted clean must collect garbage' >&2; exit 1; }
+    rm -f "$TMPDIR/gc-args"
+
+    # --yes is the explicit non-interactive path: it skips the prompt even on a tty.
+    yes_out="$(_ATYRODE_TEST_TTY=1 atyrode clean --keep 3 --yes </dev/null 2>&1)"
+    grep -qF 'is about to' <<<"$yes_out" \
+      && { echo '--yes must skip the confirmation preview' >&2; exit 1; }
+    test -e "$TMPDIR/gc-args" \
+      || { echo '--yes clean must collect garbage without prompting' >&2; exit 1; }
+    unset ATYRODE_NIX_STORE
+    rm -f "$TMPDIR/gc-args"
 
     mkdir "$out"
   ''

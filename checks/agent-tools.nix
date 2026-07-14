@@ -125,6 +125,8 @@ in
         done
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"
+        grep -q 'a switches the' "$TMPDIR/code-help.txt"
+        grep -q 'visible OMP auth combination' "$TMPDIR/code-help.txt"
         ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(

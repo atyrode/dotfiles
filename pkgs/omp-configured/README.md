@@ -8,12 +8,15 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
 
 - **`code`** — the profile generator (Bubble Tea TUI). Type a prompt and/or adjust the
   facet dials (lane, model tier, thinking, spark, fable); a local prompt→profile classifier
-  (running on the resident ollama daemon) suggests settings. **Enter** launches:
-  - with nothing changed → your **default `omp`** ("run my normal omp");
-  - after a prompt or a dial change → the **generated** profile, layered over the managed
-    defaults and policy.
+  (running on the resident ollama daemon) suggests settings. The usage widget
+  names the active OMP authentication combination; **`a`** switches it and
+  refreshes usage from that profile. **Enter** launches:
+  - with nothing changed → bare `omp` in the selected auth profile;
+  - after a prompt or a dial change → the **generated** routing profile, layered over the
+    managed defaults and policy, in that same auth profile.
 
-  Press **`u`** to open the untrusted sandbox for the current directory, `?` for all keys.
+  Press **`u`** to open the fixed untrusted sandbox for the current directory,
+  or `?` for all keys.
 - **`omp`** — passthrough to your own **unmanaged** `~/.omp` config (the one mutable base;
   `omp update` is blocked since the package is Nix-managed).
 - **`omp-managed`** — the managed-layering primitive: platform extensions + managed defaults
@@ -38,9 +41,14 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
 
 - The managed config (`defaults.yml`, `policy.yml`, `untrusted.yml`) and the generated
   routing grid are **baked into the package**.
-- Your bare `omp` keeps using your `~/.omp` config unchanged.
-- The usage panel prefers a private collector snapshot (`$TYRODE_MODEL_USAGE_SNAPSHOT`) and
-  **falls back to `omp usage`** when it's absent, so it works anywhere.
+- Your bare `omp` configuration remains mutable; `code` only selects its OMP
+  state root at launch time.
+- The wrapper accepts `CODE_AUTH_PROFILES` as a JSON array of `{id, label,
+  claude, codex}` objects. Without an override it exposes only OMP's `default`
+  profile, keeping the standalone package neutral; the dotfiles' Home Manager
+  module supplies the operator's named combinations.
+- Every usage fetch runs against the selected profile, so the displayed quota
+  and the profile used for the subsequent launch cannot diverge.
 
 ## How the managed layering stays reliable
 

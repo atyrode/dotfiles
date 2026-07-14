@@ -111,15 +111,30 @@ model routing — model names coloured by provider (blue/orange) and brightness
 scaled by thinking level — above the `omp usage` panel (per-window `N% used`
 with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
 
+The usage widget also shows the active authentication combination. Press **`a`**
+to switch between `mine` (**Claude Alex + Codex Alex**) and `mum`
+(**Claude Mum + Codex Alex**); the selection is persisted under the XDG state
+directory and is reused on the next launch. Usage is fetched from the selected
+OMP profile. Both the bare and generated trusted launch paths receive that same
+`--profile`; the `u` sandbox remains on its fixed, credential-sanitized
+`untrusted` profile.
+
+OMP profiles isolate their complete state, including every provider credential.
+Consequently the `mum` profile must authenticate both providers independently:
+open `omp --profile mum`, run `/login anthropic` with Mum's Claude identity, and
+run `/login openai-codex` with Alex's Codex identity. The existing `default`
+profile is the `mine` combination and remains the initial selection.
+
 There are three ways to leave the TUI:
 
-- **Enter with nothing changed** (no prompt, default dials) runs your default
-  `omp` — you didn't ask for anything special, so it launches your normal
-  session.
-- **Enter after typing a prompt or moving a dial** generates a managed profile
-  and launches it through `omp-managed` as a one-shot `--config`, forwarding the
-  typed prompt as the session's first message.
-- **`u`** opens the untrusted sandbox (`ompu`) for the current context.
+- **Enter with nothing changed** (no prompt, default dials) runs bare `omp`
+  inside the selected authentication profile — you didn't ask for special
+  routing, so it launches your normal session with the visible identity pair.
+- **Enter after typing a prompt or moving a dial** generates a managed routing
+  profile and launches it through `omp-managed` as a one-shot `--config`, with
+  the selected authentication profile and typed prompt carried into the session.
+- **`u`** opens the untrusted sandbox (`ompu`) for the current context; it never
+  inherits the selected personal authentication profile.
 
 `code --no-usage` (`-U`) skips the usage fetch, and `code --help` (`-h`) prints
 help. The full facet grid of profiles is enumerated at package build time by

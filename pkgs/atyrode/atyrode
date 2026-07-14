@@ -906,6 +906,10 @@ collect_garbage() {
   wait "$pid" || rc=$?
   printf '\r\033[K' >&2
   if [[ "$rc" == 0 ]]; then
+    # Expose the reclaimed size (e.g. "210.5 MiB") to the clean footer; empty if
+    # the collector reported no figure. _gc_freed is a global by design.
+    _gc_freed="$(grep -oiE '[0-9.]+ [kmgtp]?i?b freed' "$out" | tail -n1 || true)"
+    _gc_freed="${_gc_freed% freed}"
     printf 'atyrode: %s\n' "$(grep -iE 'freed|deleted' "$out" | tail -n1 || echo 'store collected')" >&2
   else
     cat "$out" >&2
@@ -919,21 +923,53 @@ collect_garbage() {
 # GC roots are owned by the Nix daemon/root, so a user-scope clean cannot unlink
 # them — but that is harmless, the store GC still reclaims whatever they no longer
 # protect. nh prints one such line per root, which drowns the real work and reads
-# like a crash. Here we count them and emit a single summary instead; every other
-# line — generation removals, genuine errors, non-permission failures — passes
-# through untouched (a "> Removing …/gcroots/auto/…" line is held one step so its
-# paired permission failure can suppress it, and flushed if no failure follows).
+# like a crash. Here we suppress them and write the count to the file named by the
+# first argument, so cmd_clean can report the tally once in its summary footer;
+# every other line — generation removals, genuine errors, non-permission failures
+# — passes through untouched (a "> Removing …/gcroots/auto/…" line is held one
+# step so its paired permission failure can suppress it, flushed if none follows).
 fold_gcroots_noise() {
-  awk '
+  local count_file="${1:-/dev/null}"
+  awk -v countfile="$count_file" '
     /^> Removing .*\/gcroots\/auto\// { if (pending != "") print pending; pending = $0; next }
     /Failed to remove path.*\/gcroots\/auto\/.*PermissionDenied/ { skipped++; pending = ""; next }
     { if (pending != "") { print pending; pending = "" } print }
     END {
       if (pending != "") print pending
-      if (skipped > 0)
-        printf "atyrode: skipped %d root-owned GC root(s) under /nix/var/nix/gcroots/auto (owned by the Nix daemon, need elevation to remove — harmless: the store GC still reclaims what they no longer protect)\n", skipped
+      print skipped + 0 > countfile
     }
   '
+}
+
+# count_generations reports how many generations the tracked profile has (0 when
+# it cannot be read) so the clean footer can show kept/removed counts.
+count_generations() {
+  local profile; profile="$(gen_profile)"
+  [[ -e "$profile" ]] || { printf 0; return; }
+  nix_env -p "$profile" --list-generations 2>/dev/null | grep -c . || true
+}
+
+# clean_footer resolves the wall of nh/gc output into one human-readable result
+# line: what was reclaimed, kept, and removed, plus how many root-owned GC roots
+# had to be skipped (daemon-owned; reaping them needs elevation — see #148).
+clean_footer() {
+  local dry="$1" before="$2" after="$3" skipped="$4" freed="$5"
+  local removed=0
+  [[ "$before" -gt "$after" ]] && removed=$(( before - after ))
+  local -a parts=()
+  if [[ "$dry" == 1 ]]; then
+    parts+=("dry-run — no changes made" "$before generation(s) present")
+  else
+    [[ -z "$freed" ]] || parts+=("reclaimed $freed")
+    parts+=("kept $after generation(s)" "removed $removed")
+  fi
+  [[ "${skipped:-0}" -gt 0 ]] &&
+    parts+=("skipped $skipped root-owned GC root(s) (daemon-owned, harmless; run with elevation to reap)")
+  local out="" p
+  for p in "${parts[@]}"; do
+    [[ -z "$out" ]] && out="$p" || out="$out · $p"
+  done
+  printf 'atyrode: %s\n' "$out" >&2
 }
 
 # clean — reclaim disk from generations the config no longer references, always
@@ -965,15 +1001,23 @@ cmd_clean() {
   # own chatter (and the folded gcroots summary) goes to stderr so that under
   # --json stdout carries only the machine-readable summary; pipefail propagates
   # nh's exit status through the filter.
+  local gens_before; gens_before="$(count_generations)"
   local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since" --no-gc)
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
-  "${nh_args[@]}" 2>&1 | fold_gcroots_noise >&2 || die "$EX_SOFTWARE" "nh clean failed"
+  local skipped_file; skipped_file="$(mktemp)"
+  "${nh_args[@]}" 2>&1 | fold_gcroots_noise "$skipped_file" >&2 || die "$EX_SOFTWARE" "nh clean failed"
+  local skipped; skipped="$(cat "$skipped_file" 2>/dev/null || echo 0)"
+  rm -f "$skipped_file"
 
+  _gc_freed=""
   [[ "$dry" == 1 ]] || collect_garbage
 
   if [[ "$(uname -s)" == Darwin ]]; then
     clean_macos_residue "$dry" "$assume_yes"
   fi
+
+  local gens_after; gens_after="$(count_generations)"
+  clean_footer "$dry" "$gens_before" "$gens_after" "$skipped" "$_gc_freed"
 
   [[ "$json" == 0 ]] || clean_summary_json "$scope" "$keep" "$keep_since" "$dry"
 }

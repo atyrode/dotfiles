@@ -598,6 +598,7 @@
             baseConfig = baseOnlyConfig;
           };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
+          docs-links = import ./checks/docs-links.nix { inherit lib pkgs; };
           go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
           nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };

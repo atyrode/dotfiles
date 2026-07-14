@@ -59,6 +59,10 @@ them together.
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 | `code` | The profile generator TUI (see below) | Generates a managed profile and launches it through `omp-managed`, or runs bare `omp` when nothing is asked for |
 
+For discoverability beyond the wrapper contract, see the versioned
+[OMP feature wiki](omp/README.md). Its CLI tables describe plain upstream OMP;
+this document remains authoritative for `code`, `omp-managed`, and `ompu`.
+
 Plain `omp` executes upstream OMP directly: no extension, defaults, or policy
 overlay is injected, so its models, approvals, and interface belong to the
 operator's mutable configuration and can change on the fly. Only `omp update`

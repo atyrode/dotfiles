@@ -27,6 +27,9 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
 
 The generator's model catalog and cost figures live in
 [`../../omp/models.yml`](../../omp/models.yml) (synced from `omp models`).
+The repository's versioned [OMP feature wiki](../../docs/omp/README.md) catalogs
+upstream CLI flags and less-obvious capabilities; this README remains
+authoritative for the four wrappers above.
 
 ## Install it standalone (Nix)
 

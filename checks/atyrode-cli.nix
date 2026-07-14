@@ -472,13 +472,15 @@ pkgs.runCommand "check-atyrode-cli"
     ' <<<"$clean_json" >/dev/null \
       || { echo "clean --json summary wrong: $clean_json" >&2; exit 1; }
 
-    # clean folds nh's benign root-owned gcroots permission flood into a single
-    # summary line, but keeps genuine removals and real (non-permission) errors.
+    # clean folds nh's benign root-owned gcroots permission flood, keeps genuine
+    # removals and real (non-permission) errors, and resolves to a legible footer.
     export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
     noise_out="$(ATYRODE_NH_NOISE=1 atyrode clean --keep 3 2>&1 >/dev/null)"
     unset ATYRODE_NIX_STORE
+    grep -qE 'atyrode: .*kept 3 generation' <<<"$noise_out" \
+      || { echo "clean must print a legible summary footer: $noise_out" >&2; exit 1; }
     grep -qF 'skipped 2 root-owned GC root(s)' <<<"$noise_out" \
-      || { echo "clean must summarize skipped gcroots: $noise_out" >&2; exit 1; }
+      || { echo "footer must tally skipped gcroots: $noise_out" >&2; exit 1; }
     grep -qF 'gcroots/auto/lvi04m7mn76' <<<"$noise_out" \
       && { echo 'clean must not print individual gcroots permission failures' >&2; exit 1; }
     grep -qF 'profile-9-link' <<<"$noise_out" \

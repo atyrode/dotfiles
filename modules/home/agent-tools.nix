@@ -131,12 +131,11 @@ in
         ]
         ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 
-        home.sessionVariables.CODE_AUTH_PROFILES = builtins.toJSON codeAuthProfiles;
-
         xdg.configFile = {
           "omp/defaults.yml".source = defaultsConfig;
           "omp/policy.yml".source = policyConfig;
           "omp/untrusted.yml".source = untrustedConfig;
+          "atyrode/code-auth-profiles.json".text = builtins.toJSON codeAuthProfiles;
         };
 
         home.file = {

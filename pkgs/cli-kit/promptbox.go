@@ -330,7 +330,12 @@ func (b PromptBox) View() string {
 			parts = append(parts, StBrk.Render(GBroken+" "+b.err.Error()))
 		}
 	case boxProposed:
-		lines := []string{StHead.Render("applied — review above")}
+		// Keep the model's reasoning + raw output visible alongside the proposal —
+		// the short weight note is the "why" behind the picks, not just scaffolding.
+		if b.answer != "" {
+			parts = append(parts, b.vp.View())
+		}
+		lines := []string{StHead.Render("applied")}
 		for _, a := range b.proposed {
 			lines = append(lines, "  "+a.Key+" → "+StWarn.Render(a.Value))
 		}

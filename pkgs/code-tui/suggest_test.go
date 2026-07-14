@@ -65,6 +65,50 @@ func TestTruncateForClassify(t *testing.T) {
 	}
 }
 
+func TestRepairConstraintsValidity(t *testing.T) {
+	// spark can't coexist with a pure-Claude lane; fable can't with a pure-GPT one.
+	m := &model{sel: map[string]string{"lane": "claude-only", "spark": "on", "fable": "on"},
+		avail: availability{bucket: map[string]string{}}}
+	m.repairConstraints()
+	if m.sel["spark"] != "off" {
+		t.Errorf("spark must be off under claude-only, got %q", m.sel["spark"])
+	}
+	m = &model{sel: map[string]string{"lane": "gpt-only", "spark": "on", "fable": "on"},
+		avail: availability{bucket: map[string]string{}}}
+	m.repairConstraints()
+	if m.sel["fable"] != "off" {
+		t.Errorf("fable must be off under gpt-only, got %q", m.sel["fable"])
+	}
+}
+
+func TestRepairConstraintsQuota(t *testing.T) {
+	// A maxed/unauthed bucket forces its toggle off regardless of lane.
+	m := &model{sel: map[string]string{"lane": "mixed", "spark": "on", "fable": "on"},
+		avail: availability{bucket: map[string]string{"claude-fable": "maxed", "codex-spark": "unauthed"}}}
+	m.repairConstraints()
+	if m.sel["fable"] != "off" {
+		t.Errorf("fable must be off when its bucket is maxed, got %q", m.sel["fable"])
+	}
+	if m.sel["spark"] != "off" {
+		t.Errorf("spark must be off when its bucket is unauthed, got %q", m.sel["spark"])
+	}
+}
+
+func TestSizingEvalFacetsPrunesMaxedLanes(t *testing.T) {
+	m := model{facets: facetDefs(map[string]string{}),
+		avail: availability{bucket: map[string]string{"claude-main": "maxed"}}}
+	for _, f := range m.sizingEvalFacets() {
+		if f.key != "lane" {
+			continue
+		}
+		for _, v := range f.values {
+			if v == "claude-only" {
+				t.Errorf("claude-only should be pruned when claude-main is maxed")
+			}
+		}
+	}
+}
+
 func TestEvalSystemPromptIsSizerRole(t *testing.T) {
 	s := string(evalSystemPrompt)
 	if !strings.Contains(s, "never do") || !strings.Contains(s, "two lines") {

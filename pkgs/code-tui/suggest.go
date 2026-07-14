@@ -111,9 +111,68 @@ func (m model) Commander() clikit.Commander {
 	// Residency is governed by the daemon's OLLAMA_KEEP_ALIVE (nix-managed, pinned
 	// on the dev box) — leave the per-request value unset so that single source of
 	// truth wins rather than overriding it here.
-	facets := m.facets
+	facets := m.sizingEvalFacets()
 	c.Wrap = func(task string) string { return classifyMessage(facets, task) }
 	return c
+}
+
+// sizingEvalFacets is the facet menu offered to the evaluator: the sizing facets,
+// with lane values pruned to pools that are actually available right now — so the
+// model never even suggests a maxed or unauthed pool. This is the soft, up-front
+// half of constraint-awareness; repairConstraints is the hard guarantee applied
+// after.
+func (m model) sizingEvalFacets() []facet {
+	out := make([]facet, 0, len(sizingFacets))
+	for _, f := range m.facets {
+		if !sizingFacets[f.key] {
+			continue
+		}
+		if f.key == "lane" {
+			avail := f.values[:0:0]
+			for _, v := range f.values {
+				if !laneUnavailable(v, m.avail) {
+					avail = append(avail, v)
+				}
+			}
+			f.values = avail
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// laneUnavailable reports whether a lane's REQUIRED pool is maxed or unauthed.
+// Only the pure lanes are hard-gated; the mixed/led lanes fall back across pools,
+// so they stay usable even when one provider is down.
+func laneUnavailable(lane string, a availability) bool {
+	switch lane {
+	case "gpt-only":
+		return a.down("codex-main")
+	case "claude-only":
+		return a.down("claude-main")
+	}
+	return false
+}
+
+// repairConstraints enforces the deterministic rules a suggestion (or selection)
+// must never violate — mirroring generate-profiles.py's `valid` plus live quota:
+// spark is an OpenAI model, so it can't run on a pure-Claude lane; fable is an
+// Anthropic elite, so it can't run on a pure-GPT lane; and neither may be left on
+// when its quota bucket is maxed or unauthed. Runs after an applied proposal, so
+// the picker can't land on an impossible or unavailable combo.
+func (m *model) repairConstraints() {
+	switch m.sel["lane"] {
+	case "claude-only":
+		m.sel["spark"] = "off"
+	case "gpt-only":
+		m.sel["fable"] = "off"
+	}
+	if m.avail.down(bucketOf("fable")) {
+		m.sel["fable"] = "off"
+	}
+	if m.avail.down(bucketOf("spark")) {
+		m.sel["spark"] = "off"
+	}
 }
 
 // BoxTitle labels the suggest box with its purpose and the model in use, so the
@@ -141,11 +200,14 @@ func validFacetActions(facets []facet, actions []clikit.Action) []clikit.Action 
 	return out
 }
 
-// applyActions applies a confirmed proposal: each valid facet=value updates the
-// selection, exactly as a manual change would, then the preview refreshes.
+// applyActions applies a proposal: each valid facet=value updates the selection,
+// exactly as a manual change would; repairConstraints then enforces the
+// validity/quota rules so the result is always a possible, available combo; and
+// the preview refreshes.
 func (m *model) applyActions(actions []clikit.Action) {
 	for _, a := range validFacetActions(m.facets, actions) {
 		m.sel[a.Key] = a.Value
 	}
+	m.repairConstraints()
 	m.syncPreview()
 }

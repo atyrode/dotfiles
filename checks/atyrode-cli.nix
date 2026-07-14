@@ -54,6 +54,9 @@ pkgs.runCommand "check-atyrode-cli"
     export ATYRODE_GIT="$TMPDIR/bin/git"
     export ATYRODE_NH="$TMPDIR/bin/nh"
     export ATYRODE_NIX_ENV="$TMPDIR/bin/nix-env"
+    # Pin the generations profile so clean --json is platform-agnostic in the
+    # check (on darwin gen_profile would otherwise point at the system profile).
+    export ATYRODE_GEN_PROFILE="$XDG_STATE_HOME/nix/profiles/home-manager"
     export _ATYRODE_TEST_HOSTNAME="fixture-linux"
     export _ATYRODE_TEST_SYSTEM="x86_64-linux"
     export _ATYRODE_TEST_USER="alex"

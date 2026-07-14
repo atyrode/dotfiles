@@ -1003,6 +1003,10 @@ clean_summary_json() {
 # system profile on macOS, the home-manager profile on Linux — mirroring which
 # `nh <backend> switch` apply drives.
 gen_profile() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_GEN_PROFILE:-}" ]]; then
+    printf '%s' "$ATYRODE_GEN_PROFILE" # pin the profile path in tests (platform-agnostic)
+    return
+  fi
   if [[ "$(uname -s)" == Darwin ]]; then
     printf '/nix/var/nix/profiles/system'
   else

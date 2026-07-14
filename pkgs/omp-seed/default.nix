@@ -21,12 +21,11 @@ in
   ];
   # The seed ships from the Nix store but stays overridable so checks can
   # exercise seed updates against a fixture file.
-  text =
-    ''
-      : "''${OMP_SEED_FILE:=${seedConfig}}"
-      export OMP_SEED_FILE
-    ''
-    + lib.removePrefix "#!/usr/bin/env bash\nset -euo pipefail\n" script;
+  text = ''
+    : "''${OMP_SEED_FILE:=${seedConfig}}"
+    export OMP_SEED_FILE
+  ''
+  + lib.removePrefix "#!/usr/bin/env bash\nset -euo pipefail\n" script;
   meta = {
     description = "Drift-aware seeding of curated plain-omp defaults";
     license = lib.licenses.mit;

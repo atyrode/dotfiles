@@ -41,37 +41,40 @@ in
 
     modules = [
       dotfiles.nixosModules.dotfiles-home
-      ({ pkgs, ... }: {
-        boot.isContainer = true;
-        nixpkgs.hostPlatform = system;
-        system.stateVersion = "26.05";
+      (
+        { pkgs, ... }:
+        {
+          boot.isContainer = true;
+          nixpkgs.hostPlatform = system;
+          system.stateVersion = "26.05";
 
-        programs.zsh.enable = true;
+          programs.zsh.enable = true;
 
-        atyrode.dotfiles.hostRegistry = registry;
+          atyrode.dotfiles.hostRegistry = registry;
 
-        users.users.${username} = {
-          home = homeDirectory;
-          isNormalUser = true;
-          shell = pkgs.zsh;
-        };
-
-        home-manager.users.${username} = {
-          imports = [
-            profiles.base
-            profiles.server
-            profiles.agent-tools
-            (dotfiles.lib.mkHostIdentityModule {
-              inherit host;
-              name = hostId;
-            })
-          ];
-
-          home = {
-            inherit homeDirectory username;
+          users.users.${username} = {
+            home = homeDirectory;
+            isNormalUser = true;
+            shell = pkgs.zsh;
           };
-        };
-      })
+
+          home-manager.users.${username} = {
+            imports = [
+              profiles.base
+              profiles.server
+              profiles.agent-tools
+              (dotfiles.lib.mkHostIdentityModule {
+                inherit host;
+                name = hostId;
+              })
+            ];
+
+            home = {
+              inherit homeDirectory username;
+            };
+          };
+        }
+      )
     ];
   };
 }

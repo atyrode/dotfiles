@@ -119,98 +119,106 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable (lib.mkMerge [
-   {
-    home.packages = [
-      cfg.ompPackage
-    ]
-    ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
+  config = lib.mkIf cfg.enable (
+    lib.mkMerge [
+      {
+        home.packages = [
+          cfg.ompPackage
+        ]
+        ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 
-    xdg.configFile = {
-      "omp/defaults.yml".source = defaultsConfig;
-      "omp/policy.yml".source = policyConfig;
-      "omp/untrusted.yml".source = untrustedConfig;
-      "omp/presets/budget.yml".source = presets.budget;
-      "omp/presets/fable-primary.yml".source = presets.fable;
-      "omp/presets/gpt56.yml".source = presets.gpt;
-      "omp/presets/sonnet-value.yml".source = presets.sonnet;
-      "omp/presets/claude-hard.yml".source = presets.claude;
-      "omp/presets/context-1m.yml".source = presets.context;
-      "omp/presets/fast-mixed.yml".source = presets.fast;
-      "omp/presets/gpt-speed.yml".source = presets.gptSpeed;
-      "omp/presets/claude-speed.yml".source = presets.claudeSpeed;
-      "omp/presets/mixed-regular.yml".source = presets.mixedRegular;
-      "omp/presets/mixed-smart.yml".source = presets.mixedSmart;
-      "omp/presets/gpt-only.yml".source = presets.gptOnly;
-      "omp/presets/claude-only.yml".source = presets.claudeOnly;
-    };
+        xdg.configFile = {
+          "omp/defaults.yml".source = defaultsConfig;
+          "omp/policy.yml".source = policyConfig;
+          "omp/untrusted.yml".source = untrustedConfig;
+          "omp/presets/budget.yml".source = presets.budget;
+          "omp/presets/fable-primary.yml".source = presets.fable;
+          "omp/presets/gpt56.yml".source = presets.gpt;
+          "omp/presets/sonnet-value.yml".source = presets.sonnet;
+          "omp/presets/claude-hard.yml".source = presets.claude;
+          "omp/presets/context-1m.yml".source = presets.context;
+          "omp/presets/fast-mixed.yml".source = presets.fast;
+          "omp/presets/gpt-speed.yml".source = presets.gptSpeed;
+          "omp/presets/claude-speed.yml".source = presets.claudeSpeed;
+          "omp/presets/mixed-regular.yml".source = presets.mixedRegular;
+          "omp/presets/mixed-smart.yml".source = presets.mixedSmart;
+          "omp/presets/gpt-only.yml".source = presets.gptOnly;
+          "omp/presets/claude-only.yml".source = presets.claudeOnly;
+        };
 
-    home.file = {
-      ".agents/skills" = {
-        source = ../../agents/skills;
-        recursive = true;
-      };
-    };
+        home.file = {
+          ".agents/skills" = {
+            source = ../../agents/skills;
+            recursive = true;
+          };
+        };
 
-    home.activation = lib.mkMerge [
-      (lib.mkIf cfg.migrateLegacy {
-        migrateLegacyAgentTools = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
-          if [[ -v DRY_RUN ]]; then
-            export AGENT_TOOLS_DRY_RUN=1
-          fi
-          ${lib.getExe cfg.migrationPackage} prepare
-        '';
-
-        finalizeLegacyAgentTools = lib.hm.dag.entryAfter [ "installPackages" "linkGeneration" ] ''
-          if [[ -v DRY_RUN ]]; then
-            export AGENT_TOOLS_DRY_RUN=1
-          fi
-          ${lib.getExe cfg.migrationPackage} finalize "$newGenPath/home-files"
-        '';
-      })
-      (lib.mkIf cfg.seedPlainConfig {
-        # Runs after the legacy migration so a first activation seeds the
-        # transformed configuration, never the pre-migration backup source.
-        # Seeding is a convenience: a failure (for example unparseable
-        # operator YAML) warns instead of failing the whole activation.
-        seedPlainOmpConfig =
-          lib.hm.dag.entryAfter
-            ([ "installPackages" "linkGeneration" ] ++ lib.optional cfg.migrateLegacy "finalizeLegacyAgentTools")
-            ''
+        home.activation = lib.mkMerge [
+          (lib.mkIf cfg.migrateLegacy {
+            migrateLegacyAgentTools = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
               if [[ -v DRY_RUN ]]; then
                 export AGENT_TOOLS_DRY_RUN=1
               fi
-              if ! ${lib.getExe cfg.seedPackage} apply; then
-                echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
-              fi
+              ${lib.getExe cfg.migrationPackage} prepare
             '';
+
+            finalizeLegacyAgentTools = lib.hm.dag.entryAfter [ "installPackages" "linkGeneration" ] ''
+              if [[ -v DRY_RUN ]]; then
+                export AGENT_TOOLS_DRY_RUN=1
+              fi
+              ${lib.getExe cfg.migrationPackage} finalize "$newGenPath/home-files"
+            '';
+          })
+          (lib.mkIf cfg.seedPlainConfig {
+            # Runs after the legacy migration so a first activation seeds the
+            # transformed configuration, never the pre-migration backup source.
+            # Seeding is a convenience: a failure (for example unparseable
+            # operator YAML) warns instead of failing the whole activation.
+            seedPlainOmpConfig =
+              lib.hm.dag.entryAfter
+                (
+                  [
+                    "installPackages"
+                    "linkGeneration"
+                  ]
+                  ++ lib.optional cfg.migrateLegacy "finalizeLegacyAgentTools"
+                )
+                ''
+                  if [[ -v DRY_RUN ]]; then
+                    export AGENT_TOOLS_DRY_RUN=1
+                  fi
+                  if ! ${lib.getExe cfg.seedPackage} apply; then
+                    echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
+                  fi
+                '';
+          })
+        ];
+      }
+
+      (lib.mkIf lcfg.enable {
+        services.ollama = {
+          enable = true;
+          port = lcfg.port;
+          environmentVariables.OLLAMA_KEEP_ALIVE = lcfg.keepAlive;
+        };
+
+        # Auto-pull the classifier model once the daemon is up. systemd user
+        # services are Linux-only in Home Manager; on other platforms the daemon
+        # still runs (via the launchd agent the ollama module defines) but the
+        # model is pulled on first use / manually.
+        systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
+          Unit = {
+            Description = "Pull the code picker's local classifier model to disk (${lcfg.model})";
+            After = [ "ollama.service" ];
+            Wants = [ "ollama.service" ];
+          };
+          Service = {
+            Type = "oneshot";
+            ExecStart = "${pullClassifierModel}";
+          };
+          Install.WantedBy = [ "default.target" ];
+        };
       })
-    ];
-   }
-
-    (lib.mkIf lcfg.enable {
-      services.ollama = {
-        enable = true;
-        port = lcfg.port;
-        environmentVariables.OLLAMA_KEEP_ALIVE = lcfg.keepAlive;
-      };
-
-      # Auto-pull the classifier model once the daemon is up. systemd user
-      # services are Linux-only in Home Manager; on other platforms the daemon
-      # still runs (via the launchd agent the ollama module defines) but the
-      # model is pulled on first use / manually.
-      systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
-        Unit = {
-          Description = "Pull the code picker's local classifier model to disk (${lcfg.model})";
-          After = [ "ollama.service" ];
-          Wants = [ "ollama.service" ];
-        };
-        Service = {
-          Type = "oneshot";
-          ExecStart = "${pullClassifierModel}";
-        };
-        Install.WantedBy = [ "default.target" ];
-      };
-    })
-  ]);
+    ]
+  );
 }

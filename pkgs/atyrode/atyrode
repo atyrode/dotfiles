@@ -32,7 +32,7 @@ Usage:
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
-  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes]
+  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--json]
 
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
@@ -918,7 +918,7 @@ collect_garbage() {
 # keeping the current generation and a rollback window (never an auto-wipe of the
 # safety net). Also sweeps stale macOS app aliases (see clean_macos_residue).
 cmd_clean() {
-  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0
+  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0 json=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -n | --dry-run) dry=1 ;;
@@ -926,6 +926,7 @@ cmd_clean() {
       --keep-since) shift; keep_since="${1:-}" ;;
       --all) scope=all ;; # also the system profile (nix-darwin); needs elevation
       -y | --yes) assume_yes=1 ;;
+      --json) json=1 ;; # machine-readable reclaim summary on stdout (cockpit)
       *) die "$EX_USAGE" "unknown clean option: $1" ;;
     esac
     shift || true
@@ -938,16 +939,64 @@ cmd_clean() {
   printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
   # Let nh remove the stale generations and gcroots, but skip its garbage
   # collection (--no-gc) — nh runs it silently. We collect below instead, with a
-  # progress indicator, so the slow final step isn't an unexplained freeze.
+  # progress indicator, so the slow final step isn't an unexplained freeze. Under
+  # --json, nh's own chatter goes to stderr so stdout carries only the summary.
   local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since" --no-gc)
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
-  "${nh_args[@]}" || die "$EX_SOFTWARE" "nh clean failed"
+  if [[ "$json" == 1 ]]; then
+    "${nh_args[@]}" >&2 || die "$EX_SOFTWARE" "nh clean failed"
+  else
+    "${nh_args[@]}" || die "$EX_SOFTWARE" "nh clean failed"
+  fi
 
   [[ "$dry" == 1 ]] || collect_garbage
 
   if [[ "$(uname -s)" == Darwin ]]; then
     clean_macos_residue "$dry" "$assume_yes"
   fi
+
+  [[ "$json" == 0 ]] || clean_summary_json "$scope" "$keep" "$keep_since" "$dry"
+}
+
+# clean_summary_json prints a machine-readable reclaim summary for the cockpit:
+# the parameters and the generations that are reclaim CANDIDATES — every
+# generation beyond the newest <keep>, excluding the current one (nh additionally
+# keeps any newer than --keep-since, so this is an upper bound on what it prunes).
+# closureSize per candidate is the generation's own closure; those overlap
+# heavily, so the real freed space is what the store GC reports, not their sum —
+# hence the note. A store read, so sizes only when nix-env resolves them.
+clean_summary_json() {
+  local scope="$1" keep="$2" keep_since="$3" dry="$4"
+  local profile; profile="$(gen_profile)"
+  local gens=() line gen rest current="" total=0
+  if [[ -e "$profile" ]]; then
+    while IFS= read -r line; do
+      read -r gen rest <<<"$line"
+      gens+=("$gen")
+      [[ "$line" == *"(current)"* ]] && current="$gen"
+    done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
+  fi
+  total=${#gens[@]}
+  # Candidates: those whose rank from the newest is >= keep and not current.
+  local candidates='[]' i rank g size date
+  for (( i = 0; i < total; i++ )); do
+    g="${gens[$i]}"
+    rank=$(( total - 1 - i ))
+    [[ "$rank" -ge "$keep" && "$g" != "$current" ]] || continue
+    date="$(nix_env -p "$profile" --list-generations 2>/dev/null | awk -v n="$g" '$1==n{print $2" "$3}')"
+    size="$(gen_size "$profile" "$g")"
+    candidates="$(jq -c --argjson c "$candidates" --argjson gen "$g" --arg date "$date" --arg size "$size" \
+      '$c + [({generation:$gen,date:$date} + (if $size=="" then {} else {closureSize:$size} end))]' <<<'null')"
+  done
+  jq -nc \
+    --arg scope "$scope" --argjson keep "$keep" --arg keepSince "$keep_since" \
+    --argjson dry "$( [[ "$dry" == 1 ]] && echo true || echo false )" \
+    --arg platform "$(gen_platform)" --arg profile "$profile" \
+    --argjson total "$total" --argjson candidates "$candidates" \
+    '{scope:$scope,platform:$platform,profile:$profile,keep:$keep,keepSince:$keepSince,dryRun:$dry,
+      generations:{total:$total,candidates:($candidates|length)},
+      reclaimCandidates:$candidates,
+      note:"candidates are generations beyond the newest keep, excluding current; nh additionally keeps any newer than keepSince. closureSize values overlap — actual freed space is what the store GC reports."}'
 }
 
 # The activation profile whose generations `apply` switches: the nix-darwin
@@ -963,13 +1012,24 @@ gen_profile() {
 
 gen_platform() { [[ "$(uname -s)" == Darwin ]] && printf 'nix-darwin' || printf 'home-manager'; }
 
+# nix_env runs nix-env, honouring an ATYRODE_NIX_ENV override under test hooks
+# (mirrors ATYRODE_NH / ATYRODE_NIX_STORE) so generation reads are stubbable.
+nix_env() {
+  local cmd=nix-env
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX_ENV:-}" ]] || cmd="$ATYRODE_NIX_ENV"
+  "$cmd" "$@"
+}
+
 # Human closure size of a profile generation's store path, or empty when it
 # can't be resolved. A store query, so it stays behind --sizes (not the default).
 gen_size() {
   local p
+  [[ -e "$1-$2-link" ]] || return 0 # no such generation link → no size (not an error)
   p="$(readlink -f "$1-$2-link" 2>/dev/null)" || return 0
   [[ -n "$p" ]] || return 0
-  nix path-info -Sh "$p" 2>/dev/null | awk -F'\t' 'NR==1 { s = $2; gsub(/^ +| +$/, "", s); print s }'
+  # Best-effort: a failed store query yields an empty size, never an abort (the
+  # caller runs under `set -e`).
+  nix path-info -Sh "$p" 2>/dev/null | awk -F'\t' 'NR==1 { s = $2; gsub(/^ +| +$/, "", s); print s }' || return 0
 }
 
 # generations — list the activation profile's generations (read-only). nh only

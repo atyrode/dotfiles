@@ -35,10 +35,25 @@ pkgs.runCommand "check-atyrode-cli"
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
     [[ "''${ATYRODE_NH_FAIL:-0}" != 1 ]]
     EOF
-    chmod +x "$TMPDIR/bin/git" "$TMPDIR/bin/nh"
+    # Stub nix-env's generation listing (clean --json / generations read it).
+    cat > "$TMPDIR/bin/nix-env" <<'EOF'
+    #!${pkgs.runtimeShell}
+    case "$*" in
+      *--list-generations*)
+        echo "  1   2026-05-01 10:00:00"
+        echo "  2   2026-06-01 10:00:00"
+        echo "  3   2026-07-01 10:00:00   (current)" ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/git" "$TMPDIR/bin/nh" "$TMPDIR/bin/nix-env"
+    # Make the home-manager generations profile path exist so clean/generations
+    # accept it (gen_profile → $XDG_STATE_HOME/nix/profiles/home-manager).
+    mkdir -p "$XDG_STATE_HOME/nix/profiles"
+    touch "$XDG_STATE_HOME/nix/profiles/home-manager"
     export PATH="$TMPDIR/bin:$PATH"
     export ATYRODE_GIT="$TMPDIR/bin/git"
     export ATYRODE_NH="$TMPDIR/bin/nh"
+    export ATYRODE_NIX_ENV="$TMPDIR/bin/nix-env"
     export _ATYRODE_TEST_HOSTNAME="fixture-linux"
     export _ATYRODE_TEST_SYSTEM="x86_64-linux"
     export _ATYRODE_TEST_USER="alex"
@@ -429,6 +444,18 @@ pkgs.runCommand "check-atyrode-cli"
     test ! -e "$TMPDIR/gc-args" \
       || { echo 'dry-run clean must not collect garbage' >&2; exit 1; }
     unset ATYRODE_NIX_STORE
+
+    # clean --json emits a machine-readable reclaim summary on stdout; nh's own
+    # chatter must go to stderr. With 3 generations (current #3) and --keep 2, the
+    # only reclaim candidate is generation #1 (beyond the newest 2, not current).
+    clean_json="$(atyrode clean --dry-run --json --keep 2 2>/dev/null)"
+    jq -e '
+      .dryRun == true and .keep == 2 and .scope == "user"
+      and .generations.total == 3 and .generations.candidates == 1
+      and (.reclaimCandidates | length) == 1
+      and .reclaimCandidates[0].generation == 1
+    ' <<<"$clean_json" >/dev/null \
+      || { echo "clean --json summary wrong: $clean_json" >&2; exit 1; }
 
     mkdir "$out"
   ''

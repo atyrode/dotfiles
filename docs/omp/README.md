@@ -1,9 +1,9 @@
 # OMP feature wiki
 
 > - **Audited:** 2026-07-14
-> - **Repository pin:** `omp` v16.4.8
-> - **Upstream release:** [v16.4.8](https://github.com/can1357/oh-my-pi/releases/tag/v16.4.8) (2026-07-12)
-> - **Audit range:** v16.0.0 through v16.4.8, plus the v16.4.8 CLI help and documentation
+> - **Repository pin:** `omp` v16.5.2
+> - **Upstream release:** [v16.5.2](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.2) (2026-07-14)
+> - **Audit range:** v16.0.0 through v16.5.2, plus the v16.5.2 CLI help and documentation
 
 This is the compact “did you know this exists?” index for the OMP binary used by
 these dotfiles. It is for operators deciding what to invoke and for agents that
@@ -11,7 +11,7 @@ need to discover an OMP capability before proposing new wrapper code.
 
 ## Choose the correct surface first
 
-The [CLI reference](cli.md) describes **plain upstream `omp` v16.4.8**. These
+The [CLI reference](cli.md) describes **plain upstream `omp` v16.5.2**. These
 repository launchers are not interchangeable:
 
 | Invoke | Authentication and state | Configuration and policy |
@@ -59,21 +59,18 @@ managed launches, then directs the operator to the repository-owned edit paths.
 Claims in this wiki were checked against:
 
 1. the repository pin in [`pkgs/omp/default.nix`](../../pkgs/omp/default.nix);
-2. the output of the packaged `omp v16.4.8 --help` and each listed shell
+2. the output of the packaged `omp v16.5.2 --help` and each listed shell
    command's `--help`;
 3. the upstream documentation at the immutable
-   [`v16.4.8` tag](https://github.com/can1357/oh-my-pi/tree/v16.4.8/docs);
+   [`v16.5.2` tag](https://github.com/can1357/oh-my-pi/tree/v16.5.2/docs);
 4. upstream release notes from
    [v16.0.0](https://github.com/can1357/oh-my-pi/releases/tag/v16.0.0) through
-   [v16.4.8](https://github.com/can1357/oh-my-pi/releases/tag/v16.4.8); and
+   [v16.5.2](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.2); and
 5. the repository-owned wrapper behavior in [Agent tools](../agent-tools.md).
 
-Upstream had already published
-[v16.5.0](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.0) and
-[v16.5.1](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.1) when this
-audit was written. They are intentionally excluded because these dotfiles still
-package v16.4.8. Availability in upstream `main` or a newer release is not proof
-that a feature exists in the packaged binary.
+No upstream release newer than v16.5.2 had been published when this audit was
+written. Availability in upstream `main` or a newer release is not proof that a
+feature exists in the packaged binary.
 
 ## Refreshing the wiki after a pin update
 

@@ -1,12 +1,12 @@
-# OMP v16.4.8 capability field guide
+# OMP v16.5.2 capability field guide
 
 > **Scope:** built-in upstream capabilities present in the packaged `omp`
-> v16.4.8, audited 2026-07-14. Wrapper policy still matters: read the
+> v16.5.2, audited 2026-07-14. Wrapper policy still matters: read the
 > [launcher matrix](README.md#choose-the-correct-surface-first).
 
 This page favors discoverability over implementation detail. The release links
 identify when a capability materially appeared or changed during the audited
-v16 series; the immutable v16.4.8 documentation links define the packaged
+v16 series; the immutable v16.5.2 documentation links define the packaged
 behavior.
 
 ## High-value “did you know?” workflows
@@ -21,8 +21,8 @@ Inside a profile, `/login <provider>` and `/logout <provider>` manage
 provider-scoped credentials. `omp usage --redact` reports every authenticated
 account without exposing full account IDs; `omp dry-balance` previews OAuth
 account selection. See upstream
-[Providers](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/providers.md)
-and [Secrets](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/secrets.md).
+[Providers](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/providers.md)
+and [Secrets](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/secrets.md).
 
 In these dotfiles, use `code`'s usage widget instead of typing profile names:
 `a` switches the visible `mine`/`mum` combination and every trusted launch gets
@@ -45,12 +45,16 @@ The session can also:
 
 These dotfiles manage the role map and fallback chains for generated launches;
 plain `omp` remains mutable. See upstream
-[Models](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/models.md).
+[Models](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/models.md).
 
 ### Change the shape of the work, not only the model
 
 - `/plan [prompt]` makes the agent propose and review a plan before mutation;
   `/plan-review` reopens the latest review.
+- `--prewalk` (with `--prewalk-into`) plans on the strong active model, then
+  hands off to a fast/cheap model at the first edit/write once the todo list
+  exists; `--plan-yolo` (with `--plan-yolo-into`) additionally auto-approves
+  the plan. These replaced the `--reasoning-slide-*` flags in v16.5.0.
 - `/goal`, `/goal budget <N>`, and `/guided-goal` maintain a persistent
   autonomous objective with a token budget.
 - `/vibe [prompt]` enters a read-only director mode whose dedicated `vibe_*`
@@ -93,7 +97,7 @@ OMP's transcript is a navigable tree, not a flat terminal log:
 
 `/export` writes browsable HTML, while `/dump` copies the full textual
 transcript. See the tagged
-[session-operations reference](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/session-operations-export-share-fork-resume.md).
+[session-operations reference](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/session-operations-export-share-fork-resume.md).
 
 ### Share a snapshot or collaborate live—with different trust models
 
@@ -104,9 +108,9 @@ creates a read-only link. Guests can use `omp join <link>` or `/join <link>`.
 
 The host still runs the model and every tool. A full collab link is therefore a
 control credential and must be handled like a secret. See the tagged
-[Collab](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/collab.md)
+[Collab](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/collab.md)
 and
-[session-sharing](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/session-operations-export-share-fork-resume.md#share)
+[session-sharing](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/session-operations-export-share-fork-resume.md#share)
 docs.
 
 ### Diagnose and reshape context before it becomes a failure
@@ -123,8 +127,8 @@ docs.
   maintenance.
 
 See the tagged upstream
-[Memory](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/memory.md) and
-[Compaction](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/compaction.md)
+[Memory](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/memory.md) and
+[Compaction](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/compaction.md)
 references for the active backend and compaction modes.
 
 ### Use rich input without leaving the terminal
@@ -146,7 +150,7 @@ dependencies rather than assuming they are installed.
 
 ### Give the agent more than file and shell access
 
-The v16.4.8 tool ecosystem includes code-aware LSP operations,
+The v16.5.2 tool ecosystem includes code-aware LSP operations,
 document/archive reads, images, notebooks, browser automation, web search,
 structured todos, subagents, and interactive operator questions. The
 discoverable `eval` tool adds persistent language kernels when its runtimes are
@@ -165,19 +169,24 @@ Notable release-backed additions include:
 - TinyFish, DuckDuckGo, xAI, and Firecrawl search adapters in
   [v16.2.0](https://github.com/can1357/oh-my-pi/releases/tag/v16.2.0), plus
   multiple credential-free engines and aggregate search in
-  [v16.4.3](https://github.com/can1357/oh-my-pi/releases/tag/v16.4.3); and
+  [v16.4.3](https://github.com/can1357/oh-my-pi/releases/tag/v16.4.3);
+- a project-scoped `launch` tool for shared long-running services and
+  debuggers — readiness probes, bounded logs, PTY input, restart policies,
+  and optional `detached` survival across broker shutdowns — gated behind
+  `launch.enabled` in
+  [v16.5.0](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.0); and
 - tagged tool contracts for
-  [image inspection](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/tools/inspect_image.md),
-  [image generation](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/tools/generate_image.md),
-  [speech generation](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/tools/tts.md),
-  and [evaluation](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/tools/eval.md).
+  [image inspection](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/tools/inspect_image.md),
+  [image generation](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/tools/generate_image.md),
+  [speech generation](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/tools/tts.md),
+  and [evaluation](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/tools/eval.md).
 
 `/tools` shows what the current session actually exposes. Wrapper policy can
 remove or require approval for any capability.
 
 ### Extend OMP without editing its core
 
-OMP v16.4.8 supports several extension boundaries:
+OMP v16.5.2 supports several extension boundaries:
 
 - TypeScript/JavaScript extensions and hooks via `-e`, `--hook`, discovery, or
   plugin packages;
@@ -192,11 +201,11 @@ OMP v16.4.8 supports several extension boundaries:
   status widgets.
 
 Start with the tagged
-[Extensions](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/extensions.md),
-[Skills](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/skills.md),
-[Rule matching](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/rulebook-matching-pipeline.md),
-[MCP](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/mcp-config.md), and
-[TUI integration](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/tui.md)
+[Extensions](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/extensions.md),
+[Skills](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/skills.md),
+[Rule matching](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/rulebook-matching-pipeline.md),
+[MCP](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/mcp-config.md), and
+[TUI integration](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/tui.md)
 docs.
 
 ### Embed or automate the same agent
@@ -212,8 +221,8 @@ The binary is not limited to the interactive TUI:
 - hooks/extensions can observe and alter lifecycle events.
 
 See the tagged
-[RPC](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/rpc.md) and
-[auth broker/gateway](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/auth-broker-gateway.md)
+[RPC](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/rpc.md) and
+[auth broker/gateway](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/auth-broker-gateway.md)
 docs; use `omp acp --help` for the packaged ACP server surface.
 
 ### Inspect OMP itself before writing another wrapper
@@ -240,10 +249,27 @@ source or adding a duplicate diagnostic to `code`.
 ## Release-note radar for the pinned v16 line
 
 This is a compact audit of operator-visible changes recorded between v16.0.0
-and v16.4.8, not a replacement for the current-feature sections above. Release
+and v16.5.2, not a replacement for the current-feature sections above. Release
 notes can bundle or migrate older behavior, so an entry means “recorded in this
 release,” not necessarily “first invented here.”
 
+- [v16.5.2](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.2) —
+  proactive rate-limit header ingestion for all supported providers with
+  multi-account rotation before 429s, a `generate_image.enabled` setting and
+  whitelist gating for the image tool, duration-suffix `--max-time` values,
+  and a breaking agent-tool change: the separate `selector` parameters were
+  removed from `read` and `grep` (ranges/modes are appended to `path`).
+- [v16.5.1](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.1) —
+  organization-scoped Anthropic credential and usage partitioning (visible in
+  `/usage`, `/logout`, and `omp token --list`), Cursor account usage in
+  `omp usage`, and `models.yaml` accepted as a custom-catalog fallback.
+- [v16.5.0](https://github.com/can1357/oh-my-pi/releases/tag/v16.5.0) —
+  the `--prewalk` plan-then-hand-off flow replacing the `--reasoning-slide-*`
+  flags, a compact session-only model picker on `Alt+P` with `@` role search,
+  a gated project-scoped `launch` tool for shared long-running services
+  (including `detached` launches), redesigned Agent Hub cards, the
+  `tui.scrollbackRebuild` setting, and removal of the Bing/Yahoo scraping
+  search providers.
 - [v16.4.8](https://github.com/can1357/oh-my-pi/releases/tag/v16.4.8) —
   Home/End navigation in the model browser and `c` to copy the edited plan from
   plan review.
@@ -303,12 +329,12 @@ change it. The pinned defaults include:
 | hold `Space` | Push-to-talk speech transcription |
 
 Keybindings live in `~/.omp/agent/keybindings.yml`; see the tagged
-[Keybindings](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/keybindings.md)
+[Keybindings](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/keybindings.md)
 reference.
 
 ## Built-in interactive slash-command index
 
-This table catalogs the v16.4.8 built-ins. `/help` remains authoritative because
+This table catalogs the v16.5.2 built-ins. `/help` remains authoritative because
 extensions may add commands and the active mode may restrict them.
 
 | Area | Commands |
@@ -338,4 +364,4 @@ Less obvious semantics:
   points to repository-owned edit paths.
 
 Source: tagged upstream
-[built-in slash-command registry](https://github.com/can1357/oh-my-pi/blob/v16.4.8/packages/coding-agent/src/slash-commands/builtin-registry.ts).
+[built-in slash-command registry](https://github.com/can1357/oh-my-pi/blob/v16.5.2/packages/coding-agent/src/slash-commands/builtin-registry.ts).

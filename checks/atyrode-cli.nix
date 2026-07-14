@@ -93,6 +93,29 @@ pkgs.runCommand "check-atyrode-cli"
     set -e
     test "$production_identity_status" = 65
 
+    # A production binary must REFUSE a store-mutating command when a test-only
+    # tool-substitution override is set: those seams are ignored in production, so
+    # a stubbed-looking clean/apply/rollback would otherwise drive the real
+    # nh/nix-store against the live store. (Regression guard for a near-miss where
+    # the production binary was run with stub overrides during development.)
+    for prod_cmd in clean apply rollback; do
+      set +e
+      env -u ATYRODE_NH -u ATYRODE_NIX_ENV -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
+        ATYRODE_NIX_STORE=/bin/true \
+        ${productionAtyrode}/bin/atyrode "$prod_cmd" --yes \
+        > /dev/null 2> "$TMPDIR/prod-guard.err"
+      prod_guard_status="$?"
+      set -e
+      test "$prod_guard_status" = 64 \
+        || { echo "production $prod_cmd must refuse a tool override (exit $prod_guard_status): $(cat "$TMPDIR/prod-guard.err")" >&2; exit 1; }
+      grep -qF 'ATYRODE_NIX_STORE is set' "$TMPDIR/prod-guard.err" \
+        || { echo "production $prod_cmd refusal must name the offending override" >&2; exit 1; }
+    done
+    # The guard is scoped to mutating verbs: a read-only command with the same
+    # override present still runs (production simply ignores the var there).
+    env ATYRODE_NIX_STORE=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
+      || { echo 'production read-only commands must not be blocked by the mutation guard' >&2; exit 1; }
+
     atyrode capabilities list --json | jq -e '
       (map(.name) | index("base") and index("server"))
       and all(.[]; .description | length > 0)

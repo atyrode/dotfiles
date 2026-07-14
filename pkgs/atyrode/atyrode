@@ -914,6 +914,28 @@ collect_garbage() {
   rm -f "$out"
 }
 
+# fold_gcroots_noise collapses one expected, benign flood in nh clean's output:
+# the "Failed to remove path …/gcroots/auto/… PermissionDenied" lines. Those auto
+# GC roots are owned by the Nix daemon/root, so a user-scope clean cannot unlink
+# them — but that is harmless, the store GC still reclaims whatever they no longer
+# protect. nh prints one such line per root, which drowns the real work and reads
+# like a crash. Here we count them and emit a single summary instead; every other
+# line — generation removals, genuine errors, non-permission failures — passes
+# through untouched (a "> Removing …/gcroots/auto/…" line is held one step so its
+# paired permission failure can suppress it, and flushed if no failure follows).
+fold_gcroots_noise() {
+  awk '
+    /^> Removing .*\/gcroots\/auto\// { if (pending != "") print pending; pending = $0; next }
+    /Failed to remove path.*\/gcroots\/auto\/.*PermissionDenied/ { skipped++; pending = ""; next }
+    { if (pending != "") { print pending; pending = "" } print }
+    END {
+      if (pending != "") print pending
+      if (skipped > 0)
+        printf "atyrode: skipped %d root-owned GC root(s) under /nix/var/nix/gcroots/auto (owned by the Nix daemon, need elevation to remove — harmless: the store GC still reclaims what they no longer protect)\n", skipped
+    }
+  '
+}
+
 # clean — reclaim disk from generations the config no longer references, always
 # keeping the current generation and a rollback window (never an auto-wipe of the
 # safety net). Also sweeps stale macOS app aliases (see clean_macos_residue).
@@ -939,15 +961,13 @@ cmd_clean() {
   printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
   # Let nh remove the stale generations and gcroots, but skip its garbage
   # collection (--no-gc) — nh runs it silently. We collect below instead, with a
-  # progress indicator, so the slow final step isn't an unexplained freeze. Under
-  # --json, nh's own chatter goes to stderr so stdout carries only the summary.
+  # progress indicator, so the slow final step isn't an unexplained freeze. nh's
+  # own chatter (and the folded gcroots summary) goes to stderr so that under
+  # --json stdout carries only the machine-readable summary; pipefail propagates
+  # nh's exit status through the filter.
   local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since" --no-gc)
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
-  if [[ "$json" == 1 ]]; then
-    "${nh_args[@]}" >&2 || die "$EX_SOFTWARE" "nh clean failed"
-  else
-    "${nh_args[@]}" || die "$EX_SOFTWARE" "nh clean failed"
-  fi
+  "${nh_args[@]}" 2>&1 | fold_gcroots_noise >&2 || die "$EX_SOFTWARE" "nh clean failed"
 
   [[ "$dry" == 1 ]] || collect_garbage
 

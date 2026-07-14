@@ -214,13 +214,15 @@ def gen(lane, mtier, thinking, spark, fable, fable_main=False):
         rp = rprov(r)
         t = min(3, base + 1) if r in DELIB else base
         th = thinking if extreme else (BUMP[thinking] if r in DELIB else thinking)
-        # Fable leads the deliberative Claude roles when on; the explicit (manual)
-        # fable-as-main escalation additionally hands it the default role — the
-        # main agent — regardless of the lane's provider preference. Both keep the
-        # smart/normal gate: a 'fast' tier explicitly trades smarts for speed, so
-        # the scarce elite never leads there.
-        fable_here = fable and mtier in ('smart', 'normal') and (
-            (fable_main and r == 'default') or (r in DELIB and rp == 'A'))
+        # Fable leads the deliberative Claude roles when on — gated to the
+        # smart/normal tiers, since a 'fast' tier explicitly trades smarts for
+        # speed. The explicit (manual) fable-as-main escalation is an OVERRIDE:
+        # it hands Fable the default role — the main agent — on every model tier
+        # and regardless of the lane's provider preference, while the rest of the
+        # profile keeps following the dials.
+        fable_here = fable and (
+            (fable_main and r == 'default') or
+            (r in DELIB and rp == 'A' and mtier in ('smart', 'normal')))
         lead = 'fable' if fable_here else LADDER[rp][t]
         out[r] = (lead, th, [(m, th) for m in build_chain(lead, isp)])
     return out

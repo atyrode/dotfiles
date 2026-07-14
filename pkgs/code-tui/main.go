@@ -841,9 +841,9 @@ func (m model) mode() int {
 		return modeSplit
 	}
 	// too narrow for side-by-side; stack the preview below the list if the
-	// terminal is tall enough to give the list, footer, and preview a usable
-	// share, else collapse.
-	if m.bodyH() >= 17 {
+	// terminal is tall enough to give the list, footer, and preview (with its
+	// pill head + fallback hint) a usable share, else collapse.
+	if m.bodyH() >= 19 {
 		return modeStacked
 	}
 	return modeCollapsed
@@ -912,7 +912,7 @@ func (m model) launchFooter() []string {
 // 1-line divider) between the list and the preview: the list takes what its
 // content needs, capped at ~60% and floored so the preview keeps ≥ minPrev rows.
 func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
-	const sep, minPrev, minList = 1, 6, 3
+	const sep, minPrev, minList = 1, 8, 3 // minPrev covers the preview chrome + ≥4 route rows
 	inner := bodyH - headRows - launchFooterRows - sep
 	listH = bodyLen
 	if c := inner * 3 / 5; listH > c {
@@ -933,19 +933,20 @@ func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
 
 // previewDims returns the preview viewport's inner (width, height) for the mode.
 // The full-width modes reserve the shared gutter; split leaves the preview's own
-// border + padding to do the breathing.
+// border + padding to do the breathing. Every mode reserves prevChromeRows for
+// the pinned pill head above and fallback-display hint below the viewport.
 func (m model) previewDims() (int, int) {
 	bodyH := m.contentH()
 	switch m.mode() {
 	case modeCollapsed:
-		return m.w - gut, bodyH
+		return m.w - gut, bodyH - prevChromeRows
 	case modeStacked:
 		body, _ := m.bodyLines()
 		_, ph := stackedSplit(bodyH, len(body))
-		return m.w - gut, ph
+		return m.w - gut, ph - prevChromeRows
 	default: // split — the pane draws a border + prevPadL inside its width, so the
 		// viewport (what renderRoute wraps to) gets the inner text area, not the box.
-		return m.w - m.listW() - 3 - prevPadL, bodyH
+		return m.w - m.listW() - 3 - prevPadL, bodyH - prevChromeRows
 	}
 }
 
@@ -1214,33 +1215,14 @@ func (m *model) syncPreview() {
 		return
 	}
 	rw := m.vp.Width
-	// routing rule carries the depth state, so `f` (primary ⇄ full chain) is
-	// discoverable — "primary" = each role's lead model only, "full" = its whole
-	// fallback chain.
-	depthLbl := "primary only"
-	if m.depth == 1 {
-		depthLbl = "full chains"
-	}
-	rHead := "── routing · " + depthLbl + " (f) "
-	rule := stDim.Render("── routing · ") + stHead.Render(depthLbl) +
-		stDim.Render(" (f) "+strings.Repeat("─", max(4, rw-lipgloss.Width(rHead))))
+	// No settings summary here: every dial is already visible (selected) in the
+	// generator list on the left, so the preview shows only what that selection
+	// produces — the role → model routing itself.
 	var b strings.Builder
 	id := comboID(m.sel)
 	if base, ok := m.generated[id]; ok {
 		_, roles := splitMeta(base)
 		roles = m.applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
-		// meta line rebuilt from the facets, so it always reflects the
-		// advisor dial and fast toggle (both live outside the baked grid).
-		line := stDim.Render("thinking " + m.sel["thinking"] + " · fallback on · advisor " + m.sel["advisor"])
-		if m.sel["lane"] != "claude-only" {
-			blue := lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff"))
-			state := stDim.Render("off")
-			if m.sel["fast"] == "on" {
-				state = blue.Render("on")
-			}
-			line += stDim.Render(" · ") + blue.Render(m.glyphs["fast"]) + stDim.Render(" fast ") + state
-		}
-		b.WriteString(line + "\n" + rule + "\n")
 		b.WriteString(renderRoute(roles, m.depth, m.avail, rw))
 	} else {
 		b.WriteString(stDim.Render("no profile for this combination") + "\n")
@@ -1457,7 +1439,7 @@ func (m model) previewPane(w, h int) string {
 		Border(lipgloss.NormalBorder(), false, false, false, true).
 		BorderForeground(lipgloss.Color(cBord)).PaddingLeft(prevPadL).
 		Width(w).Height(h).
-		Render(m.vp.View())
+		Render(m.previewColumn())
 }
 
 // accent is the context colour — the selected lane in the generator.
@@ -1466,18 +1448,42 @@ func (m model) accent() string {
 	return laneColor(m.sel["lane"])
 }
 
-// sectionTitle is the accent-pilled "generator" label at the top of the left
-// column, coloured by the active lane.
-func (m model) sectionTitle() string {
+// pill renders an accent-backed section label, coloured by the active lane —
+// the shared shape of the generator (left) and routing (right) column heads.
+func (m model) pill(label string) string {
 	return lipgloss.NewStyle().Padding(0, 1).
 		Background(lipgloss.Color(m.accent())).Foreground(lipgloss.Color("#12161d")).Bold(true).
-		Render("generator")
+		Render(label)
+}
+
+// sectionTitle is the accent-pilled "generator" label at the top of the left
+// column.
+func (m model) sectionTitle() string {
+	return m.pill("generator")
 }
 
 // sectionHead is the gutter-inset title plus a blank separator (headRows tall);
 // it stays pinned above the scrolling facet list.
 func (m model) sectionHead() string {
 	return padLeft(m.sectionTitle(), gut) + "\n\n"
+}
+
+// prevChromeRows is the preview column's pinned chrome around the scrolling
+// viewport: the pill head above (headRows) plus a blank + the fallback-display
+// hint below.
+const prevChromeRows = headRows + 2
+
+// previewColumn assembles the right column: the pinned "routing" pill head, the
+// scrolling routing viewport, and the pinned fallback-display hint. The hint's
+// show/hide wording makes clear that f only changes what is DISPLAYED — the
+// launched profile always keeps its fallback chains.
+func (m model) previewColumn() string {
+	verb := "show"
+	if m.depth == 1 {
+		verb = "hide"
+	}
+	return m.pill("routing") + "\n\n" + m.vp.View() + "\n\n" +
+		stDim.Render("f · "+verb+" fallback chains")
 }
 
 // leftColumn renders the pinned section head plus the scrolling list body, the
@@ -1502,7 +1508,7 @@ func (m model) stackedContent(bodyH int) string {
 	listH, prevH := stackedSplit(bodyH, len(body))
 	top := m.leftColumn(m.w, headRows+listH+launchFooterRows)
 	div := stDim.Render(strings.Repeat("─", m.w))
-	preview := lipgloss.NewStyle().MaxHeight(prevH).Render(padLeft(m.vp.View(), gut))
+	preview := lipgloss.NewStyle().MaxHeight(prevH).Render(padLeft(m.previewColumn(), gut))
 	return lipgloss.JoinVertical(lipgloss.Left, top, div, preview)
 }
 
@@ -1517,7 +1523,7 @@ func (m model) View() string {
 	switch m.mode() {
 	case modeCollapsed:
 		if m.showResult && m.w < 62 {
-			content = padLeft(m.vp.View(), gut)
+			content = padLeft(m.previewColumn(), gut)
 		} else {
 			content = m.leftColumn(m.w, ch)
 		}
@@ -1552,7 +1558,14 @@ func (m model) genLines() ([]string, int) {
 			ptr = lipgloss.NewStyle().Foreground(lipgloss.Color(acc)).Render("▸ ")
 			cursor = len(lines)
 		}
-		row := fmt.Sprintf("%s%s%s", ptr, gly, stDim.Render(pad(f.key, 9)))
+		// main renders as fable's tabulated child "default": the indent + the
+		// default-role row lighting up Fable in the preview explain themselves,
+		// so it carries no flavor text (which would wrap on narrow panes anyway).
+		label, childPad := f.key, ""
+		if f.key == "main" {
+			label, childPad = "default", "  "
+		}
+		row := fmt.Sprintf("%s%s%s%s", ptr, childPad, gly, stDim.Render(pad(label, 9-len(childPad))))
 		for _, v := range f.values {
 			switch {
 			case v == m.sel[f.key]:
@@ -1584,24 +1597,31 @@ func (m model) genLines() ([]string, int) {
 				}
 				row += "   " + stWarn.Render(gWarn+" "+w+" — no usage left")
 			}
-		case f.key == "main" && m.sel["main"] == "on":
-			row += "   " + stDim.Render("Fable leads the default agent — heaviest draw on its scarce bucket")
 		case f.key == "fast" && m.sel["fast"] == "on":
-			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
+			row += "   " + stDim.Render("GPT only")
 		}
 		lines = append(lines, row)
 	}
 	return lines, cursor
 }
 
-func main() {
-	// Facet glyphs are intrinsic to the generator, so the binary carries sane
-	// defaults (Nerd Font, FA range). CODE_FACET_GLYPHS may override any of them.
-	//   lane ⇄  model ⚙  thinking 💡  spark 🚀  fable 📖  main 🎯  fast ⚡
-	glyphs := map[string]string{
-		"lane": "", "model": "", "thinking": "", "advisor": "",
-		"spark": "", "fable": "", "main": "\uf140", "fast": "",
+// defaultGlyphs is the built-in facet-glyph set (Nerd Font, Font Awesome PUA
+// range), written as explicit \u escapes so the codepoints stay visible and
+// verifiable in source — a literal PUA glyph is invisible in most editors and
+// was once wiped by an edit exactly because of that. CODE_FACET_GLYPHS may
+// override any entry (see main).
+//
+//	lane ⇄ (f127)  model ⚙ (f085)  thinking 💡 (f0eb)  advisor 🧭 (f14e)
+//	spark 🚀 (f135)  fable 📖 (f02d)  default 🎯 (f140)  fast ⚡ (f0e7)
+func defaultGlyphs() map[string]string {
+	return map[string]string{
+		"lane": "\uf127", "model": "\uf085", "thinking": "\uf0eb", "advisor": "\uf14e",
+		"spark": "\uf135", "fable": "\uf02d", "main": "\uf140", "fast": "\uf0e7",
 	}
+}
+
+func main() {
+	glyphs := defaultGlyphs()
 	for _, kv := range strings.Split(os.Getenv("CODE_FACET_GLYPHS"), ",") {
 		if p := strings.SplitN(kv, "=", 2); len(p) == 2 && p[1] != "" {
 			glyphs[p[0]] = p[1]

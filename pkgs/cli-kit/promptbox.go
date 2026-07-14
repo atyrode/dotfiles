@@ -57,6 +57,29 @@ type promptToken struct {
 // A host (see Run) listens for it to hide the box.
 type BoxCloseMsg struct{}
 
+// modelResidencyMsg reports the result of a load/unload toggle. loaded is the
+// state that was aimed for; err is non-nil if the daemon call failed.
+type modelResidencyMsg struct {
+	loaded bool
+	err    error
+}
+
+// toggleModel loads or unloads the local model in the background (a cold load can
+// take many seconds), reporting the outcome as a modelResidencyMsg.
+func toggleModel(l Loadable, load bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		var err error
+		if load {
+			err = l.Load(ctx)
+		} else {
+			err = l.Unload(ctx)
+		}
+		return modelResidencyMsg{loaded: load, err: err}
+	}
+}
+
 // ActionsProposedMsg is emitted as soon as a proposal is parsed. The host applies
 // it immediately as a live preview (saving prior state), so the change is visible
 // in the tool's own UI while the box shows keep/revert.
@@ -95,6 +118,12 @@ type PromptBox struct {
 
 	startedAt time.Time     // when the current request was submitted
 	took      time.Duration // wall time of the last completed request (0 until one finishes)
+
+	loadable    Loadable  // set when the backend can load/unload a local model
+	modelLoaded bool      // user-controlled residency intent (default unloaded)
+	loading     bool      // a load/unload call is in flight
+	loadStart   time.Time // when the in-flight load/unload began (for its elapsed)
+	loadErr     error     // last load/unload failure, shown dimmed
 }
 
 // NewPromptBox builds a box in the editing state. Call SetAsker to give it a
@@ -114,13 +143,23 @@ func NewPromptBox() PromptBox {
 	return PromptBox{ta: ta, vp: viewport.New(0, 0), spin: sp, state: boxEditing}
 }
 
-// SetAsker wires the read-only backend. Without one, submitting is a no-op.
-func (b *PromptBox) SetAsker(a Asker) { b.asker = a }
+// SetAsker wires the read-only backend. Without one, submitting is a no-op. A
+// backend that is also Loadable enables the load/unload toggle.
+func (b *PromptBox) SetAsker(a Asker) { b.asker = a; b.detectLoadable(a) }
 
 // SetCommander wires the Act-mode backend. When set, submitting asks the
 // Commander for a proposal (streamed live, then shown for confirmation) instead
-// of streaming a plain answer; it takes precedence over an Asker.
-func (b *PromptBox) SetCommander(c Commander) { b.cmd = c }
+// of streaming a plain answer; it takes precedence over an Asker. A Commander
+// that is also Loadable enables the load/unload toggle.
+func (b *PromptBox) SetCommander(c Commander) { b.cmd = c; b.detectLoadable(c) }
+
+// detectLoadable records the backend as loadable if it implements Loadable, so
+// the box shows the residency indicator and binds the toggle key.
+func (b *PromptBox) detectLoadable(backend any) {
+	if l, ok := backend.(Loadable); ok {
+		b.loadable = l
+	}
+}
 
 // SetTitle sets an optional header line (e.g. "prompt → profile · gpt-5.6-luna")
 // so the user can see what the box is doing / which model it uses.
@@ -216,6 +255,14 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "ctrl+l":
+			// Toggle local-model residency. Ignored when there's no loadable
+			// backend or a load/unload is already in flight.
+			if b.loadable == nil || b.loading {
+				return b, nil
+			}
+			b.loading, b.loadStart, b.loadErr = true, time.Now(), nil
+			return b, toggleModel(b.loadable, !b.modelLoaded)
 		case "enter":
 			switch b.state {
 			case boxBusy:
@@ -245,6 +292,14 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		var cmd tea.Cmd
 		b.ta, cmd = b.ta.Update(msg)
 		return b, cmd
+
+	case modelResidencyMsg:
+		b.loading = false
+		b.loadErr = msg.err
+		if msg.err == nil {
+			b.modelLoaded = msg.loaded
+		}
+		return b, nil
 
 	case spinner.TickMsg:
 		// Always advance so the tick chain stays alive; it's only displayed while
@@ -373,6 +428,10 @@ func (b PromptBox) View() string {
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
 
+	if line := b.residencyLine(); line != "" {
+		parts = append(parts, line)
+	}
+
 	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -380,4 +439,31 @@ func (b PromptBox) View() string {
 		Padding(0, 1).
 		Width(b.w - 2). // border adds the outer 2 cols back
 		Render(body)
+}
+
+// residencyLine is the model load/unload indicator, shown only when the backend
+// is Loadable: a chip + on/off toggle plus the ^L hint, or a live progress line
+// while a load/unload runs (a cold load is slow, so the elapsed matters).
+func (b PromptBox) residencyLine() string {
+	if b.loadable == nil {
+		return ""
+	}
+	if b.loading {
+		verb := "loading model"
+		if b.modelLoaded {
+			verb = "unloading model"
+		}
+		return StDim.Render(fmt.Sprintf("%s %s… %.1fs", b.spin.View(), verb, time.Since(b.loadStart).Seconds()))
+	}
+	var state string
+	if b.modelLoaded {
+		state = StOk.Render(GToggleOn + " loaded")
+	} else {
+		state = StDim.Render(GToggleOff + " unloaded")
+	}
+	line := StDim.Render(GMemory+" model ") + state + StDim.Render("  ^L")
+	if b.loadErr != nil {
+		line += "\n" + StBrk.Render(GBroken+" "+b.loadErr.Error())
+	}
+	return line
 }

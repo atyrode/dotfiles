@@ -50,13 +50,21 @@ type OllamaCommander struct {
 	// http.DefaultClient. The request carries the Propose context, so cancelling
 	// it aborts the call.
 	Client *http.Client
+	// loaded is the shared user-controlled residency intent (see Loadable): true
+	// after Load, false after Unload. It is a pointer so copies of the value-type
+	// commander share one flag. When set, Propose pins the model (keep_alive -1)
+	// while loaded and runs it transiently (keep_alive 0 — evict after) while not,
+	// so the model only lingers in RAM when the user has chosen to load it.
+	loaded *bool
 }
 
 // NewOllamaCommander builds an OllamaCommander with the default endpoint, local
 // model, and the given system prompt (which must instruct the model to answer
-// with a JSON object of settings).
+// with a JSON object of settings). The model starts unloaded — the user loads it
+// explicitly (see Loadable).
 func NewOllamaCommander(system DocCorpus) OllamaCommander {
-	return OllamaCommander{Endpoint: DefaultOllamaEndpoint, Model: DefaultLocalModel, System: system}
+	unloaded := false
+	return OllamaCommander{Endpoint: DefaultOllamaEndpoint, Model: DefaultLocalModel, System: system, loaded: &unloaded}
 }
 
 // ollamaChatReq is the subset of ollama's /api/chat request we use.
@@ -116,7 +124,7 @@ func (o OllamaCommander) Propose(ctx context.Context, prompt string) (<-chan str
 		Model:     model,
 		Messages:  msgs,
 		Stream:    true,
-		KeepAlive: keepAliveValue(o.KeepAlive),
+		KeepAlive: o.proposeKeepAlive(),
 	})
 	if err != nil {
 		return nil, err
@@ -146,6 +154,118 @@ func (o OllamaCommander) Propose(ctx context.Context, prompt string) (<-chan str
 // same tolerant JSON extraction as the omp backend.
 func (o OllamaCommander) Parse(output string) ([]Action, error) {
 	return parseActions([]byte(output))
+}
+
+// proposeKeepAlive is the keep_alive a Propose call carries: when the user has
+// loaded the model, pin it (-1) so it stays; otherwise run it transiently (0 —
+// evict right after) so a suggestion never silently leaves the model resident.
+// With no residency flag (a hand-built commander) fall back to the KeepAlive
+// field / daemon default.
+func (o OllamaCommander) proposeKeepAlive() any {
+	if o.loaded == nil {
+		return keepAliveValue(o.KeepAlive)
+	}
+	if *o.loaded {
+		return -1
+	}
+	return 0
+}
+
+// Load pins the model resident (keep_alive -1) so subsequent suggestions are
+// warm; the first load pulls the weights into RAM and can take a while on CPU.
+func (o OllamaCommander) Load(ctx context.Context) error {
+	if o.loaded != nil {
+		*o.loaded = true
+	}
+	return o.setResidency(ctx, -1)
+}
+
+// Unload evicts the model from memory (keep_alive 0), freeing its RAM.
+func (o OllamaCommander) Unload(ctx context.Context) error {
+	if o.loaded != nil {
+		*o.loaded = false
+	}
+	return o.setResidency(ctx, 0)
+}
+
+// Loaded reports whether the model is resident right now, per the daemon's live
+// process list (/api/ps) — the source of truth, independent of the intent flag.
+func (o OllamaCommander) Loaded(ctx context.Context) (bool, error) {
+	endpoint := o.endpoint()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/api/ps", nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := o.client().Do(req)
+	if err != nil {
+		return false, fmt.Errorf("reaching ollama at %s (is the daemon running?): %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("ollama returned %s", resp.Status)
+	}
+	var ps struct {
+		Models []struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ps); err != nil {
+		return false, err
+	}
+	model := o.model()
+	for _, m := range ps.Models {
+		if m.Name == model || m.Model == model {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// setResidency asks the daemon to hold (keepAlive -1) or drop (keepAlive 0) the
+// model without generating: an empty-prompt /api/generate carrying only the
+// keep_alive is ollama's idiom for load/unload.
+func (o OllamaCommander) setResidency(ctx context.Context, keepAlive int) error {
+	body, err := json.Marshal(map[string]any{"model": o.model(), "keep_alive": keepAlive})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint()+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := o.client().Do(req)
+	if err != nil {
+		return fmt.Errorf("reaching ollama at %s (is the daemon running?): %w", o.endpoint(), err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama returned %s", resp.Status)
+	}
+	return nil
+}
+
+// endpoint, model, and client resolve the configured values with their defaults.
+func (o OllamaCommander) endpoint() string {
+	if o.Endpoint == "" {
+		return DefaultOllamaEndpoint
+	}
+	return o.Endpoint
+}
+
+func (o OllamaCommander) model() string {
+	if o.Model == "" {
+		return DefaultLocalModel
+	}
+	return o.Model
+}
+
+func (o OllamaCommander) client() *http.Client {
+	if o.Client == nil {
+		return http.DefaultClient
+	}
+	return o.Client
 }
 
 // keepAliveValue renders the configured keep-alive for the wire. Empty → omitted

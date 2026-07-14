@@ -102,6 +102,56 @@ func TestOllamaCommanderPinsForeverAsNumber(t *testing.T) {
 	}
 }
 
+func TestOllamaResidencyToggle(t *testing.T) {
+	var lastPath, lastBody string
+	stub := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		lastPath = r.URL.Path
+		if r.Body != nil {
+			b, _ := io.ReadAll(r.Body)
+			lastBody = string(b)
+		}
+		body := "{}"
+		if r.URL.Path == "/api/ps" {
+			body = `{"models":[{"name":"m","model":"m"}]}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	o := NewOllamaCommander("sys")
+	o.Model, o.Client = "m", stub
+
+	// Default: unloaded → a Propose runs transiently (keep_alive 0, evict after).
+	if got := o.proposeKeepAlive(); got != 0 {
+		t.Errorf("default proposeKeepAlive = %v, want 0 (transient)", got)
+	}
+
+	// Load pins it: /api/generate with keep_alive -1, and Propose now pins too.
+	if err := o.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if lastPath != "/api/generate" || !strings.Contains(lastBody, `"keep_alive":-1`) {
+		t.Errorf("Load should POST /api/generate keep_alive -1; got %s %s", lastPath, lastBody)
+	}
+	if got := o.proposeKeepAlive(); got != -1 {
+		t.Errorf("loaded proposeKeepAlive = %v, want -1 (pinned)", got)
+	}
+
+	// Loaded reads /api/ps and finds the model.
+	if ok, err := o.Loaded(context.Background()); err != nil || !ok {
+		t.Errorf("Loaded = %v,%v want true,nil", ok, err)
+	}
+
+	// Unload evicts: keep_alive 0, and Propose goes transient again.
+	if err := o.Unload(context.Background()); err != nil {
+		t.Fatalf("Unload: %v", err)
+	}
+	if !strings.Contains(lastBody, `"keep_alive":0`) {
+		t.Errorf("Unload should POST keep_alive 0; got %s", lastBody)
+	}
+	if got := o.proposeKeepAlive(); got != 0 {
+		t.Errorf("unloaded proposeKeepAlive = %v, want 0", got)
+	}
+}
+
 func TestOllamaCommanderDaemonDown(t *testing.T) {
 	// A connection failure must surface a clear, actionable error, not a panic.
 	c := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

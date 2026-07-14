@@ -39,6 +39,18 @@ type Commander interface {
 // injects it into the model's system prompt so answers are tool-specific.
 type DocCorpus string
 
+// Loadable is an optional backend capability for a local model that can be held
+// resident in memory. A backend that implements it lets the PromptBox offer a
+// toggle key (load/unload) and show residency state, so the user decides when the
+// model occupies RAM rather than it lingering unbidden. Load pins the model,
+// Unload evicts it, and Loaded reports whether it is resident now. All three
+// take a context so the call can be cancelled/timed out.
+type Loadable interface {
+	Load(ctx context.Context) error
+	Unload(ctx context.Context) error
+	Loaded(ctx context.Context) (bool, error)
+}
+
 // The opt-in capabilities a host may implement. Each is independent.
 type (
 	// Askable enables the PromptBox in read-only Ask mode.

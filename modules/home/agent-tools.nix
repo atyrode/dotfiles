@@ -9,24 +9,24 @@ let
   cfg = config.atyrode.agentTools;
   lcfg = cfg.localClassifier;
   ollamaBin = lib.getExe pkgs.ollama;
-  # Pull the picker's classifier model (only if missing — the pull is a no-op
-  # otherwise) THEN warm it: one throwaway generation loads the weights into RAM
-  # so the first real ctrl+o is fast instead of paying the ~cold-load. With
-  # keepAlive pinned the model then stays resident. Runs as a oneshot on every
-  # login so the model is warm after a reboot too.
-  warmClassifierModel = pkgs.writeShellScript "ollama-pull-classifier" ''
+  # Pull the picker's classifier model to disk once the daemon is up (only if
+  # missing — the pull is a no-op otherwise), so the first Load in the picker is a
+  # fast RAM-load rather than a multi-minute download. The model is NOT loaded
+  # into memory here: residency is the user's explicit choice via the picker's
+  # load/unload toggle (see cli-kit Loadable), so it never occupies RAM unbidden.
+  pullClassifierModel = pkgs.writeShellScript "ollama-pull-classifier" ''
     set -u
     export OLLAMA_HOST=127.0.0.1:${toString lcfg.port}
     for _ in $(seq 1 60); do
       if ${ollamaBin} list >/dev/null 2>&1; then break; fi
       sleep 1
     done
-    if ! ${ollamaBin} list 2>/dev/null | grep -qF ${lib.escapeShellArg lcfg.model}; then
-      echo "ollama: pulling ${lcfg.model} for the code picker (first run only)..."
-      ${ollamaBin} pull ${lib.escapeShellArg lcfg.model} || exit 1
+    if ${ollamaBin} list 2>/dev/null | grep -qF ${lib.escapeShellArg lcfg.model}; then
+      echo "ollama: ${lcfg.model} already present"
+      exit 0
     fi
-    echo "ollama: warming ${lcfg.model} into memory..."
-    ${ollamaBin} run ${lib.escapeShellArg lcfg.model} ok >/dev/null 2>&1 || true
+    echo "ollama: pulling ${lcfg.model} for the code picker (first run only)..."
+    exec ${ollamaBin} pull ${lib.escapeShellArg lcfg.model}
   '';
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
@@ -73,19 +73,20 @@ in
     seedPackage = lib.mkPackageOption pkgs "omp-seed" { };
 
     localClassifier = {
-      # A resident local model that powers `code`'s prompt→profile suggestion
-      # (ctrl+o): a small instruct model on the ollama daemon answers over
-      # loopback in a fraction of a second, with no auth and no network. The
-      # daemon is a general Asker/Commander backend, not picker-only.
+      # A local model that powers `code`'s prompt→profile suggestion (ctrl+o): a
+      # small instruct model on the ollama daemon answers over loopback with no
+      # auth and no network. The daemon is a general Asker/Commander backend and a
+      # local-model playground, not picker-only — hence enabled everywhere.
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = pkgs.stdenv.isLinux;
+        default = true;
         description = ''
-          Run the nix-managed ollama daemon and keep the code picker's classifier
-          model resident and pre-pulled. Enabled on Linux (the daemon runs as a
-          systemd user service and the model is auto-pulled on activation); on
-          other platforms the daemon still runs but the model must be pulled
-          manually.
+          Run the nix-managed ollama daemon (and put the ollama CLI on PATH). On
+          Linux the daemon runs as a systemd user service and the picker's
+          classifier model is auto-pulled to disk on activation; on macOS the
+          daemon runs via launchd and models are pulled manually (`ollama pull`).
+          The model is never loaded into memory automatically — residency is the
+          user's explicit choice via the picker's load/unload toggle.
         '';
       };
 
@@ -106,12 +107,13 @@ in
 
       keepAlive = lib.mkOption {
         type = lib.types.str;
-        default = "-1";
-        example = "30m";
+        default = "5m";
+        example = "-1";
         description = ''
-          How long ollama holds a model in memory after use (OLLAMA_KEEP_ALIVE).
-          "-1" pins it forever so every ctrl+o is warm (costs ~2GB resident for a
-          3B model); a duration like "30m" frees it after idle.
+          The daemon's DEFAULT keep-alive (OLLAMA_KEEP_ALIVE) for requests that do
+          not set their own — i.e. manual `ollama run` chats. The code picker sets
+          its own per call (pinned while loaded, evict-after while not), so this
+          does not affect it. "-1" would pin every model forever.
         '';
       };
     };
@@ -199,13 +201,13 @@ in
       # model is pulled on first use / manually.
       systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
         Unit = {
-          Description = "Pull + warm the code picker's local classifier model (${lcfg.model})";
+          Description = "Pull the code picker's local classifier model to disk (${lcfg.model})";
           After = [ "ollama.service" ];
           Wants = [ "ollama.service" ];
         };
         Service = {
           Type = "oneshot";
-          ExecStart = "${warmClassifierModel}";
+          ExecStart = "${pullClassifierModel}";
         };
         Install.WantedBy = [ "default.target" ];
       };

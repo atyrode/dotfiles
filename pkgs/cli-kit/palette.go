@@ -34,6 +34,14 @@ const (
 	GReset  = "↻︎"
 )
 
+// Nerd Font glyphs for the model-residency indicator: a memory chip plus an
+// on/off toggle. Require a Nerd Font (the CLIs already assume one).
+const (
+	GMemory    = "" //  nf-fa-memory — the local model chip
+	GToggleOn  = "" //  resident in RAM
+	GToggleOff = "" //  evicted
+)
+
 // Shared styles built from the palette.
 var (
 	StDim    = lipgloss.NewStyle().Foreground(lipgloss.Color(CDim))
@@ -41,5 +49,6 @@ var (
 	StHead   = lipgloss.NewStyle().Foreground(lipgloss.Color(CHead))
 	StWarn   = lipgloss.NewStyle().Foreground(lipgloss.Color(CAcc))
 	StBrk    = lipgloss.NewStyle().Foreground(lipgloss.Color(CRed))
+	StOk     = lipgloss.NewStyle().Foreground(lipgloss.Color(CGreen))
 	StStruck = lipgloss.NewStyle().Strikethrough(true).Faint(true).Foreground(lipgloss.Color(CDim))
 )

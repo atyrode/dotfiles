@@ -2,15 +2,15 @@
 """Generate the full facet grid of profiles from first principles.
 
 Runs at package build time. For every valid (lane, model-tier, thinking, spark,
-fable) combination it emits a routing block in the plain format the `code`
-generator's colorizeRoute renders unchanged:
+fable, fable-as-main) combination it emits a routing block in the plain format
+the `code` generator's colorizeRoute renders unchanged:
 
-    <combo-id>  <lane> · <model-tier> · <thinking>[ · spark][ · fable]
+    <combo-id>  <lane> · <model-tier> · <thinking>[ · spark][ · fable[ · main]]
       thinking <t> · fallback on · advisor <on|off>
       ● default    <model:level>  → <fallback> → ...
       ...
 
-The combo-id is `<lane>_<mtier>_<thinking>_<sp|nosp>_<fa|nofa>` — the runtime
+The combo-id is `<lane>_<mtier>_<thinking>_<sp|nosp>_<fa|famain|nofa>` — the runtime
 facet selector rebuilds the same id from the current facet state to look up the
 block. The model catalog is loaded from omp/models.yml (issue #79).
 """
@@ -165,7 +165,7 @@ def pure(lane):
     return lane in ('gpt-only', 'claude-only')
 
 
-def gen(lane, mtier, thinking, spark, fable):
+def gen(lane, mtier, thinking, spark, fable, fable_main=False):
     """Return {role: (lead_key, level, [chain (key, level)...])}."""
     P = primary(lane)
     base = TMAP[mtier]
@@ -214,23 +214,33 @@ def gen(lane, mtier, thinking, spark, fable):
         rp = rprov(r)
         t = min(3, base + 1) if r in DELIB else base
         th = thinking if extreme else (BUMP[thinking] if r in DELIB else thinking)
-        lead = 'fable' if (fable and r in DELIB and rp == 'A' and mtier in ('smart', 'normal')) else LADDER[rp][t]
+        # Fable leads the deliberative Claude roles when on; the explicit (manual)
+        # fable-as-main escalation additionally hands it the default role — the
+        # main agent — regardless of the lane's provider preference. Both keep the
+        # smart/normal gate: a 'fast' tier explicitly trades smarts for speed, so
+        # the scarce elite never leads there.
+        fable_here = fable and mtier in ('smart', 'normal') and (
+            (fable_main and r == 'default') or (r in DELIB and rp == 'A'))
+        lead = 'fable' if fable_here else LADDER[rp][t]
         out[r] = (lead, th, [(m, th) for m in build_chain(lead, isp)])
     return out
 
 
-def combo_id(lane, mtier, thinking, spark, fable):
-    return f"{lane}_{mtier}_{thinking}_{'sp' if spark else 'nosp'}_{'fa' if fable else 'nofa'}"
+def combo_id(lane, mtier, thinking, spark, fable, fable_main=False):
+    fa = 'famain' if (fable and fable_main) else ('fa' if fable else 'nofa')
+    return f"{lane}_{mtier}_{thinking}_{'sp' if spark else 'nosp'}_{fa}"
 
 
-def render(lane, mtier, thinking, spark, fable):
-    roles = gen(lane, mtier, thinking, spark, fable)
-    cid = combo_id(lane, mtier, thinking, spark, fable)
+def render(lane, mtier, thinking, spark, fable, fable_main=False):
+    roles = gen(lane, mtier, thinking, spark, fable, fable_main)
+    cid = combo_id(lane, mtier, thinking, spark, fable, fable_main)
     desc_bits = [lane, mtier, thinking]
     if spark:
         desc_bits.append('spark')
     if fable:
         desc_bits.append('fable')
+    if fable and fable_main:
+        desc_bits.append('main')
     lines = [f"{cid}  {' · '.join(desc_bits)}"]
     adv_on = roles['advisor'][0] is not None
     lines.append(f"  thinking {thinking} · fallback on · advisor {'on' if adv_on else 'off'}")
@@ -272,11 +282,13 @@ def render_advisors():
     return "\n".join(lines)
 
 
-def valid(lane, mtier, thinking, spark, fable):
+def valid(lane, mtier, thinking, spark, fable, fable_main=False):
     if lane == 'gpt-only' and fable:
         return False       # no Fable on pure GPT
     if lane == 'claude-only' and spark:
         return False       # no Spark on pure Claude
+    if fable_main and not fable:
+        return False       # fable-as-main only exists on top of fable
     return True
 
 
@@ -290,8 +302,9 @@ def main():
             for thinking in THINKING:
                 for spark in (True, False):
                     for fable in (True, False):
-                        if valid(lane, mtier, thinking, spark, fable):
-                            print(render(lane, mtier, thinking, spark, fable))
+                        for fable_main in (False, True):
+                            if valid(lane, mtier, thinking, spark, fable, fable_main):
+                                print(render(lane, mtier, thinking, spark, fable, fable_main))
 
 
 if __name__ == '__main__':

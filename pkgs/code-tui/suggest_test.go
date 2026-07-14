@@ -15,6 +15,7 @@ func TestValidFacetActions(t *testing.T) {
 		{Key: "lane", Value: "purple"},   // invalid value → dropped
 		{Key: "nonsense", Value: "x"},    // unknown facet → dropped
 		{Key: "spark", Value: "on"},      // valid
+		{Key: "main", Value: "on"},       // manual-only facet → dropped
 	}
 	got := validFacetActions(facets, in)
 	want := []clikit.Action{{Key: "model", Value: "fast"}, {Key: "thinking", Value: "high"}, {Key: "spark", Value: "on"}}
@@ -150,6 +151,40 @@ func TestRepairConstraintsQuota(t *testing.T) {
 	}
 	if m.sel["spark"] != "off" {
 		t.Errorf("spark must be off when its bucket is unauthed, got %q", m.sel["spark"])
+	}
+}
+
+// TestRepairConstraintsMainCascade: fable-as-main can never outlive fable — any
+// repair path that ends with fable off (lane, quota, or a derived toggle) must
+// clear main too, so a later fable=on never resurrects the escalation unasked.
+func TestRepairConstraintsMainCascade(t *testing.T) {
+	// gpt-only forces fable off → main follows.
+	m := &model{sel: map[string]string{"lane": "gpt-only", "fable": "on", "main": "on"},
+		avail: availability{bucket: map[string]string{}}}
+	m.repairConstraints()
+	if m.sel["main"] != "off" {
+		t.Errorf("main must cascade off with fable under gpt-only, got %q", m.sel["main"])
+	}
+	// a maxed fable bucket forces fable off → main follows.
+	m = &model{sel: map[string]string{"lane": "mixed", "fable": "on", "main": "on"},
+		avail: availability{bucket: map[string]string{"claude-fable": "maxed"}}}
+	m.repairConstraints()
+	if m.sel["main"] != "off" {
+		t.Errorf("main must cascade off when fable's bucket is maxed, got %q", m.sel["main"])
+	}
+	// fable already off (e.g. deriveToggles sized down) → stale main clears.
+	m = &model{sel: map[string]string{"lane": "mixed", "fable": "off", "main": "on"},
+		avail: availability{bucket: map[string]string{}}}
+	m.repairConstraints()
+	if m.sel["main"] != "off" {
+		t.Errorf("main must clear whenever fable is off, got %q", m.sel["main"])
+	}
+	// fable on and available → a manually chosen main survives repair.
+	m = &model{sel: map[string]string{"lane": "mixed", "fable": "on", "main": "on"},
+		avail: availability{bucket: map[string]string{}}}
+	m.repairConstraints()
+	if m.sel["main"] != "on" {
+		t.Errorf("a manual main must survive repair while fable stays on, got %q", m.sel["main"])
 	}
 }
 

@@ -948,8 +948,8 @@ let
 
   # First-principles facet grid: the generator (a models.yml + routing rules,
   # see generate-profiles.py) emits a rendered routing block for every valid
-  # (lane, model-tier, thinking, spark, fable) combination, baked at build time
-  # so the generator view stays immutable and reviewable.
+  # (lane, model-tier, thinking, spark, fable, fable-as-main) combination, baked
+  # at build time so the generator view stays immutable and reviewable.
   generatedProfiles =
     runCommand "omp-generated-profiles"
       { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }

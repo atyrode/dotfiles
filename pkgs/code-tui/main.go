@@ -65,7 +65,7 @@ var keys = keyMap{
 // defaultSel returns a fresh copy of the generator's default facet selection —
 // used both to seed the model and to restore it via the reset key.
 func defaultSel() map[string]string {
-	return map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "fast": "off"}
+	return map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "main": "off", "fast": "off"}
 }
 
 // ── palette ──────────────────────────────────────────────────────────────────
@@ -419,6 +419,10 @@ func facetDefs(glyphs map[string]string) []facet {
 		{"fast", []string{"on", "off"}, glyphs["fast"]},
 		{"spark", []string{"on", "off"}, glyphs["spark"]},
 		{"fable", []string{"on", "off"}, glyphs["fable"]},
+		// fable-as-main: hand the scarce elite the default (main-agent) role too.
+		// A sub-setting of fable — only visible while fable is on (see
+		// visibleFacets) and never set by a suggestion (see validFacetActions).
+		{"main", []string{"on", "off"}, glyphs["main"]},
 	}
 }
 
@@ -671,7 +675,8 @@ func (m model) applyAdvisor(rows []string, level, lane string) []string {
 
 // visibleFacets drops facets that don't apply to the current lane, so the
 // generator only ever shows actionable options: no spark/fast on a Claude-only
-// pool, no fable on a GPT-only pool.
+// pool, no fable on a GPT-only pool. main is fable's sub-setting, so it only
+// shows while fable is on (and the lane can host it at all).
 func (m model) visibleFacets() []facet {
 	lane := m.sel["lane"]
 	var out []facet
@@ -679,7 +684,10 @@ func (m model) visibleFacets() []facet {
 		if lane == "claude-only" && (f.key == "spark" || f.key == "fast") {
 			continue
 		}
-		if lane == "gpt-only" && f.key == "fable" {
+		if lane == "gpt-only" && (f.key == "fable" || f.key == "main") {
+			continue
+		}
+		if f.key == "main" && m.sel["fable"] != "on" {
 			continue
 		}
 		out = append(out, f)
@@ -702,6 +710,9 @@ func comboID(sel map[string]string) string {
 	}
 	if fb == "on" {
 		faid = "fa"
+		if sel["main"] == "on" {
+			faid = "famain"
+		}
 	}
 	return fmt.Sprintf("%s_%s_%s_%s_%s", lane, sel["model"], sel["thinking"], spid, faid)
 }
@@ -1422,6 +1433,12 @@ func (m *model) cycleFacet(dir int) {
 	}
 	idx = (idx + dir + len(f.values)) % len(f.values)
 	m.sel[f.key] = f.values[idx]
+	// main is fable's sub-setting: whenever fable leaves "on" it must clear too,
+	// so a later fable re-enable never silently resurrects the (expensive)
+	// fable-as-main escalation — it is re-chosen deliberately every time.
+	if m.sel["fable"] != "on" {
+		m.sel["main"] = "off"
+	}
 	// changing the lane can hide/show facets; keep the cursor in range.
 	if nv := len(m.visibleFacets()); m.fcur >= nv {
 		m.fcur = nv - 1
@@ -1542,7 +1559,7 @@ func (m model) genLines() ([]string, int) {
 				col := acc
 				if f.key == "lane" {
 					col = laneColor(v)
-				} else if (f.key == "spark" || f.key == "fable") && v == "on" {
+				} else if (f.key == "spark" || f.key == "fable" || f.key == "main") && v == "on" {
 					col = cGreen
 				}
 				st := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
@@ -1567,6 +1584,8 @@ func (m model) genLines() ([]string, int) {
 				}
 				row += "   " + stWarn.Render(gWarn+" "+w+" — no usage left")
 			}
+		case f.key == "main" && m.sel["main"] == "on":
+			row += "   " + stDim.Render("Fable leads the default agent — heaviest draw on its scarce bucket")
 		case f.key == "fast" && m.sel["fast"] == "on":
 			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
 		}
@@ -1578,10 +1597,10 @@ func (m model) genLines() ([]string, int) {
 func main() {
 	// Facet glyphs are intrinsic to the generator, so the binary carries sane
 	// defaults (Nerd Font, FA range). CODE_FACET_GLYPHS may override any of them.
-	//   lane ⇄  model ⚙  thinking 💡  spark 🚀  fable 📖  fast ⚡
+	//   lane ⇄  model ⚙  thinking 💡  spark 🚀  fable 📖  main 🎯  fast ⚡
 	glyphs := map[string]string{
-		"lane": "", "model": "", "thinking": "", "advisor": "",
-		"spark": "", "fable": "", "fast": "",
+		"lane": "", "model": "", "thinking": "", "advisor": "",
+		"spark": "", "fable": "", "main": "\uf140", "fast": "",
 	}
 	for _, kv := range strings.Split(os.Getenv("CODE_FACET_GLYPHS"), ",") {
 		if p := strings.SplitN(kv, "=", 2); len(p) == 2 && p[1] != "" {

@@ -120,7 +120,8 @@ func TestLvl(t *testing.T) {
 }
 
 // TestComboID covers the lane-driven suppression: gpt-only forces fable off,
-// claude-only forces spark off, regardless of the toggles.
+// claude-only forces spark off, regardless of the toggles — plus the fable-main
+// segment: famain only when fable is on too, and lane suppression wins over both.
 func TestComboID(t *testing.T) {
 	cases := []struct {
 		sel  map[string]string
@@ -130,6 +131,9 @@ func TestComboID(t *testing.T) {
 		{map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "spark": "off", "fable": "on"}, "mixed_normal_medium_nosp_fa"},
 		{map[string]string{"lane": "gpt-only", "model": "fast", "thinking": "high", "spark": "on", "fable": "on"}, "gpt-only_fast_high_sp_nofa"},
 		{map[string]string{"lane": "claude-only", "model": "smart", "thinking": "low", "spark": "on", "fable": "on"}, "claude-only_smart_low_nosp_fa"},
+		{map[string]string{"lane": "mixed", "model": "smart", "thinking": "high", "spark": "off", "fable": "on", "main": "on"}, "mixed_smart_high_nosp_famain"},
+		{map[string]string{"lane": "mixed", "model": "smart", "thinking": "high", "spark": "off", "fable": "off", "main": "on"}, "mixed_smart_high_nosp_nofa"},
+		{map[string]string{"lane": "gpt-only", "model": "smart", "thinking": "high", "spark": "on", "fable": "on", "main": "on"}, "gpt-only_smart_high_sp_nofa"},
 	}
 	for _, c := range cases {
 		if got := comboID(c.sel); got != c.want {
@@ -167,6 +171,49 @@ func TestDefaultSelValid(t *testing.T) {
 		if !found {
 			t.Errorf("defaultSel[%q]=%q is not a valid value (allowed: %v)", k, v, values)
 		}
+	}
+}
+
+// TestMainFacetVisibility locks the sub-setting behavior: the main (fable-as-main)
+// dial only exists while fable is on and the lane can host Fable at all.
+func TestMainFacetVisibility(t *testing.T) {
+	has := func(sel map[string]string) bool {
+		m := model{facets: facetDefs(map[string]string{}), sel: sel}
+		for _, f := range m.visibleFacets() {
+			if f.key == "main" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(map[string]string{"lane": "mixed", "fable": "on"}) {
+		t.Errorf("main must be visible when fable is on")
+	}
+	if has(map[string]string{"lane": "mixed", "fable": "off"}) {
+		t.Errorf("main must be hidden while fable is off")
+	}
+	if has(map[string]string{"lane": "gpt-only", "fable": "on"}) {
+		t.Errorf("main must be hidden on a gpt-only lane")
+	}
+}
+
+// TestCycleFacetClearsMain: manually toggling fable off must clear fable-as-main
+// too, so a later fable re-enable never silently resurrects the escalation.
+func TestCycleFacetClearsMain(t *testing.T) {
+	m := &model{facets: facetDefs(map[string]string{}), sel: defaultSel()}
+	m.sel["fable"] = "on"
+	m.sel["main"] = "on"
+	for i, f := range m.visibleFacets() {
+		if f.key == "fable" {
+			m.fcur = i
+		}
+	}
+	m.cycleFacet(1) // fable on → off
+	if m.sel["fable"] != "off" {
+		t.Fatalf("cycle should have turned fable off, got %q", m.sel["fable"])
+	}
+	if m.sel["main"] != "off" {
+		t.Errorf("main must clear when fable is manually turned off, got %q", m.sel["main"])
 	}
 }
 

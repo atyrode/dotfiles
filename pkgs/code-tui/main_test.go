@@ -287,10 +287,71 @@ func TestGenLinesMainRow(t *testing.T) {
 	if mainRow == "" {
 		t.Fatalf("no row labelled 'default' while fable+main are on:\n%s", stripAnsi(strings.Join(lines, "\n")))
 	}
-	// tabulated child: unfocused prefix is the 2-space pointer slot + a 2-space
-	// indent before the glyph — 2 deeper than every other row.
-	if !strings.HasPrefix(mainRow, strings.Repeat(" ", 4)) {
-		t.Errorf("main row must be indented as fable's child, got %q", mainRow)
+	// tabulated child: unfocused prefix is the 2-space pointer slot + an
+	// L-shaped tree connector before the glyph — the connector makes the
+	// parent/child link to fable explicit, like the `tree` CLI.
+	if !strings.HasPrefix(mainRow, "  └ ") {
+		t.Errorf("main row must carry the └ child connector, got %q", mainRow)
+	}
+}
+
+// TestAdvisorChainFlip locks the advisor's opposite-provider rule: the second
+// opinion tracks whoever actually leads. Lane-led flips were already in place;
+// fable-as-main (fable on + default on) puts Claude Fable in the default seat,
+// so mixed/gpt-led lanes must flip the advisor to GPT too — same-provider lead
+// and advisor would reintroduce the tunnel-vision risk the advisor exists to
+// cut. Pure lanes keep their own provider; fable alone (main off) doesn't flip.
+func TestAdvisorChainFlip(t *testing.T) {
+	adv := map[string][]string{
+		"glance/gpt":    {"gpt-5.6-terra:low"},
+		"glance/claude": {"claude-quartz-5:low"},
+	}
+	cases := []struct {
+		lane, fable, main string
+		wantCtx           string
+	}{
+		{"mixed", "off", "off", "claude"},
+		{"gpt-led", "off", "off", "claude"},
+		{"claude-led", "off", "off", "gpt"},
+		{"gpt-only", "off", "off", "gpt"},
+		{"claude-only", "off", "off", "claude"},
+		// fable on but not leading: no flip.
+		{"mixed", "on", "off", "claude"},
+		// fable-as-main: Claude leads, advisor flips to GPT.
+		{"mixed", "on", "on", "gpt"},
+		{"gpt-led", "on", "on", "gpt"},
+		{"claude-led", "on", "on", "gpt"},
+		// pure Claude pool: pure-lane rule wins, no GPT in the pool.
+		{"claude-only", "on", "on", "claude"},
+	}
+	for _, c := range cases {
+		m := model{advisors: adv, sel: defaultSel()}
+		m.sel["lane"], m.sel["fable"], m.sel["main"] = c.lane, c.fable, c.main
+		got := m.advisorChain("glance")
+		want := adv["glance/"+c.wantCtx]
+		if len(got) == 0 || got[0] != want[0] {
+			t.Errorf("lane=%s fable=%s main=%s: advisor chain = %v, want %s (%v)",
+				c.lane, c.fable, c.main, got, c.wantCtx, want)
+		}
+	}
+}
+
+// TestApplyAdvisorFableMain: the flipped chain must flow through applyAdvisor —
+// the single seam feeding the preview, the cost/speed meters, and the launched
+// config YAML — not just the raw table lookup.
+func TestApplyAdvisorFableMain(t *testing.T) {
+	m := model{
+		advisors: map[string][]string{
+			"glance/gpt":    {"gpt-5.6-terra:low"},
+			"glance/claude": {"claude-quartz-5:low"},
+		},
+		sel: defaultSel(),
+	}
+	m.sel["fable"], m.sel["main"] = "on", "on" // mixed lane (default)
+	rows := m.applyAdvisor([]string{"    default    claude-fable-5:high"}, "glance")
+	joined := strings.Join(rows, "\n")
+	if !strings.Contains(joined, "advisor    gpt-5.6-terra:low") {
+		t.Errorf("fable-as-main must synthesise a GPT advisor row, got:\n%s", joined)
 	}
 }
 

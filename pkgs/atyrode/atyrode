@@ -44,9 +44,11 @@ generations lists the activation profile's generations (nix-darwin system on
 macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
 config no longer references, always keeping the current one and a rollback
-window (--keep / --keep-since); on macOS it also sweeps stale Home Manager Apps
-aliases. The auto GC roots that pin old generations are owned by the Nix daemon,
-so reaping them needs elevation: rerun as `sudo atyrode clean` (atyrode never
+window (--keep / --keep-since); it previews the plan and asks before touching
+anything (--yes skips the prompt, --dry-run only previews), and on macOS it also
+sweeps stale Home Manager Apps aliases. The auto GC roots that pin old
+generations are owned by the Nix daemon; a non-root clean cannot unlink them and
+prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
 self-elevates). Commands reserved for later issues: workspace and agent.
 EOF
 }
@@ -835,10 +837,18 @@ review_seed_drift() {
   fi
 }
 
+# interactive reports whether we can hold a yes/no dialogue with a human (both
+# ends of the pipe are a terminal). A test override forces it on so the confirm
+# gates are exercisable from the non-tty check harness.
+interactive() {
+  [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_TTY:-}" ]] && return 0
+  [[ -t 0 && -t 1 ]]
+}
+
 # Ask a yes/no question; default no, and no on a non-interactive stream.
 confirm() {
   local reply
-  [[ -t 0 && -t 1 ]] || return 1
+  interactive || return 1
   printf 'atyrode: %s [y/N] ' "$1" >&2
   read -r reply || return 1
   [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]]
@@ -984,6 +994,19 @@ warn_stray_result_roots() {
   printf '  remove them (rm result*) so the store can reclaim those closures.\n' >&2
 }
 
+# nix_store_path resolves nix-store to an absolute path so the reap hint names a
+# command that survives elevation. On a non-NixOS host root's sudoers secure_path
+# excludes every Nix profile directory, so a bare `nix-store` (like `atyrode` or
+# `nh`) is not found under elevation — but an absolute path is executed directly,
+# bypassing the PATH search entirely. Honours the test override.
+nix_store_path() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_NIX_STORE:-}" ]]; then
+    printf '%s' "$ATYRODE_NIX_STORE"
+    return
+  fi
+  command -v nix-store 2>/dev/null || printf 'nix-store'
+}
+
 # count_generations reports how many generations the tracked profile has (0 when
 # it cannot be read) so the clean footer can show kept/removed counts.
 count_generations() {
@@ -1006,14 +1029,17 @@ clean_footer() {
     parts+=("dry-run — no changes made" "$before generation(s) present")
   else
     [[ -z "$freed" ]] || parts+=("reclaimed $freed")
-    parts+=("kept $after generation(s)" "removed $removed")
+    parts+=("kept $after generation(s)" "removed $removed generation(s)")
   fi
   [[ "${reaped:-0}" -gt 0 ]] && parts+=("reaped $reaped root-owned GC root(s)")
   if [[ "${skipped:-0}" -gt 0 ]]; then
     if [[ "$euid" == 0 ]]; then
       parts+=("skipped $skipped root-owned GC root(s) (unremovable)")
     else
-      parts+=("skipped $skipped root-owned GC root(s); reap them via \`sudo atyrode clean\`")
+      # Name an absolute nix-store path: under elevation a bare command is not on
+      # root's secure_path (see nix_store_path). `nix-store --gc` prunes these
+      # daemon-owned roots once this clean has dropped the generations they pin.
+      parts+=("skipped $skipped root-owned GC root(s); reap them via \`sudo $(nix_store_path) --gc\`")
     fi
   fi
   local out="" p
@@ -1021,6 +1047,35 @@ clean_footer() {
     [[ -z "$out" ]] && out="$p" || out="$out · $p"
   done
   printf 'atyrode: %s\n' "$out" >&2
+}
+
+# clean_preview describes what a clean is about to do — its keep window, how many
+# of the current generations fall outside it (an upper bound: nh additionally
+# spares anything newer than --keep-since), and that the current generation and
+# rollback window are never touched — so an accidental `atyrode clean` can be read
+# and declined before anything is removed. Store reclaim is not estimated: closure
+# sizes overlap heavily, so the honest figure is the one the GC reports afterwards.
+clean_preview() {
+  local scope="$1" keep="$2" keep_since="$3"
+  local profile; profile="$(gen_profile)"
+  local -a gens=()
+  local line gen rest current="" total=0 candidates=0 i rank
+  if [[ -e "$profile" ]]; then
+    while IFS= read -r line; do
+      read -r gen rest <<<"$line"
+      gens+=("$gen")
+      [[ "$line" == *"(current)"* ]] && current="$gen"
+    done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
+  fi
+  total=${#gens[@]}
+  for (( i = 0; i < total; i++ )); do
+    rank=$(( total - 1 - i ))
+    [[ "$rank" -ge "$keep" && "${gens[$i]}" != "$current" ]] && candidates=$(( candidates + 1 ))
+  done
+  printf 'atyrode: clean (%s) is about to:\n' "$scope" >&2
+  printf '  • keep the newest %s generation(s), anything newer than %s, and the current one\n' "$keep" "$keep_since" >&2
+  printf '  • remove up to %s of %s generation(s) that fall outside that window\n' "$candidates" "$total" >&2
+  printf '  • garbage-collect unreferenced store paths (reclaimed space reported after)\n' >&2
 }
 
 # clean — reclaim disk from generations the config no longer references, always
@@ -1044,6 +1099,15 @@ cmd_clean() {
   command -v nh >/dev/null || die "$EX_UNAVAILABLE" "nh is unavailable"
   local nh_command=nh
   [[ "$test_hooks" != 1 || -z "${ATYRODE_NH:-}" ]] || nh_command="$ATYRODE_NH"
+
+  # Guard an accidental interactive run: show the plan and require confirmation.
+  # --dry-run previews without touching anything, --yes/--json are the explicit
+  # non-interactive paths (scripts, cockpit), so none of them prompt.
+  if [[ "$dry" == 0 && "$assume_yes" == 0 && "$json" == 0 ]] && interactive; then
+    clean_preview "$scope" "$keep" "$keep_since"
+    confirm "proceed and reclaim now?" ||
+      { printf 'atyrode: clean declined — nothing changed.\n' >&2; return 0; }
+  fi
 
   printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
   # Let nh remove the stale generations and gcroots, but skip its garbage

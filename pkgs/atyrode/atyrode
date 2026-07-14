@@ -1363,9 +1363,32 @@ cmd_rollback() {
   printf 'atyrode: now on generation %s\n' "$target" >&2
 }
 
+# guard_production_mutation refuses to run a store-mutating command when a
+# test-only tool-substitution override is present on a production binary. Those
+# vars (ATYRODE_NH, ATYRODE_NIX_STORE, ATYRODE_NIX_ENV, ATYRODE_GIT,
+# ATYRODE_GEN_PROFILE) are honoured only under enableTestHooks; a production build
+# silently ignores them, so a caller who sets them expecting stubs would instead
+# drive the REAL nh / nix-store / nix-env against the live store. Aborting turns
+# that silent, potentially destructive trap into a loud, safe stop. Scoped to the
+# mutating verbs so read-only commands keep ignoring the vars outright (a hostile
+# project environment can neither spoof nor block a plain `doctor`/`capabilities`).
+guard_production_mutation() {
+  [[ "$test_hooks" == 1 ]] && return 0
+  local v
+  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE; do
+    [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
+      "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
+  done
+}
+
 main() {
   local subcommand="${1:-help}"
   shift || true
+  # A production binary must never mutate the store while a caller believes its
+  # tool overrides are in effect (they are not) — refuse before dispatching.
+  case "$subcommand" in
+    apply | clean | rollback) guard_production_mutation "$subcommand" ;;
+  esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
     clean) cmd_clean "$@" ;;

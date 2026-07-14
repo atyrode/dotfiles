@@ -44,6 +44,13 @@ pkgs.runCommand "check-atyrode-cli"
       echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
       echo '! Failed to remove path="/nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8" err=Os { code: 13, kind: PermissionDenied, message: "Permission denied" } (nh/crates/nh-clean/src/clean.rs:606)'
       echo '! Failed to remove path="/nix/store/genuine" err=Os { code: 2, kind: NotFound }' >&2
+    elif [[ "''${ATYRODE_NH_REAP:-0}" == 1 ]]; then
+      # Under elevation nh removes the same daemon-owned roots cleanly (no paired
+      # PermissionDenied), so the flood inverts into successful removals the fold
+      # must count as reaped rather than echo one-per-root.
+      echo '- OK  /home/alex/.local/state/nix/profiles/profile-9-link'
+      echo '> Removing /nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd'
+      echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
     fi
     [[ "''${ATYRODE_NH_FAIL:-0}" != 1 ]]
     EOF
@@ -481,12 +488,43 @@ pkgs.runCommand "check-atyrode-cli"
       || { echo "clean must print a legible summary footer: $noise_out" >&2; exit 1; }
     grep -qF 'skipped 2 root-owned GC root(s)' <<<"$noise_out" \
       || { echo "footer must tally skipped gcroots: $noise_out" >&2; exit 1; }
+    # A non-root clean cannot unlink the daemon-owned roots, so it names the exact
+    # elevated command to reap them (atyrode never self-elevates).
+    grep -qF 'reap them via `sudo atyrode clean`' <<<"$noise_out" \
+      || { echo "footer must point a non-root clean at sudo to reap: $noise_out" >&2; exit 1; }
     grep -qF 'gcroots/auto/lvi04m7mn76' <<<"$noise_out" \
       && { echo 'clean must not print individual gcroots permission failures' >&2; exit 1; }
     grep -qF 'profile-9-link' <<<"$noise_out" \
       || { echo 'clean must keep genuine generation removals' >&2; exit 1; }
     grep -qF '/nix/store/genuine' <<<"$noise_out" \
       || { echo 'clean must keep real (non-permission) failures' >&2; exit 1; }
+
+    # Under elevation (EUID 0) the same roots are removed cleanly: the footer
+    # reports them as reaped, counts (not echoes) them, and drops the sudo hint.
+    export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
+    reap_out="$(_ATYRODE_TEST_EUID=0 ATYRODE_NH_REAP=1 atyrode clean --keep 3 2>&1 >/dev/null)"
+    unset ATYRODE_NIX_STORE
+    grep -qF 'reaped 2 root-owned GC root(s)' <<<"$reap_out" \
+      || { echo "elevated clean must report reaped gcroots: $reap_out" >&2; exit 1; }
+    grep -qF 'reap them via' <<<"$reap_out" \
+      && { echo 'elevated clean must not print the sudo reap hint' >&2; exit 1; }
+    grep -qF 'gcroots/auto/lvi04m7mn76' <<<"$reap_out" \
+      && { echo 'elevated clean must count reaped roots, not echo them' >&2; exit 1; }
+
+    # clean warns about stray result* symlinks (indirect GC roots pinning whole
+    # closures) left by `nix build` without --no-link, and never removes them.
+    ln -s /nix/store/deadbeef-stray-closure "$TMPDIR/result"
+    ( cd "$TMPDIR"
+      export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
+      stray_out="$(atyrode clean --keep 3 2>&1 >/dev/null)"
+      grep -qF 'stray result symlink(s) still pin closures' <<<"$stray_out" \
+        || { echo "clean must warn about stray result roots: $stray_out" >&2; exit 1; }
+      grep -qF '/nix/store/deadbeef-stray-closure' <<<"$stray_out" \
+        || { echo "clean must name the stray result target: $stray_out" >&2; exit 1; }
+      test -L "$TMPDIR/result" \
+        || { echo 'clean must not remove the stray result symlink' >&2; exit 1; }
+    )
+    rm -f "$TMPDIR/result"
 
     mkdir "$out"
   ''

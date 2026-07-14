@@ -86,9 +86,6 @@ let
     "proseOnlyThinking"
     "defaultThinkingLevel"
   ];
-  managedPresetPaths = [
-    "providers.anthropic.serverSideFallback"
-  ];
   enforcedPolicyPaths = [
     "tools.approvalMode"
     "tools.approval.bash"
@@ -101,11 +98,11 @@ let
     "task.isolation.merge"
     "task.isolation.commits"
   ];
-  managedOwnedPaths = managedDefaultPaths ++ managedPresetPaths;
+  managedOwnedPaths = managedDefaultPaths;
   allManagedPaths = managedOwnedPaths ++ enforcedPolicyPaths;
 
   mkOmpCommand =
-    name: presetConfigs:
+    name:
     writeShellApplication {
       inherit name;
       runtimeInputs = [
@@ -121,15 +118,11 @@ let
         platform_root='${platformRoot}'
         local_config="''${XDG_CONFIG_HOME:-$HOME/.config}/omp/local.yml"
 
-        preset_configs=( ${lib.concatMapStringsSep " " (path: "'${path}'") presetConfigs} )
         managed_default_paths=( ${lib.escapeShellArgs managedDefaultPaths} )
-        managed_preset_paths=( ${lib.escapeShellArgs managedPresetPaths} )
         enforced_policy_paths=( ${lib.escapeShellArgs enforcedPolicyPaths} )
         managed_default_paths_json=${lib.escapeShellArg (builtins.toJSON managedDefaultPaths)}
-        managed_preset_paths_json=${lib.escapeShellArg (builtins.toJSON managedPresetPaths)}
         enforced_policy_paths_json=${lib.escapeShellArg (builtins.toJSON enforcedPolicyPaths)}
         all_managed_paths_json=${lib.escapeShellArg (builtins.toJSON allManagedPaths)}
-        preset_paths_json=${lib.escapeShellArg (builtins.toJSON (map toString presetConfigs))}
 
         takes_required_value() {
           case "$1" in
@@ -543,7 +536,6 @@ let
           local project_settings_present=false
           local project_config_present=false
           local -a layer_files=()
-          local preset
 
           if [[ -e "$machine_config" ]]; then
             machine_present=true
@@ -563,9 +555,6 @@ let
             local_present=true
             layer_files+=( "$local_config" )
           fi
-          for preset in "''${preset_configs[@]}"; do
-            layer_files+=( "$preset" )
-          done
           extract_one_shot_configs "''${original_args[@]}"
           local one_shot
           local -a resolved_one_shot_configs=()
@@ -671,10 +660,8 @@ let
               --arg policy "$policy_config" \
               --arg yolo "$yolo_config" \
               --argjson runtimeYolo "$runtime_yolo" \
-              --argjson presets "$preset_paths_json" \
               --argjson oneShots "$one_shots_json" \
               --argjson defaultKeys "$managed_default_paths_json" \
-              --argjson presetKeys "$managed_preset_paths_json" \
               --argjson policyKeys "$enforced_policy_paths_json" \
               --argjson effectiveManaged "$effective_managed" \
               --argjson enforcedPolicy "$policy_json" \
@@ -692,7 +679,6 @@ let
                       { kind: "native-project", format: "config.yml", managed: false, path: $project, present: $projectConfigPresent },
                       { kind: "machine-local", managed: false, path: $local, present: $localPresent }
                     ]
-                    + ($presets | map({ kind: "preset", managed: true, path: . }))
                     + ($oneShots | map({ kind: "one-shot-config", managed: false, invocationSpecific: true, path: . }))
                     + [
                       { kind: "managed-policy", managed: true, enforced: true, path: $policy }
@@ -706,7 +692,6 @@ let
                   ),
                   ownership: {
                     defaults: $defaultKeys,
-                    presets: $presetKeys,
                     policy: $policyKeys
                   },
                   effectiveManaged: $effectiveManaged,
@@ -785,17 +770,12 @@ let
           if [[ "$action" == set || "$action" == reset ]]; then
             if contains_managed_path "$key" "''${enforced_policy_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run zconf; machine, project, preset, and --config values are intentionally shadowed." >&2
+                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run zconf; machine, project, and --config values are intentionally shadowed." >&2
               exit 2
             fi
             if contains_managed_path "$key" "''${managed_default_paths[@]}"; then
               printf '%s\n' \
                 "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run zconf." >&2
-              exit 2
-            fi
-            if contains_managed_path "$key" "''${managed_preset_paths[@]}"; then
-              printf '%s\n' \
-                "OMP setting '$key' is owned by a Nix-managed preset. Edit the preset or choose a launcher that does not select it, then run zconf." >&2
               exit 2
             fi
           fi
@@ -805,11 +785,6 @@ let
               contains_managed_path "$key" "''${managed_default_paths[@]}"; }; then
             printf '%s\n' \
               "OMP setting '$key' has Nix-managed layers. 'omp config get' only reads writable machine state; use 'omp config managed --json' for the effective value." >&2
-            exit 2
-          fi
-          if [[ "$action" == get ]] && contains_managed_path "$key" "''${managed_preset_paths[@]}"; then
-            printf '%s\n' \
-              "OMP setting '$key' is owned by a Nix-managed preset. 'omp config get' only reads writable machine state; use 'omp config managed --json' for the effective value." >&2
             exit 2
           fi
 
@@ -940,9 +915,6 @@ let
         if [[ -f "$local_config" ]]; then
           managed_args+=( --config "$local_config" )
         fi
-        for preset in "''${preset_configs[@]}"; do
-          managed_args+=( --config "$preset" )
-        done
         for one_shot in "''${one_shot_configs[@]}"; do
           managed_args+=( --config "$one_shot" )
         done
@@ -974,7 +946,7 @@ let
   # defaults + policy to an arbitrary one-shot `--config`, with no preset
   # overlay. The code generator points CODE_OMP here so a synthesised profile
   # launches through the full managed layering.
-  ompManaged = mkOmpCommand "omp-managed" [ ];
+  ompManaged = mkOmpCommand "omp-managed";
 
   # First-principles facet grid: the generator (a models.yml + routing rules,
   # see generate-profiles.py) emits a rendered routing block for every valid
@@ -1247,7 +1219,6 @@ runCommand "omp-configured-${lib.getVersion omp}"
         enforcedPolicyPaths
         managedDefaultPaths
         managedOwnedPaths
-        managedPresetPaths
         omp
         neutralRoot
         platformRoot

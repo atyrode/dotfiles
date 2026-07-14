@@ -577,7 +577,6 @@ in
               'config set modelRoles {}' \
               'config set tools {}' \
               'config --json reset providers.webSearch' \
-              'config set providers.anthropic.serverSideFallback true' \
               '--profile work config set tools.approvalMode yolo' \
               'config reset secrets.enabled --json'
             do
@@ -822,11 +821,6 @@ in
               "$TMPDIR/managed-policy.json" >/dev/null
             jq -e '.effectiveManaged.retry.modelFallback == true' \
               "$TMPDIR/managed-policy.json" >/dev/null
-            # The managed serverSideFallback path stays under Nix-preset ownership
-            # even though no launcher-selected preset assigns it a value.
-            jq -e \
-              '(.ownership.presets | index("providers.anthropic.serverSideFallback")) != null' \
-              "$TMPDIR/managed-policy.json" >/dev/null
 
             for command in omp omp-managed; do
               set +e
@@ -1026,7 +1020,9 @@ in
             test "$(yq eval '.setupVersion' "$HOME/.omp/agent/config.yml")" = "7"
             test "$(yq eval '.custom.nested' "$HOME/.omp/agent/config.yml")" = "preserved"
             test "$(yq eval '.modelRoles' "$HOME/.omp/agent/config.yml")" = "null"
-            test "$(yq eval '.providers.anthropic.serverSideFallback' "$HOME/.omp/agent/config.yml")" = "null"
+            # serverSideFallback is no longer Nix-managed (the fable preset that owned
+            # it is gone), so migration must PRESERVE the user's value, not strip it.
+            test "$(yq eval '.providers.anthropic.serverSideFallback' "$HOME/.omp/agent/config.yml")" = "true"
             test "$(yq eval '."codexResets.autoRedeem"' "$HOME/.omp/agent/config.yml")" = "null"
             test "$(yq eval '.retry.enabled' "$HOME/.omp/agent/config.yml")" = "null"
             test "$(yq eval '.retry.custom' "$HOME/.omp/agent/config.yml")" = "preserved"

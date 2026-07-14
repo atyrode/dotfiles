@@ -33,7 +33,7 @@ func classifyMessage(task string) string {
 		"  trivial  = typo, rename, one-liner, a what-is/lookup       -> model=fast,   thinking=minimal, advisor=off\n" +
 		"  moderate = a small feature, an endpoint, a simple script   -> model=normal, thinking=medium,  advisor=glance\n" +
 		"  hard     = tricky logic, a refactor, perf work, ambiguity  -> model=smart,  thinking=high,    advisor=review\n" +
-		"  critical = security, must be exact / zero-failure / thorough, architecture, migration -> model=smart, thinking=xhigh, advisor=review\n" +
+		"  critical = security, must be exact / zero-failure / thorough, architecture, migration -> model=smart, thinking=xhigh, advisor=audit\n" +
 		"Escalate when the task demands precision, exhaustiveness, or safety.\n" +
 		"Reply in exactly two lines, like this example:\n" +
 		"hard — tricky refactor across modules\n" +
@@ -140,14 +140,42 @@ func validFacetActions(facets []facet, actions []clikit.Action) []clikit.Action 
 	return out
 }
 
-// applyActions applies a proposal: each valid facet=value updates the selection,
-// exactly as a manual change would; repairConstraints then enforces the
-// validity/quota rules so the result is always a possible, available combo; and
-// the preview refreshes.
+// applyActions applies a proposal: each valid facet=value updates the selection;
+// deriveToggles then sets spark/fable/fast from the resulting sizing (the 3B
+// can't pick all six facets well, so the toggles follow the difficulty rating
+// deterministically); repairConstraints enforces the hard validity/quota rules;
+// and the preview refreshes.
 func (m *model) applyActions(actions []clikit.Action) {
 	for _, a := range validFacetActions(m.facets, actions) {
 		m.sel[a.Key] = a.Value
 	}
+	m.deriveToggles()
 	m.repairConstraints()
 	m.syncPreview()
+}
+
+// deriveToggles sets the spark/fable/fast toggles from the suggested sizing plus
+// live quota — encoding what each model is for, which the classifier itself isn't
+// reliable enough to weigh:
+//   - fable (claude-fable-5, the most capable but a SCARCE bucket) leads only the
+//     hardest work: critical-tier sizing (smart + xhigh/max), and only when its
+//     bucket is free and the lane can host a Claude model.
+//   - fast (force the quick, priority execution model) suits the lightest tasks.
+//   - spark (a fast coder on a FREE spare bucket) helps most work and isn't
+//     task-specific, so it keeps its current value; repairConstraints still turns
+//     it off if its bucket is down or the lane is Claude-only.
+func (m *model) deriveToggles() {
+	tier := m.sel["thinking"]
+	critical := m.sel["model"] == "smart" && (tier == "xhigh" || tier == "max")
+	claudeLane := m.sel["lane"] != "gpt-only"
+	if critical && claudeLane && !m.avail.down(bucketOf("fable")) {
+		m.sel["fable"] = "on"
+	} else {
+		m.sel["fable"] = "off"
+	}
+	if m.sel["model"] == "fast" {
+		m.sel["fast"] = "on"
+	} else {
+		m.sel["fast"] = "off"
+	}
 }

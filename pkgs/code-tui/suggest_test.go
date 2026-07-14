@@ -77,6 +77,35 @@ func TestTruncateForClassify(t *testing.T) {
 	}
 }
 
+func TestDeriveToggles(t *testing.T) {
+	avail := func() availability { return availability{bucket: map[string]string{}} }
+	// critical-tier sizing, Claude-capable lane, fable free → fable on, fast off.
+	m := &model{sel: map[string]string{"model": "smart", "thinking": "xhigh", "lane": "mixed"}, avail: avail()}
+	m.deriveToggles()
+	if m.sel["fable"] != "on" || m.sel["fast"] != "off" {
+		t.Errorf("critical: want fable on/fast off, got fable=%q fast=%q", m.sel["fable"], m.sel["fast"])
+	}
+	// trivial sizing → fast on, fable off.
+	m = &model{sel: map[string]string{"model": "fast", "thinking": "minimal", "lane": "mixed"}, avail: avail()}
+	m.deriveToggles()
+	if m.sel["fast"] != "on" || m.sel["fable"] != "off" {
+		t.Errorf("trivial: want fast on/fable off, got fast=%q fable=%q", m.sel["fast"], m.sel["fable"])
+	}
+	// critical but fable bucket maxed → fable stays off (never suggest a maxed model).
+	m = &model{sel: map[string]string{"model": "smart", "thinking": "max", "lane": "mixed"},
+		avail: availability{bucket: map[string]string{"claude-fable": "maxed"}}}
+	m.deriveToggles()
+	if m.sel["fable"] != "off" {
+		t.Errorf("fable must stay off when its bucket is maxed, got %q", m.sel["fable"])
+	}
+	// critical but gpt-only lane can't host Claude → fable off.
+	m = &model{sel: map[string]string{"model": "smart", "thinking": "xhigh", "lane": "gpt-only"}, avail: avail()}
+	m.deriveToggles()
+	if m.sel["fable"] != "off" {
+		t.Errorf("fable must be off on a gpt-only lane, got %q", m.sel["fable"])
+	}
+}
+
 func TestRepairConstraintsValidity(t *testing.T) {
 	// spark can't coexist with a pure-Claude lane; fable can't with a pure-GPT one.
 	m := &model{sel: map[string]string{"lane": "claude-only", "spark": "on", "fable": "on"},

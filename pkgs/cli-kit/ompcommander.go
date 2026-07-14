@@ -56,13 +56,13 @@ func (o OmpCommander) Propose(ctx context.Context, prompt string) (<-chan string
 
 // Parse turns the model's completed output into proposed changes.
 func (o OmpCommander) Parse(output string) ([]Action, error) {
-	return parseActions([]byte(output))
+	return ParseActions([]byte(output))
 }
 
-// parseActions extracts the JSON object from a model's output (tolerating any
+// ParseActions extracts the JSON object from a model's output (tolerating any
 // surrounding prose) and turns it into a key-sorted Action set — sorted so the
 // proposal is deterministic regardless of JSON/map ordering.
-func parseActions(out []byte) ([]Action, error) {
+func ParseActions(out []byte) ([]Action, error) {
 	obj := extractJSONObject(out)
 	if obj == "" {
 		return nil, fmt.Errorf("no JSON object in model output")

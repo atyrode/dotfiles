@@ -10,9 +10,9 @@ import (
 
 func TestParseActions(t *testing.T) {
 	// Clean JSON, sorted deterministically, booleans normalised to on/off.
-	got, err := parseActions([]byte(`{"model":"fast","spark":true,"fable":false}`))
+	got, err := ParseActions([]byte(`{"model":"fast","spark":true,"fable":false}`))
 	if err != nil {
-		t.Fatalf("parseActions: %v", err)
+		t.Fatalf("ParseActions: %v", err)
 	}
 	want := []Action{{"fable", "off"}, {"model", "fast"}, {"spark", "on"}}
 	if len(got) != len(want) {
@@ -27,9 +27,9 @@ func TestParseActions(t *testing.T) {
 
 func TestParseActionsEmbeddedInProse(t *testing.T) {
 	out := []byte("Sure! Here's my suggestion:\n{\"thinking\": \"high\"}\nHope that helps.")
-	got, err := parseActions(out)
+	got, err := ParseActions(out)
 	if err != nil {
-		t.Fatalf("parseActions: %v", err)
+		t.Fatalf("ParseActions: %v", err)
 	}
 	if len(got) != 1 || got[0] != (Action{"thinking", "high"}) {
 		t.Errorf("got %v, want [{thinking high}]", got)
@@ -37,7 +37,7 @@ func TestParseActionsEmbeddedInProse(t *testing.T) {
 }
 
 func TestParseActionsNoJSON(t *testing.T) {
-	if _, err := parseActions([]byte("I cannot help with that.")); err == nil {
+	if _, err := ParseActions([]byte("I cannot help with that.")); err == nil {
 		t.Error("expected an error when there is no JSON object")
 	}
 }

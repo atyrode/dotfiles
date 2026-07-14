@@ -43,10 +43,11 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
   routing grid are **baked into the package**.
 - Your bare `omp` configuration remains mutable; `code` only selects its OMP
   state root at launch time.
-- The wrapper accepts `CODE_AUTH_PROFILES` as a JSON array of `{id, label,
-  claude, codex}` objects. Without an override it exposes only OMP's `default`
-  profile, keeping the standalone package neutral; the dotfiles' Home Manager
-  module supplies the operator's named combinations.
+- The wrapper reads named combinations from
+  `$XDG_CONFIG_HOME/atyrode/code-auth-profiles.json`; `CODE_AUTH_PROFILES` can
+  override that file with a JSON array of `{id, label, claude, codex}` objects.
+  Without either source it exposes only OMP's `default` profile, keeping the
+  standalone package neutral. The dotfiles' Home Manager module owns the file.
 - Every usage fetch runs against the selected profile, so the displayed quota
   and the profile used for the subsequent launch cannot diverge.
 

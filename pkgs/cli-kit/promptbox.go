@@ -3,7 +3,9 @@ package clikit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -55,6 +57,29 @@ type promptToken struct {
 // A host (see Run) listens for it to hide the box.
 type BoxCloseMsg struct{}
 
+// modelResidencyMsg reports the result of a load/unload toggle. loaded is the
+// state that was aimed for; err is non-nil if the daemon call failed.
+type modelResidencyMsg struct {
+	loaded bool
+	err    error
+}
+
+// toggleModel loads or unloads the local model in the background (a cold load can
+// take many seconds), reporting the outcome as a modelResidencyMsg.
+func toggleModel(l Loadable, load bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		var err error
+		if load {
+			err = l.Load(ctx)
+		} else {
+			err = l.Unload(ctx)
+		}
+		return modelResidencyMsg{loaded: load, err: err}
+	}
+}
+
 // ActionsProposedMsg is emitted as soon as a proposal is parsed. The host applies
 // it immediately as a live preview (saving prior state), so the change is visible
 // in the tool's own UI while the box shows keep/revert.
@@ -90,6 +115,15 @@ type PromptBox struct {
 
 	seq    int // identifies the current request; stale async msgs are dropped
 	cancel context.CancelFunc
+
+	startedAt time.Time     // when the current request was submitted
+	took      time.Duration // wall time of the last completed request (0 until one finishes)
+
+	loadable    Loadable  // set when the backend can load/unload a local model
+	modelLoaded bool      // user-controlled residency intent (default unloaded)
+	loading     bool      // a load/unload call is in flight
+	loadStart   time.Time // when the in-flight load/unload began (for its elapsed)
+	loadErr     error     // last load/unload failure, shown dimmed
 }
 
 // NewPromptBox builds a box in the editing state. Call SetAsker to give it a
@@ -109,36 +143,91 @@ func NewPromptBox() PromptBox {
 	return PromptBox{ta: ta, vp: viewport.New(0, 0), spin: sp, state: boxEditing}
 }
 
-// SetAsker wires the read-only backend. Without one, submitting is a no-op.
-func (b *PromptBox) SetAsker(a Asker) { b.asker = a }
+// SetAsker wires the read-only backend. Without one, submitting is a no-op. A
+// backend that is also Loadable enables the load/unload toggle.
+func (b *PromptBox) SetAsker(a Asker) { b.asker = a; b.detectLoadable(a) }
 
 // SetCommander wires the Act-mode backend. When set, submitting asks the
 // Commander for a proposal (streamed live, then shown for confirmation) instead
-// of streaming a plain answer; it takes precedence over an Asker.
-func (b *PromptBox) SetCommander(c Commander) { b.cmd = c }
+// of streaming a plain answer; it takes precedence over an Asker. A Commander
+// that is also Loadable enables the load/unload toggle.
+func (b *PromptBox) SetCommander(c Commander) { b.cmd = c; b.detectLoadable(c) }
+
+// detectLoadable records the backend as loadable if it implements Loadable, so
+// the box shows the residency indicator and binds the toggle key.
+func (b *PromptBox) detectLoadable(backend any) {
+	if l, ok := backend.(Loadable); ok {
+		b.loadable = l
+	}
+}
 
 // SetTitle sets an optional header line (e.g. "prompt → profile · gpt-5.6-luna")
 // so the user can see what the box is doing / which model it uses.
 func (b *PromptBox) SetTitle(s string) { b.title = s }
 
-// SetSize lays the box out within w×h (outer cells). A border + one column of
-// padding sit inside, so the inner widgets get w-4.
-func (b *PromptBox) SetSize(w, h int) {
-	b.w, b.h = w, h
-	inner := w - 4
+// maxInputLines caps how tall the input grows as the user types; beyond it the
+// textarea scrolls internally. The box starts one line tall (see syncInputHeight).
+const maxInputLines = 6
+
+// innerWidth is the usable content width inside the border + padding.
+func (b PromptBox) innerWidth() int {
+	inner := b.w - 4
 	if inner < 8 {
 		inner = 8
 	}
-	b.ta.SetWidth(inner)
-	b.ta.SetHeight(3)
-	vpH := h - 8 // reserve rows for border, input, and the status line
-	if vpH < 1 {
-		vpH = 1
+	return inner
+}
+
+// SetSize lays the box out within w outer cells, with maxH the tallest the box
+// may grow to (the host caps it so it never eats the whole screen). The box is
+// content-sized: the input grows with what's typed and the answer pane fits its
+// text, so an idle box is a single line rather than a half-screen panel.
+func (b *PromptBox) SetSize(w, maxH int) {
+	b.w, b.h = w, maxH
+	b.ta.SetWidth(b.innerWidth())
+	b.vp.Width = b.innerWidth()
+	b.syncInputHeight()
+	b.syncAnswerViewport()
+}
+
+// syncInputHeight grows the input to fit its content (1..maxInputLines), so the
+// box expands line-by-line as the user writes and shrinks back when they clear it.
+func (b *PromptBox) syncInputHeight() {
+	lines := 1
+	if v := b.ta.Value(); v != "" {
+		lines = lipgloss.Height(lipgloss.NewStyle().Width(b.innerWidth()).Render(v))
 	}
-	b.vp.Width, b.vp.Height = inner, vpH
-	if b.answer != "" {
-		b.vp.SetContent(b.wrapAnswer())
+	if lines > maxInputLines {
+		lines = maxInputLines
 	}
+	if lines < 1 {
+		lines = 1
+	}
+	b.ta.SetHeight(lines)
+}
+
+// syncAnswerViewport sizes the answer pane to its content (up to what maxH
+// leaves), so the box never reserves empty rows for an answer that isn't there.
+func (b *PromptBox) syncAnswerViewport() {
+	if b.answer == "" {
+		b.vp.SetContent("")
+		b.vp.Height = 0
+		return
+	}
+	content := b.wrapAnswer()
+	b.vp.SetContent(content)
+	lines := lipgloss.Height(content)
+	cap := b.h - b.ta.Height() - 5 // leave room for title, residency, border/pad
+	if cap < 1 {
+		cap = 1
+	}
+	if lines > cap {
+		lines = cap
+	}
+	if lines < 1 {
+		lines = 1
+	}
+	b.vp.Height = lines
 }
 
 // Init starts the spinner ticking.
@@ -163,13 +252,14 @@ func (b *PromptBox) submit() tea.Cmd {
 		return nil
 	}
 	b.state = boxBusy
-	b.answer, b.err, b.proposed = "", nil, nil
+	b.answer, b.err, b.proposed, b.took = "", nil, nil, 0
 	b.prompt = prompt
+	b.startedAt = time.Now()
 	b.seq++
 	seq := b.seq
 	ctx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
-	b.vp.SetContent("")
+	b.syncAnswerViewport()
 	// The spinner keeps ticking on its own (see the TickMsg case); submit only
 	// kicks off the backend, in a Cmd so a slow start never blocks the UI.
 	switch {
@@ -210,6 +300,14 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "ctrl+l":
+			// Toggle local-model residency. Ignored when there's no loadable
+			// backend or a load/unload is already in flight.
+			if b.loadable == nil || b.loading {
+				return b, nil
+			}
+			b.loading, b.loadStart, b.loadErr = true, time.Now(), nil
+			return b, toggleModel(b.loadable, !b.modelLoaded)
 		case "enter":
 			switch b.state {
 			case boxBusy:
@@ -238,7 +336,16 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		b.ta, cmd = b.ta.Update(msg)
+		b.syncInputHeight() // grow/shrink the box with the typed text
 		return b, cmd
+
+	case modelResidencyMsg:
+		b.loading = false
+		b.loadErr = msg.err
+		if msg.err == nil {
+			b.modelLoaded = msg.loaded
+		}
+		return b, nil
 
 	case spinner.TickMsg:
 		// Always advance so the tick chain stays alive; it's only displayed while
@@ -252,7 +359,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			return b, nil // stale
 		}
 		if msg.err != nil {
-			b.state, b.err = boxDone, msg.err
+			b.state, b.err, b.took = boxDone, msg.err, time.Since(b.startedAt)
 			return b, nil
 		}
 		return b, readToken(msg.seq, msg.ch)
@@ -262,6 +369,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			return b, nil // stale (cancelled or superseded)
 		}
 		if !msg.ok { // stream closed
+			b.took = time.Since(b.startedAt)
 			if b.acting && b.cmd != nil { // Act: parse the streamed output
 				actions, err := b.cmd.Parse(b.answer)
 				switch {
@@ -281,7 +389,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			return b, nil
 		}
 		b.answer += msg.tok
-		b.vp.SetContent(b.wrapAnswer())
+		b.syncAnswerViewport()
 		b.vp.GotoBottom()
 		return b, readToken(msg.seq, msg.ch)
 	}
@@ -294,6 +402,23 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		b.vp, cmd = b.vp.Update(msg)
 	}
 	return b, cmd
+}
+
+// tookLine is a dimmed "took 1.8s" line for the done state (empty until a request
+// has completed).
+func (b PromptBox) tookLine() string {
+	if b.took == 0 {
+		return ""
+	}
+	return StDim.Render(fmt.Sprintf("took %.1fs", b.took.Seconds()))
+}
+
+// tookSuffix is the same figure as a " · 1.8s" suffix to append to a status line.
+func (b PromptBox) tookSuffix() string {
+	if b.took == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · %.1fs", b.took.Seconds())
 }
 
 func (b PromptBox) wrapAnswer() string {
@@ -315,27 +440,40 @@ func (b PromptBox) View() string {
 
 	switch b.state {
 	case boxBusy:
-		if b.answer == "" {
-			parts = append(parts, StDim.Render(b.spin.View()+" thinking…"))
+		// A live elapsed counter (driven by the spinner tick) gives an honest feel
+		// for how long the model is taking. In Act mode the streamed text is just
+		// the model's raw reasoning — noise the user asked us to hide — so show only
+		// progress + timer; an Ask backend streams its answer as it is the result.
+		elapsed := StDim.Render(fmt.Sprintf("%.1fs", time.Since(b.startedAt).Seconds()))
+		if b.acting || b.answer == "" {
+			parts = append(parts, StDim.Render(b.spin.View()+" thinking… ")+elapsed)
 		} else {
-			parts = append(parts, b.vp.View())
+			parts = append(parts, b.vp.View(), StDim.Render(b.spin.View()+" ")+elapsed)
 		}
 	case boxDone:
-		// Always keep the raw output visible — on an Act parse-failure it's the
-		// diagnostic (what the model/omp actually said), not just the terse error.
+		// On an Ask answer or an Act parse-failure, show the raw output — for a
+		// failure it is the diagnostic (what the model/omp actually said).
 		if b.answer != "" {
 			parts = append(parts, b.vp.View())
 		}
 		if b.err != nil {
 			parts = append(parts, StBrk.Render(GBroken+" "+b.err.Error()))
 		}
+		if t := b.tookLine(); t != "" {
+			parts = append(parts, t)
+		}
 	case boxProposed:
-		lines := []string{StHead.Render("applied — review above")}
+		// Just the result — the applied settings — not the model's reasoning.
+		lines := []string{StHead.Render("applied")}
 		for _, a := range b.proposed {
 			lines = append(lines, "  "+a.Key+" → "+StWarn.Render(a.Value))
 		}
-		lines = append(lines, StDim.Render("enter keep · esc revert"))
+		lines = append(lines, StDim.Render("enter keep · esc revert"+b.tookSuffix()))
 		parts = append(parts, strings.Join(lines, "\n"))
+	}
+
+	if line := b.residencyLine(); line != "" {
+		parts = append(parts, line)
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -345,4 +483,31 @@ func (b PromptBox) View() string {
 		Padding(0, 1).
 		Width(b.w - 2). // border adds the outer 2 cols back
 		Render(body)
+}
+
+// residencyLine is the model load/unload indicator, shown only when the backend
+// is Loadable: whether the local model is held in memory, plus the key to toggle
+// it. Plain words (no special glyphs) so it reads correctly in any terminal font;
+// a live progress line shows while a load/unload runs (a cold load is slow).
+func (b PromptBox) residencyLine() string {
+	if b.loadable == nil {
+		return ""
+	}
+	if b.loading {
+		verb := "loading model into memory"
+		if b.modelLoaded {
+			verb = "unloading model"
+		}
+		return StDim.Render(fmt.Sprintf("%s %s… %.1fs", b.spin.View(), verb, time.Since(b.loadStart).Seconds()))
+	}
+	var line string
+	if b.modelLoaded {
+		line = StOk.Render("model loaded") + StDim.Render(" · ^L to unload (free memory)")
+	} else {
+		line = StDim.Render("model unloaded · ^L to load (faster suggestions)")
+	}
+	if b.loadErr != nil {
+		line += "\n" + StBrk.Render(GBroken+" "+b.loadErr.Error())
+	}
+	return line
 }

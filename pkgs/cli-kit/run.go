@@ -1,6 +1,7 @@
 package clikit
 
 import (
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -64,10 +65,11 @@ type host struct {
 	altScreen bool
 	mouse     bool
 	w, h      int
+	appH      int // height last handed to the app (see reflow); -1 until set
 }
 
 func newHost(app App) host {
-	h := host{app: app, toggleKey: "ctrl+o"}
+	h := host{app: app, toggleKey: "ctrl+o", appH: -1}
 	askable, isAsk := app.(Askable)
 	commandable, isCmd := app.(Commandable)
 	if isAsk || isCmd {
@@ -96,73 +98,97 @@ func (h host) Init() tea.Cmd {
 }
 
 func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		h.w, h.h = msg.Width, msg.Height
 		if h.hasBox {
-			h.box.SetSize(msg.Width, msg.Height/2) // docks in the lower half
+			h.box.SetSize(msg.Width, msg.Height/2) // the box may grow up to half
 		}
-		var cmd tea.Cmd
-		h.app, cmd = h.app.Update(msg)
-		return h, cmd
+		// The app is (re)sized by reflow below to the height the box leaves it.
 
 	case BoxCloseMsg:
 		h.active = false
-		return h, nil
 
 	case ActionsProposedMsg:
 		// Live preview: let the app apply it immediately (it owns the state the
 		// actions mutate); the box stays open showing keep/revert.
-		var cmd tea.Cmd
 		h.app, cmd = h.app.Update(msg)
-		return h, cmd
 
 	case ActionsConfirmedMsg, ActionsRevertedMsg:
 		// Keep or revert the previewed proposal; either way the box closes and the
 		// app handles it (commit, or restore the saved state).
 		h.active = false
-		var cmd tea.Cmd
 		h.app, cmd = h.app.Update(msg)
-		return h, cmd
 
 	case tea.KeyMsg:
-		if h.hasBox && !h.active && msg.String() == h.toggleKey {
+		switch {
+		case h.hasBox && !h.active && msg.String() == h.toggleKey:
 			h.active = true
-			return h, h.box.Focus()
-		}
-		if h.active {
-			var cmd tea.Cmd
+			cmd = h.box.Focus()
+		case h.active:
 			h.box, cmd = h.box.Update(msg)
-			return h, cmd
+		default:
+			h.app, cmd = h.app.Update(msg)
 		}
-		var cmd tea.Cmd
-		h.app, cmd = h.app.Update(msg)
-		return h, cmd
+
+	case spinner.TickMsg:
+		// Deliver to BOTH: the app and the box each run their own spinner, and each
+		// ignores ticks that aren't its own (spinner ticks carry an id). Routing to
+		// only the active one would let the inactive spinner's tick chain die — that
+		// is what froze the box's elapsed timer after it had been closed once.
+		var ca, cb tea.Cmd
+		h.app, ca = h.app.Update(msg)
+		if h.hasBox {
+			h.box, cb = h.box.Update(msg)
+		}
+		cmd = tea.Batch(ca, cb)
+
+	default:
+		// Other non-key messages (stream tokens, mouse) go to whichever component
+		// is live so the box can stream while open.
+		if h.active {
+			h.box, cmd = h.box.Update(msg)
+		} else {
+			h.app, cmd = h.app.Update(msg)
+		}
 	}
 
-	// Non-key messages (spinner ticks, stream tokens, mouse) go to whichever
-	// component is live so the box can stream while open.
-	if h.active {
-		var cmd tea.Cmd
-		h.box, cmd = h.box.Update(msg)
-		return h, cmd
+	// Reflow: give the app exactly the height the box does not occupy, so opening
+	// the box (or growing it as the user types) pushes the app's content up rather
+	// than clipping its bottom (which was hiding the usage panel).
+	return h, tea.Batch(cmd, h.reflow())
+}
+
+// reflow resizes the app to the rows left over above the box, sending it a
+// WindowSizeMsg only when that height actually changes so the app reflows in
+// place. When the box is closed the app gets the full height back.
+func (h *host) reflow() tea.Cmd {
+	if !h.hasBox || h.h == 0 {
+		return nil
 	}
+	target := h.h
+	if h.active {
+		if target -= lipgloss.Height(h.box.View()); target < 0 {
+			target = 0
+		}
+	}
+	if target == h.appH {
+		return nil
+	}
+	h.appH = target
 	var cmd tea.Cmd
-	h.app, cmd = h.app.Update(msg)
-	return h, cmd
+	h.app, cmd = h.app.Update(tea.WindowSizeMsg{Width: h.w, Height: target})
+	return cmd
 }
 
 func (h host) View() string {
 	if !h.active {
 		return h.app.View()
 	}
-	boxV := h.box.View()
-	appH := h.h - lipgloss.Height(boxV)
-	if appH < 0 {
-		appH = 0
-	}
-	appV := lipgloss.NewStyle().Height(appH).MaxHeight(appH).Render(h.app.View())
-	return lipgloss.JoinVertical(lipgloss.Left, appV, boxV)
+	// The app was already resized (reflow) to the space above the box, so just
+	// stack them — no clipping.
+	return lipgloss.JoinVertical(lipgloss.Left, h.app.View(), h.box.View())
 }
 
 // Focus re-focuses the input; call when (re)opening the box.

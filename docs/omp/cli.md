@@ -1,6 +1,6 @@
-# Plain OMP v16.4.8 CLI reference
+# Plain OMP v16.5.2 CLI reference
 
-> **Scope:** this page is a snapshot of the packaged **upstream `omp` v16.4.8**
+> **Scope:** this page is a snapshot of the packaged **upstream `omp` v16.5.2**
 > executable, audited 2026-07-14. It is not a promise that `code`,
 > `omp-managed`, or `ompu` preserve every flag unchanged. See the
 > [launcher matrix](README.md#choose-the-correct-surface-first) first.
@@ -25,6 +25,11 @@ non-interactive execution.
 | `--smol <selector>` | Override the lightweight/smol role for this process |
 | `--slow <selector>` | Override the thorough/reasoning role for this process |
 | `--plan <selector>` | Override the planning role for this process |
+| `--prewalk` | Start on the active model, then hand off to a fast/cheap model at the first edit/write after the plan's todo list exists (default off; `prewalk.enabled`) |
+| `--no-prewalk` | Disable prewalk even when `prewalk.enabled` is set |
+| `--prewalk-into <selector>` | Target model for the prewalk handoff (defaults to the `smol` role) |
+| `--plan-yolo` | Force read-only plan mode at start, auto-approve the plan on the model's first resolve call, then implement it on the `--plan-yolo-into` model |
+| `--plan-yolo-into <selector>` | Target model for plan-yolo execution (defaults to the `smol` role) |
 | `--provider <id>` | Legacy provider selector; prefer `--model` |
 | `--api-key <value>` | Supply a process-local credential override |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `auto` |
@@ -45,7 +50,7 @@ non-interactive execution.
 | `--append-system-prompt <text-or-file>` | Append to the system prompt |
 | `--config <file>` | Add a one-run `config.yml`-style overlay; repeatable and later overlays win |
 | `--allow-home` | Permit launch directly in the home directory |
-| `--max-time <seconds>` | Stop the session after the given wall-clock duration |
+| `--max-time <duration>` | Stop the session after the given wall-clock duration (`600`, `10m`, `1h`) |
 | `--no-title` | Disable session-title generation |
 
 An OMP profile isolates the **entire** state root, not just one provider's OAuth
@@ -149,7 +154,7 @@ $ omp config managed --json
 ```
 
 The repository-packaged `omp` passthrough intercepts that one action before
-dispatching to upstream. `config managed` is not an upstream v16.4.8
+dispatching to upstream. `config managed` is not an upstream v16.5.2
 subcommand, despite the intentionally plain-looking invocation.
 
 ## Built-in agent tool catalog
@@ -194,8 +199,8 @@ $ ompu "inspect this untrusted repository"
 ```
 
 Sources: packaged `omp --help`; tagged upstream
-[settings](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/settings.md),
-[providers](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/providers.md),
-[models](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/models.md), and
-[secrets](https://github.com/can1357/oh-my-pi/blob/v16.4.8/docs/secrets.md)
+[settings](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/settings.md),
+[providers](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/providers.md),
+[models](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/models.md), and
+[secrets](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/secrets.md)
 documentation; repository [Agent tools](../agent-tools.md).

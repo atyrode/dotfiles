@@ -7,6 +7,25 @@
 
 let
   cfg = config.atyrode.agentTools;
+  lcfg = cfg.localClassifier;
+  ollamaBin = lib.getExe pkgs.ollama;
+  # Pull the picker's classifier model once the daemon is up, and only if it is
+  # missing — the pull is a no-op afterwards. Runs as a oneshot so a fresh machine
+  # ends up ready without a manual `ollama pull`.
+  pullClassifierModel = pkgs.writeShellScript "ollama-pull-classifier" ''
+    set -u
+    export OLLAMA_HOST=127.0.0.1:${toString lcfg.port}
+    for _ in $(seq 1 60); do
+      if ${ollamaBin} list >/dev/null 2>&1; then break; fi
+      sleep 1
+    done
+    if ${ollamaBin} list 2>/dev/null | grep -qF ${lib.escapeShellArg lcfg.model}; then
+      echo "ollama: ${lcfg.model} already present"
+      exit 0
+    fi
+    echo "ollama: pulling ${lcfg.model} for the code picker (first run only)..."
+    exec ${ollamaBin} pull ${lib.escapeShellArg lcfg.model}
+  '';
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
   untrustedConfig = ../../omp/untrusted.yml;
@@ -50,9 +69,54 @@ in
     ompAgentsPackage = lib.mkPackageOption pkgs "omp-agents" { };
     migrationPackage = lib.mkPackageOption pkgs "agent-tools-migrate" { };
     seedPackage = lib.mkPackageOption pkgs "omp-seed" { };
+
+    localClassifier = {
+      # A resident local model that powers `code`'s prompt→profile suggestion
+      # (ctrl+o): a small instruct model on the ollama daemon answers over
+      # loopback in a fraction of a second, with no auth and no network. The
+      # daemon is a general Asker/Commander backend, not picker-only.
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = pkgs.stdenv.isLinux;
+        description = ''
+          Run the nix-managed ollama daemon and keep the code picker's classifier
+          model resident and pre-pulled. Enabled on Linux (the daemon runs as a
+          systemd user service and the model is auto-pulled on activation); on
+          other platforms the daemon still runs but the model must be pulled
+          manually.
+        '';
+      };
+
+      model = lib.mkOption {
+        type = lib.types.str;
+        default = "qwen2.5:3b";
+        description = ''
+          The ollama model tag the picker classifies with. Must match the model
+          `code` requests (CODE_EVAL_MODEL / cli-kit's DefaultLocalModel).
+        '';
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 11434;
+        description = "Loopback port the ollama daemon listens on.";
+      };
+
+      keepAlive = lib.mkOption {
+        type = lib.types.str;
+        default = "-1";
+        example = "30m";
+        description = ''
+          How long ollama holds a model in memory after use (OLLAMA_KEEP_ALIVE).
+          "-1" pins it forever so every ctrl+o is warm (costs ~2GB resident for a
+          3B model); a duration like "30m" frees it after idle.
+        '';
+      };
+    };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+   {
     home.packages = [
       cfg.ompPackage
     ]
@@ -118,5 +182,31 @@ in
             '';
       })
     ];
-  };
+   }
+
+    (lib.mkIf lcfg.enable {
+      services.ollama = {
+        enable = true;
+        port = lcfg.port;
+        environmentVariables.OLLAMA_KEEP_ALIVE = lcfg.keepAlive;
+      };
+
+      # Auto-pull the classifier model once the daemon is up. systemd user
+      # services are Linux-only in Home Manager; on other platforms the daemon
+      # still runs (via the launchd agent the ollama module defines) but the
+      # model is pulled on first use / manually.
+      systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
+        Unit = {
+          Description = "Pull the code picker's local classifier model (${lcfg.model})";
+          After = [ "ollama.service" ];
+          Wants = [ "ollama.service" ];
+        };
+        Service = {
+          Type = "oneshot";
+          ExecStart = "${pullClassifierModel}";
+        };
+        Install.WantedBy = [ "default.target" ];
+      };
+    })
+  ]);
 }

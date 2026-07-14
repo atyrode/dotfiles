@@ -19,14 +19,14 @@ not in a checklist.
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
 | [shell.md](shell.md) | The interactive shell surface (a launcher, not a dev environment) |
 | [codex-state.md](codex-state.md) | Codex mutable configuration and the one-time defaults seed |
+| [adr/](adr/README.md) | Architecture decision records — the *why* behind the conventions above |
+
+The topic docs above describe how each area works; the [ADRs](adr/README.md)
+record why the boundaries and conventions exist. When a doc explains a choice
+that had real alternatives, it links to the ADR rather than re-arguing it.
 
 ## Adding a machine
 
 Register the host in [`hosts/default.nix`](../hosts/default.nix) (see
 [hosts.md](hosts.md)), then follow [bootstrap.md](bootstrap.md). The
 documentation above is intended to be sufficient without chat history.
-
-## Not yet documented
-
-Architecture decision records (ADRs) for choices with meaningful alternatives or
-migration cost are still to be written — tracked in #15.

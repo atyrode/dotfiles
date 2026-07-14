@@ -45,7 +45,9 @@ macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
 config no longer references, always keeping the current one and a rollback
 window (--keep / --keep-since); on macOS it also sweeps stale Home Manager Apps
-aliases. Commands reserved for later issues: workspace and agent.
+aliases. The auto GC roots that pin old generations are owned by the Nix daemon,
+so reaping them needs elevation: rerun as `sudo atyrode clean` (atyrode never
+self-elevates). Commands reserved for later issues: workspace and agent.
 EOF
 }
 
@@ -923,22 +925,63 @@ collect_garbage() {
 # GC roots are owned by the Nix daemon/root, so a user-scope clean cannot unlink
 # them — but that is harmless, the store GC still reclaims whatever they no longer
 # protect. nh prints one such line per root, which drowns the real work and reads
-# like a crash. Here we suppress them and write the count to the file named by the
-# first argument, so cmd_clean can report the tally once in its summary footer;
-# every other line — generation removals, genuine errors, non-permission failures
-# — passes through untouched (a "> Removing …/gcroots/auto/…" line is held one
-# step so its paired permission failure can suppress it, flushed if none follows).
+# like a crash. Here we suppress them and write two space-separated tallies —
+# skipped (permission-denied) and reaped (removed cleanly) — to the file named by
+# the first argument, so cmd_clean can report them once in its summary footer.
+# Every other line — generation removals, genuine errors, non-permission failures
+# — passes through untouched. A "> Removing …/gcroots/auto/…" line is held one
+# step: a paired PermissionDenied suppresses it as skipped, otherwise it flushes
+# as a reaped root (counted, not echoed one-per-root — under elevation the flood
+# would just invert from failures to removals). Reaped roots only appear when the
+# clean runs with enough privilege to unlink them (see cmd_clean's reap hint).
 fold_gcroots_noise() {
   local count_file="${1:-/dev/null}"
   awk -v countfile="$count_file" '
-    /^> Removing .*\/gcroots\/auto\// { if (pending != "") print pending; pending = $0; next }
+    function flush_pending() { if (pending != "") { reaped++; pending = "" } }
+    /^> Removing .*\/gcroots\/auto\// { flush_pending(); pending = $0; next }
     /Failed to remove path.*\/gcroots\/auto\/.*PermissionDenied/ { skipped++; pending = ""; next }
-    { if (pending != "") { print pending; pending = "" } print }
+    { flush_pending(); print }
     END {
-      if (pending != "") print pending
-      print skipped + 0 > countfile
+      flush_pending()
+      printf "%d %d\n", skipped + 0, reaped + 0 > countfile
     }
   '
+}
+
+# effective_uid reports the caller's EUID so clean can tell whether it is able to
+# reap the daemon-owned auto GC roots: only root can unlink them, and atyrode
+# never self-elevates (see the elevation note in cmd_rollback) — a non-root clean
+# instead points at `sudo atyrode clean`. A test override exercises the privileged
+# branch without actually running as root.
+effective_uid() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_EUID:-}" ]]; then
+    printf '%s' "$_ATYRODE_TEST_EUID"
+    return
+  fi
+  printf '%s' "${EUID:-$(id -u)}"
+}
+
+# warn_stray_result_roots flags `result*` symlinks left by `nix build` without
+# --no-link: each is an indirect GC root pinning a whole closure, so they quietly
+# defeat a clean. We look only in the current directory and the enclosing git
+# worktree (cheap, and where they accumulate during development) and never touch
+# them — removing a build result is the developer's call, not clean's.
+warn_stray_result_roots() {
+  local git_command=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || git_command="$ATYRODE_GIT"
+  local -a scan=("$PWD") roots=()
+  local base top f
+  top="$("$git_command" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$top" && "$top" != "$PWD" ]] && scan+=("$top")
+  for base in "${scan[@]}"; do
+    while IFS= read -r f; do
+      [[ "$(readlink "$f" 2>/dev/null)" == /nix/store/* ]] && roots+=("$f")
+    done < <(find "$base" -maxdepth 1 -type l \( -name result -o -name 'result-*' \) 2>/dev/null)
+  done
+  [[ "${#roots[@]}" -gt 0 ]] || return 0
+  printf 'atyrode: %s stray result symlink(s) still pin closures (nix build without --no-link):\n' "${#roots[@]}" >&2
+  for f in "${roots[@]}"; do printf '  %s -> %s\n' "$f" "$(readlink "$f")" >&2; done
+  printf '  remove them (rm result*) so the store can reclaim those closures.\n' >&2
 }
 
 # count_generations reports how many generations the tracked profile has (0 when
@@ -950,10 +993,12 @@ count_generations() {
 }
 
 # clean_footer resolves the wall of nh/gc output into one human-readable result
-# line: what was reclaimed, kept, and removed, plus how many root-owned GC roots
-# had to be skipped (daemon-owned; reaping them needs elevation — see #148).
+# line: what was reclaimed, kept, and removed, plus the fate of the daemon-owned
+# auto GC roots — reaped when the clean ran with enough privilege, otherwise
+# skipped with the exact command to reap them (atyrode never self-elevates, so a
+# non-root clean cannot unlink root-owned roots; see #148).
 clean_footer() {
-  local dry="$1" before="$2" after="$3" skipped="$4" freed="$5"
+  local dry="$1" before="$2" after="$3" skipped="$4" freed="$5" reaped="${6:-0}" euid="${7:-1000}"
   local removed=0
   [[ "$before" -gt "$after" ]] && removed=$(( before - after ))
   local -a parts=()
@@ -963,8 +1008,14 @@ clean_footer() {
     [[ -z "$freed" ]] || parts+=("reclaimed $freed")
     parts+=("kept $after generation(s)" "removed $removed")
   fi
-  [[ "${skipped:-0}" -gt 0 ]] &&
-    parts+=("skipped $skipped root-owned GC root(s) (daemon-owned, harmless; run with elevation to reap)")
+  [[ "${reaped:-0}" -gt 0 ]] && parts+=("reaped $reaped root-owned GC root(s)")
+  if [[ "${skipped:-0}" -gt 0 ]]; then
+    if [[ "$euid" == 0 ]]; then
+      parts+=("skipped $skipped root-owned GC root(s) (unremovable)")
+    else
+      parts+=("skipped $skipped root-owned GC root(s); reap them via \`sudo atyrode clean\`")
+    fi
+  fi
   local out="" p
   for p in "${parts[@]}"; do
     [[ -z "$out" ]] && out="$p" || out="$out · $p"
@@ -1006,7 +1057,10 @@ cmd_clean() {
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   local skipped_file; skipped_file="$(mktemp)"
   "${nh_args[@]}" 2>&1 | fold_gcroots_noise "$skipped_file" >&2 || die "$EX_SOFTWARE" "nh clean failed"
-  local skipped; skipped="$(cat "$skipped_file" 2>/dev/null || echo 0)"
+  # fold_gcroots_noise writes "<skipped> <reaped>"; default both to 0 if unread.
+  local skipped=0 reaped=0
+  read -r skipped reaped < "$skipped_file" 2>/dev/null || true
+  skipped="${skipped:-0}"; reaped="${reaped:-0}"
   rm -f "$skipped_file"
 
   _gc_freed=""
@@ -1017,7 +1071,8 @@ cmd_clean() {
   fi
 
   local gens_after; gens_after="$(count_generations)"
-  clean_footer "$dry" "$gens_before" "$gens_after" "$skipped" "$_gc_freed"
+  clean_footer "$dry" "$gens_before" "$gens_after" "$skipped" "$_gc_freed" "$reaped" "$(effective_uid)"
+  warn_stray_result_roots || true
 
   [[ "$json" == 0 ]] || clean_summary_json "$scope" "$keep" "$keep_since" "$dry"
 }

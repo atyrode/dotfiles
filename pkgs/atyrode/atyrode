@@ -933,25 +933,35 @@ collect_garbage() {
     return 0
   fi
 
-  local out pid rc=0 i=0 deleted=0 last=""
+  local out pid rc=0 i=0 deleted=0 frame=""
   local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
   out="$(mktemp)"
   "${gc[@]}" >"$out" 2>&1 &
   pid=$!
-  # nix-store --gc streams one `deleting '/nix/store/…'` line per path it removes.
-  # Tally those live and surface the path in flight, so the long opaque middle of
-  # a clean shows real motion (count climbing, names scrolling) instead of a bare
-  # spinner that could equally mean "working" or "hung".
+  # nix-store --gc first scans the whole store for unreachable paths (the deleted
+  # count sits at 0 for a while) and only then removes them. Reflect both phases on
+  # a single \r-rewritten line so the long opaque middle shows real motion. The
+  # line is kept short and carries no store path on purpose: a line that wraps past
+  # the terminal width defeats the carriage-return redraw and stacks up stale
+  # copies instead of updating in place (and "0 paths freed" mid-scan reads as
+  # stuck, so that phase says "scanning" instead).
   while kill -0 "$pid" 2>/dev/null; do
-    deleted="$(grep -c "^deleting '" "$out" 2>/dev/null || printf 0)"
-    last="$(grep "^deleting '" "$out" 2>/dev/null | tail -n1 || true)"
-    last="${last#deleting \'}"; last="${last%\'}"
-    [[ -n "$last" ]] && last="$(basename "$last")"
-    printf '\r\033[K  %s collecting garbage — %s paths freed%s' \
-      "$(paint 36 "${frames[$((i++ % ${#frames[@]}))]}")" \
-      "$(paint '1' "$deleted")" \
-      "${last:+  $(paint 2 "${last:0:44}")}" >&2
-    sleep 0.15
+    # grep -c already prints "0" on no match (and exits 1); `|| true` keeps that
+    # single "0" instead of appending a second one — a "0\n0" value embeds a
+    # newline that splits the progress line and breaks the \r redraw.
+    deleted="$(grep -c "^deleting '" "$out" 2>/dev/null || true)"
+    # Advance the spinner in the parent shell: doing i++ inside the $(paint …)
+    # command substitution would increment a throwaway subshell copy, freezing the
+    # frame (SC2030/SC2031).
+    frame="${frames[$((i++ % ${#frames[@]}))]}"
+    if [[ "${deleted:-0}" -eq 0 ]]; then
+      printf '\r\033[K  %s %s' "$(paint 36 "$frame")" \
+        "$(paint 2 'collecting garbage — scanning the store…')" >&2
+    else
+      printf '\r\033[K  %s collecting garbage — %s paths freed' \
+        "$(paint 36 "$frame")" "$(paint '1' "$deleted")" >&2
+    fi
+    sleep 0.12
   done
   wait "$pid" || rc=$?
   printf '\r\033[K' >&2

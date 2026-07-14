@@ -9,22 +9,24 @@ let
   cfg = config.atyrode.agentTools;
   lcfg = cfg.localClassifier;
   ollamaBin = lib.getExe pkgs.ollama;
-  # Pull the picker's classifier model once the daemon is up, and only if it is
-  # missing — the pull is a no-op afterwards. Runs as a oneshot so a fresh machine
-  # ends up ready without a manual `ollama pull`.
-  pullClassifierModel = pkgs.writeShellScript "ollama-pull-classifier" ''
+  # Pull the picker's classifier model (only if missing — the pull is a no-op
+  # otherwise) THEN warm it: one throwaway generation loads the weights into RAM
+  # so the first real ctrl+o is fast instead of paying the ~cold-load. With
+  # keepAlive pinned the model then stays resident. Runs as a oneshot on every
+  # login so the model is warm after a reboot too.
+  warmClassifierModel = pkgs.writeShellScript "ollama-pull-classifier" ''
     set -u
     export OLLAMA_HOST=127.0.0.1:${toString lcfg.port}
     for _ in $(seq 1 60); do
       if ${ollamaBin} list >/dev/null 2>&1; then break; fi
       sleep 1
     done
-    if ${ollamaBin} list 2>/dev/null | grep -qF ${lib.escapeShellArg lcfg.model}; then
-      echo "ollama: ${lcfg.model} already present"
-      exit 0
+    if ! ${ollamaBin} list 2>/dev/null | grep -qF ${lib.escapeShellArg lcfg.model}; then
+      echo "ollama: pulling ${lcfg.model} for the code picker (first run only)..."
+      ${ollamaBin} pull ${lib.escapeShellArg lcfg.model} || exit 1
     fi
-    echo "ollama: pulling ${lcfg.model} for the code picker (first run only)..."
-    exec ${ollamaBin} pull ${lib.escapeShellArg lcfg.model}
+    echo "ollama: warming ${lcfg.model} into memory..."
+    ${ollamaBin} run ${lib.escapeShellArg lcfg.model} ok >/dev/null 2>&1 || true
   '';
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
@@ -197,13 +199,13 @@ in
       # model is pulled on first use / manually.
       systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
         Unit = {
-          Description = "Pull the code picker's local classifier model (${lcfg.model})";
+          Description = "Pull + warm the code picker's local classifier model (${lcfg.model})";
           After = [ "ollama.service" ];
           Wants = [ "ollama.service" ];
         };
         Service = {
           Type = "oneshot";
-          ExecStart = "${pullClassifierModel}";
+          ExecStart = "${warmClassifierModel}";
         };
         Install.WantedBy = [ "default.target" ];
       };

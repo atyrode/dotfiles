@@ -3,7 +3,9 @@ package clikit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -90,6 +92,9 @@ type PromptBox struct {
 
 	seq    int // identifies the current request; stale async msgs are dropped
 	cancel context.CancelFunc
+
+	startedAt time.Time     // when the current request was submitted
+	took      time.Duration // wall time of the last completed request (0 until one finishes)
 }
 
 // NewPromptBox builds a box in the editing state. Call SetAsker to give it a
@@ -163,8 +168,9 @@ func (b *PromptBox) submit() tea.Cmd {
 		return nil
 	}
 	b.state = boxBusy
-	b.answer, b.err, b.proposed = "", nil, nil
+	b.answer, b.err, b.proposed, b.took = "", nil, nil, 0
 	b.prompt = prompt
+	b.startedAt = time.Now()
 	b.seq++
 	seq := b.seq
 	ctx, cancel := context.WithCancel(context.Background())
@@ -252,7 +258,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			return b, nil // stale
 		}
 		if msg.err != nil {
-			b.state, b.err = boxDone, msg.err
+			b.state, b.err, b.took = boxDone, msg.err, time.Since(b.startedAt)
 			return b, nil
 		}
 		return b, readToken(msg.seq, msg.ch)
@@ -262,6 +268,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			return b, nil // stale (cancelled or superseded)
 		}
 		if !msg.ok { // stream closed
+			b.took = time.Since(b.startedAt)
 			if b.acting && b.cmd != nil { // Act: parse the streamed output
 				actions, err := b.cmd.Parse(b.answer)
 				switch {
@@ -296,6 +303,23 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 	return b, cmd
 }
 
+// tookLine is a dimmed "took 1.8s" line for the done state (empty until a request
+// has completed).
+func (b PromptBox) tookLine() string {
+	if b.took == 0 {
+		return ""
+	}
+	return StDim.Render(fmt.Sprintf("took %.1fs", b.took.Seconds()))
+}
+
+// tookSuffix is the same figure as a " · 1.8s" suffix to append to a status line.
+func (b PromptBox) tookSuffix() string {
+	if b.took == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · %.1fs", b.took.Seconds())
+}
+
 func (b PromptBox) wrapAnswer() string {
 	w := b.vp.Width
 	if w < 1 {
@@ -315,10 +339,13 @@ func (b PromptBox) View() string {
 
 	switch b.state {
 	case boxBusy:
+		// A live elapsed counter gives an honest feel for how long a local model
+		// is taking (the first call after boot loads the model and is slow).
+		elapsed := StDim.Render(fmt.Sprintf("%.1fs", time.Since(b.startedAt).Seconds()))
 		if b.answer == "" {
-			parts = append(parts, StDim.Render(b.spin.View()+" thinking…"))
+			parts = append(parts, StDim.Render(b.spin.View()+" thinking… ")+elapsed)
 		} else {
-			parts = append(parts, b.vp.View())
+			parts = append(parts, b.vp.View(), StDim.Render(b.spin.View()+" ")+elapsed)
 		}
 	case boxDone:
 		// Always keep the raw output visible — on an Act parse-failure it's the
@@ -328,6 +355,9 @@ func (b PromptBox) View() string {
 		}
 		if b.err != nil {
 			parts = append(parts, StBrk.Render(GBroken+" "+b.err.Error()))
+		}
+		if t := b.tookLine(); t != "" {
+			parts = append(parts, t)
 		}
 	case boxProposed:
 		// Keep the model's reasoning + raw output visible alongside the proposal —
@@ -339,7 +369,7 @@ func (b PromptBox) View() string {
 		for _, a := range b.proposed {
 			lines = append(lines, "  "+a.Key+" → "+StWarn.Render(a.Value))
 		}
-		lines = append(lines, StDim.Render("enter keep · esc revert"))
+		lines = append(lines, StDim.Render("enter keep · esc revert"+b.tookSuffix()))
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
 

@@ -13,11 +13,11 @@
     "owner": "development",
     "deliveryLayer": "home-manager",
     "selectedBy": ["development"],
-    "consumer": "cross-repository agent linting and Nix editing",
+    "consumer": "cross-repository agent linting, Nix editing, and operator deployment CLIs",
     "versionOwner": "pinned nixpkgs",
     "mutableState": "language-server caches",
     "closureClass": "medium",
-    "packages": ["nixd", "nixfmt", "shellcheck", "shfmt"]
+    "packages": ["clever-tools", "nixd", "nixfmt", "shellcheck", "shfmt"]
   },
   {
     "owner": "agent-tools",

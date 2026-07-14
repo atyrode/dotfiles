@@ -32,7 +32,7 @@ Usage:
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
-  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--json]
+  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
 
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
@@ -45,8 +45,9 @@ macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
 config no longer references, always keeping the current one and a rollback
 window (--keep / --keep-since); it previews the plan and asks before touching
-anything (--yes skips the prompt, --dry-run only previews), and on macOS it also
-sweeps stale Home Manager Apps aliases. The auto GC roots that pin old
+anything (--yes skips the prompt, --dry-run only previews), folds nh's verbose
+evaluation plan into its own summary (--verbose passes nh's full output through),
+and on macOS it also sweeps stale Home Manager Apps aliases. The auto GC roots that pin old
 generations are owned by the Nix daemon; a non-root clean cannot unlink them and
 prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
 self-elevates). Commands reserved for later issues: workspace and agent.
@@ -933,25 +934,35 @@ collect_garbage() {
     return 0
   fi
 
-  local out pid rc=0 i=0 deleted=0 last=""
+  local out pid rc=0 i=0 deleted=0 frame=""
   local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
   out="$(mktemp)"
   "${gc[@]}" >"$out" 2>&1 &
   pid=$!
-  # nix-store --gc streams one `deleting '/nix/store/…'` line per path it removes.
-  # Tally those live and surface the path in flight, so the long opaque middle of
-  # a clean shows real motion (count climbing, names scrolling) instead of a bare
-  # spinner that could equally mean "working" or "hung".
+  # nix-store --gc first scans the whole store for unreachable paths (the deleted
+  # count sits at 0 for a while) and only then removes them. Reflect both phases on
+  # a single \r-rewritten line so the long opaque middle shows real motion. The
+  # line is kept short and carries no store path on purpose: a line that wraps past
+  # the terminal width defeats the carriage-return redraw and stacks up stale
+  # copies instead of updating in place (and "0 paths freed" mid-scan reads as
+  # stuck, so that phase says "scanning" instead).
   while kill -0 "$pid" 2>/dev/null; do
-    deleted="$(grep -c "^deleting '" "$out" 2>/dev/null || printf 0)"
-    last="$(grep "^deleting '" "$out" 2>/dev/null | tail -n1 || true)"
-    last="${last#deleting \'}"; last="${last%\'}"
-    [[ -n "$last" ]] && last="$(basename "$last")"
-    printf '\r\033[K  %s collecting garbage — %s paths freed%s' \
-      "$(paint 36 "${frames[$((i++ % ${#frames[@]}))]}")" \
-      "$(paint '1' "$deleted")" \
-      "${last:+  $(paint 2 "${last:0:44}")}" >&2
-    sleep 0.15
+    # grep -c already prints "0" on no match (and exits 1); `|| true` keeps that
+    # single "0" instead of appending a second one — a "0\n0" value embeds a
+    # newline that splits the progress line and breaks the \r redraw.
+    deleted="$(grep -c "^deleting '" "$out" 2>/dev/null || true)"
+    # Advance the spinner in the parent shell: doing i++ inside the $(paint …)
+    # command substitution would increment a throwaway subshell copy, freezing the
+    # frame (SC2030/SC2031).
+    frame="${frames[$((i++ % ${#frames[@]}))]}"
+    if [[ "${deleted:-0}" -eq 0 ]]; then
+      printf '\r\033[K  %s %s' "$(paint 36 "$frame")" \
+        "$(paint 2 'collecting garbage — scanning the store…')" >&2
+    else
+      printf '\r\033[K  %s collecting garbage — %s paths freed' \
+        "$(paint 36 "$frame")" "$(paint '1' "$deleted")" >&2
+    fi
+    sleep 0.12
   done
   wait "$pid" || rc=$?
   printf '\r\033[K' >&2
@@ -969,30 +980,35 @@ collect_garbage() {
   rm -f "$out"
 }
 
-# fold_gcroots_noise collapses one expected, benign flood in nh clean's output:
-# the "Failed to remove path …/gcroots/auto/… PermissionDenied" lines. Those auto
-# GC roots are owned by the Nix daemon/root, so a user-scope clean cannot unlink
-# them — but that is harmless, the store GC still reclaims whatever they no longer
-# protect. nh prints one such line per root, which drowns the real work and reads
-# like a crash. Here we suppress them and write two space-separated tallies —
-# skipped (permission-denied) and reaped (removed cleanly) — to the file named by
-# the first argument, so cmd_clean can report them once in its summary footer.
-# Every other line — generation removals, genuine errors, non-permission failures
-# — passes through untouched. A "> Removing …/gcroots/auto/…" line is held one
-# step: a paired PermissionDenied suppresses it as skipped, otherwise it flushes
-# as a reaped root (counted, not echoed one-per-root — under elevation the flood
-# would just invert from failures to removals). Reaped roots only appear when the
-# clean runs with enough privilege to unlink them (see cmd_clean's reap hint).
-fold_gcroots_noise() {
-  local count_file="${1:-/dev/null}"
-  awk -v countfile="$count_file" '
-    function flush_pending() { if (pending != "") { reaped++; pending = "" } }
-    /^> Removing .*\/gcroots\/auto\// { flush_pending(); pending = $0; next }
-    /Failed to remove path.*\/gcroots\/auto\/.*PermissionDenied/ { skipped++; pending = ""; next }
-    { flush_pending(); print }
+# fold_nh_clean_noise tames `nh clean`'s output down to what matters. nh 4.4.1
+# prints a full evaluation plan on every run — a legend plus one "- OK/RE/DEL"
+# line per GC root (well over 100 lines) — and one "> Removing …/gcroots/auto/…"
+# plus paired "! Failed … PermissionDenied" per daemon-owned root a user-scope
+# clean cannot unlink. atyrode already reports the outcome in its own footer, so
+# by default we drop the plan and the auto-gcroot chatter, keeping only genuine
+# (non-permission) errors and anything unexpected. Two tallies are written to the
+# file named by the first argument: skipped (permission failures) and reaped
+# (auto-root removals that succeeded = removals − failures; counted by totals, as
+# nh emits the removals and failures in separate batches, not adjacent pairs). The
+# second argument, when 1 (--verbose), passes nh's full output through untouched
+# while still counting. ANSI colour is stripped only for matching; kept lines
+# print with their original colouring.
+fold_nh_clean_noise() {
+  local count_file="${1:-/dev/null}" verbose="${2:-0}"
+  awk -v countfile="$count_file" -v verbose="$verbose" '
+    { s = $0; gsub(/\033\[[0-9;]*m/, "", s) }
+    s ~ /^> Removing .*\/gcroots\/auto\// { removing++; if (!verbose) next }
+    s ~ /Failed to remove path.*\/gcroots\/auto\/.*PermissionDenied/ { failed++; if (!verbose) next }
+    !verbose && s ~ /^(Welcome to nh clean|Keeping |legend:|RE:|OK:|DEL:)/ { next }
+    !verbose && s ~ /^(orphaned gcroots|gcroots)$/ { next }
+    !verbose && s ~ /^- (OK|RE|DEL)/ { next }
+    !verbose && s ~ /\/nix\/profiles\/[A-Za-z0-9._-]+$/ { next }
+    !verbose && s ~ /Profiles directory not found/ { next }
+    !verbose && s ~ /^[[:space:]]*$/ { next }
+    { print }
     END {
-      flush_pending()
-      printf "%d %d\n", skipped + 0, reaped + 0 > countfile
+      reaped = removing - failed; if (reaped < 0) reaped = 0
+      printf "%d %d\n", failed + 0, reaped + 0 > countfile
     }
   '
 }
@@ -1094,35 +1110,63 @@ clean_footer() {
   printf 'atyrode: %s\n' "$out" >&2
 }
 
-# clean_preview describes what a clean is about to do — its keep window, how many
-# of the current generations fall outside it (an upper bound: nh additionally
-# spares anything newer than --keep-since), and that the current generation and
-# rollback window are never touched — so an accidental `atyrode clean` can be read
-# and declined before anything is removed. Store reclaim is not estimated: closure
-# sizes overlap heavily, so the honest figure is the one the GC reports afterwards.
+# keepsince_cutoff resolves --keep-since (nh's compact form: 30d, 1h, 4w, 45m, …)
+# to an epoch-second cutoff; anything newer is always kept. Prints nothing when the
+# duration can't be parsed, so callers fall back to a keep-only estimate.
+keepsince_cutoff() {
+  local dur="$1" num
+  [[ "$dur" =~ ^([0-9]+)[[:space:]]*([A-Za-z]+)$ ]] || return 0
+  num="${BASH_REMATCH[1]}"
+  local unit
+  case "${BASH_REMATCH[2]}" in
+    s | sec | secs | second | seconds) unit=seconds ;;
+    m | min | mins | minute | minutes) unit=minutes ;;
+    h | hr | hrs | hour | hours) unit=hours ;;
+    d | day | days) unit=days ;;
+    w | week | weeks) unit=weeks ;;
+    *) return 0 ;;
+  esac
+  date -d "$num $unit ago" +%s 2>/dev/null || true
+}
+
+# clean_preview describes what a clean is about to do — its keep window, exactly
+# how many generations fall outside it (honouring BOTH --keep and --keep-since, so
+# it never over-promises a removal that keep-since will spare), and that the
+# current generation and rollback window are never touched — so an accidental
+# `atyrode clean` can be read and declined before anything is removed. Store
+# reclaim is not estimated: closure sizes overlap heavily, so the honest figure is
+# the one the GC reports afterwards.
 clean_preview() {
   local scope="$1" keep="$2" keep_since="$3"
   local profile; profile="$(gen_profile)"
-  local -a gens=()
-  local line gen rest current="" total=0 candidates=0 i rank
+  local -a gens=() dates=()
+  local line gen d t rest current="" total=0 removable=0 i rank
   if [[ -e "$profile" ]]; then
     while IFS= read -r line; do
-      read -r gen rest <<<"$line"
-      gens+=("$gen")
+      read -r gen d t rest <<<"$line"
+      gens+=("$gen"); dates+=("$d $t")
       [[ "$line" == *"(current)"* ]] && current="$gen"
     done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
   fi
   total=${#gens[@]}
+  local cutoff; cutoff="$(keepsince_cutoff "$keep_since")"
   for (( i = 0; i < total; i++ )); do
     rank=$(( total - 1 - i ))
-    [[ "$rank" -ge "$keep" && "${gens[$i]}" != "$current" ]] && candidates=$(( candidates + 1 ))
+    [[ "$rank" -ge "$keep" && "${gens[$i]}" != "$current" ]] || continue
+    if [[ -n "$cutoff" ]]; then
+      # Removable only if also older than the keep-since window.
+      local ge; ge="$(date -d "${dates[$i]}" +%s 2>/dev/null || echo 0)"
+      [[ "$ge" -gt 0 && "$ge" -lt "$cutoff" ]] && removable=$(( removable + 1 ))
+    else
+      removable=$(( removable + 1 )) # duration unparseable → keep-only upper bound
+    fi
   done
   local bullet; bullet="$(paint 36 '•')"
   printf 'atyrode: %s\n' "$(paint 1 "clean ($scope) is about to:")" >&2
   printf '  %s keep the newest %s generation(s), anything newer than %s, and the current one\n' \
     "$bullet" "$(paint 1 "$keep")" "$(paint 1 "$keep_since")" >&2
-  printf '  %s remove up to %s of %s generation(s) that fall outside that window\n' \
-    "$bullet" "$(paint 33 "$candidates")" "$(paint 1 "$total")" >&2
+  printf '  %s remove %s of %s generation(s) that fall outside that window\n' \
+    "$bullet" "$(paint 33 "$removable")" "$(paint 1 "$total")" >&2
   printf '  %s garbage-collect unreferenced store paths %s\n' \
     "$bullet" "$(paint 2 '(reclaimed space reported after)')" >&2
 }
@@ -1131,7 +1175,7 @@ clean_preview() {
 # keeping the current generation and a rollback window (never an auto-wipe of the
 # safety net). Also sweeps stale macOS app aliases (see clean_macos_residue).
 cmd_clean() {
-  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0 json=0
+  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0 json=0 verbose=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -n | --dry-run) dry=1 ;;
@@ -1139,6 +1183,7 @@ cmd_clean() {
       --keep-since) shift; keep_since="${1:-}" ;;
       --all) scope=all ;; # also the system profile (nix-darwin); needs elevation
       -y | --yes) assume_yes=1 ;;
+      -v | --verbose) verbose=1 ;; # pass nh clean's full evaluation plan through
       --json) json=1 ;; # machine-readable reclaim summary on stdout (cockpit)
       *) die "$EX_USAGE" "unknown clean option: $1" ;;
     esac
@@ -1163,15 +1208,16 @@ cmd_clean() {
   # Let nh remove the stale generations and gcroots, but skip its garbage
   # collection (--no-gc) — nh runs it silently. We collect below instead, with a
   # progress indicator, so the slow final step isn't an unexplained freeze. nh's
-  # own chatter (and the folded gcroots summary) goes to stderr so that under
-  # --json stdout carries only the machine-readable summary; pipefail propagates
-  # nh's exit status through the filter.
+  # own chatter (its plan and the folded gcroots summary) goes to stderr so that
+  # under --json stdout carries only the machine-readable summary; pipefail
+  # propagates nh's exit status through the filter. --verbose passes nh's full
+  # evaluation plan through instead of folding it.
   local gens_before; gens_before="$(count_generations)"
   local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since" --no-gc)
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   local skipped_file; skipped_file="$(mktemp)"
-  "${nh_args[@]}" 2>&1 | fold_gcroots_noise "$skipped_file" >&2 || die "$EX_SOFTWARE" "nh clean failed"
-  # fold_gcroots_noise writes "<skipped> <reaped>"; default both to 0 if unread.
+  "${nh_args[@]}" 2>&1 | fold_nh_clean_noise "$skipped_file" "$verbose" >&2 || die "$EX_SOFTWARE" "nh clean failed"
+  # fold_nh_clean_noise writes "<skipped> <reaped>"; default both to 0 if unread.
   local skipped=0 reaped=0
   read -r skipped reaped < "$skipped_file" 2>/dev/null || true
   skipped="${skipped:-0}"; reaped="${reaped:-0}"

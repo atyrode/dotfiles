@@ -103,15 +103,37 @@ func persistAuthProfile(statePath, id string) error {
 	return os.Rename(tmpName, statePath)
 }
 
-// withOMPProfile puts the global flag before the subcommand/forwarded arguments,
-// which works for both `omp usage --json` and interactive launches.
+// withOMPProfile makes the selected UI profile authoritative. Any forwarded
+// profile flag is removed before the selected flag is inserted, so the identity
+// shown beside usage cannot diverge from the profile OMP launches. Arguments
+// after `--` are messages and remain untouched.
 func withOMPProfile(profile string, args ...string) []string {
-	if profile == "" {
-		return append([]string(nil), args...)
+	clean := make([]string, 0, len(args))
+	skipValue := false
+scan:
+	for i, arg := range args {
+		if skipValue {
+			skipValue = false
+			continue
+		}
+		switch {
+		case arg == "--":
+			clean = append(clean, args[i:]...)
+			break scan
+		case arg == "--profile":
+			skipValue = true
+		case strings.HasPrefix(arg, "--profile="):
+			continue
+		default:
+			clean = append(clean, arg)
+		}
 	}
-	out := make([]string, 0, len(args)+2)
+	if profile == "" {
+		return clean
+	}
+	out := make([]string, 0, len(clean)+2)
 	out = append(out, "--profile", profile)
-	return append(out, args...)
+	return append(out, clean...)
 }
 
 func (m model) activeAuthProfile() authProfile {

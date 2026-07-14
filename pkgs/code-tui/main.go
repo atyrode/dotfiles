@@ -1679,8 +1679,8 @@ func launchGenerated(cfg, prompt, profile string) {
 		fmt.Fprintln(os.Stderr, "code: omp not found:", err)
 		os.Exit(1)
 	}
-	args := append([]string{path}, withOMPProfile(profile, "--config", tmp.Name())...)
-	args = append(args, os.Args[1:]...)
+	forwarded := append([]string{"--config", tmp.Name()}, os.Args[1:]...)
+	args := append([]string{path}, withOMPProfile(profile, forwarded...)...)
 	if prompt != "" { // forward the suggest-box prompt as omp's first message
 		args = append(args, prompt)
 	}

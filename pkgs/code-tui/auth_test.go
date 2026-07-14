@@ -62,7 +62,7 @@ func TestLoadAvailabilityUsesSelectedProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("ARGS_PATH", argsPath)
-	got := loadAvailability(script+" usage --json", "mum")
+	got := loadAvailability(script+" --profile default usage --json", "mum")
 	if !got.ok {
 		t.Fatal("usage response was not accepted")
 	}
@@ -92,10 +92,50 @@ func TestUsagePanelNamesWholeAuthCombination(t *testing.T) {
 	}
 }
 
-func TestWithOMPProfilePrecedesForwardedArgs(t *testing.T) {
-	got := withOMPProfile("mum", "--config", "/tmp/generated.yml", "--resume")
-	want := []string{"--profile", "mum", "--config", "/tmp/generated.yml", "--resume"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("args = %#v, want %#v", got, want)
+func TestWithOMPProfileOverridesForwardedProfile(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile string
+		args    []string
+		want    []string
+	}{
+		{
+			name:    "no override",
+			profile: "mum",
+			args:    []string{"--config", "/tmp/generated.yml", "--resume"},
+			want:    []string{"--profile", "mum", "--config", "/tmp/generated.yml", "--resume"},
+		},
+		{
+			name:    "separate override",
+			profile: "mum",
+			args:    []string{"--config", "/tmp/generated.yml", "--profile", "default", "--resume"},
+			want:    []string{"--profile", "mum", "--config", "/tmp/generated.yml", "--resume"},
+		},
+		{
+			name:    "equals override",
+			profile: "mum",
+			args:    []string{"--profile=default", "--resume"},
+			want:    []string{"--profile", "mum", "--resume"},
+		},
+		{
+			name:    "message after terminator",
+			profile: "mum",
+			args:    []string{"--resume", "--", "--profile", "literal message"},
+			want:    []string{"--profile", "mum", "--resume", "--", "--profile", "literal message"},
+		},
+		{
+			name:    "sandbox strips override",
+			profile: "",
+			args:    []string{"--profile", "default", "--resume"},
+			want:    []string{"--resume"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := withOMPProfile(tt.profile, tt.args...)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("args = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }

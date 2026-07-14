@@ -1,6 +1,7 @@
 package clikit
 
 import (
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -131,9 +132,21 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.app, cmd = h.app.Update(msg)
 		}
 
+	case spinner.TickMsg:
+		// Deliver to BOTH: the app and the box each run their own spinner, and each
+		// ignores ticks that aren't its own (spinner ticks carry an id). Routing to
+		// only the active one would let the inactive spinner's tick chain die — that
+		// is what froze the box's elapsed timer after it had been closed once.
+		var ca, cb tea.Cmd
+		h.app, ca = h.app.Update(msg)
+		if h.hasBox {
+			h.box, cb = h.box.Update(msg)
+		}
+		cmd = tea.Batch(ca, cb)
+
 	default:
-		// Non-key messages (spinner ticks, stream tokens, mouse) go to whichever
-		// component is live so the box can stream while open.
+		// Other non-key messages (stream tokens, mouse) go to whichever component
+		// is live so the box can stream while open.
 		if h.active {
 			h.box, cmd = h.box.Update(msg)
 		} else {

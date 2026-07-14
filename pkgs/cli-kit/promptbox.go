@@ -440,17 +440,19 @@ func (b PromptBox) View() string {
 
 	switch b.state {
 	case boxBusy:
-		// A live elapsed counter gives an honest feel for how long a local model
-		// is taking (the first call after boot loads the model and is slow).
+		// A live elapsed counter (driven by the spinner tick) gives an honest feel
+		// for how long the model is taking. In Act mode the streamed text is just
+		// the model's raw reasoning — noise the user asked us to hide — so show only
+		// progress + timer; an Ask backend streams its answer as it is the result.
 		elapsed := StDim.Render(fmt.Sprintf("%.1fs", time.Since(b.startedAt).Seconds()))
-		if b.answer == "" {
+		if b.acting || b.answer == "" {
 			parts = append(parts, StDim.Render(b.spin.View()+" thinking… ")+elapsed)
 		} else {
 			parts = append(parts, b.vp.View(), StDim.Render(b.spin.View()+" ")+elapsed)
 		}
 	case boxDone:
-		// Always keep the raw output visible — on an Act parse-failure it's the
-		// diagnostic (what the model/omp actually said), not just the terse error.
+		// On an Ask answer or an Act parse-failure, show the raw output — for a
+		// failure it is the diagnostic (what the model/omp actually said).
 		if b.answer != "" {
 			parts = append(parts, b.vp.View())
 		}
@@ -461,11 +463,7 @@ func (b PromptBox) View() string {
 			parts = append(parts, t)
 		}
 	case boxProposed:
-		// Keep the model's reasoning + raw output visible alongside the proposal —
-		// the short weight note is the "why" behind the picks, not just scaffolding.
-		if b.answer != "" {
-			parts = append(parts, b.vp.View())
-		}
+		// Just the result — the applied settings — not the model's reasoning.
 		lines := []string{StHead.Render("applied")}
 		for _, a := range b.proposed {
 			lines = append(lines, "  "+a.Key+" → "+StWarn.Render(a.Value))
@@ -488,26 +486,26 @@ func (b PromptBox) View() string {
 }
 
 // residencyLine is the model load/unload indicator, shown only when the backend
-// is Loadable: a chip + on/off toggle plus the ^L hint, or a live progress line
-// while a load/unload runs (a cold load is slow, so the elapsed matters).
+// is Loadable: whether the local model is held in memory, plus the key to toggle
+// it. Plain words (no special glyphs) so it reads correctly in any terminal font;
+// a live progress line shows while a load/unload runs (a cold load is slow).
 func (b PromptBox) residencyLine() string {
 	if b.loadable == nil {
 		return ""
 	}
 	if b.loading {
-		verb := "loading model"
+		verb := "loading model into memory"
 		if b.modelLoaded {
 			verb = "unloading model"
 		}
 		return StDim.Render(fmt.Sprintf("%s %s… %.1fs", b.spin.View(), verb, time.Since(b.loadStart).Seconds()))
 	}
-	var state string
+	var line string
 	if b.modelLoaded {
-		state = StOk.Render(GToggleOn + " loaded")
+		line = StOk.Render("model loaded") + StDim.Render(" · ^L to unload (free memory)")
 	} else {
-		state = StDim.Render(GToggleOff + " unloaded")
+		line = StDim.Render("model unloaded · ^L to load (faster suggestions)")
 	}
-	line := StDim.Render(GMemory+" model ") + state + StDim.Render("  ^L")
 	if b.loadErr != nil {
 		line += "\n" + StBrk.Render(GBroken+" "+b.loadErr.Error())
 	}

@@ -526,7 +526,7 @@ const (
 // currentRows is the routing block the cost/speed meters score: the generator's
 // facet combo with the advisor dial applied.
 func (m model) currentRows() []string {
-	return m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
+	return m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"])
 }
 
 func (m model) weightedModels(rows []string, fn func(w float64, id, lvl string)) {
@@ -621,14 +621,22 @@ func (m model) meter(label, glyph, fill string, n int) string {
 	return clikit.Meter(label, glyph, fill, n)
 }
 
-// advisorChain returns the advisor role's model chain for an intensity + lane,
-// sourced from the baked __advisors__ table. The advisor is the independent
-// second opinion, so it uses the opposite provider to the lane's preference — GPT
-// on a Claude-led (or pure-GPT) lane, Claude otherwise. Only the pure lanes stay
-// on their own provider (gpt-only keeps GPT; claude-only keeps Claude).
-func (m model) advisorChain(level, lane string) []string {
+// advisorChain returns the advisor role's model chain for an intensity, sourced
+// from the baked __advisors__ table. The advisor is the independent second
+// opinion, so it uses the opposite provider to whoever leads the session: GPT
+// when the lead is Claude — a Claude-led (or pure-GPT) lane, or fable-as-main
+// handing the default role to Fable — and Claude otherwise. Only the pure lanes
+// stay on their own provider (gpt-only keeps GPT; claude-only keeps Claude).
+func (m model) advisorChain(level string) []string {
+	lane := m.sel["lane"]
 	ctx := "claude"
 	if lane == "gpt-only" || lane == "claude-led" {
+		ctx = "gpt"
+	}
+	// fable-as-main puts Claude Fable in the default seat, so the second
+	// opinion flips to GPT — except on claude-only, where the pure-lane rule
+	// keeps the whole pool (advisor included) on Claude.
+	if lane != "claude-only" && m.sel["fable"] == "on" && m.sel["main"] == "on" {
 		ctx = "gpt"
 	}
 	return m.advisors[level+"/"+ctx]
@@ -649,8 +657,8 @@ func roleOf(row string) string {
 // applyAdvisor replaces the baked advisor row with one synthesised from the
 // chosen intensity (dropping it entirely when off), so the generated preview and
 // the launched config both reflect the advisor facet.
-func (m model) applyAdvisor(rows []string, level, lane string) []string {
-	chain := m.advisorChain(level, lane)
+func (m model) applyAdvisor(rows []string, level string) []string {
+	chain := m.advisorChain(level)
 	newRow := ""
 	if len(chain) > 0 {
 		newRow = "    advisor    " + strings.Join(chain, " → ")
@@ -744,7 +752,7 @@ func prefixed(model string) string {
 // thinking, advisor, and the priority tier when fast is on) from the generated
 // routing block for the current facets — what Enter launches omp with.
 func (m model) genConfigYAML() string {
-	rows := m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"], m.sel["lane"])
+	rows := m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"])
 	var mr, fc strings.Builder
 	advisorOn := false
 	for _, r := range rows {
@@ -1222,7 +1230,7 @@ func (m *model) syncPreview() {
 	id := comboID(m.sel)
 	if base, ok := m.generated[id]; ok {
 		_, roles := splitMeta(base)
-		roles = m.applyAdvisor(roles, m.sel["advisor"], m.sel["lane"])
+		roles = m.applyAdvisor(roles, m.sel["advisor"])
 		b.WriteString(renderRoute(roles, m.depth, m.avail, rw))
 	} else {
 		b.WriteString(stDim.Render("no profile for this combination") + "\n")
@@ -1561,11 +1569,12 @@ func (m model) genLines() ([]string, int) {
 		// main renders as fable's tabulated child "default": the indent + the
 		// default-role row lighting up Fable in the preview explain themselves,
 		// so it carries no flavor text (which would wrap on narrow panes anyway).
-		label, childPad := f.key, ""
+		label, childPad, childW := f.key, "", 0
 		if f.key == "main" {
-			label, childPad = "default", "  "
+			// tree-style L connector: reads as fable's child, like `tree`.
+			label, childPad, childW = "default", stDim.Render("└ "), 2
 		}
-		row := fmt.Sprintf("%s%s%s%s", ptr, childPad, gly, stDim.Render(pad(label, 9-len(childPad))))
+		row := fmt.Sprintf("%s%s%s%s", ptr, childPad, gly, stDim.Render(pad(label, 9-childW)))
 		for _, v := range f.values {
 			switch {
 			case v == m.sel[f.key]:

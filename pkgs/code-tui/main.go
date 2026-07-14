@@ -1483,13 +1483,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clikit.ActionsProposedMsg:
 		// Live preview: snapshot the current selection, then apply the proposal to
-		// the generator so the user sees the change while deciding.
+		// the generator so the user sees the change while deciding. Report the FULL
+		// applied diff back to the box (the model's picks plus the derived toggles),
+		// so its "applied" list reflects everything that changed, not just the three
+		// facets the model named directly.
 		m.view = genView
 		m.savedSel = map[string]string{}
 		for k, v := range m.sel {
 			m.savedSel[k] = v
 		}
 		m.applyActions(msg.Actions)
+		return m, func() tea.Msg { return clikit.AppliedActionsMsg{Actions: m.appliedDiff()} }
 
 	case clikit.ActionsConfirmedMsg:
 		// Kept: the preview stays; remember the prompt for the launched session.

@@ -154,6 +154,20 @@ func (m *model) applyActions(actions []clikit.Action) {
 	m.syncPreview()
 }
 
+// appliedDiff returns the facets that changed from the pre-suggestion snapshot
+// (m.savedSel) to the current selection, in facet order — the complete set the
+// suggestion applied: the model's direct picks plus the derived spark/fable/fast
+// toggles and any repair. The box shows this so its "applied" list is truthful.
+func (m model) appliedDiff() []clikit.Action {
+	var out []clikit.Action
+	for _, f := range m.facets {
+		if m.savedSel[f.key] != m.sel[f.key] {
+			out = append(out, clikit.Action{Key: f.key, Value: m.sel[f.key]})
+		}
+	}
+	return out
+}
+
 // deriveToggles sets the spark/fable/fast toggles from the suggested sizing plus
 // live quota — encoding what each model is for, which the classifier itself isn't
 // reliable enough to weigh:

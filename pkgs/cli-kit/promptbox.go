@@ -95,6 +95,12 @@ type ActionsConfirmedMsg struct{ Prompt string }
 // host restores the state it saved on ActionsProposedMsg.
 type ActionsRevertedMsg struct{}
 
+// AppliedActionsMsg lets the host replace what the box lists as "applied" with
+// the authoritative set it actually applied — which may differ from the parsed
+// proposal (e.g. the host derives extra changes, or repairs/validates some).
+// Optional: a host that applies actions verbatim need never send it.
+type AppliedActionsMsg struct{ Actions []Action }
+
 // PromptBox is a value type — Update returns an updated copy, matching the
 // bubbles convention.
 type PromptBox struct {
@@ -338,6 +344,14 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		b.ta, cmd = b.ta.Update(msg)
 		b.syncInputHeight() // grow/shrink the box with the typed text
 		return b, cmd
+
+	case AppliedActionsMsg:
+		// The host telling us what it really applied (see the type doc); reflect it
+		// in the proposal list so "applied" is truthful.
+		if b.state == boxProposed {
+			b.proposed = msg.Actions
+		}
+		return b, nil
 
 	case modelResidencyMsg:
 		b.loading = false

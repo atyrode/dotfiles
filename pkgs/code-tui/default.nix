@@ -10,7 +10,10 @@ buildGoModule {
   # the source must carry both module dirs; modRoot points the build at code-tui.
   src = lib.fileset.toSource {
     root = ./..;
-    fileset = lib.fileset.unions [ ./. ../cli-kit ];
+    fileset = lib.fileset.unions [
+      ./.
+      ../cli-kit
+    ];
   };
   modRoot = "code-tui";
   # cli-kit is a local `replace` whose source lives in this build's src (above),

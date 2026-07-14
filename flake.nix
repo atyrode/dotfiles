@@ -599,6 +599,7 @@
           };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
+          nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;

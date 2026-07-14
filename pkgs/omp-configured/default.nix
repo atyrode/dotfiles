@@ -1146,15 +1146,17 @@ let
     }
   ];
   presetProfiles = builtins.filter (p: p ? preset) paletteProfiles;
-  ompuProfile = lib.findFirst (p: p.cmd == "ompu") (throw "ompu missing from palette") paletteProfiles;
+  ompuProfile = lib.findFirst (
+    p: p.cmd == "ompu"
+  ) (throw "ompu missing from palette") paletteProfiles;
   # ompu loads defaultsConfig then untrusted.yml, and untrusted.yml overrides only
   # tools/approvals — never modelRoles/retry/thinking — so its routing is exactly the
   # managed defaults. Render it like any preset so the picker preview and omph show a
   # real model list (GUI parity) instead of a blank. (The bare `omp` genuinely has no
   # managed routing — upstream's built-in modelRoles is empty — so it stays off this list.)
-  routeSpecs =
-    (map (p: "${p.cmd}|${p.blurb}|${p.preset}") presetProfiles)
-    ++ [ "ompu|${ompuProfile.blurb}|${untrustedConfig}" ];
+  routeSpecs = (map (p: "${p.cmd}|${p.blurb}|${p.preset}") presetProfiles) ++ [
+    "ompu|${ompuProfile.blurb}|${untrustedConfig}"
+  ];
   routesHelp =
     runCommand "omp-routes-help-${lib.getVersion omp}"
       {
@@ -1404,13 +1406,38 @@ let
   nfGlyph = cp: builtins.fromJSON ''"\u${cp}"'';
   profileColor =
     cmd:
-    if builtins.elem cmd [ "ompz" "ompn" "ompm" ] then
+    if
+      builtins.elem cmd [
+        "ompz"
+        "ompn"
+        "ompm"
+      ]
+    then
       "#aa96e1" # mixed — purple
-    else if builtins.elem cmd [ "ompl" "ompb" "ompg" "ompo" ] then
+    else if
+      builtins.elem cmd [
+        "ompl"
+        "ompb"
+        "ompg"
+        "ompo"
+      ]
+    then
       "#62a7ff" # gpt-led — blue
-    else if builtins.elem cmd [ "ompk" "omps" "ompc" "ompe" ] then
+    else if
+      builtins.elem cmd [
+        "ompk"
+        "omps"
+        "ompc"
+        "ompe"
+      ]
+    then
       "#ff9f52" # claude-led — orange
-    else if builtins.elem cmd [ "ompf" "ompx" ] then
+    else if
+      builtins.elem cmd [
+        "ompf"
+        "ompx"
+      ]
+    then
       "#46bec8" # specialist — teal
     else if cmd == "ompu" then
       "#d05c60" # untrusted — red
@@ -1418,13 +1445,36 @@ let
       "#78c8aa"; # yours — green
   profileGlyph =
     cmd:
-    if builtins.elem cmd [ "ompz" "ompl" "ompk" ] then
+    if
+      builtins.elem cmd [
+        "ompz"
+        "ompl"
+        "ompk"
+      ]
+    then
       nfGlyph "f0e7" # bolt — speed
-    else if builtins.elem cmd [ "ompn" "ompb" "omps" ] then
+    else if
+      builtins.elem cmd [
+        "ompn"
+        "ompb"
+        "omps"
+      ]
+    then
       nfGlyph "f085" # cogs — routine
-    else if builtins.elem cmd [ "ompm" "ompg" "ompc" ] then
+    else if
+      builtins.elem cmd [
+        "ompm"
+        "ompg"
+        "ompc"
+      ]
+    then
       nfGlyph "f0eb" # lightbulb — smart
-    else if builtins.elem cmd [ "ompo" "ompe" ] then
+    else if
+      builtins.elem cmd [
+        "ompo"
+        "ompe"
+      ]
+    then
       nfGlyph "f127" # broken link — pure pool
     else if cmd == "ompf" then
       nfGlyph "f08d" # thumbtack — deterministic

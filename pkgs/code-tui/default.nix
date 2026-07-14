@@ -16,11 +16,13 @@ buildGoModule {
     ];
   };
   modRoot = "code-tui";
-  # cli-kit is a local `replace` whose source lives in this build's src (above),
-  # so any change to pkgs/cli-kit/*.go shifts this hash — bump it on cli-kit edits.
-  # A plain build can reuse a cached FOD and hide the change; get the true value
-  # from a fake-hash build (set to sha256-AAA…, read the reported `got:`) or CI.
-  vendorHash = "sha256-JbqO9z0UhyNRGJuT7PJrzsyJsc1VLrtbxBaNgnUfDtQ=";
+  # cli-kit is a local `replace` resolved from this build's src (above). With
+  # plain vendoring `go mod vendor` would copy cli-kit INTO the vendor FOD, so
+  # every cli-kit edit shifted this hash — and a warm cache could silently reuse
+  # a stale FOD and mask the change. proxyVendor keeps only the remote module
+  # cache in the FOD: the hash moves only when go.mod/go.sum change.
+  proxyVendor = true;
+  vendorHash = "sha256-8Ay9Rav9W+kM84C4DUqCZuwUJJ70nphS3tG6gdoTv64=";
 
   # The prompt→profile generator is invoked as `code`.
   postInstall = ''

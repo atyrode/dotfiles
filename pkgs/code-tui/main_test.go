@@ -1,11 +1,19 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// ansiRe strips SGR sequences so tests assert on visible text regardless of the
+// active color profile.
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripAnsi(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
 // A realistic full-name routing row: renderRoute shortens the names for display.
 const sampleRow = "  default    gpt-5.6-terra:medium → gpt-5.6-luna:medium → claude-sonnet-5:medium → claude-haiku-4-5:medium"
@@ -231,5 +239,90 @@ func TestUnmodified(t *testing.T) {
 	}
 	if m := (model{sel: defaultSel(), firstPrompt: "add a login endpoint"}); m.unmodified() {
 		t.Errorf("a typed prompt should count as modified even at defaults")
+	}
+}
+
+// TestDefaultGlyphs pins the built-in facet glyphs to their Nerd Font (FA PUA)
+// codepoints. The literals are invisible in most editors — an edit once wiped
+// them all to empty strings without anything failing; this locks each value.
+func TestDefaultGlyphs(t *testing.T) {
+	want := map[string]rune{
+		"lane": 0xf127, "model": 0xf085, "thinking": 0xf0eb, "advisor": 0xf14e,
+		"spark": 0xf135, "fable": 0xf02d, "main": 0xf140, "fast": 0xf0e7,
+	}
+	g := defaultGlyphs()
+	if len(g) != len(want) {
+		t.Errorf("defaultGlyphs has %d entries, want %d", len(g), len(want))
+	}
+	for _, f := range facetDefs(g) {
+		r := []rune(g[f.key])
+		if len(r) != 1 {
+			t.Errorf("glyph for %q is %d runes, want exactly 1", f.key, len(r))
+			continue
+		}
+		if r[0] != want[f.key] {
+			t.Errorf("glyph for %q = U+%04X, want U+%04X", f.key, r[0], want[f.key])
+		}
+	}
+}
+
+// TestGenLinesMainRow: the fable-as-main dial renders as fable's tabulated child
+// labelled "default" (self-explanatory next to the preview), with no flavor text
+// — the old explainer wrapped on narrow panes and broke the layout.
+func TestGenLinesMainRow(t *testing.T) {
+	m := model{facets: facetDefs(defaultGlyphs()), sel: defaultSel()}
+	m.sel["fable"] = "on"
+	m.sel["main"] = "on"
+	lines, _ := m.genLines()
+	var mainRow string
+	for _, ln := range lines {
+		p := stripAnsi(ln)
+		if strings.Contains(p, "default") {
+			mainRow = p
+		}
+		if strings.Contains(p, "Fable leads") {
+			t.Errorf("main row must carry no flavor text, got %q", p)
+		}
+	}
+	if mainRow == "" {
+		t.Fatalf("no row labelled 'default' while fable+main are on:\n%s", stripAnsi(strings.Join(lines, "\n")))
+	}
+	// tabulated child: unfocused prefix is the 2-space pointer slot + a 2-space
+	// indent before the glyph — 2 deeper than every other row.
+	if !strings.HasPrefix(mainRow, strings.Repeat(" ", 4)) {
+		t.Errorf("main row must be indented as fable's child, got %q", mainRow)
+	}
+}
+
+// TestPreviewColumn locks the right column's shape: a pinned "routing" pill on
+// top, no settings-summary line (the dials are visible on the left), and the
+// pinned f cue at the bottom worded as a DISPLAY toggle (show/hide).
+func TestPreviewColumn(t *testing.T) {
+	id := comboID(defaultSel())
+	m := model{
+		generated: map[string][]string{id: {
+			"  thinking medium · fallback on · advisor on",
+			"    default    gpt-5.6-terra:medium → gpt-5.6-luna:medium",
+			"  ● task       gpt-5.6-terra:medium → gpt-5.6-luna:medium",
+		}},
+		sel: defaultSel(),
+		rdy: true,
+	}
+	m.vp = viewport.New(60, 6)
+	m.syncPreview()
+	plain := stripAnsi(m.previewColumn())
+	if !strings.Contains(plain, "routing") {
+		t.Errorf("preview column must carry the routing pill, got:\n%s", plain)
+	}
+	if strings.Contains(plain, "fallback on") || strings.Contains(plain, "thinking medium ·") {
+		t.Errorf("the baked settings-summary line must not reach the preview, got:\n%s", plain)
+	}
+	rows := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+	if last := strings.TrimSpace(rows[len(rows)-1]); last != "f · show fallback chains" {
+		t.Errorf("bottom hint = %q, want %q", last, "f · show fallback chains")
+	}
+	m.depth = 1
+	if plain := stripAnsi(m.previewColumn()); !strings.Contains(plain, "f · hide fallback chains") {
+		t.Errorf("full-chain depth must flip the cue to hide, got:\n%s", plain)
 	}
 }

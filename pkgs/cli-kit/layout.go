@@ -54,7 +54,12 @@ func WindowList(lines []string, cursor, h, w int) string {
 		vis = append(vis, "")
 	}
 	lw := w - 1 // reserve a column for the scrollbar
-	list := lipgloss.NewStyle().Width(lw).MaxWidth(lw).Render(strings.Join(vis, "\n"))
+	// Clip BEFORE fixing the width: Width() word-wraps over-wide lines onto
+	// extra physical rows, silently making the column taller than h and pushing
+	// everything below it off-screen. MaxWidth alone truncates per line without
+	// wrapping; Width then only pads the (now fitting) lines to a stable lw.
+	clipped := lipgloss.NewStyle().MaxWidth(lw).Render(strings.Join(vis, "\n"))
+	list := lipgloss.NewStyle().Width(lw).Render(clipped)
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, Scrollbar(total, h, start))
 }
 

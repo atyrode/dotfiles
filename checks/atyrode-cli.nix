@@ -34,11 +34,18 @@ pkgs.runCommand "check-atyrode-cli"
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
     if [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
-      # Reproduce nh clean's real output shape: a genuine generation removal, the
-      # benign root-owned gcroots permission flood, and one real (non-permission)
-      # error — so the check can prove fold_gcroots_noise keeps the first and last
-      # while collapsing the flood.
+      # Reproduce nh 4.4.1 clean's real output shape: a verbose evaluation plan
+      # (Welcome/legend/one line per gcroot), the benign root-owned gcroots
+      # permission flood, and one real (non-permission) error — so the check can
+      # prove the plan and flood are folded while a genuine error survives.
+      echo 'Welcome to nh clean'
+      echo 'legend:'
+      echo 'OK: path to be kept'
+      echo 'gcroots'
       echo '- OK  /home/alex/.local/state/nix/profiles/profile-9-link'
+      echo '- DEL /nix/var/nix/profiles/per-user/root/channels-1-link'
+      echo '/home/alex/.local/state/nix/profiles/home-manager'
+      echo '- OK  /home/alex/.local/state/nix/profiles/home-manager-62-link'
       echo '> Removing /nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd'
       echo '! Failed to remove path="/nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd" err=Os { code: 13, kind: PermissionDenied, message: "Permission denied" } (nh/crates/nh-clean/src/clean.rs:606)'
       echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
@@ -46,8 +53,8 @@ pkgs.runCommand "check-atyrode-cli"
       echo '! Failed to remove path="/nix/store/genuine" err=Os { code: 2, kind: NotFound }' >&2
     elif [[ "''${ATYRODE_NH_REAP:-0}" == 1 ]]; then
       # Under elevation nh removes the same daemon-owned roots cleanly (no paired
-      # PermissionDenied), so the flood inverts into successful removals the fold
-      # must count as reaped rather than echo one-per-root.
+      # PermissionDenied), so the fold counts them as reaped (removals − failures)
+      # rather than echoing one line per root.
       echo '- OK  /home/alex/.local/state/nix/profiles/profile-9-link'
       echo '> Removing /nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd'
       echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
@@ -502,8 +509,9 @@ pkgs.runCommand "check-atyrode-cli"
     ' <<<"$clean_json" >/dev/null \
       || { echo "clean --json summary wrong: $clean_json" >&2; exit 1; }
 
-    # clean folds nh's benign root-owned gcroots permission flood, keeps genuine
-    # removals and real (non-permission) errors, and resolves to a legible footer.
+    # clean folds nh's verbose evaluation plan AND the benign root-owned gcroots
+    # permission flood into its own footer, while a genuine (non-permission) error
+    # still survives.
     export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
     noise_out="$(ATYRODE_NH_NOISE=1 atyrode clean --keep 3 2>&1 >/dev/null)"
     unset ATYRODE_NIX_STORE
@@ -523,10 +531,23 @@ pkgs.runCommand "check-atyrode-cli"
       && { echo 'footer must not print the old unrunnable sudo atyrode clean hint' >&2; exit 1; }
     grep -qF 'gcroots/auto/lvi04m7mn76' <<<"$noise_out" \
       && { echo 'clean must not print individual gcroots permission failures' >&2; exit 1; }
-    grep -qF 'profile-9-link' <<<"$noise_out" \
-      || { echo 'clean must keep genuine generation removals' >&2; exit 1; }
+    for folded in 'Welcome to nh clean' 'legend:' 'profile-9-link' 'home-manager-62-link' 'channels-1-link'; do
+      grep -qF "$folded" <<<"$noise_out" \
+        && { echo "clean must fold nh's verbose plan line: $folded" >&2; exit 1; }
+    done
     grep -qF '/nix/store/genuine' <<<"$noise_out" \
       || { echo 'clean must keep real (non-permission) failures' >&2; exit 1; }
+
+    # --verbose passes nh's full evaluation plan through instead of folding it.
+    export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
+    verbose_out="$(ATYRODE_NH_NOISE=1 atyrode clean --keep 3 --verbose 2>&1 >/dev/null)"
+    unset ATYRODE_NIX_STORE
+    for shown in 'Welcome to nh clean' 'profile-9-link' 'home-manager-62-link'; do
+      grep -qF "$shown" <<<"$verbose_out" \
+        || { echo "--verbose must pass nh's plan line through: $shown" >&2; exit 1; }
+    done
+    grep -qF 'skipped 2 root-owned GC root(s)' <<<"$verbose_out" \
+      || { echo "--verbose must still tally skipped gcroots: $verbose_out" >&2; exit 1; }
 
     # Under elevation (EUID 0) the same roots are removed cleanly: the footer
     # reports them as reaped, counts (not echoes) them, and drops the sudo hint.
@@ -570,6 +591,19 @@ pkgs.runCommand "check-atyrode-cli"
       || { echo "declining must abort the clean: $decline_out" >&2; exit 1; }
     test ! -e "$TMPDIR/gc-args" \
       || { echo 'a declined clean must not collect garbage' >&2; exit 1; }
+
+    # The preview count honours BOTH --keep and --keep-since — it must not promise
+    # a removal that keep-since will spare. Stub generations: #1 2026-05-01,
+    # #2 2026-06-01, #3 2026-07-01 (current). All decline (n) so nothing runs.
+    keep_floor="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 5 2>&1)"
+    grep -qF 'remove 0 of 3 generation(s)' <<<"$keep_floor" \
+      || { echo "preview: --keep above the total must spare all: $keep_floor" >&2; exit 1; }
+    since_wide="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 0 --keep-since 100000d 2>&1)"
+    grep -qF 'remove 0 of 3 generation(s)' <<<"$since_wide" \
+      || { echo "preview: a wide --keep-since must spare recent generations: $since_wide" >&2; exit 1; }
+    since_narrow="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 0 --keep-since 1s 2>&1)"
+    grep -qF 'remove 2 of 3 generation(s)' <<<"$since_narrow" \
+      || { echo "preview: a 1s --keep-since must count the older generations: $since_narrow" >&2; exit 1; }
 
     # Accepting proceeds through the collector.
     accept_out="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 3 2>&1)"

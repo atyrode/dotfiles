@@ -263,8 +263,7 @@
             cli-kit = final.callPackage ./pkgs/cli-kit { };
             code-tui = final.callPackage ./pkgs/code-tui { };
             codex = final.callPackage ./pkgs/codex-bin { };
-            codex-configured = final.callPackage ./pkgs/codex-configured { };
-            codex-use = final.callPackage ./pkgs/codex-use { };
+            codex-seed = final.callPackage ./pkgs/codex-seed { };
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
@@ -452,8 +451,8 @@
             atyrode
             cli-kit
             code-tui
-            codex-configured
-            codex-use
+            codex
+            codex-seed
             omp
             omp-agents
             omp-configured
@@ -593,10 +592,7 @@
               .${system};
           };
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
-          codex-use = import ./checks/codex-use.nix {
-            inherit lib pkgs;
-            baseConfig = baseOnlyConfig;
-          };
+          codex-seed = import ./checks/codex-seed.nix { inherit lib pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           docs-links = import ./checks/docs-links.nix { inherit lib pkgs; };
           go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };

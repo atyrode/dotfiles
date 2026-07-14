@@ -10,7 +10,7 @@ the host-registry check keeps it identical to the registry.
 
 Capabilities are declarative Home Manager modules, not imperative `nix
 profile` state. Home Manager generations remain activation history and rollback
-points; OMP and Codex profiles remain harness-specific mutable-state boundaries.
+points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-state boundaries.
 
 ## Current capabilities
 

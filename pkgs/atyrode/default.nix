@@ -89,7 +89,7 @@ let
         capability = "agent-tools";
         version = lib.getVersion codex;
         versionOwner = "repository package derivation";
-        mutableState = "~/.codex and ~/.codex-profiles";
+        mutableState = "~/.codex";
         launchModes = [
           "interactive"
           "exec"

@@ -18,7 +18,7 @@ not in a checklist.
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
 | [shell.md](shell.md) | The interactive shell surface (a launcher, not a dev environment) |
-| [codex-state.md](codex-state.md) | Codex mutable configuration and profile state |
+| [codex-state.md](codex-state.md) | Codex mutable configuration and the one-time defaults seed |
 
 ## Adding a machine
 

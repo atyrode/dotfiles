@@ -11,8 +11,7 @@
   home.packages =
     (with pkgs; [
       claude-code
-      codex-configured
-      codex-use
+      codex
       tmux
     ])
     ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];

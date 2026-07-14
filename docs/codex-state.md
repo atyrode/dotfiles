@@ -1,51 +1,39 @@
-# Codex configuration and profile state
+# Codex configuration and the defaults seed
 
-Codex reads mutable user configuration from `~/.codex/config.toml` and supports
-an explicit profile layer at `$CODEX_HOME/<name>.config.toml`. The managed
-launcher uses the documented `--profile atyrode` layer so portable defaults can
-converge without replacing user/project trust entries in the base file. See the
-official [configuration basics](https://learn.chatgpt.com/docs/config-file/config-basic#codex-configuration-file)
-and [developer command reference](https://learn.chatgpt.com/docs/developer-commands).
-Machine-local keys remain in the base file; the managed layer intentionally wins
-when both layers define the same portable default.
+Codex runs vanilla against `~/.codex`. The dotfiles no longer wrap it or manage
+a profile layer: the former `codex-use` profile switcher and the
+`--profile atyrode` launcher were retired. What the repository contributes now
+is a **one-time config seed** plus a few **portable managed files** — everything
+else in `~/.codex` is Codex-owned mutable state the dotfiles never touch.
 
-## Ownership
+## What the repository manages
 
 | Path | Owner | Behavior |
 |---|---|---|
-| `AGENTS.md` | portable, repository-managed | Convergent symlink; pre-existing content is timestamp-backed up first. |
-| `atyrode.config.toml` | portable, repository-managed | Convergent Codex profile layer selected by the packaged launcher. |
-| `config.toml` and named non-atyrode profiles | machine-local/user | Never replaced; project trust and personal overrides stay local. |
-| `auth.json` and provider credentials | secret, Codex-owned | Never read by diagnostics, copied into derivations, or moved outside its auth profile. |
-| history, sessions, rollouts, plugins, skills config, caches, logs | mutable, Codex-owned | Move with the selected authentication profile; never enter the Nix store. |
+| `~/.codex/config.toml` | seeded once, then user | On first activation the curated defaults (`codex/config.toml`) are installed. Any pre-existing file is timestamp-backed-up to `config.toml.pre-seed.<ts>` first (never merged). After that the file is yours — repository changes do not re-apply and your edits, including Codex's machine-local `[projects]` trust, are never touched again. |
+| `~/.codex/AGENTS.md` | portable, repository-managed | Home Manager symlink to `codex/AGENTS.md` (global agent guidance). |
+| `~/.codex/skills`, `~/.codex/templates` | portable, repository-managed | Home Manager recursive symlinks to `codex/skills` and `codex/templates`. |
+| `auth.json` and provider credentials | secret, Codex-owned | Never read, copied into derivations, or moved. Log in with `codex login`. |
+| history, sessions, rollouts, plugins, caches, logs, and `config.toml` after the seed | mutable, Codex-owned | Never entered into the Nix store or rewritten by the dotfiles. |
 
-The CLI and managed profile contain no credentials. `codex-use status --json`
-reports only the active profile and this ownership classification.
+## The seed
 
-## Commands
+`atyrode-codex-seed apply` (run automatically by Home Manager on activation, and
+invokable by hand) performs the one-time install described above; it records a
+marker under `$XDG_STATE_HOME/atyrode/codex-seed/` so it never runs twice.
+`atyrode-codex-seed status [--json]` reports whether the seed has been applied.
+A dry run (`AGENT_TOOLS_DRY_RUN=1`) writes nothing.
 
-```sh
-codex-use status --json
-codex-use list
-codex-use alt
-codex-use login alt
-codex-use path alt
-codex-use migrate
-```
+To re-apply the repository defaults after they change, remove the marker
+(`rm ~/.local/state/atyrode/codex-seed/seeded`) and re-activate; your current
+`config.toml` is backed up before the fresh install.
 
-`main` remains a compatibility spelling for `default`. `codex-use login`
-selects the profile transactionally, then starts device authentication. The
-separate shell-only login wrappers were removed by #12.
+## Migrating from the old profile system
 
-Every mutating invocation takes an atomic per-user directory lock. A switch
-preflights process and destination collisions, installs managed files before
-moving directories, records a recovery journal, moves the active and inactive
-profiles, then atomically writes `.active-profile`. The next invocation rolls
-back an interrupted partial move or completes a layout that had already
-finished. Managed-path collisions are preserved under a timestamped
-`.pre-managed.*` name rather than deleted.
-
-Home Manager runs `codex-use converge` on every switch. It updates only the two
-portable files in the active and inactive profiles. Existing seeded profiles
-therefore converge without a manual sync and without changing `config.toml`,
-authentication, history, sessions, plugin state, or caches.
+The retired `codex-use` kept multiple identities under `~/.codex-profiles/` and
+swapped the active one into `~/.codex`. After the removal, `~/.codex` is just the
+plain Codex home (your auth and data are already there). Home Manager clears the
+two store symlinks the old converge left (`~/.codex/AGENTS.md`,
+`~/.codex/atyrode.config.toml`) so the new managed files can take their place;
+`~/.codex-profiles/` is left in place as harmless orphaned state you can delete.
+See the [official configuration basics](https://learn.chatgpt.com/docs/config-file/config-basic#codex-configuration-file).

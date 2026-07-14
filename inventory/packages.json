@@ -27,7 +27,7 @@
     "versionOwner": "pinned nixpkgs or repository package derivation",
     "mutableState": "separate harness-owned auth, sessions, MCP state, and caches under the user home",
     "closureClass": "large",
-    "packages": ["bubblewrap", "claude-code", "codex-configured", "codex-use", "omp-configured", "tmux"]
+    "packages": ["bubblewrap", "claude-code", "codex", "omp-configured", "tmux"]
   },
   {
     "owner": "desktop",

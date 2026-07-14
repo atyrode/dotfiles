@@ -6,8 +6,8 @@
 
 personality = "pragmatic"
 approvals_reviewer = "guardian_subagent"
-model = "gpt-5.5"
-model_reasoning_effort = "xhigh"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
 plan_mode_reasoning_effort = "xhigh"
 service_tier = "default"
 default_permissions = "workspace-github"
@@ -38,3 +38,6 @@ mode = "limited"
 "github.com" = "allow"
 "**.github.com" = "allow"
 "**.githubusercontent.com" = "allow"
+
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"

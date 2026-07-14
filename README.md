@@ -205,8 +205,8 @@ and Homebrew, plus the read-only operational readiness checks.
 [Shell surface](docs/shell.md) records every retained and removed function,
 alias, startup side effect, and Oh My Zsh plugin.
 
-[Codex state](docs/codex-state.md) documents convergent portable configuration,
-transactional authentication profiles, recovery, and secret/mutable ownership.
+[Codex state](docs/codex-state.md) documents the one-time defaults seed, the
+managed guidance files, and secret/mutable ownership.
 
 For this Mac, the manual switch command is:
 

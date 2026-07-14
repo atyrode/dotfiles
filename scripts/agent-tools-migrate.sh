@@ -402,7 +402,6 @@ render_transformed_config() {
   yq eval "
     del(
       .providers.webSearch,
-      .providers.anthropic.serverSideFallback,
       .tools.approvalMode,
       .tools.approval,
       .secrets.enabled,

@@ -169,3 +169,20 @@ func TestDefaultSelValid(t *testing.T) {
 		}
 	}
 }
+
+// TestUnmodified locks the launch decision: an untouched generator (defaults, no
+// prompt) is "unmodified" so Enter runs the bare default omp; any changed facet
+// or a typed prompt flips it, so Enter launches the generated profile instead.
+func TestUnmodified(t *testing.T) {
+	if m := (model{sel: defaultSel()}); !m.unmodified() {
+		t.Errorf("defaults + no prompt should be unmodified (→ default omp)")
+	}
+	m := model{sel: defaultSel()}
+	m.sel["model"] = "smart" // any facet off its default
+	if m.unmodified() {
+		t.Errorf("a changed facet should count as modified (→ generated profile)")
+	}
+	if m := (model{sel: defaultSel(), firstPrompt: "add a login endpoint"}); m.unmodified() {
+		t.Errorf("a typed prompt should count as modified even at defaults")
+	}
+}

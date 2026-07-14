@@ -13,7 +13,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const MANAGED_PATHS = [
 	"providers.webSearch",
-	"providers.anthropic.serverSideFallback",
 	"symbolPreset",
 	"colorBlindMode",
 	"modelRoles",

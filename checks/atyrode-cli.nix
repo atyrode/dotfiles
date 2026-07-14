@@ -33,6 +33,18 @@ pkgs.runCommand "check-atyrode-cli"
     cat > "$TMPDIR/bin/nh" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
+    if [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
+      # Reproduce nh clean's real output shape: a genuine generation removal, the
+      # benign root-owned gcroots permission flood, and one real (non-permission)
+      # error — so the check can prove fold_gcroots_noise keeps the first and last
+      # while collapsing the flood.
+      echo '- OK  /home/alex/.local/state/nix/profiles/profile-9-link'
+      echo '> Removing /nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd'
+      echo '! Failed to remove path="/nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd" err=Os { code: 13, kind: PermissionDenied, message: "Permission denied" } (nh/crates/nh-clean/src/clean.rs:606)'
+      echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
+      echo '! Failed to remove path="/nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8" err=Os { code: 13, kind: PermissionDenied, message: "Permission denied" } (nh/crates/nh-clean/src/clean.rs:606)'
+      echo '! Failed to remove path="/nix/store/genuine" err=Os { code: 2, kind: NotFound }' >&2
+    fi
     [[ "''${ATYRODE_NH_FAIL:-0}" != 1 ]]
     EOF
     # Stub nix-env's generation listing (clean --json / generations read it).
@@ -459,6 +471,20 @@ pkgs.runCommand "check-atyrode-cli"
       and .reclaimCandidates[0].generation == 1
     ' <<<"$clean_json" >/dev/null \
       || { echo "clean --json summary wrong: $clean_json" >&2; exit 1; }
+
+    # clean folds nh's benign root-owned gcroots permission flood into a single
+    # summary line, but keeps genuine removals and real (non-permission) errors.
+    export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc"
+    noise_out="$(ATYRODE_NH_NOISE=1 atyrode clean --keep 3 2>&1 >/dev/null)"
+    unset ATYRODE_NIX_STORE
+    grep -qF 'skipped 2 root-owned GC root(s)' <<<"$noise_out" \
+      || { echo "clean must summarize skipped gcroots: $noise_out" >&2; exit 1; }
+    grep -qF 'gcroots/auto/lvi04m7mn76' <<<"$noise_out" \
+      && { echo 'clean must not print individual gcroots permission failures' >&2; exit 1; }
+    grep -qF 'profile-9-link' <<<"$noise_out" \
+      || { echo 'clean must keep genuine generation removals' >&2; exit 1; }
+    grep -qF '/nix/store/genuine' <<<"$noise_out" \
+      || { echo 'clean must keep real (non-permission) failures' >&2; exit 1; }
 
     mkdir "$out"
   ''

@@ -29,26 +29,38 @@ func TestValidFacetActions(t *testing.T) {
 }
 
 func TestClassifyMessage(t *testing.T) {
-	msg := classifyMessage(facetDefs(map[string]string{}), "check the docs for X")
-	// Only the sizing facets are offered to the evaluator.
-	for _, key := range []string{"lane", "model", "thinking", "advisor"} {
-		if !strings.Contains(msg, key) {
-			t.Errorf("classifyMessage missing sizing facet %q", key)
+	msg := classifyMessage("check the docs for X")
+	// The difficulty rubric and the sizing facets it maps to must be present.
+	for _, s := range []string{"difficulty", "trivial", "critical", "model=", "thinking=", "advisor="} {
+		if !strings.Contains(msg, s) {
+			t.Errorf("classifyMessage missing %q", s)
 		}
 	}
-	// The budget/preference toggles must NOT be part of the suggestion.
-	for _, key := range []string{"spark", "fable", "fast"} {
-		if strings.Contains(msg, key+"[") {
-			t.Errorf("classifyMessage should not offer non-sizing facet %q", key)
-		}
-	}
-	// The two-line format (note + JSON) and an anchoring example must be present.
-	if !strings.Contains(msg, "Line 1:") || !strings.Contains(msg, "Line 2:") {
-		t.Errorf("classifyMessage must specify the two-line format, got:\n%s", msg)
+	// lane is NOT suggested (a 3B can't pick a pool; it invented "lane: smart").
+	if strings.Contains(msg, "lane") {
+		t.Errorf("classifyMessage should not mention lane, got:\n%s", msg)
 	}
 	// The user's prompt must be embedded as delimited data, not a bare instruction.
 	if !strings.Contains(msg, "\"\"\"\ncheck the docs for X\n\"\"\"") {
 		t.Errorf("classifyMessage must embed the prompt as delimited data, got:\n%s", msg)
+	}
+}
+
+func TestEvalCommanderParseFiltersInvalid(t *testing.T) {
+	// The wrapper must drop values the picker can't apply, so the box shows only
+	// what will actually change (no hallucinated lane value leaking through).
+	c := evalCommander{facets: facetDefs(map[string]string{})}
+	got, err := c.Parse(`{"model":"smart","thinking":"high","lane":"smart"}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, a := range got {
+		if a.Key == "lane" {
+			t.Errorf("invalid lane value should be filtered, got %v", got)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("want 2 valid actions (model, thinking), got %v", got)
 	}
 }
 
@@ -94,24 +106,9 @@ func TestRepairConstraintsQuota(t *testing.T) {
 	}
 }
 
-func TestSizingEvalFacetsPrunesMaxedLanes(t *testing.T) {
-	m := model{facets: facetDefs(map[string]string{}),
-		avail: availability{bucket: map[string]string{"claude-main": "maxed"}}}
-	for _, f := range m.sizingEvalFacets() {
-		if f.key != "lane" {
-			continue
-		}
-		for _, v := range f.values {
-			if v == "claude-only" {
-				t.Errorf("claude-only should be pruned when claude-main is maxed")
-			}
-		}
-	}
-}
-
 func TestEvalSystemPromptIsSizerRole(t *testing.T) {
 	s := string(evalSystemPrompt)
-	if !strings.Contains(s, "never do") || !strings.Contains(s, "two lines") {
-		t.Errorf("evalSystemPrompt should pin the sizer-only, two-line role, got: %q", s)
+	if !strings.Contains(s, "difficulty") || !strings.Contains(s, "never") {
+		t.Errorf("evalSystemPrompt should pin the difficulty-rating, sizer-only role, got: %q", s)
 	}
 }

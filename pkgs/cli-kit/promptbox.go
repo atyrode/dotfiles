@@ -165,24 +165,69 @@ func (b *PromptBox) detectLoadable(backend any) {
 // so the user can see what the box is doing / which model it uses.
 func (b *PromptBox) SetTitle(s string) { b.title = s }
 
-// SetSize lays the box out within w×h (outer cells). A border + one column of
-// padding sit inside, so the inner widgets get w-4.
-func (b *PromptBox) SetSize(w, h int) {
-	b.w, b.h = w, h
-	inner := w - 4
+// maxInputLines caps how tall the input grows as the user types; beyond it the
+// textarea scrolls internally. The box starts one line tall (see syncInputHeight).
+const maxInputLines = 6
+
+// innerWidth is the usable content width inside the border + padding.
+func (b PromptBox) innerWidth() int {
+	inner := b.w - 4
 	if inner < 8 {
 		inner = 8
 	}
-	b.ta.SetWidth(inner)
-	b.ta.SetHeight(3)
-	vpH := h - 8 // reserve rows for border, input, and the status line
-	if vpH < 1 {
-		vpH = 1
+	return inner
+}
+
+// SetSize lays the box out within w outer cells, with maxH the tallest the box
+// may grow to (the host caps it so it never eats the whole screen). The box is
+// content-sized: the input grows with what's typed and the answer pane fits its
+// text, so an idle box is a single line rather than a half-screen panel.
+func (b *PromptBox) SetSize(w, maxH int) {
+	b.w, b.h = w, maxH
+	b.ta.SetWidth(b.innerWidth())
+	b.vp.Width = b.innerWidth()
+	b.syncInputHeight()
+	b.syncAnswerViewport()
+}
+
+// syncInputHeight grows the input to fit its content (1..maxInputLines), so the
+// box expands line-by-line as the user writes and shrinks back when they clear it.
+func (b *PromptBox) syncInputHeight() {
+	lines := 1
+	if v := b.ta.Value(); v != "" {
+		lines = lipgloss.Height(lipgloss.NewStyle().Width(b.innerWidth()).Render(v))
 	}
-	b.vp.Width, b.vp.Height = inner, vpH
-	if b.answer != "" {
-		b.vp.SetContent(b.wrapAnswer())
+	if lines > maxInputLines {
+		lines = maxInputLines
 	}
+	if lines < 1 {
+		lines = 1
+	}
+	b.ta.SetHeight(lines)
+}
+
+// syncAnswerViewport sizes the answer pane to its content (up to what maxH
+// leaves), so the box never reserves empty rows for an answer that isn't there.
+func (b *PromptBox) syncAnswerViewport() {
+	if b.answer == "" {
+		b.vp.SetContent("")
+		b.vp.Height = 0
+		return
+	}
+	content := b.wrapAnswer()
+	b.vp.SetContent(content)
+	lines := lipgloss.Height(content)
+	cap := b.h - b.ta.Height() - 5 // leave room for title, residency, border/pad
+	if cap < 1 {
+		cap = 1
+	}
+	if lines > cap {
+		lines = cap
+	}
+	if lines < 1 {
+		lines = 1
+	}
+	b.vp.Height = lines
 }
 
 // Init starts the spinner ticking.
@@ -214,7 +259,7 @@ func (b *PromptBox) submit() tea.Cmd {
 	seq := b.seq
 	ctx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
-	b.vp.SetContent("")
+	b.syncAnswerViewport()
 	// The spinner keeps ticking on its own (see the TickMsg case); submit only
 	// kicks off the backend, in a Cmd so a slow start never blocks the UI.
 	switch {
@@ -291,6 +336,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		b.ta, cmd = b.ta.Update(msg)
+		b.syncInputHeight() // grow/shrink the box with the typed text
 		return b, cmd
 
 	case modelResidencyMsg:
@@ -343,7 +389,7 @@ func (b PromptBox) Update(msg tea.Msg) (PromptBox, tea.Cmd) {
 			return b, nil
 		}
 		b.answer += msg.tok
-		b.vp.SetContent(b.wrapAnswer())
+		b.syncAnswerViewport()
 		b.vp.GotoBottom()
 		return b, readToken(msg.seq, msg.ch)
 	}

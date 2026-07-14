@@ -565,5 +565,38 @@ pkgs.runCommand "check-atyrode-cli"
     unset ATYRODE_NIX_STORE
     rm -f "$TMPDIR/gc-args"
 
+    # On a live stderr the collector reports progress and a summary the footer
+    # reclaims from. A verbose stub mimics nix-store --gc: a couple of `deleting`
+    # lines plus the closing "N store paths deleted, X freed" tally.
+    cat > "$TMPDIR/bin/fake-gc-verbose" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" > "$TMPDIR/gc-args"
+    echo "deleting '/nix/store/aaaaaaaa-old-closure'"
+    echo "deleting '/nix/store/bbbbbbbb-older-closure'"
+    echo "42 store paths deleted, 1.5 GiB freed"
+    EOF
+    chmod +x "$TMPDIR/bin/fake-gc-verbose"
+    export ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc-verbose"
+    gc_out="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 atyrode clean --keep 3 2>&1)"
+    unset ATYRODE_NIX_STORE
+    grep -qF '1.5 GiB freed' <<<"$gc_out" \
+      || { echo "interactive gc must surface the collector summary: $gc_out" >&2; exit 1; }
+    grep -qF 'reclaimed 1.5 GiB' <<<"$gc_out" \
+      || { echo "footer must reclaim the size the gc reported: $gc_out" >&2; exit 1; }
+    rm -f "$TMPDIR/gc-args"
+
+    # Colour is opt-in on the outcome: forced on it wraps the footer in SGR codes,
+    # and by default (no tty, no override) the output stays byte-plain so pipes and
+    # this harness read clean text. \033 is the ESC that opens every SGR sequence.
+    color_out="$(ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc" ATYRODE_NH_NOISE=1 _ATYRODE_TEST_COLOR=1 \
+      atyrode clean --keep 3 --yes 2>&1)"
+    printf '%s' "$color_out" | grep -q "$(printf '\033')" \
+      || { echo 'forced colour must emit ANSI SGR codes' >&2; exit 1; }
+    plain_out="$(ATYRODE_NIX_STORE="$TMPDIR/bin/fake-gc" ATYRODE_NH_NOISE=1 \
+      atyrode clean --keep 3 --yes 2>&1)"
+    printf '%s' "$plain_out" | grep -q "$(printf '\033')" \
+      && { echo 'default (non-tty) output must stay plain — no ANSI codes' >&2; exit 1; }
+    rm -f "$TMPDIR/gc-args"
+
     mkdir "$out"
   ''

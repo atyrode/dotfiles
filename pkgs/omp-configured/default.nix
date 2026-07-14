@@ -14,7 +14,6 @@
   python3,
   runCommand,
   writeShellApplication,
-  writeText,
   yq-go,
 }:
 
@@ -98,8 +97,7 @@ let
     "task.isolation.merge"
     "task.isolation.commits"
   ];
-  managedOwnedPaths = managedDefaultPaths;
-  allManagedPaths = managedOwnedPaths ++ enforcedPolicyPaths;
+  allManagedPaths = managedDefaultPaths ++ enforcedPolicyPaths;
 
   mkOmpCommand =
     name:
@@ -942,10 +940,10 @@ let
       exec ${lib.getExe omp} "$@"
     '';
   };
-  # Zero-preset managed launcher: applies the platform extensions + managed
-  # defaults + policy to an arbitrary one-shot `--config`, with no preset
-  # overlay. The code generator points CODE_OMP here so a synthesised profile
-  # launches through the full managed layering.
+  # The managed launcher: applies the platform extensions + managed defaults +
+  # policy to an arbitrary one-shot `--config`. The code generator points
+  # CODE_OMP here so a synthesised profile launches through the full managed
+  # layering.
   ompManaged = mkOmpCommand "omp-managed";
 
   # First-principles facet grid: the generator (a models.yml + routing rules,
@@ -1214,12 +1212,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
 
     passthru = {
       inherit
-        allManagedPaths
         defaultsConfig
-        enforcedPolicyPaths
-        managedDefaultPaths
-        managedOwnedPaths
-        omp
         neutralRoot
         platformRoot
         policyConfig

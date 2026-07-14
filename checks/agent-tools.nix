@@ -810,7 +810,7 @@ in
 
             # Plain omp is unmanaged and has no Nix-declared default model;
             # the managed launcher pins the managed defaults' routing (asserted
-            # directly with yq above) with no preset overlay on top.
+            # directly with yq above).
             policy_home="$TMPDIR/policy-home"
             policy_project="$TMPDIR/policy-project"
             mkdir -p "$policy_home" "$policy_project"

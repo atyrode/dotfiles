@@ -19,7 +19,7 @@ type Asker interface {
 }
 
 // Action is one host-validated mutation the agent proposes in Act mode. Its
-// meaning is the host's: for the code picker an Action is {facet, value}. The
+// meaning is the host's: for the code generator an Action is {facet, value}. The
 // closed set a Commander returns IS the tool's agent-facing API surface.
 type Action struct {
 	Key   string

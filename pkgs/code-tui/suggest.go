@@ -51,7 +51,7 @@ func truncateForClassify(task string) string {
 	return string(r[:maxClassifyChars]) + " …"
 }
 
-// evalModel is the local model the picker classifies with. A resident 3B model
+// evalModel is the local model the generator classifies with. A resident 3B model
 // on the nix-managed ollama daemon answers in a fraction of a second once warm,
 // with no auth and no network — the whole point of ctrl+o is a snappy suggestion.
 // Override with CODE_EVAL_MODEL (any tag the daemon has pulled).
@@ -63,7 +63,7 @@ func evalModel() string {
 }
 
 // evalCommander wraps the local OllamaCommander so Parse yields only actions the
-// picker can actually apply: the box then shows exactly what will change, with no
+// generator can actually apply: the box then shows exactly what will change, with no
 // invalid facet value (e.g. a hallucinated lane) leaking into the displayed
 // proposal. Embedding carries Load/Unload/Loaded/Propose through unchanged, so
 // the load/unload toggle still works.
@@ -99,7 +99,7 @@ func (m model) Commander() clikit.Commander {
 // spark is an OpenAI model, so it can't run on a pure-Claude lane; fable is an
 // Anthropic elite, so it can't run on a pure-GPT lane; and neither may be left on
 // when its quota bucket is maxed or unauthed. Runs after an applied proposal, so
-// the picker can't land on an impossible or unavailable combo.
+// the generator can't land on an impossible or unavailable combo.
 func (m *model) repairConstraints() {
 	switch m.sel["lane"] {
 	case "claude-only":

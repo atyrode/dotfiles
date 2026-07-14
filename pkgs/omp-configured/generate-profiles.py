@@ -2,8 +2,8 @@
 """Generate the full facet grid of profiles from first principles.
 
 Runs at package build time. For every valid (lane, model-tier, thinking, spark,
-fable) combination it emits a block in the same plain format render-omp-routes.sh
-produces, so the `code` picker's colorize_routes can render it unchanged:
+fable) combination it emits a routing block in the plain format the `code`
+generator's colorizeRoute renders unchanged:
 
     <combo-id>  <lane> · <model-tier> · <thinking>[ · spark][ · fable]
       thinking <t> · fallback on · advisor <on|off>
@@ -131,7 +131,7 @@ UTIL_THINK = {  # kept low — these roles must stay fast/cheap even on deep pro
     'smol':   {'low': 'low', 'medium': 'low', 'high': 'medium', 'xhigh': 'medium'},
     'sonic':  {'low': 'low', 'medium': 'medium', 'high': 'medium', 'xhigh': 'medium'},
 }
-# Advisor power/cost dial, emitted as a table the code picker reads (so the
+# Advisor power/cost dial, emitted as a table the code generator reads (so the
 # catalog stays the single source of truth). Keyed by context — 'gpt' on a pure
 # GPT pool, else 'claude' for the most independent cross-provider second opinion.
 ADVISOR = {
@@ -236,7 +236,7 @@ def render(lane, mtier, thinking, spark, fable):
     lines.append(f"  thinking {thinking} · fallback on · advisor {'on' if adv_on else 'off'}")
     for r in ROLE_ORDER:
         lead, lvl, chain = roles[r]
-        if lead is None:  # advisor off — no row (matches render-omp-routes skip)
+        if lead is None:  # advisor off — emit no row for this role
             continue
         marker = '●' if r in AGENT_ROLES else ' '
         model = f"{ID[lead]}:{clamp_th(lead, lvl)}"
@@ -249,7 +249,7 @@ def render(lane, mtier, thinking, spark, fable):
 
 
 def render_model_facts():
-    """Emit the per-model cost + speed table as a pseudo-block the picker parses,
+    """Emit the per-model cost + speed table as a pseudo-block the generator parses,
     so the generator's $ / speed meters read from the catalog (not a second copy):
     cost is $ per 1M tokens (from omp), speed is our curated tok/s (see models.yml
     — omp exposes no throughput)."""
@@ -261,7 +261,7 @@ def render_model_facts():
 
 
 def render_advisors():
-    """Emit the advisor dial as a pseudo-block the picker parses (level context
+    """Emit the advisor dial as a pseudo-block the generator parses (level context
     → chain), so the advisor model names live here, not duplicated in the TUI."""
     lines = ["__advisors__  advisor dial (level context → chain)"]
     for ctx in ('gpt', 'claude'):

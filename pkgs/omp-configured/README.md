@@ -17,8 +17,8 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
 - **`omp`** — passthrough to your own **unmanaged** `~/.omp` config (the one mutable base;
   `omp update` is blocked since the package is Nix-managed).
 - **`omp-managed`** — the managed-layering primitive: platform extensions + managed defaults
-  + policy applied to a one-shot `--config`, with no preset overlay. This is the launch
-  target `code` uses for a generated profile; it is also useful directly.
+  + policy applied to a one-shot `--config`. This is the launch target `code` uses for a
+  generated profile; it is also useful directly.
 - **`ompu`** — a sandboxed launcher for untrusted repositories (stripped credentials,
   restricted tools/approvals, sanitized state).
 

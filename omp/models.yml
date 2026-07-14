@@ -34,7 +34,7 @@ models:
     thinking: low→max
     role: >-
       Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
-      tier (ompl); the cheap rung and same-bucket sibling everywhere.
+      tier; the cheap rung and same-bucket sibling everywhere.
   terra:
     id: gpt-5.6-terra
     pool: O
@@ -47,7 +47,7 @@ models:
     context: 272000
     thinking: low→max
     role: >-
-      Balanced workhorse. Leads the regular GPT tier (ompb) and the mixed
+      Balanced workhorse. Leads the regular GPT tier and the mixed
       workers. Sonnet's price-twin.
   sol:
     id: gpt-5.6-sol
@@ -60,7 +60,7 @@ models:
     ttft: 4.59
     context: 272000
     thinking: low→max
-    role: Flagship. Leads the smart GPT tier (ompg, ompm, ompo).
+    role: Flagship. Leads the smart GPT tier.
   spark:
     id: gpt-5.3-codex-spark
     pool: O
@@ -87,7 +87,7 @@ models:
     context: 200000
     thinking: minimal→xhigh
     role: >-
-      Fastest/cheapest Anthropic tier. Leads the speed Claude tier (ompk); the
+      Fastest/cheapest Anthropic tier. Leads the speed Claude tier; the
       Anthropic cheap rung and background hum.
   sonnet:
     id: claude-sonnet-5
@@ -102,7 +102,7 @@ models:
     thinking: low→max
     role: >-
       The value pick — near-Opus quality at a fraction of the cost. Leads the
-      regular Claude tier (omps) and the mixed judgment roles.
+      regular Claude tier and the mixed judgment roles.
   opus:
     id: claude-opus-4-8
     pool: A
@@ -115,8 +115,8 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Top Opus tier. Leads the smart Claude judgment roles and ompe (claude-only);
-      the main-plan deliberative sibling across the maps.
+      Top Opus tier. Leads the smart Claude judgment roles; the main-plan
+      deliberative sibling across the maps.
   fable:
     id: claude-fable-5
     pool: A
@@ -134,4 +134,4 @@ models:
     thinking: low→max
     role: >-
       Most capable, and its own scarce bucket. A deliberate elite lead only
-      (ompc, ompf, ompm judgment, ompx plan) — never an automatic fallback net.
+      (smart judgment and long-context plan roles) — never an automatic fallback net.

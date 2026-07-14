@@ -10,14 +10,14 @@ import (
 func TestValidFacetActions(t *testing.T) {
 	facets := facetDefs(map[string]string{})
 	in := []clikit.Action{
-		{"model", "fast"},    // valid
-		{"thinking", "high"}, // valid
-		{"lane", "purple"},   // invalid value → dropped
-		{"nonsense", "x"},    // unknown facet → dropped
-		{"spark", "on"},      // valid
+		{Key: "model", Value: "fast"},    // valid
+		{Key: "thinking", Value: "high"}, // valid
+		{Key: "lane", Value: "purple"},   // invalid value → dropped
+		{Key: "nonsense", Value: "x"},    // unknown facet → dropped
+		{Key: "spark", Value: "on"},      // valid
 	}
 	got := validFacetActions(facets, in)
-	want := []clikit.Action{{"model", "fast"}, {"thinking", "high"}, {"spark", "on"}}
+	want := []clikit.Action{{Key: "model", Value: "fast"}, {Key: "thinking", Value: "high"}, {Key: "spark", Value: "on"}}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -47,7 +47,7 @@ func TestClassifyMessage(t *testing.T) {
 }
 
 func TestEvalCommanderParseFiltersInvalid(t *testing.T) {
-	// The wrapper must drop values the picker can't apply, so the box shows only
+	// The wrapper must drop values the generator can't apply, so the box shows only
 	// what will actually change (no hallucinated lane value leaking through).
 	c := evalCommander{facets: facetDefs(map[string]string{})}
 	got, err := c.Parse(`{"model":"smart","thinking":"high","lane":"smart"}`)
@@ -84,7 +84,7 @@ func TestAppliedDiff(t *testing.T) {
 		savedSel: map[string]string{"model": "normal", "thinking": "medium", "spark": "on", "fable": "off"},
 		sel:      map[string]string{"model": "smart", "thinking": "xhigh", "spark": "on", "fable": "on"}}
 	got := m.appliedDiff()
-	want := []clikit.Action{{"model", "smart"}, {"thinking", "xhigh"}, {"fable", "on"}}
+	want := []clikit.Action{{Key: "model", Value: "smart"}, {Key: "thinking", Value: "xhigh"}, {Key: "fable", Value: "on"}}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

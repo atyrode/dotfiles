@@ -101,7 +101,7 @@ box + backend + grounding pipeline with none of Act's risk.
 A running Bubble Tea program's state lives in the Go process's memory. A
 shelled-out agent can edit files on disk but **cannot reach into a live TUI's
 selections**. So "let the agent run bash to change the tool" works only for
-tools whose state is on disk; a live picker like `code` requires this minimal
+tools whose state is on disk; a live generator like `code` requires this minimal
 typed action channel the TUI validates and applies. Docs-in-prompt is how the
 agent *decides*; the typed Action is how it *applies*. The two are complementary,
 not alternatives.
@@ -201,7 +201,7 @@ remain (and those are gated on the open questions below).
   **stub** backend; `atyrode` mounts a toggleable Ask panel (#117) as the first,
   safest consumer. Validates box + contract end-to-end.
 - **P2** — real omp `Asker` (once Q2 is answered); grounding from a generated
-  capabilities doc for `atyrode` and the wiki/`models.yml` for `code`.
+  capabilities doc for `atyrode` and `models.yml` for `code`.
 - **P3** — Act mode + `Commander` in `code` (#116): diff + confirm, reset = undo,
   then launch the omp session with the chosen profile and forward the prompt.
 

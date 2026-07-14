@@ -72,30 +72,22 @@ func defaultSel() map[string]string {
 // ergonomic local aliases so the rest of the file reads unchanged. cli-kit is
 // the single source both `code` and `atyrode` build on.
 const (
-	cDim     = clikit.CDim
-	cGrp     = clikit.CGrp
-	cAcc     = clikit.CAcc
-	cBord    = clikit.CBord
-	cHead    = clikit.CHead
-	cSelBg   = clikit.CSelBg
-	cGptSoft = clikit.CGptSoft
-	cClaSoft = clikit.CClaSoft
-	cRed     = clikit.CRed
-	cGreen   = clikit.CGreen
-	cEmpty   = clikit.CEmpty
+	cAcc   = clikit.CAcc
+	cBord  = clikit.CBord
+	cHead  = clikit.CHead
+	cSelBg = clikit.CSelBg
+	cGreen = clikit.CGreen
 )
 
 const (
-	gWarn   = clikit.GWarn
-	gBroken = clikit.GBroken
-	gReset  = clikit.GReset
+	gWarn  = clikit.GWarn
+	gReset = clikit.GReset
 )
 
 var (
 	meterRamp = clikit.MeterRamp
 
 	stDim    = clikit.StDim
-	stGrp    = clikit.StGrp
 	stHead   = clikit.StHead
 	stWarn   = clikit.StWarn
 	stBrk    = clikit.StBrk
@@ -864,8 +856,8 @@ func (m model) contentH() int {
 
 // bodyLines renders the generator's scrolling facet list and reports the cursor's
 // line index within it.
-func (m model) bodyLines(w int) ([]string, int) {
-	return m.genLines(true)
+func (m model) bodyLines() ([]string, int) {
+	return m.genLines()
 }
 
 // unmodified reports whether the generator is still untouched: every facet at its
@@ -935,7 +927,7 @@ func (m model) previewDims() (int, int) {
 	case modeCollapsed:
 		return m.w - gut, bodyH
 	case modeStacked:
-		body, _ := m.bodyLines(m.w - gut)
+		body, _ := m.bodyLines()
 		_, ph := stackedSplit(bodyH, len(body))
 		return m.w - gut, ph
 	default: // split — the pane draws a border + prevPadL inside its width, so the
@@ -1016,7 +1008,7 @@ func (m model) listW() int {
 	return w
 }
 
-// gradient bar (green→red), 10 cells, matching the fzf panel.
+// gradient bar (green→red), 10 cells.
 func barStr(p int) string {
 	var r, g float64
 	if p <= 50 {
@@ -1180,7 +1172,7 @@ func (m *model) syncPreview() {
 	rw := m.vp.Width
 	// routing rule carries the depth state, so `f` (primary ⇄ full chain) is
 	// discoverable — "primary" = each role's lead model only, "full" = its whole
-	// fallback chain. (Avoid "lead" here; the profile list uses it for provider.)
+	// fallback chain.
 	depthLbl := "primary only"
 	if m.depth == 1 {
 		depthLbl = "full chains"
@@ -1425,7 +1417,7 @@ func (m model) sectionHead() string {
 // whole column inset by the shared gutter, sized to totalH rows and w columns.
 func (m model) leftColumn(w, totalH int) string {
 	iw := w - gut
-	body, bcur := m.bodyLines(iw)
+	body, bcur := m.bodyLines()
 	listH := totalH - headRows - launchFooterRows
 	if listH < 1 {
 		listH = 1
@@ -1439,7 +1431,7 @@ func (m model) leftColumn(w, totalH int) string {
 // divider, then the preview stacked below. The preview keeps its own viewport, so
 // it scrolls (mouse wheel) independently of the list above it.
 func (m model) stackedContent(bodyH int) string {
-	body, _ := m.bodyLines(m.w - gut)
+	body, _ := m.bodyLines()
 	listH, prevH := stackedSplit(bodyH, len(body))
 	top := m.leftColumn(m.w, headRows+listH+launchFooterRows)
 	div := stDim.Render(strings.Repeat("─", m.w))
@@ -1480,16 +1472,13 @@ func (m model) View() string {
 		lipgloss.JoinVertical(lipgloss.Left, body, foot))
 }
 
-func (m model) genLines(focused bool) ([]string, int) {
+func (m model) genLines() ([]string, int) {
 	acc := m.accent()
 	var lines []string
 	cursor := 0
 	for i, f := range m.visibleFacets() {
-		onRow := i == m.fcur && focused
+		onRow := i == m.fcur
 		glyCol := laneColor(m.sel["lane"])
-		if !focused {
-			glyCol = cDim
-		}
 		gly := lipgloss.NewStyle().Foreground(lipgloss.Color(glyCol)).Width(2).Render(f.glyph)
 		ptr := "  "
 		if onRow {
@@ -1506,10 +1495,7 @@ func (m model) genLines(focused bool) ([]string, int) {
 				} else if (f.key == "spark" || f.key == "fable") && v == "on" {
 					col = cGreen
 				}
-				if !focused {
-					col = cGrp // grayed but legible when the section is unfocused
-				}
-				st := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(focused)
+				st := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true)
 				if onRow { // the cursor sits on the selected value of the focused row
 					st = st.Background(lipgloss.Color(cSelBg))
 				}
@@ -1519,7 +1505,7 @@ func (m model) genLines(focused bool) ([]string, int) {
 			}
 		}
 		switch {
-		case focused && (f.key == "fable" || f.key == "spark") && m.sel[f.key] == "on":
+		case (f.key == "fable" || f.key == "spark") && m.sel[f.key] == "on":
 			bkt, lbl := "claude-fable", "Fable"
 			if f.key == "spark" {
 				bkt, lbl = "codex-spark", "Spark"
@@ -1531,7 +1517,7 @@ func (m model) genLines(focused bool) ([]string, int) {
 				}
 				row += "   " + stWarn.Render(gWarn+" "+w+" — no usage left")
 			}
-		case focused && f.key == "fast" && m.sel["fast"] == "on":
+		case f.key == "fast" && m.sel["fast"] == "on":
 			row += "   " + stDim.Render("priority service tier — quicker OpenAI replies")
 		}
 		lines = append(lines, row)

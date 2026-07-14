@@ -34,16 +34,16 @@ import (
 
 // ── keybindings (drive both input handling and the bubbles/help footer) ───────
 type keyMap struct {
-	Move, Change, Reset, Depth, Refresh, Collapse, Launch, Untrusted, Help, Quit key.Binding
+	Move, Change, Reset, Depth, Refresh, Auth, Collapse, Launch, Untrusted, Help, Quit key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Move, k.Change, k.Reset, k.Launch, k.Untrusted, k.Help, k.Quit}
+	return []key.Binding{k.Move, k.Change, k.Reset, k.Auth, k.Launch, k.Untrusted, k.Help, k.Quit}
 }
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Move, k.Change, k.Reset},
-		{k.Depth, k.Refresh, k.Collapse},
+		{k.Depth, k.Refresh, k.Auth, k.Collapse},
 		{k.Launch, k.Untrusted, k.Help, k.Quit},
 	}
 }
@@ -54,6 +54,7 @@ var keys = keyMap{
 	Reset:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", gReset+" defaults")),
 	Depth:     key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "primary ⇄ full chains")),
 	Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh usage")),
+	Auth:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch auth")),
 	Collapse:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "collapse")),
 	Launch:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
 	Untrusted: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "sandbox")),
@@ -223,13 +224,14 @@ type availability struct {
 	ok     bool
 }
 
-func loadAvailability(cmd string) availability {
+func loadAvailability(cmd, profile string) availability {
 	a := availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	if cmd == "" {
 		return a
 	}
 	parts := strings.Fields(cmd)
-	out, err := exec.Command(parts[0], parts[1:]...).Output()
+	args := withOMPProfile(profile, parts[1:]...)
+	out, err := exec.Command(parts[0], args...).Output()
 	if err != nil || len(out) == 0 {
 		return a
 	}
@@ -958,6 +960,11 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
+	authProfiles []authProfile
+	authIdx      int
+	authState    string
+	authErr      string
+
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
 
@@ -978,21 +985,26 @@ func tickCmd() tea.Cmd {
 }
 
 // usageMsg carries availability fetched off the main thread so startup never
-// blocks on `omp usage --json` (a network call).
-type usageMsg availability
+// blocks on `omp --profile <id> usage --json` (a network call). The profile ID
+// travels with the result so a slow response from the old profile cannot replace
+// the newly selected profile's usage after an auth switch.
+type usageMsg struct {
+	profile string
+	avail   availability
+}
 
-func fetchUsageCmd(cmd string) tea.Cmd {
+func fetchUsageCmd(cmd, profile string) tea.Cmd {
 	if cmd == "" {
 		return nil
 	}
-	return func() tea.Msg { return usageMsg(loadAvailability(cmd)) }
+	return func() tea.Msg { return usageMsg{profile: profile, avail: loadAvailability(cmd, profile)} }
 }
 
 func (m model) Init() tea.Cmd {
 	if m.usageCmd == "" {
 		return nil
 	}
-	return tea.Batch(fetchUsageCmd(m.usageCmd), m.spin.Tick, tickCmd())
+	return tea.Batch(fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID), m.spin.Tick, tickCmd())
 }
 
 func (m model) listW() int {
@@ -1077,15 +1089,36 @@ func (m *model) refreshLine() string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("r") + stDim.Render(" now")
 }
 
+func (m *model) authLine() string {
+	p := m.activeAuthProfile()
+	label := lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Bold(true).Render(p.Label)
+	claude := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff9f52")).Render("Claude " + p.Claude)
+	codex := lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff")).Render("Codex " + p.Codex)
+	line := stDim.Render("   auth · ") + label + stDim.Render("  ") + claude + stDim.Render(" + ") + codex
+	if len(m.authProfiles) > 1 {
+		line += stDim.Render("  ·  ") + lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("a") + stDim.Render(" switch")
+	}
+	if m.authErr != "" {
+		line += "\n" + stBrk.Render("  profile switch failed: "+m.authErr)
+	}
+	return line
+}
+
 func (m *model) usagePanel() string {
+	auth := m.authLine()
 	if !m.avail.ok {
-		if m.usageCmd != "" {
-			return stDim.Render("  " + m.spin.View() + " fetching usage…")
+		if m.usageCmd == "" {
+			return auth
 		}
-		return ""
+		if m.fetching || m.nextRefresh.IsZero() {
+			return auth + "\n" + stDim.Render("  "+m.spin.View()+" fetching usage…")
+		}
+		p := m.activeAuthProfile()
+		return auth + "\n" + stWarn.Render("  usage unavailable · authenticate with omp --profile "+p.ID)
 	}
 	if len(m.avail.wins) == 0 {
-		return ""
+		p := m.activeAuthProfile()
+		return auth + "\n" + stWarn.Render("  no provider usage · authenticate with omp --profile "+p.ID)
 	}
 	wins := append([]usageWin(nil), m.avail.wins...)
 	provOrder := func(p string) int {
@@ -1133,7 +1166,7 @@ func (m *model) usagePanel() string {
 		for _, p := range order {
 			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[p], "\n")))
 		}
-		return m.refreshLine() + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
+		return auth + "\n" + m.refreshLine() + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	}
 	var lines []string
 	for i, p := range order {
@@ -1142,7 +1175,7 @@ func (m *model) usagePanel() string {
 		}
 		lines = append(lines, blocks[p]...)
 	}
-	return m.refreshLine() + "\n" + strings.Join(lines, "\n")
+	return auth + "\n" + m.refreshLine() + "\n" + strings.Join(lines, "\n")
 }
 
 func (m *model) usageRow(w usageWin) string {
@@ -1243,7 +1276,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 		m.relayout()
 	case usageMsg:
-		m.avail = availability(msg)
+		if msg.profile != m.activeAuthProfile().ID {
+			return m, nil
+		}
+		m.avail = msg.avail
 		m.fetching = false
 		m.nextRefresh = time.Now().Add(refreshEvery)
 		m.relayout()
@@ -1252,11 +1288,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd()}
 		if !m.fetching && !m.nextRefresh.IsZero() && !time.Now().Before(m.nextRefresh) {
 			m.fetching = true
-			cmds = append(cmds, fetchUsageCmd(m.usageCmd))
+			cmds = append(cmds, fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID))
 		}
 		return m, tea.Batch(cmds...)
 	case spinner.TickMsg:
-		if !m.avail.ok {
+		if m.fetching || !m.avail.ok {
 			var cmd tea.Cmd
 			m.spin, cmd = m.spin.Update(msg)
 			return m, cmd
@@ -1287,7 +1323,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.usageCmd != "" && !m.fetching {
 				m.fetching = true
-				return m, fetchUsageCmd(m.usageCmd)
+				return m, fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID)
+			}
+		case "a":
+			if len(m.authProfiles) > 1 {
+				if err := m.switchAuthProfile(); err != nil {
+					m.authErr = err.Error()
+					m.relayout()
+					break
+				}
+				m.authErr = ""
+				m.fetching = m.usageCmd != ""
+				m.relayout()
+				if m.fetching {
+					return m, fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID)
+				}
 			}
 		case "up", "k":
 			m.moveUp()
@@ -1541,17 +1591,24 @@ func main() {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	generated := loadBlocks(os.Getenv("CODE_GENERATED"))
+	authProfiles := parseAuthProfiles(os.Getenv("CODE_AUTH_PROFILES"))
+	authState := os.Getenv("CODE_AUTH_STATE")
+	authIdx := selectedAuthIndex(authProfiles, authState)
 	m := model{
-		generated: generated,
-		advisors:  parseAdvisors(generated["__advisors__"]),
-		facts:     parseFacts(generated["__models__"]),
-		avail:     availability{bucket: map[string]string{}, reset: map[string]int64{}},
-		usageCmd:  os.Getenv("CODE_USAGE"),
-		spin:      sp,
-		help:      help.New(),
-		glyphs:    glyphs,
-		facets:    facetDefs(glyphs),
-		sel:       defaultSel(),
+		generated:    generated,
+		advisors:     parseAdvisors(generated["__advisors__"]),
+		facts:        parseFacts(generated["__models__"]),
+		avail:        availability{bucket: map[string]string{}, reset: map[string]int64{}},
+		usageCmd:     os.Getenv("CODE_USAGE"),
+		authProfiles: authProfiles,
+		authIdx:      authIdx,
+		authState:    authState,
+		fetching:     os.Getenv("CODE_USAGE") != "",
+		spin:         sp,
+		help:         help.New(),
+		glyphs:       glyphs,
+		facets:       facetDefs(glyphs),
+		sel:          defaultSel(),
 	}
 	// No mouse capture: with mouse reporting on, the terminal routes every mouse
 	// event (right-click, selection, paste) to the app, breaking native terminal
@@ -1562,23 +1619,25 @@ func main() {
 		os.Exit(1)
 	}
 	fm, _ := final.(model)
+	profile := fm.activeAuthProfile().ID
 	switch {
 	case fm.launchUntrusted:
-		// The untrusted sandbox owns its own routing/policy — no generated --config.
-		execForward("CODE_OMP_UNTRUSTED", "ompu", fm.firstPrompt)
+		// The sandbox owns the fixed `untrusted` profile and must never inherit the
+		// selected personal auth state.
+		execForward("CODE_OMP_UNTRUSTED", "ompu", fm.firstPrompt, "")
 	case fm.launchDefault:
-		// Nothing was generated — just run the user's bare default omp.
-		execForward("CODE_OMP_DEFAULT", "omp", fm.firstPrompt)
+		// Nothing was generated — run bare omp inside the selected auth profile.
+		execForward("CODE_OMP_DEFAULT", "omp", fm.firstPrompt, profile)
 	case fm.genConfig != "":
-		launchGenerated(fm.genConfig, fm.firstPrompt)
+		launchGenerated(fm.genConfig, fm.firstPrompt, profile)
 	}
 }
 
 // execForward execs the launcher named by env (falling back to a bare command
 // name on PATH), forwarding this process's args plus, when non-empty, the typed
-// prompt as a trailing first message. Used for the bare-omp default and the
-// untrusted sandbox launches — neither takes a generated --config.
-func execForward(env, fallback, prompt string) {
+// prompt as a trailing first message. The selected OMP profile is inserted before
+// forwarded arguments; an empty profile is reserved for the fixed ompu sandbox.
+func execForward(env, fallback, prompt, profile string) {
 	cmd := os.Getenv(env)
 	if cmd == "" {
 		cmd = fallback
@@ -1588,7 +1647,7 @@ func execForward(env, fallback, prompt string) {
 		fmt.Fprintln(os.Stderr, "code: not found:", err)
 		os.Exit(1)
 	}
-	args := append([]string{path}, os.Args[1:]...)
+	args := append([]string{path}, withOMPProfile(profile, os.Args[1:]...)...)
 	if prompt != "" { // forward the suggest-box prompt as the first message
 		args = append(args, prompt)
 	}
@@ -1603,7 +1662,7 @@ func execForward(env, fallback, prompt string) {
 // supplies the platform extensions, managed defaults, and policy (and caps the
 // overlay), so we must NOT re-layer defaults/policy here — doing so both
 // double-applies them and breaks when their paths aren't valid from the cwd.
-func launchGenerated(cfg, prompt string) {
+func launchGenerated(cfg, prompt, profile string) {
 	tmp, err := os.CreateTemp("", "code-gen-*.yml")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
@@ -1620,7 +1679,8 @@ func launchGenerated(cfg, prompt string) {
 		fmt.Fprintln(os.Stderr, "code: omp not found:", err)
 		os.Exit(1)
 	}
-	args := append([]string{path, "--config", tmp.Name()}, os.Args[1:]...)
+	args := append([]string{path}, withOMPProfile(profile, "--config", tmp.Name())...)
+	args = append(args, os.Args[1:]...)
 	if prompt != "" { // forward the suggest-box prompt as omp's first message
 		args = append(args, prompt)
 	}

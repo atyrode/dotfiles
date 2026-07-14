@@ -1168,12 +1168,30 @@ let
       export CODE_OMP_DEFAULT="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
       export CODE_USAGE="$omp_bin usage --json"
+      if [[ ! -v CODE_AUTH_PROFILES ]]; then
+        export CODE_AUTH_PROFILES=${
+          lib.escapeShellArg (
+            builtins.toJSON [
+              {
+                id = "default";
+                label = "default";
+                claude = "current";
+                codex = "current";
+              }
+            ]
+          )
+        }
+      fi
+      export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-profile}"
       # The generator's prompt→profile classifier runs on the resident,
       # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
-      # daemon/model. Launch targets: ↵ with no changes runs your default omp
-      # (CODE_OMP_DEFAULT); a generated profile runs through the managed layering
-      # (CODE_OMP); `u` opens the untrusted sandbox (CODE_OMP_UNTRUSTED).
+      # daemon/model. The Bubble Tea usage widget owns the active OMP auth profile:
+      # `a` switches it, usage is fetched from that profile, and every trusted launch
+      # receives the same --profile. Launch targets: ↵ with no changes runs your
+      # selected bare omp (CODE_OMP_DEFAULT); a generated profile runs through the
+      # managed layering (CODE_OMP); `u` opens the fixed untrusted sandbox
+      # (CODE_OMP_UNTRUSTED).
 
       usage() {
         printf '%s\n' \
@@ -1185,9 +1203,10 @@ let
           '  code -U, --no-usage  open without fetching the usage panel' \
           '  code -h, --help      this help' \
           "" \
-          'In the generator: type a prompt or adjust the dials, ? shows all' \
-          'keys, Enter launches (your default omp if nothing was changed,' \
-          'the generated profile otherwise), u opens an untrusted sandbox.'
+          'In the generator: type a prompt or adjust the dials, a switches the' \
+          'visible OMP auth combination, ? shows all keys, Enter launches (your' \
+          'selected bare omp if nothing was changed, the generated profile' \
+          'otherwise), and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in

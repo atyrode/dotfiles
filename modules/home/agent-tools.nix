@@ -32,6 +32,25 @@ let
   policyConfig = ../../omp/policy.yml;
   untrustedConfig = ../../omp/untrusted.yml;
 
+  # Each OMP profile is a complete auth/state root. The second profile repeats
+  # the operator's Codex identity deliberately: OMP cannot share one provider's
+  # OAuth record across otherwise-isolated profiles, so both combinations are
+  # named explicitly in `code` and authenticated independently.
+  codeAuthProfiles = [
+    {
+      id = "default";
+      label = "mine";
+      claude = "Alex";
+      codex = "Alex";
+    }
+    {
+      id = "mum";
+      label = "mum";
+      claude = "Mum";
+      codex = "Alex";
+    }
+  ];
+
 in
 {
   options.atyrode.agentTools = {
@@ -111,6 +130,8 @@ in
           cfg.ompPackage
         ]
         ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
+
+        home.sessionVariables.CODE_AUTH_PROFILES = builtins.toJSON codeAuthProfiles;
 
         xdg.configFile = {
           "omp/defaults.yml".source = defaultsConfig;

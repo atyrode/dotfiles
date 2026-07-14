@@ -113,6 +113,12 @@ func (m *model) repairConstraints() {
 	if m.avail.down(bucketOf("spark")) {
 		m.sel["spark"] = "off"
 	}
+	// fable-as-main is fable's sub-setting: it can never outlive fable itself, so
+	// any repair (or derived toggle) that turns fable off clears it too. Turning
+	// fable back on requires the operator to re-choose main deliberately.
+	if m.sel["fable"] != "on" {
+		m.sel["main"] = "off"
+	}
 }
 
 // BoxTitle labels the suggest box with its purpose and the model in use, so the
@@ -121,7 +127,9 @@ func (m model) BoxTitle() string { return "prompt → profile · " + evalModel()
 
 // validFacetActions keeps only the actions that name a real facet with a value
 // that facet offers — the whitelist that makes an agent proposal no more powerful
-// than a manual change.
+// than a manual change. main (fable-as-main) is the one exception: the elite is
+// scarce and expensive, so promoting it to the default agent is a decision the
+// operator takes by hand — no proposal may set it, in either direction.
 func validFacetActions(facets []facet, actions []clikit.Action) []clikit.Action {
 	valid := map[string]map[string]bool{}
 	for _, f := range facets {
@@ -133,6 +141,9 @@ func validFacetActions(facets []facet, actions []clikit.Action) []clikit.Action 
 	}
 	var out []clikit.Action
 	for _, a := range actions {
+		if a.Key == "main" {
+			continue
+		}
 		if vs, ok := valid[a.Key]; ok && vs[a.Value] {
 			out = append(out, a)
 		}

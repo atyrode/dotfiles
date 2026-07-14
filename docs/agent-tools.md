@@ -110,7 +110,8 @@ entry that could go stale.
 `code` is the profile generator. It opens a Bubble Tea TUI with a
 prompt→profile classifier running on the resident Nix-managed ollama daemon
 (loopback HTTP). You type a prompt and/or adjust the facet dials (lane, model
-tier, thinking, spark, fable), and a preview pane shows the resulting role →
+tier, thinking, spark, fable — with fable's manual-only "main" sub-dial that
+promotes it to the default agent), and a preview pane shows the resulting role →
 model routing — model names coloured by provider (blue/orange) and brightness
 scaled by thinking level — above the `omp usage` panel (per-window `N% used`
 with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
@@ -147,7 +148,8 @@ preview always matches what a launch would route.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the generator derives every profile from it and the `omp/models.yml` catalog,
-adjusting the table by facet (lane, model tier, thinking, spark, fable) rather
+adjusting the table by facet (lane, model tier, thinking, spark, fable, and
+fable's main sub-dial) rather
 than from hand-curated preset files.
 
 `omp-managed` loads configuration in this order:

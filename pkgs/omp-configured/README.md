@@ -7,7 +7,9 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
 ## What you get
 
 - **`code`** — the profile generator (Bubble Tea TUI). Type a prompt and/or adjust the
-  facet dials (lane, model tier, thinking, spark, fable); a local prompt→profile classifier
+  facet dials (lane, model tier, thinking, spark, fable — plus, while fable is on, a
+  "main" sub-dial that hands Fable the default-agent role; that escalation is manual
+  only, never suggested); a local prompt→profile classifier
   (running on the resident ollama daemon) suggests settings. The usage widget
   names the active OMP authentication combination; **`a`** switches it and
   refreshes usage from that profile. **Enter** launches:

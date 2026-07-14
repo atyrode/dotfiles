@@ -845,11 +845,38 @@ interactive() {
   [[ -t 0 && -t 1 ]]
 }
 
+# stderr_is_tty reports whether the progress channel (stderr) is a live terminal,
+# so the collector can choose between the animated progress line and streaming its
+# raw output. Same test override as interactive() drives the live path in checks.
+stderr_is_tty() {
+  [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_TTY:-}" ]] && return 0
+  [[ -t 2 ]]
+}
+
+# _use_color decides whether to emit ANSI colour: only when stderr (where all the
+# human-facing chatter goes) is a terminal and the environment permits it —
+# NO_COLOR honoured, TERM=dumb excluded — so pipes, redirects, and the --json
+# stream stay plain. A test override forces the decision either way.
+_use_color() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_COLOR:-}" ]]; then
+    [[ "$_ATYRODE_TEST_COLOR" == 1 ]]
+    return
+  fi
+  [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]
+}
+
+# paint wraps text in an SGR code when colour is on, else prints it bare, so every
+# colourised message degrades cleanly to plain text (e.g. paint '1;36' "text").
+paint() {
+  local code="$1"; shift
+  if _use_color; then printf '\033[%sm%s\033[0m' "$code" "$*"; else printf '%s' "$*"; fi
+}
+
 # Ask a yes/no question; default no, and no on a non-interactive stream.
 confirm() {
   local reply
   interactive || return 1
-  printf 'atyrode: %s [y/N] ' "$1" >&2
+  printf 'atyrode: %s %s ' "$(paint 1 "$1")" "$(paint 2 '[y/N]')" >&2
   read -r reply || return 1
   [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]]
 }
@@ -900,20 +927,31 @@ collect_garbage() {
     gc=("$ATYRODE_NIX_STORE" --gc)
   fi
 
-  if [[ ! -t 2 ]]; then # non-interactive: stream the collector's own output
+  if ! stderr_is_tty; then # non-interactive: stream the collector's own output
     printf 'atyrode: collecting garbage…\n' >&2
     "${gc[@]}" >&2 || printf 'atyrode: garbage collection reported an error\n' >&2
     return 0
   fi
 
-  local out pid rc=0 i=0
+  local out pid rc=0 i=0 deleted=0 last=""
   local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
   out="$(mktemp)"
   "${gc[@]}" >"$out" 2>&1 &
   pid=$!
+  # nix-store --gc streams one `deleting '/nix/store/…'` line per path it removes.
+  # Tally those live and surface the path in flight, so the long opaque middle of
+  # a clean shows real motion (count climbing, names scrolling) instead of a bare
+  # spinner that could equally mean "working" or "hung".
   while kill -0 "$pid" 2>/dev/null; do
-    printf '\r  %s collecting garbage…' "${frames[$((i++ % ${#frames[@]}))]}" >&2
-    sleep 0.1
+    deleted="$(grep -c "^deleting '" "$out" 2>/dev/null || printf 0)"
+    last="$(grep "^deleting '" "$out" 2>/dev/null | tail -n1 || true)"
+    last="${last#deleting \'}"; last="${last%\'}"
+    [[ -n "$last" ]] && last="$(basename "$last")"
+    printf '\r\033[K  %s collecting garbage — %s paths freed%s' \
+      "$(paint 36 "${frames[$((i++ % ${#frames[@]}))]}")" \
+      "$(paint '1' "$deleted")" \
+      "${last:+  $(paint 2 "${last:0:44}")}" >&2
+    sleep 0.15
   done
   wait "$pid" || rc=$?
   printf '\r\033[K' >&2
@@ -922,10 +960,11 @@ collect_garbage() {
     # the collector reported no figure. _gc_freed is a global by design.
     _gc_freed="$(grep -oiE '[0-9.]+ [kmgtp]?i?b freed' "$out" | tail -n1 || true)"
     _gc_freed="${_gc_freed% freed}"
-    printf 'atyrode: %s\n' "$(grep -iE 'freed|deleted' "$out" | tail -n1 || echo 'store collected')" >&2
+    printf 'atyrode: %s %s\n' "$(paint '1;32' '✓')" \
+      "$(grep -iE 'freed|deleted' "$out" | tail -n1 || echo 'store collected')" >&2
   else
     cat "$out" >&2
-    printf 'atyrode: garbage collection failed\n' >&2
+    printf 'atyrode: %s\n' "$(paint '1;31' 'garbage collection failed')" >&2
   fi
   rm -f "$out"
 }
@@ -989,9 +1028,10 @@ warn_stray_result_roots() {
     done < <(find "$base" -maxdepth 1 -type l \( -name result -o -name 'result-*' \) 2>/dev/null)
   done
   [[ "${#roots[@]}" -gt 0 ]] || return 0
-  printf 'atyrode: %s stray result symlink(s) still pin closures (nix build without --no-link):\n' "${#roots[@]}" >&2
-  for f in "${roots[@]}"; do printf '  %s -> %s\n' "$f" "$(readlink "$f")" >&2; done
-  printf '  remove them (rm result*) so the store can reclaim those closures.\n' >&2
+  printf 'atyrode: %s %s stray result symlink(s) still pin closures (nix build without --no-link):\n' \
+    "$(paint 33 '⚠')" "${#roots[@]}" >&2
+  for f in "${roots[@]}"; do printf '  %s %s %s\n' "$(paint 1 "$f")" "$(paint 2 '->')" "$(paint 2 "$(readlink "$f")")" >&2; done
+  printf '  %s\n' "$(paint 2 'remove them (rm result*) so the store can reclaim those closures.')" >&2
 }
 
 # nix_store_path resolves nix-store to an absolute path so the reap hint names a
@@ -1024,27 +1064,32 @@ clean_footer() {
   local dry="$1" before="$2" after="$3" skipped="$4" freed="$5" reaped="${6:-0}" euid="${7:-1000}"
   local removed=0
   [[ "$before" -gt "$after" ]] && removed=$(( before - after ))
+  # Colour by meaning so the outcome scans at a glance: reclaimed/reaped green,
+  # skipped amber with the reap command in cyan, everything neutral. Each segment
+  # is painted whole (never mid-phrase), so with colour off the plain text is
+  # byte-for-byte what a pipe or the check harness reads.
   local -a parts=()
   if [[ "$dry" == 1 ]]; then
-    parts+=("dry-run — no changes made" "$before generation(s) present")
+    parts+=("$(paint 33 'dry-run — no changes made')" "$before generation(s) present")
   else
-    [[ -z "$freed" ]] || parts+=("reclaimed $freed")
+    [[ -z "$freed" ]] || parts+=("$(paint '1;32' "reclaimed $freed")")
     parts+=("kept $after generation(s)" "removed $removed generation(s)")
   fi
-  [[ "${reaped:-0}" -gt 0 ]] && parts+=("reaped $reaped root-owned GC root(s)")
+  [[ "${reaped:-0}" -gt 0 ]] && parts+=("$(paint 32 "reaped $reaped root-owned GC root(s)")")
   if [[ "${skipped:-0}" -gt 0 ]]; then
     if [[ "$euid" == 0 ]]; then
-      parts+=("skipped $skipped root-owned GC root(s) (unremovable)")
+      parts+=("$(paint 33 "skipped $skipped root-owned GC root(s) (unremovable)")")
     else
       # Name an absolute nix-store path: under elevation a bare command is not on
       # root's secure_path (see nix_store_path). `nix-store --gc` prunes these
       # daemon-owned roots once this clean has dropped the generations they pin.
-      parts+=("skipped $skipped root-owned GC root(s); reap them via \`sudo $(nix_store_path) --gc\`")
+      parts+=("$(paint 33 "skipped $skipped root-owned GC root(s)"); reap them via \`$(paint '1;36' "sudo $(nix_store_path) --gc")\`")
     fi
   fi
-  local out="" p
+  local out="" p sep
+  sep="$(paint 2 '·')"
   for p in "${parts[@]}"; do
-    [[ -z "$out" ]] && out="$p" || out="$out · $p"
+    [[ -z "$out" ]] && out="$p" || out="$out $sep $p"
   done
   printf 'atyrode: %s\n' "$out" >&2
 }
@@ -1072,10 +1117,14 @@ clean_preview() {
     rank=$(( total - 1 - i ))
     [[ "$rank" -ge "$keep" && "${gens[$i]}" != "$current" ]] && candidates=$(( candidates + 1 ))
   done
-  printf 'atyrode: clean (%s) is about to:\n' "$scope" >&2
-  printf '  • keep the newest %s generation(s), anything newer than %s, and the current one\n' "$keep" "$keep_since" >&2
-  printf '  • remove up to %s of %s generation(s) that fall outside that window\n' "$candidates" "$total" >&2
-  printf '  • garbage-collect unreferenced store paths (reclaimed space reported after)\n' >&2
+  local bullet; bullet="$(paint 36 '•')"
+  printf 'atyrode: %s\n' "$(paint 1 "clean ($scope) is about to:")" >&2
+  printf '  %s keep the newest %s generation(s), anything newer than %s, and the current one\n' \
+    "$bullet" "$(paint 1 "$keep")" "$(paint 1 "$keep_since")" >&2
+  printf '  %s remove up to %s of %s generation(s) that fall outside that window\n' \
+    "$bullet" "$(paint 33 "$candidates")" "$(paint 1 "$total")" >&2
+  printf '  %s garbage-collect unreferenced store paths %s\n' \
+    "$bullet" "$(paint 2 '(reclaimed space reported after)')" >&2
 }
 
 # clean — reclaim disk from generations the config no longer references, always
@@ -1106,10 +1155,11 @@ cmd_clean() {
   if [[ "$dry" == 0 && "$assume_yes" == 0 && "$json" == 0 ]] && interactive; then
     clean_preview "$scope" "$keep" "$keep_since"
     confirm "proceed and reclaim now?" ||
-      { printf 'atyrode: clean declined — nothing changed.\n' >&2; return 0; }
+      { printf 'atyrode: %s\n' "$(paint 33 'clean declined — nothing changed.')" >&2; return 0; }
   fi
 
-  printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
+  printf 'atyrode: %s (keeping %s generation(s) + everything newer than %s)\n' \
+    "$(paint 1 'reclaiming the Nix store')" "$(paint 36 "$keep")" "$(paint 36 "$keep_since")" >&2
   # Let nh remove the stale generations and gcroots, but skip its garbage
   # collection (--no-gc) — nh runs it silently. We collect below instead, with a
   # progress indicator, so the slow final step isn't an unexplained freeze. nh's

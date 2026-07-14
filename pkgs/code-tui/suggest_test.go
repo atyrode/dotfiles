@@ -77,6 +77,24 @@ func TestTruncateForClassify(t *testing.T) {
 	}
 }
 
+func TestAppliedDiff(t *testing.T) {
+	// The diff must include every changed facet (model's picks + derived toggles),
+	// in facet order, and skip unchanged ones.
+	m := model{facets: facetDefs(map[string]string{}),
+		savedSel: map[string]string{"model": "normal", "thinking": "medium", "spark": "on", "fable": "off"},
+		sel:      map[string]string{"model": "smart", "thinking": "xhigh", "spark": "on", "fable": "on"}}
+	got := m.appliedDiff()
+	want := []clikit.Action{{"model", "smart"}, {"thinking", "xhigh"}, {"fable", "on"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("action %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestDeriveToggles(t *testing.T) {
 	avail := func() availability { return availability{bucket: map[string]string{}} }
 	// critical-tier sizing, Claude-capable lane, fable free → fable on, fast off.

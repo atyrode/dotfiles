@@ -115,6 +115,10 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// actions mutate); the box stays open showing keep/revert.
 		h.app, cmd = h.app.Update(msg)
 
+	case AppliedActionsMsg:
+		// The app reporting the authoritative applied set — hand it to the box.
+		h.box, cmd = h.box.Update(msg)
+
 	case ActionsConfirmedMsg, ActionsRevertedMsg:
 		// Keep or revert the previewed proposal; either way the box closes and the
 		// app handles it (commit, or restore the saved state).

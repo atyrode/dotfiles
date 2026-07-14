@@ -10,9 +10,6 @@ let
   yoloConfig = ../omp/yolo-session.yml;
   settingsGuardExtension = ../omp/extensions/managed-settings-guard.ts;
   taskIsolationGuardExtension = ../omp/extensions/task-isolation-guard.ts;
-  budgetPreset = ../omp/presets/budget.yml;
-  fablePreset = ../omp/presets/fable-primary.yml;
-  gptPreset = ../omp/presets/gpt56.yml;
   plainSeedConfig = ../omp/plain-seed.yml;
 
   stubOmp =
@@ -90,10 +87,7 @@ in
           ${defaultsConfig} \
           ${policyConfig} \
           ${untrustedConfig} \
-          ${yoloConfig} \
-          ${budgetPreset} \
-          ${fablePreset} \
-          ${gptPreset}
+          ${yoloConfig}
         do
           "$raw_omp" models --config "$config" --json >/dev/null
         done
@@ -120,73 +114,35 @@ in
         test "$(yq eval '.tools.approval.github' ${untrustedConfig})" = "deny"
         test "$(yq eval '.tools.approval.eval' ${untrustedConfig})" = "deny"
         test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
-        test "$(yq eval '.retry.modelFallback' ${fablePreset})" = "false"
 
-        for command in omp ompb ompc ompe ompf ompg ompk ompl ompm ompn ompo omps ompu ompx ompz; do
+        # The hand-curated preset launchers were sunset: the managed bin set is
+        # now exactly `code omp omp-managed ompu` (plus the zsh completion). The
+        # omp-passthrough launchers report the pinned version; `code` is the
+        # generator TUI and only answers --help non-interactively.
+        for command in omp omp-managed ompu; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
           test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
         done
+        ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
+        grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"
+        ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-        )" = "code,omp,ompb,ompc,ompe,ompf,ompg,omph,ompk,ompl,ompm,ompn,ompo,omps,ompu,ompx,ompz"
-
-        ${pkgs.omp-configured}/bin/omph > "$TMPDIR/omph.txt"
-        ! grep -q $'\e' "$TMPDIR/omph.txt"
-        grep -q "OMP managed routing — oh-my-pi ${lib.getVersion pkgs.omp}" "$TMPDIR/omph.txt"
-        grep -q 'bundled agents: designer librarian reviewer scout sonic task' "$TMPDIR/omph.txt"
-        grep -q '^ompz  Luna + Haiku, low thinking$' "$TMPDIR/omph.txt"
-        grep -q '^ompb  Terra, off the premium tiers$' "$TMPDIR/omph.txt"
-        grep -q '^omps  Sonnet value, Opus for depth$' "$TMPDIR/omph.txt"
-        grep -q '^ompg  Sol drives, Claude is the net$' "$TMPDIR/omph.txt"
-        grep -q '^ompc  Fable drives, Opus reviews$' "$TMPDIR/omph.txt"
-        grep -q '^ompf  Fable, deterministic (no net)$' "$TMPDIR/omph.txt"
-        grep -q '^ompx  Beyond 372K — Anthropic 1M$' "$TMPDIR/omph.txt"
-        grep -q '^ompl  Luna; task drains Spark$' "$TMPDIR/omph.txt"
-        grep -q '^ompk  Haiku, fast and cheap$' "$TMPDIR/omph.txt"
-        grep -q '^ompn  Claude judges, GPT executes$' "$TMPDIR/omph.txt"
-        grep -q '^ompm  Best model per task$' "$TMPDIR/omph.txt"
-        grep -q '^ompo  Codex only, never crosses$' "$TMPDIR/omph.txt"
-        grep -q '^ompe  Claude only, never crosses$' "$TMPDIR/omph.txt"
-        # ompu inherits the managed defaults routing, so it is rendered like a preset
-        grep -q '^ompu  Sandboxed, restricted tools$' "$TMPDIR/omph.txt"
-        grep -q 'gpt-5.6-sol:high' "$TMPDIR/omph.txt"
-        grep -q 'claude-fable-5:high' "$TMPDIR/omph.txt"
-        grep -q 'gpt-5.6-luna:low' "$TMPDIR/omph.txt"
-        grep -q 'gpt-5.3-codex-spark:xhigh' "$TMPDIR/omph.txt"
-        grep -q 'claude-haiku-4-5:low' "$TMPDIR/omph.txt"
-        grep -q 'scout is deliberately unpinned' "$TMPDIR/omph.txt"
-
-        # `code` umbrella picker: lists the palette non-interactively and
-        # resolves selectors without opening the interactive prompt.
-        ${pkgs.omp-configured}/bin/code --list > "$TMPDIR/code.txt"
-        grep -q 'ompz' "$TMPDIR/code.txt"
-        grep -q '^  mixed$' "$TMPDIR/code.txt"
-        grep -q '^  special$' "$TMPDIR/code.txt"
-        grep -q 'omps' "$TMPDIR/code.txt"
-        grep -q 'ompc' "$TMPDIR/code.txt"
-        grep -q 'ompx' "$TMPDIR/code.txt"
-        grep -q 'ompu' "$TMPDIR/code.txt"
-        ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
-        grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
-
-        # Profiles wiki (#79): a self-contained HTML page rendered from
-        # models.yml + `omp models` (cost/context) + routes.plain + PROFILES.md.
-        wiki=${pkgs.omp-configured}/share/omp/routes.html
-        test -f "$wiki"
-        grep -q 'gpt-5.6-sol' "$wiki"          # a catalog model
-        grep -q '$30' "$wiki"                  # Sol output cost, live from omp models
-        grep -q 'data-name="ompm"' "$wiki"     # a profile row
-        grep -q 'full fallback chains' "$wiki" # the depth toggle
-        # self-contained — no external scripts/styles/images
-        ! grep -qE '<(script|link|img|iframe)[^>]*(src|href)=' "$wiki"
+        )" = "code,omp,omp-managed,ompu"
+        # None of the retired preset launchers (or the routing-help/wiki surface)
+        # survive.
+        for gone in ompb ompc ompe ompf ompg omph ompk ompl ompm ompn ompo omps ompx ompz; do
+          test ! -e ${pkgs.omp-configured}/bin/"$gone"
+        done
+        test ! -e ${pkgs.omp-configured}/share/omp/routes.html
 
         ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
         test ! -s "$TMPDIR/models.err"
         jq -e '.models | type == "array"' "$TMPDIR/models.json" >/dev/null
 
         set +e
-        ${pkgs.omp-configured}/bin/ompg acp \
+        ${pkgs.omp-configured}/bin/omp-managed acp \
           --config "$TMPDIR/missing-one-shot.yml" \
           > "$TMPDIR/acp.out" 2> "$TMPDIR/acp.err"
         acp_status=$?
@@ -310,7 +266,7 @@ in
         ${pkgs.bun}/bin/bun "$TMPDIR/settings-guard.test.ts"
 
         # #78 — managed launchers are immutable at LAUNCH: a hostile ~/.omp cannot
-        # override managed routing (the preset wins) or enforced policy (approvals,
+        # override the managed routing default or enforced policy (approvals,
         # task isolation), and `config set` on a managed path is refused. The
         # in-session guard above covers the running-session half; this covers the
         # next-launch half that makes profiles reliable.
@@ -325,11 +281,11 @@ in
           isolation:
             mode: none
         YAML
-        env HOME="$imm_home" ${pkgs.omp-configured}/bin/ompm config managed --json \
+        env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config managed --json \
           > "$TMPDIR/effective.json"
-        # routing: the mixed-smart preset wins over the user's weak pin
+        # routing: the managed default wins over the user's weak pin
         test "$(jq -r '.effectiveManaged.modelRoles.default' "$TMPDIR/effective.json")" \
-          = "openai-codex/gpt-5.6-sol:high"
+          = "openai-codex/gpt-5.6-sol:medium"
         # enforced policy: the user cannot weaken approvals or task isolation
         test "$(jq -r '.effectiveManaged.tools.approvalMode' "$TMPDIR/effective.json")" = "yolo"
         test "$(jq -r '.effectiveManaged.task.isolation.mode' "$TMPDIR/effective.json")" = "auto"
@@ -338,7 +294,7 @@ in
           = "openai-codex/gpt-5.6-luna:minimal"
         # and the CLI refuses to set a managed path from a managed launcher
         set +e
-        env HOME="$imm_home" ${pkgs.omp-configured}/bin/ompm config set \
+        env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config set \
           modelRoles.default openai-codex/gpt-5.6-luna:low \
           > "$TMPDIR/cfgset.out" 2> "$TMPDIR/cfgset.err"
         cfgset_status=$?
@@ -387,7 +343,7 @@ in
 
   # Upstream agent renames and removals must fail the build instead of
   # silently misrouting models (#62): every agent name referenced by the
-  # managed defaults and presets has to exist in the pinned unpacked set.
+  # managed configs has to exist in the pinned unpacked set.
   omp-agent-references =
     pkgs.runCommand "check-omp-agent-references"
       {
@@ -407,9 +363,6 @@ in
         status=0
         for config in \
           ${defaultsConfig} \
-          ${budgetPreset} \
-          ${fablePreset} \
-          ${gptPreset} \
           ${untrustedConfig} \
           ${yoloConfig} \
           ${policyConfig} \
@@ -489,7 +442,7 @@ in
         EOF
             cd "$project"
 
-            ${configuredStub}/bin/ompg \
+            ${configuredStub}/bin/omp-managed \
               --config "$TMPDIR/one-shot.yml" \
               --model custom \
               -- \
@@ -506,8 +459,6 @@ in
         --config
         $XDG_CONFIG_HOME/omp/local.yml
         --config
-        ${configuredStub.presets.gpt}
-        --config
         $TMPDIR/one-shot.yml
         --config
         ${configuredStub.policyConfig}
@@ -519,7 +470,7 @@ in
         EOF
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompg acp \
+            ${configuredStub}/bin/omp-managed acp \
               --config="$TMPDIR/acp-one-shot.yml" \
               --approval-mode yolo > "$TMPDIR/actual"
             cat > "$TMPDIR/expected" <<EOF
@@ -535,8 +486,6 @@ in
         --config
         $XDG_CONFIG_HOME/omp/local.yml
         --config
-        ${configuredStub.presets.gpt}
-        --config
         $TMPDIR/acp-one-shot.yml
         --config
         ${configuredStub.policyConfig}
@@ -547,27 +496,27 @@ in
         EOF
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompg models --json > "$TMPDIR/actual"
+            ${configuredStub}/bin/omp-managed models --json > "$TMPDIR/actual"
             printf 'models\n--json\n' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompg config path > "$TMPDIR/actual"
+            ${configuredStub}/bin/omp-managed config path > "$TMPDIR/actual"
             printf '%s\n' 'config' 'path' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompg --no-extensions models --json > "$TMPDIR/actual"
+            ${configuredStub}/bin/omp-managed --no-extensions models --json > "$TMPDIR/actual"
             printf '%s\n' '--no-extensions' 'models' '--json' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
             set +e
-            ${configuredStub}/bin/ompg --no-extensions --mode rpc \
+            ${configuredStub}/bin/omp-managed --no-extensions --mode rpc \
               > "$TMPDIR/no-extensions.out" 2> "$TMPDIR/no-extensions.err"
             no_extensions_status=$?
             set -e
             test "$no_extensions_status" -eq 2
             grep -q 'Nix-owned settings guard' "$TMPDIR/no-extensions.err"
 
-            ${configuredStub}/bin/ompg --resume models > "$TMPDIR/actual"
+            ${configuredStub}/bin/omp-managed --resume models > "$TMPDIR/actual"
             cat > "$TMPDIR/expected" <<EOF
         --extension
         ${configuredStub.platformRoot}
@@ -579,8 +528,6 @@ in
         $project/.omp/config.yml
         --config
         $XDG_CONFIG_HOME/omp/local.yml
-        --config
-        ${configuredStub.presets.gpt}
         --config
         ${configuredStub.policyConfig}
         --resume
@@ -622,7 +569,7 @@ in
             printf '%s\n' '--help' 'config' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            ${configuredStub}/bin/ompg config set completion.notify off --json > "$TMPDIR/actual"
+            ${configuredStub}/bin/omp-managed config set completion.notify off --json > "$TMPDIR/actual"
             printf '%s\n' 'config' 'set' 'completion.notify' 'off' '--json' > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
@@ -636,7 +583,7 @@ in
             do
               read -r -a args <<< "$invocation"
               set +e
-              ${configuredStub}/bin/ompg "''${args[@]}" \
+              ${configuredStub}/bin/omp-managed "''${args[@]}" \
                 > "$TMPDIR/refused.out" 2> "$TMPDIR/refused.err"
               refused_status=$?
               set -e
@@ -644,10 +591,10 @@ in
               grep -Eq 'Nix-managed default|Nix-managed preset|enforced by Nix policy' "$TMPDIR/refused.err"
             done
 
-            ${configuredStub}/bin/ompg \
+            ${configuredStub}/bin/omp-managed \
               --config "$TMPDIR/managed-one-shot.yml" \
               config managed --json > "$TMPDIR/managed.json"
-            jq -e '.launcher == "ompg"' "$TMPDIR/managed.json" >/dev/null
+            jq -e '.launcher == "omp-managed"' "$TMPDIR/managed.json" >/dev/null
             jq -e '.profile == "default"' "$TMPDIR/managed.json" >/dev/null
             jq -e '.statePath == $ENV.HOME + "/.omp/agent"' "$TMPDIR/managed.json" >/dev/null
             jq -e '.effectiveManaged.modelRoles.default == "one-shot/model:high"' \
@@ -673,7 +620,7 @@ in
             }' \
               "$TMPDIR/managed.json" >/dev/null
             test "$(jq -r '[.sources[].kind] | join(",")' "$TMPDIR/managed.json")" = \
-              'writable-machine-state,managed-defaults,native-project,native-project,machine-local,preset,one-shot-config,managed-policy,runtime-flags'
+              'writable-machine-state,managed-defaults,native-project,native-project,machine-local,one-shot-config,managed-policy,runtime-flags'
             jq -e '.sources[0].present == true' "$TMPDIR/managed.json" >/dev/null
             jq -e --arg projectSettings "$project/.omp/settings.json" \
               '.sources[] | select(.format == "settings.json") | .path == $projectSettings and .present == true' \
@@ -685,18 +632,16 @@ in
               '.sources[] | select(.kind == "one-shot-config") | .path == $oneShot' \
               "$TMPDIR/managed.json" >/dev/null
 
-            # Model-preset launchers are routing overlays only: all of them
-            # share the default profile and the normal persisted state root,
-            # so switching launchers never requires re-authentication.
-            for launcher in ompz ompb omps ompg ompc ompf ompx; do
-              ${configuredStub}/bin/"$launcher" config managed --json \
-                > "$TMPDIR/launcher-state.json"
-              jq -e '.profile == "default"' "$TMPDIR/launcher-state.json" >/dev/null
-              jq -e '.statePath == $ENV.HOME + "/.omp/agent"' \
-                "$TMPDIR/launcher-state.json" >/dev/null
-            done
+            # The managed launcher is a routing overlay only: it shares the
+            # default profile and the normal persisted state root, so launching
+            # a generated profile through it never requires re-authentication.
+            ${configuredStub}/bin/omp-managed config managed --json \
+              > "$TMPDIR/launcher-state.json"
+            jq -e '.profile == "default"' "$TMPDIR/launcher-state.json" >/dev/null
+            jq -e '.statePath == $ENV.HOME + "/.omp/agent"' \
+              "$TMPDIR/launcher-state.json" >/dev/null
 
-            PI_SMOL_MODEL=env/smol:low ${configuredStub}/bin/ompg \
+            PI_SMOL_MODEL=env/smol:low ${configuredStub}/bin/omp-managed \
               --approval-mode yolo \
               --model runtime/default:high \
               --smol runtime/smol:medium \
@@ -734,14 +679,14 @@ in
             jq -e '[.sources[].kind] | index("one-session-unattended-policy") != null' \
               "$TMPDIR/runtime-managed.json" >/dev/null
 
-            ${configuredStub}/bin/ompg --yolo --mode rpc \
+            ${configuredStub}/bin/omp-managed --yolo --mode rpc \
               > "$TMPDIR/yolo.out" 2> "$TMPDIR/yolo.err"
             grep -q 'unattended yolo mode is enabled for this process only' "$TMPDIR/yolo.err"
             grep -Fx -- '--config' "$TMPDIR/yolo.out" >/dev/null
             grep -Fx -- '${configuredStub.yoloConfig}' "$TMPDIR/yolo.out" >/dev/null
 
             PI_SMOL_MODEL=env/smol:low PI_SLOW_MODEL=env/slow:high PI_PLAN_MODEL=env/plan:medium \
-              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/runtime-env.json"
+              ${configuredStub}/bin/omp-managed config managed --json > "$TMPDIR/runtime-env.json"
             jq -e '
               .effectiveManaged.modelRoles.smol == "env/smol:low"
               and .effectiveManaged.modelRoles.slow == "env/slow:high"
@@ -749,11 +694,11 @@ in
             ' "$TMPDIR/runtime-env.json" >/dev/null
 
             PI_CODING_AGENT_DIR="$TMPDIR/custom-agent" \
-              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/custom-state.json"
+              ${configuredStub}/bin/omp-managed config managed --json > "$TMPDIR/custom-state.json"
             jq -e --arg state "$TMPDIR/custom-agent" '.statePath == $state' \
               "$TMPDIR/custom-state.json" >/dev/null
 
-            ${configuredStub}/bin/ompg --profile work \
+            ${configuredStub}/bin/omp-managed --profile work \
               config managed --json > "$TMPDIR/profile-state.json"
             jq -e --arg state "$HOME/.omp/profiles/work/agent" \
               '.profile == "work" and .statePath == $state' \
@@ -761,13 +706,13 @@ in
 
             OMP_PROFILE=default PI_PROFILE=work \
               PI_CODING_AGENT_DIR="$HOME/.omp/profiles/work/agent" \
-              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/default-profile-state.json"
+              ${configuredStub}/bin/omp-managed config managed --json > "$TMPDIR/default-profile-state.json"
             jq -e --arg state "$HOME/.omp/agent" \
               '.profile == "default" and .statePath == $state' \
               "$TMPDIR/default-profile-state.json" >/dev/null
 
             set +e
-            ${configuredStub}/bin/ompg --profile ../../escape config managed --json \
+            ${configuredStub}/bin/omp-managed --profile ../../escape config managed --json \
               > "$TMPDIR/invalid-profile.out" 2> "$TMPDIR/invalid-profile.err"
             invalid_profile_status=$?
             set -e
@@ -775,7 +720,7 @@ in
             grep -q 'Invalid OMP profile' "$TMPDIR/invalid-profile.err"
 
             PI_CONFIG_DIR=.custom-omp \
-              ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/config-root.json"
+              ${configuredStub}/bin/omp-managed config managed --json > "$TMPDIR/config-root.json"
             jq -e --arg state "$HOME/.custom-omp/agent" '.statePath == $state' \
               "$TMPDIR/config-root.json" >/dev/null
 
@@ -786,7 +731,7 @@ in
           yaml-machine: machine/yaml:low
         EOF
             HOME="$yaml_home" XDG_CONFIG_HOME="$yaml_home/.config" \
-              ${configuredStub}/bin/ompg --cwd "$project" config managed --json \
+              ${configuredStub}/bin/omp-managed --cwd "$project" config managed --json \
                 > "$TMPDIR/yaml-state.json"
             jq -e --arg path "$yaml_home/.omp/agent/config.yaml" '
               .sources[0].path == $path
@@ -794,7 +739,7 @@ in
               and .effectiveManaged.modelRoles["yaml-machine"] == "machine/yaml:low"
             ' "$TMPDIR/yaml-state.json" >/dev/null
 
-            ${configuredStub}/bin/ompg --system-prompt --cwd \
+            ${configuredStub}/bin/omp-managed --system-prompt --cwd \
               config managed --json > "$TMPDIR/arity.json"
             jq -e --arg project "$project/.omp/config.yml" \
               '.sources[] | select(.format == "config.yml") | .path == $project' \
@@ -812,9 +757,9 @@ in
             (
               cd "$HOME"
               XDG_CONFIG_HOME="$TMPDIR/auto-xdg" \
-                ${configuredStub}/bin/ompg config managed --json > "$TMPDIR/home-auto.json"
+                ${configuredStub}/bin/omp-managed config managed --json > "$TMPDIR/home-auto.json"
               XDG_CONFIG_HOME="$TMPDIR/auto-xdg" \
-                ${configuredStub}/bin/ompg --allow-home config managed --json > "$TMPDIR/home-allowed.json"
+                ${configuredStub}/bin/omp-managed --allow-home config managed --json > "$TMPDIR/home-allowed.json"
             )
             jq -e --arg cwd "$HOME/tmp" '
               .effectiveCwd == $cwd and .effectiveManaged.modelRoles["workspace-role"] == "tmp/project:low"
@@ -836,7 +781,7 @@ in
         modelRoles:
           default: relative/one-shot:high
         EOF
-            ${configuredStub}/bin/ompg \
+            ${configuredStub}/bin/omp-managed \
               --cwd "$legacy_project" \
               --config relative.yml \
               config managed --json > "$TMPDIR/legacy-managed.json"
@@ -849,51 +794,41 @@ in
             ' "$TMPDIR/legacy-managed.json" >/dev/null
 
             set +e
-            ${configuredStub}/bin/ompg config get modelRoles --json \
+            ${configuredStub}/bin/omp-managed config get modelRoles --json \
               > "$TMPDIR/get.out" 2> "$TMPDIR/get.err"
             get_status=$?
             set -e
             test "$get_status" -eq 2
             grep -q 'only reads writable machine state' "$TMPDIR/get.err"
 
-            ${configuredStub}/bin/ompg config list > "$TMPDIR/list.out" 2> "$TMPDIR/list.err"
+            ${configuredStub}/bin/omp-managed config list > "$TMPDIR/list.out" 2> "$TMPDIR/list.err"
             grep -q 'shows writable machine state' "$TMPDIR/list.err"
 
-            ${configuredStub}/bin/ompg setup --help > "$TMPDIR/setup.out" 2> "$TMPDIR/setup.err"
+            ${configuredStub}/bin/omp-managed setup --help > "$TMPDIR/setup.out" 2> "$TMPDIR/setup.err"
             printf '%s\n' setup --help > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/setup.out"
             grep -q 'writes writable machine state' "$TMPDIR/setup.err"
 
             # Plain omp is unmanaged and has no Nix-declared default model;
-            # the managed defaults file is asserted directly with yq above.
-            declare -A expected_default_models=(
-              [ompz]='openai-codex/gpt-5.6-luna:low'
-              [ompb]='openai-codex/gpt-5.6-terra:low'
-              [omps]='anthropic/claude-sonnet-5:medium'
-              [ompg]='openai-codex/gpt-5.6-sol:high'
-              [ompc]='anthropic/claude-fable-5:high'
-              [ompf]='anthropic/claude-fable-5:high'
-              [ompx]='anthropic/claude-opus-4-8:medium'
-            )
+            # the managed launcher pins the managed defaults' routing (asserted
+            # directly with yq above) with no preset overlay on top.
             policy_home="$TMPDIR/policy-home"
             policy_project="$TMPDIR/policy-project"
             mkdir -p "$policy_home" "$policy_project"
-            for command in ompz ompb omps ompg ompc ompf ompx; do
-              HOME="$policy_home" XDG_CONFIG_HOME="$policy_home/.config" \
-                ${configuredStub}/bin/"$command" --cwd "$policy_project" \
-                  config managed --json > "$TMPDIR/$command-policy.json"
-              jq -e --arg expected "''${expected_default_models[$command]}" \
-                '.effectiveManaged.modelRoles.default == $expected' \
-                "$TMPDIR/$command-policy.json" >/dev/null
-            done
-            jq -e '.effectiveManaged.retry.modelFallback == false' \
-              "$TMPDIR/ompf-policy.json" >/dev/null
-            jq -e '
-              .effectiveManaged.providers.anthropic.serverSideFallback == false
-              and (.ownership.presets | index("providers.anthropic.serverSideFallback")) != null
-            ' "$TMPDIR/ompf-policy.json" >/dev/null
+            HOME="$policy_home" XDG_CONFIG_HOME="$policy_home/.config" \
+              ${configuredStub}/bin/omp-managed --cwd "$policy_project" \
+                config managed --json > "$TMPDIR/managed-policy.json"
+            jq -e '.effectiveManaged.modelRoles.default == "openai-codex/gpt-5.6-sol:medium"' \
+              "$TMPDIR/managed-policy.json" >/dev/null
+            jq -e '.effectiveManaged.retry.modelFallback == true' \
+              "$TMPDIR/managed-policy.json" >/dev/null
+            # The managed serverSideFallback path stays under Nix-preset ownership
+            # even though no launcher-selected preset assigns it a value.
+            jq -e \
+              '(.ownership.presets | index("providers.anthropic.serverSideFallback")) != null' \
+              "$TMPDIR/managed-policy.json" >/dev/null
 
-            for command in omp ompb omps ompg ompc ompf ompx ompz; do
+            for command in omp omp-managed; do
               set +e
               ${configuredStub}/bin/"$command" update \
                 > "$TMPDIR/update.out" 2> "$TMPDIR/update.err"

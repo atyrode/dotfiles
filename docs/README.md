@@ -15,7 +15,7 @@ not in a checklist.
 | [package-ownership.md](package-ownership.md) | Which layer owns each package ([`inventory/packages.json`](../inventory/packages.json)) |
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
-| [agent-tools.md](agent-tools.md) | OMP, model presets, agents, rules, and the `code` picker |
+| [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
 | [shell.md](shell.md) | The interactive shell surface (a launcher, not a dev environment) |
 | [codex-state.md](codex-state.md) | Codex mutable configuration and profile state |

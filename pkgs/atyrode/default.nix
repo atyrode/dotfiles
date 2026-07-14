@@ -104,7 +104,7 @@ let
         mutableState = "profile-scoped auth, sessions, MCP state, and caches";
         launchModes = [
           "normal"
-          "preset"
+          "generated"
           "untrusted"
           "acp"
         ];

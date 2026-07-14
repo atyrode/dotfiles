@@ -31,21 +31,6 @@ let
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
   untrustedConfig = ../../omp/untrusted.yml;
-  presets = {
-    budget = ../../omp/presets/budget.yml;
-    fable = ../../omp/presets/fable-primary.yml;
-    gpt = ../../omp/presets/gpt56.yml;
-    sonnet = ../../omp/presets/sonnet-value.yml;
-    claude = ../../omp/presets/claude-hard.yml;
-    context = ../../omp/presets/context-1m.yml;
-    fast = ../../omp/presets/fast-mixed.yml;
-    gptSpeed = ../../omp/presets/gpt-speed.yml;
-    claudeSpeed = ../../omp/presets/claude-speed.yml;
-    mixedRegular = ../../omp/presets/mixed-regular.yml;
-    mixedSmart = ../../omp/presets/mixed-smart.yml;
-    gptOnly = ../../omp/presets/gpt-only.yml;
-    claudeOnly = ../../omp/presets/claude-only.yml;
-  };
 
 in
 {
@@ -131,19 +116,6 @@ in
           "omp/defaults.yml".source = defaultsConfig;
           "omp/policy.yml".source = policyConfig;
           "omp/untrusted.yml".source = untrustedConfig;
-          "omp/presets/budget.yml".source = presets.budget;
-          "omp/presets/fable-primary.yml".source = presets.fable;
-          "omp/presets/gpt56.yml".source = presets.gpt;
-          "omp/presets/sonnet-value.yml".source = presets.sonnet;
-          "omp/presets/claude-hard.yml".source = presets.claude;
-          "omp/presets/context-1m.yml".source = presets.context;
-          "omp/presets/fast-mixed.yml".source = presets.fast;
-          "omp/presets/gpt-speed.yml".source = presets.gptSpeed;
-          "omp/presets/claude-speed.yml".source = presets.claudeSpeed;
-          "omp/presets/mixed-regular.yml".source = presets.mixedRegular;
-          "omp/presets/mixed-smart.yml".source = presets.mixedSmart;
-          "omp/presets/gpt-only.yml".source = presets.gptOnly;
-          "omp/presets/claude-only.yml".source = presets.claudeOnly;
         };
 
         home.file = {

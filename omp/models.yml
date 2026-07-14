@@ -15,10 +15,10 @@
 #   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
 #           Tiers 1..3 form the per-pool fallback ladder; 0 and 4 are special
 #           leads (spark drains an idle bucket; fable is a scarce elite lead).
-#   bucket: the quota window a model draws (see PROFILES.md → Separate rate buckets).
+#   bucket: the quota window a model draws (a separate rate bucket per provider).
 #
-# Consumed by generate-profiles.py (the facet grid) and generate-wiki.py (the
-# browsable profiles wiki).
+# Consumed by generate-profiles.py to render the facet grid the `code` generator
+# browses (cost/model catalog + routing).
 refreshed: '2026-07-13'
 models:
   luna:

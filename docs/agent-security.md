@@ -6,14 +6,15 @@ repository trustworthy, and it is not an operating-system sandbox.
 
 ## Normal sessions
 
-Managed preset launchers (`ompb`, `omps`, `ompg`, `ompc`, `ompf`, `ompx`) use
-the trusted-machine unattended approval policy: workspace edits, shell/eval,
-browser, task spawning, and GitHub operations do not prompt. Secret filtering
-remains enabled, and task isolation uses OMP's automatic backend selection and
-patch merging. A managed extension fails closed when a `task` call that can
-write omits `isolated: true`, including any item in a task batch.
+Managed sessions launched through `omp-managed` — including every profile the
+`code` generator produces — use the trusted-machine unattended approval policy:
+workspace edits, shell/eval, browser, task spawning, and GitHub operations do
+not prompt. Secret filtering remains enabled, and task isolation uses OMP's
+automatic backend selection and patch merging. A managed extension fails closed
+when a `task` call that can write omits `isolated: true`, including any item in
+a task batch.
 
-The policy overlay is applied after writable machine, project, preset, and
+The policy overlay is applied after writable machine, project, and
 one-shot configuration. Repositories can still choose non-security settings,
 but cannot change managed approvals, secret filtering, or task isolation.
 Explicit yolo flags remain accepted for compatibility, but do not grant these
@@ -26,7 +27,7 @@ and integrations are whatever that mutable configuration says. The seeded
 defaults start that configuration with secret obfuscation and automatic task
 isolation enabled, but unlike the managed policy the operator can change or
 remove them on the fly — the next apply only reports the drift. Every
-launcher in this table is appropriate only for repositories the operator has
+managed session is appropriate only for repositories the operator has
 reviewed; use `ompu` for untrusted repositories.
 
 ## Untrusted projects

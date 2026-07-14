@@ -45,7 +45,7 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 - **Git** - Pre-configured with useful aliases
 - **tmux** - Terminal multiplexer
 - **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
-- **OMP** - Pinned coding agent, model presets, agents, and skills
+- **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
   native compilers come from committed dev shells, `mise.toml`, or native
@@ -87,27 +87,17 @@ atyrode doctor system # Audit system-owned operational prerequisites
 
 ### Agent Tools
 ```bash
-code          # fzf picker: arrow-key select over the grouped launcher palette
+code          # Profile generator TUI: type a prompt or turn the facet dials
 omp           # Mutable user-owned OMP; unmanaged except the blocked update
-ompz          # Mixed · speed — fastest tiers both providers, low thinking
-ompn          # Mixed · regular — balanced daily driver, both pools
-ompm          # Mixed · smart — hardest work, best model per task
-ompl          # GPT · speed — fast Codex (Luna; task drains Spark)
-ompb          # GPT · regular — routine Codex work (Terra, off premium tiers)
-ompg          # GPT · smart — difficult work, GPT-led (Sol drives, Claude net)
-ompo          # GPT-only — never crosses to Anthropic (drain Codex)
-ompk          # Claude · speed — fast Claude (Haiku)
-omps          # Claude · regular — everyday value (Sonnet leads)
-ompc          # Claude · smart — difficult work, Claude-led (Fable drives)
-ompe          # Claude-only — never crosses to OpenAI (drain the Claude plan)
-ompf          # Fable-first profile with fallback disabled
-ompx          # Huge-context (1M) work; Anthropic's 1M line, no cross-net
-omph          # Show the managed routing: roles, models, fallbacks per profile
+omp-managed   # Managed-layering launch target: defaults + policy over --config
 ompu          # Restricted launcher for deliberately untrusted repositories
 ```
 
-See [`omp/PROFILES.md`](omp/PROFILES.md) for the model catalog and the
-reasoning behind each profile.
+`code` opens a TUI with a prompt→profile classifier on the local ollama daemon.
+Enter with nothing changed runs your default `omp`; type a prompt or move a dial
+and it generates a managed profile, launching it through `omp-managed`. The `u`
+key opens the `ompu` sandbox. The model catalog lives in
+[`omp/models.yml`](omp/models.yml).
 
 OMP, shared skills, and mise are installed by `zconf`
 with the rest of the Home Manager profile. See
@@ -159,7 +149,7 @@ dotfiles/
 ├── flake.nix              # Main flake configuration
 ├── install.sh             # Phased, transactional bootstrap
 ├── modules/                 # Reusable Home Manager modules
-├── omp/                     # Managed config, presets, agents, and rules
+├── omp/                     # Managed config, model catalog, agents, and rules
 ├── pkgs/                    # Pinned custom derivations and wrappers
 ├── scripts/                 # Activation-time migration and seeding logic
 └── home/                  # Home Manager modules

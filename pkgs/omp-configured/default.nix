@@ -30,8 +30,8 @@ let
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
     cp ${../../omp/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
-    cp ${../../omp/extensions/task-isolation-guard.ts} "$out/extensions/task-isolation-guard.ts"
     cp ${../../omp/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
+    cp ${../../omp/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
     cp ${../../omp/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
     cat > "$out/package.json" <<'EOF'
     {
@@ -40,8 +40,7 @@ let
       "type": "module",
       "omp": {
         "extensions": [
-          "./extensions/managed-settings-guard.ts",
-          "./extensions/task-isolation-guard.ts"
+          "./extensions/managed-settings-guard.ts"
         ]
       }
     }

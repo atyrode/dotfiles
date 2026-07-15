@@ -1,10 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -442,5 +447,484 @@ func TestPreviewColumn(t *testing.T) {
 	m.depth = 1
 	if plain := stripAnsi(m.previewColumn()); !strings.Contains(plain, "f · hide fallback chains") {
 		t.Errorf("full-chain depth must flip the cue to hide, got:\n%s", plain)
+	}
+}
+
+// ── responsive layout (#197) ─────────────────────────────────────────────────
+
+// layoutModel builds a fully-populated model the way main() does — real facets,
+// a generated routing block, and usage windows for both providers — so layout
+// tests exercise the actual compositions rather than skeleton fixtures.
+func layoutModel() model {
+	glyphs := defaultGlyphs()
+	id := comboID(defaultSel())
+	rows := []string{
+		"  thinking medium · fallback on · advisor on",
+		"    default    gpt-5.6-terra:medium → gpt-5.6-luna:medium → claude-sonnet-5:medium",
+		"  ● task       gpt-5.6-terra:medium → gpt-5.6-luna:medium → claude-sonnet-5:medium",
+		"  ● scout      gpt-5.6-luna:low → claude-haiku-4-5:low",
+		"    advisor    claude-opus-4-5:high",
+		"    commit     gpt-5.6-luna:minimal",
+	}
+	return model{
+		generated: map[string][]string{id: rows},
+		avail: availability{
+			ok:     true,
+			bucket: map[string]string{},
+			reset:  map[string]int64{},
+			wins: []usageWin{
+				{label: "5 hours", pct: 12, secs: 3 * 3600, dur: 5 * 3600, prov: "openai-codex"},
+				{label: "7 days", pct: 33, secs: 6 * day, dur: 7 * day, prov: "openai-codex"},
+				{label: "5 hours", pct: 55, secs: 2 * 3600, dur: 5 * 3600, prov: "anthropic"},
+				{label: "7 days", pct: 61, secs: 5 * day, dur: 7 * day, prov: "anthropic"},
+			},
+		},
+		usageCmd:     "omp usage --json",
+		authProfiles: []authProfile{{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"}},
+		spin:         spinner.New(),
+		help:         help.New(),
+		glyphs:       glyphs,
+		facets:       facetDefs(glyphs),
+		sel:          defaultSel(),
+		nextRefresh:  time.Now().Add(refreshEvery),
+	}
+}
+
+// resize drives a live tea.WindowSizeMsg through Update and asserts the one
+// hard rule of #197 resizing: it must never produce a command (no fetches).
+func resize(t *testing.T, m model, w, h int) model {
+	t.Helper()
+	nm, cmd := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	if cmd != nil {
+		t.Fatalf("resize to %dx%d produced a command — resizes must never trigger fetches", w, h)
+	}
+	return nm.(model)
+}
+
+type termSize struct{ w, h int }
+
+// layoutSizes derives representative wide/medium/narrow/short terminal sizes
+// from the model's own measured breakpoints (terminal cells, never pixels), so
+// the tests keep tracking content needs if the rendered minima ever grow.
+func layoutSizes(t *testing.T, m model) (wide, medium, narrow, short termSize) {
+	t.Helper()
+	wideW := m.genRowWidth() + routingMinW
+	if m.mediumMinW()+6 >= wideW {
+		t.Fatalf("fixture drift: medium width %d overlaps the wide threshold %d", m.mediumMinW()+6, wideW)
+	}
+	wide = termSize{wideW + 20, 40}
+	medium = termSize{m.mediumMinW() + 6, 40}
+	narrow = termSize{m.mediumMinW() - 10, 40}
+	short = termSize{wideW + 20, 10}
+	return
+}
+
+// assertLayoutInvariants checks the frame guarantees every composition must
+// hold: no line wider than the terminal (it would auto-wrap), total height in
+// bounds, full-width rules never broken mid-line, and the help footer pinned
+// to the very last row.
+func assertLayoutInvariants(t *testing.T, m model, label string) {
+	t.Helper()
+	view := stripAnsi(m.View())
+	lines := strings.Split(view, "\n")
+	if got := len(lines); got > m.h {
+		t.Errorf("%s: view is %d rows for a %d-row terminal", label, got, m.h)
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > m.w {
+			t.Errorf("%s: line %d is %d cells wide (terminal %d) — would auto-wrap: %q", label, i, w, m.w, l)
+		}
+		if strings.HasPrefix(l, "─") { // horizontal rules span exactly the terminal
+			if strings.TrimRight(l, " ") != strings.Repeat("─", m.w) {
+				t.Errorf("%s: rule on line %d does not span the full width: %q", label, i, l)
+			}
+		}
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "move") {
+		t.Errorf("%s: help footer not pinned to the last row: %q", label, last)
+	}
+}
+
+// lineIndex returns the first view line containing every needle, or -1.
+func lineIndex(lines []string, needles ...string) int {
+	for i, l := range lines {
+		ok := true
+		for _, n := range needles {
+			if !strings.Contains(l, n) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestResponsiveCompositions locks the #197 hierarchy: wide keeps Generator and
+// Routing side by side over a full-width Usage band (provider groups side by
+// side); medium is generator-dominant — the list full width on top, Routing and
+// Usage sharing a secondary row, Usage's provider groups stacked vertically;
+// narrow and short show one usable panel at a time, Generator first, instead of
+// compressing every section.
+func TestResponsiveCompositions(t *testing.T) {
+	m := layoutModel()
+	wide, medium, narrow, short := layoutSizes(t, m)
+
+	m = resize(t, m, wide.w, wide.h)
+	if m.mode() != modeSplit {
+		t.Fatalf("wide %dx%d: mode = %d, want split", wide.w, wide.h, m.mode())
+	}
+	lines := strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(lines, "generator", "routing") < 0 {
+		t.Errorf("wide: generator and routing pills must share a row:\n%s", strings.Join(lines, "\n"))
+	}
+	sideBySide := false
+	for _, l := range lines {
+		if strings.Count(l, "% used") > 1 {
+			sideBySide = true
+		}
+	}
+	if !sideBySide {
+		t.Errorf("wide: usage provider groups must sit side by side in the bottom band:\n%s", strings.Join(lines, "\n"))
+	}
+	assertLayoutInvariants(t, m, "wide")
+
+	m = resize(t, m, medium.w, medium.h)
+	if m.mode() != modeMedium {
+		t.Fatalf("medium %dx%d: mode = %d, want medium", medium.w, medium.h, m.mode())
+	}
+	lines = strings.Split(stripAnsi(m.View()), "\n")
+	gen := lineIndex(lines, "generator")
+	sec := lineIndex(lines, "routing", "usage")
+	launch := lineIndex(lines, "launch generated profile")
+	if gen < 0 || sec < 0 || launch < 0 {
+		t.Fatalf("medium: missing generator (%d), secondary row (%d), or launch footer (%d):\n%s", gen, sec, launch, strings.Join(lines, "\n"))
+	}
+	if lineIndex(lines, "generator", "routing") >= 0 {
+		t.Errorf("medium: generator must own its full-width row, not share it with routing")
+	}
+	if !(gen < launch && launch < sec) {
+		t.Errorf("medium: want generator (%d) over its launch footer (%d) over the routing+usage row (%d)", gen, launch, sec)
+	}
+	for i, l := range lines {
+		if strings.Count(l, "% used") > 1 {
+			t.Errorf("medium: usage provider groups must stack vertically, found side-by-side row %d: %q", i, l)
+		}
+	}
+	if lineIndex(lines, "% used") < 0 {
+		t.Errorf("medium: usage rows must be visible in the secondary column")
+	}
+	baseGenH, baseSecH := m.mediumSplit(m.contentH())
+	if want := m.secondaryMinH(); baseSecH != want {
+		t.Errorf("medium: secondary row height = %d, want measured minimum %d", baseSecH, want)
+	}
+	tall := resize(t, m, medium.w, medium.h+8)
+	tallGenH, tallSecH := tall.mediumSplit(tall.contentH())
+	if tallSecH != baseSecH {
+		t.Errorf("tall medium: secondary row grew from %d to %d instead of staying content-sized", baseSecH, tallSecH)
+	}
+	if tallGenH != baseGenH+8 {
+		t.Errorf("tall medium: generator grew from %d to %d, want %d", baseGenH, tallGenH, baseGenH+8)
+	}
+	assertLayoutInvariants(t, m, "medium")
+
+	m = resize(t, m, narrow.w, narrow.h)
+	if m.mode() != modeCollapsed {
+		t.Fatalf("narrow %dx%d: mode = %d, want collapsed", narrow.w, narrow.h, m.mode())
+	}
+	lines = strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(lines, "generator") < 0 {
+		t.Errorf("narrow: the generator must stay usable")
+	}
+	if lineIndex(lines, "routing") >= 0 || lineIndex(lines, "% used") >= 0 {
+		t.Errorf("narrow: secondary sections must be shed, not compressed:\n%s", strings.Join(lines, "\n"))
+	}
+	assertLayoutInvariants(t, m, "narrow")
+
+	// ‹p› swaps to the routing panel — one full panel at a time.
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	m = nm.(model)
+	lines = strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(lines, "routing") < 0 || lineIndex(lines, "generator") >= 0 {
+		t.Errorf("narrow+p: want the routing panel full width instead of the generator:\n%s", strings.Join(lines, "\n"))
+	}
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	m = nm.(model)
+
+	m = resize(t, m, short.w, short.h)
+	if m.mode() != modeCollapsed {
+		t.Fatalf("short %dx%d: mode = %d, want collapsed", short.w, short.h, m.mode())
+	}
+	lines = strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(lines, "generator") < 0 {
+		t.Errorf("short: the generator must stay usable")
+	}
+	if lineIndex(lines, "% used") >= 0 {
+		t.Errorf("short: the usage band must be shed to preserve generator rows")
+	}
+	assertLayoutInvariants(t, m, "short")
+}
+
+// TestModeThresholdEdges locks the exact measured breakpoints: one cell or row
+// under a threshold flips the composition immediately on the resize itself —
+// no extra keypress, tick, or second message.
+func TestModeThresholdEdges(t *testing.T) {
+	m := layoutModel()
+	wideW := m.genRowWidth() + routingMinW
+
+	m = resize(t, m, wideW, 40)
+	if m.mode() != modeSplit {
+		t.Fatalf("at the wide width threshold: mode = %d, want split", m.mode())
+	}
+	m = resize(t, m, wideW-1, 40)
+	if m.mode() != modeMedium {
+		t.Fatalf("one cell under the wide threshold: mode = %d, want medium", m.mode())
+	}
+	m = resize(t, m, wideW, 40)
+	if m.mode() != modeSplit {
+		t.Fatalf("back across the wide threshold: mode = %d, want split", m.mode())
+	}
+
+	hEdge := m.wideMinH()
+	m = resize(t, m, wideW, hEdge)
+	if m.mode() != modeSplit {
+		t.Fatalf("at the wide height threshold %d: mode = %d, want split", hEdge, m.mode())
+	}
+	m = resize(t, m, wideW, hEdge-1)
+	if m.mode() == modeSplit {
+		t.Fatalf("one row under the wide height threshold %d must leave the split", hEdge)
+	}
+
+	mediumW := m.mediumMinW() + 6
+	m = resize(t, m, mediumW, 40)
+	if m.mode() != modeMedium {
+		t.Fatalf("medium width %d: mode = %d, want medium", mediumW, m.mode())
+	}
+	mEdge := m.mediumMinH()
+	m = resize(t, m, mediumW, mEdge)
+	if m.mode() != modeMedium {
+		t.Fatalf("at the medium height threshold %d: mode = %d, want medium", mEdge, m.mode())
+	}
+	m = resize(t, m, mediumW, mEdge-1)
+	if m.mode() != modeCollapsed {
+		t.Fatalf("one row under the medium height threshold %d: mode = %d, want collapsed", mEdge, m.mode())
+	}
+	m = resize(t, m, m.mediumMinW()-1, 40)
+	if m.mode() != modeCollapsed {
+		t.Fatalf("one cell under the medium width threshold: mode = %d, want collapsed", m.mode())
+	}
+}
+
+// TestRepeatedResizeCrossingsPreserveState resizes back and forth across every
+// threshold repeatedly and asserts the whole interactive state — selection,
+// cursor, depth, collapse, auth, usage fetch identity — rides along untouched,
+// and that the routing viewport offset always stays clamped to valid content.
+func TestRepeatedResizeCrossingsPreserveState(t *testing.T) {
+	m := layoutModel()
+	wide, medium, narrow, short := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+
+	m.fcur = 2
+	m.cycleFacet(1) // thinking: medium → high (facet semantics untouched)
+	m.depth = 1
+	m.syncPreview()
+	wantSel := map[string]string{}
+	for k, v := range m.sel {
+		wantSel[k] = v
+	}
+	wantNext := m.nextRefresh
+
+	steps := []struct {
+		termSize
+		mode int
+	}{
+		{medium, modeMedium},
+		{narrow, modeCollapsed},
+		{short, modeCollapsed},
+		{medium, modeMedium},
+		{wide, modeSplit},
+		{narrow, modeCollapsed},
+		{wide, modeSplit},
+	}
+	for round := range 3 {
+		for _, s := range steps {
+			m = resize(t, m, s.w, s.h)
+			label := fmt.Sprintf("round %d, %dx%d", round, s.w, s.h)
+			if m.mode() != s.mode {
+				t.Fatalf("%s: mode = %d, want %d immediately after the resize", label, m.mode(), s.mode)
+			}
+			if m.fcur != 2 || m.depth != 1 || m.collapse || m.showResult {
+				t.Fatalf("%s: cursor/depth/collapse state mutated: fcur=%d depth=%d collapse=%v showResult=%v", label, m.fcur, m.depth, m.collapse, m.showResult)
+			}
+			if !reflect.DeepEqual(m.sel, wantSel) {
+				t.Fatalf("%s: facet selection mutated: %v", label, m.sel)
+			}
+			if m.fetching || !m.nextRefresh.Equal(wantNext) {
+				t.Fatalf("%s: usage fetch state mutated: fetching=%v nextRefresh moved=%v", label, m.fetching, !m.nextRefresh.Equal(wantNext))
+			}
+			if m.authIdx != 0 {
+				t.Fatalf("%s: auth profile mutated: %d", label, m.authIdx)
+			}
+			maxOff := m.vp.TotalLineCount() - m.vp.Height
+			if maxOff < 0 {
+				maxOff = 0
+			}
+			if m.vp.YOffset < 0 || m.vp.YOffset > maxOff {
+				t.Fatalf("%s: viewport offset %d outside [0,%d]", label, m.vp.YOffset, maxOff)
+			}
+			assertLayoutInvariants(t, m, label)
+		}
+	}
+}
+
+// TestResizeScrollClamp: a scrolled routing viewport keeps its offset across a
+// width-only resize, and clamps (never dangles past the content) when a resize
+// shrinks the panel; a facet change still resets to the top.
+func TestResizeScrollClamp(t *testing.T) {
+	m := layoutModel()
+	id := comboID(defaultSel())
+	rows := []string{"  thinking medium · fallback on · advisor on"}
+	for i := range 40 {
+		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
+	}
+	m.generated[id] = rows
+	wide, medium, narrow, _ := layoutSizes(t, m)
+
+	m = resize(t, m, wide.w, wide.h)
+	if m.vp.TotalLineCount() <= m.vp.Height {
+		t.Fatalf("fixture: routing content (%d lines) must overflow the viewport (%d rows)", m.vp.TotalLineCount(), m.vp.Height)
+	}
+	m.vp.SetYOffset(6)
+
+	m = resize(t, m, wide.w+8, wide.h) // width-only: offset survives
+	if m.vp.YOffset != 6 {
+		t.Fatalf("width-only resize moved the scroll: YOffset = %d, want 6", m.vp.YOffset)
+	}
+
+	m.vp.GotoBottom()
+	m = resize(t, m, medium.w, medium.h) // shrink: offset clamps into range
+	maxOff := m.vp.TotalLineCount() - m.vp.Height
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if m.vp.YOffset < 0 || m.vp.YOffset > maxOff {
+		t.Fatalf("shrink left a dangling offset %d outside [0,%d]", m.vp.YOffset, maxOff)
+	}
+	m = resize(t, m, narrow.w, narrow.h)
+	m = resize(t, m, wide.w, wide.h)
+
+	m.vp.SetYOffset(4)
+	m.cycleFacet(1) // content change: back to the top
+	if m.vp.YOffset != 0 {
+		t.Fatalf("facet change must reset the preview scroll, YOffset = %d", m.vp.YOffset)
+	}
+}
+
+// ── trackpad / wheel gating ──────────────────────────────────────────────────
+
+// TestWheelGate locks the temporal detent: the first event of a gesture acts
+// immediately (real wheel clicks feel instant), a rapid same-axis burst is
+// absorbed after that one step, orthogonal jitter inside the locked gesture
+// never leaks a step (and keeps the lock alive), a held scroll advances at the
+// controlled wheelRepeat cadence, and a pause re-arms an immediate step.
+func TestWheelGate(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	var g wheelGate
+
+	if !g.admit(wheelAxisV, t0) {
+		t.Fatal("first wheel event must act immediately")
+	}
+	for i := 1; i <= 30; i++ { // trackpad fling: 30 events over 150ms
+		if g.admit(wheelAxisV, t0.Add(time.Duration(i)*5*time.Millisecond)) {
+			t.Fatalf("burst event %d must be absorbed by the gate", i)
+		}
+	}
+	if g.admit(wheelAxisH, t0.Add(160*time.Millisecond)) {
+		t.Fatal("orthogonal jitter inside a vertical gesture must not act")
+	}
+	if g.admit(wheelAxisV, t0.Add(170*time.Millisecond)) {
+		t.Fatal("jitter must keep the lock alive — same-axis event still rationed")
+	}
+	if !g.admit(wheelAxisV, t0.Add(310*time.Millisecond)) {
+		t.Fatal("a held deliberate scroll must advance after wheelRepeat")
+	}
+	if g.admit(wheelAxisV, t0.Add(320*time.Millisecond)) {
+		t.Fatal("the cadence must re-arm after each granted step")
+	}
+	if !g.admit(wheelAxisH, t0.Add(700*time.Millisecond)) {
+		t.Fatal("after an idle pause a deliberate step on any axis must act immediately")
+	}
+	if g.axis != wheelAxisH {
+		t.Fatalf("gate must re-lock to the new axis, got %d", g.axis)
+	}
+}
+
+// TestWheelStepsFacets locks the wheel→facet mapping with a controlled clock:
+// vertical steps move the selection, horizontal steps change the focused
+// facet's value, bursts and diagonal jitter advance at most one step, and
+// later deliberate steps land after a pause. Facet semantics are the arrow-key
+// handlers verbatim.
+func TestWheelStepsFacets(t *testing.T) {
+	m := layoutModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	t0 := time.Unix(1000, 0)
+
+	m.wheelStep(tea.MouseButtonWheelDown, t0)
+	if m.fcur != 1 {
+		t.Fatalf("wheel down must move the selection, fcur = %d", m.fcur)
+	}
+	for i := 1; i <= 20; i++ { // same-axis burst: at most that one step
+		m.wheelStep(tea.MouseButtonWheelDown, t0.Add(time.Duration(i)*5*time.Millisecond))
+	}
+	if m.fcur != 1 {
+		t.Fatalf("a wheel burst must advance one controlled step, fcur = %d", m.fcur)
+	}
+	sel := m.sel["model"]
+	for i := range 5 { // diagonal jitter during the vertical gesture
+		m.wheelStep(tea.MouseButtonWheelRight, t0.Add(120*time.Millisecond+time.Duration(i)*5*time.Millisecond))
+	}
+	if m.sel["model"] != sel {
+		t.Fatalf("diagonal jitter must not change facet values: model %q → %q", sel, m.sel["model"])
+	}
+
+	t1 := t0.Add(time.Second) // deliberate later gesture on the other axis
+	m.wheelStep(tea.MouseButtonWheelRight, t1)
+	if m.sel["model"] == sel {
+		t.Fatal("a deliberate horizontal step after a pause must change the value")
+	}
+	m.wheelStep(tea.MouseButtonWheelUp, t1.Add(time.Second))
+	if m.fcur != 0 {
+		t.Fatalf("wheel up must move the selection back, fcur = %d", m.fcur)
+	}
+}
+
+// TestWheelThroughUpdate verifies the wiring: a live tea.MouseMsg wheel press
+// reaches the gate (one immediate step, no command), and non-wheel mouse
+// traffic is ignored.
+func TestWheelThroughUpdate(t *testing.T) {
+	m := layoutModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+
+	nm, cmd := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m = nm.(model)
+	if cmd != nil {
+		t.Fatal("wheel input must never produce a command")
+	}
+	if m.fcur != 1 {
+		t.Fatalf("wheel press must step the selection, fcur = %d", m.fcur)
+	}
+
+	sel := map[string]string{}
+	for k, v := range m.sel {
+		sel[k] = v
+	}
+	nm, cmd = m.Update(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonNone})
+	m = nm.(model)
+	if cmd != nil || m.fcur != 1 || !reflect.DeepEqual(m.sel, sel) {
+		t.Fatal("non-wheel mouse traffic must be ignored")
 	}
 }

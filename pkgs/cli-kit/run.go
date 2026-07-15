@@ -65,11 +65,12 @@ type host struct {
 	altScreen bool
 	mouse     bool
 	w, h      int
-	appH      int // height last handed to the app (see reflow); -1 until set
+	appW      int // width last handed to a capability app (see reflow); -1 until set
+	appH      int // height last handed to a capability app (see reflow); -1 until set
 }
 
 func newHost(app App) host {
-	h := host{app: app, toggleKey: "ctrl+o", appH: -1}
+	h := host{app: app, toggleKey: "ctrl+o", appW: -1, appH: -1}
 	askable, isAsk := app.(Askable)
 	commandable, isCmd := app.(Commandable)
 	if isAsk || isCmd {
@@ -167,9 +168,9 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return h, tea.Batch(cmd, h.reflow())
 }
 
-// reflow resizes the app to the rows left over above the box, sending it a
-// WindowSizeMsg only when that height actually changes so the app reflows in
-// place. When the box is closed the app gets the full height back.
+// reflow resizes the app to the space left over above the box, sending it a
+// WindowSizeMsg whenever either effective dimension changes. When the box is
+// closed the app gets the full height back.
 func (h *host) reflow() tea.Cmd {
 	if !h.hasBox || h.h == 0 {
 		return nil
@@ -180,10 +181,10 @@ func (h *host) reflow() tea.Cmd {
 			target = 0
 		}
 	}
-	if target == h.appH {
+	if h.w == h.appW && target == h.appH {
 		return nil
 	}
-	h.appH = target
+	h.appW, h.appH = h.w, target
 	var cmd tea.Cmd
 	h.app, cmd = h.app.Update(tea.WindowSizeMsg{Width: h.w, Height: target})
 	return cmd

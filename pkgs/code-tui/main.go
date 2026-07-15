@@ -844,13 +844,27 @@ func (m model) genConfigYAML() string {
 // ── model ────────────────────────────────────────────────────────────────────
 // layout modes, chosen from the terminal size (unless the user collapses):
 //
-//	split     — wide:            the focused list on the left, preview on the right
-//	stacked   — narrow but tall: list on top, preview stacked below it (full width)
-//	collapsed — narrow+short/‹p›: one full-width pane (list, or result w/ showResult)
+//	split     — wide:   the focused list on the left, routing preview on the
+//	            right, and Usage spanning the full bottom width
+//	medium    — generator-dominant: the list full width on top (primary), then
+//	            Routing and Usage side by side in a secondary row, with Usage's
+//	            provider groups stacked vertically inside its narrower column
+//	collapsed — narrow/short or ‹p›: one full-width panel at a time (list, or
+//	            routing w/ showResult) — the Generator stays usable instead of
+//	            compressing every section into an unreadable split
 const (
 	modeSplit = iota
-	modeStacked
+	modeMedium
 	modeCollapsed
+)
+
+// size classes behind mode(): derived from terminal cells and the measured
+// rendered minima of each section (#197) — never from pixels or a hard-coded
+// screenshot width.
+const (
+	sizeWide = iota
+	sizeMedium
+	sizeNarrow
 )
 
 // gut is the left gutter every panel shares, so the whole UI hangs off one
@@ -863,7 +877,20 @@ const (
 	headRows = 2
 	// the launch footer pinned under the list: blank + cost + speed + ⏎ launch.
 	launchFooterRows = 4
+	// routingMinW is the narrowest useful routing column: pane chrome plus room
+	// for a lead chain — below this a side-by-side routing panel stops earning
+	// its keep.
+	routingMinW = 33
+	// genMinRows is the fewest facet rows the generator list may be windowed to
+	// before the layout must shed secondary sections instead of compressing it.
+	genMinRows = 4
+	// minRouteRows is the fewest routing viewport rows worth pinning chrome around.
+	minRouteRows = 4
 )
+
+// genColMinH is the generator column's minimum useful height: the pinned head,
+// a windowed-but-usable slice of the facet list, and the pinned launch footer.
+const genColMinH = headRows + genMinRows + launchFooterRows
 
 // genRowWidth is the width needed to render the widest generator facet row (all
 // options) on a single line — the minimum for the left panel.
@@ -881,20 +908,63 @@ func (m model) genRowWidth() int {
 	return max + 2
 }
 
+// sizeMode classifies the terminal into the wide / medium / narrow-short
+// responsive classes. Widths compare against the measured generator row,
+// routing, and usage-column minima; heights against the chrome each composition
+// pins on screen — breakpoints track content needs, not screenshot numbers.
+func (m model) sizeMode() int {
+	if m.w >= m.genRowWidth()+routingMinW && m.h >= m.wideMinH() {
+		return sizeWide
+	}
+	if m.w >= m.mediumMinW() && m.h >= m.mediumMinH() {
+		return sizeMedium
+	}
+	return sizeNarrow
+}
+
 func (m model) mode() int {
 	if m.collapse {
 		return modeCollapsed
 	}
-	if m.w >= m.genRowWidth()+33 { // room for the list + a useful side preview
+	switch m.sizeMode() {
+	case sizeWide:
 		return modeSplit
+	case sizeMedium:
+		return modeMedium
+	default:
+		return modeCollapsed
 	}
-	// too narrow for side-by-side; stack the preview below the list if the
-	// terminal is tall enough to give the list, footer, and preview (with its
-	// pill head + fallback hint) a usable share, else collapse.
-	if m.bodyH() >= 19 {
-		return modeStacked
+}
+
+// wideMinH is the least height at which the wide composition stays readable:
+// a usable generator column above the full-width Usage footer. Shorter than
+// this, keeping every section visible would compress them all — shed instead.
+func (m model) wideMinH() int {
+	return topGap + genColMinH + m.footerH(true)
+}
+
+// mediumMinH stacks the generator over the secondary Routing+Usage row (at its
+// measured minimum) with Usage out of the footer.
+func (m model) mediumMinH() int {
+	return topGap + genColMinH + 1 + m.secondaryMinH() + m.footerH(false)
+}
+
+// mediumMinW: the secondary row must seat a useful routing viewport beside the
+// measured usage column without clipping either.
+func (m model) mediumMinW() int {
+	return routingMinW + m.usageColW()
+}
+
+// footerH measures the pinned footer for a composition directly from its parts
+// — mode selection depends on it, so it must not consult the mode itself.
+func (m model) footerH(withUsage bool) int {
+	h := 1 + lipgloss.Height("  "+m.help.View(keys))
+	if withUsage {
+		if p := m.usagePanel(); p != "" {
+			h += 1 + lipgloss.Height(p)
+		}
 	}
-	return modeCollapsed
+	return h
 }
 
 // bodyH is the height available above the pinned footer.
@@ -939,25 +1009,16 @@ func (m model) launchFooter() []string {
 	}
 }
 
-// stackedSplit divides the inner body height (minus the section head and the
-// 1-line divider) between the list and the preview: the list takes what its
-// content needs, capped at ~60% and floored so the preview keeps ≥ minPrev rows.
-func stackedSplit(bodyH, bodyLen int) (listH, prevH int) {
-	const sep, minPrev, minList = 1, 8, 3 // minPrev covers the preview chrome + ≥4 route rows
-	inner := bodyH - headRows - launchFooterRows - sep
-	listH = bodyLen
-	if c := inner * 3 / 5; listH > c {
-		listH = c
-	}
-	if listH > inner-minPrev {
-		listH = inner - minPrev
-	}
-	if listH < minList {
-		listH = minList
-	}
-	prevH = inner - listH
-	if prevH < minPrev {
-		prevH = minPrev
+// mediumSplit gives the Routing+Usage row only its measured minimum, then lets
+// the primary Generator absorb every remaining row. The medium height threshold
+// guarantees both sections fit; taller terminals therefore expand Generator
+// instead of leaving slack below the compact secondary content.
+func (m model) mediumSplit(bodyH int) (genH, secH int) {
+	secH = m.secondaryMinH()
+	genH = bodyH - 1 - secH
+	if genH < genColMinH {
+		genH = genColMinH
+		secH = bodyH - 1 - genH
 	}
 	return
 }
@@ -971,14 +1032,74 @@ func (m model) previewDims() (int, int) {
 	switch m.mode() {
 	case modeCollapsed:
 		return m.w - gut, bodyH - prevChromeRows
-	case modeStacked:
-		body, _ := m.bodyLines()
-		_, ph := stackedSplit(bodyH, len(body))
-		return m.w - gut, ph - prevChromeRows
+	case modeMedium:
+		_, secH := m.mediumSplit(bodyH)
+		return m.routingColW() - gut, secH - prevChromeRows
 	default: // split — the pane draws a border + prevPadL inside its width, so the
 		// viewport (what renderRoute wraps to) gets the inner text area, not the box.
 		return m.w - m.listW() - 3 - prevPadL, bodyH - prevChromeRows
 	}
+}
+
+// routingColW is the medium secondary row's routing share: whatever the
+// measured usage column leaves free.
+func (m model) routingColW() int {
+	w := m.w - m.usageColW()
+	if w < routingMinW {
+		w = routingMinW
+	}
+	return w
+}
+
+// ── trackpad / mouse wheel ───────────────────────────────────────────────────
+// The wheel drives the generator directly: vertical scroll moves the facet
+// selection, horizontal scroll changes the selected facet's value. Terminals
+// (and SSH) offer no haptic channel, so the "detent" is temporal: a wheelGate
+// axis-locks each gesture and rations steps, letting a trackpad fling or
+// diagonal jitter advance at most one controlled step while a single detented
+// wheel click still acts immediately.
+const (
+	wheelAxisNone = iota
+	wheelAxisV
+	wheelAxisH
+)
+
+// wheelIdle is the longest gap between wheel events that still reads as one
+// continuous gesture — a pause beyond it starts a fresh (immediate) step.
+// wheelRepeat rations further steps inside a held gesture, so a deliberate
+// continuous scroll advances at a controlled cadence instead of per event.
+const (
+	wheelIdle   = 200 * time.Millisecond
+	wheelRepeat = 300 * time.Millisecond
+)
+
+// wheelGate arbitrates raw wheel events into discrete facet steps.
+type wheelGate struct {
+	axis   int       // locked gesture axis (wheelAxisNone when idle)
+	last   time.Time // last event seen — orthogonal jitter keeps the lock alive
+	stepAt time.Time // last event that was allowed to act
+}
+
+// admit reports whether a wheel event on axis a at time t may act. The first
+// event after an idle pause acts immediately and locks the gesture to its
+// axis; while locked, orthogonal events are swallowed (diagonal jitter) and
+// same-axis events act only every wheelRepeat (burst resistance).
+func (g *wheelGate) admit(a int, t time.Time) bool {
+	fresh := g.axis == wheelAxisNone || t.Sub(g.last) > wheelIdle
+	g.last = t
+	if fresh {
+		g.axis = a
+		g.stepAt = t
+		return true
+	}
+	if a != g.axis {
+		return false
+	}
+	if t.Sub(g.stepAt) >= wheelRepeat {
+		g.stepAt = t
+		return true
+	}
+	return false
 }
 
 type model struct {
@@ -995,6 +1116,8 @@ type model struct {
 	facets []facet
 	fcur   int
 	sel    map[string]string
+
+	wheel wheelGate // trackpad/mouse wheel arbiter: axis lock + step resistance
 
 	vp       viewport.Model
 	spin     spinner.Model
@@ -1147,7 +1270,14 @@ func (m *model) authLine() string {
 	return line
 }
 
-func (m *model) usagePanel() string {
+// usagePanel is the composition-agnostic Usage band sized for the current
+// terminal width — the wide layout's full-width footer form.
+func (m *model) usagePanel() string { return m.usagePanelFor(m.w) }
+
+// usagePanelFor renders auth + refresh + provider usage, laying provider groups
+// side by side only when w seats every column; w <= 0 forces the vertical stack
+// (the medium layout's narrow usage column).
+func (m *model) usagePanelFor(w int) string {
 	auth := m.authLine()
 	if !m.avail.ok {
 		if m.usageCmd == "" {
@@ -1209,7 +1339,7 @@ func (m *model) usagePanel() string {
 	// side-by-side when there's horizontal room, else stacked. colW must fit the
 	// widest row (label · bar · pct · ↻reset · note) without wrapping the note.
 	const colW = 49
-	if len(order) > 1 && m.w >= colW*len(order) {
+	if w > 0 && len(order) > 1 && w >= colW*len(order) {
 		var cols []string
 		for _, p := range order {
 			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[p], "\n")))
@@ -1224,6 +1354,30 @@ func (m *model) usagePanel() string {
 		lines = append(lines, blocks[p]...)
 	}
 	return auth + "\n" + m.refreshLine() + "\n" + strings.Join(lines, "\n")
+}
+
+// usageColumn is the medium layout's right-hand Usage section: a pinned pill
+// head over the usage panel with provider groups forced into a vertical stack —
+// the column is deliberately too narrow for side-by-side groups.
+func (m model) usageColumn() string {
+	return padLeft(m.pill("usage"), gut) + "\n\n" + m.usagePanelFor(0)
+}
+
+// usageColW is the medium usage column's measured width: the widest rendered
+// line of the stacked panel (auth, refresh, bars, notes) — measured, not guessed.
+func (m model) usageColW() int {
+	return lipgloss.Width(m.usageColumn())
+}
+
+// secondaryMinH is the medium secondary row's minimum height: routing's pinned
+// chrome plus a few useful route rows, or the full stacked usage column when
+// that is taller — medium only engages when neither column needs clipping.
+func (m model) secondaryMinH() int {
+	h := prevChromeRows + minRouteRows
+	if u := lipgloss.Height(m.usageColumn()); u > h {
+		h = u
+	}
+	return h
 }
 
 func (m *model) usageRow(w usageWin) string {
@@ -1282,7 +1436,20 @@ func fmtDays(s int64) string {
 	return fmt.Sprintf("%dd", (s+86399)/86400)
 }
 
+// syncPreview re-renders the routing content and jumps back to the top — for
+// content changes (facet cycling, depth, reset), where the old scroll offset
+// points at rows that no longer exist.
 func (m *model) syncPreview() {
+	m.syncPreviewAt(0)
+}
+
+// syncPreviewKeepScroll re-renders while preserving the scroll position where
+// still valid — resizes and background usage refreshes must never yank the view.
+func (m *model) syncPreviewKeepScroll() {
+	m.syncPreviewAt(m.vp.YOffset)
+}
+
+func (m *model) syncPreviewAt(yoff int) {
 	if !m.rdy || m.collapse {
 		return
 	}
@@ -1302,19 +1469,38 @@ func (m *model) syncPreview() {
 	// clip (don't wrap) to pane width — renderRoute already wrapped the chains.
 	content := lipgloss.NewStyle().MaxWidth(m.vp.Width).Render(b.String())
 	m.vp.SetContent(content)
-	m.vp.GotoTop()
+	m.vp.SetYOffset(yoff) // clamps into the new content and viewport height
 }
 
-// footer is the pinned bottom block: the usage panel (if any) then the controls
-// help, each under a rule. Built once here so relayout and View stay in sync.
+// footer is the pinned bottom block: the usage panel (when this composition
+// keeps Usage in the footer) then the controls help, each under a rule. Built
+// once here so relayout and View stay in sync.
 func (m *model) footer() string {
 	rule := stDim.Render(strings.Repeat("─", m.w))
 	var parts []string
-	if p := m.usagePanel(); p != "" {
-		parts = append(parts, rule, p)
+	if m.usageInFooter() {
+		if p := m.usagePanel(); p != "" {
+			parts = append(parts, rule, p)
+		}
 	}
 	parts = append(parts, rule, "  "+m.help.View(keys))
 	return strings.Join(parts, "\n")
+}
+
+// usageInFooter says where Usage lives: the wide layout keeps it as the
+// full-width bottom band; medium moves it into the secondary column (back to
+// the footer while ‹p› hides that row); narrow/short hides it entirely so the
+// Generator stays usable first — fetch state and the refresh cadence keep
+// running unseen, and nothing is refetched when it reappears.
+func (m *model) usageInFooter() bool {
+	switch m.sizeMode() {
+	case sizeWide:
+		return true
+	case sizeMedium:
+		return m.collapse
+	default:
+		return false
+	}
 }
 
 func (m *model) relayout() {
@@ -1332,7 +1518,7 @@ func (m *model) relayout() {
 	} else {
 		m.vp.Width, m.vp.Height = pw, ph
 	}
-	m.syncPreview()
+	m.syncPreviewKeepScroll()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1361,6 +1547,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.spin, cmd = m.spin.Update(msg)
 			return m, cmd
+		}
+	case tea.MouseMsg:
+		// Wheel → generator control (see wheelGate). The routing preview keeps
+		// its keyboard scrolling; wheel input deliberately owns facet steps.
+		if msg.Action == tea.MouseActionPress {
+			m.wheelStep(msg.Button, time.Now())
 		}
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -1460,6 +1652,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// wheelStep translates an admitted wheel event into the matching facet action:
+// vertical scroll moves the selection, horizontal scroll changes the value.
+// Facet semantics stay untouched — these are the exact arrow-key handlers,
+// merely rationed by the wheelGate.
+func (m *model) wheelStep(b tea.MouseButton, t time.Time) {
+	switch b {
+	case tea.MouseButtonWheelUp:
+		if m.wheel.admit(wheelAxisV, t) {
+			m.moveUp()
+		}
+	case tea.MouseButtonWheelDown:
+		if m.wheel.admit(wheelAxisV, t) {
+			m.moveDown()
+		}
+	case tea.MouseButtonWheelLeft:
+		if m.wheel.admit(wheelAxisH, t) {
+			m.cycleFacet(-1)
+		}
+	case tea.MouseButtonWheelRight:
+		if m.wheel.admit(wheelAxisH, t) {
+			m.cycleFacet(1)
+		}
+	}
 }
 
 func (m *model) moveUp() {
@@ -1572,16 +1789,22 @@ func (m model) leftColumn(w, totalH int) string {
 	return m.sectionHead() + list + "\n" + footer
 }
 
-// stackedContent is the narrow-but-tall layout: head + list on top, a full-width
-// divider, then the preview stacked below. The preview keeps its own viewport, so
-// it scrolls (mouse wheel) independently of the list above it.
-func (m model) stackedContent(bodyH int) string {
-	body, _ := m.bodyLines()
-	listH, prevH := stackedSplit(bodyH, len(body))
-	top := m.leftColumn(m.w, headRows+listH+launchFooterRows)
+// mediumContent is the generator-dominant layout: the full-width facet list on
+// top (primary), a divider, then Routing and Usage side by side in a secondary
+// row. Routing keeps its own scrolling viewport; Usage stacks its provider
+// groups vertically inside the measured-width right column.
+func (m model) mediumContent(bodyH int) string {
+	genH, secH := m.mediumSplit(bodyH)
+	top := m.leftColumn(m.w, genH)
 	div := stDim.Render(strings.Repeat("─", m.w))
-	preview := lipgloss.NewStyle().MaxHeight(prevH).Render(padLeft(m.previewColumn(), gut))
-	return lipgloss.JoinVertical(lipgloss.Left, top, div, preview)
+	rw := m.routingColW()
+	// clip each column before fixing its width — Width() alone would wrap any
+	// over-wide line onto an extra physical row and break the row's height.
+	routing := lipgloss.NewStyle().Width(rw).MaxHeight(secH).Render(
+		lipgloss.NewStyle().MaxWidth(rw).Render(padLeft(m.previewColumn(), gut)))
+	usage := lipgloss.NewStyle().MaxWidth(m.w - rw).MaxHeight(secH).Render(m.usageColumn())
+	return lipgloss.JoinVertical(lipgloss.Left, top, div,
+		lipgloss.JoinHorizontal(lipgloss.Top, routing, usage))
 }
 
 func (m model) View() string {
@@ -1594,13 +1817,13 @@ func (m model) View() string {
 	var content string
 	switch m.mode() {
 	case modeCollapsed:
-		if m.showResult && m.w < 62 {
+		if m.showResult && !m.collapse {
 			content = padLeft(m.previewColumn(), gut)
 		} else {
 			content = m.leftColumn(m.w, ch)
 		}
-	case modeStacked:
-		content = m.stackedContent(ch)
+	case modeMedium:
+		content = m.mediumContent(ch)
 	default: // split
 		content = lipgloss.JoinHorizontal(lipgloss.Top,
 			m.leftColumn(m.listW(), ch),
@@ -1722,10 +1945,10 @@ func main() {
 		facets:       facetDefs(glyphs),
 		sel:          defaultSel(),
 	}
-	// No mouse capture: with mouse reporting on, the terminal routes every mouse
-	// event (right-click, selection, paste) to the app, breaking native terminal
-	// behaviour. The preview scrolls via pgup/pgdown / ctrl+u/ctrl+d instead.
-	final, err := clikit.Run(m, clikit.WithAltScreen())
+	// Cell-motion mouse reporting feeds the trackpad/wheel facet control (see
+	// wheelGate); it is the narrowest mode that carries wheel events. The
+	// preview still scrolls via pgup/pgdown / ctrl+u/ctrl+d.
+	final, err := clikit.Run(m, clikit.WithAltScreen(), clikit.WithMouseCellMotion())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
 		os.Exit(1)

@@ -71,6 +71,39 @@ pkgs.runCommand "check-omp-seed"
     [ -f "$config" ] || fail "first boot did not create config.yml"
     [ "$(stat -c '%a' "$config")" = "600" ] || fail "first boot config mode is not 600"
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "first boot did not seed secrets.enabled"
+    [ "$(yq eval '.task.disabledAgents | length' "$config")" = "0" ] || fail "first boot did not seed empty disabledAgents"
+
+    # Scenario: a profile-scoped agent environment must never redirect the
+    # seeder. PI_CODING_AGENT_DIR points at a decoy profile root; apply must
+    # leave the decoy untouched and seed the default root anyway (issue #173:
+    # `atyrode apply` run from inside an omp session leaked the session's
+    # profile into the seeder).
+    export HOME="$TMPDIR/envleak"
+    decoy="$HOME/.omp/profiles/decoy/agent"
+    mkdir -p "$HOME" "$decoy"
+    printf 'setupVersion: 1\n' >"$decoy/config.yml"
+    decoy_before="$(cat "$decoy/config.yml")"
+    PI_CODING_AGENT_DIR="$decoy" atyrode-omp-seed apply >"$TMPDIR/envleak.log"
+    [ "$(cat "$decoy/config.yml")" = "$decoy_before" ] || fail "profile env redirected seeding into the decoy root"
+    [ -f "$HOME/.omp/agent/config.yml" ] || fail "profile env prevented seeding the default root"
+    PI_CODING_AGENT_DIR="$decoy" atyrode-omp-seed status --json >"$TMPDIR/envleak-status.json"
+    jq -e --arg cfg "$HOME/.omp/agent/config.yml" '.config == $cfg' "$TMPDIR/envleak-status.json" >/dev/null \
+      || fail "status honored the profile env instead of the default root"
+
+    # Scenario: a populated local list under a seeded empty-list key is a
+    # local edit — kept and reported as drift, never overwritten.
+    export HOME="$TMPDIR/listdrift"
+    mkdir -p "$HOME/.omp/agent"
+    config="$HOME/.omp/agent/config.yml"
+    cat >"$config" <<'YAML'
+    task:
+      disabledAgents:
+        - scout
+    YAML
+    atyrode-omp-seed apply >"$TMPDIR/listdrift.log"
+    [ "$(yq eval '.task.disabledAgents.[0]' "$config")" = "scout" ] || fail "populated disabledAgents was overwritten by the seed"
+    jq -e '.drift[] | select(.key == "task.disabledAgents")' \
+      "$HOME/.local/state/atyrode/omp-plain-seed/drift.json" >/dev/null || fail "populated disabledAgents not reported as drift"
 
     # Scenario: a local scalar blocks seed mappings — nothing may be
     # destroyed, the blocked leaves report drift, everything else seeds.

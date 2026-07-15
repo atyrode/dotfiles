@@ -4,8 +4,9 @@
 //
 //	CODE_GENERATED     : generated.plain (facet-grid blocks, keyed by combo id)
 //	CODE_USAGE         : optional command (space-split) that prints `omp usage --json`
-//	CODE_OMP           : the omp-managed executable — launches a generated profile
-//	CODE_OMP_DEFAULT   : the bare omp executable — launched when nothing is generated
+//	CODE_OMP           : the omp-managed executable — launches every trusted session:
+//	                     a generated profile as a one-shot --config, or the managed
+//	                     defaults when nothing was generated
 //	CODE_OMP_UNTRUSTED : the ompu sandbox executable — launched by the u key
 package main
 
@@ -882,8 +883,9 @@ func (m model) bodyLines() ([]string, int) {
 }
 
 // unmodified reports whether the generator is still untouched: every facet at its
-// default value and no prompt typed into the suggest box. Enter then launches the
-// bare default omp instead of building a generated config.
+// default value and no prompt typed into the suggest box. Enter then launches
+// omp-managed with no overlay (the managed defaults) instead of building a
+// generated config.
 func (m model) unmodified() bool {
 	if m.firstPrompt != "" {
 		return false
@@ -899,13 +901,14 @@ func (m model) unmodified() bool {
 // launchFooter is the cost/speed meters for the current facet combo plus the
 // enter-to-launch call to action — so the generator always shows what the choice
 // costs, how fast it is, and how Enter will launch it. The call to action tracks
-// the launch rule: an untouched generator runs the bare default omp; any change
-// launches the generated profile. The sandbox (u) key is always offered.
+// the launch rule: an untouched generator runs omp-managed on the managed
+// defaults; any change launches the generated profile. The sandbox (u) key is
+// always offered.
 func (m model) launchFooter() []string {
 	cs, ss := m.costScore(), m.speedScore()
 	cta := "⏎ launch generated profile"
 	if m.unmodified() {
-		cta = "⏎ run your default omp"
+		cta = "⏎ run managed omp"
 	}
 	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("  " + cta)
 	return []string{
@@ -988,7 +991,7 @@ type model struct {
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
 
-	launchDefault   bool              // Enter on an untouched generator: run bare CODE_OMP_DEFAULT
+	launchDefault   bool              // Enter on an untouched generator: run CODE_OMP with no overlay
 	launchUntrusted bool              // u: run the CODE_OMP_UNTRUSTED sandbox
 	genConfig       string            // generated config YAML to launch omp with (generator Enter)
 	firstPrompt     string            // prompt from the suggest box, forwarded as omp's first message
@@ -1674,8 +1677,10 @@ func main() {
 		// selected personal auth state.
 		execForward("CODE_OMP_UNTRUSTED", "ompu", fm.firstPrompt, "")
 	case fm.launchDefault:
-		// Nothing was generated — run bare omp inside the selected auth profile.
-		execForward("CODE_OMP_DEFAULT", "omp", fm.firstPrompt, profile)
+		// Nothing was generated — run omp-managed on the managed defaults inside
+		// the selected auth profile. Every trusted code launch goes through the
+		// managed layers; plain omp is reached by typing `omp` directly.
+		execForward("CODE_OMP", "omp-managed", fm.firstPrompt, profile)
 	case fm.genConfig != "":
 		launchGenerated(fm.genConfig, fm.firstPrompt, profile)
 	}

@@ -23,7 +23,11 @@ snapshot_file="$state_root/last-applied.yml"
 report_file="$state_root/drift.json"
 dry_run="${AGENT_TOOLS_DRY_RUN:-0}"
 
-agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}"
+# Always the default state root: the seed's target and its global drift state
+# are a pair. Honoring a caller's PI_CODING_AGENT_DIR (e.g. `atyrode apply` run
+# from inside a profile-scoped agent session) would audit — and seed — the
+# wrong profile's config against state recorded for the default root.
+agent_dir="$HOME/.omp/agent"
 
 transient_files=()
 cleanup() {

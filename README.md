@@ -94,10 +94,10 @@ ompu          # Restricted launcher for deliberately untrusted repositories
 ```
 
 `code` opens a TUI with a prompt→profile classifier on the local ollama daemon.
-Enter with nothing changed runs your default `omp`; type a prompt or move a dial
-and it generates a managed profile, launching it through `omp-managed`. The `u`
-key opens the `ompu` sandbox. The model catalog lives in
-[`omp/models.yml`](omp/models.yml).
+Every trusted launch goes through `omp-managed`: Enter with nothing changed runs
+the managed defaults; type a prompt or move a dial and it generates a managed
+profile. The `u` key opens the `ompu` sandbox; plain `omp` is reached by typing
+`omp` directly. The model catalog lives in [`omp/models.yml`](omp/models.yml).
 
 OMP, shared skills, and mise are installed by `zconf`
 with the rest of the Home Manager profile. See

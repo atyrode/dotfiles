@@ -1165,7 +1165,6 @@ let
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
       export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
       export CODE_OMP=${lib.getExe ompManaged}
-      export CODE_OMP_DEFAULT="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
       export CODE_USAGE="$omp_bin usage --json"
       if [[ ! -v CODE_AUTH_PROFILES ]]; then
@@ -1197,10 +1196,10 @@ let
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
       # daemon/model. The Bubble Tea usage widget owns the active OMP auth profile:
       # `a` switches it, usage is fetched from that profile, and every trusted launch
-      # receives the same --profile. Launch targets: ↵ with no changes runs your
-      # selected bare omp (CODE_OMP_DEFAULT); a generated profile runs through the
-      # managed layering (CODE_OMP); `u` opens the fixed untrusted sandbox
-      # (CODE_OMP_UNTRUSTED).
+      # receives the same --profile. Launch targets: ↵ runs through the managed
+      # layering (CODE_OMP) — the managed defaults when nothing was changed, the
+      # generated profile otherwise; `u` opens the fixed untrusted sandbox
+      # (CODE_OMP_UNTRUSTED). Plain omp is reached by typing `omp`, never via code.
 
       usage() {
         printf '%s\n' \
@@ -1213,9 +1212,9 @@ let
           '  code -h, --help      this help' \
           "" \
           'In the generator: type a prompt or adjust the dials, a switches the' \
-          'visible OMP auth combination, ? shows all keys, Enter launches (your' \
-          'selected bare omp if nothing was changed, the generated profile' \
-          'otherwise), and u opens an untrusted sandbox.'
+          'visible OMP auth combination, ? shows all keys, Enter launches through' \
+          'the managed layering (the managed defaults if nothing was changed, the' \
+          'generated profile otherwise), and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in

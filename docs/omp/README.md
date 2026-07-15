@@ -17,7 +17,7 @@ repository launchers are not interchangeable:
 | Invoke | Authentication and state | Configuration and policy |
 | --- | --- | --- |
 | `omp` | The selected OMP `--profile`, or OMP's default state root | Plain, mutable upstream configuration under `~/.omp`; no repository-managed policy is injected |
-| `code` | The `mine`/`mum` combination visible in its usage widget; press `a` to switch | With no generated input, launches plain `omp`; with a prompt or changed dial, launches a generated routing profile through the managed layers |
+| `code` | The `mine`/`mum` combination visible in its usage widget; press `a` to switch | Always launches through the managed layers: a generated routing profile with a prompt or changed dial, the managed defaults otherwise. Plain `omp` is never launched via `code` |
 | `omp-managed` | The selected OMP `--profile` | Injects the Nix-owned defaults, platform extensions, and enforced policy; maintenance subcommands bypass overlay injection but remain subject to repository intercepts/guards |
 | `ompu` | Always the fixed `untrusted` profile | Fixed credential-sanitized untrusted sandbox; does not inherit the personal profile selected in `code` |
 

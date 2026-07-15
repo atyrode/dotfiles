@@ -226,8 +226,9 @@ func TestCycleFacetClearsMain(t *testing.T) {
 }
 
 // TestUnmodified locks the launch decision: an untouched generator (defaults, no
-// prompt) is "unmodified" so Enter runs the bare default omp; any changed facet
-// or a typed prompt flips it, so Enter launches the generated profile instead.
+// prompt) is "unmodified" so Enter runs omp-managed on the managed defaults; any
+// changed facet or a typed prompt flips it, so Enter launches the generated
+// profile instead.
 func TestUnmodified(t *testing.T) {
 	if m := (model{sel: defaultSel()}); !m.unmodified() {
 		t.Errorf("defaults + no prompt should be unmodified (→ default omp)")

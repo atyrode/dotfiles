@@ -57,7 +57,7 @@ them together.
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
 | `omp-managed` | The managed launch target: platform extensions, managed defaults, and enforced policy over a one-shot `--config`, with no preset overlay | Managed defaults and policy, plus the generated `--config` the generator passes |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
-| `code` | The profile generator TUI (see below) | Generates a managed profile and launches it through `omp-managed`, or runs bare `omp` when nothing is asked for |
+| `code` | The profile generator TUI (see below) | Always launches through `omp-managed`: a generated profile as a one-shot `--config`, or the managed defaults when nothing was asked for |
 
 For discoverability beyond the wrapper contract, see the versioned
 [OMP feature wiki](omp/README.md). Its CLI tables describe plain upstream OMP;
@@ -130,11 +130,13 @@ open `omp --profile mum`, run `/login anthropic` with Mum's Claude identity, and
 run `/login openai-codex` with Alex's Codex identity. The existing `default`
 profile is the `mine` combination and remains the initial selection.
 
-There are three ways to leave the TUI:
+There are three ways to leave the TUI — every trusted launch goes through
+`omp-managed`; plain `omp` is reached by typing `omp` directly, never via
+`code`:
 
-- **Enter with nothing changed** (no prompt, default dials) runs bare `omp`
-  inside the selected authentication profile — you didn't ask for special
-  routing, so it launches your normal session with the visible identity pair.
+- **Enter with nothing changed** (no prompt, default dials) runs `omp-managed`
+  with no overlay — the managed defaults — inside the selected authentication
+  profile.
 - **Enter after typing a prompt or moving a dial** generates a managed routing
   profile and launches it through `omp-managed` as a one-shot `--config`, with
   the selected authentication profile and typed prompt carried into the session.
@@ -234,7 +236,10 @@ the writable machine configuration, so a "defaults that lose to local edits"
 layer cannot exist at launch time. Instead, `atyrode-omp-seed apply` runs
 during activation (after the legacy migration) and three-way merges the seed
 into `~/.omp/agent/config.yml` against the last-applied seed recorded in
-`~/.local/state/atyrode/omp-plain-seed/`:
+`~/.local/state/atyrode/omp-plain-seed/`. The seeder always targets that
+default state root — a caller's profile-scoped environment (for example
+`atyrode apply` run from inside an omp session) never redirects it, and named
+profile roots are never seeded:
 
 - a key the operator never touched is written and later follows repository
   updates;

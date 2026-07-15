@@ -16,22 +16,51 @@ and checkout-specific behavior remain aligned.
 
 ## Apply panel
 
-Startup performs two read-only operations in order:
+Startup resolves the apply plan first, then starts two read-only operations
+asynchronously:
 
 1. `atyrode apply --plan --json` supplies the host, system, target revision,
-   backend, and capabilities rendered in the plan panel. Remote plans include
-   the full commit as `resolvedRevision`.
+   backend, and active capabilities rendered in the plan panel. Remote plans
+   include the full commit as `resolvedRevision`.
 2. `atyrode apply --ref <resolvedRevision> --preview-json` runs the same
    read-only `nh … --dry` preview and returns the stable schema described below.
    The TUI renders that structure rather than parsing terminal text.
+3. `atyrode inventory --ref <resolvedRevision> --json` supplies the complete
+   capability manifest for that exact commit. The inventory load runs alongside
+   the preview and cannot block or disable apply confirmation.
 
 No activation occurs during startup. Pressing `a` or `enter` opens a confirmation
 step; only `y` then runs `atyrode apply --ref <resolvedRevision>` in the terminal.
 The preview and activation therefore address the same immutable commit even if
 the published branch advances while the cockpit is open. `n` or `esc` cancels
-confirmation, `r` resolves and previews the branch again, arrow keys or `j`/`k`
-scroll the preview, `d` toggles between the operator summary and normalized
-technical details, and `q` exits.
+confirmation, `r` resolves and previews
+the branch again, arrow keys or `j`/`k` scroll the focused pane, and `d` toggles
+between the operator summary and normalized technical details. Press `c` to
+open or focus capabilities and `c`/`esc` to return to the preview without
+resetting either pane.
+
+## Capability panel
+
+Capabilities appear in the apply plan's declared active order. The selected
+view shows `Title  n/N`, textual active/applicable state, resolved item count,
+purpose, deliverables grouped by kind, and delivery, system, security, and
+mutable-state boundaries. Deliberate marker capabilities such as `server`
+explicitly say that they have no direct deliverables. Descriptions lead each
+item; name, version, source, and delivery are secondary.
+
+Use `[`/`]` or left/right arrows to cycle backward and forward with wrapping.
+On wide terminals the activation preview remains beside a 42-cell capability
+panel; `Tab` moves scrolling focus between them. Medium terminals open a
+full-width capability view, while narrow terminals stack the selection summary
+over a safely wrapped, scrollable detail list. Selection and both independent
+scroll positions survive `c`, `esc`, focus changes, and the Ask overlay.
+
+The parser accepts inventory schema version 1 only, requires the manifest's
+full revision and system to equal the apply plan, derives the platform from that
+system, and resolves the planned host through its canonical id or aliases.
+Loading, command failures, and identity/schema mismatches remain visible as
+text inside the capability view. They never substitute stale inventory and
+never change preview or confirmation state.
 
 ## Ask panel
 
@@ -68,18 +97,21 @@ host, system, or full revision differs from the plan.
 
 ## Scope
 
-This package owns the apply cockpit from issue #110 and its read-only Ask panel
-from issue #117. Follow-up operational panels remain separate:
+This package owns the apply cockpit from issue #110, its read-only Ask panel
+from issue #117, and the capability inventory panel from issue #196. Follow-up
+operational panels remain separate:
 
 - issue #111: generations, rollback, and clean;
-- issue #112: doctor, capabilities, and package inventory.
+- issue #112: doctor and remaining operational read panels.
 
 ## Verification
 
-`nix build .#atyrode-tui` runs the focused Go tests. They cover plan/preview
-command sequencing, explicit confirmation, failure safety, terminal-output
-normalization, responsive layout, CLI-derived Ask grounding, streamed
-completion, cancellation, toggle behavior, and preserved cockpit state. Visual
-changes also follow `docs/tui-verification.md`: capture the app in tmux under
-the truecolor environment and inspect both the character grid and a `freeze`
-render.
+`nix build .#atyrode-tui` runs the focused Go tests. They cover plan, preview,
+and exact-revision inventory command sequencing; schema and identity
+validation; active order; cycling and focus; independent scroll preservation;
+grouping, empty markers, long text, platform state, loading and failure safety;
+explicit apply confirmation; responsive 140-, 100-, 72-, and 44-column
+layouts; CLI-derived Ask grounding; streaming; and cancellation. Visual changes
+also follow `docs/tui-verification.md`: capture the app in tmux under the
+truecolor environment, verify PUA codepoints and row bounds from the character
+grid, and inspect `freeze` renders.

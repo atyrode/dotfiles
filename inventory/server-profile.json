@@ -16,6 +16,7 @@
     "bat",
     "btop",
     "bubblewrap",
+    "charm-freeze",
     "claude-code",
     "codex",
     "direnv",
@@ -25,8 +26,10 @@
     "fzf",
     "gh",
     "git",
+    "jetbrains-mono",
     "jq",
     "mise",
+    "nerd-fonts-symbols-only",
     "omp-configured",
     "ripgrep",
     "tmux",
@@ -95,12 +98,12 @@
     "aarch64-linux": {
       "maxNarBytes": 2684354560,
       "maxStorePaths": 500,
-      "maxTopLevelPackages": 40
+      "maxTopLevelPackages": 45
     },
     "x86_64-linux": {
       "maxNarBytes": 2617245696,
       "maxStorePaths": 450,
-      "maxTopLevelPackages": 40
+      "maxTopLevelPackages": 45
     }
   },
   "systemOwned": [

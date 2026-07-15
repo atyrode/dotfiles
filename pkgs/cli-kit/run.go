@@ -16,6 +16,12 @@ type App interface {
 // RunOption configures Run.
 type RunOption func(*host)
 
+// MessageFilter runs before Bubble Tea dispatches a message. Returning nil
+// drops the message before Update and View, which is useful for coalescing
+// high-rate input that would otherwise trigger redundant redraws. The model
+// passed to the filter is the consumer app, not cli-kit's host wrapper.
+type MessageFilter func(tea.Model, tea.Msg) tea.Msg
+
 // WithToggleKey overrides the key that opens the prompt box (default "ctrl+o").
 func WithToggleKey(k string) RunOption {
 	return func(h *host) { h.toggleKey = k }
@@ -29,6 +35,11 @@ func WithAltScreen() RunOption {
 // WithMouseCellMotion enables cell-motion mouse reporting (e.g. wheel scroll).
 func WithMouseCellMotion() RunOption {
 	return func(h *host) { h.mouse = true }
+}
+
+// WithMessageFilter installs a pre-dispatch Bubble Tea message filter.
+func WithMessageFilter(filter MessageFilter) RunOption {
+	return func(h *host) { h.messageFilter = filter }
 }
 
 // Run starts app under a cli-kit host that auto-mounts capabilities: Askable gets
@@ -47,6 +58,9 @@ func Run(app App, opts ...RunOption) (tea.Model, error) {
 	if h.mouse {
 		teaOpts = append(teaOpts, tea.WithMouseCellMotion())
 	}
+	if h.messageFilter != nil {
+		teaOpts = append(teaOpts, tea.WithFilter(h.filterMessage))
+	}
 	final, err := tea.NewProgram(h, teaOpts...).Run()
 	if fh, ok := final.(host); ok {
 		return fh.app, err
@@ -57,16 +71,29 @@ func Run(app App, opts ...RunOption) (tea.Model, error) {
 // host wraps a consumer App, overlaying the prompt box when active and routing
 // input between the two.
 type host struct {
-	app       tea.Model
-	box       PromptBox
-	hasBox    bool
-	active    bool
-	toggleKey string
-	altScreen bool
-	mouse     bool
-	w, h      int
-	appW      int // width last handed to a capability app (see reflow); -1 until set
-	appH      int // height last handed to a capability app (see reflow); -1 until set
+	app           tea.Model
+	box           PromptBox
+	hasBox        bool
+	active        bool
+	toggleKey     string
+	altScreen     bool
+	mouse         bool
+	messageFilter MessageFilter
+	w, h          int
+	appW          int // width last handed to a capability app (see reflow); -1 until set
+	appH          int // height last handed to a capability app (see reflow); -1 until set
+}
+
+// filterMessage unwraps the current host so consumer filters can reason about
+// their own model while still running at Bubble Tea's pre-Update boundary.
+func (h host) filterMessage(current tea.Model, msg tea.Msg) tea.Msg {
+	if h.messageFilter == nil {
+		return msg
+	}
+	if currentHost, ok := current.(host); ok {
+		current = currentHost.app
+	}
+	return h.messageFilter(current, msg)
 }
 
 func newHost(app App) host {

@@ -1,20 +1,21 @@
 package main
 
 import (
-	"fmt"
-	"path/filepath"
-	"reflect"
-	"regexp"
-	"strings"
-	"testing"
-	"time"
-
 	clikit "cli-kit"
+	"fmt"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"io"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
 )
 
 // ansiRe strips SGR sequences so tests assert on visible text regardless of the
@@ -956,6 +957,208 @@ func TestWheelThroughUpdate(t *testing.T) {
 	if cmd != nil || m.fcur != 1 || !reflect.DeepEqual(m.sel, sel) {
 		t.Fatal("non-wheel mouse traffic must be ignored")
 	}
+}
+
+func TestWheelInputFilterDetentAndRearm(t *testing.T) {
+	m := layoutModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	now := time.Unix(1000, 0)
+	filter := wheelInputFilter{now: func() time.Time { return now }}
+	wheel := func(b tea.MouseButton) tea.MouseMsg {
+		return tea.MouseMsg{Action: tea.MouseActionPress, Button: b, X: 2, Y: topGap + 2}
+	}
+
+	first := filter.Filter(m, wheel(tea.MouseButtonWheelUp))
+	if _, ok := first.(admittedWheelMsg); !ok {
+		t.Fatalf("first gesture event = %T, want admittedWheelMsg", first)
+	}
+	nm, _ := m.Update(first)
+	m = nm.(model)
+	if m.fcur != 1 {
+		t.Fatalf("first wheel-up gesture did not move down: fcur = %d", m.fcur)
+	}
+	for range 100 {
+		if got := filter.Filter(m, wheel(tea.MouseButtonWheelUp)); got != nil {
+			t.Fatalf("same-axis momentum reached Update as %T", got)
+		}
+		if got := filter.Filter(m, wheel(tea.MouseButtonWheelRight)); got != nil {
+			t.Fatalf("axis jitter reached Update as %T", got)
+		}
+		if got := filter.Filter(m, tea.MouseMsg{Action: tea.MouseActionMotion, X: 3, Y: topGap + 2}); got != nil {
+			t.Fatalf("unused mouse motion reached Update as %T", got)
+		}
+	}
+	now = now.Add(wheelIdle + time.Millisecond)
+	second := filter.Filter(m, wheel(tea.MouseButtonWheelDown))
+	if _, ok := second.(admittedWheelMsg); !ok {
+		t.Fatalf("second gesture after release = %T, want admittedWheelMsg", second)
+	}
+	nm, _ = m.Update(second)
+	m = nm.(model)
+	if m.fcur != 0 {
+		t.Fatalf("re-armed wheel-down gesture did not move up: fcur = %d", m.fcur)
+	}
+}
+
+func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
+	m := layoutModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	m.selectionState = filepath.Join(t.TempDir(), "selection.json")
+	now := time.Unix(1000, 0)
+	filter := wheelInputFilter{now: func() time.Time { return now }}
+	left := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelLeft, X: 2, Y: topGap + 2}
+
+	for range 100 {
+		if msg := filter.Filter(m, left); msg != nil {
+			nm, _ := m.Update(msg)
+			m = nm.(model)
+		}
+	}
+	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "claude-led" {
+		t.Fatalf("persisted lane after admitted wheel-left = %q, want claude-led", got)
+	}
+
+	now = now.Add(wheelIdle + time.Millisecond)
+	right := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelRight, X: 2, Y: topGap + 2}
+	nm, _ := m.Update(filter.Filter(m, right))
+	m = nm.(model)
+	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "mixed" {
+		t.Fatalf("persisted lane after re-armed wheel-right = %q, want mixed", got)
+	}
+}
+
+func TestWheelInputFilterKeepsRoutingContinuous(t *testing.T) {
+	m := layoutModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	m.vp.Height = 2
+	m.vp.SetContent("zero\none\ntwo\nthree")
+	filter := wheelInputFilter{}
+	x, y := m.w-2, topGap+2
+	wheel := func(b tea.MouseButton) tea.MouseMsg {
+		return tea.MouseMsg{Action: tea.MouseActionPress, Button: b, X: x, Y: y}
+	}
+
+	for want := 1; want <= 2; want++ {
+		msg := filter.Filter(m, wheel(tea.MouseButtonWheelUp))
+		if _, ok := msg.(tea.MouseMsg); !ok {
+			t.Fatalf("routing event %d = %T, want ordinary MouseMsg", want, msg)
+		}
+		nm, _ := m.Update(msg)
+		m = nm.(model)
+		if m.vp.YOffset != want {
+			t.Fatalf("routing event %d: YOffset = %d, want %d", want, m.vp.YOffset, want)
+		}
+	}
+	if got := filter.Filter(m, wheel(tea.MouseButtonWheelUp)); got != nil {
+		t.Fatalf("clamped routing event reached redraw as %T", got)
+	}
+	if got := filter.Filter(m, wheel(tea.MouseButtonWheelLeft)); got != nil {
+		t.Fatalf("inert routing horizontal event reached redraw as %T", got)
+	}
+	if got := filter.Filter(m, wheel(tea.MouseButtonWheelDown)); got == nil {
+		t.Fatal("routing wheel-down must remain continuous away from the clamp")
+	}
+}
+
+type programResult struct {
+	model tea.Model
+	err   error
+}
+
+type burstProbe struct {
+	model
+	views   *atomic.Int64
+	keySeen chan int64
+}
+
+func (p burstProbe) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "j" {
+		p.keySeen <- p.views.Load()
+	}
+	nm, cmd := p.model.Update(msg)
+	p.model = nm.(model)
+	return p, cmd
+}
+
+func (p burstProbe) View() string {
+	p.views.Add(1)
+	return p.model.View()
+}
+
+// TestRawMouseBurstRemainsResponsive drives the real Bubble Tea ANSI parser
+// with a trackpad-like wheel/jitter/motion burst, then a keyboard command and a
+// second gesture after release. Rejected events must never reach Update/View.
+func TestRawMouseBurstRemainsResponsive(t *testing.T) {
+	m := layoutModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	m.usageCmd = "" // keep the program deterministic: no background fetch/ticks
+	var views atomic.Int64
+	keySeen := make(chan int64, 1)
+	clock := atomic.Int64{}
+	clock.Store(time.Unix(1000, 0).UnixNano())
+	filter := wheelInputFilter{now: func() time.Time { return time.Unix(0, clock.Load()) }}
+	inR, inW := io.Pipe()
+	p := tea.NewProgram(
+		burstProbe{model: m, views: &views, keySeen: keySeen},
+		tea.WithInput(inR),
+		tea.WithOutput(io.Discard),
+		tea.WithFilter(filter.Filter),
+	)
+	done := make(chan programResult, 1)
+	go func() {
+		final, err := p.Run()
+		done <- programResult{model: final, err: err}
+	}()
+
+	started := time.Now()
+	var redrawsAtKey int64
+	for range 300 {
+		fmt.Fprint(inW, "\x1b[<64;3;4M") // vertical wheel
+		fmt.Fprint(inW, "\x1b[<67;3;4M") // horizontal axis jitter
+		fmt.Fprint(inW, "\x1b[<35;4;4M") // cell motion with no button
+	}
+	fmt.Fprint(inW, "j")
+	select {
+	case redrawsAtKey = <-keySeen:
+		if redrawsAtKey > 3 {
+			t.Fatalf("keyboard waited behind %d redraws; rejected burst events reached View", redrawsAtKey)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("keyboard input was starved after the first trackpad gesture")
+	}
+
+	clock.Add(int64(wheelIdle + time.Millisecond))
+	for range 300 {
+		fmt.Fprint(inW, "\x1b[<65;3;4M") // later opposite vertical gesture
+		fmt.Fprint(inW, "\x1b[<66;3;4M") // horizontal axis jitter
+		fmt.Fprint(inW, "\x1b[<35;4;4M") // cell motion
+	}
+	time.Sleep(10 * time.Millisecond) // force a separate ANSI key read
+	fmt.Fprint(inW, "q")
+	inW.Close()
+
+	var result programResult
+	select {
+	case result = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Bubble Tea event loop stayed backlogged after the second gesture")
+	}
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	final := result.model.(burstProbe).model
+	if final.fcur != 1 {
+		t.Fatalf("want one first-gesture step + keyboard + one re-armed step: fcur = %d, want 1", final.fcur)
+	}
+	if got := views.Load(); got > 8 {
+		t.Fatalf("raw burst produced %d views, want a bounded redraw count <= 8", got)
+	}
+	t.Logf("1800 raw mouse messages + keyboard + second gesture: %d views, key after %d views, %s total",
+		views.Load(), redrawsAtKey, time.Since(started))
 }
 
 // ── usage identity · collapsible sections · contextual help (#198) ──────────

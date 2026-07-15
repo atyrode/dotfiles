@@ -11,14 +11,55 @@ permissions:
   contents: read
   # cache-nix-action purges superseded platform caches after saving.
   actions: write
+  # The classify job lists pull-request files.
+  pull-requests: read
 
 concurrency:
   group: nix-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Docs-only changes skip the 3-platform matrix (#169). Classification fails
+  # closed: any API error, empty file list, or non-PR event runs the full
+  # matrix. Only `docs/**` and `README.md` are inert; every other Markdown
+  # file is treated as code because it can be a derivation input (deployed
+  # agents/skills, omp rules, home/claude/CLAUDE.md).
+  changes:
+    name: classify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - name: Classify changed paths
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          code=true
+          if [ -n "$PR_NUMBER" ]; then
+            if files="$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" \
+              --paginate --jq '.[].filename')" && [ -n "$files" ]; then
+              code=false
+              while IFS= read -r f; do
+                case "$f" in
+                  docs/* | README.md) ;;
+                  *) code=true ;;
+                esac
+              done <<EOF
+          $files
+          EOF
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "classified: code=$code"
+
   check:
     name: ${{ matrix.system }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -64,3 +105,49 @@ jobs:
 
       - name: Check flake
         run: nix flake check --show-trace
+
+  # Docs-only fast path: Markdown is not fully inert — links are linted — so
+  # run just the docs-links check when the matrix is skipped. No store cache:
+  # the check only needs python3 from the binary cache.
+  docs-links:
+    name: docs-links
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check documentation links
+        run: nix build .#checks.x86_64-linux.docs-links --show-trace
+
+  # Sole required status check (#169). Always reports, so a path-skipped
+  # matrix can never leave a pull request stuck on a missing check. Passes
+  # only when classification succeeded, nothing failed or was cancelled, and
+  # at least one real verification (matrix or docs-links) ran.
+  ci-gate:
+    name: ci-gate
+    needs: [changes, check, docs-links]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify required jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          jq -e '
+            (.changes.result == "success")
+            and ([.[] | .result] | all(. == "success" or . == "skipped"))
+            and ((.check.result == "success") or (.["docs-links"].result == "success"))
+          ' <<<"$NEEDS" >/dev/null

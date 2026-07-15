@@ -75,6 +75,10 @@ func TestLoadAvailabilityUsesSelectedProfile(t *testing.T) {
 	}
 }
 
+// TestUsagePanelNamesWholeAuthCombination locks the #198 identity move: the
+// effective provider/account combination lives in the provider headings
+// ("Codex <account>", "Claude <account>") — a mixed profile reads correctly
+// with no standalone auth equation — and the switch cue says "switch profile".
 func TestUsagePanelNamesWholeAuthCombination(t *testing.T) {
 	m := model{
 		authProfiles: []authProfile{
@@ -84,11 +88,14 @@ func TestUsagePanelNamesWholeAuthCombination(t *testing.T) {
 		authIdx: 1,
 		avail:   availability{bucket: map[string]string{}, reset: map[string]int64{}},
 	}
-	panel := m.usagePanel()
-	for _, text := range []string{"auth", "mum", "Claude Mum", "Codex Alex", "switch"} {
+	panel := stripAnsi(m.usagePanel())
+	for _, text := range []string{"usage", "Claude Mum", "Codex Alex", "a switch profile"} {
 		if !strings.Contains(panel, text) {
 			t.Fatalf("usage panel missing %q: %q", text, panel)
 		}
+	}
+	if strings.Contains(panel, "auth ·") || strings.Contains(panel, " + ") {
+		t.Fatalf("usage panel must not repeat the auth equation: %q", panel)
 	}
 }
 

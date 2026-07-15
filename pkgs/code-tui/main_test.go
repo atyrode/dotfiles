@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	clikit "cli-kit"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -417,9 +419,12 @@ func TestApplyAdvisorFableMain(t *testing.T) {
 	}
 }
 
-// TestPreviewColumn locks the right column's shape: a pinned "routing" pill on
-// top, no settings-summary line (the dials are visible on the left), and the
-// pinned f cue at the bottom worded as a DISPLAY toggle (show/hide).
+// TestPreviewColumn locks the Routing section's shape (#198): the title row
+// carries the section-local collapse cue (p · hide), the fallback-display cue
+// sits directly beneath the title as Routing chrome (worded as a show/hide
+// DISPLAY toggle) rather than on a detached bottom row, and no baked
+// settings-summary line reaches the preview (the dials are visible on the
+// left).
 func TestPreviewColumn(t *testing.T) {
 	id := comboID(defaultSel())
 	m := model{
@@ -434,15 +439,18 @@ func TestPreviewColumn(t *testing.T) {
 	m.vp = viewport.New(60, 6)
 	m.syncPreview()
 	plain := stripAnsi(m.previewColumn())
-	if !strings.Contains(plain, "routing") {
-		t.Errorf("preview column must carry the routing pill, got:\n%s", plain)
-	}
 	if strings.Contains(plain, "fallback on") || strings.Contains(plain, "thinking medium ·") {
 		t.Errorf("the baked settings-summary line must not reach the preview, got:\n%s", plain)
 	}
-	rows := strings.Split(strings.TrimRight(plain, "\n"), "\n")
-	if last := strings.TrimSpace(rows[len(rows)-1]); last != "f · show fallback chains" {
-		t.Errorf("bottom hint = %q, want %q", last, "f · show fallback chains")
+	rows := strings.Split(plain, "\n")
+	if !strings.Contains(rows[0], "routing") || !strings.Contains(rows[0], "p · hide") {
+		t.Errorf("title row must carry the routing pill and its local collapse cue, got %q", rows[0])
+	}
+	if strings.TrimSpace(rows[1]) != "f · show fallback chains" {
+		t.Errorf("fallback cue must sit under the title as chrome, got %q", rows[1])
+	}
+	if tail := strings.TrimSpace(rows[len(rows)-1]); strings.Contains(tail, "fallback") {
+		t.Errorf("no detached bottom hint row may remain, got %q", tail)
 	}
 	m.depth = 1
 	if plain := stripAnsi(m.previewColumn()); !strings.Contains(plain, "f · hide fallback chains") {
@@ -638,8 +646,13 @@ func TestResponsiveCompositions(t *testing.T) {
 	if lineIndex(lines, "generator") < 0 {
 		t.Errorf("narrow: the generator must stay usable")
 	}
-	if lineIndex(lines, "routing") >= 0 || lineIndex(lines, "% used") >= 0 {
+	// The shed routing SECTION (its p · hide title chrome) must be gone; the
+	// compact footer instead carries the recovery cue.
+	if lineIndex(lines, "p · hide") >= 0 || lineIndex(lines, "% used") >= 0 {
 		t.Errorf("narrow: secondary sections must be shed, not compressed:\n%s", strings.Join(lines, "\n"))
+	}
+	if lineIndex(lines, "show routing") < 0 {
+		t.Errorf("narrow: the compact footer must offer the routing recovery cue:\n%s", strings.Join(lines, "\n"))
 	}
 	assertLayoutInvariants(t, m, "narrow")
 
@@ -647,7 +660,7 @@ func TestResponsiveCompositions(t *testing.T) {
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
 	m = nm.(model)
 	lines = strings.Split(stripAnsi(m.View()), "\n")
-	if lineIndex(lines, "routing") < 0 || lineIndex(lines, "generator") >= 0 {
+	if lineIndex(lines, "routing", "p · hide") < 0 || lineIndex(lines, "generator") >= 0 {
 		t.Errorf("narrow+p: want the routing panel full width instead of the generator:\n%s", strings.Join(lines, "\n"))
 	}
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
@@ -927,4 +940,487 @@ func TestWheelThroughUpdate(t *testing.T) {
 	if cmd != nil || m.fcur != 1 || !reflect.DeepEqual(m.sel, sel) {
 		t.Fatal("non-wheel mouse traffic must be ignored")
 	}
+}
+
+// ── usage identity · collapsible sections · contextual help (#198) ──────────
+
+// press drives one rune keypress through Update.
+func press(t *testing.T, m model, k string) (model, tea.Cmd) {
+	t.Helper()
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+	return nm.(model), cmd
+}
+
+// multiProfileModel is layoutModel with a second (mixed) auth profile, so the
+// switch cue and profile-dependent help rules engage.
+func multiProfileModel() model {
+	m := layoutModel()
+	m.authProfiles = []authProfile{
+		{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"},
+		{ID: "mum", Label: "mum", Claude: "Mum", Codex: "Alex"},
+	}
+	return m
+}
+
+// shortDescs returns the compact help line's action descriptions — the
+// state-derived contract, independent of footer width truncation.
+func shortDescs(m model) []string {
+	var out []string
+	for _, b := range m.contextHelp().ShortHelp() {
+		out = append(out, b.Help().Desc)
+	}
+	return out
+}
+
+func hasDesc(descs []string, want string) bool {
+	for _, d := range descs {
+		if d == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestUsageHeadingsNameEffectiveProfile locks the identity move: provider
+// group headings carry the effective account ("Codex <account>",
+// "Claude <account>") for every supported profile combination — including
+// mixed profiles — and the standalone auth equation is gone.
+func TestUsageHeadingsNameEffectiveProfile(t *testing.T) {
+	cases := []struct {
+		name          string
+		claude, codex string
+	}{
+		{"alex/alex", "Alex", "Alex"},
+		{"mum/alex mixed", "Mum", "Alex"},
+		{"mum/mum", "Mum", "Mum"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := layoutModel()
+			m.authProfiles = []authProfile{{ID: "p", Label: "p", Claude: tc.claude, Codex: tc.codex}}
+			lines := strings.Split(stripAnsi(m.usagePanel()), "\n")
+			codexHead := lineIndex(lines, "Codex "+tc.codex)
+			claudeHead := lineIndex(lines, "Claude "+tc.claude)
+			if codexHead < 0 || claudeHead < 0 {
+				t.Fatalf("provider headings must name the effective accounts:\n%s", strings.Join(lines, "\n"))
+			}
+			if trimmed := strings.TrimSpace(lines[codexHead]); trimmed != "Codex "+tc.codex {
+				t.Errorf("Codex heading must be a standalone group title, got %q", trimmed)
+			}
+			if lineIndex(lines, "auth ·") >= 0 || lineIndex(lines, "Claude "+tc.claude+" + ") >= 0 {
+				t.Errorf("the standalone auth equation must be gone:\n%s", strings.Join(lines, "\n"))
+			}
+			if lines[0] == "" || !strings.Contains(lines[0], "usage") || !strings.Contains(lines[0], "s · hide") {
+				t.Errorf("usage must open with its first-class title and local hide cue, got %q", lines[0])
+			}
+		})
+	}
+}
+
+// TestUsageSwitchCue: `a switch profile` sits after `r now` in the control
+// row when an alternate profile exists, and disappears everywhere when only
+// one auth profile is configured.
+func TestUsageSwitchCue(t *testing.T) {
+	m := multiProfileModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	lines := strings.Split(stripAnsi(m.usagePanel()), "\n")
+	ctrl := lineIndex(lines, "next refresh", "r now", "a switch profile")
+	if ctrl < 0 {
+		t.Fatalf("refresh and switch must share the usage control row:\n%s", strings.Join(lines, "\n"))
+	}
+	row := lines[ctrl]
+	if strings.Index(row, "r now") > strings.Index(row, "a switch profile") {
+		t.Errorf("switch cue must come after the refresh cue: %q", row)
+	}
+
+	single := layoutModel()
+	single = resize(t, single, wide.w, wide.h)
+	if view := stripAnsi(single.View()); strings.Contains(view, "switch profile") {
+		t.Errorf("single-profile: the switch cue must be omitted everywhere:\n%s", view)
+	}
+}
+
+// TestUsageLoadingErrorStates: the loading, refreshing, unavailable, and
+// switch-failure states each keep the effective identity visible and replace
+// only the status — errors stay attached to the Usage section.
+func TestUsageLoadingErrorStates(t *testing.T) {
+	m := layoutModel()
+
+	loading := m
+	loading.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	loading.fetching = true
+	panel := stripAnsi(loading.usagePanel())
+	for _, want := range []string{"fetching usage…", "Codex Alex", "Claude Alex"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("loading: panel missing %q:\n%s", want, panel)
+		}
+	}
+	if strings.Contains(panel, "usage unavailable") {
+		t.Errorf("loading must not read as an error:\n%s", panel)
+	}
+
+	refreshing := m
+	refreshing.fetching = true
+	panel = stripAnsi(refreshing.usagePanel())
+	for _, want := range []string{"refreshing…", "Codex Alex", "Claude Alex", "% used"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("refreshing: panel missing %q:\n%s", want, panel)
+		}
+	}
+	if strings.Contains(panel, "next refresh") {
+		t.Errorf("refreshing must replace the countdown, not stack on it:\n%s", panel)
+	}
+
+	failed := m
+	failed.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	panel = stripAnsi(failed.usagePanel())
+	for _, want := range []string{"usage unavailable · authenticate with omp --profile default", "Codex Alex", "Claude Alex"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("unavailable: panel missing %q:\n%s", want, panel)
+		}
+	}
+
+	switchErr := multiProfileModel()
+	switchErr.authErr = "state write denied"
+	panel = stripAnsi(switchErr.usagePanel())
+	if !strings.Contains(panel, "profile switch failed: state write denied") {
+		t.Errorf("a switch failure must stay attached to the usage section:\n%s", panel)
+	}
+}
+
+// TestSectionToggleCombinations walks every routing × usage visibility combo
+// on a wide terminal: local hide cues live in the section titles, hidden
+// sections surface their recovery cue in the compact footer instead, no
+// toggle ever triggers a fetch, and every combination keeps the frame
+// invariants.
+func TestSectionToggleCombinations(t *testing.T) {
+	m := multiProfileModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	availBefore := m.avail
+
+	assertCombo := func(label string, wantRouting, wantUsage bool) {
+		t.Helper()
+		view := stripAnsi(m.View())
+		lines := strings.Split(view, "\n")
+		if got := lineIndex(lines, "p · hide") >= 0; got != wantRouting {
+			t.Errorf("%s: routing chrome visible = %v, want %v:\n%s", label, got, wantRouting, view)
+		}
+		if got := lineIndex(lines, "s · hide") >= 0; got != wantUsage {
+			t.Errorf("%s: usage chrome visible = %v, want %v:\n%s", label, got, wantUsage, view)
+		}
+		if got := lineIndex(lines, "% used") >= 0; got != wantUsage {
+			t.Errorf("%s: usage rows visible = %v, want %v", label, got, wantUsage)
+		}
+		descs := shortDescs(m)
+		if got := hasDesc(descs, "show routing"); got == wantRouting {
+			t.Errorf("%s: compact help offers show routing = %v with routing visible = %v", label, got, wantRouting)
+		}
+		if got := hasDesc(descs, "show usage"); got == wantUsage {
+			t.Errorf("%s: compact help offers show usage = %v with usage visible = %v", label, got, wantUsage)
+		}
+		if got := hasDesc(descs, "switch profile"); got == wantUsage {
+			t.Errorf("%s: compact help repeats/misses switch profile (got %v) with usage visible = %v", label, got, wantUsage)
+		}
+		if m.fetching || !reflect.DeepEqual(m.avail, availBefore) {
+			t.Errorf("%s: a display toggle mutated fetch state", label)
+		}
+		assertLayoutInvariants(t, m, label)
+	}
+
+	assertCombo("both visible", true, true)
+
+	var cmd tea.Cmd
+	m, cmd = press(t, m, "s")
+	if cmd != nil {
+		t.Fatal("hiding usage must never produce a command")
+	}
+	assertCombo("usage hidden", true, false)
+
+	m, cmd = press(t, m, "p")
+	if cmd != nil {
+		t.Fatal("hiding routing must never produce a command")
+	}
+	assertCombo("both hidden", false, false)
+
+	m, _ = press(t, m, "s")
+	assertCombo("routing hidden", false, true)
+
+	m, _ = press(t, m, "p")
+	assertCombo("both restored", true, true)
+}
+
+// TestCompactHelpDerivation locks the state-derived footer rules: chrome-
+// visible actions never repeat in the compact line, hidden sections add their
+// recovery cue, refresh hides while a fetch is in flight or unusable, the
+// launch trio surfaces only when the generator's launch footer is off screen,
+// and the usage recovery cue never advertises a restore the narrow layout
+// would immediately shed.
+func TestCompactHelpDerivation(t *testing.T) {
+	m := multiProfileModel()
+	wide, _, narrow, _ := layoutSizes(t, m)
+
+	m = resize(t, m, wide.w, wide.h)
+	descs := shortDescs(m)
+	for _, d := range []string{"move", "change", "switch profile", "refresh usage", "managed omp", "sandbox", "launch", "show routing", "show usage"} {
+		got := hasDesc(descs, d)
+		want := d == "move" || d == "change"
+		if got != want {
+			t.Errorf("wide compact help: %q shown = %v, want %v (descs %v)", d, got, want, descs)
+		}
+	}
+	if !hasDesc(descs, "more") || !hasDesc(descs, "quit") {
+		t.Errorf("full-help discovery and quit must always be offered: %v", descs)
+	}
+
+	m = resize(t, m, narrow.w, narrow.h)
+	descs = shortDescs(m)
+	for _, d := range []string{"show routing", "switch profile", "refresh usage"} {
+		if !hasDesc(descs, d) {
+			t.Errorf("narrow compact help missing %q: %v", d, descs)
+		}
+	}
+	if hasDesc(descs, "show usage") {
+		t.Errorf("narrow sheds usage by size, not by state — no show-usage cue: %v", descs)
+	}
+	ordered := strings.Join(descs, "|")
+	for _, optional := range []string{"switch profile", "refresh usage"} {
+		if strings.Index(ordered, "more") > strings.Index(ordered, optional) ||
+			strings.Index(ordered, "quit") > strings.Index(ordered, optional) {
+			t.Errorf("narrow compact help must prioritize more/quit before %q: %v", optional, descs)
+		}
+	}
+
+	fetching := m
+	fetching.fetching = true
+	if hasDesc(shortDescs(fetching), "refresh usage") {
+		t.Error("refresh must hide from compact help while a fetch is in flight")
+	}
+	noCmd := m
+	noCmd.usageCmd = ""
+	if hasDesc(shortDescs(noCmd), "refresh usage") {
+		t.Error("refresh must hide from compact help when no usage command exists")
+	}
+
+	// narrow + p: routing full-screen hides the generator launch footer.
+	swapped, _ := press(t, m, "p")
+	descs = shortDescs(swapped)
+	for _, d := range []string{"launch", "managed omp", "sandbox"} {
+		if !hasDesc(descs, d) {
+			t.Errorf("routing-full-screen compact help missing %q: %v", d, descs)
+		}
+	}
+	if hasDesc(descs, "show routing") {
+		t.Errorf("routing is visible full-screen — no recovery cue: %v", descs)
+	}
+
+	// A terminal too narrow to ever seat usage must not advertise its restore.
+	tiny := multiProfileModel()
+	tiny.hideUsage = true
+	tiny = resize(t, tiny, routingMinW-3, 40)
+	if hasDesc(shortDescs(tiny), "show usage") {
+		t.Error("show usage must not be offered when restoring could not render it")
+	}
+}
+
+// TestFullHelpComplete: ? always exposes every binding — including both
+// section toggles — regardless of what the compact footer dropped, and the
+// full keymap stays conflict-free (u keeps the sandbox; s is the usage key).
+func TestFullHelpComplete(t *testing.T) {
+	m := multiProfileModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	m.hideUsage = true
+	m.collapse = true
+	m.help.ShowAll = true
+	foot := stripAnsi(m.footer())
+	for _, d := range []string{"move", "change", "defaults", "primary ⇄ full chains", "refresh usage", "switch profile", "show/hide routing", "show/hide usage", "launch", "managed omp", "sandbox", "quit"} {
+		if !strings.Contains(foot, d) {
+			t.Errorf("full help missing %q:\n%s", d, foot)
+		}
+	}
+
+	seen := map[string]string{}
+	for _, group := range keys.FullHelp() {
+		for _, b := range group {
+			for _, k := range b.Keys() {
+				if prev, dup := seen[k]; dup {
+					t.Errorf("key %q bound to both %q and %q", k, prev, b.Help().Desc)
+				}
+				seen[k] = b.Help().Desc
+			}
+		}
+	}
+	if got := keys.Usage.Keys(); len(got) != 1 || got[0] != "s" {
+		t.Errorf("usage toggle key = %v, want [s]", got)
+	}
+	if got := keys.Untrusted.Keys(); len(got) != 1 || got[0] != "u" {
+		t.Errorf("sandbox must keep u, got %v", got)
+	}
+	if got := keys.Collapse.Keys(); len(got) != 1 || got[0] != "p" {
+		t.Errorf("routing toggle must keep p, got %v", got)
+	}
+}
+
+// TestLongAccountLabelsWidthInvariant: over-long account names widen the
+// measured usage column (shifting the breakpoints) instead of overflowing or
+// truncating the identity, at every representative terminal size.
+func TestLongAccountLabelsWidthInvariant(t *testing.T) {
+	const longName = "Alexander-Maximilian-Extremely-Long-Name"
+	m := layoutModel()
+	m.authProfiles = []authProfile{{ID: "long", Label: "long", Claude: longName, Codex: longName}}
+	wideW := m.genRowWidth() + routingMinW
+	sizes := []termSize{
+		{wideW + 30, 40},
+		{m.mediumMinW() + 2, 40},
+		{m.mediumMinW() - 10, 40},
+		{45, 40},
+		{wideW + 30, 12},
+	}
+	for _, s := range sizes {
+		m = resize(t, m, s.w, s.h)
+		label := fmt.Sprintf("long labels %dx%d", s.w, s.h)
+		assertLayoutInvariants(t, m, label)
+		view := stripAnsi(m.View())
+		if strings.Contains(view, "% used") && !strings.Contains(view, "Codex "+longName) {
+			t.Errorf("%s: visible usage must keep the full account identity:\n%s", label, view)
+		}
+	}
+}
+
+// TestSectionStatePreservation: routing/usage visibility survives resizes,
+// background refreshes, auth switches, and PromptBox proposal round-trips;
+// restoring routing recovers its prior scroll; restoring usage refetches
+// nothing.
+func TestSectionStatePreservation(t *testing.T) {
+	m := multiProfileModel()
+	m.authState = filepath.Join(t.TempDir(), "nested", "selected")
+	wide, medium, narrow, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	m.hideUsage = true
+	m.collapse = true
+
+	for _, s := range []termSize{medium, narrow, wide} {
+		m = resize(t, m, s.w, s.h)
+		if !m.hideUsage || !m.collapse {
+			t.Fatalf("resize to %dx%d mutated section visibility", s.w, s.h)
+		}
+		assertLayoutInvariants(t, m, fmt.Sprintf("hidden sections %dx%d", s.w, s.h))
+	}
+
+	nm, _ := m.Update(usageMsg{profile: "default", avail: m.avail})
+	m = nm.(model)
+	if !m.hideUsage || !m.collapse {
+		t.Fatal("a background refresh mutated section visibility")
+	}
+
+	m, cmd := press(t, m, "a")
+	if cmd == nil {
+		t.Fatal("an auth switch must trigger a usage fetch")
+	}
+	if !m.hideUsage || !m.collapse {
+		t.Fatal("an auth switch mutated section visibility")
+	}
+	if m.activeAuthProfile().ID != "mum" {
+		t.Fatalf("auth switch did not advance the profile: %q", m.activeAuthProfile().ID)
+	}
+	m.fetching = false
+	m.avail = multiProfileModel().avail
+	if panel := stripAnsi(m.usagePanel()); !strings.Contains(panel, "Claude Mum") {
+		t.Errorf("usage headings must follow the switched profile:\n%s", panel)
+	}
+
+	nm, _ = m.Update(clikit.ActionsProposedMsg{})
+	m = nm.(model)
+	nm, _ = m.Update(clikit.ActionsRevertedMsg{})
+	m = nm.(model)
+	if !m.hideUsage || !m.collapse {
+		t.Fatal("a PromptBox proposal round-trip mutated section visibility")
+	}
+
+	// Restoring routing recovers the prior scroll position.
+	sc := layoutModel()
+	id := comboID(defaultSel())
+	rows := []string{"  thinking medium · fallback on · advisor on"}
+	for i := range 40 {
+		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
+	}
+	sc.generated[id] = rows
+	sc = resize(t, sc, wide.w, wide.h)
+	sc.vp.SetYOffset(6)
+	sc, _ = press(t, sc, "p")
+	sc, _ = press(t, sc, "p")
+	if sc.vp.YOffset != 6 {
+		t.Fatalf("routing restore lost the scroll position: YOffset = %d, want 6", sc.vp.YOffset)
+	}
+
+	// Restoring usage refetches nothing: same rows, no command, no fetch.
+	u := layoutModel()
+	u = resize(t, u, wide.w, wide.h)
+	before := stripAnsi(u.View())
+	u, cmd = press(t, u, "s")
+	if cmd != nil {
+		t.Fatal("hiding usage must not produce a command")
+	}
+	u, cmd = press(t, u, "s")
+	if cmd != nil || u.fetching {
+		t.Fatal("restoring usage must not refetch")
+	}
+	if after := stripAnsi(u.View()); after != before {
+		t.Fatalf("usage restore must reproduce the exact prior band:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+// TestCollapseReallocation: hiding a section hands its rows to the active
+// composition immediately — medium's secondary row shrinks to routing-only at
+// full width and the generator absorbs the slack; wide returns the usage band
+// rows to the body; a narrow terminal gains the medium secondary row once the
+// usage column no longer needs seating.
+func TestCollapseReallocation(t *testing.T) {
+	m := layoutModel()
+	wide, medium, narrow, _ := layoutSizes(t, m)
+
+	m = resize(t, m, medium.w, medium.h+8)
+	gen0, sec0 := m.mediumSplit(m.contentH())
+	m, _ = press(t, m, "s")
+	if m.mode() != modeMedium {
+		t.Fatalf("hiding usage at medium width must stay medium, mode = %d", m.mode())
+	}
+	gen1, sec1 := m.mediumSplit(m.contentH())
+	if sec1 >= sec0 || gen1 <= gen0 {
+		t.Errorf("medium reallocation: secondary %d→%d, generator %d→%d — generator must absorb the freed rows", sec0, sec1, gen0, gen1)
+	}
+	if got := m.routingColW(); got != m.w {
+		t.Errorf("routing must span the full secondary row when usage hides: %d, want %d", got, m.w)
+	}
+	assertLayoutInvariants(t, m, "medium usage hidden")
+	m, _ = press(t, m, "s")
+	if gen2, sec2 := m.mediumSplit(m.contentH()); gen2 != gen0 || sec2 != sec0 {
+		t.Errorf("restore must return the original split: got %d/%d, want %d/%d", gen2, sec2, gen0, gen0)
+	}
+
+	w := layoutModel()
+	w = resize(t, w, wide.w, wide.h)
+	ch0 := w.contentH()
+	w, _ = press(t, w, "s")
+	if ch1 := w.contentH(); ch1 <= ch0 {
+		t.Errorf("wide: hiding the usage band must return its rows to the body: %d → %d", ch0, ch1)
+	}
+	assertLayoutInvariants(t, w, "wide usage hidden")
+
+	n := layoutModel()
+	n = resize(t, n, narrow.w, narrow.h)
+	if n.mode() != modeCollapsed {
+		t.Fatalf("fixture: %dx%d must start collapsed", narrow.w, narrow.h)
+	}
+	n, _ = press(t, n, "s")
+	if n.mode() != modeMedium {
+		t.Fatalf("narrow: freeing the usage column must let routing return, mode = %d", n.mode())
+	}
+	lines := strings.Split(stripAnsi(n.View()), "\n")
+	if lineIndex(lines, "routing", "p · hide") < 0 {
+		t.Errorf("narrow with usage hidden: the routing section must reappear:\n%s", strings.Join(lines, "\n"))
+	}
+	assertLayoutInvariants(t, n, "narrow usage hidden")
 }

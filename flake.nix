@@ -594,9 +594,6 @@
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
           codex-seed = import ./checks/codex-seed.nix { inherit lib pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
-          docs-links = import ./checks/docs-links.nix { inherit lib pkgs; };
-          go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
-          nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
@@ -616,6 +613,14 @@
             externalFixture = if isLinux then externalServerFixture else null;
             darwinConfigs = systemDarwinConfigs;
           };
+        }
+        // lib.optionalAttrs (system == "x86_64-linux") {
+          # Platform-independent lints: their output is a pure function of the
+          # source tree, so emitting them on every system just re-runs the same
+          # work three times in CI. Keep them on one leg only (#169).
+          docs-links = import ./checks/docs-links.nix { inherit lib pkgs; };
+          go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
+          nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };
         }
         // lib.optionalAttrs isLinux {
           portable-profiles = import ./checks/portable-profiles.nix {

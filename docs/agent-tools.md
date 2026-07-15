@@ -381,5 +381,6 @@ agent-named `retry.fallbackChains` key in the managed defaults
 still exists in that unpacked set, so an upstream agent rename or removal
 fails the build instead of silently misrouting models.
 
-GitHub Actions runs the same flake checks natively on x86_64 and aarch64 Linux
-and aarch64 macOS.
+GitHub Actions runs the flake checks natively on x86_64 and aarch64 Linux and
+aarch64 macOS; platform-independent lints (docs-links, nixfmt, go-fmt) are
+emitted on x86_64-linux only to avoid duplicate work (#169).

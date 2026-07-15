@@ -9,10 +9,13 @@ repository trustworthy, and it is not an operating-system sandbox.
 Managed sessions launched through `omp-managed` — including every profile the
 `code` generator produces — use the trusted-machine unattended approval policy:
 workspace edits, shell/eval, browser, task spawning, and GitHub operations do
-not prompt. Secret filtering remains enabled, and task isolation uses OMP's
-automatic backend selection and patch merging. A managed extension fails closed
-when a `task` call that can write omits `isolated: true`, including any item in
-a task batch.
+not prompt. Secret filtering remains enabled, and when a spawn requests
+isolation, OMP's automatic backend selection and patch merging apply (both
+policy-fixed). Isolation itself is upstream's per-spawn opt-in — the model or
+operator requests `isolated: true` per task; a managed rule advises it for
+concurrent writing subagents. There is no repository-side isolation mandate
+(#175): a hard guard converted upstream isolation failures into a total
+delegation outage, and stock OMP has no such concept.
 
 The policy overlay is applied after writable machine, project, and
 one-shot configuration. Repositories can still choose non-security settings,
@@ -45,8 +48,10 @@ GitHub credentials, SSH agents, caller Git configuration, credential helpers,
 and hook configuration are not forwarded. Git prompting and SSH transport are
 disabled. Browser, GitHub, eval, debug, LSP, project MCP configuration,
 auto-learning, memory, project command discovery, and skill commands are
-disabled. Shell and task use remain approval-gated, and every writing task must
-request OMP isolation.
+disabled. Shell and task use remain approval-gated — the operator sees and
+approves each command and each spawn, and can require isolation case by case.
+That human gate and the untrusted system prompt are the controls; isolation
+itself is not separately enforced.
 
 Project instructions, rules, agents, skills, source files, and tool output are
 still loaded because they are the material the agent must analyze. The managed

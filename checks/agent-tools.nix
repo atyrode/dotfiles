@@ -9,7 +9,7 @@ let
   untrustedConfig = ../omp/untrusted.yml;
   yoloConfig = ../omp/yolo-session.yml;
   settingsGuardExtension = ../omp/extensions/managed-settings-guard.ts;
-  taskIsolationGuardExtension = ../omp/extensions/task-isolation-guard.ts;
+  parallelWriteRule = ../omp/rules/parallel-write-isolation.md;
   plainSeedConfig = ../omp/plain-seed.yml;
 
   stubOmp =
@@ -304,41 +304,19 @@ in
         test "$cfgset_status" -ne 0
         grep -q 'Nix-managed' "$TMPDIR/cfgset.err"
 
-        cat > "$TMPDIR/task-isolation-guard.test.ts" <<'EOF'
-        import guard, { taskIsolationViolation } from "${taskIsolationGuardExtension}";
-
-        const expectViolation = (input: unknown) => {
-          if (!taskIsolationViolation(input)) throw new Error("unsafe task call was accepted");
-        };
-        const expectAllowed = (input: unknown) => {
-          if (taskIsolationViolation(input)) throw new Error("isolated task call was rejected");
-        };
-        expectViolation({});
-        expectViolation({ isolated: false });
-        expectViolation({ tasks: [] });
-        expectViolation({ tasks: [{ isolated: true }, { prompt: "unsafe" }] });
-        expectAllowed({ isolated: true });
-        expectAllowed({ tasks: [{ isolated: true }, { isolated: true }] });
-
-        const handlers = new Map<string, Function>();
-        guard({ on(name: string, handler: Function) { handlers.set(name, handler); } } as any);
-        const blocked = await handlers.get("tool_call")?.({ toolName: "task", input: {} });
-        if (blocked?.block !== true || !blocked.reason.includes("isolated")) {
-          throw new Error("task tool gate did not fail closed");
-        }
-        if (await handlers.get("tool_call")?.({ toolName: "read", input: {} })) {
-          throw new Error("unrelated tool call was blocked");
-        }
-        EOF
-        ${pkgs.bun}/bin/bun "$TMPDIR/task-isolation-guard.test.ts"
+        # The task-isolation mandate is retired (#175): isolation is upstream's
+        # per-spawn opt-in, so no guard extension may ship — only the guidance
+        # rule. A reintroduced guard must be a deliberate decision, not drift.
+        test ! -e ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts
+        grep -q 'isolated: true' ${parallelWriteRule}
 
         test "$(
           find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
         )" -eq 6
         test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 6
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
-        test -f ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts
         test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md
+        test -f ${pkgs.omp-configured.platformRoot}/rules/parallel-write-isolation.md
 
         mkdir "$out"
       '';

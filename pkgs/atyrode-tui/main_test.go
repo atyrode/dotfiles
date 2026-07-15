@@ -19,6 +19,12 @@ import (
 
 const testRevision = "feedfacefeedfacefeedfacefeedfacefeedface"
 
+type runnerFunc func(context.Context, string, ...string) ([]byte, error)
+
+func (f runnerFunc) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return f(ctx, name, args...)
+}
+
 func testPreviewDocument() previewdata.Document {
 	return previewdata.Document{
 		SchemaVersion:    previewdata.SchemaVersion,
@@ -187,51 +193,54 @@ func TestGroundedAskerCancellationClosesStream(t *testing.T) {
 	}
 }
 
-func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
+func TestInitLoadsOnlyPlanAndPreviewIsExplicit(t *testing.T) {
 	var calls [][]string
 	m := newModel("/bin/atyrode")
-	m.output = func(name string, args ...string) ([]byte, error) {
+	m.runner = runnerFunc(func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, append([]string{name}, args...))
-		switch len(calls) {
-		case 1:
+		switch {
+		case reflect.DeepEqual(args, []string{"apply", "--plan", "--json"}):
 			return []byte(`{"host":"workstation","system":"x86_64-linux","user":"alex","capabilities":["base","agents"],"installable":"github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#workstation","revision":"feedfacefeed","resolvedRevision":"feedfacefeedfacefeedfacefeedfacefeedface","source":"remote"}`), nil
-		case 2:
-			result, err := json.Marshal(testPreviewDocument())
-			if err != nil {
-				t.Fatal(err)
-			}
-			return result, nil
-		case 3:
-			result, err := json.Marshal(testInventoryDocument())
-			if err != nil {
-				t.Fatal(err)
-			}
-			return result, nil
+		case reflect.DeepEqual(args, []string{"apply", "--ref", testRevision, "--preview-json"}):
+			return json.Marshal(testPreviewDocument())
 		default:
-			t.Fatal("unexpected command")
+			t.Fatalf("unexpected command: %s %v", name, args)
 			return nil, nil
 		}
-	}
+	})
 
 	plan := m.Init()().(planMsg)
 	next, cmd := m.Update(plan)
 	m = next.(model)
-	batch := cmd().(tea.BatchMsg)
-	for _, load := range batch {
-		next, _ = m.Update(load())
-		m = next.(model)
+	if cmd != nil || m.phase != ready {
+		t.Fatalf("plan completion phase/cmd = %v/%v, want ready/nil", m.phase, cmd)
+	}
+	if want := [][]string{{"/bin/atyrode", "apply", "--plan", "--json"}}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("startup commands = %#v, want %#v", calls, want)
+	}
+	unloaded := stripTerminalControls(m.View())
+	for _, want := range []string{"workstation", "feedfacefeed", "Preview not loaded", "v preview", "enter apply"} {
+		if !strings.Contains(unloaded, want) {
+			t.Errorf("unloaded ready view missing %q", want)
+		}
 	}
 
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = next.(model)
+	if !m.previewLoading || cmd == nil || m.phase != ready {
+		t.Fatalf("preview start loading/cmd/phase = %t/%v/%v", m.previewLoading, cmd, m.phase)
+	}
+	next, _ = m.Update(cmd())
+	m = next.(model)
 	wantCalls := [][]string{
 		{"/bin/atyrode", "apply", "--plan", "--json"},
 		{"/bin/atyrode", "apply", "--ref", testRevision, "--preview-json"},
-		{"/bin/atyrode", "inventory", "--ref", testRevision, "--json"},
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("commands = %#v, want %#v", calls, wantCalls)
 	}
-	if m.phase != ready {
-		t.Fatalf("phase = %v, want ready", m.phase)
+	if m.phase != ready || m.previewLoading || m.preview.SchemaVersion == 0 {
+		t.Fatalf("preview completion state = phase %v loading %t schema %d", m.phase, m.previewLoading, m.preview.SchemaVersion)
 	}
 	view := stripTerminalControls(m.View())
 	for _, want := range []string{"ACTIVATION PREVIEW", "Applying revision feedfacefeed", "Preview built", "1 added", "2 updated", "1 removed", "Disk usage decreases by 5.59 MiB"} {
@@ -239,24 +248,13 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 			t.Errorf("visible summary missing %q", want)
 		}
 	}
-	allRows := stripTerminalControls(strings.Join(m.previewRowsForWidth(80), "\n"))
-	for _, want := range []string{"Added (1)", "Updated (2)", "Removed (1)", "alpha", "1.0 → 2.0", "delta", "5.0"} {
-		if !strings.Contains(allRows, want) {
-			t.Errorf("summary rows missing %q", want)
-		}
-	}
-	for _, hidden := range []string{"/nix/store/old-home-manager-generation", "/nix/store/new-home-manager-generation"} {
-		if strings.Contains(view, hidden) {
-			t.Errorf("summary exposed generation path %q", hidden)
-		}
-	}
 }
 
 func TestRemotePlanRequiresResolvedRevision(t *testing.T) {
 	m := newModel("atyrode")
-	m.output = func(string, ...string) ([]byte, error) {
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
 		return []byte(`{"source":"remote","revision":"feedfacefeed"}`), nil
-	}
+	})
 	msg := m.Init()().(planMsg)
 	if msg.err == nil || !strings.Contains(msg.err.Error(), "full resolved revision") {
 		t.Fatalf("missing resolved revision error = %v", msg.err)
@@ -265,20 +263,22 @@ func TestRemotePlanRequiresResolvedRevision(t *testing.T) {
 
 func TestPreviewMustMatchPlannedIdentity(t *testing.T) {
 	m := newModel("atyrode")
-	m.phase = loadingPreview
+	m.phase = ready
 	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Source: "remote", ResolvedRevision: testRevision}
 	result := testPreviewDocument()
 	result.ResolvedRevision = strings.Repeat("b", 40)
-	m.output = func(string, ...string) ([]byte, error) {
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
 		return json.Marshal(result)
+	})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = next.(model)
+	next, _ = m.Update(cmd())
+	m = next.(model)
+	if m.previewErr == nil || !strings.Contains(m.previewErr.Error(), "plan identity changed") {
+		t.Fatalf("identity mismatch error = %v", m.previewErr)
 	}
-	msg := m.loadPreview()().(previewMsg)
-	if msg.err == nil || !strings.Contains(msg.err.Error(), "plan identity changed") {
-		t.Fatalf("identity mismatch error = %v", msg.err)
-	}
-	next, _ := m.Update(msg)
-	if next.(model).phase != failed {
-		t.Fatal("identity mismatch did not fail closed")
+	if m.phase != ready {
+		t.Fatal("identity mismatch blocked the validated plan")
 	}
 }
 
@@ -325,18 +325,123 @@ func TestApplyRequiresExplicitConfirmation(t *testing.T) {
 	}
 }
 
-func TestPreviewFailureNeverEnablesApply(t *testing.T) {
+func TestPreviewFailureIsPanelLocalAndApplyRemainsAvailable(t *testing.T) {
 	m := newModel("atyrode")
-	m.phase = loadingPreview
-	next, _ := m.Update(previewMsg{err: errors.New("dry run failed")})
+	m.phase = ready
+	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
+	m.previewGeneration = 3
+	next, _ := m.Update(previewMsg{revision: testRevision, generation: 3, err: errors.New("dry run failed")})
 	m = next.(model)
-	if m.phase != failed {
-		t.Fatalf("phase = %v, want failed", m.phase)
+	if m.phase != ready || m.previewErr == nil || m.err != nil {
+		t.Fatalf("preview failure escaped panel: phase=%v previewErr=%v err=%v", m.phase, m.previewErr, m.err)
 	}
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
-	if m.phase != failed || cmd != nil {
-		t.Fatal("failed preview allowed apply")
+	if m.phase != confirming || cmd != nil {
+		t.Fatal("failed preview blocked apply confirmation")
+	}
+	view := stripTerminalControls(m.View())
+	for _, want := range []string{"Preview unavailable", "dry run failed", "y confirm"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("local failure view missing %q", want)
+		}
+	}
+}
+
+func TestPreviewLoadingRemainsResponsiveAndCancellationIsStaleSafe(t *testing.T) {
+	for _, key := range []string{"a", "v", "r", "q"} {
+		t.Run(key, func(t *testing.T) {
+			started, cancelled := make(chan struct{}), make(chan struct{})
+			m := newModel("atyrode")
+			m.phase = ready
+			m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Source: "remote", ResolvedRevision: testRevision}
+			m.runner = runnerFunc(func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+				if !reflect.DeepEqual(args, []string{"apply", "--ref", testRevision, "--preview-json"}) {
+					t.Fatalf("preview args = %#v", args)
+				}
+				close(started)
+				<-ctx.Done()
+				close(cancelled)
+				return nil, ctx.Err()
+			})
+
+			next, previewCmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+			m = next.(model)
+			if previewCmd == nil || !m.previewLoading || m.phase != ready {
+				t.Fatal("preview did not start in non-blocking ready state")
+			}
+			result := make(chan tea.Msg, 1)
+			go func() { result <- previewCmd() }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("preview runner did not start")
+			}
+
+			m = press(m, "j")
+			if m.phase != ready || !strings.Contains(stripTerminalControls(m.View()), "Apply controls remain available") {
+				t.Fatal("loading preview made the model unresponsive")
+			}
+			next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+			m = next.(model)
+			select {
+			case <-cancelled:
+			case <-time.After(time.Second):
+				t.Fatalf("%q did not cancel preview context", key)
+			}
+			if m.previewLoading {
+				t.Fatalf("%q left preview loading", key)
+			}
+			if key == "a" && m.phase != confirming {
+				t.Fatalf("apply key phase = %v, want confirming", m.phase)
+			}
+			stale := <-result
+			next, _ = m.Update(stale)
+			after := next.(model)
+			if after.previewErr != nil || after.preview.SchemaVersion != 0 {
+				t.Fatalf("stale cancellation reply changed preview: %#v / %v", after.preview, after.previewErr)
+			}
+		})
+	}
+}
+
+func TestPreviewRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
+	m := newModel("atyrode")
+	m.phase = ready
+	m.plan.ResolvedRevision = testRevision
+	m.previewGeneration = 9
+	current := testPreviewDocument()
+	next, _ := m.Update(previewMsg{revision: testRevision, generation: 9, preview: current})
+	m = next.(model)
+	for _, stale := range []previewMsg{
+		{revision: strings.Repeat("a", 40), generation: 9, err: errors.New("wrong revision")},
+		{revision: testRevision, generation: 8, err: errors.New("old failure")},
+		{revision: testRevision, generation: 10, preview: previewdata.Document{SchemaVersion: previewdata.SchemaVersion}},
+	} {
+		next, _ = m.Update(stale)
+		m = next.(model)
+		if !reflect.DeepEqual(m.preview, current) || m.previewErr != nil {
+			t.Fatalf("stale preview reply mutated current state: %#v / %v", m.preview, m.previewErr)
+		}
+	}
+}
+
+func TestConfirmationExplainsOptionalPreviewStatus(t *testing.T) {
+	m := newModel("atyrode")
+	m.phase = ready
+	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
+	m = press(m, "enter")
+	without := stripTerminalControls(m.View())
+	if !strings.Contains(without, "Optional dry preview was not run.") || !strings.Contains(without, "y confirm") {
+		t.Fatalf("no-preview confirmation was not explicit: %q", without)
+	}
+
+	m.phase, m.preview = ready, testPreviewDocument()
+	m = press(m, "enter")
+	with := stripTerminalControls(m.View())
+	if !strings.Contains(with, "Preview built") || !strings.Contains(with, "y confirm") ||
+		strings.Contains(with, "Optional dry preview was not run.") {
+		t.Fatalf("loaded-preview confirmation status = %q", with)
 	}
 }
 
@@ -438,10 +543,10 @@ func TestStripTerminalControlsUsesANSIParser(t *testing.T) {
 func TestLongPlanFailureStaysInsideNarrowWindow(t *testing.T) {
 	m := newModel("atyrode")
 	m.width, m.height = 44, 26
-	m.output = func(string, ...string) ([]byte, error) {
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
 		output := "\x1b]0;unsafe\x07" + strings.Repeat("plan-failure-with-an-unbroken-path/", 12)
 		return []byte(output), errors.New("exit status 69")
-	}
+	})
 	msg := m.Init()().(planMsg)
 	next, _ := m.Update(msg)
 	assertFailureViewContained(t, next.(model))
@@ -449,16 +554,29 @@ func TestLongPlanFailureStaysInsideNarrowWindow(t *testing.T) {
 
 func TestLongPreviewFailureStaysInsideNarrowWindow(t *testing.T) {
 	m := newModel("atyrode")
-	m.width, m.height = 44, 26
+	m.width, m.height, m.phase = 44, 26, ready
 	m.plan = applyPlan{
 		Host: "fixture", System: "x86_64-linux", User: "alex",
 		Capabilities: []string{"base"}, Source: "remote", Revision: "feedfacefeed",
 		ResolvedRevision: testRevision,
 	}
 	output := "\x1bPignored\x1b\\" + strings.Repeat("/nix/store/preview-failure-without-breakpoints", 10)
+	m.previewGeneration = 4
 	err := commandError("preview apply", []byte(output), errors.New("exit status 1"))
-	next, _ := m.Update(previewMsg{err: err})
-	assertFailureViewContained(t, next.(model))
+	next, _ := m.Update(previewMsg{revision: testRevision, generation: 4, err: err})
+	m = next.(model)
+	if m.phase != ready || m.previewErr == nil {
+		t.Fatalf("preview error blocked ready state: phase=%v err=%v", m.phase, m.previewErr)
+	}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) > m.height {
+		t.Errorf("preview failure view rendered %d rows into height %d", len(lines), m.height)
+	}
+	for _, line := range lines {
+		if width := lipgloss.Width(line); width > m.width-1 {
+			t.Errorf("preview failure row width = %d, safe window = %d: %q", width, m.width-1, stripTerminalControls(line))
+		}
+	}
 }
 
 func assertFailureViewContained(t *testing.T, m model) {
@@ -546,6 +664,7 @@ func readyInventoryModel(width int) model {
 		Revision: testRevision, System: "x86_64-linux", Host: "workstation",
 		ActiveCapabilities: m.plan.Capabilities,
 	})
+	m.inventoryRequested = true
 	return m
 }
 
@@ -694,6 +813,137 @@ func TestInventoryLoadingAndFailureNeverAlterApplyConfirmation(t *testing.T) {
 	}
 }
 
+func TestCapabilityInventoryIsLazyExactRevisionAndRequestedOnce(t *testing.T) {
+	var calls [][]string
+	m := newModel("/bin/atyrode")
+	m.phase = ready
+	m.plan = applyPlan{
+		Host: "workstation", System: "x86_64-linux", Source: "remote",
+		ResolvedRevision: testRevision, Capabilities: []string{"base", "agents", "server"},
+	}
+	m.runner = runnerFunc(func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return json.Marshal(testInventoryDocument())
+	})
+	if m.inventoryRequested || m.inventoryLoading {
+		t.Fatal("inventory was requested before capability inspection")
+	}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = next.(model)
+	if cmd == nil || !m.inventoryRequested || !m.inventoryLoading || m.focus != capabilityPane {
+		t.Fatalf("first c state = cmd %v requested %t loading %t focus %v", cmd, m.inventoryRequested, m.inventoryLoading, m.focus)
+	}
+	next, _ = m.Update(cmd())
+	m = next.(model)
+	want := [][]string{{"/bin/atyrode", "inventory", "--ref", testRevision, "--json"}}
+	if !reflect.DeepEqual(calls, want) || m.inventoryLoading || len(m.inventory.Capabilities) != 3 {
+		t.Fatalf("inventory calls/state = %#v loading=%t capabilities=%d", calls, m.inventoryLoading, len(m.inventory.Capabilities))
+	}
+	m = press(m, "c")
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = next.(model)
+	if cmd != nil || len(calls) != 1 {
+		t.Fatalf("reopening inventory started another request: cmd=%v calls=%#v", cmd, calls)
+	}
+}
+
+func TestInspectionRequestsNeverOverlap(t *testing.T) {
+	previewing := newModel("atyrode")
+	previewing.phase = ready
+	previewing.plan.ResolvedRevision = testRevision
+	previewing.previewLoading = true
+	next, cmd := previewing.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	previewing = next.(model)
+	if cmd != nil || previewing.inventoryRequested {
+		t.Fatal("capability inspection overlapped a running preview")
+	}
+
+	inventoryLoading := newModel("atyrode")
+	inventoryLoading.phase = ready
+	inventoryLoading.plan.ResolvedRevision = testRevision
+	inventoryLoading.inventoryRequested, inventoryLoading.inventoryLoading = true, true
+	next, cmd = inventoryLoading.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	inventoryLoading = next.(model)
+	if cmd != nil || inventoryLoading.previewLoading {
+		t.Fatal("preview overlapped a running capability inventory")
+	}
+}
+
+func TestInventoryContextIsCancelledByRefreshAndQuit(t *testing.T) {
+	for _, key := range []string{"r", "q"} {
+		t.Run(key, func(t *testing.T) {
+			started, cancelled := make(chan struct{}), make(chan struct{})
+			m := newModel("atyrode")
+			m.phase = ready
+			m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
+			m.runner = runnerFunc(func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+				close(started)
+				<-ctx.Done()
+				close(cancelled)
+				return nil, ctx.Err()
+			})
+			next, inventoryCmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+			m = next.(model)
+			result := make(chan tea.Msg, 1)
+			go func() { result <- inventoryCmd() }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("inventory runner did not start")
+			}
+			next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+			m = next.(model)
+			select {
+			case <-cancelled:
+			case <-time.After(time.Second):
+				t.Fatalf("%q did not cancel inventory context", key)
+			}
+			stale := <-result
+			next, _ = m.Update(stale)
+			after := next.(model)
+			if len(after.inventory.Capabilities) != 0 || after.inventoryErr != nil {
+				t.Fatalf("stale inventory cancellation reply changed state: %#v / %v", after.inventory, after.inventoryErr)
+			}
+		})
+	}
+}
+
+func TestPreviewStatesStayResponsiveAtRepresentativeWidths(t *testing.T) {
+	states := []struct {
+		name string
+		set  func(*model)
+		want string
+	}{
+		{name: "unloaded", set: func(m *model) { m.preview = previewdata.Document{} }, want: "Preview not loaded"},
+		{name: "loading", set: func(m *model) { m.preview, m.previewLoading = previewdata.Document{}, true }, want: "Loading optional dry"},
+		{name: "failure", set: func(m *model) { m.preview, m.previewErr = previewdata.Document{}, errors.New("fixture failure") }, want: "Preview unavailable"},
+		{name: "loaded", set: func(m *model) { m.preview = testPreviewDocument() }, want: "Preview built"},
+	}
+	for _, width := range []int{140, 100, 72, 44} {
+		for _, state := range states {
+			t.Run(fmt.Sprintf("%d/%s", width, state.name), func(t *testing.T) {
+				m := readyInventoryModel(width)
+				m.height = 30
+				m.previewLoading, m.previewErr = false, nil
+				state.set(&m)
+				rendered := m.View()
+				if !strings.Contains(flattened(stripTerminalControls(rendered)), state.want) {
+					t.Fatalf("state marker %q missing from:\n%s", state.want, stripTerminalControls(rendered))
+				}
+				lines := strings.Split(rendered, "\n")
+				if len(lines) > m.height {
+					t.Fatalf("rendered %d rows into height %d", len(lines), m.height)
+				}
+				for _, line := range lines {
+					if got := lipgloss.Width(line); got > width-1 {
+						t.Fatalf("row overflowed width %d at %d: %q", width, got, stripTerminalControls(line))
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestCapabilityResponsiveLayoutsStayWithinTerminal(t *testing.T) {
 	for _, width := range []int{140, 100, 72, 44} {
 		m := readyInventoryModel(width)
@@ -756,7 +1006,7 @@ func TestInventoryRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newModel("atyrode")
 			m.plan.ResolvedRevision = currentRevision
-			m.inventoryGeneration, m.inventoryLoading = 8, true
+			m.inventoryGeneration, m.inventoryRequested, m.inventoryLoading = 8, true, true
 
 			next, _ := m.Update(tt.current)
 			m = next.(model)
@@ -778,19 +1028,22 @@ func TestInventoryRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
 	}
 }
 
-func TestRefreshInvalidatesPriorInventoryWhileReplacementLoads(t *testing.T) {
+func TestRefreshInvalidatesPriorInventoryAndKeepsReplacementLazy(t *testing.T) {
 	m := readyInventoryModel(100)
-	m.inventoryGeneration = 11
+	cancelled := false
+	m.inventoryGeneration, m.inventoryLoading = 11, true
+	m.inventoryCancel = func() { cancelled = true }
 	m = press(m, "r")
-	if m.phase != loadingPlan || m.inventoryGeneration != 12 {
-		t.Fatalf("refresh phase/generation = %v/%d", m.phase, m.inventoryGeneration)
+	if m.phase != loadingPlan || m.inventoryGeneration != 13 || !cancelled {
+		t.Fatalf("refresh phase/generation/cancel = %v/%d/%t", m.phase, m.inventoryGeneration, cancelled)
 	}
 
 	replacement := m.plan
-	next, _ := m.Update(planMsg{plan: replacement})
+	next, cmd := m.Update(planMsg{plan: replacement})
 	m = next.(model)
-	if !m.inventoryLoading || m.inventoryGeneration != 13 {
-		t.Fatalf("replacement request loading/generation = %t/%d", m.inventoryLoading, m.inventoryGeneration)
+	if cmd != nil || m.inventoryRequested || m.inventoryLoading || m.inventoryGeneration != 14 {
+		t.Fatalf("replacement inventory state requested/loading/generation/cmd = %t/%t/%d/%v",
+			m.inventoryRequested, m.inventoryLoading, m.inventoryGeneration, cmd)
 	}
 
 	stale := []inventoryMsg{
@@ -799,14 +1052,13 @@ func TestRefreshInvalidatesPriorInventoryWhileReplacementLoads(t *testing.T) {
 			inventory: inventorydata.Document{Capabilities: []inventorydata.Capability{{Name: "stale"}}},
 		},
 		{revision: testRevision, generation: 11, err: errors.New("stale failure"), diagnostic: "stale detail"},
-		{revision: strings.Repeat("b", 40), generation: 13, err: errors.New("wrong revision")},
 	}
 	for _, msg := range stale {
 		next, _ = m.Update(msg)
 		m = next.(model)
-		if !m.inventoryLoading || len(m.inventory.Capabilities) != 0 || m.inventoryErr != nil || m.inventoryDiagnostic != "" {
-			t.Fatalf("stale reply mutated replacement state: loading=%t inventory=%#v err=%v diagnostic=%q",
-				m.inventoryLoading, m.inventory, m.inventoryErr, m.inventoryDiagnostic)
+		if m.inventoryRequested || m.inventoryLoading || len(m.inventory.Capabilities) != 0 || m.inventoryErr != nil || m.inventoryDiagnostic != "" {
+			t.Fatalf("stale reply mutated lazy replacement: requested=%t loading=%t inventory=%#v err=%v diagnostic=%q",
+				m.inventoryRequested, m.inventoryLoading, m.inventory, m.inventoryErr, m.inventoryDiagnostic)
 		}
 	}
 }
@@ -849,11 +1101,13 @@ func TestInventoryFailureDiagnosticsAreExplicitSanitizedAndBounded(t *testing.T)
 		"SIXTH SECRET",
 	}, "\n")
 	m := readyInventoryModel(100)
-	m.inventoryGeneration, m.inventoryLoading = 5, true
-	m.output = func(string, ...string) ([]byte, error) {
+	m.inventory, m.inventoryRequested, m.inventoryLoading = inventorydata.Document{}, false, false
+	m.inventoryGeneration = 5
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
 		return []byte(raw), errors.New("exit status 27")
-	}
-	msg := m.loadInventory()().(inventoryMsg)
+	})
+	cmd := m.startInventory()
+	msg := cmd().(inventoryMsg)
 	if msg.err == nil || msg.err.Error() != "inventory unavailable: exit status 27" {
 		t.Fatalf("primary inventory error = %v", msg.err)
 	}
@@ -917,7 +1171,7 @@ func TestInventoryFailureDiagnosticsAreExplicitSanitizedAndBounded(t *testing.T)
 	if m.phase != confirming {
 		t.Fatal("diagnostic toggle cancelled apply confirmation")
 	}
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	m = next.(model)
 	if m.phase != applying || applies != 1 || cmd == nil {
 		t.Fatalf("diagnostic view blocked confirmed apply: phase=%v applies=%d", m.phase, applies)

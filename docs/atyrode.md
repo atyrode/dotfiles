@@ -81,10 +81,23 @@ session variables and leaves full startup to `exec zsh -l` or a new terminal.
 ```sh
 atyrode capabilities list --json
 atyrode capabilities show alex-linux --json
+atyrode inventory --json
+atyrode inventory --host alex-linux --json
+atyrode inventory --ref <branch-tag-or-commit> --json
+atyrode inventory --repo /absolute/path/to/checkout --json
 atyrode doctor host --json
 atyrode doctor system --json
 atyrode doctor tools --json
 ```
+
+`inventory` is a thin, read-only consumer of the flake's schema-versioned
+evaluated manifest. By default it evaluates the exact immutable revision baked
+into the installed CLI, so an older binary cannot accidentally describe its own
+packages while targeting a newer revision. `--ref` selects a published target
+revision and `--repo` selects a local checkout; they are mutually exclusive.
+`--host` resolves canonical names and aliases inside that evaluated revision.
+The command currently requires `--json`, returns compact key-sorted JSON, and
+does not inspect closures, credentials, sessions, or other mutable state.
 
 Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.

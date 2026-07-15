@@ -96,11 +96,14 @@
         };
       };
       knownCapabilities = builtins.attrNames capabilityModules;
-      capabilityDescriptions = import ./home/profiles/descriptions.nix;
-      capabilityInventory =
+      inventoryAnnotations = import ./inventory/annotations.nix;
+      capabilityDescriptions = lib.mapAttrs (
+        _: annotation: annotation.purpose
+      ) inventoryAnnotations.capabilities;
+      capabilitySummary =
         assert lib.assertMsg (
           builtins.attrNames capabilityDescriptions == knownCapabilities
-        ) "capability descriptions must cover the capability set exactly";
+        ) "capability annotations must cover the capability set exactly";
         map (name: {
           inherit name;
           description = capabilityDescriptions.${name};
@@ -248,6 +251,20 @@
         }
         ++ [ (mkHostIdentityModule { inherit host name; }) ];
 
+      repositoryPackageNames = [
+        "atyrode-agent-tools-migrate"
+        "atyrode"
+        "atyrode-tui"
+        "cli-kit"
+        "code-tui"
+        "codex"
+        "atyrode-codex-seed"
+        "omp"
+        "omp-agents"
+        "omp-configured"
+        "atyrode-omp-seed"
+      ];
+
       mkPackageOverlay =
         {
           hostRegistry ? { },
@@ -270,9 +287,10 @@
             omp-configured = final.callPackage ./pkgs/omp-configured { };
             omp-seed = final.callPackage ./pkgs/omp-seed { };
             atyrode = final.callPackage ./pkgs/atyrode {
-              capabilities = capabilityInventory;
+              capabilities = capabilitySummary;
               inherit homebrewCasks;
               hostRegistry = publicRegistry;
+              revision = inventoryRevision;
             };
           })
         ];
@@ -400,6 +418,27 @@
       canonicalHomeConfigs = lib.mapAttrs mkHomeConfig hosts;
       darwinHosts = lib.filterAttrs (_name: host: host.platform == "darwin") hosts;
       canonicalDarwinConfigs = lib.mapAttrs mkDarwinConfig darwinHosts;
+      inventoryRevision = self.rev or self.dirtyRev or "dirty";
+      inventoryBySystem = forAllSystems (
+        system:
+        import ./inventory {
+          inherit
+            capabilityModules
+            home-manager
+            hosts
+            lib
+            repositoryPackageNames
+            system
+            ;
+          annotations = inventoryAnnotations;
+          pkgs = pkgsFor system;
+          revision = inventoryRevision;
+          homeConfigs = lib.filterAttrs (name: _: hosts.${name}.system == system) canonicalHomeConfigs;
+          darwinConfigs = lib.filterAttrs (
+            name: _: darwinHosts.${name}.system == system
+          ) canonicalDarwinConfigs;
+        }
+      );
 
       aliasesFor =
         selectedHosts: configs:
@@ -415,6 +454,8 @@
       homeConfigurations = canonicalHomeConfigs // aliasesFor hosts canonicalHomeConfigs;
 
       darwinConfigurations = canonicalDarwinConfigs // aliasesFor darwinHosts canonicalDarwinConfigs;
+      inventory = inventoryBySystem;
+      capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
 
       lib = {
         inherit
@@ -605,8 +646,8 @@
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {
-            inherit lib pkgs serverPolicy;
-            serverConfig = if isLinux then serverHomeConfig.config else null;
+            inherit pkgs;
+            inventory = inventoryBySystem.${system};
           };
           shell-surface = import ./checks/shell-surface.nix {
             inherit lib pkgs;
@@ -614,6 +655,7 @@
           };
           system-boundary = import ./checks/system-boundary.nix {
             inherit lib pkgs system;
+            inventory = inventoryBySystem.${system};
             homeConfigs = systemHomeConfigs;
             serverConfig = if isLinux then serverHomeConfig.config else null;
             externalFixture = if isLinux then externalServerFixture else null;

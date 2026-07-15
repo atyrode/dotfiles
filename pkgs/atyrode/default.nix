@@ -11,6 +11,7 @@
   # Published flake activated by `atyrode apply` without --repo. Must stay a
   # github: ref; the CLI derives the ls-remote URL from it.
   flakeRef ? "github:atyrode/dotfiles",
+  revision ? "unknown",
   gawk,
   gitMinimal,
   gnugrep,
@@ -183,6 +184,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@homebrew_casks@' '${homebrewCaskInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
+      --replace-fail '@revision@' '${revision}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}'

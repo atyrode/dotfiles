@@ -1,10 +1,25 @@
 # Package ownership
 
-The checked source of truth is [`inventory/packages.json`](../inventory/packages.json).
-Every package has one delivery owner, a demonstrated consumer, a version owner,
-a mutable-state boundary, and a coarse closure class. The flake rejects duplicate
-entries and rejects workstation runtimes, mobile/media tools, and GUI packages
-from the server composition.
+Installed membership is generated from evaluated configurations, not a package
+matrix. `nix eval .#inventory.<system> --json` is the complete system manifest;
+`nix eval .#capabilityInventory.<system>.<capability> --json` is its capability
+projection. [`inventory/annotations.nix`](../inventory/annotations.nix) contains
+only titles, purpose, demonstrated consumers, and state/security/delivery
+boundaries. It intentionally contains no ordinary installed package or cask
+arrays.
+
+Each manifest is schema version 1 and identifies the exact flake revision,
+system, and platform. Package and cask rows include deterministic name, version,
+description, homepage, delivery, and source fields. Missing pinned metadata uses
+an explicit deterministic fallback instead of live upstream lookup. Host rows
+carry the selected capability composition and owner-attributed deliverables.
+The evaluator rejects duplicate ownership, unknown semantic keys, unsupported
+platform composition, and any evaluated top-level package or cask without an
+owner. Home Manager's identity-only implementation support packages are the
+baseline rather than user-facing deliverables.
+
+The default inventory never traverses closures and never reads authentication,
+sessions, caches, device identities, or other mutable state.
 
 ## Delivery layers
 
@@ -56,10 +71,10 @@ boundary](system-boundary.md).
 
 ## Closure review
 
-The matrix records a stable coarse contribution so large additions are visible
-in review. Exact sizes vary by platform and nixpkgs revision. Measure a pinned
+The default inventory excludes transitive closures. Exact sizes vary by platform
+and nixpkgs revision and remain an explicit diagnostic. Measure a pinned
 workstation closure without activating it, and build the portable server
-manifest for its enforced budget:
+manifest for its separately enforced budget:
 
 ```sh
 nix build --no-link .#homeConfigurations.alex-x86_64-linux.activationPackage

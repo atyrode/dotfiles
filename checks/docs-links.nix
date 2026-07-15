@@ -1,8 +1,8 @@
 { lib, pkgs }:
 
 let
-  # The whole tree, so links from Markdown to non-Markdown files (e.g. a doc
-  # pointing at inventory/packages.json) can be resolved and verified.
+  # The whole tree, so links from Markdown to non-Markdown authority files (for
+  # example inventory/annotations.nix) can be resolved and verified.
   src = lib.fileset.toSource {
     root = ../.;
     fileset = ../.;

@@ -20,8 +20,18 @@ Every package has **one owning layer**, and the layer determines its scope:
 - **project / host** — specific to a host or project;
 - **on-demand** — invoked transiently (e.g. via `nix run`), not installed.
 
-Ownership is recorded as data ([`inventory/packages.json`](../../inventory/packages.json))
-and checked, so a package cannot silently appear at the wrong scope.
+Ownership is computed from the real evaluated Home Manager and nix-darwin
+configurations. [`inventory/annotations.nix`](../../inventory/annotations.nix)
+records only semantic intent and boundaries that evaluation cannot derive.
+
+The versioned `inventory.<system>` flake output attributes packages by comparing
+an identity-only baseline, `base`, and `base + capability` evaluations. It uses
+the evaluated Darwin configuration for Homebrew casks. The same manifest powers
+checks and the scriptable CLI; source parsing and committed package projections
+are not authorities. Repository revision, system, platform, capability
+composition, and host selection are part of the schema identity. Transitive
+closures and secret-bearing mutable state are deliberately outside the default
+manifest.
 
 See [package-ownership.md](../package-ownership.md).
 
@@ -31,7 +41,8 @@ See [package-ownership.md](../package-ownership.md).
   catch-all bucket.
 - Capability packages compose with capability-based host composition (ADR 0001):
   turning a capability on brings its packages, off removes them.
-- A package-ownership check compares the declared inventory against what hosts
-  actually install, so drift fails CI.
+- An evaluation check rejects duplicate ownership, unknown annotations,
+  incomplete host attribution, invalid platform conditionals, and composition
+  drift.
 - On-demand tools stay out of the installed closure, keeping machines lean while
   remaining one command away.

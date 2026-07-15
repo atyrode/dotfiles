@@ -12,6 +12,7 @@ readonly system_policy='@system_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
 readonly flake_ref='@flakeRef@'
+readonly embedded_revision='@revision@'
 readonly flake_remote_url="https://github.com/${flake_ref#github:}"
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
@@ -27,6 +28,7 @@ usage() {
 Usage:
   atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
   atyrode capabilities list [--json]
+  atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
   atyrode capabilities show [HOST] [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -39,9 +41,16 @@ Usage:
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
 to an exact commit first; --repo switches to a local checkout for development.
+apply preview modes are non-activating: --plan resolves and validates the target
+then prints preflight metadata without invoking nh; --dry-run invokes the normal
+nh switch backend with --dry; --preview-json runs that dry backend and emits its
+normalized package/action preview as JSON.
 apply validates everything before invoking nh, and afterwards reports plain-omp
 settings that drifted from the seeded defaults, offering an interactive
 keep-or-reset review on a terminal.
+inventory evaluates the versioned manifest at this CLI's exact revision by
+default; --ref selects another published revision and --repo evaluates a local
+checkout. It is read-only and currently requires --json.
 generations lists the activation profile's generations (nix-darwin system on
 macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
@@ -186,6 +195,78 @@ capabilities() {
       ;;
     *) die "$EX_USAGE" "capabilities expects list or show" ;;
   esac
+}
+
+inventory() {
+  local host="" ref="" repo="" json=0 system target manifest resolved_ref
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--host expects a host name"
+        host="$1"
+        ;;
+      --ref)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--ref expects a Git revision"
+        ref="$1"
+        ;;
+      --repo)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--repo expects a flake path"
+        repo="$1"
+        ;;
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown inventory option: $1" ;;
+    esac
+    shift
+  done
+  [[ "$json" == 1 ]] || die "$EX_USAGE" "inventory currently requires --json"
+  [[ -z "$ref" || -z "$repo" ]] || die "$EX_USAGE" "--ref and --repo are mutually exclusive"
+
+  system="$(actual_system)"
+  if [[ -n "$repo" ]]; then
+    target="$repo#inventory.$system"
+  elif [[ -n "$ref" ]]; then
+    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+      resolved_ref="$ref"
+    else
+      resolved_ref="$(git ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref" |
+        head -n 1 | cut -f 1)" || true
+      [[ -n "$resolved_ref" ]] ||
+        die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
+    fi
+    target="$flake_ref/$resolved_ref#inventory.$system"
+  else
+    [[ "$embedded_revision" =~ ^[0-9a-f]{40}$ ]] ||
+      die "$EX_UNAVAILABLE" "this development build has no immutable inventory revision; pass --ref or --repo"
+    target="$flake_ref/$embedded_revision#inventory.$system"
+  fi
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_INVENTORY:-}" ]]; then
+    [[ -f "$_ATYRODE_TEST_INVENTORY" && ! -L "$_ATYRODE_TEST_INVENTORY" ]] ||
+      die "$EX_DATAERR" "inventory fixture must be a regular file"
+    manifest="$(jq -ec 'select(type == "object")' "$_ATYRODE_TEST_INVENTORY")" ||
+      die "$EX_DATAERR" "inventory fixture is not a JSON object"
+  else
+    manifest="$(nix eval "$target" --json --no-write-lock-file)" ||
+      die "$EX_UNAVAILABLE" "could not evaluate inventory from $target"
+  fi
+  if [[ -z "$host" ]]; then
+    jq -cS . <<<"$manifest"
+  else
+    jq -ceS --arg requested "$host" '
+      ([.hosts | to_entries[]
+        | select(.key == $requested or (.value.aliases | index($requested)))][0]) as $match
+      | if $match == null then error("unknown host or alias: " + $requested)
+        else {
+          schemaVersion,
+          identity,
+          authority,
+          host: $match.value
+        }
+        end
+    ' <<<"$manifest" || die "$EX_DATAERR" "unknown host or alias in evaluated inventory: $host"
+  fi
 }
 
 doctor_tools() {
@@ -1479,6 +1560,7 @@ main() {
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
+    inventory) inventory "$@" ;;
     workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;
     *) die "$EX_USAGE" "unknown command: $subcommand" ;;

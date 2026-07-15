@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -225,21 +226,73 @@ func TestCycleFacetClearsMain(t *testing.T) {
 	}
 }
 
-// TestUnmodified locks the launch decision: an untouched generator (defaults, no
-// prompt) is "unmodified" so Enter runs omp-managed on the managed defaults; any
-// changed facet or a typed prompt flips it, so Enter launches the generated
-// profile instead.
-func TestUnmodified(t *testing.T) {
-	if m := (model{sel: defaultSel()}); !m.unmodified() {
-		t.Errorf("defaults + no prompt should be unmodified (→ default omp)")
+// TestLaunchKeys locks the launch decision: Enter always launches the generated
+// profile for the current facets — even at defaults with no prompt — while m
+// requests omp-managed on the managed defaults with no generated overlay.
+func TestLaunchKeys(t *testing.T) {
+	rows := []string{
+		"    default    gpt-5.6-sol:high → gpt-5.6-terra:medium",
+		"  ● task       gpt-5.6-terra:medium",
 	}
-	m := model{sel: defaultSel()}
-	m.sel["model"] = "smart" // any facet off its default
-	if m.unmodified() {
-		t.Errorf("a changed facet should count as modified (→ generated profile)")
+	base := model{
+		sel:       defaultSel(),
+		generated: map[string][]string{comboID(defaultSel()): rows},
 	}
-	if m := (model{sel: defaultSel(), firstPrompt: "add a login endpoint"}); m.unmodified() {
-		t.Errorf("a typed prompt should count as modified even at defaults")
+
+	next, _ := base.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m := next.(model)
+	if m.genConfig == "" || m.launchManaged {
+		t.Errorf("Enter at defaults must launch a generated profile, got genConfig=%q launchManaged=%v", m.genConfig, m.launchManaged)
+	}
+
+	next, _ = base.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = next.(model)
+	if !m.launchManaged || m.genConfig != "" {
+		t.Errorf("m must request the managed defaults with no overlay, got genConfig=%q launchManaged=%v", m.genConfig, m.launchManaged)
+	}
+}
+
+// TestGenConfigYAMLAgentOverrides locks the #173 fix: every ●-marked
+// agent-backed role in the generated block is mirrored into
+// task.agentModelOverrides (so spawned agents follow the generated profile),
+// while unmarked roles and the advisor never are. Prompt-focused keystrokes
+// never reach the launch keybinds — clikit's promptbox owns that routing and
+// its tests live in cli-kit.
+func TestGenConfigYAMLAgentOverrides(t *testing.T) {
+	rows := []string{
+		"    default    gpt-5.6-sol:high",
+		"    plan       claude-fable-5:xhigh",
+		"  ● designer   claude-fable-5:xhigh → claude-sonnet-5:high",
+		"  ● librarian  gpt-5.6-sol:high",
+		"  ● reviewer   claude-fable-5:xhigh",
+		"  ● sonic      gpt-5.6-luna:minimal",
+		"  ● task       gpt-5.6-terra:medium",
+		"    smol       gpt-5.6-luna:low",
+	}
+	m := model{
+		sel:       defaultSel(),
+		generated: map[string][]string{comboID(defaultSel()): rows},
+	}
+	m.sel["advisor"] = "off"
+	got := m.genConfigYAML()
+
+	// The override block is emitted in row order with a fixed shape; assert it
+	// verbatim so any drift in keys, values, or nesting fails loudly.
+	want := "task:\n  agentModelOverrides:\n" +
+		"    designer: anthropic/claude-fable-5:xhigh\n" +
+		"    librarian: openai-codex/gpt-5.6-sol:high\n" +
+		"    reviewer: anthropic/claude-fable-5:xhigh\n" +
+		"    sonic: openai-codex/gpt-5.6-luna:minimal\n" +
+		"    task: openai-codex/gpt-5.6-terra:medium\n" +
+		"defaultThinkingLevel:"
+	if !strings.Contains(got, want) {
+		t.Errorf("generated config must mirror exactly the ● roles into agentModelOverrides, got:\n%s", got)
+	}
+	// Override entries are 4-space-indented; assert no non-agent role sneaks in.
+	for _, role := range []string{"plan", "smol", "default", "advisor"} {
+		if strings.Contains(got, "    "+role+": ") {
+			t.Errorf("non-agent role %q must not be overridden, got:\n%s", role, got)
+		}
 	}
 }
 

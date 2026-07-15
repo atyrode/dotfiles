@@ -1196,10 +1196,11 @@ let
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
       # daemon/model. The Bubble Tea usage widget owns the active OMP auth profile:
       # `a` switches it, usage is fetched from that profile, and every trusted launch
-      # receives the same --profile. Launch targets: ↵ runs through the managed
-      # layering (CODE_OMP) — the managed defaults when nothing was changed, the
-      # generated profile otherwise; `u` opens the fixed untrusted sandbox
-      # (CODE_OMP_UNTRUSTED). Plain omp is reached by typing `omp`, never via code.
+      # receives the same --profile. Launch targets: ↵ always runs the generated
+      # profile for the current facets through the managed layering (CODE_OMP);
+      # `m` runs the managed defaults with no overlay; `u` opens the fixed
+      # untrusted sandbox (CODE_OMP_UNTRUSTED). Plain omp is reached by typing
+      # `omp`, never via code.
 
       usage() {
         printf '%s\n' \
@@ -1212,9 +1213,9 @@ let
           '  code -h, --help      this help' \
           "" \
           'In the generator: type a prompt or adjust the dials, a switches the' \
-          'visible OMP auth combination, ? shows all keys, Enter launches through' \
-          'the managed layering (the managed defaults if nothing was changed, the' \
-          'generated profile otherwise), and u opens an untrusted sandbox.'
+          'visible OMP auth combination, ? shows all keys, Enter launches the' \
+          'generated profile through the managed layering, m runs the managed' \
+          'defaults with no overlay, and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in

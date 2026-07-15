@@ -57,7 +57,7 @@ them together.
 | `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
 | `omp-managed` | The managed launch target: platform extensions, managed defaults, and enforced policy over a one-shot `--config`, with no preset overlay | Managed defaults and policy, plus the generated `--config` the generator passes |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
-| `code` | The profile generator TUI (see below) | Always launches through `omp-managed`: a generated profile as a one-shot `--config`, or the managed defaults when nothing was asked for |
+| `code` | The profile generator TUI (see below) | Always launches through `omp-managed`: Enter passes the generated profile as a one-shot `--config`; `m` runs the managed defaults with no overlay |
 
 For discoverability beyond the wrapper contract, see the versioned
 [OMP feature wiki](omp/README.md). Its CLI tables describe plain upstream OMP;
@@ -134,12 +134,15 @@ There are three ways to leave the TUI — every trusted launch goes through
 `omp-managed`; plain `omp` is reached by typing `omp` directly, never via
 `code`:
 
-- **Enter with nothing changed** (no prompt, default dials) runs `omp-managed`
-  with no overlay — the managed defaults — inside the selected authentication
-  profile.
-- **Enter after typing a prompt or moving a dial** generates a managed routing
-  profile and launches it through `omp-managed` as a one-shot `--config`, with
-  the selected authentication profile and typed prompt carried into the session.
+- **Enter** always launches the generated routing profile for the current
+  facets through `omp-managed` as a one-shot `--config` — the untouched
+  default combo is a profile like any other — with the selected authentication
+  profile and any typed prompt carried into the session. The generated profile
+  carries `task.agentModelOverrides` mirroring its agent-backed roles, so
+  spawned task agents follow the generated routing instead of staying pinned
+  to the static managed defaults.
+- **`m`** runs `omp-managed` with no overlay — the managed defaults — inside
+  the selected authentication profile.
 - **`u`** opens the untrusted sandbox (`ompu`) for the current context; it never
   inherits the selected personal authentication profile.
 

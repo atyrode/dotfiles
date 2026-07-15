@@ -219,11 +219,19 @@ type usageWin struct {
 	prov  string
 }
 
+// resetCredits tracks OpenAI reset credits: how many are currently available
+// and the seconds until each available credit expires (relative, unsorted).
+type resetCredits struct {
+	avail int
+	exp   []int64
+}
+
 type availability struct {
-	bucket map[string]string // bucket -> "ok" | "maxed" | "unauthed"
-	reset  map[string]int64
-	wins   []usageWin
-	ok     bool
+	bucket  map[string]string // bucket -> "ok" | "maxed" | "unauthed"
+	reset   map[string]int64
+	wins    []usageWin
+	credits resetCredits
+	ok      bool
 }
 
 func loadAvailability(cmd, profile string) availability {
@@ -253,6 +261,13 @@ func loadAvailability(cmd, profile string) availability {
 					DurationMs int64 `json:"durationMs"`
 				} `json:"window"`
 			} `json:"limits"`
+			ResetCredits struct {
+				AvailableCount int `json:"availableCount"`
+				Credits        []struct {
+					ExpiresAt string `json:"expiresAt"`
+					Status    string `json:"status"`
+				} `json:"credits"`
+			} `json:"resetCredits"`
 		} `json:"reports"`
 	}
 	if json.Unmarshal(out, &doc) != nil {
@@ -275,6 +290,17 @@ func loadAvailability(cmd, profile string) availability {
 				a.reset[bkt] = l.Window.ResetsAt/1000 - now
 			} else if a.bucket[bkt] != "maxed" {
 				a.bucket[bkt] = "ok"
+			}
+		}
+		if r.Provider == "openai-codex" {
+			a.credits.avail = r.ResetCredits.AvailableCount
+			for _, c := range r.ResetCredits.Credits {
+				if c.Status != "available" {
+					continue
+				}
+				if t, err := time.Parse(time.RFC3339, c.ExpiresAt); err == nil {
+					a.credits.exp = append(a.credits.exp, t.Unix()-now)
+				}
 			}
 		}
 	}
@@ -1175,6 +1201,11 @@ func (m *model) usagePanel() string {
 		}
 		blocks[w.prov] = append(blocks[w.prov], m.usageRow(w))
 	}
+	if cl := m.creditLine(); cl != "" {
+		if b, ok := blocks["openai-codex"]; ok {
+			blocks["openai-codex"] = append(b, cl)
+		}
+	}
 	// side-by-side when there's horizontal room, else stacked. colW must fit the
 	// widest row (label · bar · pct · ↻reset · note) without wrapping the note.
 	const colW = 49
@@ -1213,6 +1244,42 @@ func (m *model) usageRow(w usageWin) string {
 		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + " " + fmtReset(w.secs))
 	}
 	return fmt.Sprintf("  %-9s %s %3d%% used  %s%s", shortWin(w.label), barStr(w.pct), w.pct, reset, note)
+}
+
+// creditLine renders the OpenAI reset-credit summary: the available count and
+// the days remaining until the three soonest credit expirations, ascending.
+func (m *model) creditLine() string {
+	c := m.avail.credits
+	if c.avail == 0 && len(c.exp) == 0 {
+		return ""
+	}
+	exp := append([]int64(nil), c.exp...)
+	sort.Slice(exp, func(i, j int) bool { return exp[i] < exp[j] })
+	if len(exp) > 3 {
+		exp = exp[:3]
+	}
+	noun := "resets"
+	if c.avail == 1 {
+		noun = "reset"
+	}
+	line := fmt.Sprintf("%d %s", c.avail, noun)
+	if len(exp) > 0 {
+		days := make([]string, len(exp))
+		for i, s := range exp {
+			days[i] = fmtDays(s)
+		}
+		line += " · expiring in " + strings.Join(days, ", ")
+	}
+	return "  " + stDim.Render(gReset+" "+line)
+}
+
+// fmtDays renders a relative duration as whole days remaining, rounding up so
+// a credit expiring later today still reads 1d.
+func fmtDays(s int64) string {
+	if s <= 0 {
+		return "0d"
+	}
+	return fmt.Sprintf("%dd", (s+86399)/86400)
 }
 
 func (m *model) syncPreview() {

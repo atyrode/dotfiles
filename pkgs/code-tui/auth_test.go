@@ -92,6 +92,71 @@ func TestUsagePanelNamesWholeAuthCombination(t *testing.T) {
 	}
 }
 
+const day = int64(86400)
+
+func TestCreditLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		credits resetCredits
+		want    string
+	}{
+		{"absent", resetCredits{}, ""},
+		{"count only", resetCredits{avail: 2}, "2 resets"},
+		{"singular", resetCredits{avail: 1, exp: []int64{3 * day}}, "1 reset · expiring in 3d"},
+		{"sorted ascending", resetCredits{avail: 3, exp: []int64{28 * day, 11 * day, 16 * day}}, "3 resets · expiring in 11d, 16d, 28d"},
+		{"capped at three soonest", resetCredits{avail: 5, exp: []int64{40 * day, 2 * day, 30 * day, 9 * day, 20 * day}}, "5 resets · expiring in 2d, 9d, 20d"},
+		{"rounds up to whole days", resetCredits{avail: 3, exp: []int64{1, day, day + 1}}, "3 resets · expiring in 1d, 1d, 2d"},
+		{"expired reads zero", resetCredits{avail: 0, exp: []int64{-5}}, "0 resets · expiring in 0d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model{avail: availability{credits: tt.credits}}
+			got := m.creditLine()
+			if tt.want == "" {
+				if got != "" {
+					t.Fatalf("creditLine() = %q, want empty", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("creditLine() = %q, want it to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUsagePanelShowsOpenAIResetCredits(t *testing.T) {
+	m := model{
+		authProfiles: []authProfile{{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"}},
+		avail: availability{
+			ok:      true,
+			bucket:  map[string]string{},
+			reset:   map[string]int64{},
+			wins:    []usageWin{{label: "7 days", pct: 33, secs: 6 * day, dur: 7 * day, prov: "openai-codex"}},
+			credits: resetCredits{avail: 3, exp: []int64{28 * day, 11 * day, 16 * day}},
+		},
+	}
+	panel := m.usagePanel()
+	if !strings.Contains(panel, "3 resets · expiring in 11d, 16d, 28d") {
+		t.Fatalf("usage panel missing reset credits: %q", panel)
+	}
+}
+
+func TestUsagePanelWithoutResetCredits(t *testing.T) {
+	m := model{
+		authProfiles: []authProfile{{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"}},
+		avail: availability{
+			ok:     true,
+			bucket: map[string]string{},
+			reset:  map[string]int64{},
+			wins:   []usageWin{{label: "7 days", pct: 33, secs: 6 * day, dur: 7 * day, prov: "openai-codex"}},
+		},
+	}
+	if panel := m.usagePanel(); strings.Contains(panel, "expiring") || strings.Contains(panel, "resets") {
+		t.Fatalf("usage panel unexpectedly mentions reset credits: %q", panel)
+	}
+}
+
 func TestWithOMPProfileOverridesForwardedProfile(t *testing.T) {
 	tests := []struct {
 		name    string

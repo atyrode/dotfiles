@@ -120,16 +120,29 @@ func TestHostMountsBoxForAskable(t *testing.T) {
 	}
 }
 
-type resizeApp struct{ width, height int }
+type resizeApp struct {
+	width, height int
+	resizes       []tea.WindowSizeMsg
+}
 
 func (resizeApp) Init() tea.Cmd { return nil }
 func (a resizeApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
 		a.width, a.height = size.Width, size.Height
+		a.resizes = append(a.resizes, size)
 	}
 	return a, nil
 }
 func (resizeApp) View() string { return "" }
+
+type resizeAskableApp struct{ resizeApp }
+
+func (resizeAskableApp) Asker() Asker { return stubAsker{} }
+func (a resizeAskableApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := a.resizeApp.Update(msg)
+	a.resizeApp = next.(resizeApp)
+	return a, cmd
+}
 
 func TestHostForwardsResizeToBareApp(t *testing.T) {
 	h := newHost(resizeApp{})
@@ -137,6 +150,69 @@ func TestHostForwardsResizeToBareApp(t *testing.T) {
 	got := next.(host).app.(resizeApp)
 	if got.width != 72 || got.height != 26 {
 		t.Fatalf("bare app size = %dx%d, want 72x26", got.width, got.height)
+	}
+}
+
+func TestHostForwardsEffectiveResizeWithPromptBoxInactive(t *testing.T) {
+	h := newHost(resizeAskableApp{})
+
+	for _, size := range []tea.WindowSizeMsg{
+		{Width: 72, Height: 26},
+		{Width: 80, Height: 26}, // width only
+		{Width: 80, Height: 26}, // unchanged
+		{Width: 80, Height: 30}, // height only
+		{Width: 80, Height: 30}, // unchanged
+	} {
+		next, _ := h.Update(size)
+		h = next.(host)
+	}
+
+	got := h.app.(resizeAskableApp).resizes
+	want := []tea.WindowSizeMsg{
+		{Width: 72, Height: 26},
+		{Width: 80, Height: 26},
+		{Width: 80, Height: 30},
+	}
+	assertResizeHistory(t, got, want)
+}
+
+func TestHostForwardsEffectiveResizeWithPromptBoxActive(t *testing.T) {
+	h := newHost(resizeAskableApp{})
+	next, _ := h.Update(tea.WindowSizeMsg{Width: 72, Height: 26})
+	h = next.(host)
+	next, _ = h.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	h = next.(host)
+
+	activeHeight := h.appH
+	for _, size := range []tea.WindowSizeMsg{
+		{Width: 80, Height: 26}, // width only
+		{Width: 80, Height: 26}, // unchanged
+		{Width: 80, Height: 30}, // height only
+		{Width: 80, Height: 30}, // unchanged
+	} {
+		next, _ = h.Update(size)
+		h = next.(host)
+	}
+
+	got := h.app.(resizeAskableApp).resizes
+	want := []tea.WindowSizeMsg{
+		{Width: 72, Height: 26},
+		{Width: 72, Height: activeHeight},
+		{Width: 80, Height: activeHeight},
+		{Width: 80, Height: activeHeight + 4},
+	}
+	assertResizeHistory(t, got, want)
+}
+
+func assertResizeHistory(t *testing.T, got, want []tea.WindowSizeMsg) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("resize history length = %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("resize[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 

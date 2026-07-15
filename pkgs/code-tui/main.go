@@ -67,7 +67,7 @@ var keys = keyMap{
 // defaultSel returns a fresh copy of the generator's default facet selection —
 // used both to seed the model and to restore it via the reset key.
 func defaultSel() map[string]string {
-	return map[string]string{"lane": "mixed", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "main": "off", "fast": "off"}
+	return map[string]string{"lane": "mixed", "model": "smart", "thinking": "medium", "advisor": "glance", "spark": "on", "fable": "off", "main": "off", "fast": "off"}
 }
 
 // ── palette ──────────────────────────────────────────────────────────────────

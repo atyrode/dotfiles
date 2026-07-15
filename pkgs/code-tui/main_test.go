@@ -152,8 +152,8 @@ func TestComboID(t *testing.T) {
 }
 
 // TestDefaultSelValid guards the reset-to-defaults key (#119) against facet
-// drift: every default must name a real facet and a value that facet offers, and
-// every facet must be seeded exactly once.
+// drift: every default must name a real facet and a value that facet offers,
+// every facet must be seeded exactly once, and the model default is smart (#178).
 func TestDefaultSelValid(t *testing.T) {
 	facets := facetDefs(map[string]string{})
 	byKey := map[string][]string{}
@@ -180,6 +180,9 @@ func TestDefaultSelValid(t *testing.T) {
 		if !found {
 			t.Errorf("defaultSel[%q]=%q is not a valid value (allowed: %v)", k, v, values)
 		}
+	}
+	if def["model"] != "smart" {
+		t.Errorf(`defaultSel["model"] = %q, want "smart"`, def["model"])
 	}
 }
 

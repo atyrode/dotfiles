@@ -975,9 +975,9 @@ let
         config_root="$HOME/.omp"
         matched_default=false
         matched_profiles=()
-        shopt -s nullglob
+        shopt -s nullglob globstar
 
-        for session in "$config_root/agent/sessions/"*.jsonl; do
+        for session in "$config_root/agent/sessions"/**/*.jsonl; do
           session_id="''${session##*_}"
           session_id="''${session_id%.jsonl}"
           if [[ "$session_id" == "$resume_target"* ]]; then
@@ -989,7 +989,7 @@ let
         for profile_root in "$config_root/profiles/"*/agent/sessions; do
           profile="''${profile_root#"$config_root/profiles/"}"
           profile="''${profile%%/*}"
-          for session in "$profile_root/"*.jsonl; do
+          for session in "$profile_root"/**/*.jsonl; do
             session_id="''${session##*_}"
             session_id="''${session_id%.jsonl}"
             if [[ "$session_id" == "$resume_target"* ]]; then

@@ -35,17 +35,17 @@ import (
 
 // ── keybindings (drive both input handling and the bubbles/help footer) ───────
 type keyMap struct {
-	Move, Change, Reset, Depth, Refresh, Auth, Collapse, Launch, Untrusted, Help, Quit key.Binding
+	Move, Change, Reset, Depth, Refresh, Auth, Collapse, Launch, Managed, Untrusted, Help, Quit key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Move, k.Change, k.Reset, k.Auth, k.Launch, k.Untrusted, k.Help, k.Quit}
+	return []key.Binding{k.Move, k.Change, k.Reset, k.Auth, k.Launch, k.Managed, k.Untrusted, k.Help, k.Quit}
 }
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Move, k.Change, k.Reset},
 		{k.Depth, k.Refresh, k.Auth, k.Collapse},
-		{k.Launch, k.Untrusted, k.Help, k.Quit},
+		{k.Launch, k.Managed, k.Untrusted, k.Help, k.Quit},
 	}
 }
 
@@ -58,6 +58,7 @@ var keys = keyMap{
 	Auth:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch auth")),
 	Collapse:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "collapse")),
 	Launch:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
+	Managed:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "managed omp")),
 	Untrusted: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "sandbox")),
 	Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "more")),
 	Quit:      key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
@@ -749,12 +750,16 @@ func prefixed(model string) string {
 	return "openai-codex/" + model
 }
 
-// genConfigYAML reconstructs an omp config (modelRoles, fallback chains,
-// thinking, advisor, and the priority tier when fast is on) from the generated
-// routing block for the current facets — what Enter launches omp with.
+// genConfigYAML reconstructs an omp config (modelRoles, task-agent model
+// overrides for the ●-marked agent-backed roles, fallback chains, thinking,
+// advisor, and the priority tier when fast is on) from the generated routing
+// block for the current facets — what Enter launches omp with. The agent
+// overrides mirror the preview: without them the static managed defaults
+// would keep the five agent-backed types pinned regardless of the generated
+// profile (issue #173).
 func (m model) genConfigYAML() string {
 	rows := m.applyAdvisor(m.generated[comboID(m.sel)], m.sel["advisor"])
-	var mr, fc strings.Builder
+	var mr, fc, ao strings.Builder
 	advisorOn := false
 	for _, r := range rows {
 		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
@@ -778,6 +783,11 @@ func (m model) genConfigYAML() string {
 		if role == "advisor" {
 			advisorOn = true
 		}
+		if i == 1 && role != "advisor" {
+			// ●-marked agent-backed role: mirror its lead route as the task-agent
+			// model override so spawned agents follow the generated profile.
+			ao.WriteString("    " + role + ": " + prefixed(models[0]) + "\n")
+		}
 		mr.WriteString("  " + role + ": " + prefixed(models[0]) + "\n")
 		if len(models) > 1 {
 			var fbs []string
@@ -790,6 +800,9 @@ func (m model) genConfigYAML() string {
 	var b strings.Builder
 	b.WriteString("modelRoles:\n" + mr.String())
 	b.WriteString("retry:\n  enabled: true\n  modelFallback: true\n  fallbackRevertPolicy: cooldown-expiry\n  fallbackChains:\n" + fc.String())
+	if ao.Len() > 0 {
+		b.WriteString("task:\n  agentModelOverrides:\n" + ao.String())
+	}
 	b.WriteString("defaultThinkingLevel: " + m.sel["thinking"] + "\n")
 	if advisorOn {
 		b.WriteString("advisor:\n  enabled: true\n")
@@ -882,40 +895,21 @@ func (m model) bodyLines() ([]string, int) {
 	return m.genLines()
 }
 
-// unmodified reports whether the generator is still untouched: every facet at its
-// default value and no prompt typed into the suggest box. Enter then launches
-// omp-managed with no overlay (the managed defaults) instead of building a
-// generated config.
-func (m model) unmodified() bool {
-	if m.firstPrompt != "" {
-		return false
-	}
-	for k, v := range defaultSel() {
-		if m.sel[k] != v {
-			return false
-		}
-	}
-	return true
-}
-
 // launchFooter is the cost/speed meters for the current facet combo plus the
 // enter-to-launch call to action — so the generator always shows what the choice
-// costs, how fast it is, and how Enter will launch it. The call to action tracks
-// the launch rule: an untouched generator runs omp-managed on the managed
-// defaults; any change launches the generated profile. The sandbox (u) key is
-// always offered.
+// costs, how fast it is, and how Enter will launch it. Enter always launches
+// the generated profile for the current facets (the untouched default combo is
+// a profile like any other); m runs omp-managed on the managed defaults with
+// no overlay, and the sandbox (u) key is always offered.
 func (m model) launchFooter() []string {
 	cs, ss := m.costScore(), m.speedScore()
 	cta := "⏎ launch generated profile"
-	if m.unmodified() {
-		cta = "⏎ run managed omp"
-	}
 	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("  " + cta)
 	return []string{
 		"",
 		m.meter("cost", "$", meterRamp[cs], cs), // dear → red, cheap → green
 		m.meter("speed", "»", meterRamp[6-ss], ss), // fast → green, slow → red
-		acc + stDim.Render("   u sandbox"),
+		acc + stDim.Render("   m managed omp · u sandbox"),
 	}
 }
 
@@ -991,7 +985,7 @@ type model struct {
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
 
-	launchDefault   bool              // Enter on an untouched generator: run CODE_OMP with no overlay
+	launchManaged   bool              // m: run CODE_OMP with no overlay (the managed defaults)
 	launchUntrusted bool              // u: run the CODE_OMP_UNTRUSTED sandbox
 	genConfig       string            // generated config YAML to launch omp with (generator Enter)
 	firstPrompt     string            // prompt from the suggest box, forwarded as omp's first message
@@ -1360,15 +1354,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.HalfViewUp() // scroll the preview (mouse capture is off, see main)
 		case "pgdown", "ctrl+d":
 			m.vp.HalfViewDown()
+		case "m":
+			// Managed-defaults omp: omp-managed with no generated overlay. The
+			// explicit keybind keeps every Enter launch a generated profile.
+			m.launchManaged = true
+			return m, tea.Quit
 		case "enter":
-			// An untouched generator (defaults, no prompt) just runs the user's bare
-			// default omp; any facet change or typed prompt launches the generated
-			// profile instead.
-			if m.unmodified() {
-				m.launchDefault = true
-			} else {
-				m.genConfig = m.genConfigYAML()
-			}
+			// Enter always launches the generated profile for the current facets —
+			// the untouched default combo is a generated profile like any other.
+			m.genConfig = m.genConfigYAML()
 			return m, tea.Quit
 		}
 
@@ -1676,10 +1670,9 @@ func main() {
 		// The sandbox owns the fixed `untrusted` profile and must never inherit the
 		// selected personal auth state.
 		execForward("CODE_OMP_UNTRUSTED", "ompu", fm.firstPrompt, "")
-	case fm.launchDefault:
-		// Nothing was generated — run omp-managed on the managed defaults inside
-		// the selected auth profile. Every trusted code launch goes through the
-		// managed layers; plain omp is reached by typing `omp` directly.
+	case fm.launchManaged:
+		// m — omp-managed on the managed defaults, no generated overlay, inside
+		// the selected auth profile. Plain omp is reached by typing `omp` directly.
 		execForward("CODE_OMP", "omp-managed", fm.firstPrompt, profile)
 	case fm.genConfig != "":
 		launchGenerated(fm.genConfig, fm.firstPrompt, profile)

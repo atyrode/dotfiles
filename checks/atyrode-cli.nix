@@ -25,6 +25,7 @@ pkgs.runCommand "check-atyrode-cli"
     case "$*" in
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
+      *rev-parse\ HEAD*) echo 0123456789abcdef0123456789abcdef01234567 ;;
       *diff\ --quiet*) exit 0 ;;
       *ls-remote*) printf 'feedfacefeedfacefeedfacefeedfacefeedface\trefs/heads/main\n' ;;
       *) exit 1 ;;
@@ -166,6 +167,7 @@ pkgs.runCommand "check-atyrode-cli"
       and .backend == "nh-home"
       and .source == "local"
       and .revision == "0123456789ab"
+      and .resolvedRevision == "0123456789abcdef0123456789abcdef01234567"
       and .mutationBoundary == "activation only after preflight"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
@@ -192,6 +194,7 @@ pkgs.runCommand "check-atyrode-cli"
     atyrode apply --plan --json | jq -e '
       .source == "remote"
       and .revision == "feedfacefeed"
+      and .resolvedRevision == "feedfacefeedfacefeedfacefeedfacefeedface"
       and .installable == "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#alex-x86_64-linux"
       and (.dirty | not)
       and .repository == "github:atyrode/dotfiles"
@@ -206,7 +209,9 @@ pkgs.runCommand "check-atyrode-cli"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
 
     atyrode apply --ref 0123456789012345678901234567890123456789 --plan --json | jq -e '
-      .source == "remote" and .revision == "012345678901"
+      .source == "remote"
+      and .revision == "012345678901"
+      and .resolvedRevision == "0123456789012345678901234567890123456789"
     ' >/dev/null
 
     if atyrode apply --ref main --repo "$HOME/nix-dotfiles" --plan >/dev/null 2>&1; then

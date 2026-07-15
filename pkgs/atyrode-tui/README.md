@@ -19,14 +19,17 @@ checkout-specific behavior remain aligned.
 Startup performs two read-only operations in order:
 
 1. `atyrode apply --plan --json` supplies the host, system, target revision,
-   backend, and capabilities rendered in the plan panel.
-2. `atyrode apply --dry-run` supplies the activation preview. Terminal control
-   sequences and carriage-return progress updates are normalized before the
-   output is rendered inside the changes viewport.
+   backend, and capabilities rendered in the plan panel. Remote plans include
+   the full commit as `resolvedRevision`.
+2. `atyrode apply --ref <resolvedRevision> --dry-run` supplies the activation
+   preview. Terminal control sequences and carriage-return progress updates are
+   normalized before the output is rendered inside the changes viewport.
 
 No activation occurs during startup. Pressing `a` or `enter` opens a confirmation
-step; only `y` then runs the real `atyrode apply` in the terminal. `n` or `esc`
-cancels confirmation, `r` refreshes the plan and preview, arrow keys or `j`/`k`
+step; only `y` then runs `atyrode apply --ref <resolvedRevision>` in the terminal.
+The preview and activation therefore address the same immutable commit even if
+the published branch advances while the cockpit is open. `n` or `esc` cancels
+confirmation, `r` resolves and previews the branch again, arrow keys or `j`/`k`
 scroll the preview, and `q` exits.
 
 ## Scope

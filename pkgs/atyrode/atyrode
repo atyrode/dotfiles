@@ -730,7 +730,7 @@ apply_config() {
   done
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
 
-  local host data expected_system expected_user expected_hostname platform source repository flake_source revision dirty backend installable
+  local host data expected_system expected_user expected_hostname platform source repository flake_source revision resolved_revision dirty backend installable
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -753,6 +753,7 @@ apply_config() {
     [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
     "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
     revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
+    resolved_revision="$("$git_command" -C "$repo" rev-parse HEAD)"
     dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
     repository="$repo"
     flake_source="$repo"
@@ -771,6 +772,7 @@ apply_config() {
       [[ -n "$rev" ]] || die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
     fi
     revision="${rev:0:12}"
+    resolved_revision="$rev"
     dirty=false
     repository="$flake_ref"
     flake_source="$flake_ref/$rev"
@@ -780,9 +782,9 @@ apply_config() {
 
   local output
   output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
-    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg source "$source" \
+    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg resolved_revision "$resolved_revision" --arg source "$source" \
     --arg installable "$installable" --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
-    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
+    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,resolvedRevision:$resolved_revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
   if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
   else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
   [[ "$plan" == 0 ]] || return 0

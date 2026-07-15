@@ -35,6 +35,7 @@ type applyPlan struct {
 	Capabilities     []string `json:"capabilities"`
 	Backend          string   `json:"backend"`
 	Revision         string   `json:"revision"`
+	ResolvedRevision string   `json:"resolvedRevision"`
 	Dirty            bool     `json:"dirty"`
 	Repository       string   `json:"repository"`
 	MutationBoundary string   `json:"mutationBoundary"`
@@ -53,7 +54,7 @@ type previewMsg struct {
 type applyDoneMsg struct{ err error }
 
 type outputFunc func(string, ...string) ([]byte, error)
-type applyFunc func(string) tea.Cmd
+type applyFunc func(string, ...string) tea.Cmd
 
 type model struct {
 	cli     string
@@ -73,8 +74,8 @@ func commandOutput(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
 
-func execApply(cli string) tea.Cmd {
-	cmd := exec.Command(cli, "apply")
+func execApply(cli string, args ...string) tea.Cmd {
+	cmd := exec.Command(cli, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -104,18 +105,44 @@ func (m model) loadPlan() tea.Cmd {
 		if err := json.Unmarshal(out, &plan); err != nil {
 			return planMsg{err: fmt.Errorf("decode apply plan: %w", err)}
 		}
+		if plan.Source == "remote" && !isFullGitRevision(plan.ResolvedRevision) {
+			return planMsg{err: fmt.Errorf("decode apply plan: remote plan omitted its full resolved revision")}
+		}
 		return planMsg{plan: plan}
 	}
 }
 
 func (m model) loadPreview() tea.Cmd {
 	return func() tea.Msg {
-		out, err := m.output(m.cli, "apply", "--dry-run")
+		out, err := m.output(m.cli, m.applyArgs(true)...)
 		if err != nil {
 			return previewMsg{output: strings.TrimSpace(string(out)), err: commandError("preview apply", out, err)}
 		}
 		return previewMsg{output: strings.TrimSpace(string(out))}
 	}
+}
+
+func (m model) applyArgs(preview bool) []string {
+	args := []string{"apply"}
+	if m.plan.Source == "remote" {
+		args = append(args, "--ref", m.plan.ResolvedRevision)
+	}
+	if preview {
+		args = append(args, "--dry-run")
+	}
+	return args
+}
+
+func isFullGitRevision(revision string) bool {
+	if len(revision) != 40 {
+		return false
+	}
+	for _, c := range revision {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func commandError(action string, output []byte, err error) error {
@@ -278,7 +305,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y":
 			if m.phase == confirming {
 				m.phase, m.err = applying, nil
-				return m, m.apply(m.cli)
+				return m, m.apply(m.cli, m.applyArgs(false)...)
 			}
 		case "n", "esc":
 			if m.phase == confirming {

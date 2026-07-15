@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const testRevision = "feedfacefeedfacefeedfacefeedfacefeedface"
+
 func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 	var calls [][]string
 	m := newModel("/bin/atyrode")
@@ -17,7 +19,7 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 		calls = append(calls, append([]string{name}, args...))
 		switch len(calls) {
 		case 1:
-			return []byte(`{"host":"workstation","system":"x86_64-linux","user":"alex","capabilities":["base","agents"],"installable":"github:atyrode/dotfiles#workstation","revision":"abc123","source":"remote"}`), nil
+			return []byte(`{"host":"workstation","system":"x86_64-linux","user":"alex","capabilities":["base","agents"],"installable":"github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#workstation","revision":"feedfacefeed","resolvedRevision":"feedfacefeedfacefeedfacefeedfacefeedface","source":"remote"}`), nil
 		case 2:
 			return []byte("would build /nix/store/new-home\nwould activate workstation\n"), nil
 		default:
@@ -35,7 +37,7 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 
 	wantCalls := [][]string{
 		{"/bin/atyrode", "apply", "--plan", "--json"},
-		{"/bin/atyrode", "apply", "--dry-run"},
+		{"/bin/atyrode", "apply", "--ref", testRevision, "--dry-run"},
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("commands = %#v, want %#v", calls, wantCalls)
@@ -54,15 +56,29 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 	}
 }
 
+func TestRemotePlanRequiresResolvedRevision(t *testing.T) {
+	m := newModel("atyrode")
+	m.output = func(string, ...string) ([]byte, error) {
+		return []byte(`{"source":"remote","revision":"feedfacefeed"}`), nil
+	}
+	msg := m.Init()().(planMsg)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "full resolved revision") {
+		t.Fatalf("missing resolved revision error = %v", msg.err)
+	}
+}
+
 func TestApplyRequiresExplicitConfirmation(t *testing.T) {
 	m := newModel("/bin/atyrode")
 	m.phase = ready
+	m.plan = applyPlan{Source: "remote", ResolvedRevision: testRevision}
 	applies := 0
-	m.apply = func(cli string) tea.Cmd {
+	var applyArgs []string
+	m.apply = func(cli string, args ...string) tea.Cmd {
 		applies++
 		if cli != "/bin/atyrode" {
 			t.Fatalf("cli = %q", cli)
 		}
+		applyArgs = append([]string(nil), args...)
 		return func() tea.Msg { return applyDoneMsg{} }
 	}
 
@@ -82,6 +98,9 @@ func TestApplyRequiresExplicitConfirmation(t *testing.T) {
 	m = next.(model)
 	if m.phase != applying || applies != 1 || cmd == nil {
 		t.Fatalf("confirmation phase = %v, applies = %d, cmd nil = %t", m.phase, applies, cmd == nil)
+	}
+	if want := []string{"apply", "--ref", testRevision}; !reflect.DeepEqual(applyArgs, want) {
+		t.Fatalf("apply args = %#v, want %#v", applyArgs, want)
 	}
 
 	next, _ = m.Update(cmd())

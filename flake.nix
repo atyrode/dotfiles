@@ -97,7 +97,9 @@
       };
       knownCapabilities = builtins.attrNames capabilityModules;
       inventoryAnnotations = import ./inventory/annotations.nix;
-      capabilityDescriptions = lib.mapAttrs (_: annotation: annotation.purpose) inventoryAnnotations.capabilities;
+      capabilityDescriptions = lib.mapAttrs (
+        _: annotation: annotation.purpose
+      ) inventoryAnnotations.capabilities;
       capabilitySummary =
         assert lib.assertMsg (
           builtins.attrNames capabilityDescriptions == knownCapabilities
@@ -431,9 +433,7 @@
           annotations = inventoryAnnotations;
           pkgs = pkgsFor system;
           revision = inventoryRevision;
-          homeConfigs = lib.filterAttrs (
-            name: _: hosts.${name}.system == system
-          ) canonicalHomeConfigs;
+          homeConfigs = lib.filterAttrs (name: _: hosts.${name}.system == system) canonicalHomeConfigs;
           darwinConfigs = lib.filterAttrs (
             name: _: darwinHosts.${name}.system == system
           ) canonicalDarwinConfigs;
@@ -456,7 +456,6 @@
       darwinConfigurations = canonicalDarwinConfigs // aliasesFor darwinHosts canonicalDarwinConfigs;
       inventory = inventoryBySystem;
       capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
-
 
       lib = {
         inherit

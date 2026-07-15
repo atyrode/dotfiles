@@ -39,17 +39,22 @@ let
   noClamAV = config: !(builtins.elem "clamav" (packageNames config));
 
   capabilityOwners = builtins.attrNames inventory.capabilities;
-  inventoryPackages = lib.concatMap
-    (capability: map (item: item.name)
-      (lib.filter (item: item.kind == "package")
-        inventory.capabilities.${capability}.deliverables))
-    capabilityOwners;
-  inventoryCasks = map (item: item.name)
-    (lib.filter (item: item.kind == "application")
-      inventory.capabilities.desktop.deliverables);
-  packagesFor = owner: sort (map (item: item.name)
-    (lib.filter (item: item.kind == "package")
-      inventory.capabilities.${owner}.deliverables));
+  inventoryPackages = lib.concatMap (
+    capability:
+    map (item: item.name) (
+      lib.filter (item: item.kind == "package") inventory.capabilities.${capability}.deliverables
+    )
+  ) capabilityOwners;
+  inventoryCasks = map (item: item.name) (
+    lib.filter (item: item.kind == "application") inventory.capabilities.desktop.deliverables
+  );
+  packagesFor =
+    owner:
+    sort (
+      map (item: item.name) (
+        lib.filter (item: item.kind == "package") inventory.capabilities.${owner}.deliverables
+      )
+    );
 
   expectedContainerPackages =
     if lib.hasSuffix "-darwin" system then

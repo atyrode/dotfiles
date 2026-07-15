@@ -91,14 +91,29 @@
     projectOwned = {
       kind = "on-demand";
       items = [
-        "bun" "cargo" "clippy" "deno" "gcc" "go" "nodejs" "pillow"
-        "python" "rust-analyzer" "rustc" "rustfmt" "uv"
+        "bun"
+        "cargo"
+        "clippy"
+        "deno"
+        "gcc"
+        "go"
+        "nodejs"
+        "pillow"
+        "python"
+        "rust-analyzer"
+        "rustc"
+        "rustfmt"
+        "uv"
       ];
       purpose = "Runtimes and compilers belong to committed project shells, mise.toml, or native manifests";
     };
     experimental = {
       kind = "not-installed";
-      items = [ "pi" "pi-extensions" "zed" ];
+      items = [
+        "pi"
+        "pi-extensions"
+        "zed"
+      ];
       purpose = "Candidates remain absent until separately evaluated and admitted";
     };
   };

@@ -5,6 +5,20 @@ dotfiles. It reads the declarative registry described in [Hosts and
 capabilities](hosts.md); it does not infer a profile from the current directory
 or maintain a second mutable profile database.
 
+## Interactive cockpit
+
+Running bare `atyrode` with both stdin and stdout attached to a terminal opens
+the interactive cockpit. A bare non-TTY invocation continues to print CLI help,
+and every explicit subcommand (`atyrode apply`, `atyrode doctor …`, JSON calls,
+and the other command surfaces) continues through the Bash CLI even on a TTY.
+Existing scripts therefore do not enter the cockpit.
+
+The apply panel first resolves the requested branch to an exact commit, then
+previews `atyrode apply --ref <commit> --dry-run`. It performs no activation
+until the operator opens the confirmation step and accepts it; the real apply
+uses that same exact commit, so the activated configuration cannot drift from
+the preview if the branch advances while the cockpit is open.
+
 ## Applying a configuration
 
 ```sh

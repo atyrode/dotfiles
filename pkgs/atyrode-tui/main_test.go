@@ -157,6 +157,76 @@ func TestCommandErrorStripsTerminalControls(t *testing.T) {
 	}
 }
 
+func TestStripTerminalControlsUsesANSIParser(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		{"CSI", "a\x1b[31mb\x1b[0mc", "abc"},
+		{"OSC BEL", "a\x1b]0;title\x07b", "ab"},
+		{"OSC ST", "a\x1b]8;;https://example.test\x1b\\b\x1b]8;;\x1b\\c", "abc"},
+		{"DCS", "a\x1bP1;2|payload\x1b\\b", "ab"},
+		{"SOS", "a\x1bXpayload\x1b\\b", "ab"},
+		{"PM", "a\x1b^payload\x1b\\b", "ab"},
+		{"APC", "a\x1b_payload\x1b\\b", "ab"},
+		{"BEL", "a\x07b", "ab"},
+		{"C1", "a\u0085b", "ab"},
+		{"truncated CSI", "a\x1b[31", "a"},
+		{"truncated OSC", "a\x1b]unterminated", "a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripTerminalControls(tt.input); got != tt.want {
+				t.Fatalf("stripTerminalControls(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLongPlanFailureStaysInsideNarrowWindow(t *testing.T) {
+	m := newModel("atyrode")
+	m.width, m.height = 44, 26
+	m.output = func(string, ...string) ([]byte, error) {
+		output := "\x1b]0;unsafe\x07" + strings.Repeat("plan-failure-with-an-unbroken-path/", 12)
+		return []byte(output), errors.New("exit status 69")
+	}
+	msg := m.Init()().(planMsg)
+	next, _ := m.Update(msg)
+	assertFailureViewContained(t, next.(model))
+}
+
+func TestLongPreviewFailureStaysInsideNarrowWindow(t *testing.T) {
+	m := newModel("atyrode")
+	m.width, m.height = 44, 26
+	m.plan = applyPlan{
+		Host: "fixture", System: "x86_64-linux", User: "alex",
+		Capabilities: []string{"base"}, Source: "remote", Revision: "feedfacefeed",
+		ResolvedRevision: testRevision,
+	}
+	output := "\x1bPignored\x1b\\" + strings.Repeat("/nix/store/preview-failure-without-breakpoints", 10)
+	err := commandError("preview apply", []byte(output), errors.New("exit status 1"))
+	next, _ := m.Update(previewMsg{output: output, err: err})
+	assertFailureViewContained(t, next.(model))
+}
+
+func assertFailureViewContained(t *testing.T, m model) {
+	t.Helper()
+	if m.phase != failed {
+		t.Fatalf("phase = %v, want failed", m.phase)
+	}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) > m.height {
+		t.Errorf("failure view rendered %d rows into height %d", len(lines), m.height)
+	}
+	for _, line := range lines {
+		if width := lipgloss.Width(line); width > m.width-1 {
+			t.Errorf("failure row width = %d, safe window = %d: %q", width, m.width-1, stripTerminalControls(line))
+		}
+		if strings.ContainsAny(line, "\x1b\a") {
+			t.Errorf("failure row retained terminal control: %q", line)
+		}
+	}
+}
+
 func TestPanelsKeepRightBorderWithinWindow(t *testing.T) {
 	for _, windowWidth := range []int{44, 72, 80, 100} {
 		m := newModel("atyrode")

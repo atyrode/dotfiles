@@ -192,50 +192,21 @@ func isPlanField(line string) bool {
 	return false
 }
 
-// stripTerminalControls removes CSI/OSC sequences while preserving printable
-// text. nh owns a terminal when run directly; its captured preview must not.
+// stripTerminalControls delegates ECMA-48 parsing (CSI, OSC, DCS, SOS, PM, APC,
+// and their BEL/ST terminators) to Charm's ANSI parser. C0/C1 execution controls
+// that are intentionally preserved by ansi.Strip are removed separately, except
+// for whitespace used by the preview's line normalization.
 func stripTerminalControls(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] != 0x1b {
-			if s[i] == '\t' || s[i] == '\n' || s[i] == '\r' || s[i] >= 0x20 {
-				b.WriteByte(s[i])
-			}
-			i++
-			continue
-		}
-		i++
-		if i >= len(s) {
-			break
-		}
-		switch s[i] {
-		case '[':
-			i++
-			for i < len(s) {
-				c := s[i]
-				i++
-				if c >= 0x40 && c <= 0x7e {
-					break
-				}
-			}
-		case ']':
-			i++
-			for i < len(s) {
-				if s[i] == '\a' {
-					i++
-					break
-				}
-				if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
-					i += 2
-					break
-				}
-				i++
-			}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r':
+			return r
+		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+			return -1
 		default:
-			i++
+			return r
 		}
-	}
-	return b.String()
+	}, ansi.Strip(s))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -517,9 +488,30 @@ func previewRows(lines []string) []string {
 	return rows
 }
 
+const maxErrorLines = 4
+
+func (m model) errorFooter() string {
+	_, width := m.horizontalLayout()
+	if width < 1 {
+		width = 1
+	}
+	text := clikit.StBrk.Render(stripTerminalControls(m.err.Error()))
+	lines := strings.Split(ansi.Hardwrap(text, width, false), "\n")
+	if len(lines) > maxErrorLines {
+		lines = lines[:maxErrorLines]
+		tailWidth := width - 1
+		if tailWidth < 1 {
+			tailWidth = 1
+		}
+		lines[maxErrorLines-1] = ansi.Truncate(lines[maxErrorLines-1], tailWidth, "") + "…"
+	}
+	lines = append(lines, clikit.StDim.Render("r retry  ·  q quit"))
+	return strings.Join(lines, "\n")
+}
+
 func (m model) footer() string {
 	if m.err != nil {
-		return clikit.StBrk.Render(m.err.Error()) + "\n" + clikit.StDim.Render("r retry  ·  q quit")
+		return m.errorFooter()
 	}
 	switch m.phase {
 	case confirming:

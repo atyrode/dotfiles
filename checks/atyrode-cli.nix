@@ -133,6 +133,9 @@ pkgs.runCommand "check-atyrode-cli"
       cockpit:*/bin/.atyrode-wrapped:0) ;;
       *) echo "bare TTY did not pass the packaged CLI to the cockpit: $cockpit_dispatch" >&2; exit 1 ;;
     esac
+    forced_tty_subcommand="$(_ATYRODE_TEST_TTY=1 atyrode capabilities list --json)"
+    jq -e 'type == "array" and length > 0' <<<"$forced_tty_subcommand" >/dev/null \
+      || { echo "explicit subcommand entered the cockpit under forced TTY: $forced_tty_subcommand" >&2; exit 1; }
     atyrode </dev/null | grep -qF 'Usage:'
 
     atyrode capabilities list --json | jq -e '

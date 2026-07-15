@@ -936,7 +936,83 @@ let
         printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
         exit 2
       fi
-      exec ${lib.getExe omp} "$@"
+
+      # Upstream's end-of-session hint omits the active profile, so make a bare
+      # UUID resume target profile-aware without changing explicit state choices.
+      args=( "$@" )
+      resume_target=""
+      explicit_state=false
+      for (( i = 0; i < ''${#args[@]}; i++ )); do
+        arg="''${args[$i]}"
+        case "$arg" in
+          --profile|--session-dir)
+            explicit_state=true
+            (( i += 1 ))
+            ;;
+          --profile=*|--session-dir=*)
+            explicit_state=true
+            ;;
+          --resume|-r)
+            if (( i + 1 < ''${#args[@]} )) && [[ "''${args[$((i + 1))]}" != -* ]]; then
+              resume_target="''${args[$((i + 1))]}"
+            fi
+            ;;
+          --resume=*)
+            resume_target="''${arg#--resume=}"
+            ;;
+          -r?*)
+            resume_target="''${arg#-r}"
+            ;;
+          --)
+            break
+            ;;
+        esac
+      done
+
+      if [[ -z "''${OMP_PROFILE:-}" && -z "''${PI_CODING_AGENT_DIR:-}" &&
+        -z "''${PI_CONFIG_DIR:-}" && "$explicit_state" == false &&
+        "$resume_target" =~ ^[0-9a-fA-F-]{8,36}$ ]]; then
+        config_root="$HOME/.omp"
+        matched_default=false
+        matched_profiles=()
+        shopt -s nullglob
+
+        for session in "$config_root/agent/sessions/"*.jsonl; do
+          session_id="''${session##*_}"
+          session_id="''${session_id%.jsonl}"
+          if [[ "$session_id" == "$resume_target"* ]]; then
+            matched_default=true
+            break
+          fi
+        done
+
+        for profile_root in "$config_root/profiles/"*/agent/sessions; do
+          profile="''${profile_root#"$config_root/profiles/"}"
+          profile="''${profile%%/*}"
+          for session in "$profile_root/"*.jsonl; do
+            session_id="''${session##*_}"
+            session_id="''${session_id%.jsonl}"
+            if [[ "$session_id" == "$resume_target"* ]]; then
+              matched_profiles+=( "$profile" )
+              break
+            fi
+          done
+        done
+
+        match_count=''${#matched_profiles[@]}
+        if [[ "$matched_default" == true ]]; then
+          (( match_count += 1 ))
+        fi
+        if (( match_count == 1 )) && [[ "$matched_default" == false ]]; then
+          args=( --profile "''${matched_profiles[0]}" "''${args[@]}" )
+        elif (( match_count > 1 )); then
+          printf 'Error: Resume target "%s" matches sessions in multiple OMP state roots; pass --profile explicitly.\n' \
+            "$resume_target" >&2
+          exit 2
+        fi
+      fi
+
+      exec ${lib.getExe omp} "''${args[@]}"
     '';
   };
   # The managed launcher: applies the platform extensions + managed defaults +

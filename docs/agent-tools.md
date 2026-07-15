@@ -54,7 +54,7 @@ them together.
 
 | Command | Intended use | Configuration |
 | --- | --- | --- |
-| `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` |
+| `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` and profile-aware resume lookup |
 | `omp-managed` | The managed launch target: platform extensions, managed defaults, and enforced policy over a one-shot `--config`, with no preset overlay | Managed defaults and policy, plus the generated `--config` the generator passes |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 | `code` | The profile generator TUI (see below) | Always launches through `omp-managed`: Enter passes the generated profile as a one-shot `--config`; `m` runs the managed defaults with no overlay |
@@ -65,10 +65,14 @@ this document remains authoritative for `code`, `omp-managed`, and `ompu`.
 
 Plain `omp` executes upstream OMP directly: no extension, defaults, or policy
 overlay is injected, so its models, approvals, and interface belong to the
-operator's mutable configuration and can change on the fly. Only `omp update`
-is blocked, so nothing shadows the Nix-pinned binary. Its starting point is not
-empty, though: activation seeds the curated defaults from `omp/plain-seed.yml`
-into the writable configuration with local edits always winning; see
+operator's mutable configuration and can change on the fly. `omp update` is
+blocked so nothing shadows the Nix-pinned binary. For a UUID or UUID-prefix
+passed to `--resume`, the launcher searches the default and named-profile
+session roots and injects the sole matching profile; explicit profile/state
+selection always wins, and ambiguous matches require `--profile`. This repairs
+upstream's profile-free end-of-session resume hint without changing ordinary
+launches. Activation seeds the curated defaults from `omp/plain-seed.yml` into
+the writable configuration with local edits always winning; see
 [Seeded plain-omp defaults](#seeded-plain-omp-defaults).
 
 `omp-managed` is the managed launcher with no profile of its own. It layers the

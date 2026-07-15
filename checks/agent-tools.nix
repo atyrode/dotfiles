@@ -536,6 +536,38 @@ in
         literal
         EOF
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+            unset OMP_PROFILE PI_CODING_AGENT_DIR PI_CONFIG_DIR
+            # A resume hint emitted by a profiled session is usable verbatim.
+            resume_id=019f6386-bbf6-7000-8e5c-8d88e87e3907
+            mkdir -p "$HOME/.omp/profiles/mum/agent/sessions"
+            touch "$HOME/.omp/profiles/mum/agent/sessions/2026-07-15T02-06-42-166Z_$resume_id.jsonl"
+            ${configuredStub}/bin/omp --resume "''${resume_id:0:12}" > "$TMPDIR/actual"
+            printf '%s\n' --profile mum --resume "''${resume_id:0:12}" > "$TMPDIR/expected"
+            diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+
+            # Explicit state selection always wins, even when another profile
+            # contains the same resume target.
+            ${configuredStub}/bin/omp --profile mine --resume "$resume_id" > "$TMPDIR/actual"
+            printf '%s\n' --profile mine --resume "$resume_id" > "$TMPDIR/expected"
+            diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+
+            default_id=029f6386-bbf6-7000-8e5c-8d88e87e3907
+            mkdir -p "$HOME/.omp/agent/sessions"
+            touch "$HOME/.omp/agent/sessions/2026-07-15T03-00-00-000Z_$default_id.jsonl"
+            ${configuredStub}/bin/omp --resume="$default_id" > "$TMPDIR/actual"
+            printf '%s\n' "--resume=$default_id" > "$TMPDIR/expected"
+            diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+
+            mkdir -p "$HOME/.omp/profiles/mine/agent/sessions"
+            touch "$HOME/.omp/profiles/mine/agent/sessions/2026-07-15T04-00-00-000Z_$resume_id.jsonl"
+            set +e
+            ${configuredStub}/bin/omp -r"''${resume_id:0:12}" \
+              > "$TMPDIR/ambiguous.out" 2> "$TMPDIR/ambiguous.err"
+            ambiguous_status=$?
+            set -e
+            test "$ambiguous_status" -eq 2
+            grep -q 'matches sessions in multiple OMP state roots' "$TMPDIR/ambiguous.err"
+
 
             set +e
             ${configuredStub}/bin/omp update \

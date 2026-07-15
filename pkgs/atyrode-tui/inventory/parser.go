@@ -35,13 +35,26 @@ func Parse(data []byte, expected Expected) (Document, error) {
 		return Document{}, fmt.Errorf("inventory host identity mismatch for %q", host.ID)
 	}
 
-	active := make(map[string]bool, len(host.Capabilities))
+	planned := make(map[string]struct{}, len(expected.ActiveCapabilities))
+	for _, name := range expected.ActiveCapabilities {
+		if _, exists := planned[name]; exists {
+			return Document{}, fmt.Errorf("inventory capability mismatch: duplicate %q in apply plan", name)
+		}
+		planned[name] = struct{}{}
+	}
+	active := make(map[string]struct{}, len(host.Capabilities))
 	for _, name := range host.Capabilities {
-		active[name] = true
+		if _, exists := active[name]; exists {
+			return Document{}, fmt.Errorf("inventory capability mismatch: duplicate %q on %q", name, host.ID)
+		}
+		if _, expected := planned[name]; !expected {
+			return Document{}, fmt.Errorf("inventory capability mismatch: unexpected %q is active on %q", name, host.ID)
+		}
+		active[name] = struct{}{}
 	}
 	capabilities := make([]Capability, 0, len(expected.ActiveCapabilities))
 	for _, name := range expected.ActiveCapabilities {
-		if !active[name] {
+		if _, ok := active[name]; !ok {
 			return Document{}, fmt.Errorf("inventory capability mismatch: %q is not active on %q", name, host.ID)
 		}
 		capability, ok := manifest.Capabilities[name]

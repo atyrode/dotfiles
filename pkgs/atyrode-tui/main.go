@@ -56,8 +56,11 @@ type previewMsg struct {
 	err     error
 }
 type inventoryMsg struct {
-	inventory inventorydata.Document
-	err       error
+	revision   string
+	generation uint64
+	inventory  inventorydata.Document
+	err        error
+	diagnostic string
 }
 
 type pane int
@@ -123,16 +126,21 @@ func buildAskGrounding(help []byte) (clikit.DocCorpus, error) {
 }
 
 type model struct {
-	cli     string
-	output  outputFunc
-	apply   applyFunc
-	asker   clikit.Asker
-	phase              phase
-	plan               applyPlan
-	preview            previewdata.Document
-	inventory          inventorydata.Document
-	inventoryLoading   bool
-	inventoryErr       error
+	cli    string
+	output outputFunc
+	apply  applyFunc
+	asker  clikit.Asker
+	phase  phase
+	plan   applyPlan
+
+	preview              previewdata.Document
+	inventory            inventorydata.Document
+	inventoryLoading     bool
+	inventoryErr         error
+	inventoryGeneration  uint64
+	inventoryDiagnostic  string
+	inventoryDetailsOpen bool
+
 	details            bool
 	capabilitiesOpen   bool
 	focus              pane
@@ -223,21 +231,27 @@ func (m model) loadPreview() tea.Cmd {
 	}
 }
 func (m model) loadInventory() tea.Cmd {
+	revision, generation := m.plan.ResolvedRevision, m.inventoryGeneration
 	return func() tea.Msg {
-		out, err := m.output(m.cli, "inventory", "--ref", m.plan.ResolvedRevision, "--json")
+		out, err := m.output(m.cli, "inventory", "--ref", revision, "--json")
 		if err != nil {
-			return inventoryMsg{err: commandError("inventory unavailable", out, err)}
+			return inventoryMsg{
+				revision:   revision,
+				generation: generation,
+				err:        fmt.Errorf("inventory unavailable: %w", err),
+				diagnostic: boundedInventoryDiagnostic(out),
+			}
 		}
 		result, err := inventorydata.Parse(out, inventorydata.Expected{
-			Revision:           m.plan.ResolvedRevision,
+			Revision:           revision,
 			System:             m.plan.System,
 			Host:               m.plan.Host,
 			ActiveCapabilities: m.plan.Capabilities,
 		})
 		if err != nil {
-			return inventoryMsg{err: err}
+			return inventoryMsg{revision: revision, generation: generation, err: err}
 		}
-		return inventoryMsg{inventory: result}
+		return inventoryMsg{revision: revision, generation: generation, inventory: result}
 	}
 }
 
@@ -273,6 +287,29 @@ func commandError(action string, output []byte, err error) error {
 	return fmt.Errorf("%s: %w\n%s", action, err, text)
 }
 
+const (
+	maxInventoryDiagnosticLines = 4
+	maxInventoryDiagnosticRunes = 512
+)
+
+func boundedInventoryDiagnostic(output []byte) string {
+	text := strings.TrimSpace(stripTerminalControls(strings.ReplaceAll(string(output), "\r", "\n")))
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > maxInventoryDiagnosticLines {
+		lines = lines[:maxInventoryDiagnosticLines]
+		lines[len(lines)-1] = strings.TrimRight(lines[len(lines)-1], " ") + "…"
+	}
+	text = strings.Join(lines, "\n")
+	runes := []rune(text)
+	if len(runes) > maxInventoryDiagnosticRunes {
+		text = string(runes[:maxInventoryDiagnosticRunes-1]) + "…"
+	}
+	return text
+}
+
 // stripTerminalControls delegates ECMA-48 parsing (CSI, OSC, DCS, SOS, PM, APC,
 // and their BEL/ST terminators) to Charm's ANSI parser. C0/C1 execution controls
 // that are intentionally preserved by ansi.Strip are removed separately, except
@@ -301,7 +338,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.plan, m.phase, m.err = msg.plan, loadingPreview, nil
+		m.inventoryGeneration++
 		m.inventory, m.inventoryErr, m.inventoryLoading = inventorydata.Document{}, nil, true
+		m.inventoryDiagnostic, m.inventoryDetailsOpen = "", false
 		return m, tea.Batch(m.loadPreview(), m.loadInventory())
 	case previewMsg:
 		if msg.err != nil {
@@ -312,7 +351,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.phase, m.err, m.previewCursor, m.details = ready, nil, 0, false
 		return m, nil
 	case inventoryMsg:
+		if msg.generation != m.inventoryGeneration || msg.revision != m.plan.ResolvedRevision {
+			return m, nil
+		}
 		m.inventoryLoading = false
+		m.inventoryDiagnostic, m.inventoryDetailsOpen = msg.diagnostic, false
 		if msg.err != nil {
 			m.inventory, m.inventoryErr = inventorydata.Document{}, msg.err
 		} else {
@@ -337,7 +380,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.phase != applying {
 				m.phase, m.err, m.status, m.preview, m.inventory = loadingPlan, nil, "", previewdata.Document{}, inventorydata.Document{}
+				m.inventoryGeneration++
 				m.inventoryErr, m.inventoryLoading, m.details = nil, false, false
+				m.inventoryDiagnostic, m.inventoryDetailsOpen = "", false
 				m.capabilitiesOpen, m.focus = false, previewPane
 				m.previewCursor, m.capabilityCursor, m.selectedCapability = 0, 0, 0
 				return m, m.loadPlan()
@@ -378,7 +423,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m = m.scrollFocused(m.paneBodyHeight())
 		case "d":
-			if m.focus == previewPane && (m.phase == ready || m.phase == confirming || m.phase == applied) {
+			if m.focus == capabilityPane && m.inventoryErr != nil && m.inventoryDiagnostic != "" &&
+				(m.phase == ready || m.phase == confirming || m.phase == applied) {
+				m.inventoryDetailsOpen = !m.inventoryDetailsOpen
+				m.capabilityCursor = 0
+			} else if m.focus == previewPane && (m.phase == ready || m.phase == confirming || m.phase == applied) {
 				m.details, m.previewCursor = !m.details, 0
 			}
 		case "a", "enter":
@@ -395,13 +444,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.phase = ready
 			}
 		case "esc":
-			if m.focus == capabilityPane {
+			if m.phase == confirming {
+				m.phase = ready
+			} else if m.focus == capabilityPane {
 				m.focus = previewPane
 				if !m.isWide() {
 					m.capabilitiesOpen = false
 				}
-			} else if m.phase == confirming {
-				m.phase = ready
 			}
 		}
 	}
@@ -678,7 +727,19 @@ func (m model) capabilityRowsForWidth(width int) []string {
 	case m.inventoryErr != nil:
 		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Inventory unavailable"), width)
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StDim.Render(stripTerminalControls(m.inventoryErr.Error())), width)
+		reason := strings.TrimPrefix(m.inventoryErr.Error(), "inventory unavailable: ")
+		appendWrappedRow(&rows, clikit.StDim.Render(stripTerminalControls(reason)), width)
+		if m.inventoryDiagnostic != "" {
+			rows = append(rows, "")
+			if m.inventoryDetailsOpen {
+				appendWrappedRow(&rows, titleStyle.Render("Diagnostic detail"), width)
+				for _, line := range strings.Split(m.inventoryDiagnostic, "\n") {
+					appendIndentedWrappedRow(&rows, clikit.StDim.Render(line), width, 2)
+				}
+			} else {
+				appendWrappedRow(&rows, clikit.StDim.Render("Press d to show bounded diagnostic detail."), width)
+			}
+		}
 		rows = append(rows, "")
 		appendWrappedRow(&rows, "The activation preview and apply confirmation remain available.", width)
 		return rows
@@ -986,6 +1047,13 @@ func (m model) footer() string {
 		controls := "↑/↓ scroll  ·  [/] cycle  ·  c back"
 		if m.isWide() {
 			controls = "↑/↓ capability  ·  [/] cycle  ·  Tab/c preview"
+		}
+		if m.inventoryErr != nil && m.inventoryDiagnostic != "" && m.width >= 80 {
+			diagnosticMode := "diagnostics"
+			if m.inventoryDetailsOpen {
+				diagnosticMode = "hide diagnostics"
+			}
+			controls += "  ·  d " + diagnosticMode
 		}
 		if m.width < 60 {
 			if m.phase == confirming {

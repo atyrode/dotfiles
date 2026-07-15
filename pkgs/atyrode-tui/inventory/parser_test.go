@@ -68,6 +68,8 @@ func TestParseRejectsHostCapabilityAndDeliverableIdentityMismatch(t *testing.T) 
 	}{
 		{"host", `"desk"`, `"other"`, "host mismatch"},
 		{"capability", `"capabilities":["base","server"]`, `"capabilities":["base"]`, "capability mismatch"},
+		{"extra capability", `"capabilities":["base","server"]`, `"capabilities":["base","server","desktop"]`, "unexpected \"desktop\""},
+		{"duplicate capability", `"capabilities":["base","server"]`, `"capabilities":["base","server","base"]`, "duplicate \"base\""},
 		{"deliverable", `"system":"x86_64-linux","platform":"linux"}]`, `"system":"aarch64-linux","platform":"linux"}]`, "deliverable identity mismatch"},
 	}
 	for _, tt := range tests {
@@ -78,5 +80,14 @@ func TestParseRejectsHostCapabilityAndDeliverableIdentityMismatch(t *testing.T) 
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseRejectsDuplicatePlanCapability(t *testing.T) {
+	want := expected()
+	want.ActiveCapabilities = append(want.ActiveCapabilities, "base")
+	_, err := Parse([]byte(manifestJSON(1, revision, "x86_64-linux", "linux")), want)
+	if err == nil || !strings.Contains(err.Error(), `duplicate "base" in apply plan`) {
+		t.Fatalf("error = %v, want duplicate plan capability", err)
 	}
 }

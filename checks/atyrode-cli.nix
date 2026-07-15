@@ -123,6 +123,17 @@ pkgs.runCommand "check-atyrode-cli"
     env ATYRODE_NIX_STORE=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
       || { echo 'production read-only commands must not be blocked by the mutation guard' >&2; exit 1; }
 
+    # Bare invocation is additive: a TTY enters the cockpit and passes the
+    # installed Bash CLI through for shell-outs; the same invocation without a
+    # TTY remains the scriptable CLI help surface. makeWrapper renames that Bash
+    # payload to .atyrode-wrapped and puts the public launcher in front of it.
+    cockpit_dispatch="$(_ATYRODE_TEST_TTY=1 atyrode)"
+    case "$cockpit_dispatch" in
+      cockpit:*/bin/.atyrode-wrapped:0) ;;
+      *) echo "bare TTY did not pass the packaged CLI to the cockpit: $cockpit_dispatch" >&2; exit 1 ;;
+    esac
+    atyrode </dev/null | grep -qF 'Usage:'
+
     atyrode capabilities list --json | jq -e '
       (map(.name) | index("base") and index("server"))
       and all(.[]; .description | length > 0)

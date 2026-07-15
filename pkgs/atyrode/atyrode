@@ -3,6 +3,7 @@
 set -euo pipefail
 
 readonly registry='@registry@'
+readonly atyrode_tui='@atyrode_tui@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
 readonly homebrew_cask_inventory='@homebrew_casks@'
@@ -1428,6 +1429,10 @@ guard_production_mutation() {
 }
 
 main() {
+  if [[ $# == 0 ]] && interactive; then
+    export ATYRODE_CLI="$0"
+    exec "$atyrode_tui"
+  fi
   local subcommand="${1:-help}"
   shift || true
   # A production binary must never mutate the store while a caller believes its

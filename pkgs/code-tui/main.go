@@ -35,16 +35,20 @@ import (
 
 // ── keybindings (drive both input handling and the bubbles/help footer) ───────
 type keyMap struct {
-	Move, Change, Reset, Depth, Refresh, Auth, Collapse, Launch, Managed, Untrusted, Help, Quit key.Binding
+	Move, Change, Reset, Depth, Refresh, Auth, Collapse, Usage, Launch, Managed, Untrusted, Help, Quit key.Binding
 }
 
+// ShortHelp is a static single-line stand-in used only when measuring the
+// footer height for mode selection (which would otherwise recurse through the
+// state-derived compact help). The rendered compact line comes from
+// contextHelp, which derives its bindings from the live model state (#198).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Move, k.Change, k.Reset, k.Auth, k.Launch, k.Managed, k.Untrusted, k.Help, k.Quit}
+	return []key.Binding{k.Move, k.Change, k.Reset, k.Help, k.Quit}
 }
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Move, k.Change, k.Reset},
-		{k.Depth, k.Refresh, k.Auth, k.Collapse},
+		{k.Depth, k.Refresh, k.Auth, k.Collapse, k.Usage},
 		{k.Launch, k.Managed, k.Untrusted, k.Help, k.Quit},
 	}
 }
@@ -55,8 +59,9 @@ var keys = keyMap{
 	Reset:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", gReset+" defaults")),
 	Depth:     key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "primary ⇄ full chains")),
 	Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh usage")),
-	Auth:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch auth")),
-	Collapse:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "collapse")),
+	Auth:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch profile")),
+	Collapse:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "show/hide routing")),
+	Usage:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "show/hide usage")),
 	Launch:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
 	Managed:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "managed omp")),
 	Untrusted: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "sandbox")),
@@ -95,6 +100,10 @@ var (
 	stWarn   = clikit.StWarn
 	stBrk    = clikit.StBrk
 	stStruck = clikit.StStruck
+
+	// stKey renders an inline key cue (r, a, s, p) — visually secondary but
+	// readable against the background, per the section-chrome convention.
+	stKey = lipgloss.NewStyle().Foreground(lipgloss.Color(cHead))
 
 	// layout + meter primitives now live in cli-kit
 	padLeft    = clikit.PadLeft
@@ -849,6 +858,7 @@ func (m model) genConfigYAML() string {
 //	medium    — generator-dominant: the list full width on top (primary), then
 //	            Routing and Usage side by side in a secondary row, with Usage's
 //	            provider groups stacked vertically inside its narrower column
+//	            (Routing takes the whole row while ‹s› hides Usage)
 //	collapsed — narrow/short or ‹p›: one full-width panel at a time (list, or
 //	            routing w/ showResult) — the Generator stays usable instead of
 //	            compressing every section into an unreadable split
@@ -940,7 +950,7 @@ func (m model) mode() int {
 // a usable generator column above the full-width Usage footer. Shorter than
 // this, keeping every section visible would compress them all — shed instead.
 func (m model) wideMinH() int {
-	return topGap + genColMinH + m.footerH(true)
+	return topGap + genColMinH + m.footerH(!m.hideUsage)
 }
 
 // mediumMinH stacks the generator over the secondary Routing+Usage row (at its
@@ -952,6 +962,9 @@ func (m model) mediumMinH() int {
 // mediumMinW: the secondary row must seat a useful routing viewport beside the
 // measured usage column without clipping either.
 func (m model) mediumMinW() int {
+	if m.hideUsage {
+		return routingMinW
+	}
 	return routingMinW + m.usageColW()
 }
 
@@ -1044,7 +1057,10 @@ func (m model) previewDims() (int, int) {
 // routingColW is the medium secondary row's routing share: whatever the
 // measured usage column leaves free.
 func (m model) routingColW() int {
-	w := m.w - m.usageColW()
+	w := m.w
+	if !m.hideUsage {
+		w -= m.usageColW()
+	}
 	if w < routingMinW {
 		w = routingMinW
 	}
@@ -1109,9 +1125,10 @@ type model struct {
 	avail     availability
 	glyphs    map[string]string
 
-	depth      int // 0 lead · 1 full
-	collapse   bool
+	depth      int  // 0 lead · 1 full
+	collapse   bool // p: hide the Routing section
 	showResult bool // in collapsed mode: show the preview full-width
+	hideUsage  bool // s: hide the Usage section (#198); fetch state keeps running unseen
 
 	facets []facet
 	fcur   int
@@ -1240,58 +1257,92 @@ func shortWin(l string) string {
 	return l
 }
 
-// refreshLine shows either the live countdown to the next auto-refresh or, while
-// a fetch is in flight, a refreshing marker — plus the manual-refresh hint.
-func (m *model) refreshLine() string {
-	if m.fetching {
-		return stDim.Render("  usage · ") + stWarn.Render(gReset+" refreshing…")
+// usageCtrlLine is the Usage chrome's action row: the refresh status/countdown
+// with its manual-refresh cue, then the profile-switch cue (omitted when only
+// one auth profile exists). The identity itself lives in the provider group
+// headings, so no separate auth equation remains (#198). A profile-switch
+// error stays attached here — next to the control that caused it.
+func (m *model) usageCtrlLine() string {
+	var parts []string
+	if m.usageCmd != "" {
+		switch {
+		case !m.avail.ok && (m.fetching || m.nextRefresh.IsZero()):
+			parts = append(parts, stDim.Render(m.spin.View()+" fetching usage…"))
+		case m.fetching:
+			parts = append(parts, stWarn.Render(gReset+" refreshing…"))
+		default:
+			rem := time.Until(m.nextRefresh)
+			if rem < 0 {
+				rem = 0
+			}
+			s := int(rem.Seconds())
+			parts = append(parts,
+				stDim.Render(fmt.Sprintf("next refresh %d:%02d · ", s/60, s%60))+
+					stKey.Render("r")+stDim.Render(" now"))
+		}
 	}
-	rem := time.Until(m.nextRefresh)
-	if rem < 0 {
-		rem = 0
-	}
-	s := int(rem.Seconds())
-	return stDim.Render(fmt.Sprintf("  usage · next refresh %d:%02d · ", s/60, s%60)) +
-		lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("r") + stDim.Render(" now")
-}
-
-func (m *model) authLine() string {
-	p := m.activeAuthProfile()
-	label := lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Bold(true).Render(p.Label)
-	claude := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff9f52")).Render("Claude " + p.Claude)
-	codex := lipgloss.NewStyle().Foreground(lipgloss.Color("#62a7ff")).Render("Codex " + p.Codex)
-	line := stDim.Render("   auth · ") + label + stDim.Render("  ") + claude + stDim.Render(" + ") + codex
 	if len(m.authProfiles) > 1 {
-		line += stDim.Render("  ·  ") + lipgloss.NewStyle().Foreground(lipgloss.Color(cHead)).Render("a") + stDim.Render(" switch")
+		parts = append(parts, stKey.Render("a")+stDim.Render(" switch profile"))
 	}
+	if len(parts) == 0 {
+		return ""
+	}
+	line := "  " + strings.Join(parts, stDim.Render("  ·  "))
 	if m.authErr != "" {
 		line += "\n" + stBrk.Render("  profile switch failed: "+m.authErr)
 	}
 	return line
 }
 
+// providerHeading names a provider usage group by its effective identity —
+// "Codex <account>" / "Claude <account>", derived from the active auth
+// profile — so mixed profiles (Claude Mum + Codex Alex) read correctly with
+// no prose equation, in text rather than color alone.
+func providerHeading(prov string, p authProfile) string {
+	col, name, acct := "#62a7ff", "Codex", p.Codex
+	if prov == "anthropic" {
+		col, name, acct = "#ff9f52", "Claude", p.Claude
+	}
+	if acct != "" {
+		name += " " + acct
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
+}
+
+// identityLines renders the effective provider/account headings on their own —
+// the loading and error states keep the active identity visible even before
+// any usage rows exist.
+func (m *model) identityLines() string {
+	p := m.activeAuthProfile()
+	return padLeft(providerHeading("openai-codex", p), gut) + "\n" +
+		padLeft(providerHeading("anthropic", p), gut)
+}
+
 // usagePanel is the composition-agnostic Usage band sized for the current
 // terminal width — the wide layout's full-width footer form.
 func (m *model) usagePanel() string { return m.usagePanelFor(m.w) }
 
-// usagePanelFor renders auth + refresh + provider usage, laying provider groups
-// side by side only when w seats every column; w <= 0 forces the vertical stack
-// (the medium layout's narrow usage column).
+// usagePanelFor renders the first-class Usage section: the pilled title with
+// its local hide cue, the refresh/switch control row, and the per-provider
+// usage groups headed by the effective provider/account identity. Provider
+// groups sit side by side only when w seats every column; w <= 0 forces the
+// vertical stack (the medium layout's narrow usage column).
 func (m *model) usagePanelFor(w int) string {
-	auth := m.authLine()
+	out := padLeft(m.pill("usage")+"  "+stKey.Render("s")+stDim.Render(" · hide"), gut) + "\n"
+	if ctrl := m.usageCtrlLine(); ctrl != "" {
+		out += "\n" + ctrl
+	}
+	p := m.activeAuthProfile()
 	if !m.avail.ok {
-		if m.usageCmd == "" {
-			return auth
+		out += "\n" + m.identityLines()
+		if m.usageCmd != "" && !m.fetching && !m.nextRefresh.IsZero() {
+			out += "\n" + stWarn.Render("  usage unavailable · authenticate with omp --profile "+p.ID)
 		}
-		if m.fetching || m.nextRefresh.IsZero() {
-			return auth + "\n" + stDim.Render("  "+m.spin.View()+" fetching usage…")
-		}
-		p := m.activeAuthProfile()
-		return auth + "\n" + stWarn.Render("  usage unavailable · authenticate with omp --profile "+p.ID)
+		return out
 	}
 	if len(m.avail.wins) == 0 {
-		p := m.activeAuthProfile()
-		return auth + "\n" + stWarn.Render("  no provider usage · authenticate with omp --profile "+p.ID)
+		return out + "\n" + m.identityLines() + "\n" +
+			stWarn.Render("  no provider usage · authenticate with omp --profile "+p.ID)
 	}
 	wins := append([]usageWin(nil), m.avail.wins...)
 	provOrder := func(p string) int {
@@ -1320,16 +1371,12 @@ func (m *model) usagePanelFor(w int) string {
 	})
 	blocks := map[string][]string{}
 	var order []string
-	for _, w := range wins {
-		if _, ok := blocks[w.prov]; !ok {
-			order = append(order, w.prov)
-			pcol, pname := "#62a7ff", "Codex"
-			if w.prov == "anthropic" {
-				pcol, pname = "#ff9f52", "Claude"
-			}
-			blocks[w.prov] = []string{padLeft(lipgloss.NewStyle().Foreground(lipgloss.Color(pcol)).Bold(true).Render(pname), gut)}
+	for _, win := range wins {
+		if _, ok := blocks[win.prov]; !ok {
+			order = append(order, win.prov)
+			blocks[win.prov] = []string{padLeft(providerHeading(win.prov, p), gut)}
 		}
-		blocks[w.prov] = append(blocks[w.prov], m.usageRow(w))
+		blocks[win.prov] = append(blocks[win.prov], m.usageRow(win))
 	}
 	if cl := m.creditLine(); cl != "" {
 		if b, ok := blocks["openai-codex"]; ok {
@@ -1337,34 +1384,40 @@ func (m *model) usagePanelFor(w int) string {
 		}
 	}
 	// side-by-side when there's horizontal room, else stacked. colW must fit the
-	// widest row (label · bar · pct · ↻reset · note) without wrapping the note.
-	const colW = 49
+	// widest row (label · bar · pct · ↻reset · note) without wrapping the note;
+	// a long account name widens the column instead of truncating the identity.
+	colW := 49
+	for _, prov := range order {
+		if hw := lipgloss.Width(blocks[prov][0]) + 2; hw > colW {
+			colW = hw
+		}
+	}
 	if w > 0 && len(order) > 1 && w >= colW*len(order) {
 		var cols []string
-		for _, p := range order {
-			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[p], "\n")))
+		for _, prov := range order {
+			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[prov], "\n")))
 		}
-		return auth + "\n" + m.refreshLine() + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
+		return out + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	}
 	var lines []string
-	for i, p := range order {
+	for i, prov := range order {
 		if i > 0 {
 			lines = append(lines, "") // blank line between provider groups
 		}
-		lines = append(lines, blocks[p]...)
+		lines = append(lines, blocks[prov]...)
 	}
-	return auth + "\n" + m.refreshLine() + "\n" + strings.Join(lines, "\n")
+	return out + "\n" + strings.Join(lines, "\n")
 }
 
-// usageColumn is the medium layout's right-hand Usage section: a pinned pill
-// head over the usage panel with provider groups forced into a vertical stack —
-// the column is deliberately too narrow for side-by-side groups.
+// usageColumn is the medium layout's right-hand Usage section: the panel with
+// provider groups forced into a vertical stack — the column is deliberately
+// too narrow for side-by-side groups. The panel carries its own title chrome.
 func (m model) usageColumn() string {
-	return padLeft(m.pill("usage"), gut) + "\n\n" + m.usagePanelFor(0)
+	return m.usagePanelFor(0)
 }
 
 // usageColW is the medium usage column's measured width: the widest rendered
-// line of the stacked panel (auth, refresh, bars, notes) — measured, not guessed.
+// line of the stacked panel (title, controls, bars, notes) — measured, not guessed.
 func (m model) usageColW() int {
 	return lipgloss.Width(m.usageColumn())
 }
@@ -1374,6 +1427,9 @@ func (m model) usageColW() int {
 // that is taller — medium only engages when neither column needs clipping.
 func (m model) secondaryMinH() int {
 	h := prevChromeRows + minRouteRows
+	if m.hideUsage {
+		return h
+	}
 	if u := lipgloss.Height(m.usageColumn()); u > h {
 		h = u
 	}
@@ -1483,7 +1539,7 @@ func (m *model) footer() string {
 			parts = append(parts, rule, p)
 		}
 	}
-	parts = append(parts, rule, "  "+m.help.View(keys))
+	parts = append(parts, rule, "  "+m.help.View(m.contextHelp()))
 	return strings.Join(parts, "\n")
 }
 
@@ -1493,6 +1549,9 @@ func (m *model) footer() string {
 // Generator stays usable first — fetch state and the refresh cadence keep
 // running unseen, and nothing is refetched when it reappears.
 func (m *model) usageInFooter() bool {
+	if m.hideUsage {
+		return false
+	}
 	switch m.sizeMode() {
 	case sizeWide:
 		return true
@@ -1501,6 +1560,90 @@ func (m *model) usageInFooter() bool {
 	default:
 		return false
 	}
+}
+
+// routingShown reports whether the Routing section (and so its title-local
+// p · hide cue) is on screen in the current composition.
+func (m model) routingShown() bool {
+	if m.collapse {
+		return false
+	}
+	if m.mode() == modeCollapsed {
+		return m.showResult
+	}
+	return true
+}
+
+// usageShown reports whether the Usage panel is rendered anywhere — the
+// wide/collapsed footer band or medium's secondary column. Narrow sheds it
+// regardless of the s toggle.
+func (m model) usageShown() bool {
+	if m.hideUsage {
+		return false
+	}
+	return m.usageInFooter() || m.mode() == modeMedium
+}
+
+// usageCanShow reports whether restoring Usage would actually render it — the
+// compact footer must never advertise a recovery action the narrow layout
+// would immediately shed anyway.
+func (m model) usageCanShow() bool {
+	t := m
+	t.hideUsage = false
+	return t.usageShown()
+}
+
+// generatorShown: the Generator (and its launch footer advertising ⏎/m/u) is
+// visible in every composition except the narrow routing-full-screen swap.
+func (m model) generatorShown() bool {
+	return !(m.mode() == modeCollapsed && !m.collapse && m.showResult)
+}
+
+// helpKeys is the state-derived key map handed to the bubbles help view: the
+// compact line lists only what contextHelp selected, while ? always exposes
+// the complete static reference.
+type helpKeys struct {
+	short []key.Binding
+	full  [][]key.Binding
+}
+
+func (h helpKeys) ShortHelp() []key.Binding  { return h.short }
+func (h helpKeys) FullHelp() [][]key.Binding { return h.full }
+
+// contextHelp derives the compact footer from the model state (#198):
+//   - navigation, reset, full-help discovery, and quit are always offered;
+//   - a hidden section contributes its recovery action (show routing/usage) —
+//     usage only when the current terminal could actually seat it again;
+//   - profile switching and manual refresh surface only while the Usage
+//     chrome that normally advertises them is off screen, and only when they
+//     can run (an alternate profile exists; no fetch already in flight);
+//   - the launch trio surfaces only while the Generator launch footer is
+//     hidden (the narrow routing-full-screen swap).
+//
+// Everything else lives in visible section chrome or behind ?.
+func (m model) contextHelp() helpKeys {
+	short := []key.Binding{keys.Move, keys.Change, keys.Reset}
+	if !m.routingShown() {
+		short = append(short, key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "show routing")))
+	}
+	if m.hideUsage && m.usageCanShow() {
+		short = append(short, key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "show usage")))
+	}
+	// Keep full-help discovery and quit ahead of optional contextual actions:
+	// bubbles truncates a compact line from the right on narrow terminals.
+	short = append(short, keys.Help, keys.Quit)
+	if !m.usageShown() {
+		if len(m.authProfiles) > 1 {
+			short = append(short, keys.Auth)
+		}
+		if m.usageCmd != "" && !m.fetching {
+			short = append(short, keys.Refresh)
+		}
+	}
+	if !m.generatorShown() {
+		short = append(short, keys.Launch, keys.Managed, keys.Untrusted)
+	}
+	return helpKeys{short: short, full: keys.FullHelp()}
 }
 
 func (m *model) relayout() {
@@ -1567,6 +1710,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				m.collapse = true // split/stacked: hide the preview, list full-screen
 			}
+			m.relayout()
+		case "s":
+			// Usage collapse (#198): a pure display toggle. Fetch state and the
+			// refresh cadence keep running unseen; nothing is refetched on
+			// restore, and the freed rows reallocate to the active composition.
+			m.hideUsage = !m.hideUsage
 			m.relayout()
 		case "?":
 			m.help.ShowAll = !m.help.ShowAll
@@ -1757,22 +1906,24 @@ func (m model) sectionHead() string {
 	return padLeft(m.sectionTitle(), gut) + "\n\n"
 }
 
-// prevChromeRows is the preview column's pinned chrome around the scrolling
-// viewport: the pill head above (headRows) plus a blank + the fallback-display
-// hint below.
-const prevChromeRows = headRows + 2
+// prevChromeRows is the Routing column's pinned chrome above the scrolling
+// viewport: the title row with its local collapse cue, the fallback-display
+// cue beneath it, and a blank separator.
+const prevChromeRows = headRows + 1
 
-// previewColumn assembles the right column: the pinned "routing" pill head, the
-// scrolling routing viewport, and the pinned fallback-display hint. The hint's
-// show/hide wording makes clear that f only changes what is DISPLAYED — the
-// launched profile always keeps its fallback chains.
+// previewColumn assembles the Routing section: the pinned title row carrying
+// the section-local collapse cue (p · hide), the fallback-display cue directly
+// beneath it — Routing chrome, not a detached bottom row (#198) — then the
+// scrolling routing viewport. The f wording makes clear it only changes what
+// is DISPLAYED: the launched profile always keeps its fallback chains.
 func (m model) previewColumn() string {
 	verb := "show"
 	if m.depth == 1 {
 		verb = "hide"
 	}
-	return m.pill("routing") + "\n\n" + m.vp.View() + "\n\n" +
-		stDim.Render("f · "+verb+" fallback chains")
+	return m.pill("routing") + "  " + stKey.Render("p") + stDim.Render(" · hide") + "\n" +
+		stKey.Render("f") + stDim.Render(" · "+verb+" fallback chains") + "\n\n" +
+		m.vp.View()
 }
 
 // leftColumn renders the pinned section head plus the scrolling list body, the
@@ -1802,9 +1953,12 @@ func (m model) mediumContent(bodyH int) string {
 	// over-wide line onto an extra physical row and break the row's height.
 	routing := lipgloss.NewStyle().Width(rw).MaxHeight(secH).Render(
 		lipgloss.NewStyle().MaxWidth(rw).Render(padLeft(m.previewColumn(), gut)))
-	usage := lipgloss.NewStyle().MaxWidth(m.w - rw).MaxHeight(secH).Render(m.usageColumn())
-	return lipgloss.JoinVertical(lipgloss.Left, top, div,
-		lipgloss.JoinHorizontal(lipgloss.Top, routing, usage))
+	sec := routing
+	if !m.hideUsage {
+		usage := lipgloss.NewStyle().MaxWidth(m.w - rw).MaxHeight(secH).Render(m.usageColumn())
+		sec = lipgloss.JoinHorizontal(lipgloss.Top, routing, usage)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, top, div, sec)
 }
 
 func (m model) View() string {

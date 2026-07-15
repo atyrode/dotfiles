@@ -258,6 +258,7 @@
         lib.composeManyExtensions [
           (final: previous: {
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
+            atyrode-tui = final.callPackage ./pkgs/atyrode-tui { };
             # Repository-owned on every platform: upstream releases outpace
             # nixpkgs, which also cannot build codex on aarch64-darwin.
             cli-kit = final.callPackage ./pkgs/cli-kit { };
@@ -449,6 +450,7 @@
           inherit (pkgs)
             agent-tools-migrate
             atyrode
+            atyrode-tui
             cli-kit
             code-tui
             codex
@@ -487,8 +489,13 @@
               }
             else
               null;
+          cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
+            printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
+          '';
           systemDoctorAtyrode = pkgs.atyrode.override {
             enableTestHooks = true;
+            atyrode-tui = cockpitStub;
+            atyrode-preview-parser = pkgs.atyrode-tui;
             hostRegistry = publicHosts // {
               fixture-server = {
                 id = "fixture-server";

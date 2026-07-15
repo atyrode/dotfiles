@@ -1,4 +1,6 @@
 {
+  atyrode-tui,
+  atyrode-preview-parser ? atyrode-tui,
   bubblewrap,
   capabilities,
   claude-code,
@@ -173,6 +175,8 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     install -D -m755 "$src" "$out/bin/atyrode"
     substituteInPlace "$out/bin/atyrode" \
+      --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
+      --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrode-preview-parser "atyrode-preview-parser"}' \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \

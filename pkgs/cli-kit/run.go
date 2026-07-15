@@ -105,6 +105,9 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h.hasBox {
 			h.box.SetSize(msg.Width, msg.Height/2) // the box may grow up to half
 		}
+		if !h.hasBox {
+			h.app, cmd = h.app.Update(msg)
+		}
 		// The app is (re)sized by reflow below to the height the box leaves it.
 
 	case BoxCloseMsg:

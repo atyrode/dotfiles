@@ -5,12 +5,31 @@ dotfiles. It reads the declarative registry described in [Hosts and
 capabilities](hosts.md); it does not infer a profile from the current directory
 or maintain a second mutable profile database.
 
+## Interactive cockpit
+
+Running bare `atyrode` with both stdin and stdout attached to a terminal opens
+the interactive cockpit. A bare non-TTY invocation continues to print CLI help,
+and every explicit subcommand (`atyrode apply`, `atyrode doctor …`, JSON calls,
+and the other command surfaces) continues through the Bash CLI even on a TTY.
+Existing scripts therefore do not enter the cockpit.
+
+The apply panel first resolves the requested branch to an exact commit, then
+loads `atyrode apply --ref <commit> --preview-json`. Its default activation
+preview summarizes package, store-path, and closure-size changes without
+showing raw generation paths; `d` toggles normalized technical details, where
+the previous and new generation paths remain available with labels. Startup
+and refresh perform no activation. The operator must open the confirmation
+step and accept it; the real apply uses that same exact commit, so the activated
+configuration cannot drift from the preview if the branch advances while the
+cockpit is open.
+
 ## Applying a configuration
 
 ```sh
 atyrode apply            # activate the latest published main; no checkout needed
 atyrode apply --plan
 atyrode apply --dry-run
+atyrode apply --preview-json # stable schema for the read-only dry-run preview
 ```
 
 The default host comes from `ATYRODE_HOST`, then the managed host identity file,

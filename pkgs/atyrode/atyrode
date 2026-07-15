@@ -3,6 +3,8 @@
 set -euo pipefail
 
 readonly registry='@registry@'
+readonly atyrode_tui='@atyrode_tui@'
+readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
 readonly homebrew_cask_inventory='@homebrew_casks@'
@@ -23,7 +25,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run] [--json] [--restart-shell]
+  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode doctor host [HOST] [--json]
@@ -713,7 +715,7 @@ doctor_system() {
 }
 
 apply_config() {
-  local requested="" repo="" ref="" plan=0 dry=0 json=0 restart=0
+  local requested="" repo="" ref="" plan=0 dry=0 json=0 preview_json=0 restart=0
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -721,6 +723,7 @@ apply_config() {
       --ref) [[ $# -ge 2 ]] || die "$EX_USAGE" "--ref requires a branch, tag, or full commit"; ref="$2"; shift 2 ;;
       --plan) plan=1; shift ;;
       --dry-run) dry=1; shift ;;
+      --preview-json) preview_json=1; dry=1; shift ;;
       --json) json=1; shift ;;
       --restart-shell) restart=1; shift ;;
       -h|--help) usage; return ;;
@@ -728,8 +731,10 @@ apply_config() {
     esac
   done
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
+  [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
+  [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
 
-  local host data expected_system expected_user expected_hostname platform source repository flake_source revision dirty backend installable
+  local host data expected_system expected_user expected_hostname platform source repository flake_source revision resolved_revision dirty backend installable
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -752,6 +757,7 @@ apply_config() {
     [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
     "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
     revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
+    resolved_revision="$("$git_command" -C "$repo" rev-parse HEAD)"
     dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
     repository="$repo"
     flake_source="$repo"
@@ -770,6 +776,7 @@ apply_config() {
       [[ -n "$rev" ]] || die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
     fi
     revision="${rev:0:12}"
+    resolved_revision="$rev"
     dirty=false
     repository="$flake_ref"
     flake_source="$flake_ref/$rev"
@@ -779,11 +786,13 @@ apply_config() {
 
   local output
   output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
-    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg source "$source" \
+    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg resolved_revision "$resolved_revision" --arg source "$source" \
     --arg installable "$installable" --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
-    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
-  if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
-  else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
+    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,resolvedRevision:$resolved_revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
+  if [[ "$preview_json" == 0 ]]; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
+    else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
+  fi
   [[ "$plan" == 0 ]] || return 0
 
   local -a nh_args
@@ -797,6 +806,22 @@ apply_config() {
   if [[ "$platform" == darwin ]]; then nh_args=("$nh_command" darwin switch "$installable" --diff always)
   else nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always); fi
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
+  if [[ "$preview_json" == 1 ]]; then
+    [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
+    local preview_file
+    preview_file="$(mktemp)"
+    if ! "${nh_args[@]}" >"$preview_file" 2>&1; then
+      cat "$preview_file" >&2
+      rm -f "$preview_file"
+      die "$EX_SOFTWARE" "$backend preview failed"
+    fi
+    if ! "$atyrode_preview_parser" --host "$host" --system "$expected_system" --revision "$resolved_revision" <"$preview_file"; then
+      rm -f "$preview_file"
+      die "$EX_SOFTWARE" "$backend preview output was not understood"
+    fi
+    rm -f "$preview_file"
+    return 0
+  fi
   "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
   if [[ "$dry" == 0 ]]; then
     local state_dir state_file temp
@@ -1428,6 +1453,10 @@ guard_production_mutation() {
 }
 
 main() {
+  if [[ $# == 0 ]] && interactive; then
+    export ATYRODE_CLI="$0"
+    exec "$atyrode_tui"
+  fi
   local subcommand="${1:-help}"
   shift || true
   # A production binary must never mutate the store while a caller believes its

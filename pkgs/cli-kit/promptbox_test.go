@@ -120,6 +120,26 @@ func TestHostMountsBoxForAskable(t *testing.T) {
 	}
 }
 
+type resizeApp struct{ width, height int }
+
+func (resizeApp) Init() tea.Cmd { return nil }
+func (a resizeApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		a.width, a.height = size.Width, size.Height
+	}
+	return a, nil
+}
+func (resizeApp) View() string { return "" }
+
+func TestHostForwardsResizeToBareApp(t *testing.T) {
+	h := newHost(resizeApp{})
+	next, _ := h.Update(tea.WindowSizeMsg{Width: 72, Height: 26})
+	got := next.(host).app.(resizeApp)
+	if got.width != 72 || got.height != 26 {
+		t.Fatalf("bare app size = %dx%d, want 72x26", got.width, got.height)
+	}
+}
+
 // stubCommander streams optional output and parses to a fixed action set.
 type stubCommander struct {
 	actions []Action

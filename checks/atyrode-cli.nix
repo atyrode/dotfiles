@@ -25,6 +25,7 @@ pkgs.runCommand "check-atyrode-cli"
     case "$*" in
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
+      *rev-parse\ HEAD*) echo 0123456789abcdef0123456789abcdef01234567 ;;
       *diff\ --quiet*) exit 0 ;;
       *ls-remote*) printf 'feedfacefeedfacefeedfacefeedfacefeedface\trefs/heads/main\n' ;;
       *) exit 1 ;;
@@ -33,7 +34,15 @@ pkgs.runCommand "check-atyrode-cli"
     cat > "$TMPDIR/bin/nh" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
-    if [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
+    if [[ "$*" == *"home switch"* && "$*" == *" --dry"* ]]; then
+      printf '\033[?25l⠋ Building\r⏱ 0s\rFinished at 14:18:57 after 0s\n'
+      printf '\033[1m<<<\033[0m /nix/store/old-home-manager-generation\n'
+      printf '\033[1m>>>\033[0m /nix/store/new-home-manager-generation\n\n'
+      printf 'CHANGED\n[U.] alpha 1.0 -> 2.0, +9.67 KiB\n[D.] beta 3.0 -> 2.5, -1.00 MiB\n[C.] source -9.67 KiB\n\n'
+      printf 'ADDED\n[A+] gamma 4.0, +2.00 MiB\n\n'
+      printf 'REMOVED\n[R-] delta 5.0, -7.00 MiB\n\n'
+      printf 'PATHS: 7529 -> 7536 (+5054, -5047)\nSIZE: 1.50 GiB -> 1.49 GiB\nDIFF: -5.59 MiB\033[?25h\n'
+    elif [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
       # Reproduce nh 4.4.1 clean's real output shape: a verbose evaluation plan
       # (Welcome/legend/one line per gcroot), the benign root-owned gcroots
       # permission flood, and one real (non-permission) error — so the check can
@@ -123,6 +132,20 @@ pkgs.runCommand "check-atyrode-cli"
     env ATYRODE_NIX_STORE=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
       || { echo 'production read-only commands must not be blocked by the mutation guard' >&2; exit 1; }
 
+    # Bare invocation is additive: a TTY enters the cockpit and passes the
+    # installed Bash CLI through for shell-outs; the same invocation without a
+    # TTY remains the scriptable CLI help surface. makeWrapper renames that Bash
+    # payload to .atyrode-wrapped and puts the public launcher in front of it.
+    cockpit_dispatch="$(_ATYRODE_TEST_TTY=1 atyrode)"
+    case "$cockpit_dispatch" in
+      cockpit:*/bin/.atyrode-wrapped:0) ;;
+      *) echo "bare TTY did not pass the packaged CLI to the cockpit: $cockpit_dispatch" >&2; exit 1 ;;
+    esac
+    forced_tty_subcommand="$(_ATYRODE_TEST_TTY=1 atyrode capabilities list --json)"
+    jq -e 'type == "array" and length > 0' <<<"$forced_tty_subcommand" >/dev/null \
+      || { echo "explicit subcommand entered the cockpit under forced TTY: $forced_tty_subcommand" >&2; exit 1; }
+    atyrode </dev/null | grep -qF 'Usage:'
+
     atyrode capabilities list --json | jq -e '
       (map(.name) | index("base") and index("server"))
       and all(.[]; .description | length > 0)
@@ -155,6 +178,7 @@ pkgs.runCommand "check-atyrode-cli"
       and .backend == "nh-home"
       and .source == "local"
       and .revision == "0123456789ab"
+      and .resolvedRevision == "0123456789abcdef0123456789abcdef01234567"
       and .mutationBoundary == "activation only after preflight"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
@@ -178,9 +202,28 @@ pkgs.runCommand "check-atyrode-cli"
     grep -F -- '--dry' "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
+    preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
+    jq -e '
+      .schemaVersion == 1
+      and .host == "alex-x86_64-linux"
+      and .system == "x86_64-linux"
+      and .resolvedRevision == "0123456789abcdef0123456789abcdef01234567"
+      and .status == "built"
+      and (.packages.added | map(.changeKind) == ["added"])
+      and (.packages.updated | map(.changeKind) == ["upgraded", "downgraded", "changed"])
+      and (.packages.removed | map(.changeKind) == ["removed"])
+      and .storePaths == {previous:7529,resulting:7536,added:5054,removed:5047}
+      and .closure == {previous:"1.50 GiB",resulting:"1.49 GiB",delta:"-5.59 MiB"}
+      and .generations.previous == "/nix/store/old-home-manager-generation"
+      and .generations.new == "/nix/store/new-home-manager-generation"
+      and ([.technical[] | contains("Finished at") or contains("⏱")] | any | not)
+    ' <<< "$preview" >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+
     atyrode apply --plan --json | jq -e '
       .source == "remote"
       and .revision == "feedfacefeed"
+      and .resolvedRevision == "feedfacefeedfacefeedfacefeedfacefeedface"
       and .installable == "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#alex-x86_64-linux"
       and (.dirty | not)
       and .repository == "github:atyrode/dotfiles"
@@ -195,7 +238,9 @@ pkgs.runCommand "check-atyrode-cli"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
 
     atyrode apply --ref 0123456789012345678901234567890123456789 --plan --json | jq -e '
-      .source == "remote" and .revision == "012345678901"
+      .source == "remote"
+      and .revision == "012345678901"
+      and .resolvedRevision == "0123456789012345678901234567890123456789"
     ' >/dev/null
 
     if atyrode apply --ref main --repo "$HOME/nix-dotfiles" --plan >/dev/null 2>&1; then

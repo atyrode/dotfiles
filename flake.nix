@@ -595,7 +595,6 @@
           codex-seed = import ./checks/codex-seed.nix { inherit lib pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };
-          production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {
@@ -618,7 +617,12 @@
           # Platform-independent lints: their output is a pure function of the
           # source tree, so emitting them on every system just re-runs the same
           # work three times in CI. Keep them on one leg only (#169).
+          # docs-links and production-facts scan the whole tree (docs
+          # included); they are the two intentional exceptions the docs-only
+          # fast path builds directly and scripts/docs-drift-guard.sh excludes.
           docs-links = import ./checks/docs-links.nix { inherit lib pkgs; };
+          docs-drift-guard = import ./checks/docs-drift-guard.nix { inherit pkgs; };
+          production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
           nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };
         }

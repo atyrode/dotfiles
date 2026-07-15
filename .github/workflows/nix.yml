@@ -106,15 +106,19 @@ jobs:
       - name: Check flake
         run: nix flake check --show-trace
 
-  # Docs-only fast path: Markdown is not fully inert — links are linted — so
-  # run just the docs-links check when the matrix is skipped. No store cache:
-  # the check only needs python3 from the binary cache.
+  # Docs-only fast path: Markdown is not fully inert — links are linted and
+  # docs can leak production facts — so build the two intentional whole-tree
+  # lints when the matrix is skipped, then guard the fast-path invariant
+  # itself: instantiate every check on every platform at base and head
+  # (evaluation-only, no builds) and fail if the docs change altered any
+  # other derivation. No store cache: the lints only need python3 from the
+  # binary cache, and the guard never builds.
   docs-links:
     name: docs-links
     needs: changes
     if: needs.changes.outputs.code == 'false'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -127,8 +131,15 @@ jobs:
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check documentation links
-        run: nix build .#checks.x86_64-linux.docs-links --show-trace
+      - name: Check documentation links and production facts
+        run: nix build .#checks.x86_64-linux.docs-links .#checks.x86_64-linux.production-facts --show-trace
+
+      - name: Guard the fast-path dependency invariant
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --quiet --depth=1 origin "$BASE_SHA"
+          ./scripts/docs-drift-guard.sh "$BASE_SHA" "$(git rev-parse HEAD)"
 
   # Sole required status check (#169): the protect-main ruleset requires the
   # `ci-gate` context (flipped from the three platform names on 2026-07-15).

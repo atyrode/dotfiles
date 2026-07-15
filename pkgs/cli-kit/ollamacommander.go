@@ -72,6 +72,9 @@ type ollamaChatReq struct {
 	Model    string          `json:"model"`
 	Messages []ollamaMessage `json:"messages"`
 	Stream   bool            `json:"stream"`
+	// Format asks Ollama to constrain generation to valid JSON. Commanders
+	// always return machine-parsed actions, so free-form output is never useful.
+	Format string `json:"format"`
 	// KeepAlive is any so it serialises correctly for both forms ollama accepts:
 	// a duration string ("30m") OR a bare number (-1 = never unload). Sending -1
 	// as the string "-1" fails ollama's duration parser ("missing unit"), so the
@@ -124,6 +127,7 @@ func (o OllamaCommander) Propose(ctx context.Context, prompt string) (<-chan str
 		Model:     model,
 		Messages:  msgs,
 		Stream:    true,
+		Format:    "json",
 		KeepAlive: o.proposeKeepAlive(),
 	})
 	if err != nil {

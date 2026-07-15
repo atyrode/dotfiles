@@ -1547,9 +1547,10 @@ func TestUsageCtrlRowPinned(t *testing.T) {
 }
 
 // TestMediumSecondarySeparator locks the medium secondary row's pane contract:
-// Routing is always the LEFT pane and Usage the RIGHT, and a visible one-cell
-// │ border column separates them on every secondary row at exactly the routing
-// column's width. Hiding usage removes both the right pane and the separator.
+// Usage is always the LEFT pane and Routing the RIGHT, and a visible one-cell
+// │ border column separates them on every secondary row at exactly the usage
+// column's favored share. Hiding usage removes both the left pane and the
+// separator.
 func TestMediumSecondarySeparator(t *testing.T) {
 	m := layoutModel()
 	_, medium, _, _ := layoutSizes(t, m)
@@ -1563,25 +1564,31 @@ func TestMediumSecondarySeparator(t *testing.T) {
 		t.Fatalf("routing and usage titles must share the secondary row:\n%s", strings.Join(lines, "\n"))
 	}
 	row := lines[head]
-	if strings.Index(row, "routing") > strings.Index(row, "usage") {
-		t.Errorf("routing must be the left pane and usage the right: %q", row)
+	if strings.Index(row, "usage") > strings.Index(row, "routing") {
+		t.Errorf("usage must be the left pane and routing the right: %q", row)
 	}
-	rw := m.routingColW()
+	uw := m.w - m.routingColW() - secSepW
 	genH, secH := m.mediumSplit(m.contentH())
 	first := topGap + genH + 1 // the row right under the full-width divider
 	for i := first; i < first+secH; i++ {
-		r := []rune(lines[i])
-		if len(r) <= rw || r[rw] != '│' {
-			t.Errorf("secondary row %d: want the │ separator at column %d, got %q", i, rw, lines[i])
+		// usage rows carry zero-width runes (the ↻︎ variation selector), so
+		// locate the separator and measure its display column, not rune index.
+		p := strings.IndexRune(lines[i], '│')
+		if p < 0 {
+			t.Errorf("secondary row %d: missing the │ separator: %q", i, lines[i])
+			continue
+		}
+		if col := lipgloss.Width(lines[i][:p]); col != uw {
+			t.Errorf("secondary row %d: separator at display column %d, want %d: %q", i, col, uw, lines[i])
 		}
 	}
 	if p := strings.IndexRune(row, '│'); p < 0 {
 		t.Errorf("the title row must carry the separator between the panes: %q", row)
-	} else if u := strings.Index(row, "usage"); u >= 0 && u < p {
-		t.Errorf("usage must sit right of the separator: %q", row)
+	} else if u := strings.Index(row, "routing"); u >= 0 && u < p {
+		t.Errorf("routing must sit right of the separator: %q", row)
 	}
 
-	m, _ = press(t, m, "s") // hiding usage removes the right pane AND the border
+	m, _ = press(t, m, "s") // hiding usage removes the left pane AND the border
 	if view := stripAnsi(m.View()); strings.ContainsRune(view, '│') {
 		t.Errorf("no separator may remain once usage hides:\n%s", view)
 	}
@@ -1840,7 +1847,7 @@ func TestFirstLoadBarFill(t *testing.T) {
 // visible Routing pane vertical wheel scrolls the viewport continuously —
 // ungated, clamped at both ends, inverted to match the operator-confirmed
 // trackpad direction, horizontal inert — in the wide right pane, medium's
-// lower-left pane, and the narrow routing-only swap, while the generator
+// lower-right pane, and the narrow routing-only swap, while the generator
 // keeps the detented wheel everywhere else and no scroll ever touches the
 // facet selection.
 func TestRoutingWheelScroll(t *testing.T) {
@@ -1900,16 +1907,17 @@ func TestRoutingWheelScroll(t *testing.T) {
 		t.Fatalf("generator wheel outside routing must step the selection, fcur = %d", m.fcur)
 	}
 
-	// Medium: only the lower-left secondary pane scrolls routing.
+	// Medium: only the lower-right secondary pane scrolls routing; the usage
+	// pane left of the separator belongs to the generator wheel.
 	m = resize(t, long, medium.w, medium.h)
 	genH, _ := m.mediumSplit(m.contentH())
-	m = wheel(m, tea.MouseButtonWheelUp, 2, topGap+genH+2)
-	if m.vp.YOffset != 1 || m.fcur != 0 {
-		t.Fatalf("medium: wheel in the lower-left pane must scroll routing only (YOffset %d, fcur %d)", m.vp.YOffset, m.fcur)
+	m = wheel(m, tea.MouseButtonWheelUp, 2, topGap+genH+2) // over the left usage pane
+	if m.vp.YOffset != 0 || m.fcur != 1 {
+		t.Fatalf("medium: wheel over the usage pane must step the generator, never scroll routing (YOffset %d, fcur %d)", m.vp.YOffset, m.fcur)
 	}
-	m = wheel(m, tea.MouseButtonWheelUp, 2, topGap+1) // the generator's own rows
-	if m.fcur != 1 {
-		t.Fatalf("medium: wheel over the generator must step the selection, fcur = %d", m.fcur)
+	m = wheel(m, tea.MouseButtonWheelUp, m.w-2, topGap+genH+2) // right of the separator
+	if m.vp.YOffset != 1 || m.fcur != 1 {
+		t.Fatalf("medium: wheel in the lower-right pane must scroll routing only (YOffset %d, fcur %d)", m.vp.YOffset, m.fcur)
 	}
 
 	// Narrow routing-only: the whole body scrolls; facets stay untouched.
@@ -1923,5 +1931,305 @@ func TestRoutingWheelScroll(t *testing.T) {
 	}
 	if fmt.Sprint(m.sel) != sel || m.fcur != 0 {
 		t.Fatal("routing-only scroll must never touch the generator state")
+	}
+}
+
+// TestMediumFavoredUsageShare locks medium's secondary width allocation:
+// Usage is the favored pane — it takes the larger share of the row and never
+// less than its measured stacked column — while Routing is the pane that
+// shrinks, floored at routingMinW, and every representative medium width
+// renders without a single auto-wrapped line.
+func TestMediumFavoredUsageShare(t *testing.T) {
+	m := layoutModel()
+	wideW := m.genRowWidth() + routingMinW
+	minW := m.mediumMinW()
+	for _, w := range []int{minW, minW + (wideW-minW)/2, wideW - 1} {
+		m = resize(t, m, w, 40)
+		if m.mode() != modeMedium {
+			t.Fatalf("width %d: mode = %d, want medium", w, m.mode())
+		}
+		rw := m.routingColW()
+		uw := m.w - rw - secSepW
+		if rw < routingMinW {
+			t.Errorf("width %d: routing share %d lost its useful minimum %d", w, rw, routingMinW)
+		}
+		if uw <= rw {
+			t.Errorf("width %d: usage share %d must exceed routing's %d — usage is the favored pane", w, uw, rw)
+		}
+		if min := m.usageColW(); uw < min {
+			t.Errorf("width %d: usage share %d clips its measured column %d", w, uw, min)
+		}
+		assertLayoutInvariants(t, m, fmt.Sprintf("medium favored usage width %d", w))
+	}
+}
+
+// TestUsageCtrlBlankRow: exactly one blank visual row separates the provider
+// content — including a present fable window — from the bottom refresh/hotkey
+// control line, in the wide band and medium's stacked column alike.
+func TestUsageCtrlBlankRow(t *testing.T) {
+	m := multiProfileModel()
+	m.avail.wins = append(m.avail.wins,
+		usageWin{label: "Claude 7 Day (Fable)", pct: 40, tier: "fable", secs: 4 * day, dur: 7 * day, prov: "anthropic"})
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	for _, tc := range []struct{ label, panel string }{
+		{"wide band", stripAnsi(m.usagePanel())},
+		{"medium column", stripAnsi(m.usageColumn())},
+	} {
+		lines := strings.Split(tc.panel, "\n")
+		if lineIndex(lines, "7d fable") < 0 {
+			t.Fatalf("%s: fixture fable row missing:\n%s", tc.label, tc.panel)
+		}
+		ctrl := lineIndex(lines, "r now")
+		if ctrl < 2 {
+			t.Fatalf("%s: control row missing:\n%s", tc.label, tc.panel)
+		}
+		if strings.TrimSpace(lines[ctrl-1]) != "" {
+			t.Errorf("%s: want a blank row above the control line, got %q", tc.label, lines[ctrl-1])
+		}
+		if strings.TrimSpace(lines[ctrl-2]) == "" {
+			t.Errorf("%s: want exactly one blank row — content directly above it, got %q", tc.label, lines[ctrl-2])
+		}
+	}
+}
+
+// TestReconcileUsageFableRetention: a successful refresh that omits the
+// Anthropic fable window keeps the previously observed window — marked stale,
+// with its bucket/reset state carried so down-routing never flips to ok on
+// missing evidence — while every freshly fetched window wins as usual.
+func TestReconcileUsageFableRetention(t *testing.T) {
+	prev := availability{
+		ok:     true,
+		bucket: map[string]string{"claude-fable": "maxed", "claude-main": "ok"},
+		reset:  map[string]int64{"claude-fable": 9000},
+		wins: []usageWin{
+			{label: "Claude 5 Hour", pct: 10, secs: 3600, dur: 5 * 3600, prov: "anthropic"},
+			{label: "Claude 7 Day (Fable)", pct: 100, tier: "fable", secs: 9000, dur: 7 * day, prov: "anthropic"},
+		},
+	}
+	next := availability{
+		ok:     true,
+		bucket: map[string]string{"claude-fable": "ok", "claude-main": "ok"},
+		reset:  map[string]int64{},
+		wins: []usageWin{
+			{label: "Claude 5 Hour", pct: 20, secs: 3000, dur: 5 * 3600, prov: "anthropic"},
+		},
+	}
+	got, stale := reconcileUsage(prev, next)
+	if stale {
+		t.Fatal("a successful refresh must not mark the whole panel stale")
+	}
+	fable := usageWin{}
+	found := false
+	for _, w := range got.wins {
+		if w.tier == "fable" {
+			fable, found = w, true
+		}
+	}
+	if !found {
+		t.Fatalf("the omitted fable window must be retained: %+v", got.wins)
+	}
+	if !fable.stale || fable.missing || fable.pct != 100 || fable.secs != 9000 {
+		t.Errorf("retained fable row must carry the last observed value marked stale: %+v", fable)
+	}
+	if got.bucket["claude-fable"] != "maxed" || got.reset["claude-fable"] != 9000 {
+		t.Errorf("bucket/reset must stay conservative, got %q/%d", got.bucket["claude-fable"], got.reset["claude-fable"])
+	}
+	if !got.down("claude-fable") {
+		t.Error("down-routing must not flip a maxed fable to ok on missing evidence")
+	}
+	for _, w := range got.wins {
+		if w.tier == "" && w.pct != 20 {
+			t.Errorf("freshly fetched windows must win: %+v", w)
+		}
+	}
+	m := layoutModel()
+	row := stripAnsi(m.usageRow(fable))
+	if !strings.Contains(row, "7d fable") || !strings.Contains(row, "stale") {
+		t.Errorf("the retained row must carry a visible stale warning: %q", row)
+	}
+	if !strings.Contains(row, "100% used") {
+		t.Errorf("the retained row must show the last observed value: %q", row)
+	}
+}
+
+// TestReconcileUsageFablePlaceholder: with no fable window ever observed a
+// successful anthropic payload gains a deterministic unavailable placeholder
+// (no fabricated numbers, real row geometry), a payload with no anthropic
+// windows at all gains nothing, and a payload carrying the fable window
+// passes through untouched.
+func TestReconcileUsageFablePlaceholder(t *testing.T) {
+	empty := availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	next := availability{
+		ok:     true,
+		bucket: map[string]string{"claude-fable": "ok"},
+		reset:  map[string]int64{},
+		wins: []usageWin{
+			{label: "Claude 5 Hour", pct: 20, secs: 3000, dur: 5 * 3600, prov: "anthropic"},
+		},
+	}
+	got, stale := reconcileUsage(empty, next)
+	if stale {
+		t.Fatal("a successful first fetch must not read stale")
+	}
+	fable := usageWin{}
+	found := false
+	for _, w := range got.wins {
+		if w.tier == "fable" {
+			fable, found = w, true
+		}
+	}
+	if !found {
+		t.Fatalf("a missing fable window with no prior value must gain a placeholder: %+v", got.wins)
+	}
+	if !fable.missing || fable.stale || fable.pct != 0 {
+		t.Errorf("the placeholder must be marked missing and carry no value: %+v", fable)
+	}
+	m := layoutModel()
+	row := stripAnsi(m.usageRow(fable))
+	if !strings.Contains(row, "7d fable") || !strings.Contains(row, "··%") || !strings.Contains(row, "unavailable") {
+		t.Errorf("placeholder row must read as a deterministic unavailable stand-in: %q", row)
+	}
+	if regexp.MustCompile(`\d+% used`).MatchString(row) || strings.Contains(row, "█") {
+		t.Errorf("the placeholder must not fabricate values: %q", row)
+	}
+
+	// Geometry: swapping the placeholder for a later real value never pops
+	// the stacked column's row count.
+	mp := layoutModel()
+	mp.avail = got
+	real := got
+	real.wins = append([]usageWin(nil), got.wins...)
+	for i := range real.wins {
+		if real.wins[i].missing {
+			real.wins[i] = usageWin{label: "Claude 7 Day (Fable)", pct: 40, tier: "fable", secs: 4 * day, dur: 7 * day, prov: "anthropic"}
+		}
+	}
+	mr := layoutModel()
+	mr.avail = real
+	if hp, hr := lipgloss.Height(mp.usageColumn()), lipgloss.Height(mr.usageColumn()); hp != hr {
+		t.Errorf("placeholder column is %d rows, real column %d — the datum appearing would pop the layout", hp, hr)
+	}
+
+	// No anthropic report at all: nothing to place a row under.
+	gptOnly := availability{ok: true, bucket: map[string]string{}, reset: map[string]int64{},
+		wins: []usageWin{{label: "5 hours", pct: 5, secs: 3600, dur: 5 * 3600, prov: "openai-codex"}}}
+	if got, _ := reconcileUsage(empty, gptOnly); len(got.wins) != 1 {
+		t.Errorf("no anthropic windows → no fable placeholder: %+v", got.wins)
+	}
+
+	// A payload carrying the fable window passes through untouched.
+	withFable := availability{ok: true, bucket: map[string]string{}, reset: map[string]int64{},
+		wins: []usageWin{
+			{label: "Claude 5 Hour", pct: 20, secs: 3000, dur: 5 * 3600, prov: "anthropic"},
+			{label: "Claude 7 Day (Fable)", pct: 7, tier: "fable", secs: 2 * day, dur: 7 * day, prov: "anthropic"},
+		}}
+	got2, _ := reconcileUsage(got, withFable)
+	if len(got2.wins) != 2 || got2.wins[1].stale || got2.wins[1].missing || got2.wins[1].pct != 7 {
+		t.Errorf("a present fable window must pass through fresh: %+v", got2.wins)
+	}
+}
+
+// TestUsageRefreshFailureRetention: a total refresh failure after a prior
+// success keeps the full previous availability on screen with a visible
+// refresh-failed warning — never wiping to the unauthenticated error — and
+// the next successful refresh clears the warning. Without any prior success
+// a failure still reads unavailable (nothing is fabricated).
+func TestUsageRefreshFailureRetention(t *testing.T) {
+	m := multiProfileModel()
+	wide, _, _, _ := layoutSizes(t, m)
+	m = resize(t, m, wide.w, wide.h)
+	m.hadUsage = true
+	before := m.avail
+	failed := availability{bucket: map[string]string{}, reset: map[string]int64{}}
+
+	nm, cmd := m.Update(usageMsg{profile: "default", avail: failed})
+	m = nm.(model)
+	if cmd != nil || m.barAnim != 0 {
+		t.Fatal("a failed refresh must not start the first-load fill")
+	}
+	if !m.avail.ok || !reflect.DeepEqual(m.avail, before) {
+		t.Fatalf("a failed refresh must keep the previous availability wholesale:\n got %+v\nwant %+v", m.avail, before)
+	}
+	if !m.usageStale {
+		t.Fatal("a failed refresh after a success must mark the panel stale")
+	}
+	panel := stripAnsi(m.usagePanel())
+	if !strings.Contains(panel, "refresh failed · stale") {
+		t.Errorf("the control row must warn about the failed refresh:\n%s", panel)
+	}
+	if strings.Contains(panel, "usage unavailable") {
+		t.Errorf("retained data must not read as unavailable:\n%s", panel)
+	}
+	if lineIndex(strings.Split(panel, "\n"), "% used") < 0 {
+		t.Errorf("the previous usage rows must stay on screen:\n%s", panel)
+	}
+	// The warning replaces the countdown's slot, so the measured medium
+	// breakpoint barely moves: a flaky refresh must not collapse the layout.
+	_, staleMedium, _, _ := layoutSizes(t, m)
+	m = resize(t, m, staleMedium.w, staleMedium.h)
+	if m.mode() != modeMedium {
+		t.Fatalf("stale usage at %dx%d: mode = %d, want medium — the warning must not blow up the measured column", staleMedium.w, staleMedium.h, m.mode())
+	}
+	assertLayoutInvariants(t, m, "medium stale usage")
+
+	// The next successful refresh clears the warning.
+	nm, _ = m.Update(usageMsg{profile: "default", avail: before})
+	m = nm.(model)
+	if m.usageStale {
+		t.Fatal("a successful refresh must clear the stale flag")
+	}
+	if panel := stripAnsi(m.usagePanel()); strings.Contains(panel, "refresh failed") {
+		t.Errorf("the warning must clear on the next success:\n%s", panel)
+	}
+
+	// Without any prior success a failure keeps the honest unavailable state.
+	fresh := multiProfileModel()
+	fresh.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	nm, _ = fresh.Update(usageMsg{profile: "default", avail: failed})
+	f := nm.(model)
+	if f.avail.ok || f.usageStale {
+		t.Errorf("no prior success → no retention, no stale flag (ok %v, stale %v)", f.avail.ok, f.usageStale)
+	}
+}
+
+// TestFooterHelpGutter: every physical help line — the compact row and every
+// row of the multi-line ? full help — carries the shared gut indentation, not
+// just the first one, and no footer line overflows the terminal.
+func TestFooterHelpGutter(t *testing.T) {
+	m := multiProfileModel()
+	wide, medium, _, _ := layoutSizes(t, m)
+	for _, tc := range []struct {
+		label string
+		s     termSize
+	}{{"wide", wide}, {"medium", medium}} {
+		m = resize(t, m, tc.s.w, tc.s.h)
+		m.help.ShowAll = true
+		footer := stripAnsi(m.footer())
+		flines := strings.Split(footer, "\n")
+		rule := -1
+		for i, l := range flines {
+			if strings.HasPrefix(l, "─") {
+				rule = i
+			}
+		}
+		help := flines[rule+1:]
+		if len(help) < 2 {
+			t.Fatalf("%s: full help must span multiple physical lines, got %d:\n%s", tc.label, len(help), footer)
+		}
+		for i, l := range help {
+			if strings.TrimSpace(l) == "" {
+				continue
+			}
+			if !strings.HasPrefix(l, strings.Repeat(" ", gut)) {
+				t.Errorf("%s: help line %d lost the %d-cell gutter: %q", tc.label, i, gut, l)
+			}
+		}
+		for i, l := range flines {
+			if w := lipgloss.Width(l); w > m.w {
+				t.Errorf("%s: footer line %d is %d cells for a %d-cell terminal: %q", tc.label, i, w, m.w, l)
+			}
+		}
+		m.help.ShowAll = false
 	}
 }

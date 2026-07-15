@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	previewdata "atyrode-tui/preview"
+	clikit "cli-kit"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -33,6 +36,117 @@ func testPreviewDocument() previewdata.Document {
 		Closure:     &previewdata.ClosureSummary{Previous: "1.50 GiB", Resulting: "1.49 GiB", Delta: "-5.59 MiB"},
 		Generations: &previewdata.GenerationPaths{Previous: "/nix/store/old-home-manager-generation", New: "/nix/store/new-home-manager-generation"},
 		Technical:   []string{"<<< /nix/store/old-home-manager-generation", ">>> /nix/store/new-home-manager-generation", "PATHS: 7529 -> 7536 (+5054, -5047)", "SIZE: 1.50 GiB -> 1.49 GiB", "DIFF: -5.59 MiB"},
+	}
+}
+
+type recordingAsker struct {
+	docs   clikit.DocCorpus
+	chunks []string
+}
+
+func (a *recordingAsker) Ask(context.Context, string) (<-chan string, error) {
+	ch := make(chan string, len(a.chunks))
+	for _, chunk := range a.chunks {
+		ch <- chunk
+	}
+	close(ch)
+	return ch, nil
+}
+
+func TestAskGroundingComesFromCLIHelp(t *testing.T) {
+	help := []byte(`Usage:
+  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
+apply preview modes are non-activating: --plan resolves and validates the target
+then prints preflight metadata without invoking nh; --dry-run invokes the normal
+nh switch backend with --dry; --preview-json runs that dry backend and emits its
+normalized package/action preview as JSON.
+`)
+	docs, err := buildAskGrounding(help)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(docs)
+	for _, want := range []string{"atyrode apply [HOST]", "--plan resolves and validates the target", "--dry-run invokes the normal", "--preview-json runs that dry backend", "read-only", "Do not invent"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("grounding missing %q: %q", want, got)
+		}
+	}
+	if _, err := buildAskGrounding([]byte("not command help")); err == nil {
+		t.Fatal("unrecognizable help unexpectedly produced grounding")
+	}
+	if backend, ok := newAskBackend(docs).(clikit.OmpAsker); !ok || !backend.ReplaceSystem {
+		t.Fatal("atyrode Ask backend did not isolate its grounded system prompt")
+	}
+}
+
+func TestGroundedAskerStreamsCompletionAndCachesHelp(t *testing.T) {
+	loadCalls := 0
+	var backend *recordingAsker
+	asker := &groundedAsker{
+		cli: "atyrode",
+		grounding: func(context.Context, string) ([]byte, error) {
+			loadCalls++
+			return []byte("Usage:\n  atyrode generations [--json] [--sizes]\n"), nil
+		},
+		backend: func(docs clikit.DocCorpus) clikit.Asker {
+			backend = &recordingAsker{docs: docs, chunks: []string{"first", " second"}}
+			return backend
+		},
+	}
+
+	for range 2 {
+		stream, err := asker.Ask(context.Background(), "how do generations work?")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer strings.Builder
+		for chunk := range stream {
+			answer.WriteString(chunk)
+		}
+		if got := answer.String(); got != "first second" {
+			t.Fatalf("streamed answer = %q", got)
+		}
+	}
+	if loadCalls != 1 {
+		t.Fatalf("--help loads = %d, want one cached load", loadCalls)
+	}
+	if backend == nil || !strings.Contains(string(backend.docs), "atyrode generations") {
+		t.Fatal("backend did not receive CLI-derived grounding")
+	}
+}
+
+type cancellingAsker struct{}
+
+func (cancellingAsker) Ask(ctx context.Context, _ string) (<-chan string, error) {
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		<-ctx.Done()
+	}()
+	return ch, nil
+}
+
+func TestGroundedAskerCancellationClosesStream(t *testing.T) {
+	asker := &groundedAsker{
+		cli: "atyrode",
+		grounding: func(context.Context, string) ([]byte, error) {
+			return []byte("Usage:\n  atyrode host [HOST] [--json]\n"), nil
+		},
+		backend: func(clikit.DocCorpus) clikit.Asker { return cancellingAsker{} },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := asker.Ask(ctx, "which host?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case _, ok := <-stream:
+		if ok {
+			t.Fatal("cancelled stream produced a token")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled stream did not close")
 	}
 }
 

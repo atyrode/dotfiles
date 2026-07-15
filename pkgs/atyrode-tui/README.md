@@ -11,8 +11,8 @@ operation to the existing CLI rather than reimplementing activation logic.
 - Bare non-TTY invocation continues to print CLI help.
 
 The wrapper exports `ATYRODE_CLI` before launching the cockpit. The TUI uses
-that exact executable for plan, preview, and apply commands, so packaged and
-checkout-specific behavior remain aligned.
+that exact executable for plan, preview, apply, and Ask grounding, so packaged
+and checkout-specific behavior remain aligned.
 
 ## Apply panel
 
@@ -32,6 +32,19 @@ the published branch advances while the cockpit is open. `n` or `esc` cancels
 confirmation, `r` resolves and previews the branch again, arrow keys or `j`/`k`
 scroll the preview, `d` toggles between the operator summary and normalized
 technical details, and `q` exits.
+
+## Ask panel
+
+Press `ctrl+o` to open the read-only Ask panel and ask a question about
+`atyrode`. The panel uses `cli-kit`'s `PromptBox` with the OMP Asker backend and
+streams the answer in place. On the first question it derives its grounding
+directly from `atyrode --help`, caches that command reference, and instructs the
+backend not to invent undocumented commands or flags. It does not expose Act
+mode, typed actions, or any command-execution path.
+
+Press `esc` or `ctrl+o` to close the panel. Either key cancels an in-flight
+request, and opening or closing the panel does not reset the apply plan,
+preview, selection, details mode, or confirmation state.
 
 ## Preview JSON contract
 
@@ -55,17 +68,18 @@ host, system, or full revision differs from the plan.
 
 ## Scope
 
-This package currently owns only the apply cockpit from issue #110. Follow-up
-panels remain separate:
+This package owns the apply cockpit from issue #110 and its read-only Ask panel
+from issue #117. Follow-up operational panels remain separate:
 
 - issue #111: generations, rollback, and clean;
-- issue #112: doctor, capabilities, and package inventory;
-- issue #117: the read-only Ask panel.
+- issue #112: doctor, capabilities, and package inventory.
 
 ## Verification
 
-`nix build .#atyrode-tui` runs the Go tests. The tests cover plan/preview command
-sequencing, explicit confirmation, failure safety, terminal-output normalization,
-responsive panel borders, capability layout, and narrow-window overflow. Visual
-changes should also follow `docs/tui-verification.md`: capture the app in tmux at
-representative sizes and inspect a truecolor ANSI render with `freeze`.
+`nix build .#atyrode-tui` runs the focused Go tests. They cover plan/preview
+command sequencing, explicit confirmation, failure safety, terminal-output
+normalization, responsive layout, CLI-derived Ask grounding, streamed
+completion, cancellation, toggle behavior, and preserved cockpit state. Visual
+changes also follow `docs/tui-verification.md`: capture the app in tmux under
+the truecolor environment and inspect both the character grid and a `freeze`
+render.

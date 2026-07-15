@@ -2,12 +2,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	previewdata "atyrode-tui/preview"
 	clikit "cli-kit"
@@ -58,10 +60,60 @@ type applyDoneMsg struct{ err error }
 type outputFunc func(string, ...string) ([]byte, error)
 type applyFunc func(string, ...string) tea.Cmd
 
+type askGroundingFunc func(context.Context, string) ([]byte, error)
+
+type groundedAsker struct {
+	cli       string
+	grounding askGroundingFunc
+	backend   func(clikit.DocCorpus) clikit.Asker
+
+	mu   sync.Mutex
+	docs clikit.DocCorpus
+}
+
+func (a *groundedAsker) Ask(ctx context.Context, prompt string) (<-chan string, error) {
+	docs, err := a.loadDocs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.backend(docs).Ask(ctx, prompt)
+}
+
+func (a *groundedAsker) loadDocs(ctx context.Context) (clikit.DocCorpus, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.docs != "" {
+		return a.docs, nil
+	}
+	help, err := a.grounding(ctx, a.cli)
+	if err != nil {
+		return "", commandError("load atyrode command reference", help, err)
+	}
+	docs, err := buildAskGrounding(help)
+	if err != nil {
+		return "", err
+	}
+	a.docs = docs
+	return docs, nil
+}
+
+func commandGrounding(ctx context.Context, cli string) ([]byte, error) {
+	return exec.CommandContext(ctx, cli, "--help").CombinedOutput()
+}
+
+func buildAskGrounding(help []byte) (clikit.DocCorpus, error) {
+	reference := strings.TrimSpace(stripTerminalControls(string(help)))
+	if reference == "" || !strings.Contains(reference, "Usage:") || !strings.Contains(reference, "atyrode ") {
+		return "", fmt.Errorf("load atyrode command reference: --help returned no recognizable usage")
+	}
+	return clikit.DocCorpus("You are atyrode's read-only Ask assistant. Answer questions about atyrode only from the command reference below. Never claim to execute commands or change the system. Do not invent commands, flags, behavior, or help forms. Suggest only exact invocations supported by the reference. If the reference does not answer a question, say that it is not documented and stop; do not suggest other commands or sources.\n\nCommand reference (from `atyrode --help`):\n" + reference), nil
+}
+
 type model struct {
 	cli     string
 	output  outputFunc
 	apply   applyFunc
+	asker   clikit.Asker
 	phase   phase
 	plan    applyPlan
 	preview previewdata.Document
@@ -85,16 +137,32 @@ func execApply(cli string, args ...string) tea.Cmd {
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return applyDoneMsg{err: err} })
 }
 
+func newAskBackend(docs clikit.DocCorpus) clikit.Asker {
+	asker := clikit.NewOmpAsker(docs)
+	asker.ReplaceSystem = true
+	return asker
+}
+
 func newModel(cli string) model {
+	asker := &groundedAsker{
+		cli:       cli,
+		grounding: commandGrounding,
+		backend:   newAskBackend,
+	}
 	return model{
 		cli:    cli,
 		output: commandOutput,
 		apply:  execApply,
+		asker:  asker,
 		phase:  loadingPlan,
 		width:  100,
 		height: 30,
 	}
 }
+
+func (m model) Asker() clikit.Asker { return m.asker }
+
+func (model) BoxTitle() string { return "ASK ATYRODE · read-only" }
 
 func (m model) Init() tea.Cmd { return m.loadPlan() }
 
@@ -618,7 +686,7 @@ func (m model) errorFooter() string {
 		}
 		lines[maxErrorLines-1] = ansi.Truncate(lines[maxErrorLines-1], tailWidth, "") + "…"
 	}
-	lines = append(lines, clikit.StDim.Render("r retry  ·  q quit"))
+	lines = append(lines, clikit.StDim.Render("^O ask  ·  r retry  ·  q quit"))
 	return strings.Join(lines, "\n")
 }
 
@@ -632,21 +700,24 @@ func (m model) footer() string {
 	}
 	switch m.phase {
 	case confirming:
-		if m.width < 60 {
-			return clikit.StWarn.Render("Apply?  y confirm  ·  n cancel  ·  d " + mode)
+		if m.width < 80 {
+			return clikit.StWarn.Render("^O ask  ·  y confirm  ·  n cancel")
 		}
-		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  d " + mode)
+		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  d " + mode + "  ·  ^O ask")
 	case applying:
-		return clikit.StDim.Render("Applying…")
+		return clikit.StDim.Render("Applying…  ·  ^O ask")
 	case applied:
-		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("d "+mode+"  ·  r refresh  ·  q quit")
-	case ready:
 		if m.width < 60 {
-			return clikit.StDim.Render("d " + mode + "  ·  enter apply  ·  q quit")
+			return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("^O ask  ·  d "+mode+"  ·  r refresh  ·  q")
 		}
-		return clikit.StDim.Render("↑/↓ preview  ·  d " + mode + "  ·  a/enter apply  ·  r refresh  ·  q quit")
+		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("^O ask  ·  d "+mode+"  ·  r refresh  ·  q quit")
+	case ready:
+		if m.width < 80 {
+			return clikit.StDim.Render("^O ask · d " + mode + " · enter apply · q")
+		}
+		return clikit.StDim.Render("↑/↓ preview  ·  d " + mode + "  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
 	default:
-		return clikit.StDim.Render("q quit")
+		return clikit.StDim.Render("^O ask  ·  q quit")
 	}
 }
 

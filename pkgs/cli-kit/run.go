@@ -134,6 +134,12 @@ func (h host) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case h.hasBox && !h.active && msg.String() == h.toggleKey:
 			h.active = true
 			cmd = h.box.Focus()
+		case h.active && (msg.String() == h.toggleKey || msg.String() == "esc"):
+			// Dismissing the overlay is one action even while a request is
+			// streaming. Feeding esc through PromptBox first cancels its context
+			// and invalidates trailing stream messages; then hide it immediately.
+			h.box, cmd = h.box.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			h.active = false
 		case h.active:
 			h.box, cmd = h.box.Update(msg)
 		default:

@@ -128,6 +128,12 @@ in
         grep -q 'a switches the' "$TMPDIR/code-help.txt"
         grep -q 'visible OMP auth combination' "$TMPDIR/code-help.txt"
         ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
+        # The managed generator owns private selection/auth state defaults while
+        # preserving both variables as caller-overridable wrapper inputs.
+        grep -Fq 'export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-profile}"' \
+          ${pkgs.omp-configured}/bin/code
+        grep -Fq 'export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"' \
+          ${pkgs.omp-configured}/bin/code
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -

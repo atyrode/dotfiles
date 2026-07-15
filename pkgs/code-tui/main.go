@@ -4,6 +4,7 @@
 //
 //	CODE_GENERATED     : generated.plain (facet-grid blocks, keyed by combo id)
 //	CODE_USAGE         : optional command (space-split) that prints `omp usage --json`
+//	CODE_SELECTION_STATE: optional persisted generator facet choices; empty disables it
 //	CODE_OMP           : the omp-managed executable — launches every trusted session:
 //	                     a generated profile as a one-shot --config, or the managed
 //	                     defaults when nothing was generated
@@ -104,6 +105,16 @@ var (
 	// stKey renders an inline key cue (r, a, s, p) — visually secondary but
 	// readable against the background, per the section-chrome convention.
 	stKey = lipgloss.NewStyle().Foreground(lipgloss.Color(cHead))
+
+	// Title-local hotkey cues (d · defaults, p · hide, s · hide) are quieter
+	// than the footer help: terminals have no portable alpha, so these are
+	// dedicated pre-blended tokens — CHead/CDim mixed ~40% toward the app's
+	// dark backdrop — applied to the whole cue, key included. Pre-blending is
+	// used instead of ANSI faint because faint's dimming factor varies wildly
+	// across terminals (and would double-dim already-muted text). Footer
+	// recovery cues keep the brighter help styles for readability.
+	stCueKey = lipgloss.NewStyle().Foreground(lipgloss.Color("#646b76")) // CHead → backdrop
+	stCue    = lipgloss.NewStyle().Foreground(lipgloss.Color("#4f5768")) // CDim → backdrop
 
 	// layout + meter primitives now live in cli-kit
 	padLeft    = clikit.PadLeft
@@ -885,12 +896,17 @@ const (
 	gut      = 2
 	topGap   = 1
 	headRows = 2
-	// the launch footer pinned under the list: blank + cost + speed + ⏎ launch.
-	launchFooterRows = 4
+	// the launch footer pinned under the list: blank + cost + speed + blank +
+	// the ⏎ launch action on its own visually separated row.
+	launchFooterRows = 5
 	// routingMinW is the narrowest useful routing column: pane chrome plus room
 	// for a lead chain — below this a side-by-side routing panel stops earning
 	// its keep.
 	routingMinW = 33
+	// secSepW is the one-cell border column between medium's adjacent
+	// secondary panes (Routing left, Usage right) — visible separation, same
+	// stroke as the wide layout's routing pane border.
+	secSepW = 1
 	// genMinRows is the fewest facet rows the generator list may be windowed to
 	// before the layout must shed secondary sections instead of compressing it.
 	genMinRows = 4
@@ -960,12 +976,13 @@ func (m model) mediumMinH() int {
 }
 
 // mediumMinW: the secondary row must seat a useful routing viewport beside the
-// measured usage column without clipping either.
+// measured usage column — plus the one-cell separator between them — without
+// clipping either.
 func (m model) mediumMinW() int {
 	if m.hideUsage {
 		return routingMinW
 	}
-	return routingMinW + m.usageColW()
+	return routingMinW + secSepW + m.usageColW()
 }
 
 // footerH measures the pinned footer for a composition directly from its parts
@@ -1012,12 +1029,12 @@ func (m model) bodyLines() ([]string, int) {
 // no overlay, and the sandbox (u) key is always offered.
 func (m model) launchFooter() []string {
 	cs, ss := m.costScore(), m.speedScore()
-	cta := "⏎ launch generated profile"
-	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("  " + cta)
+	acc := lipgloss.NewStyle().Foreground(lipgloss.Color(m.accent())).Bold(true).Render("  ⏎ launch")
 	return []string{
 		"",
 		m.meter("cost", "$", meterRamp[cs], cs), // dear → red, cheap → green
 		m.meter("speed", "»", meterRamp[6-ss], ss), // fast → green, slow → red
+		"", // breathing room between the meters and the action row
 		acc + stDim.Render("   m managed omp · u sandbox"),
 	}
 }
@@ -1055,11 +1072,11 @@ func (m model) previewDims() (int, int) {
 }
 
 // routingColW is the medium secondary row's routing share: whatever the
-// measured usage column leaves free.
+// measured usage column (and the separator between the panes) leaves free.
 func (m model) routingColW() int {
 	w := m.w
 	if !m.hideUsage {
-		w -= m.usageColW()
+		w -= m.usageColW() + secSepW
 	}
 	if w < routingMinW {
 		w = routingMinW
@@ -1070,10 +1087,12 @@ func (m model) routingColW() int {
 // ── trackpad / mouse wheel ───────────────────────────────────────────────────
 // The wheel drives the generator directly: vertical scroll moves the facet
 // selection, horizontal scroll changes the selected facet's value. Terminals
-// (and SSH) offer no haptic channel, so the "detent" is temporal: a wheelGate
-// axis-locks each gesture and rations steps, letting a trackpad fling or
-// diagonal jitter advance at most one controlled step while a single detented
-// wheel click still acts immediately.
+// (and SSH) offer no haptic channel, so the "detent" is temporal — and HARD:
+// a wheelGate axis-locks each gesture and grants exactly ONE step per
+// gesture; every further event (same-axis repeats and diagonal jitter alike)
+// is swallowed until an idle pause releases the detent. A single detented
+// wheel click still acts immediately. The hard detent is scoped to the
+// generator: the Routing viewport scrolls continuously (see wheelInRouting).
 const (
 	wheelAxisNone = iota
 	wheelAxisV
@@ -1081,38 +1100,26 @@ const (
 )
 
 // wheelIdle is the longest gap between wheel events that still reads as one
-// continuous gesture — a pause beyond it starts a fresh (immediate) step.
-// wheelRepeat rations further steps inside a held gesture, so a deliberate
-// continuous scroll advances at a controlled cadence instead of per event.
-const (
-	wheelIdle   = 200 * time.Millisecond
-	wheelRepeat = 300 * time.Millisecond
-)
+// continuous gesture — only a pause beyond it (a release) re-arms the next
+// immediate step.
+const wheelIdle = 200 * time.Millisecond
 
 // wheelGate arbitrates raw wheel events into discrete facet steps.
 type wheelGate struct {
-	axis   int       // locked gesture axis (wheelAxisNone when idle)
-	last   time.Time // last event seen — orthogonal jitter keeps the lock alive
-	stepAt time.Time // last event that was allowed to act
+	axis int       // locked gesture axis (wheelAxisNone when idle)
+	last time.Time // last event seen — any event keeps the gesture (and lock) alive
 }
 
 // admit reports whether a wheel event on axis a at time t may act. The first
 // event after an idle pause acts immediately and locks the gesture to its
-// axis; while locked, orthogonal events are swallowed (diagonal jitter) and
-// same-axis events act only every wheelRepeat (burst resistance).
+// axis; everything else inside the gesture — orthogonal jitter and same-axis
+// repeats — is swallowed. There is no held-gesture repeat: the pointer must
+// pause (or lift) for wheelIdle before the next step.
 func (g *wheelGate) admit(a int, t time.Time) bool {
 	fresh := g.axis == wheelAxisNone || t.Sub(g.last) > wheelIdle
 	g.last = t
 	if fresh {
 		g.axis = a
-		g.stepAt = t
-		return true
-	}
-	if a != g.axis {
-		return false
-	}
-	if t.Sub(g.stepAt) >= wheelRepeat {
-		g.stepAt = t
 		return true
 	}
 	return false
@@ -1130,9 +1137,10 @@ type model struct {
 	showResult bool // in collapsed mode: show the preview full-width
 	hideUsage  bool // s: hide the Usage section (#198); fetch state keeps running unseen
 
-	facets []facet
-	fcur   int
-	sel    map[string]string
+	facets         []facet
+	fcur           int
+	sel            map[string]string
+	selectionState string // CODE_SELECTION_STATE; empty keeps standalone runs stateless
 
 	wheel wheelGate // trackpad/mouse wheel arbiter: axis lock + step resistance
 
@@ -1150,6 +1158,8 @@ type model struct {
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
+	hadUsage    bool      // a successful fetch has landed — gates the one-time first-load bar fill
+	barAnim     int       // first-load fill frame (1..barAnimSteps-1 = partial); 0 = inactive, bars at full value
 
 	launchManaged   bool              // m: run CODE_OMP with no overlay (the managed defaults)
 	launchUntrusted bool              // u: run the CODE_OMP_UNTRUSTED sandbox
@@ -1181,6 +1191,25 @@ func fetchUsageCmd(cmd, profile string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg { return usageMsg{profile: profile, avail: loadAvailability(cmd, profile)} }
+}
+
+// First-load bar fill: the one-time animation that grows each usage bar from
+// empty to its real value when the FIRST successful fetch replaces the loading
+// skeleton. A dedicated bounded tick sequence — barAnimSteps frames at
+// barAnimInterval (8 × 25ms = 200ms total) — renders every bar's fill at
+// step/steps of its target; labels and numbers are real from the first frame,
+// only the fill animates. Refreshes (manual, auto, or post-switch) never
+// re-run it, and each tick schedules nothing beyond the next frame.
+const (
+	barAnimSteps    = 8
+	barAnimInterval = 25 * time.Millisecond
+)
+
+// barAnimMsg advances the first-load fill to the given frame (2..barAnimSteps).
+type barAnimMsg struct{ step int }
+
+func barAnimCmd(step int) tea.Cmd {
+	return tea.Tick(barAnimInterval, func(time.Time) tea.Msg { return barAnimMsg{step} })
 }
 
 func (m model) Init() tea.Cmd {
@@ -1295,18 +1324,20 @@ func (m *model) usageCtrlLine() string {
 }
 
 // providerHeading names a provider usage group by its effective identity —
-// "Codex <account>" / "Claude <account>", derived from the active auth
-// profile — so mixed profiles (Claude Mum + Codex Alex) read correctly with
-// no prose equation, in text rather than color alone.
+// "Codex (account)" / "Claude (account)", derived from the active auth
+// profile — so mixed profiles (Claude (Mum) + Codex (Alex)) read correctly
+// with no prose equation, in text rather than color alone. The parenthesized
+// owner is dimmed so the provider name stays the heading's anchor.
 func providerHeading(prov string, p authProfile) string {
 	col, name, acct := "#62a7ff", "Codex", p.Codex
 	if prov == "anthropic" {
 		col, name, acct = "#ff9f52", "Claude", p.Claude
 	}
+	out := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
 	if acct != "" {
-		name += " " + acct
+		out += " " + stDim.Render("("+acct+")")
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
+	return out
 }
 
 // identityLines renders the effective provider/account headings on their own —
@@ -1323,25 +1354,37 @@ func (m *model) identityLines() string {
 func (m *model) usagePanel() string { return m.usagePanelFor(m.w) }
 
 // usagePanelFor renders the first-class Usage section: the pilled title with
-// its local hide cue, the refresh/switch control row, and the per-provider
-// usage groups headed by the effective provider/account identity. Provider
-// groups sit side by side only when w seats every column; w <= 0 forces the
-// vertical stack (the medium layout's narrow usage column).
+// its local hide cue, the per-provider usage groups headed by the effective
+// provider/account identity, and the refresh/switch control row at the
+// section's bottom edge — below the content it governs. Provider groups sit
+// side by side only when w seats every column; w <= 0 forces the vertical
+// stack (the medium layout's narrow usage column).
 func (m *model) usagePanelFor(w int) string {
-	out := padLeft(m.pill("usage")+"  "+stKey.Render("s")+stDim.Render(" · hide"), gut) + "\n"
+	out := padLeft(m.pill("usage")+"  "+stCueKey.Render("s")+stCue.Render(" · hide"), gut) + "\n" +
+		"\n" + m.usageBodyFor(w)
 	if ctrl := m.usageCtrlLine(); ctrl != "" {
 		out += "\n" + ctrl
 	}
+	return out
+}
+
+// usageBodyFor renders the provider/account content between the pinned title
+// and the bottom control row: the identity-headed usage groups, or the
+// loading/unavailable identity block.
+func (m *model) usageBodyFor(w int) string {
 	p := m.activeAuthProfile()
 	if !m.avail.ok {
-		out += "\n" + m.identityLines()
+		if m.usageLoading() {
+			return m.skeletonBody(w, p)
+		}
+		out := m.identityLines()
 		if m.usageCmd != "" && !m.fetching && !m.nextRefresh.IsZero() {
 			out += "\n" + stWarn.Render("  usage unavailable · authenticate with omp --profile "+p.ID)
 		}
 		return out
 	}
 	if len(m.avail.wins) == 0 {
-		return out + "\n" + m.identityLines() + "\n" +
+		return m.identityLines() + "\n" +
 			stWarn.Render("  no provider usage · authenticate with omp --profile "+p.ID)
 	}
 	wins := append([]usageWin(nil), m.avail.wins...)
@@ -1383,9 +1426,16 @@ func (m *model) usagePanelFor(w int) string {
 			blocks["openai-codex"] = append(b, cl)
 		}
 	}
-	// side-by-side when there's horizontal room, else stacked. colW must fit the
-	// widest row (label · bar · pct · ↻reset · note) without wrapping the note;
-	// a long account name widens the column instead of truncating the identity.
+	return layoutGroups(w, order, blocks)
+}
+
+// layoutGroups arranges per-provider row blocks side by side when w seats
+// every measured column, else stacked with a blank line between groups —
+// shared by the real usage body and the loading skeleton so the two agree on
+// geometry and the first fetch never pops the layout. colW must fit the
+// widest row (label · bar · pct · ↻reset · note) without wrapping the note;
+// a long account name widens the column instead of truncating the identity.
+func layoutGroups(w int, order []string, blocks map[string][]string) string {
 	colW := 49
 	for _, prov := range order {
 		if hw := lipgloss.Width(blocks[prov][0]) + 2; hw > colW {
@@ -1397,7 +1447,7 @@ func (m *model) usagePanelFor(w int) string {
 		for _, prov := range order {
 			cols = append(cols, lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[prov], "\n")))
 		}
-		return out + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, cols...)
+		return lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	}
 	var lines []string
 	for i, prov := range order {
@@ -1406,7 +1456,44 @@ func (m *model) usagePanelFor(w int) string {
 		}
 		lines = append(lines, blocks[prov]...)
 	}
-	return out + "\n" + strings.Join(lines, "\n")
+	return strings.Join(lines, "\n")
+}
+
+// usageLoading reports the initial-fetch state: a usage command exists but no
+// successful result has ever landed and one is pending (in flight, or queued
+// before the first tick) — the window where Usage shows the layout-stable
+// skeleton instead of popping from an identity stub to full provider groups.
+func (m *model) usageLoading() bool {
+	return m.usageCmd != "" && !m.avail.ok && (m.fetching || m.nextRefresh.IsZero())
+}
+
+// skeletonWins are the loading skeleton's placeholder windows: both supported
+// providers expose a 5-hour rolling window and a weekly window, so the
+// skeleton mirrors that standard shape — real labels, empty bars, dotted
+// placeholders — without fabricating numbers the fetch hasn't produced.
+var skeletonWins = [...]string{"5h", "7d"}
+
+// skeletonRow is a placeholder usage row: the real row's exact geometry with
+// an empty bar and ·· placeholders for the percentage and reset time.
+func skeletonRow(label string) string {
+	return fmt.Sprintf("  %-9s %s %s used  %s", label, barStr(0),
+		stDim.Render(" ··%"), stDim.Render(gReset+" ··"))
+}
+
+// skeletonBody is the pre-first-fetch Usage content: the provider/account
+// headings with generic placeholder window rows, laid out by the same group
+// logic as real data so the first result lands without a layout pop.
+func (m *model) skeletonBody(w int, p authProfile) string {
+	order := []string{"openai-codex", "anthropic"}
+	blocks := map[string][]string{}
+	for _, prov := range order {
+		rows := []string{padLeft(providerHeading(prov, p), gut)}
+		for _, label := range skeletonWins {
+			rows = append(rows, skeletonRow(label))
+		}
+		blocks[prov] = rows
+	}
+	return layoutGroups(w, order, blocks)
 }
 
 // usageColumn is the medium layout's right-hand Usage section: the panel with
@@ -1453,11 +1540,56 @@ func (m *model) usageRow(w usageWin) string {
 	} else if w.dur > 0 && w.secs*4 < w.dur {
 		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + " " + fmtReset(w.secs))
 	}
-	return fmt.Sprintf("  %-9s %s %3d%% used  %s%s", shortWin(w.label), barStr(w.pct), w.pct, reset, note)
+	// During the one-time first-load fill only the bar is scaled toward its
+	// target; the label, percentage, and reset text are real from frame one.
+	pct := w.pct
+	if m.barAnim > 0 {
+		pct = pct * m.barAnim / barAnimSteps
+	}
+	return fmt.Sprintf("  %-9s %s %3d%% used  %s%s", shortWin(w.label), barStr(pct), w.pct, reset, note)
+}
+
+// Reset-credit expiry urgency tints: each individual expiry (`3d`, `12d`, …)
+// in the credit line is colored on a muted red→amber→green ramp so soon
+// expiries read as warnings and distant ones as headroom, while the icon,
+// count, and connecting prose stay dim. The palette is precomputed and
+// deliberately desaturated (no per-frame color math, no saturated alarm
+// colors inside a dim summary row); the day text itself stays sufficient
+// without color. Thresholds are whole days remaining, exactly as fmtDays
+// rounds them (up, so later-today = 1): ≤ creditUrgentDays is muted red,
+// ≤ creditSoonDays muted amber, anything later muted green.
+const (
+	creditUrgentDays = 3  // expiring within three days — spend it or lose it
+	creditSoonDays   = 10 // within ten days — plan around it
+)
+
+var (
+	stCreditUrgent = lipgloss.NewStyle().Foreground(lipgloss.Color("#b0716f")) // muted red
+	stCreditSoon   = lipgloss.NewStyle().Foreground(lipgloss.Color("#b39c6b")) // muted amber
+	stCreditSafe   = lipgloss.NewStyle().Foreground(lipgloss.Color("#85a883")) // muted green
+)
+
+// creditDayStyle picks the urgency tint for a credit expiring in s seconds,
+// bucketing on the same rounded-up whole days fmtDays renders — the color and
+// the text can never disagree about which side of a threshold an expiry is on.
+func creditDayStyle(s int64) lipgloss.Style {
+	d := int64(0)
+	if s > 0 {
+		d = (s + 86399) / 86400
+	}
+	switch {
+	case d <= creditUrgentDays:
+		return stCreditUrgent
+	case d <= creditSoonDays:
+		return stCreditSoon
+	default:
+		return stCreditSafe
+	}
 }
 
 // creditLine renders the OpenAI reset-credit summary: the available count and
-// the days remaining until the three soonest credit expirations, ascending.
+// the days remaining until the three soonest credit expirations, ascending —
+// each expiry tinted by creditDayStyle while the surrounding prose stays dim.
 func (m *model) creditLine() string {
 	c := m.avail.credits
 	if c.avail == 0 && len(c.exp) == 0 {
@@ -1472,15 +1604,15 @@ func (m *model) creditLine() string {
 	if c.avail == 1 {
 		noun = "reset"
 	}
-	line := fmt.Sprintf("%d %s", c.avail, noun)
+	line := stDim.Render(gReset + " " + fmt.Sprintf("%d %s", c.avail, noun))
 	if len(exp) > 0 {
 		days := make([]string, len(exp))
 		for i, s := range exp {
-			days[i] = fmtDays(s)
+			days[i] = creditDayStyle(s).Render(fmtDays(s))
 		}
-		line += " · expiring in " + strings.Join(days, ", ")
+		line += stDim.Render(" · expiring in ") + strings.Join(days, stDim.Render(", "))
 	}
-	return "  " + stDim.Render(gReset+" "+line)
+	return "  " + line
 }
 
 // fmtDays renders a relative duration as whole days remaining, rounding up so
@@ -1622,7 +1754,12 @@ func (h helpKeys) FullHelp() [][]key.Binding { return h.full }
 //
 // Everything else lives in visible section chrome or behind ?.
 func (m model) contextHelp() helpKeys {
-	short := []key.Binding{keys.Move, keys.Change, keys.Reset}
+	short := []key.Binding{keys.Move, keys.Change}
+	// The generator title advertises d · defaults itself; the compact line
+	// repeats it only while that chrome is off screen (routing full-screen).
+	if !m.generatorShown() {
+		short = append(short, keys.Reset)
+	}
 	if !m.routingShown() {
 		short = append(short, key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "show routing")))
 	}
@@ -1671,12 +1808,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.relayout()
 	case usageMsg:
 		if msg.profile != m.activeAuthProfile().ID {
-			return m, nil
+			return m, nil // stale profile: never applied, never starts the fill
 		}
+		first := !m.hadUsage && msg.avail.ok
 		m.avail = msg.avail
+		m.hadUsage = m.hadUsage || msg.avail.ok
 		m.fetching = false
 		m.nextRefresh = time.Now().Add(refreshEvery)
 		m.relayout()
+		if first {
+			// The first real data replaces the skeleton: run the one-time
+			// bounded bar fill. Refreshes never reach this branch again.
+			m.barAnim = 1
+			return m, barAnimCmd(2)
+		}
+	case barAnimMsg:
+		// Bounded and self-terminating: apply the frame, arm the next tick,
+		// and stop at the final step (barAnim 0 = inactive, bars at value).
+		if m.barAnim == 0 {
+			return m, nil
+		}
+		if msg.step >= barAnimSteps {
+			m.barAnim = 0
+			return m, nil
+		}
+		m.barAnim = msg.step
+		return m, barAnimCmd(msg.step + 1)
 	case refreshTickMsg:
 		// re-arm the 1s tick; auto-refresh once the interval elapses.
 		cmds := []tea.Cmd{tickCmd()}
@@ -1692,9 +1849,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.MouseMsg:
-		// Wheel → generator control (see wheelGate). The routing preview keeps
-		// its keyboard scrolling; wheel input deliberately owns facet steps.
+		// Wheel dispatch by pointer position: inside the visible Routing pane
+		// the viewport owns vertical scrolling — continuous, ungated, clamped
+		// by the viewport itself, with horizontal wheel deliberately inert.
+		// Everywhere else the wheel drives the generator through the hard
+		// one-step-per-gesture detent (see wheelGate). Scrolling never touches
+		// the facet selection, so only real generator changes persist.
 		if msg.Action == tea.MouseActionPress {
+			if m.wheelInRouting(msg.X, msg.Y) {
+				switch msg.Button {
+				case tea.MouseButtonWheelUp:
+					m.vp.LineDown(1) // inverted: operator-confirmed trackpad direction
+				case tea.MouseButtonWheelDown:
+					m.vp.LineUp(1)
+				}
+				return m, nil
+			}
 			m.wheelStep(msg.Button, time.Now())
 		}
 	case tea.KeyMsg:
@@ -1722,6 +1892,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.relayout() // the taller/shorter footer changes the body height
 		case "d":
 			m.sel = defaultSel()
+			m.persistSelection()
 			m.syncPreview()
 		case "f":
 			m.depth = (m.depth + 1) % 2
@@ -1791,6 +1962,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Kept: the preview stays; remember the prompt for the launched session.
 		m.savedSel = nil
 		m.firstPrompt = msg.Prompt
+		m.persistSelection()
 
 	case clikit.ActionsRevertedMsg:
 		// Rejected: restore the pre-preview selection.
@@ -1803,27 +1975,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// wheelInRouting reports whether a pointer position (terminal cells, 0-based)
+// falls inside the visible Routing pane, whose viewport then owns vertical
+// wheel scrolling: the wide split's right pane, medium's lower-left pane, or
+// the narrow routing-only swap's full body. Hidden/collapsed routing claims
+// nothing, so the generator keeps the wheel everywhere else.
+func (m model) wheelInRouting(x, y int) bool {
+	if !m.routingShown() {
+		return false
+	}
+	ch := m.contentH()
+	switch m.mode() {
+	case modeCollapsed: // routing-only swap: the whole body is Routing
+		return y >= topGap && y < topGap+ch
+	case modeMedium: // the secondary row's left column, under the divider
+		genH, secH := m.mediumSplit(ch)
+		secTop := topGap + genH + 1
+		return y >= secTop && y < secTop+secH && x < m.routingColW()
+	default: // split: the right pane, from the list's right edge on
+		return y >= topGap && y < topGap+ch && x >= m.listW()
+	}
+}
+
 // wheelStep translates an admitted wheel event into the matching facet action:
 // vertical scroll moves the selection, horizontal scroll changes the value.
-// Facet semantics stay untouched — these are the exact arrow-key handlers,
-// merely rationed by the wheelGate.
+// The raw mapping is INVERTED on both axes — operator-confirmed trackpad
+// direction: WheelUp moves the selection down, WheelDown up; WheelLeft cycles
+// to the next (right) option, WheelRight to the previous. Arrow keys keep
+// their literal semantics; the handlers themselves are untouched and merely
+// rationed by the wheelGate.
 func (m *model) wheelStep(b tea.MouseButton, t time.Time) {
 	switch b {
 	case tea.MouseButtonWheelUp:
 		if m.wheel.admit(wheelAxisV, t) {
-			m.moveUp()
+			m.moveDown()
 		}
 	case tea.MouseButtonWheelDown:
 		if m.wheel.admit(wheelAxisV, t) {
-			m.moveDown()
+			m.moveUp()
 		}
 	case tea.MouseButtonWheelLeft:
 		if m.wheel.admit(wheelAxisH, t) {
-			m.cycleFacet(-1)
+			m.cycleFacet(1)
 		}
 	case tea.MouseButtonWheelRight:
 		if m.wheel.admit(wheelAxisH, t) {
-			m.cycleFacet(1)
+			m.cycleFacet(-1)
 		}
 	}
 }
@@ -1864,6 +2061,7 @@ func (m *model) cycleFacet(dir int) {
 		m.fcur = nv - 1
 	}
 	m.syncPreview()
+	m.persistSelection()
 }
 
 // prevPadL is the split preview pane's left padding. Width() counts it, so the
@@ -1900,30 +2098,32 @@ func (m model) sectionTitle() string {
 	return m.pill("generator")
 }
 
-// sectionHead is the gutter-inset title plus a blank separator (headRows tall);
-// it stays pinned above the scrolling facet list.
+// sectionHead is the gutter-inset title row — the pill plus its local
+// reset-to-defaults cue (d · defaults) — and a blank separator (headRows
+// tall); it stays pinned above the scrolling facet list.
 func (m model) sectionHead() string {
-	return padLeft(m.sectionTitle(), gut) + "\n\n"
+	return padLeft(m.sectionTitle()+"  "+stCueKey.Render("d")+stCue.Render(" · defaults"), gut) + "\n\n"
 }
 
-// prevChromeRows is the Routing column's pinned chrome above the scrolling
-// viewport: the title row with its local collapse cue, the fallback-display
-// cue beneath it, and a blank separator.
+// prevChromeRows is the Routing column's pinned chrome around the scrolling
+// viewport: the title row with its local collapse cue and a blank separator
+// above, plus the fallback-display cue pinned beneath the viewport.
 const prevChromeRows = headRows + 1
 
 // previewColumn assembles the Routing section: the pinned title row carrying
-// the section-local collapse cue (p · hide), the fallback-display cue directly
-// beneath it — Routing chrome, not a detached bottom row (#198) — then the
-// scrolling routing viewport. The f wording makes clear it only changes what
-// is DISPLAYED: the launched profile always keeps its fallback chains.
+// the section-local collapse cue (p · hide), the scrolling routing viewport,
+// then the fallback-display cue pinned at the section's bottom edge — bottom
+// chrome, where the chains it toggles end. The f wording makes clear it only
+// changes what is DISPLAYED: the launched profile always keeps its fallback
+// chains.
 func (m model) previewColumn() string {
 	verb := "show"
 	if m.depth == 1 {
 		verb = "hide"
 	}
-	return m.pill("routing") + "  " + stKey.Render("p") + stDim.Render(" · hide") + "\n" +
-		stKey.Render("f") + stDim.Render(" · "+verb+" fallback chains") + "\n\n" +
-		m.vp.View()
+	return m.pill("routing") + "  " + stCueKey.Render("p") + stCue.Render(" · hide") + "\n\n" +
+		m.vp.View() + "\n" +
+		stKey.Render("f") + stDim.Render(" · "+verb+" fallback chains")
 }
 
 // leftColumn renders the pinned section head plus the scrolling list body, the
@@ -1941,9 +2141,10 @@ func (m model) leftColumn(w, totalH int) string {
 }
 
 // mediumContent is the generator-dominant layout: the full-width facet list on
-// top (primary), a divider, then Routing and Usage side by side in a secondary
-// row. Routing keeps its own scrolling viewport; Usage stacks its provider
-// groups vertically inside the measured-width right column.
+// top (primary), a divider, then Routing (left) and Usage (right) side by side
+// in a secondary row, separated by a one-cell border column. Routing keeps its
+// own scrolling viewport; Usage stacks its provider groups vertically inside
+// the measured-width right column.
 func (m model) mediumContent(bodyH int) string {
 	genH, secH := m.mediumSplit(bodyH)
 	top := m.leftColumn(m.w, genH)
@@ -1955,8 +2156,10 @@ func (m model) mediumContent(bodyH int) string {
 		lipgloss.NewStyle().MaxWidth(rw).Render(padLeft(m.previewColumn(), gut)))
 	sec := routing
 	if !m.hideUsage {
-		usage := lipgloss.NewStyle().MaxWidth(m.w - rw).MaxHeight(secH).Render(m.usageColumn())
-		sec = lipgloss.JoinHorizontal(lipgloss.Top, routing, usage)
+		sep := lipgloss.NewStyle().Foreground(lipgloss.Color(cBord)).Render(
+			strings.TrimSuffix(strings.Repeat("│\n", secH), "\n"))
+		usage := lipgloss.NewStyle().MaxWidth(m.w - rw - secSepW).MaxHeight(secH).Render(m.usageColumn())
+		sec = lipgloss.JoinHorizontal(lipgloss.Top, routing, sep, usage)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, top, div, sec)
 }
@@ -2083,21 +2286,24 @@ func main() {
 	authProfiles := parseAuthProfiles(os.Getenv("CODE_AUTH_PROFILES"))
 	authState := os.Getenv("CODE_AUTH_STATE")
 	authIdx := selectedAuthIndex(authProfiles, authState)
+	facets := facetDefs(glyphs)
+	selectionState := os.Getenv("CODE_SELECTION_STATE")
 	m := model{
-		generated:    generated,
-		advisors:     parseAdvisors(generated["__advisors__"]),
-		facts:        parseFacts(generated["__models__"]),
-		avail:        availability{bucket: map[string]string{}, reset: map[string]int64{}},
-		usageCmd:     os.Getenv("CODE_USAGE"),
-		authProfiles: authProfiles,
-		authIdx:      authIdx,
-		authState:    authState,
-		fetching:     os.Getenv("CODE_USAGE") != "",
-		spin:         sp,
-		help:         help.New(),
-		glyphs:       glyphs,
-		facets:       facetDefs(glyphs),
-		sel:          defaultSel(),
+		generated:      generated,
+		advisors:       parseAdvisors(generated["__advisors__"]),
+		facts:          parseFacts(generated["__models__"]),
+		avail:          availability{bucket: map[string]string{}, reset: map[string]int64{}},
+		usageCmd:       os.Getenv("CODE_USAGE"),
+		authProfiles:   authProfiles,
+		authIdx:        authIdx,
+		authState:      authState,
+		fetching:       os.Getenv("CODE_USAGE") != "",
+		spin:           sp,
+		help:           help.New(),
+		glyphs:         glyphs,
+		facets:         facets,
+		sel:            loadSelectionState(selectionState, facets),
+		selectionState: selectionState,
 	}
 	// Cell-motion mouse reporting feeds the trackpad/wheel facet control (see
 	// wheelGate); it is the narrowest mode that carries wheel events. The

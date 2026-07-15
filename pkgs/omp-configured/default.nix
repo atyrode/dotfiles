@@ -1266,6 +1266,7 @@ let
         export CODE_AUTH_PROFILES
       fi
       export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-profile}"
+      export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
       # The generator's prompt→profile classifier runs on the resident,
       # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the

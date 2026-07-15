@@ -13,7 +13,9 @@ from the server composition.
 - `development` contains cross-repository Nix and shell quality tools. It does
   not provide application language versions.
 - `agent-tools` owns Claude Code, Codex, OMP, their launch adapters,
-  tmux, and the Linux isolation backend. Authentication, sessions, trust, and
+  tmux, the Linux isolation backend, and the TUI-verification render stack
+  (charm-freeze plus the JetBrains Mono and Nerd Font symbols render fonts,
+  exposed through user fontconfig). Authentication, sessions, trust, and
   caches remain mutable and harness-owned outside derivations.
 - `desktop`, `mobile`, `media`, `containers`, and `security` are explicit host
   capabilities. Container daemons and Homebrew application state remain
@@ -72,12 +74,12 @@ or capability. The shared Nix store deduplicates identical dependencies across
 hosts and workspaces; a binary cache can be added without changing ownership.
 
 At the pinned 2026-07-08 nixpkgs revision, the portable x86_64-linux server
-profile delivers 37 top-level packages and measures 2,376,988,648 NAR bytes
-across 406 store paths. Its enforced ceilings are 40 packages, 2,617,245,696
+profile delivers 41 top-level packages and measures 2,430,232,848 NAR bytes
+across 409 store paths. Its enforced ceilings are 45 packages, 2,617,245,696
 bytes, and 450 paths. The profile deliberately excludes development, containers, security,
 media, mobile, and desktop capabilities; it therefore contains neither
 workstation language stacks, container clients, nor antivirus software. The
-aarch64 ceilings are 40
+aarch64 ceilings are 45
 packages, 2.5 GiB, and 500 paths and are enforced by the native CI runner. See
 [Portable Home Manager profiles](portable-profiles.md) for the manifest schema
 and pin/update workflow.

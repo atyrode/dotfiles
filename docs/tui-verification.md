@@ -9,8 +9,10 @@ empty strings.
 
 The toolchain: **tmux** (drive + capture, authoritative), **charm-freeze**
 (deterministic PNG renders), with ttyd/vhs as live-viewing alternatives.
-Packaging these into the managed agent tool suite is tracked in
-[issue #163](https://github.com/atyrode/dotfiles/issues/163).
+tmux, charm-freeze, and the render fonts (JetBrains Mono + Nerd Font symbols)
+ship in the managed agent tool suite — the `agent-tools` capability
+([issue #163](https://github.com/atyrode/dotfiles/issues/163)); ttyd/vhs stay
+on-demand `nix shell` tools because that stack is flaky in agent sandboxes.
 
 ## 0. Fix the environment first — it silently degrades color
 
@@ -70,15 +72,16 @@ To actually *look* at a frame (colors, pills, contrast), render the ANSI
 capture to PNG with `freeze` — no server, no browser, no client sizing:
 
 ```console
-$ nix shell nixpkgs#charm-freeze -c \
-    freeze --language ansi /tmp/frame.ansi -o /tmp/frame.png \
+$ freeze --language ansi /tmp/frame.ansi -o /tmp/frame.png \
     --font.family "JetBrains Mono,Symbols Nerd Font Mono"
 ```
 
 With the truecolor env from §0, the PNG reproduces the authored hex colors
-exactly (24-bit SGR bypasses freeze's ANSI theme palette). Install the fonts
-once where freeze runs (`nixpkgs#jetbrains-mono`,
-`nixpkgs#nerd-fonts.symbols-only` → `~/.local/share/fonts` + `fc-cache -f`).
+exactly (24-bit SGR bypasses freeze's ANSI theme palette). freeze and both
+fonts are installed by the `agent-tools` capability with user fontconfig
+enabled; on an unmanaged machine, `nix shell nixpkgs#charm-freeze` and drop
+`nixpkgs#jetbrains-mono` + `nixpkgs#nerd-fonts.symbols-only` into
+`~/.local/share/fonts` (then `fc-cache -f`).
 
 Known limitations:
 

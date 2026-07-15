@@ -1422,4 +1422,40 @@ in
 
             mkdir "$out"
       '';
+
+  # The terminal-viewing stack from the tui-visual-verification skill (#163):
+  # tmux drives and captures the TUI under test, charm-freeze renders the ANSI
+  # capture to PNG with the pinned render fonts. Exercise the whole pipeline so
+  # a missing tool, a renamed nixpkgs attribute, or a dropped font file fails
+  # the flake instead of the first agent verification run.
+  agent-tools-terminal-viewing =
+    pkgs.runCommand "check-agent-tools-terminal-viewing"
+      {
+        nativeBuildInputs = [
+          pkgs.charm-freeze
+          pkgs.tmux
+        ];
+      }
+      ''
+        tmux -V
+        freeze --version
+
+        # The exact font files the profile installs and freeze is pointed at.
+        test -f ${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Regular.ttf
+        test -f ${pkgs.nerd-fonts.symbols-only}/share/fonts/truetype/NerdFonts/Symbols/SymbolsNerdFontMono-Regular.ttf
+
+        # Render a truecolor frame carrying a Nerd Font PUA glyph end to end,
+        # with the fonts exposed the way a user profile exposes them.
+        export HOME="$TMPDIR"
+        export XDG_DATA_HOME="$TMPDIR/share"
+        mkdir -p "$XDG_DATA_HOME/fonts"
+        ln -s ${pkgs.jetbrains-mono}/share/fonts/truetype/*.ttf "$XDG_DATA_HOME/fonts/"
+        ln -s ${pkgs.nerd-fonts.symbols-only}/share/fonts/truetype/NerdFonts/Symbols/*.ttf "$XDG_DATA_HOME/fonts/"
+        printf '\x1b[38;2;255;95;175mpill \xee\x82\xb6 glyph\x1b[0m\n' > frame.ansi
+        freeze --language ansi frame.ansi -o frame.png \
+          --font.family "JetBrains Mono,Symbols Nerd Font Mono"
+        test -s frame.png
+
+        mkdir "$out"
+      '';
 }

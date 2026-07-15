@@ -16,28 +16,34 @@ and checkout-specific behavior remain aligned.
 
 ## Apply panel
 
-Startup resolves the apply plan first, then starts two read-only operations
-asynchronously:
+Startup runs only `atyrode apply --plan --json`. That command supplies the host,
+system, immutable target revision, backend, and active capabilities rendered in
+the plan panel; remote plans include the full commit as `resolvedRevision`.
+Once the plan is validated, apply confirmation is immediately available.
 
-1. `atyrode apply --plan --json` supplies the host, system, target revision,
-   backend, and active capabilities rendered in the plan panel. Remote plans
-   include the full commit as `resolvedRevision`.
-2. `atyrode apply --ref <resolvedRevision> --preview-json` runs the same
-   read-only `nh … --dry` preview and returns the stable schema described below.
-   The TUI renders that structure rather than parsing terminal text.
-3. `atyrode inventory --ref <resolvedRevision> --json` supplies the complete
-   capability manifest for that exact commit. The inventory load runs alongside
-   the preview and cannot block or disable apply confirmation.
+The expensive read-only inspections are opt-in so a constrained host never
+starts multiple Nix evaluations merely by opening the cockpit:
 
-No activation occurs during startup. Pressing `a` or `enter` opens a confirmation
-step; only `y` then runs `atyrode apply --ref <resolvedRevision>` in the terminal.
-The preview and activation therefore address the same immutable commit even if
+- Press `v` to start `atyrode apply --ref <resolvedRevision> --preview-json`.
+  It runs the same read-only `nh … --dry` preview and returns the stable schema
+  described below. Press `v` again to cancel it.
+- Press `c` (or `Tab`) to open capabilities and lazily start
+  `atyrode inventory --ref <resolvedRevision> --json`.
+
+Preview and inventory requests never overlap. Their subprocess groups are
+cancelled on refresh, quit, or apply, and stale replies are ignored. A failed
+optional inspection stays local to its panel and never disables the validated
+apply plan.
+
+No activation occurs during startup or inspection. Pressing `a` or `enter`
+opens a confirmation step; only `y` then runs
+`atyrode apply --ref <resolvedRevision>` in the terminal. The preview,
+inventory, and activation therefore address the same immutable commit even if
 the published branch advances while the cockpit is open. `n` or `esc` cancels
-confirmation, `r` resolves and previews
-the branch again, arrow keys or `j`/`k` scroll the focused pane, and `d` toggles
-between the operator summary and normalized technical details. Press `c` to
-open or focus capabilities and `c`/`esc` to return to the preview without
-resetting either pane.
+confirmation, `r` resolves the branch again, arrow keys or `j`/`k` scroll the
+focused pane, and `d` toggles normalized technical details after a preview is
+loaded. Press `c` to open or focus capabilities and `c`/`esc` to return to the
+preview without resetting either pane.
 
 ## Capability panel
 

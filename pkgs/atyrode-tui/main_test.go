@@ -76,7 +76,6 @@ func testInventoryDocument() inventorydata.Manifest {
 	}
 }
 
-
 type recordingAsker struct {
 	docs   clikit.DocCorpus
 	chunks []string

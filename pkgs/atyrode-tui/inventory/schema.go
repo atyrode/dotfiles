@@ -50,8 +50,8 @@ type Host struct {
 type Manifest struct {
 	SchemaVersion int                   `json:"schemaVersion"`
 	Identity      Identity              `json:"identity"`
-	Capabilities map[string]Capability `json:"capabilities"`
-	Hosts        map[string]Host       `json:"hosts"`
+	Capabilities  map[string]Capability `json:"capabilities"`
+	Hosts         map[string]Host       `json:"hosts"`
 }
 
 type Expected struct {

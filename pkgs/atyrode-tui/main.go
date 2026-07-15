@@ -70,7 +70,6 @@ const (
 	capabilityPane
 )
 
-
 type applyDoneMsg struct{ err error }
 
 type outputFunc func(string, ...string) ([]byte, error)
@@ -254,7 +253,6 @@ func (m model) loadInventory() tea.Cmd {
 		return inventoryMsg{revision: revision, generation: generation, inventory: result}
 	}
 }
-
 
 func (m model) applyArgs(preview bool) []string {
 	args := []string{"apply"}
@@ -850,7 +848,6 @@ func nonEmpty(values ...string) []string {
 	}
 	return result
 }
-
 
 func (m model) previewRows() []string {
 	_, width := m.horizontalLayout()

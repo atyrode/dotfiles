@@ -382,11 +382,19 @@ still exists in that unpacked set, so an upstream agent rename or removal
 fails the build instead of silently misrouting models.
 
 GitHub Actions runs the flake checks natively on x86_64 and aarch64 Linux and
-aarch64 macOS; platform-independent lints (docs-links, nixfmt, go-fmt) are
-emitted on x86_64-linux only to avoid duplicate work (#169). Changes confined
-to `docs/**` and `README.md` skip the platform matrix entirely and run only
-the docs-links check; the sole required status check is the always-reporting
-`ci-gate` job, so a skipped matrix can never leave a pull request stuck on a
-missing check. Any other Markdown file counts as code because it can be a
-derivation input (deployed `agents/skills`, omp rules, the managed Claude
-policy).
+aarch64 macOS; platform-independent lints (docs-links, production-facts,
+nixfmt, go-fmt) are emitted on x86_64-linux only to avoid duplicate work
+(#169). Changes confined to `docs/**` and `README.md` skip the platform
+matrix entirely and build only the two intentional whole-tree lints —
+docs-links and production-facts, which scan documentation on purpose; the
+sole required status check is the always-reporting `ci-gate` job, so a
+skipped matrix can never leave a pull request stuck on a missing check. Any
+other Markdown file counts as code because it can be a derivation input
+(deployed `agents/skills`, omp rules, the managed Claude policy). The fast
+path guards its own invariant: `scripts/docs-drift-guard.sh` instantiates
+every check on every CI platform at the pull request's base and head
+(evaluation-only, no builds) and fails if the docs change altered any
+derivation other than those two lints — so a `docs/**` path silently
+becoming a derivation input blocks the merge instead of skipping real
+verification. The guard's comparison logic is regression-tested by the
+`docs-drift-guard` flake check.

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	inventorydata "atyrode-tui/inventory"
 	previewdata "atyrode-tui/preview"
@@ -23,7 +24,6 @@ type phase int
 
 const (
 	loadingPlan phase = iota
-	loadingPreview
 	ready
 	confirming
 	applying
@@ -52,8 +52,10 @@ type planMsg struct {
 }
 
 type previewMsg struct {
-	preview previewdata.Document
-	err     error
+	revision   string
+	generation uint64
+	preview    previewdata.Document
+	err        error
 }
 type inventoryMsg struct {
 	revision   string
@@ -72,7 +74,24 @@ const (
 
 type applyDoneMsg struct{ err error }
 
-type outputFunc func(string, ...string) ([]byte, error)
+type commandRunner interface {
+	Output(context.Context, string, ...string) ([]byte, error)
+}
+
+type execCommandRunner struct{}
+
+func (execCommandRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	return cmd.CombinedOutput()
+}
+
 type applyFunc func(string, ...string) tea.Cmd
 
 type askGroundingFunc func(context.Context, string) ([]byte, error)
@@ -126,34 +145,40 @@ func buildAskGrounding(help []byte) (clikit.DocCorpus, error) {
 
 type model struct {
 	cli    string
-	output outputFunc
+	runner commandRunner
 	apply  applyFunc
 	asker  clikit.Asker
 	phase  phase
 	plan   applyPlan
 
-	preview              previewdata.Document
-	inventory            inventorydata.Document
-	inventoryLoading     bool
-	inventoryErr         error
-	inventoryGeneration  uint64
+	preview             previewdata.Document
+	previewLoading      bool
+	previewErr          error
+	previewGeneration   uint64
+	previewCancel       context.CancelFunc
+	inventory           inventorydata.Document
+	inventoryRequested  bool
+	inventoryLoading    bool
+	inventoryErr        error
+	inventoryGeneration uint64
+	inventoryCancel     context.CancelFunc
+
 	inventoryDiagnostic  string
 	inventoryDetailsOpen bool
-
-	details            bool
-	capabilitiesOpen   bool
-	focus              pane
-	previewCursor      int
-	capabilityCursor   int
-	selectedCapability int
-	width              int
-	height             int
-	err                error
-	status             string
+	details              bool
+	capabilitiesOpen     bool
+	focus                pane
+	previewCursor        int
+	capabilityCursor     int
+	selectedCapability   int
+	width                int
+	height               int
+	err                  error
+	status               string
 }
 
-func commandOutput(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+func commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return execCommandRunner{}.Output(ctx, name, args...)
 }
 
 func execApply(cli string, args ...string) tea.Cmd {
@@ -178,7 +203,7 @@ func newModel(cli string) model {
 	}
 	return model{
 		cli:    cli,
-		output: commandOutput,
+		runner: execCommandRunner{},
 		apply:  execApply,
 		asker:  asker,
 		phase:  loadingPlan,
@@ -194,8 +219,10 @@ func (model) BoxTitle() string { return "ASK ATYRODE · read-only" }
 func (m model) Init() tea.Cmd { return m.loadPlan() }
 
 func (m model) loadPlan() tea.Cmd {
+	runner := m.runner
+	cli := m.cli
 	return func() tea.Msg {
-		out, err := m.output(m.cli, "apply", "--plan", "--json")
+		out, err := runner.Output(context.Background(), cli, "apply", "--plan", "--json")
 		if err != nil {
 			return planMsg{err: commandError("load apply plan", out, err)}
 		}
@@ -210,29 +237,49 @@ func (m model) loadPlan() tea.Cmd {
 	}
 }
 
-func (m model) loadPreview() tea.Cmd {
+func (m *model) startPreview() tea.Cmd {
+	if m.previewLoading || m.preview.SchemaVersion != 0 || m.inventoryLoading {
+		return nil
+	}
+	m.previewGeneration++
+	generation := m.previewGeneration
+	revision, plan := m.plan.ResolvedRevision, m.plan
+	ctx, cancel := context.WithCancel(context.Background())
+	m.previewCancel = cancel
+	m.previewLoading, m.previewErr = true, nil
+	runner, cli, args := m.runner, m.cli, m.applyArgs(true)
 	return func() tea.Msg {
-		out, err := m.output(m.cli, m.applyArgs(true)...)
+		out, err := runner.Output(ctx, cli, args...)
 		if err != nil {
-			return previewMsg{err: commandError("preview apply", out, err)}
+			return previewMsg{revision: revision, generation: generation, err: commandError("preview apply", out, err)}
 		}
 		var result previewdata.Document
 		if err := json.Unmarshal(out, &result); err != nil {
-			return previewMsg{err: fmt.Errorf("decode activation preview: %w", err)}
+			return previewMsg{revision: revision, generation: generation, err: fmt.Errorf("decode activation preview: %w", err)}
 		}
 		if result.SchemaVersion != previewdata.SchemaVersion {
-			return previewMsg{err: fmt.Errorf("decode activation preview: unsupported schema version %d", result.SchemaVersion)}
+			return previewMsg{revision: revision, generation: generation, err: fmt.Errorf("decode activation preview: unsupported schema version %d", result.SchemaVersion)}
 		}
-		if result.ResolvedRevision != m.plan.ResolvedRevision || result.Host != m.plan.Host || result.System != m.plan.System {
-			return previewMsg{err: fmt.Errorf("decode activation preview: plan identity changed")}
+		if result.ResolvedRevision != plan.ResolvedRevision || result.Host != plan.Host || result.System != plan.System {
+			return previewMsg{revision: revision, generation: generation, err: fmt.Errorf("decode activation preview: plan identity changed")}
 		}
-		return previewMsg{preview: result}
+		return previewMsg{revision: revision, generation: generation, preview: result}
 	}
 }
-func (m model) loadInventory() tea.Cmd {
+func (m *model) startInventory() tea.Cmd {
+	if m.inventoryRequested || m.previewLoading {
+		return nil
+	}
+	m.inventoryRequested, m.inventoryLoading, m.inventoryErr = true, true, nil
+	m.inventoryDiagnostic, m.inventoryDetailsOpen = "", false
+	m.inventoryGeneration++
 	revision, generation := m.plan.ResolvedRevision, m.inventoryGeneration
+	plan := m.plan
+	ctx, cancel := context.WithCancel(context.Background())
+	m.inventoryCancel = cancel
+	runner, cli := m.runner, m.cli
 	return func() tea.Msg {
-		out, err := m.output(m.cli, "inventory", "--ref", revision, "--json")
+		out, err := runner.Output(ctx, cli, "inventory", "--ref", revision, "--json")
 		if err != nil {
 			return inventoryMsg{
 				revision:   revision,
@@ -243,15 +290,42 @@ func (m model) loadInventory() tea.Cmd {
 		}
 		result, err := inventorydata.Parse(out, inventorydata.Expected{
 			Revision:           revision,
-			System:             m.plan.System,
-			Host:               m.plan.Host,
-			ActiveCapabilities: m.plan.Capabilities,
+			System:             plan.System,
+			Host:               plan.Host,
+			ActiveCapabilities: plan.Capabilities,
 		})
 		if err != nil {
 			return inventoryMsg{revision: revision, generation: generation, err: err}
 		}
 		return inventoryMsg{revision: revision, generation: generation, inventory: result}
 	}
+}
+
+func (m *model) cancelPreview() {
+	if m.previewCancel != nil {
+		m.previewCancel()
+		m.previewCancel = nil
+	}
+	if m.previewLoading {
+		m.previewGeneration++
+		m.previewLoading = false
+	}
+}
+
+func (m *model) cancelInventory() {
+	if m.inventoryCancel != nil {
+		m.inventoryCancel()
+		m.inventoryCancel = nil
+	}
+	if m.inventoryLoading {
+		m.inventoryGeneration++
+		m.inventoryLoading = false
+	}
+}
+
+func (m *model) cancelInspections() {
+	m.cancelPreview()
+	m.cancelInventory()
 }
 
 func (m model) applyArgs(preview bool) []string {
@@ -335,24 +409,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phase, m.err = failed, msg.err
 			return m, nil
 		}
-		m.plan, m.phase, m.err = msg.plan, loadingPreview, nil
+		m.plan, m.phase, m.err = msg.plan, ready, nil
+		m.previewGeneration++
+		m.preview, m.previewLoading, m.previewErr, m.previewCancel = previewdata.Document{}, false, nil, nil
 		m.inventoryGeneration++
-		m.inventory, m.inventoryErr, m.inventoryLoading = inventorydata.Document{}, nil, true
+		m.inventory, m.inventoryRequested, m.inventoryLoading = inventorydata.Document{}, false, false
+		m.inventoryErr, m.inventoryCancel = nil, nil
 		m.inventoryDiagnostic, m.inventoryDetailsOpen = "", false
-		return m, tea.Batch(m.loadPreview(), m.loadInventory())
+		m.previewCursor, m.capabilityCursor, m.selectedCapability = 0, 0, 0
+		m.details, m.capabilitiesOpen, m.focus = false, false, previewPane
+		return m, nil
 	case previewMsg:
-		if msg.err != nil {
-			m.phase, m.err = failed, msg.err
+		if msg.generation != m.previewGeneration || msg.revision != m.plan.ResolvedRevision {
 			return m, nil
 		}
-		m.preview = msg.preview
-		m.phase, m.err, m.previewCursor, m.details = ready, nil, 0, false
+		m.previewLoading, m.previewCancel = false, nil
+		if msg.err != nil {
+			m.preview, m.previewErr = previewdata.Document{}, msg.err
+		} else {
+			m.preview, m.previewErr = msg.preview, nil
+			m.previewCursor, m.details = 0, false
+		}
 		return m, nil
 	case inventoryMsg:
 		if msg.generation != m.inventoryGeneration || msg.revision != m.plan.ResolvedRevision {
 			return m, nil
 		}
-		m.inventoryLoading = false
+		m.inventoryLoading, m.inventoryCancel = false, nil
 		m.inventoryDiagnostic, m.inventoryDetailsOpen = msg.diagnostic, false
 		if msg.err != nil {
 			m.inventory, m.inventoryErr = inventorydata.Document{}, msg.err
@@ -374,16 +457,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
+			m.cancelInspections()
 			return m, tea.Quit
 		case "r":
 			if m.phase != applying {
+				m.cancelInspections()
 				m.phase, m.err, m.status, m.preview, m.inventory = loadingPlan, nil, "", previewdata.Document{}, inventorydata.Document{}
+				m.previewGeneration++
 				m.inventoryGeneration++
-				m.inventoryErr, m.inventoryLoading, m.details = nil, false, false
+				m.previewErr, m.previewLoading, m.details = nil, false, false
+				m.inventoryErr, m.inventoryRequested, m.inventoryLoading = nil, false, false
 				m.inventoryDiagnostic, m.inventoryDetailsOpen = "", false
 				m.capabilitiesOpen, m.focus = false, previewPane
 				m.previewCursor, m.capabilityCursor, m.selectedCapability = 0, 0, 0
 				return m, m.loadPlan()
+			}
+		case "v":
+			if m.previewLoading {
+				m.cancelPreview()
+				return m, nil
+			}
+			if (m.phase == ready || m.phase == applied) && m.preview.SchemaVersion == 0 && !m.inventoryLoading {
+				return m, m.startPreview()
 			}
 		case "c":
 			if m.phase == ready || m.phase == confirming || m.phase == applied {
@@ -394,6 +489,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else {
 					m.focus, m.capabilitiesOpen = capabilityPane, true
+					return m, m.startInventory()
 				}
 			}
 		case "tab":
@@ -402,6 +498,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.focus = previewPane
 				} else {
 					m.focus, m.capabilitiesOpen = capabilityPane, true
+					return m, m.startInventory()
 				}
 			}
 		case "[", "left":
@@ -425,15 +522,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				(m.phase == ready || m.phase == confirming || m.phase == applied) {
 				m.inventoryDetailsOpen = !m.inventoryDetailsOpen
 				m.capabilityCursor = 0
-			} else if m.focus == previewPane && (m.phase == ready || m.phase == confirming || m.phase == applied) {
+			} else if m.focus == previewPane && m.preview.SchemaVersion != 0 &&
+				(m.phase == ready || m.phase == confirming || m.phase == applied) {
 				m.details, m.previewCursor = !m.details, 0
 			}
 		case "a", "enter":
 			if m.phase == ready {
+				m.cancelPreview()
 				m.phase = confirming
 			}
 		case "y":
 			if m.phase == confirming {
+				m.cancelInspections()
 				m.phase, m.err = applying, nil
 				return m, m.apply(m.cli, m.applyArgs(false)...)
 			}
@@ -669,27 +769,61 @@ func (m model) previewHeight() int {
 }
 
 func (m model) previewBox(width int) string {
+	previewWidth := max(1, panelContentWidth(width)-4)
 	var body string
-	switch m.phase {
-	case loadingPlan:
-		body = clikit.StDim.Render("Loading apply plan…")
-	case loadingPreview:
-		body = clikit.StDim.Render("Building read-only activation preview…")
-	case applying:
-		body = clikit.StWarn.Render("Apply is running in the terminal…")
-	default:
-		if m.preview.SchemaVersion == 0 {
-			body = clikit.StDim.Render("Preview unavailable.")
-		} else {
-			previewWidth := max(1, panelContentWidth(width)-4)
-			body = clikit.WindowList(m.previewRowsForWidth(max(1, previewWidth-1)), m.previewCursor, m.previewHeight(), previewWidth)
-		}
+	if m.preview.SchemaVersion != 0 {
+		body = clikit.WindowList(m.previewRowsForWidth(max(1, previewWidth-1)), m.previewCursor, m.previewHeight(), previewWidth)
+	} else {
+		body = clikit.WindowList(m.previewStatusRows(max(1, previewWidth-1)), 0, m.previewHeight(), previewWidth)
 	}
 	label := iconStyle.Render("\uf0ad") + "  " + titleStyle.Render("ACTIVATION PREVIEW")
 	if m.focus == previewPane {
 		label += clikit.StHead.Render("  ·  FOCUSED")
 	}
 	return panel(width, label+"\n"+body)
+}
+
+func (m model) previewStatusRows(width int) []string {
+	rows := make([]string, 0, 10)
+	switch {
+	case m.phase == loadingPlan:
+		appendWrappedRow(&rows, clikit.StDim.Render("Loading apply plan…"), width)
+	case m.phase == applying:
+		appendWrappedRow(&rows, clikit.StWarn.Render("Apply is running in the terminal…"), width)
+	case m.previewLoading:
+		appendWrappedRow(&rows, titleStyle.Render("Loading optional dry preview…"), width)
+		rows = append(rows, "")
+		appendWrappedRow(&rows, clikit.StDim.Render("The exact-revision Nix evaluation is running in the background."), width)
+		appendWrappedRow(&rows, "Apply controls remain available. Press v to cancel.", width)
+	case m.previewErr != nil:
+		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Preview unavailable"), width)
+		rows = append(rows, "")
+		reason := strings.Split(stripTerminalControls(m.previewErr.Error()), "\n")
+		if len(reason) > maxErrorLines {
+			reason = reason[:maxErrorLines]
+		}
+		for _, line := range reason {
+			appendWrappedRow(&rows, clikit.StDim.Render(line), width)
+		}
+		rows = append(rows, "")
+		appendWrappedRow(&rows, "Press v to retry. Apply remains available.", width)
+	default:
+		marker := "Preview not loaded"
+		if m.phase == confirming {
+			marker = "Optional dry preview was not run."
+		}
+		appendWrappedRow(&rows, titleStyle.Render(marker), width)
+		rows = append(rows, "")
+		appendWrappedRow(&rows, clikit.StDim.Render("The validated exact-revision plan is ready."), width)
+		if m.phase == confirming {
+			appendWrappedRow(&rows, "Apply can continue without the optional package/action diff.", width)
+		} else if m.inventoryLoading {
+			appendWrappedRow(&rows, "Capability inventory is loading. Preview waits to avoid duplicate Nix evaluation.", width)
+		} else {
+			appendWrappedRow(&rows, "Press v to load the optional package/action diff.", width)
+		}
+	}
+	return rows
 }
 func (m model) capabilityPanelWidth() int {
 	_, total := m.horizontalLayout()
@@ -719,6 +853,15 @@ func (m model) capabilityRows() []string {
 func (m model) capabilityRowsForWidth(width int) []string {
 	rows := make([]string, 0, 32)
 	switch {
+	case !m.inventoryRequested:
+		appendWrappedRow(&rows, titleStyle.Render("Inventory not loaded"), width)
+		rows = append(rows, "")
+		if m.previewLoading {
+			appendWrappedRow(&rows, clikit.StDim.Render("Cancel the running preview with v before loading capabilities."), width)
+		} else {
+			appendWrappedRow(&rows, clikit.StDim.Render("Press c to load exact-revision capability details."), width)
+		}
+		return rows
 	case m.inventoryLoading:
 		appendWrappedRow(&rows, clikit.StDim.Render("Loading exact-revision inventory…"), width)
 		return rows
@@ -1054,40 +1197,50 @@ func (m model) footer() string {
 		}
 		if m.width < 60 {
 			if m.phase == confirming {
-				return clikit.StWarn.Render("[/] cycle  ·  c back  ·  y/n apply")
+				return clikit.StWarn.Render("c back  ·  y/n apply")
 			}
-			return clikit.StDim.Render(controls)
-		}
-		if m.phase == confirming && m.width < 68 {
-			return clikit.StWarn.Render("[/] cycle  ·  c back  ·  y/n apply")
+			return clikit.StDim.Render("c back  ·  a apply  ·  q")
 		}
 		if m.phase == confirming {
 			controls += "  ·  y confirm  ·  n cancel"
 			return clikit.StWarn.Render(controls)
 		}
-		return clikit.StDim.Render(controls + "  ·  ^O ask  ·  q")
+		return clikit.StDim.Render(controls + "  ·  enter apply  ·  q")
 	}
 	switch m.phase {
 	case confirming:
 		if m.width < 80 {
-			return clikit.StWarn.Render("y confirm  ·  n cancel  ·  c capabilities")
+			return clikit.StWarn.Render("Apply plan?  y confirm  ·  n cancel")
 		}
-		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  d " + mode + "  ·  c capabilities  ·  ^O ask")
+		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  c capabilities  ·  ^O ask")
 	case applying:
 		return clikit.StDim.Render("Applying…  ·  ^O ask")
 	case applied:
 		if m.width < 60 {
-			return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c capabilities  ·  r refresh  ·  q")
+			return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c caps  ·  r refresh  ·  q")
 		}
-		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c capabilities  ·  d "+mode+"  ·  r refresh  ·  ^O ask  ·  q quit")
+		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c capabilities  ·  r refresh  ·  ^O ask  ·  q quit")
 	case ready:
+		previewControl := "v preview"
+		if m.previewLoading {
+			previewControl = "v cancel preview"
+		} else if m.preview.SchemaVersion != 0 {
+			previewControl = "d " + mode
+		}
 		if m.width < 60 {
-			return clikit.StDim.Render("c capabilities  ·  enter apply  ·  q")
+			if m.previewLoading {
+				return clikit.StDim.Render("v cancel  ·  a apply  ·  q")
+			}
+			return clikit.StDim.Render(previewControl + "  ·  c caps  ·  a apply  ·  q")
 		}
 		if m.width < 112 {
-			return clikit.StDim.Render("↑/↓ preview  ·  c capabilities  ·  d " + mode + "  ·  enter apply  ·  q")
+			mediumControl := previewControl
+			if m.previewLoading {
+				mediumControl = "v cancel"
+			}
+			return clikit.StDim.Render("↑/↓ scroll  ·  " + mediumControl + "  ·  c capabilities  ·  enter apply  ·  q")
 		}
-		return clikit.StDim.Render("↑/↓ preview  ·  Tab/c capabilities  ·  d " + mode + "  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
+		return clikit.StDim.Render("↑/↓ preview  ·  " + previewControl + "  ·  Tab/c capabilities  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
 	default:
 		return clikit.StDim.Render("^O ask  ·  q quit")
 	}

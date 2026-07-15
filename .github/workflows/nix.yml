@@ -130,10 +130,12 @@ jobs:
       - name: Check documentation links
         run: nix build .#checks.x86_64-linux.docs-links --show-trace
 
-  # Sole required status check (#169). Always reports, so a path-skipped
-  # matrix can never leave a pull request stuck on a missing check. Passes
-  # only when classification succeeded, nothing failed or was cancelled, and
-  # at least one real verification (matrix or docs-links) ran.
+  # Sole required status check (#169): the protect-main ruleset requires the
+  # `ci-gate` context (flipped from the three platform names on 2026-07-15).
+  # Always reports, so a path-skipped matrix can never leave a pull request
+  # stuck on a missing check. Passes only when classification succeeded,
+  # nothing failed or was cancelled, and at least one real verification
+  # (matrix or docs-links) ran.
   ci-gate:
     name: ci-gate
     needs: [changes, check, docs-links]

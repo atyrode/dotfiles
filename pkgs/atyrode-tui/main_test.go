@@ -1,16 +1,40 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
+	previewdata "atyrode-tui/preview"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 const testRevision = "feedfacefeedfacefeedfacefeedfacefeedface"
+
+func testPreviewDocument() previewdata.Document {
+	return previewdata.Document{
+		SchemaVersion:    previewdata.SchemaVersion,
+		Host:             "workstation",
+		System:           "x86_64-linux",
+		ResolvedRevision: testRevision,
+		Status:           "built",
+		Packages: previewdata.PackageGroups{
+			Added: []previewdata.PackageChange{{Name: "gamma", ChangeKind: "added", NewVersion: "4.0", SizeDelta: "+2.00 MiB"}},
+			Updated: []previewdata.PackageChange{
+				{Name: "alpha", ChangeKind: "upgraded", PreviousVersion: "1.0", NewVersion: "2.0", SizeDelta: "+9.67 KiB"},
+				{Name: "beta", ChangeKind: "downgraded", PreviousVersion: "3.0", NewVersion: "2.5", SizeDelta: "-1.00 MiB"},
+			},
+			Removed: []previewdata.PackageChange{{Name: "delta", ChangeKind: "removed", PreviousVersion: "5.0", SizeDelta: "-7.00 MiB"}},
+		},
+		StorePaths:  &previewdata.StorePathSummary{Previous: 7529, Resulting: 7536, Added: 5054, Removed: 5047},
+		Closure:     &previewdata.ClosureSummary{Previous: "1.50 GiB", Resulting: "1.49 GiB", Delta: "-5.59 MiB"},
+		Generations: &previewdata.GenerationPaths{Previous: "/nix/store/old-home-manager-generation", New: "/nix/store/new-home-manager-generation"},
+		Technical:   []string{"<<< /nix/store/old-home-manager-generation", ">>> /nix/store/new-home-manager-generation", "PATHS: 7529 -> 7536 (+5054, -5047)", "SIZE: 1.50 GiB -> 1.49 GiB", "DIFF: -5.59 MiB"},
+	}
+}
 
 func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 	var calls [][]string
@@ -21,7 +45,11 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 		case 1:
 			return []byte(`{"host":"workstation","system":"x86_64-linux","user":"alex","capabilities":["base","agents"],"installable":"github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#workstation","revision":"feedfacefeed","resolvedRevision":"feedfacefeedfacefeedfacefeedfacefeedface","source":"remote"}`), nil
 		case 2:
-			return []byte("would build /nix/store/new-home\nwould activate workstation\n"), nil
+			result, err := json.Marshal(testPreviewDocument())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return result, nil
 		default:
 			t.Fatal("unexpected command")
 			return nil, nil
@@ -37,7 +65,7 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 
 	wantCalls := [][]string{
 		{"/bin/atyrode", "apply", "--plan", "--json"},
-		{"/bin/atyrode", "apply", "--ref", testRevision, "--dry-run"},
+		{"/bin/atyrode", "apply", "--ref", testRevision, "--preview-json"},
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("commands = %#v, want %#v", calls, wantCalls)
@@ -45,13 +73,21 @@ func TestInitLoadsPlanThenDryRunPreview(t *testing.T) {
 	if m.phase != ready {
 		t.Fatalf("phase = %v, want ready", m.phase)
 	}
-	if got := strings.Join(m.preview, "\n"); !strings.Contains(got, "would activate workstation") {
-		t.Fatalf("preview missing activation: %q", got)
-	}
-	view := m.View()
-	for _, want := range []string{"workstation", "x86_64-linux", "base", "agents", "would build /nix/store/new-home"} {
+	view := stripTerminalControls(m.View())
+	for _, want := range []string{"ACTIVATION PREVIEW", "Applying revision feedfacefeed", "Preview built", "1 added", "2 updated", "1 removed", "Disk usage decreases by 5.59 MiB"} {
 		if !strings.Contains(view, want) {
-			t.Errorf("view missing %q", want)
+			t.Errorf("visible summary missing %q", want)
+		}
+	}
+	allRows := stripTerminalControls(strings.Join(m.previewRowsForWidth(80), "\n"))
+	for _, want := range []string{"Added (1)", "Updated (2)", "Removed (1)", "alpha", "1.0 → 2.0", "delta", "5.0"} {
+		if !strings.Contains(allRows, want) {
+			t.Errorf("summary rows missing %q", want)
+		}
+	}
+	for _, hidden := range []string{"/nix/store/old-home-manager-generation", "/nix/store/new-home-manager-generation"} {
+		if strings.Contains(view, hidden) {
+			t.Errorf("summary exposed generation path %q", hidden)
 		}
 	}
 }
@@ -64,6 +100,25 @@ func TestRemotePlanRequiresResolvedRevision(t *testing.T) {
 	msg := m.Init()().(planMsg)
 	if msg.err == nil || !strings.Contains(msg.err.Error(), "full resolved revision") {
 		t.Fatalf("missing resolved revision error = %v", msg.err)
+	}
+}
+
+func TestPreviewMustMatchPlannedIdentity(t *testing.T) {
+	m := newModel("atyrode")
+	m.phase = loadingPreview
+	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Source: "remote", ResolvedRevision: testRevision}
+	result := testPreviewDocument()
+	result.ResolvedRevision = strings.Repeat("b", 40)
+	m.output = func(string, ...string) ([]byte, error) {
+		return json.Marshal(result)
+	}
+	msg := m.loadPreview()().(previewMsg)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "plan identity changed") {
+		t.Fatalf("identity mismatch error = %v", msg.err)
+	}
+	next, _ := m.Update(msg)
+	if next.(model).phase != failed {
+		t.Fatal("identity mismatch did not fail closed")
 	}
 }
 
@@ -113,7 +168,7 @@ func TestApplyRequiresExplicitConfirmation(t *testing.T) {
 func TestPreviewFailureNeverEnablesApply(t *testing.T) {
 	m := newModel("atyrode")
 	m.phase = loadingPreview
-	next, _ := m.Update(previewMsg{output: "evaluation failed", err: errors.New("dry run failed")})
+	next, _ := m.Update(previewMsg{err: errors.New("dry run failed")})
 	m = next.(model)
 	if m.phase != failed {
 		t.Fatalf("phase = %v, want failed", m.phase)
@@ -125,23 +180,61 @@ func TestPreviewFailureNeverEnablesApply(t *testing.T) {
 	}
 }
 
-func TestNormalizePreviewContainsTerminalProgress(t *testing.T) {
-	input := "host: workstation\ninstallable: github:atyrode/dotfiles#workstation\n" +
-		"\x1b[2K\rbuilding 1/2\rFinished at 14:18:57 after 0s\n" +
-		"\x1b[31m<<< /nix/store/old-generation\x1b[0m\n" +
-		"\x1b[32m>>> /nix/store/new-generation\x1b[0m\n"
-	got := normalizePreview(input)
-	want := []string{
-		"Finished at 14:18:57 after 0s",
-		"<<< /nix/store/old-generation",
-		">>> /nix/store/new-generation",
+func TestDetailsToggleLabelsGenerationPaths(t *testing.T) {
+	m := newModel("atyrode")
+	m.phase = ready
+	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
+	m.preview = testPreviewDocument()
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = next.(model)
+	if !m.details || m.cursor != 0 {
+		t.Fatalf("details toggle = %t, cursor = %d", m.details, m.cursor)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("normalizePreview() = %#v, want %#v", got, want)
+	view := stripTerminalControls(m.View())
+	if !strings.Contains(view, "Technical details") || !strings.Contains(view, "d summary") {
+		t.Errorf("details toggle not visible: %q", view)
 	}
-	for _, line := range got {
-		if strings.ContainsAny(line, "\x1b\r") {
-			t.Fatalf("terminal control escaped normalization: %q", line)
+	allRows := stripTerminalControls(strings.Join(m.previewRowsForWidth(80), "\n"))
+	for _, want := range []string{"Previous generation", "/nix/store/old-home-manager-generation", "New generation", "/nix/store/new-home-manager-generation", "Normalized nh report"} {
+		if !strings.Contains(allRows, want) {
+			t.Errorf("details rows missing %q", want)
+		}
+	}
+
+	if strings.Contains(allRows, "<<< /nix/store") || strings.Contains(allRows, ">>> /nix/store") {
+		t.Errorf("details rows exposed naked generation paths: %q", allRows)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = next.(model)
+	if m.details || strings.Contains(stripTerminalControls(m.View()), "Previous generation") {
+		t.Fatal("second details toggle did not restore summary")
+	}
+}
+
+func TestSummaryOmitsEmptyGroupsAndUnreportedFacts(t *testing.T) {
+	m := newModel("atyrode")
+	m.phase = ready
+	m.preview = previewdata.Document{
+		SchemaVersion:    previewdata.SchemaVersion,
+		ResolvedRevision: testRevision,
+		Status:           "built",
+		Packages: previewdata.PackageGroups{
+			Added:   []previewdata.PackageChange{},
+			Updated: []previewdata.PackageChange{},
+			Removed: []previewdata.PackageChange{{Name: "legacy", ChangeKind: "removed", PreviousVersion: "1.0"}},
+		},
+	}
+	rows := stripTerminalControls(strings.Join(m.previewRowsForWidth(80), "\n"))
+	for _, absent := range []string{"Added (", "Updated (", "Store paths", "Disk usage", "closure size", "Finished at", "⏱"} {
+		if strings.Contains(rows, absent) {
+			t.Errorf("summary exposed absent/debris fact %q: %q", absent, rows)
+		}
+	}
+	for _, want := range []string{"1 removed", "Removed (1)", "legacy", "1.0"} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("summary missing %q: %q", want, rows)
 		}
 	}
 }
@@ -204,7 +297,7 @@ func TestLongPreviewFailureStaysInsideNarrowWindow(t *testing.T) {
 	}
 	output := "\x1bPignored\x1b\\" + strings.Repeat("/nix/store/preview-failure-without-breakpoints", 10)
 	err := commandError("preview apply", []byte(output), errors.New("exit status 1"))
-	next, _ := m.Update(previewMsg{output: output, err: err})
+	next, _ := m.Update(previewMsg{err: err})
 	assertFailureViewContained(t, next.(model))
 }
 
@@ -241,19 +334,22 @@ func TestPanelsKeepRightBorderWithinWindow(t *testing.T) {
 			Backend:      "nh-home",
 			Capabilities: []string{"base", "development", "agent-tools", "containers"},
 		}
-		m.preview = []string{"Finished at 14:18:57 after 0s", ">>> /nix/store/a-very-long-home-manager-generation"}
+		m.preview = testPreviewDocument()
 
-		renderedLines := strings.Split(m.View(), "\n")
-		if len(renderedLines) > m.height {
-			t.Errorf("window %d rendered %d rows into height %d", windowWidth, len(renderedLines), m.height)
-		}
-		for _, line := range renderedLines {
-			if width := lipgloss.Width(line); width > windowWidth-1 {
-				t.Errorf("rendered row width = %d, safe window = %d: %q", width, windowWidth-1, stripTerminalControls(line))
+		for _, details := range []bool{false, true} {
+			m.details = details
+			renderedLines := strings.Split(m.View(), "\n")
+			if len(renderedLines) > m.height {
+				t.Errorf("window %d details=%t rendered %d rows into height %d", windowWidth, details, len(renderedLines), m.height)
 			}
-			plain := stripTerminalControls(line)
-			if strings.ContainsAny(plain, "╭│╰") && !strings.HasSuffix(plain, "╮") && !strings.HasSuffix(plain, "│") && !strings.HasSuffix(plain, "╯") {
-				t.Errorf("window %d panel row lost right border: %q", windowWidth, plain)
+			for _, line := range renderedLines {
+				if width := lipgloss.Width(line); width > windowWidth-1 {
+					t.Errorf("rendered row width = %d, safe window = %d: %q", width, windowWidth-1, stripTerminalControls(line))
+				}
+				plain := stripTerminalControls(line)
+				if strings.ContainsAny(plain, "╭│╰") && !strings.HasSuffix(plain, "╮") && !strings.HasSuffix(plain, "│") && !strings.HasSuffix(plain, "╯") {
+					t.Errorf("window %d details=%t panel row lost right border: %q", windowWidth, details, plain)
+				}
 			}
 		}
 	}

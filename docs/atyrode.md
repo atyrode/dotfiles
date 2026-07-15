@@ -14,10 +14,14 @@ and the other command surfaces) continues through the Bash CLI even on a TTY.
 Existing scripts therefore do not enter the cockpit.
 
 The apply panel first resolves the requested branch to an exact commit, then
-previews `atyrode apply --ref <commit> --dry-run`. It performs no activation
-until the operator opens the confirmation step and accepts it; the real apply
-uses that same exact commit, so the activated configuration cannot drift from
-the preview if the branch advances while the cockpit is open.
+loads `atyrode apply --ref <commit> --preview-json`. Its default activation
+preview summarizes package, store-path, and closure-size changes without
+showing raw generation paths; `d` toggles normalized technical details, where
+the previous and new generation paths remain available with labels. Startup
+and refresh perform no activation. The operator must open the confirmation
+step and accept it; the real apply uses that same exact commit, so the activated
+configuration cannot drift from the preview if the branch advances while the
+cockpit is open.
 
 ## Applying a configuration
 
@@ -25,6 +29,7 @@ the preview if the branch advances while the cockpit is open.
 atyrode apply            # activate the latest published main; no checkout needed
 atyrode apply --plan
 atyrode apply --dry-run
+atyrode apply --preview-json # stable schema for the read-only dry-run preview
 ```
 
 The default host comes from `ATYRODE_HOST`, then the managed host identity file,

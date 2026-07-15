@@ -21,16 +21,37 @@ Startup performs two read-only operations in order:
 1. `atyrode apply --plan --json` supplies the host, system, target revision,
    backend, and capabilities rendered in the plan panel. Remote plans include
    the full commit as `resolvedRevision`.
-2. `atyrode apply --ref <resolvedRevision> --dry-run` supplies the activation
-   preview. Terminal control sequences and carriage-return progress updates are
-   normalized before the output is rendered inside the changes viewport.
+2. `atyrode apply --ref <resolvedRevision> --preview-json` runs the same
+   read-only `nh … --dry` preview and returns the stable schema described below.
+   The TUI renders that structure rather than parsing terminal text.
 
 No activation occurs during startup. Pressing `a` or `enter` opens a confirmation
 step; only `y` then runs `atyrode apply --ref <resolvedRevision>` in the terminal.
 The preview and activation therefore address the same immutable commit even if
 the published branch advances while the cockpit is open. `n` or `esc` cancels
 confirmation, `r` resolves and previews the branch again, arrow keys or `j`/`k`
-scroll the preview, and `q` exits.
+scroll the preview, `d` toggles between the operator summary and normalized
+technical details, and `q` exits.
+
+## Preview JSON contract
+
+`atyrode apply --preview-json` is additive; existing plain output, `--plan
+--json`, and `--dry-run` behavior remain unchanged. The command emits one JSON
+document with `schemaVersion: 1`, the host/system/full resolved revision, a
+duration-free `status`, package changes grouped as `added`, `updated`, and
+`removed`, and only the store-path, closure-size, and generation facts reported
+by `nh`. Each package retains its granular `changeKind` (`added`, `removed`,
+`upgraded`, `downgraded`, or `changed`) plus available versions and size delta.
+`technical` contains the normalized diff report without spinner-frame history.
+
+`nh` 4.4.1 does not expose this report as JSON. The separate
+`atyrode-preview-parser` executable owns the nh-to-schema conversion and is
+covered with fixtures for every current dix change kind, totals, generation
+paths, no-change output, terminal controls, and format drift. Unknown package
+status lines fail closed instead of silently dropping a change. Version 1 may
+gain optional fields; removing or changing field meaning requires incrementing
+`schemaVersion`. The TUI rejects unknown versions and rejects a preview whose
+host, system, or full revision differs from the plan.
 
 ## Scope
 

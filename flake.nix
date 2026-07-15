@@ -495,6 +495,7 @@
           systemDoctorAtyrode = pkgs.atyrode.override {
             enableTestHooks = true;
             atyrode-tui = cockpitStub;
+            atyrode-preview-parser = pkgs.atyrode-tui;
             hostRegistry = publicHosts // {
               fixture-server = {
                 id = "fixture-server";

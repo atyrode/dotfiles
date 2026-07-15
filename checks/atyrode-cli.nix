@@ -34,7 +34,15 @@ pkgs.runCommand "check-atyrode-cli"
     cat > "$TMPDIR/bin/nh" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
-    if [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
+    if [[ "$*" == *"home switch"* && "$*" == *" --dry"* ]]; then
+      printf '\033[?25l⠋ Building\r⏱ 0s\rFinished at 14:18:57 after 0s\n'
+      printf '\033[1m<<<\033[0m /nix/store/old-home-manager-generation\n'
+      printf '\033[1m>>>\033[0m /nix/store/new-home-manager-generation\n\n'
+      printf 'CHANGED\n[U.] alpha 1.0 -> 2.0, +9.67 KiB\n[D.] beta 3.0 -> 2.5, -1.00 MiB\n[C.] source -9.67 KiB\n\n'
+      printf 'ADDED\n[A+] gamma 4.0, +2.00 MiB\n\n'
+      printf 'REMOVED\n[R-] delta 5.0, -7.00 MiB\n\n'
+      printf 'PATHS: 7529 -> 7536 (+5054, -5047)\nSIZE: 1.50 GiB -> 1.49 GiB\nDIFF: -5.59 MiB\033[?25h\n'
+    elif [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
       # Reproduce nh 4.4.1 clean's real output shape: a verbose evaluation plan
       # (Welcome/legend/one line per gcroot), the benign root-owned gcroots
       # permission flood, and one real (non-permission) error — so the check can
@@ -192,6 +200,24 @@ pkgs.runCommand "check-atyrode-cli"
     grep -F -- "home switch $HOME/nix-dotfiles --configuration alex-x86_64-linux" \
       "$TMPDIR/nh-args" >/dev/null
     grep -F -- '--dry' "$TMPDIR/nh-args" >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+
+    preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
+    jq -e '
+      .schemaVersion == 1
+      and .host == "alex-x86_64-linux"
+      and .system == "x86_64-linux"
+      and .resolvedRevision == "0123456789abcdef0123456789abcdef01234567"
+      and .status == "built"
+      and (.packages.added | map(.changeKind) == ["added"])
+      and (.packages.updated | map(.changeKind) == ["upgraded", "downgraded", "changed"])
+      and (.packages.removed | map(.changeKind) == ["removed"])
+      and .storePaths == {previous:7529,resulting:7536,added:5054,removed:5047}
+      and .closure == {previous:"1.50 GiB",resulting:"1.49 GiB",delta:"-5.59 MiB"}
+      and .generations.previous == "/nix/store/old-home-manager-generation"
+      and .generations.new == "/nix/store/new-home-manager-generation"
+      and ([.technical[] | contains("Finished at") or contains("⏱")] | any | not)
+    ' <<< "$preview" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
     atyrode apply --plan --json | jq -e '

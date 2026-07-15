@@ -14,6 +14,10 @@ buildGoModule {
     ];
   };
   modRoot = "atyrode-tui";
+  subPackages = [
+    "."
+    "cmd/atyrode-preview-parser"
+  ];
   proxyVendor = true;
   vendorHash = "sha256-8Ay9Rav9W+kM84C4DUqCZuwUJJ70nphS3tG6gdoTv64=";
 

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
+	previewdata "atyrode-tui/preview"
 	clikit "cli-kit"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -47,8 +49,8 @@ type planMsg struct {
 }
 
 type previewMsg struct {
-	output string
-	err    error
+	preview previewdata.Document
+	err     error
 }
 
 type applyDoneMsg struct{ err error }
@@ -62,7 +64,8 @@ type model struct {
 	apply   applyFunc
 	phase   phase
 	plan    applyPlan
-	preview []string
+	preview previewdata.Document
+	details bool
 	cursor  int
 	width   int
 	height  int
@@ -116,9 +119,19 @@ func (m model) loadPreview() tea.Cmd {
 	return func() tea.Msg {
 		out, err := m.output(m.cli, m.applyArgs(true)...)
 		if err != nil {
-			return previewMsg{output: strings.TrimSpace(string(out)), err: commandError("preview apply", out, err)}
+			return previewMsg{err: commandError("preview apply", out, err)}
 		}
-		return previewMsg{output: strings.TrimSpace(string(out))}
+		var result previewdata.Document
+		if err := json.Unmarshal(out, &result); err != nil {
+			return previewMsg{err: fmt.Errorf("decode activation preview: %w", err)}
+		}
+		if result.SchemaVersion != previewdata.SchemaVersion {
+			return previewMsg{err: fmt.Errorf("decode activation preview: unsupported schema version %d", result.SchemaVersion)}
+		}
+		if result.ResolvedRevision != m.plan.ResolvedRevision || result.Host != m.plan.Host || result.System != m.plan.System {
+			return previewMsg{err: fmt.Errorf("decode activation preview: plan identity changed")}
+		}
+		return previewMsg{preview: result}
 	}
 }
 
@@ -128,7 +141,7 @@ func (m model) applyArgs(preview bool) []string {
 		args = append(args, "--ref", m.plan.ResolvedRevision)
 	}
 	if preview {
-		args = append(args, "--dry-run")
+		args = append(args, "--preview-json")
 	}
 	return args
 }
@@ -151,45 +164,6 @@ func commandError(action string, output []byte, err error) error {
 		return fmt.Errorf("%s: %w", action, err)
 	}
 	return fmt.Errorf("%s: %w\n%s", action, err, text)
-}
-
-// normalizePreview turns nh's terminal-oriented output into stable rows for the
-// viewport. Progress renderers use carriage returns and ANSI cursor controls;
-// passing either through Bubble Tea can move the cursor outside the bordered
-// panel. The dry-run also repeats the structured plan rendered above, so those
-// fields are removed from the change stream.
-func normalizePreview(output string) []string {
-	output = stripTerminalControls(output)
-	var lines []string
-	for _, raw := range strings.Split(output, "\n") {
-		parts := strings.Split(raw, "\r")
-		raw = ""
-		for i := len(parts) - 1; i >= 0; i-- {
-			if strings.TrimSpace(parts[i]) != "" {
-				raw = parts[i]
-				break
-			}
-		}
-		line := strings.TrimRight(raw, " \t")
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || isPlanField(trimmed) {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
-
-func isPlanField(line string) bool {
-	for _, prefix := range []string{
-		"host:", "installable:", "source:", "system:", "user:", "capabilities:",
-		"backend:", "revision:", "dirty:", "mutation boundary:",
-	} {
-		if strings.HasPrefix(line, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // stripTerminalControls delegates ECMA-48 parsing (CSI, OSC, DCS, SOS, PM, APC,
@@ -222,15 +196,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.plan, m.phase, m.err = msg.plan, loadingPreview, nil
 		return m, m.loadPreview()
 	case previewMsg:
-		m.preview = normalizePreview(msg.output)
-		if len(m.preview) == 0 {
-			m.preview = []string{"No changes reported by the dry run."}
-		}
 		if msg.err != nil {
 			m.phase, m.err = failed, msg.err
 			return m, nil
 		}
-		m.phase, m.err, m.cursor = ready, nil, 0
+		m.preview = msg.preview
+		m.phase, m.err, m.cursor, m.details = ready, nil, 0, false
 		return m, nil
 	case applyDoneMsg:
 		if msg.err != nil {
@@ -245,7 +216,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			if m.phase != applying {
-				m.phase, m.err, m.status, m.preview, m.cursor = loadingPlan, nil, "", nil, 0
+				m.phase, m.err, m.status, m.preview, m.cursor, m.details = loadingPlan, nil, "", previewdata.Document{}, 0, false
 				return m, m.loadPlan()
 			}
 		case "up", "k":
@@ -253,7 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor+1 < len(m.preview) {
+			if m.cursor+1 < len(m.previewRows()) {
 				m.cursor++
 			}
 		case "pgup":
@@ -263,11 +234,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "pgdown":
 			m.cursor += m.previewHeight()
-			if m.cursor >= len(m.preview) {
-				m.cursor = len(m.preview) - 1
+			if m.cursor >= len(m.previewRows()) {
+				m.cursor = len(m.previewRows()) - 1
 			}
 			if m.cursor < 0 {
 				m.cursor = 0
+			}
+		case "d":
+			if m.phase == ready || m.phase == confirming || m.phase == applied {
+				m.details, m.cursor = !m.details, 0
 			}
 		case "a", "enter":
 			if m.phase == ready {
@@ -333,7 +308,7 @@ func (m model) header(width int) string {
 		dirty = clikit.StWarn.Render("dirty")
 	}
 	available := panelContentWidth(width)
-	targetWidth := available - lipgloss.Width(labelStyle.Render("target"))
+	targetWidth := available - lipgloss.Width(labelStyle.Render("target")) - 2
 	if targetWidth < 1 {
 		targetWidth = 1
 	}
@@ -446,46 +421,184 @@ func (m model) previewBox(width int) string {
 	case loadingPlan:
 		body = clikit.StDim.Render("Loading apply plan…")
 	case loadingPreview:
-		body = clikit.StDim.Render("Running safe dry-run preview…")
+		body = clikit.StDim.Render("Building read-only activation preview…")
 	case applying:
 		body = clikit.StWarn.Render("Apply is running in the terminal…")
 	default:
-		if len(m.preview) == 0 {
+		if m.preview.SchemaVersion == 0 {
 			body = clikit.StDim.Render("Preview unavailable.")
 		} else {
 			previewWidth := panelContentWidth(width) - 4
 			if previewWidth < 1 {
 				previewWidth = 1
 			}
-			body = clikit.WindowList(previewRows(m.preview), m.cursor, m.previewHeight(), previewWidth)
+			body = clikit.WindowList(m.previewRowsForWidth(max(1, previewWidth-1)), m.cursor, m.previewHeight(), previewWidth)
 		}
 	}
-	label := iconStyle.Render("\uf0ad") + "  " + titleStyle.Render("CHANGES") + "\n\n"
+	label := iconStyle.Render("\uf0ad") + "  " + titleStyle.Render("ACTIVATION PREVIEW") + "\n"
 	return panel(width, label+body)
 }
 
-func previewRows(lines []string) []string {
-	rows := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "<<< "):
-			rows = append(rows, clikit.StBrk.Render("−")+"  "+clikit.StDim.Render(strings.TrimPrefix(line, "<<< ")))
-		case strings.HasPrefix(line, ">>> "):
-			rows = append(rows, clikit.StOk.Render("+")+"  "+clikit.StHead.Render(strings.TrimPrefix(line, ">>> ")))
-		case strings.HasPrefix(line, "> "):
-			rows = append(rows, iconStyle.Render("›")+"  "+clikit.StHead.Render(strings.TrimPrefix(line, "> ")))
-		case strings.HasPrefix(line, "Finished at "):
-			rows = append(rows, clikit.StOk.Render("✓")+"  "+clikit.StDim.Render(line))
-		case strings.HasPrefix(line, "+"):
-			rows = append(rows, clikit.StOk.Render("+")+"  "+clikit.StHead.Render(strings.TrimSpace(strings.TrimPrefix(line, "+"))))
-		case strings.HasPrefix(line, "-"):
-			rows = append(rows, clikit.StBrk.Render("−")+"  "+clikit.StDim.Render(strings.TrimSpace(strings.TrimPrefix(line, "-"))))
-		default:
-			rows = append(rows, clikit.StDim.Render("•  "+line))
+func (m model) previewRows() []string {
+	_, width := m.horizontalLayout()
+	previewWidth := panelContentWidth(width) - 4
+	if previewWidth < 1 {
+		previewWidth = 1
+	}
+	return m.previewRowsForWidth(max(1, previewWidth-1))
+}
+
+func (m model) previewRowsForWidth(width int) []string {
+	rows := make([]string, 0, 24)
+	revision := m.preview.ResolvedRevision
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	if width < 32 {
+		appendWrappedRow(&rows, "Applying "+titleStyle.Render(revision), width)
+		appendWrappedRow(&rows, "will make these changes.", width)
+	} else {
+		appendWrappedRow(&rows, "Applying revision "+titleStyle.Render(revision)+" will make the following changes.", width)
+	}
+	rows = append(rows, "")
+
+	status := "✓  Preview built"
+	if m.preview.Status == "no-changes" {
+		status += " · no version or size changes"
+	}
+	appendWrappedRow(&rows, clikit.StOk.Render(status), width)
+	if m.details {
+		rows = append(rows, "")
+		appendWrappedRow(&rows, titleStyle.Render("Technical details"), width)
+		if generations := m.preview.Generations; generations != nil {
+			if generations.Previous != "" {
+				appendWrappedRow(&rows, clikit.StHead.Render("Previous generation"), width)
+				appendIndentedWrappedRow(&rows, clikit.StDim.Render(generations.Previous), width, 2)
+			}
+			if generations.New != "" {
+				appendWrappedRow(&rows, clikit.StHead.Render("New generation"), width)
+				appendIndentedWrappedRow(&rows, clikit.StDim.Render(generations.New), width, 2)
+			}
+		}
+		raw := make([]string, 0, len(m.preview.Technical))
+		for _, line := range m.preview.Technical {
+			if strings.HasPrefix(line, "<<< ") || strings.HasPrefix(line, ">>> ") {
+				continue
+			}
+			raw = append(raw, line)
+		}
+		if len(raw) > 0 {
+			rows = append(rows, "")
+			appendWrappedRow(&rows, titleStyle.Render("Normalized nh report"), width)
+			for _, line := range raw {
+				appendIndentedWrappedRow(&rows, clikit.StDim.Render(line), width, 2)
+			}
+		}
+		return rows
+	}
+
+	added, updated, removed := len(m.preview.Packages.Added), len(m.preview.Packages.Updated), len(m.preview.Packages.Removed)
+	var packageFacts []string
+	if added > 0 {
+		packageFacts = append(packageFacts, fmt.Sprintf("%d added", added))
+	}
+	if updated > 0 {
+		packageFacts = append(packageFacts, fmt.Sprintf("%d updated", updated))
+	}
+	if removed > 0 {
+		packageFacts = append(packageFacts, fmt.Sprintf("%d removed", removed))
+	}
+	if len(packageFacts) == 0 {
+		appendWrappedRow(&rows, labelStyle.Render("Packages")+clikit.StDim.Render("No package changes reported."), width)
+	} else {
+		appendWrappedRow(&rows, labelStyle.Render("Packages")+strings.Join(packageFacts, "  ·  "), width)
+	}
+	if paths := m.preview.StorePaths; paths != nil {
+		facts := fmt.Sprintf("%s added  ·  %s removed", formatCount(paths.Added), formatCount(paths.Removed))
+		appendWrappedRow(&rows, labelStyle.Render("Store paths")+facts, width)
+	}
+	if closure := m.preview.Closure; closure != nil {
+		if closure.Delta != "" {
+			appendWrappedRow(&rows, diskUsageSentence(closure.Delta), width)
+		}
+		if closure.Resulting != "" {
+			appendWrappedRow(&rows, "Resulting total closure size is "+clikit.StHead.Render(closure.Resulting)+".", width)
 		}
 	}
+
+	groups := []struct {
+		name    string
+		changes []previewdata.PackageChange
+		style   lipgloss.Style
+	}{
+		{name: "Added", changes: m.preview.Packages.Added, style: clikit.StOk},
+		{name: "Updated", changes: m.preview.Packages.Updated, style: clikit.StHead},
+		{name: "Removed", changes: m.preview.Packages.Removed, style: clikit.StBrk},
+	}
+	for _, group := range groups {
+		if len(group.changes) == 0 {
+			continue
+		}
+		rows = append(rows, "")
+		appendWrappedRow(&rows, group.style.Bold(true).Render(fmt.Sprintf("%s (%d)", group.name, len(group.changes))), width)
+		for _, change := range group.changes {
+			appendIndentedWrappedRow(&rows, titleStyle.Render(change.Name), width, 2)
+			if secondary := packageSecondary(change); secondary != "" {
+				appendIndentedWrappedRow(&rows, clikit.StDim.Render(secondary), width, 4)
+			}
+		}
+	}
+
 	return rows
+}
+
+func appendWrappedRow(rows *[]string, line string, width int) {
+	for _, wrapped := range strings.Split(ansi.Wrap(line, width, " "), "\n") {
+		*rows = append(*rows, wrapped)
+	}
+}
+
+func appendIndentedWrappedRow(rows *[]string, line string, width, indent int) {
+	contentWidth := max(1, width-indent)
+	prefix := strings.Repeat(" ", indent)
+	for _, wrapped := range strings.Split(ansi.Wrap(line, contentWidth, " "), "\n") {
+		*rows = append(*rows, prefix+wrapped)
+	}
+}
+
+func packageSecondary(change previewdata.PackageChange) string {
+	var details []string
+	switch {
+	case change.PreviousVersion != "" && change.NewVersion != "":
+		details = append(details, change.PreviousVersion+" → "+change.NewVersion)
+	case change.NewVersion != "":
+		details = append(details, change.NewVersion)
+	case change.PreviousVersion != "":
+		details = append(details, change.PreviousVersion)
+	}
+	if change.SizeDelta != "" {
+		details = append(details, change.SizeDelta)
+	}
+	return strings.Join(details, "  ·  ")
+}
+
+func diskUsageSentence(delta string) string {
+	switch {
+	case strings.HasPrefix(delta, "-"):
+		return "Disk usage decreases by " + clikit.StOk.Render(strings.TrimPrefix(delta, "-")) + "."
+	case strings.HasPrefix(delta, "+"):
+		return "Disk usage increases by " + clikit.StWarn.Render(strings.TrimPrefix(delta, "+")) + "."
+	default:
+		return "Disk usage is unchanged (" + delta + ")."
+	}
+}
+
+func formatCount(value int) string {
+	digits := strconv.Itoa(value)
+	for i := len(digits) - 3; i > 0; i -= 3 {
+		digits = digits[:i] + "," + digits[i:]
+	}
+	return digits
 }
 
 const maxErrorLines = 4
@@ -513,21 +626,25 @@ func (m model) footer() string {
 	if m.err != nil {
 		return m.errorFooter()
 	}
+	mode := "details"
+	if m.details {
+		mode = "summary"
+	}
 	switch m.phase {
 	case confirming:
 		if m.width < 60 {
-			return clikit.StWarn.Render("Apply?  y confirm  ·  n cancel")
+			return clikit.StWarn.Render("Apply?  y confirm  ·  n cancel  ·  d " + mode)
 		}
-		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel")
+		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  d " + mode)
 	case applying:
 		return clikit.StDim.Render("Applying…")
 	case applied:
-		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("r refresh  ·  q quit")
+		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("d "+mode+"  ·  r refresh  ·  q quit")
 	case ready:
 		if m.width < 60 {
-			return clikit.StDim.Render("↑/↓ scroll  ·  enter apply  ·  q quit")
+			return clikit.StDim.Render("d " + mode + "  ·  enter apply  ·  q quit")
 		}
-		return clikit.StDim.Render("↑/↓ preview  ·  a/enter apply  ·  r refresh  ·  q quit")
+		return clikit.StDim.Render("↑/↓ preview  ·  d " + mode + "  ·  a/enter apply  ·  r refresh  ·  q quit")
 	default:
 		return clikit.StDim.Render("q quit")
 	}

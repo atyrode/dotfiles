@@ -53,6 +53,76 @@ func TestAuthProfileSelectionPersists(t *testing.T) {
 	}
 }
 
+func TestAuthProfileSwitchReplaysUsageFill(t *testing.T) {
+	m := layoutModel()
+	m = resize(t, m, 120, 40)
+	loaded := m.avail
+	m.authProfiles = []authProfile{{ID: "default"}, {ID: "mum"}}
+	m.authState = filepath.Join(t.TempDir(), "selected")
+	m.hadUsage = true
+	m.barAnim = barAnimSteps / 2
+
+	if err := m.switchAuthProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.activeAuthProfile().ID; got != "mum" {
+		t.Fatalf("active profile = %q, want mum", got)
+	}
+	if m.hadUsage || m.barAnim != 0 || m.avail.ok {
+		t.Fatalf("switch must clear usage and re-arm its fill: hadUsage=%v barAnim=%d avail.ok=%v", m.hadUsage, m.barAnim, m.avail.ok)
+	}
+
+	nm, cmd := m.Update(usageMsg{profile: "default", avail: loaded})
+	m = nm.(model)
+	if cmd != nil || m.hadUsage || m.barAnim != 0 || m.avail.ok {
+		t.Fatal("a stale prior-profile result must remain ignored after the switch")
+	}
+
+	failed := availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	nm, cmd = m.Update(usageMsg{profile: "mum", avail: failed})
+	m = nm.(model)
+	if cmd != nil || m.hadUsage || m.barAnim != 0 || m.avail.ok {
+		t.Fatal("a failed matching-profile fetch must not start or consume the fill")
+	}
+
+	nm, cmd = m.Update(usageMsg{profile: "mum", avail: loaded})
+	m = nm.(model)
+	if cmd == nil || !m.hadUsage || m.barAnim != 1 || !m.avail.ok {
+		t.Fatalf("the first successful switched-profile result must start the fill: cmd nil=%v hadUsage=%v barAnim=%d avail.ok=%v", cmd == nil, m.hadUsage, m.barAnim, m.avail.ok)
+	}
+	for m.barAnim != 0 {
+		nm, _ = m.Update(barAnimMsg{step: m.barAnim + 1})
+		m = nm.(model)
+	}
+
+	refreshed := loaded
+	refreshed.wins = append([]usageWin(nil), loaded.wins...)
+	refreshed.wins[0].pct = 78
+	nm, cmd = m.Update(usageMsg{profile: "mum", avail: refreshed})
+	m = nm.(model)
+	if cmd != nil || m.barAnim != 0 {
+		t.Fatal("a same-profile refresh must update directly without replaying the fill")
+	}
+	if got := m.avail.wins[0].pct; got != 78 {
+		t.Fatalf("same-profile refresh did not land: pct = %d, want 78", got)
+	}
+
+	if err := m.switchAuthProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.activeAuthProfile().ID; got != "default" {
+		t.Fatalf("active profile = %q after switching back, want default", got)
+	}
+	if m.hadUsage || m.barAnim != 0 || m.avail.ok {
+		t.Fatalf("switching back must re-arm the fill: hadUsage=%v barAnim=%d avail.ok=%v", m.hadUsage, m.barAnim, m.avail.ok)
+	}
+	nm, cmd = m.Update(usageMsg{profile: "default", avail: loaded})
+	m = nm.(model)
+	if cmd == nil || !m.hadUsage || m.barAnim != 1 {
+		t.Fatalf("switching back must replay the fill on success: cmd nil=%v hadUsage=%v barAnim=%d", cmd == nil, m.hadUsage, m.barAnim)
+	}
+}
+
 func TestLoadAvailabilityUsesSelectedProfile(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")

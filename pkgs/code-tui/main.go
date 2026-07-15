@@ -1242,7 +1242,7 @@ type model struct {
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
-	hadUsage    bool      // a successful fetch has landed — gates the one-time first-load bar fill
+	hadUsage    bool      // a successful fetch has landed for this profile — gates its first-load bar fill
 	usageStale  bool      // the last refresh failed outright; avail is retained from an earlier success
 	barAnim     int       // first-load fill frame (1..barAnimSteps-1 = partial); 0 = inactive, bars at full value
 
@@ -1278,13 +1278,13 @@ func fetchUsageCmd(cmd, profile string) tea.Cmd {
 	return func() tea.Msg { return usageMsg{profile: profile, avail: loadAvailability(cmd, profile)} }
 }
 
-// First-load bar fill: the one-time animation that grows each usage bar from
-// empty to its real value when the FIRST successful fetch replaces the loading
-// skeleton. A dedicated bounded tick sequence — barAnimSteps frames at
+// First-load bar fill: the per-profile-context animation that grows each usage
+// bar from empty to its real value when the first successful fetch replaces the
+// loading skeleton. A dedicated bounded tick sequence — barAnimSteps frames at
 // barAnimInterval (8 × 25ms = 200ms total) — renders every bar's fill at
 // step/steps of its target; labels and numbers are real from the first frame,
-// only the fill animates. Refreshes (manual, auto, or post-switch) never
-// re-run it, and each tick schedules nothing beyond the next frame.
+// only the fill animates. Manual and automatic refreshes for the same profile
+// never re-run it, and each tick schedules nothing beyond the next frame.
 const (
 	barAnimSteps    = 8
 	barAnimInterval = 25 * time.Millisecond

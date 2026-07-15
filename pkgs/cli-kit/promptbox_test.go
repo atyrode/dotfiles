@@ -216,6 +216,66 @@ func assertResizeHistory(t *testing.T, got, want []tea.WindowSizeMsg) {
 	}
 }
 
+type statefulAskableApp struct {
+	cursor int
+}
+
+func (statefulAskableApp) Init() tea.Cmd { return nil }
+func (a statefulAskableApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "down" {
+		a.cursor++
+	}
+	return a, nil
+}
+func (statefulAskableApp) View() string { return "cockpit" }
+func (statefulAskableApp) Asker() Asker { return stubAsker{} }
+
+func TestHostTogglePreservesAppState(t *testing.T) {
+	h := newHost(statefulAskableApp{cursor: 7})
+	next, _ := h.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	h = next.(host)
+	if !h.active {
+		t.Fatal("toggle did not open prompt box")
+	}
+
+	next, _ = h.Update(tea.KeyMsg{Type: tea.KeyDown})
+	h = next.(host)
+	if got := h.app.(statefulAskableApp).cursor; got != 7 {
+		t.Fatalf("open prompt changed app cursor to %d", got)
+	}
+
+	next, _ = h.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	h = next.(host)
+	if h.active {
+		t.Fatal("second toggle did not close prompt box")
+	}
+	if got := h.app.(statefulAskableApp).cursor; got != 7 {
+		t.Fatalf("toggle round trip changed app cursor to %d", got)
+	}
+}
+
+func TestHostDismissCancelsBusyPrompt(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyCtrlO},
+	} {
+		h := newHost(statefulAskableApp{})
+		h.active = true
+		h.box.state = boxBusy
+		cancelled := false
+		h.box.cancel = func() { cancelled = true }
+
+		next, _ := h.Update(key)
+		h = next.(host)
+		if h.active {
+			t.Errorf("%s left prompt open", key.String())
+		}
+		if !cancelled || h.box.state != boxEditing {
+			t.Errorf("%s did not cancel busy prompt", key.String())
+		}
+	}
+}
+
 // stubCommander streams optional output and parses to a fixed action set.
 type stubCommander struct {
 	actions []Action

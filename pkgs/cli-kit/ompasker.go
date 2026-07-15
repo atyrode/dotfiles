@@ -17,9 +17,10 @@ const DefaultEvaluatorModel = "claude-haiku-4-5"
 // invoked at runtime, never linked. Cancelling the Ask context kills the omp
 // subprocess (exec.CommandContext), satisfying esc-to-cancel.
 type OmpAsker struct {
-	Bin   string    // omp binary; defaults to "omp" on PATH
-	Model string    // evaluator model; defaults to DefaultEvaluatorModel
-	Docs  DocCorpus // grounding, appended to omp's system prompt
+	Bin           string    // omp binary; defaults to "omp" on PATH
+	Model         string    // evaluator model; defaults to DefaultEvaluatorModel
+	Docs          DocCorpus // grounding injected into omp's system prompt
+	ReplaceSystem bool      // use docs as the complete system prompt and strip agent scaffolding
 }
 
 // NewOmpAsker builds an OmpAsker grounded in docs, with the default binary and
@@ -30,12 +31,11 @@ func NewOmpAsker(docs DocCorpus) OmpAsker {
 
 // ompArgs assembles the headless invocation: process one prompt and exit (-p),
 // plain streamed text, no session, no tools. thinking (if set) pins the reasoning
-// level. When replaceSystem is true this is BARE-CLASSIFIER mode: the docs REPLACE
-// omp's default system prompt (--system-prompt) AND omp's agent scaffolding
-// (rules, skills, extensions loaded from the managed ~/.omp) is stripped —
-// otherwise omp behaves like a coding agent and answers the prompt instead of
-// classifying it. When false the docs are appended and the agent stays intact.
-// Kept pure so the command line is unit-testable.
+// level. When replaceSystem is true the docs replace omp's default system prompt
+// and its managed agent scaffolding (rules, skills, extensions) is stripped. This
+// supports narrow grounded assistants and bare classifiers that must not inherit
+// general coding-agent behavior. When false the docs are appended and the agent
+// stays intact. Kept pure so the command line is unit-testable.
 func ompArgs(model, thinking string, replaceSystem bool, docs DocCorpus, prompt string) []string {
 	args := []string{"-p", "--mode", "text", "--no-session", "--no-tools"}
 	if replaceSystem {
@@ -68,7 +68,7 @@ func (o OmpAsker) Ask(ctx context.Context, prompt string) (<-chan string, error)
 	if model == "" {
 		model = DefaultEvaluatorModel
 	}
-	cmd := exec.CommandContext(ctx, bin, ompArgs(model, "", false, o.Docs, prompt)...)
+	cmd := exec.CommandContext(ctx, bin, ompArgs(model, "", o.ReplaceSystem, o.Docs, prompt)...)
 	return streamCmd(ctx, cmd)
 }
 

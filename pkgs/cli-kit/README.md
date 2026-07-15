@@ -28,7 +28,8 @@ small interfaces — structural, compile-time, à la carte:
 | `Documented` → `Docs() DocCorpus` | grounding injected into the backend's system prompt |
 
 `clikit.Run(app)` detects what's implemented and mounts the box behind a toggle
-key (default `ctrl+o`). Act mode takes precedence over Ask when both are present.
+key (default `ctrl+o`). The same key or `esc` closes it and cancels any in-flight
+request. Act mode takes precedence over Ask when both are present.
 
 ### Ask mode
 
@@ -43,8 +44,10 @@ func main() { _, _ = clikit.Run(helpApp{...}, clikit.WithAltScreen()) }
 
 `NewOmpAsker` shells out to a headless omp run
 (`omp -p --mode text --no-session --no-tools --model claude-haiku-4-5
---append-system-prompt <docs> <prompt>`) and streams the answer; cancelling (esc)
-kills the omp subprocess. Override the evaluator via `OmpAsker.Model`.
+--append-system-prompt <docs> <prompt>`) and streams the answer; dismissing the
+box kills the omp subprocess. Set `OmpAsker.ReplaceSystem` for a narrow grounded
+assistant that must replace the coding-agent prompt and managed scaffolding.
+Override the evaluator via `OmpAsker.Model`.
 
 ### Act mode
 

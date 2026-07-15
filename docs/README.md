@@ -12,7 +12,7 @@ not in a checklist.
 | [system-boundary.md](system-boundary.md) | Home Manager vs system (nix-darwin) ownership and the Homebrew convergence policy |
 | [hosts.md](hosts.md) | The host registry (`hosts/default.nix`): identity, platform, and capabilities |
 | [portable-profiles.md](portable-profiles.md) | The capability modules exported for reuse in other Home Manager configs |
-| [package-ownership.md](package-ownership.md) | Which layer owns each package ([`inventory/packages.json`](../inventory/packages.json)) |
+| [package-ownership.md](package-ownership.md) | Evaluated capability/package inventory and its semantic authority boundaries |
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |

@@ -152,6 +152,8 @@ func (m *model) switchAuthProfile() error {
 		return err
 	}
 	m.authIdx = next
+	m.hadUsage = false
+	m.barAnim = 0
 	m.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	m.nextRefresh = time.Time{}
 	return nil

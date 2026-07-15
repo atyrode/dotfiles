@@ -88,7 +88,7 @@ atyrode doctor system # Audit system-owned operational prerequisites
 ### Agent Tools
 ```bash
 code          # Profile generator TUI: type a prompt or turn the facet dials
-omp           # Mutable user-owned OMP; unmanaged except the blocked update
+omp           # Mutable user-owned OMP; profile-aware resume, blocked update
 omp-managed   # Managed-layering launch target: defaults + policy over --config
 ompu          # Restricted launcher for deliberately untrusted repositories
 ```

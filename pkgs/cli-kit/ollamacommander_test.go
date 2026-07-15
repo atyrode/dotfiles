@@ -50,12 +50,15 @@ func TestOllamaCommanderProposeParse(t *testing.T) {
 		t.Errorf("stream missing rationale, got: %q", out.String())
 	}
 
-	// The wrapped prompt and system prompt must reach the request body.
+	// The wrapped prompt, system prompt, and JSON constraint must reach the request.
 	if !strings.Contains(gotBody, "classify: audit the repo") {
 		t.Errorf("request body missing wrapped prompt: %s", gotBody)
 	}
 	if !strings.Contains(gotBody, "be a selector") {
 		t.Errorf("request body missing system prompt: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"format":"json"`) {
+		t.Errorf("request body does not enforce JSON output: %s", gotBody)
 	}
 
 	got, err := o.Parse(out.String())

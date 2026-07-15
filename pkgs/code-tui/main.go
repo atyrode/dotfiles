@@ -231,12 +231,14 @@ func loadBlocks(path string) map[string][]string {
 
 // ── usage + availability ─────────────────────────────────────────────────────
 type usageWin struct {
-	label string
-	pct   int
-	tier  string
-	secs  int64 // seconds until reset (relative)
-	dur   int64 // window length in seconds
-	prov  string
+	label   string
+	pct     int
+	tier    string
+	secs    int64 // seconds until reset (relative)
+	dur     int64 // window length in seconds
+	prov    string
+	stale   bool // retained from the last successful fetch after a refresh omitted this window
+	missing bool // never observed: rendered as a deterministic placeholder row
 }
 
 // resetCredits tracks OpenAI reset credits: how many are currently available
@@ -300,7 +302,8 @@ func loadAvailability(cmd, profile string) availability {
 		provSeen[r.Provider] = true
 		for _, l := range r.Limits {
 			pct := int(l.Amount.UsedFraction*100 + 0.5)
-			a.wins = append(a.wins, usageWin{l.Label, pct, l.Scope.Tier, l.Window.ResetsAt/1000 - now, l.Window.DurationMs / 1000, r.Provider})
+			a.wins = append(a.wins, usageWin{label: l.Label, pct: pct, tier: l.Scope.Tier,
+				secs: l.Window.ResetsAt/1000 - now, dur: l.Window.DurationMs / 1000, prov: r.Provider})
 			bkt := bucketForProviderTier(r.Provider, l.Scope.Tier)
 			if bkt == "" {
 				continue
@@ -361,6 +364,69 @@ func bucketForProviderTier(prov, tier string) string {
 func (a availability) down(bucket string) bool {
 	return a.bucket[bucket] == "maxed" || a.bucket[bucket] == "unauthed"
 }
+
+// reconcileUsage folds a freshly fetched availability over the one currently
+// shown, so a flaky upstream never wipes known-good data. It returns the
+// availability to display plus whether the whole panel is stale:
+//
+//   - a total fetch failure after any prior success keeps the previous
+//     availability wholesale and reports it stale — the control row shows a
+//     refresh-failed warning instead of dropping to the unauthenticated error;
+//   - a successful payload that omits the Anthropic fable window (the
+//     "Claude 7 Day (Fable)" datum is flaky upstream) retains the last
+//     observed fable row marked stale, along with its bucket/reset state, so
+//     down-routing stays conservative instead of silently flipping a maxed
+//     fable back to ok on missing evidence;
+//   - a successful payload with no fable window ever observed appends a
+//     deterministic unavailable placeholder, so the datum appearing on a
+//     later refresh never pops the panel geometry.
+//
+// Fresh values always win; nothing is fabricated — retained rows are visibly
+// marked stale and placeholders carry no numbers.
+func reconcileUsage(prev, next availability) (availability, bool) {
+	if !next.ok {
+		if prev.ok {
+			return prev, true
+		}
+		return next, false
+	}
+	hasClaude, hasFable := false, false
+	for _, w := range next.wins {
+		if w.prov != "anthropic" {
+			continue
+		}
+		hasClaude = true
+		if w.tier == "fable" {
+			hasFable = true
+		}
+	}
+	if !hasClaude || hasFable {
+		return next, false
+	}
+	for _, w := range prev.wins {
+		if w.prov == "anthropic" && w.tier == "fable" && !w.missing {
+			w.stale = true
+			next.wins = append(next.wins, w)
+			// Carry the bucket/reset state observed with the retained window:
+			// loadAvailability defaults an unseen bucket to "ok", which would
+			// route onto a fable the last real datum said was maxed.
+			if st, ok := prev.bucket["claude-fable"]; ok {
+				next.bucket["claude-fable"] = st
+			}
+			if r, ok := prev.reset["claude-fable"]; ok {
+				next.reset["claude-fable"] = r
+			}
+			return next, false
+		}
+	}
+	next.wins = append(next.wins, fablePlaceholder)
+	return next, false
+}
+
+// fablePlaceholder is the never-observed fable window's deterministic
+// stand-in: the real payload label (so shortWin renders the same "7d fable"
+// tag) and window length, with no usage numbers to fabricate.
+var fablePlaceholder = usageWin{label: "Claude 7 Day (Fable)", tier: "fable", dur: 7 * 24 * 3600, prov: "anthropic", missing: true}
 
 // ── routing render (depth: 0 lead · 1 full) ──────────────────────────────────
 // renderRoute lays out each role's chain, wrapping cleanly at `width`: when a
@@ -867,9 +933,10 @@ func (m model) genConfigYAML() string {
 //	split     — wide:   the focused list on the left, routing preview on the
 //	            right, and Usage spanning the full bottom width
 //	medium    — generator-dominant: the list full width on top (primary), then
-//	            Routing and Usage side by side in a secondary row, with Usage's
-//	            provider groups stacked vertically inside its narrower column
-//	            (Routing takes the whole row while ‹s› hides Usage)
+//	            Usage and Routing side by side in a secondary row — Usage's
+//	            provider groups stacked vertically inside its measured left
+//	            column, Routing on the right (and taking the whole row while
+//	            ‹s› hides Usage)
 //	collapsed — narrow/short or ‹p›: one full-width panel at a time (list, or
 //	            routing w/ showResult) — the Generator stays usable instead of
 //	            compressing every section into an unreadable split
@@ -904,7 +971,7 @@ const (
 	// its keep.
 	routingMinW = 33
 	// secSepW is the one-cell border column between medium's adjacent
-	// secondary panes (Routing left, Usage right) — visible separation, same
+	// secondary panes (Usage left, Routing right) — visible separation, same
 	// stroke as the wide layout's routing pane border.
 	secSepW = 1
 	// genMinRows is the fewest facet rows the generator list may be windowed to
@@ -988,7 +1055,7 @@ func (m model) mediumMinW() int {
 // footerH measures the pinned footer for a composition directly from its parts
 // — mode selection depends on it, so it must not consult the mode itself.
 func (m model) footerH(withUsage bool) int {
-	h := 1 + lipgloss.Height("  "+m.help.View(keys))
+	h := 1 + lipgloss.Height(padLeft(m.help.View(keys), gut))
 	if withUsage {
 		if p := m.usagePanel(); p != "" {
 			h += 1 + lipgloss.Height(p)
@@ -1071,12 +1138,29 @@ func (m model) previewDims() (int, int) {
 	}
 }
 
-// routingColW is the medium secondary row's routing share: whatever the
-// measured usage column (and the separator between the panes) leaves free.
+// usageColShare is the medium secondary row's Usage width: Usage is the
+// favored pane — it takes the larger 3/5 proportional share of the row so its
+// bars and notes keep breathing room, never dropping below its measured
+// stacked minimum. Routing is the pane that shrinks as Usage grows, floored
+// at routingMinW (the medium width threshold guarantees both floors seat).
+func (m model) usageColShare() int {
+	avail := m.w - secSepW
+	uw := avail * 3 / 5
+	if min := m.usageColW(); uw < min {
+		uw = min
+	}
+	if avail-uw < routingMinW {
+		uw = avail - routingMinW
+	}
+	return uw
+}
+
+// routingColW is the medium secondary row's routing share: whatever Usage's
+// favored share (and the separator between the panes) leaves free.
 func (m model) routingColW() int {
 	w := m.w
 	if !m.hideUsage {
-		w -= m.usageColW() + secSepW
+		w -= m.usageColShare() + secSepW
 	}
 	if w < routingMinW {
 		w = routingMinW
@@ -1159,6 +1243,7 @@ type model struct {
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
 	hadUsage    bool      // a successful fetch has landed — gates the one-time first-load bar fill
+	usageStale  bool      // the last refresh failed outright; avail is retained from an earlier success
 	barAnim     int       // first-load fill frame (1..barAnimSteps-1 = partial); 0 = inactive, bars at full value
 
 	launchManaged   bool              // m: run CODE_OMP with no overlay (the managed defaults)
@@ -1299,6 +1384,13 @@ func (m *model) usageCtrlLine() string {
 			parts = append(parts, stDim.Render(m.spin.View()+" fetching usage…"))
 		case m.fetching:
 			parts = append(parts, stWarn.Render(gReset+" refreshing…"))
+		case m.usageStale:
+			// A failed refresh kept the previous data on screen: the warning
+			// takes the countdown's slot (same row, similar width) so the
+			// measured panel geometry — and with it the medium/collapsed
+			// breakpoint — barely moves on a flaky refresh.
+			parts = append(parts, stWarn.Render("refresh failed · stale")+
+				stDim.Render(" · ")+stKey.Render("r")+stDim.Render(" retry"))
 		default:
 			rem := time.Until(m.nextRefresh)
 			if rem < 0 {
@@ -1363,7 +1455,7 @@ func (m *model) usagePanelFor(w int) string {
 	out := padLeft(m.pill("usage")+"  "+stCueKey.Render("s")+stCue.Render(" · hide"), gut) + "\n" +
 		"\n" + m.usageBodyFor(w)
 	if ctrl := m.usageCtrlLine(); ctrl != "" {
-		out += "\n" + ctrl
+		out += "\n\n" + ctrl // blank row: air between provider content and the control row
 	}
 	return out
 }
@@ -1496,7 +1588,7 @@ func (m *model) skeletonBody(w int, p authProfile) string {
 	return layoutGroups(w, order, blocks)
 }
 
-// usageColumn is the medium layout's right-hand Usage section: the panel with
+// usageColumn is the medium layout's left-hand Usage section: the panel with
 // provider groups forced into a vertical stack — the column is deliberately
 // too narrow for side-by-side groups. The panel carries its own title chrome.
 func (m model) usageColumn() string {
@@ -1524,6 +1616,12 @@ func (m model) secondaryMinH() int {
 }
 
 func (m *model) usageRow(w usageWin) string {
+	if w.missing {
+		// Never-observed window (the upstream payload omits it): the real
+		// row's exact geometry with dotted values, so the datum appearing on
+		// a later refresh never pops the layout — no fabricated numbers.
+		return skeletonRow(shortWin(w.label)) + "  " + stDim.Render("unavailable")
+	}
 	note := ""
 	if w.pct >= 80 {
 		note = "  " + stWarn.Render("tight")
@@ -1533,6 +1631,11 @@ func (m *model) usageRow(w usageWin) string {
 	}
 	if w.tier == "spark" && w.pct == 0 {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
+	}
+	if w.stale {
+		// Retained from the last successful fetch after a refresh omitted
+		// this window — the value is old, and the row says so.
+		note += "  " + stWarn.Render("stale")
 	}
 	reset := stDim.Render(gReset + " " + fmtReset(w.secs))
 	if w.dur > 0 && w.secs*10 < w.dur {
@@ -1671,7 +1774,7 @@ func (m *model) footer() string {
 			parts = append(parts, rule, p)
 		}
 	}
-	parts = append(parts, rule, "  "+m.help.View(m.contextHelp()))
+	parts = append(parts, rule, padLeft(m.help.View(m.contextHelp()), gut))
 	return strings.Join(parts, "\n")
 }
 
@@ -1784,7 +1887,7 @@ func (m model) contextHelp() helpKeys {
 }
 
 func (m *model) relayout() {
-	m.help.Width = m.w
+	m.help.Width = m.w - gut // the footer help is gutter-inset on every line; wrap inside the padded width
 	pw, ph := m.previewDims()
 	if pw < 10 {
 		pw = 10
@@ -1811,7 +1914,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // stale profile: never applied, never starts the fill
 		}
 		first := !m.hadUsage && msg.avail.ok
-		m.avail = msg.avail
+		m.avail, m.usageStale = reconcileUsage(m.avail, msg.avail)
 		m.hadUsage = m.hadUsage || msg.avail.ok
 		m.fetching = false
 		m.nextRefresh = time.Now().Add(refreshEvery)
@@ -1910,6 +2013,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 				m.authErr = ""
+				m.usageStale = false // the wiped avail belongs to the new profile; no stale carry-over
 				m.fetching = m.usageCmd != ""
 				m.relayout()
 				if m.fetching {
@@ -1977,7 +2081,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // wheelInRouting reports whether a pointer position (terminal cells, 0-based)
 // falls inside the visible Routing pane, whose viewport then owns vertical
-// wheel scrolling: the wide split's right pane, medium's lower-left pane, or
+// wheel scrolling: the wide split's right pane, medium's lower-right pane, or
 // the narrow routing-only swap's full body. Hidden/collapsed routing claims
 // nothing, so the generator keeps the wheel everywhere else.
 func (m model) wheelInRouting(x, y int) bool {
@@ -1988,10 +2092,10 @@ func (m model) wheelInRouting(x, y int) bool {
 	switch m.mode() {
 	case modeCollapsed: // routing-only swap: the whole body is Routing
 		return y >= topGap && y < topGap+ch
-	case modeMedium: // the secondary row's left column, under the divider
+	case modeMedium: // the secondary row's right column, under the divider
 		genH, secH := m.mediumSplit(ch)
 		secTop := topGap + genH + 1
-		return y >= secTop && y < secTop+secH && x < m.routingColW()
+		return y >= secTop && y < secTop+secH && x >= m.w-m.routingColW()
 	default: // split: the right pane, from the list's right edge on
 		return y >= topGap && y < topGap+ch && x >= m.listW()
 	}
@@ -2141,10 +2245,10 @@ func (m model) leftColumn(w, totalH int) string {
 }
 
 // mediumContent is the generator-dominant layout: the full-width facet list on
-// top (primary), a divider, then Routing (left) and Usage (right) side by side
-// in a secondary row, separated by a one-cell border column. Routing keeps its
-// own scrolling viewport; Usage stacks its provider groups vertically inside
-// the measured-width right column.
+// top (primary), a divider, then Usage (left) and Routing (right) side by side
+// in a secondary row, separated by a one-cell border column. Usage stacks its
+// provider groups vertically inside the measured-width left column; Routing
+// keeps its own scrolling viewport in whatever the row leaves free.
 func (m model) mediumContent(bodyH int) string {
 	genH, secH := m.mediumSplit(bodyH)
 	top := m.leftColumn(m.w, genH)
@@ -2156,10 +2260,12 @@ func (m model) mediumContent(bodyH int) string {
 		lipgloss.NewStyle().MaxWidth(rw).Render(padLeft(m.previewColumn(), gut)))
 	sec := routing
 	if !m.hideUsage {
+		uw := m.w - rw - secSepW // the measured usage column's share, left of the border
 		sep := lipgloss.NewStyle().Foreground(lipgloss.Color(cBord)).Render(
 			strings.TrimSuffix(strings.Repeat("│\n", secH), "\n"))
-		usage := lipgloss.NewStyle().MaxWidth(m.w - rw - secSepW).MaxHeight(secH).Render(m.usageColumn())
-		sec = lipgloss.JoinHorizontal(lipgloss.Top, routing, sep, usage)
+		usage := lipgloss.NewStyle().Width(uw).MaxHeight(secH).Render(
+			lipgloss.NewStyle().MaxWidth(uw).Render(m.usageColumn()))
+		sec = lipgloss.JoinHorizontal(lipgloss.Top, usage, sep, routing)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, top, div, sec)
 }

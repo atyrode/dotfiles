@@ -1209,6 +1209,67 @@ func (g *wheelGate) admit(a int, t time.Time) bool {
 	return false
 }
 
+// admittedWheelMsg marks a generator wheel event admitted before Bubble Tea's
+// Update/render cycle. Routing wheel events remain ordinary tea.MouseMsgs.
+type admittedWheelMsg tea.MouseMsg
+
+// wheelTarget is the layout state the pre-dispatch filter needs. Keeping this
+// interface narrow also lets the raw-input regression test wrap model while
+// preserving the exact production filter path.
+type wheelTarget interface {
+	wheelInRouting(int, int) bool
+	routingWheelCanMove(tea.MouseButton) bool
+}
+
+// wheelInputFilter removes mouse traffic before Bubble Tea's unconditional
+// redraw-after-Update. Generator momentum is hard-detented here; motion,
+// non-wheel presses, routing horizontal wheel, and clamped routing scroll are
+// dropped because none can change the view.
+type wheelInputFilter struct {
+	gate wheelGate
+	now  func() time.Time
+}
+
+func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
+	mouse, ok := msg.(tea.MouseMsg)
+	if !ok {
+		return msg
+	}
+	if mouse.Action != tea.MouseActionPress {
+		return nil
+	}
+	target, ok := app.(wheelTarget)
+	if !ok {
+		return msg
+	}
+	if target.wheelInRouting(mouse.X, mouse.Y) {
+		switch mouse.Button {
+		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+			if target.routingWheelCanMove(mouse.Button) {
+				return mouse
+			}
+		}
+		return nil
+	}
+	axis := wheelAxisNone
+	switch mouse.Button {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+		axis = wheelAxisV
+	case tea.MouseButtonWheelLeft, tea.MouseButtonWheelRight:
+		axis = wheelAxisH
+	default:
+		return nil
+	}
+	now := time.Now()
+	if f.now != nil {
+		now = f.now()
+	}
+	if !f.gate.admit(axis, now) {
+		return nil
+	}
+	return admittedWheelMsg(mouse)
+}
+
 type model struct {
 	generated map[string][]string
 	advisors  map[string][]string  // "level/ctx" → advisor model chain
@@ -1226,7 +1287,7 @@ type model struct {
 	sel            map[string]string
 	selectionState string // CODE_SELECTION_STATE; empty keeps standalone runs stateless
 
-	wheel wheelGate // trackpad/mouse wheel arbiter: axis lock + step resistance
+	wheel wheelGate // direct-Update detent; live input is admitted by wheelInputFilter before redraw
 
 	vp       viewport.Model
 	spin     spinner.Model
@@ -1951,6 +2012,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spin, cmd = m.spin.Update(msg)
 			return m, cmd
 		}
+	case admittedWheelMsg:
+		m.applyWheelStep(msg.Button)
+		return m, nil
 	case tea.MouseMsg:
 		// Wheel dispatch by pointer position: inside the visible Routing pane
 		// the viewport owns vertical scrolling — continuous, ungated, clamped
@@ -2101,6 +2165,19 @@ func (m model) wheelInRouting(x, y int) bool {
 	}
 }
 
+// routingWheelCanMove reports whether a vertical routing scroll would change
+// the viewport. No-op events at either clamp are filtered before redraw.
+func (m model) routingWheelCanMove(b tea.MouseButton) bool {
+	switch b {
+	case tea.MouseButtonWheelUp:
+		return m.vp.YOffset < m.vp.TotalLineCount()-m.vp.Height
+	case tea.MouseButtonWheelDown:
+		return m.vp.YOffset > 0
+	default:
+		return false
+	}
+}
+
 // wheelStep translates an admitted wheel event into the matching facet action:
 // vertical scroll moves the selection, horizontal scroll changes the value.
 // The raw mapping is INVERTED on both axes — operator-confirmed trackpad
@@ -2108,24 +2185,29 @@ func (m model) wheelInRouting(x, y int) bool {
 // to the next (right) option, WheelRight to the previous. Arrow keys keep
 // their literal semantics; the handlers themselves are untouched and merely
 // rationed by the wheelGate.
-func (m *model) wheelStep(b tea.MouseButton, t time.Time) {
+func (m *model) applyWheelStep(b tea.MouseButton) {
 	switch b {
 	case tea.MouseButtonWheelUp:
-		if m.wheel.admit(wheelAxisV, t) {
-			m.moveDown()
-		}
+		m.moveDown()
 	case tea.MouseButtonWheelDown:
-		if m.wheel.admit(wheelAxisV, t) {
-			m.moveUp()
-		}
+		m.moveUp()
 	case tea.MouseButtonWheelLeft:
-		if m.wheel.admit(wheelAxisH, t) {
-			m.cycleFacet(1)
-		}
+		m.cycleFacet(1)
 	case tea.MouseButtonWheelRight:
-		if m.wheel.admit(wheelAxisH, t) {
-			m.cycleFacet(-1)
-		}
+		m.cycleFacet(-1)
+	}
+}
+
+func (m *model) wheelStep(b tea.MouseButton, t time.Time) {
+	axis := wheelAxisNone
+	switch b {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+		axis = wheelAxisV
+	case tea.MouseButtonWheelLeft, tea.MouseButtonWheelRight:
+		axis = wheelAxisH
+	}
+	if axis != wheelAxisNone && m.wheel.admit(axis, t) {
+		m.applyWheelStep(b)
 	}
 }
 
@@ -2411,10 +2493,11 @@ func main() {
 		sel:            loadSelectionState(selectionState, facets),
 		selectionState: selectionState,
 	}
-	// Cell-motion mouse reporting feeds the trackpad/wheel facet control (see
-	// wheelGate); it is the narrowest mode that carries wheel events. The
-	// preview still scrolls via pgup/pgdown / ctrl+u/ctrl+d.
-	final, err := clikit.Run(m, clikit.WithAltScreen(), clikit.WithMouseCellMotion())
+	// Cell-motion mouse reporting carries wheel events. Filter rejected
+	// momentum and unused motion before Bubble Tea's redraw-after-Update loop.
+	inputFilter := &wheelInputFilter{}
+	final, err := clikit.Run(m, clikit.WithAltScreen(), clikit.WithMouseCellMotion(),
+		clikit.WithMessageFilter(inputFilter.Filter))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
 		os.Exit(1)

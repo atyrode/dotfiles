@@ -397,4 +397,6 @@ every check on every CI platform at the pull request's base and head
 derivation other than those two lints — so a `docs/**` path silently
 becoming a derivation input blocks the merge instead of skipping real
 verification. The guard's comparison logic is regression-tested by the
-`docs-drift-guard` flake check.
+`docs-drift-guard` flake check, and it adds roughly three minutes of pure
+evaluation to a docs-only pull request (six instantiations: three systems
+at base and head).

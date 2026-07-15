@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	inventorydata "atyrode-tui/inventory"
 	previewdata "atyrode-tui/preview"
 	clikit "cli-kit"
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,6 +55,18 @@ type previewMsg struct {
 	preview previewdata.Document
 	err     error
 }
+type inventoryMsg struct {
+	inventory inventorydata.Document
+	err       error
+}
+
+type pane int
+
+const (
+	previewPane pane = iota
+	capabilityPane
+)
+
 
 type applyDoneMsg struct{ err error }
 
@@ -114,15 +127,22 @@ type model struct {
 	output  outputFunc
 	apply   applyFunc
 	asker   clikit.Asker
-	phase   phase
-	plan    applyPlan
-	preview previewdata.Document
-	details bool
-	cursor  int
-	width   int
-	height  int
-	err     error
-	status  string
+	phase              phase
+	plan               applyPlan
+	preview            previewdata.Document
+	inventory          inventorydata.Document
+	inventoryLoading   bool
+	inventoryErr       error
+	details            bool
+	capabilitiesOpen   bool
+	focus              pane
+	previewCursor      int
+	capabilityCursor   int
+	selectedCapability int
+	width              int
+	height             int
+	err                error
+	status             string
 }
 
 func commandOutput(name string, args ...string) ([]byte, error) {
@@ -202,6 +222,25 @@ func (m model) loadPreview() tea.Cmd {
 		return previewMsg{preview: result}
 	}
 }
+func (m model) loadInventory() tea.Cmd {
+	return func() tea.Msg {
+		out, err := m.output(m.cli, "inventory", "--ref", m.plan.ResolvedRevision, "--json")
+		if err != nil {
+			return inventoryMsg{err: commandError("inventory unavailable", out, err)}
+		}
+		result, err := inventorydata.Parse(out, inventorydata.Expected{
+			Revision:           m.plan.ResolvedRevision,
+			System:             m.plan.System,
+			Host:               m.plan.Host,
+			ActiveCapabilities: m.plan.Capabilities,
+		})
+		if err != nil {
+			return inventoryMsg{err: err}
+		}
+		return inventoryMsg{inventory: result}
+	}
+}
+
 
 func (m model) applyArgs(preview bool) []string {
 	args := []string{"apply"}
@@ -262,14 +301,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.plan, m.phase, m.err = msg.plan, loadingPreview, nil
-		return m, m.loadPreview()
+		m.inventory, m.inventoryErr, m.inventoryLoading = inventorydata.Document{}, nil, true
+		return m, tea.Batch(m.loadPreview(), m.loadInventory())
 	case previewMsg:
 		if msg.err != nil {
 			m.phase, m.err = failed, msg.err
 			return m, nil
 		}
 		m.preview = msg.preview
-		m.phase, m.err, m.cursor, m.details = ready, nil, 0, false
+		m.phase, m.err, m.previewCursor, m.details = ready, nil, 0, false
+		return m, nil
+	case inventoryMsg:
+		m.inventoryLoading = false
+		if msg.err != nil {
+			m.inventory, m.inventoryErr = inventorydata.Document{}, msg.err
+		} else {
+			m.inventory, m.inventoryErr = msg.inventory, nil
+			if m.selectedCapability >= len(m.inventory.Capabilities) {
+				m.selectedCapability = 0
+				m.capabilityCursor = 0
+			}
+		}
 		return m, nil
 	case applyDoneMsg:
 		if msg.err != nil {
@@ -284,33 +336,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			if m.phase != applying {
-				m.phase, m.err, m.status, m.preview, m.cursor, m.details = loadingPlan, nil, "", previewdata.Document{}, 0, false
+				m.phase, m.err, m.status, m.preview, m.inventory = loadingPlan, nil, "", previewdata.Document{}, inventorydata.Document{}
+				m.inventoryErr, m.inventoryLoading, m.details = nil, false, false
+				m.capabilitiesOpen, m.focus = false, previewPane
+				m.previewCursor, m.capabilityCursor, m.selectedCapability = 0, 0, 0
 				return m, m.loadPlan()
 			}
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor+1 < len(m.previewRows()) {
-				m.cursor++
-			}
-		case "pgup":
-			m.cursor -= m.previewHeight()
-			if m.cursor < 0 {
-				m.cursor = 0
-			}
-		case "pgdown":
-			m.cursor += m.previewHeight()
-			if m.cursor >= len(m.previewRows()) {
-				m.cursor = len(m.previewRows()) - 1
-			}
-			if m.cursor < 0 {
-				m.cursor = 0
-			}
-		case "d":
+		case "c":
 			if m.phase == ready || m.phase == confirming || m.phase == applied {
-				m.details, m.cursor = !m.details, 0
+				if m.focus == capabilityPane {
+					m.focus = previewPane
+					if !m.isWide() {
+						m.capabilitiesOpen = false
+					}
+				} else {
+					m.focus, m.capabilitiesOpen = capabilityPane, true
+				}
+			}
+		case "tab":
+			if m.isWide() && (m.phase == ready || m.phase == confirming || m.phase == applied) {
+				if m.focus == capabilityPane {
+					m.focus = previewPane
+				} else {
+					m.focus, m.capabilitiesOpen = capabilityPane, true
+				}
+			}
+		case "[", "left":
+			if m.focus == capabilityPane {
+				m = m.cycleCapability(-1)
+			}
+		case "]", "right":
+			if m.focus == capabilityPane {
+				m = m.cycleCapability(1)
+			}
+		case "up", "k":
+			m = m.scrollFocused(-1)
+		case "down", "j":
+			m = m.scrollFocused(1)
+		case "pgup":
+			m = m.scrollFocused(-m.paneBodyHeight())
+		case "pgdown":
+			m = m.scrollFocused(m.paneBodyHeight())
+		case "d":
+			if m.focus == previewPane && (m.phase == ready || m.phase == confirming || m.phase == applied) {
+				m.details, m.previewCursor = !m.details, 0
 			}
 		case "a", "enter":
 			if m.phase == ready {
@@ -321,13 +390,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.phase, m.err = applying, nil
 				return m, m.apply(m.cli, m.applyArgs(false)...)
 			}
-		case "n", "esc":
+		case "n":
 			if m.phase == confirming {
+				m.phase = ready
+			}
+		case "esc":
+			if m.focus == capabilityPane {
+				m.focus = previewPane
+				if !m.isWide() {
+					m.capabilitiesOpen = false
+				}
+			} else if m.phase == confirming {
 				m.phase = ready
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m model) cycleCapability(delta int) model {
+	count := len(m.inventory.Capabilities)
+	if count == 0 {
+		return m
+	}
+	m.selectedCapability = (m.selectedCapability + delta + count) % count
+	m.capabilityCursor = 0
+	return m
+}
+
+func (m model) scrollFocused(delta int) model {
+	if m.focus == capabilityPane {
+		m.capabilityCursor = clampCursor(m.capabilityCursor+delta, len(m.capabilityRows()))
+	} else {
+		m.previewCursor = clampCursor(m.previewCursor+delta, len(m.previewRows()))
+	}
+	return m
+}
+
+func clampCursor(cursor, rows int) int {
+	if cursor < 0 || rows == 0 {
+		return 0
+	}
+	if cursor >= rows {
+		return rows - 1
+	}
+	return cursor
 }
 
 var (
@@ -341,14 +448,54 @@ var (
 
 func (m model) View() string {
 	margin, panelWidth := m.horizontalLayout()
+	content := m.previewBox(panelWidth)
+	if m.isWide() {
+		previewWidth, capabilityWidth := m.splitWidths(panelWidth)
+		content = lipgloss.JoinHorizontal(lipgloss.Top, m.previewBox(previewWidth), " ", m.capabilityBox(capabilityWidth))
+	} else if m.capabilitiesOpen {
+		content = m.capabilityBox(panelWidth)
+	}
 
 	sections := []string{
 		titleStyle.Render("ATYRODE") + "  " + pillStyle.Render("apply"),
 		m.header(panelWidth),
-		m.previewBox(panelWidth),
+		content,
 		m.footer(),
 	}
 	return clikit.PadLeft(strings.Join(sections, "\n\n"), margin)
+}
+
+func (m model) isWide() bool { return m.width >= 112 }
+
+func (m model) splitWidths(total int) (previewWidth, capabilityWidth int) {
+	capabilityWidth = 42
+	if total < 84 {
+		capabilityWidth = max(38, total/2)
+	}
+	previewWidth = max(1, total-capabilityWidth-1)
+	return previewWidth, capabilityWidth
+}
+
+func (m model) contentPanelWidth() int {
+	_, total := m.horizontalLayout()
+	if m.isWide() {
+		previewWidth, capabilityWidth := m.splitWidths(total)
+		if m.focus == capabilityPane {
+			return capabilityWidth
+		}
+		return previewWidth
+	}
+	return total
+}
+
+func (m model) contentOuterHeight() int {
+	_, width := m.horizontalLayout()
+	fixed := 1 + lipgloss.Height(m.header(width)) + lipgloss.Height(m.footer()) + 7
+	return max(4, m.height-fixed)
+}
+
+func (m model) paneBodyHeight() int {
+	return max(1, m.contentOuterHeight()-3)
 }
 
 func (m model) horizontalLayout() (margin, panelWidth int) {
@@ -380,8 +527,8 @@ func (m model) header(width int) string {
 	if targetWidth < 1 {
 		targetWidth = 1
 	}
-	target := ansi.Truncate(m.plan.Installable, targetWidth, "")
-	compactTarget := ansi.Truncate(m.plan.Installable, available-2, "")
+	target := ansi.Truncate(m.plan.Installable, targetWidth, "…")
+	compactTarget := ansi.Truncate(m.plan.Installable, available-2, "…")
 	var lines []string
 	system := m.plan.System
 	if width >= 50 {
@@ -471,16 +618,7 @@ func capabilityChips(capabilities []string, width int) string {
 }
 
 func (m model) previewHeight() int {
-	_, width := m.horizontalLayout()
-	// Three blank separators plus the title, preview border/title, footer, and
-	// two terminal auto-wrap safety rows consume ten rows. Measuring the rendered
-	// header keeps narrow layouts from pushing the title into scrollback.
-	fixedRows := lipgloss.Height(m.header(width)) + lipgloss.Height(m.footer()) + 10
-	h := m.height - fixedRows
-	if h < 1 {
-		h = 1
-	}
-	return h
+	return m.paneBodyHeight()
 }
 
 func (m model) previewBox(width int) string {
@@ -496,23 +634,169 @@ func (m model) previewBox(width int) string {
 		if m.preview.SchemaVersion == 0 {
 			body = clikit.StDim.Render("Preview unavailable.")
 		} else {
-			previewWidth := panelContentWidth(width) - 4
-			if previewWidth < 1 {
-				previewWidth = 1
-			}
-			body = clikit.WindowList(m.previewRowsForWidth(max(1, previewWidth-1)), m.cursor, m.previewHeight(), previewWidth)
+			previewWidth := max(1, panelContentWidth(width)-4)
+			body = clikit.WindowList(m.previewRowsForWidth(max(1, previewWidth-1)), m.previewCursor, m.previewHeight(), previewWidth)
 		}
 	}
-	label := iconStyle.Render("\uf0ad") + "  " + titleStyle.Render("ACTIVATION PREVIEW") + "\n"
-	return panel(width, label+body)
+	label := iconStyle.Render("\uf0ad") + "  " + titleStyle.Render("ACTIVATION PREVIEW")
+	if m.focus == previewPane {
+		label += clikit.StHead.Render("  ·  FOCUSED")
+	}
+	return panel(width, label+"\n"+body)
 }
+func (m model) capabilityPanelWidth() int {
+	_, total := m.horizontalLayout()
+	if m.isWide() {
+		_, width := m.splitWidths(total)
+		return width
+	}
+	return total
+}
+
+func (m model) capabilityBox(width int) string {
+	bodyWidth := max(1, panelContentWidth(width)-4)
+	rows := m.capabilityRowsForWidth(max(1, bodyWidth-1))
+	body := clikit.WindowList(rows, m.capabilityCursor, m.paneBodyHeight(), bodyWidth)
+	label := iconStyle.Render("\uf085") + "  " + titleStyle.Render("CAPABILITIES")
+	if m.focus == capabilityPane {
+		label += clikit.StHead.Render("  ·  FOCUSED")
+	}
+	return panel(width, label+"\n"+body)
+}
+
+func (m model) capabilityRows() []string {
+	width := max(1, panelContentWidth(m.capabilityPanelWidth())-5)
+	return m.capabilityRowsForWidth(width)
+}
+
+func (m model) capabilityRowsForWidth(width int) []string {
+	rows := make([]string, 0, 32)
+	switch {
+	case m.inventoryLoading:
+		appendWrappedRow(&rows, clikit.StDim.Render("Loading exact-revision inventory…"), width)
+		return rows
+	case m.inventoryErr != nil:
+		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Inventory unavailable"), width)
+		rows = append(rows, "")
+		appendWrappedRow(&rows, clikit.StDim.Render(stripTerminalControls(m.inventoryErr.Error())), width)
+		rows = append(rows, "")
+		appendWrappedRow(&rows, "The activation preview and apply confirmation remain available.", width)
+		return rows
+	case len(m.inventory.Capabilities) == 0:
+		appendWrappedRow(&rows, clikit.StDim.Render("No active capabilities were declared by this apply plan."), width)
+		return rows
+	}
+
+	index := m.selectedCapability
+	if index < 0 || index >= len(m.inventory.Capabilities) {
+		index = 0
+	}
+	capability := m.inventory.Capabilities[index]
+	appendWrappedRow(&rows, titleStyle.Render(capability.Title)+clikit.StDim.Render(fmt.Sprintf("  %d/%d", index+1, len(m.inventory.Capabilities))), width)
+	state := "ACTIVE"
+	if !capability.Applicable {
+		state = "ACTIVE · NOT APPLICABLE ON " + strings.ToUpper(m.inventory.Identity.Platform)
+	}
+	appendWrappedRow(&rows, clikit.StHead.Render(state)+clikit.StDim.Render(fmt.Sprintf("  ·  %d items", len(capability.Deliverables))), width)
+	rows = append(rows, "")
+	appendWrappedRow(&rows, capability.Purpose, width)
+
+	if len(capability.Deliverables) == 0 {
+		rows = append(rows, "")
+		marker := "No direct deliverables."
+		if capability.Marker {
+			marker = "Intentional marker · no direct deliverables."
+		}
+		appendWrappedRow(&rows, clikit.StWarn.Render(marker), width)
+	} else {
+		for _, group := range deliverableGroups(capability.Deliverables) {
+			rows = append(rows, "")
+			appendWrappedRow(&rows, titleStyle.Render(fmt.Sprintf("%s (%d)", kindTitle(group.kind), len(group.items))), width)
+			for _, item := range group.items {
+				appendIndentedWrappedRow(&rows, item.Description, width, 2)
+				secondary := strings.TrimSpace(strings.Join(nonEmpty(item.Name, item.Version, item.Source), "  ·  "))
+				if secondary != "" {
+					appendIndentedWrappedRow(&rows, clikit.StDim.Render(secondary), width, 4)
+				}
+				if item.Delivery != "" {
+					appendIndentedWrappedRow(&rows, clikit.StDim.Render("via "+item.Delivery), width, 4)
+				}
+				if item.System != "" {
+					appendIndentedWrappedRow(&rows, clikit.StDim.Render("for "+item.System), width, 4)
+				}
+			}
+		}
+	}
+
+	boundaries := []struct {
+		label string
+		value string
+	}{
+		{label: "Delivery boundary", value: capability.DeliveryBoundary},
+		{label: "Security boundary", value: capability.SecurityBoundary},
+		{label: "Mutable state", value: capability.MutableState},
+	}
+	for _, boundary := range boundaries {
+		if boundary.value == "" {
+			continue
+		}
+		rows = append(rows, "")
+		appendWrappedRow(&rows, clikit.StHead.Render(boundary.label), width)
+		appendIndentedWrappedRow(&rows, clikit.StDim.Render(boundary.value), width, 2)
+	}
+	return rows
+}
+
+type deliverableGroup struct {
+	kind  string
+	items []inventorydata.Deliverable
+}
+
+func deliverableGroups(items []inventorydata.Deliverable) []deliverableGroup {
+	groups := make([]deliverableGroup, 0, 2)
+	indices := make(map[string]int, 2)
+	for _, item := range items {
+		index, ok := indices[item.Kind]
+		if !ok {
+			index = len(groups)
+			indices[item.Kind] = index
+			groups = append(groups, deliverableGroup{kind: item.Kind})
+		}
+		groups[index].items = append(groups[index].items, item)
+	}
+	return groups
+}
+
+func kindTitle(kind string) string {
+	switch kind {
+	case "package":
+		return "Packages"
+	case "application":
+		return "Applications"
+	case "":
+		return "Deliverables"
+	default:
+		return strings.ToUpper(kind[:1]) + kind[1:]
+	}
+}
+
+func nonEmpty(values ...string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 
 func (m model) previewRows() []string {
 	_, width := m.horizontalLayout()
-	previewWidth := panelContentWidth(width) - 4
-	if previewWidth < 1 {
-		previewWidth = 1
+	if m.isWide() {
+		width, _ = m.splitWidths(width)
 	}
+	previewWidth := max(1, panelContentWidth(width)-4)
 	return m.previewRowsForWidth(max(1, previewWidth-1))
 }
 
@@ -698,24 +982,47 @@ func (m model) footer() string {
 	if m.details {
 		mode = "summary"
 	}
+	if m.focus == capabilityPane {
+		controls := "↑/↓ scroll  ·  [/] cycle  ·  c back"
+		if m.isWide() {
+			controls = "↑/↓ capability  ·  [/] cycle  ·  Tab/c preview"
+		}
+		if m.width < 60 {
+			if m.phase == confirming {
+				return clikit.StWarn.Render("[/] cycle  ·  c back  ·  y/n apply")
+			}
+			return clikit.StDim.Render(controls)
+		}
+		if m.phase == confirming && m.width < 68 {
+			return clikit.StWarn.Render("[/] cycle  ·  c back  ·  y/n apply")
+		}
+		if m.phase == confirming {
+			controls += "  ·  y confirm  ·  n cancel"
+			return clikit.StWarn.Render(controls)
+		}
+		return clikit.StDim.Render(controls + "  ·  ^O ask  ·  q")
+	}
 	switch m.phase {
 	case confirming:
 		if m.width < 80 {
-			return clikit.StWarn.Render("^O ask  ·  y confirm  ·  n cancel")
+			return clikit.StWarn.Render("y confirm  ·  n cancel  ·  c capabilities")
 		}
-		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  d " + mode + "  ·  ^O ask")
+		return clikit.StWarn.Render("Apply this configuration?  y confirm  ·  n cancel  ·  d " + mode + "  ·  c capabilities  ·  ^O ask")
 	case applying:
 		return clikit.StDim.Render("Applying…  ·  ^O ask")
 	case applied:
 		if m.width < 60 {
-			return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("^O ask  ·  d "+mode+"  ·  r refresh  ·  q")
+			return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c capabilities  ·  r refresh  ·  q")
 		}
-		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("^O ask  ·  d "+mode+"  ·  r refresh  ·  q quit")
+		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c capabilities  ·  d "+mode+"  ·  r refresh  ·  ^O ask  ·  q quit")
 	case ready:
-		if m.width < 80 {
-			return clikit.StDim.Render("^O ask · d " + mode + " · enter apply · q")
+		if m.width < 60 {
+			return clikit.StDim.Render("c capabilities  ·  enter apply  ·  q")
 		}
-		return clikit.StDim.Render("↑/↓ preview  ·  d " + mode + "  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
+		if m.width < 112 {
+			return clikit.StDim.Render("↑/↓ preview  ·  c capabilities  ·  d " + mode + "  ·  enter apply  ·  q")
+		}
+		return clikit.StDim.Render("↑/↓ preview  ·  Tab/c capabilities  ·  d " + mode + "  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
 	default:
 		return clikit.StDim.Render("^O ask  ·  q quit")
 	}

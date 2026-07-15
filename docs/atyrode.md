@@ -14,14 +14,32 @@ and the other command surfaces) continues through the Bash CLI even on a TTY.
 Existing scripts therefore do not enter the cockpit.
 
 The apply panel first resolves the requested branch to an exact commit, then
-loads `atyrode apply --ref <commit> --preview-json`. Its default activation
-preview summarizes package, store-path, and closure-size changes without
-showing raw generation paths; `d` toggles normalized technical details, where
-the previous and new generation paths remain available with labels. Startup
-and refresh perform no activation. The operator must open the confirmation
-step and accept it; the real apply uses that same exact commit, so the activated
-configuration cannot drift from the preview if the branch advances while the
-cockpit is open.
+loads both `atyrode apply --ref <commit> --preview-json` and `atyrode inventory
+--ref <commit> --json` asynchronously. Its default activation preview
+summarizes package, store-path, and closure-size changes without showing raw
+generation paths; `d` toggles normalized technical details, where the previous
+and new generation paths remain available with labels.
+
+Press `c` to open or focus the active capability inventory. `[`/`]` (or
+left/right arrows) cycle in the apply plan's declared order, and `j`/`k` or
+arrows scroll the focused pane. Wide terminals keep a 42-cell capability panel
+beside the preview and use `Tab` to change focus; medium terminals use a
+full-width capability view; narrow terminals stack the selection summary above
+the scrollable details. `c` or `esc` returns to the preview without losing
+selection or either scroll position.
+
+Capability details are read only from the exact-revision CLI manifest. The
+cockpit validates schema version, full revision, system/platform identity, and
+the planned host's canonical id or alias before showing purpose, active state,
+resolved deliverables, and ownership/security/mutable-state boundaries.
+Loading and inventory failures remain textual and never block confirmation or
+fall back to stale data.
+
+Startup and refresh perform no activation. The operator must open the
+confirmation step and accept it; the real apply uses that same exact commit, so
+the activated configuration cannot drift from the preview if the branch
+advances while the cockpit is open. The `ctrl+o` Ask overlay remains read-only
+and preserves the full cockpit state.
 
 ## Applying a configuration
 

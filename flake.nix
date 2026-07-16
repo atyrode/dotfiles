@@ -255,7 +255,7 @@
         "atyrode-agent-tools-migrate"
         "atyrode"
         "atyrode-tui"
-        "code-tui"
+        "code"
         "codex"
         "atyrode-codex-seed"
         "omp"
@@ -277,7 +277,7 @@
             atyrode-tui = final.callPackage ./pkgs/atyrode-tui { };
             # Repository-owned on every platform: upstream releases outpace
             # nixpkgs, which also cannot build codex on aarch64-darwin.
-            code-tui = final.callPackage ./pkgs/code-tui { };
+            code = final.callPackage ./pkgs/code { };
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-seed = final.callPackage ./pkgs/codex-seed { };
             omp = final.callPackage ./pkgs/omp { };
@@ -490,7 +490,7 @@
             agent-tools-migrate
             atyrode
             atyrode-tui
-            code-tui
+            code
             codex
             codex-seed
             omp

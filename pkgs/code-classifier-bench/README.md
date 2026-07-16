@@ -2,7 +2,7 @@
 
 An in-repo, anonymized benchmark harness for the `code` picker's prompt→profile
 classifier — the local ollama / `qwen2.5:3b` evaluator behind <kbd>ctrl+o</kbd>
-(`pkgs/code-tui/suggest.go` + [cli-kit](https://github.com/atyrode/cli-kit)’s `ollama` backend, PR #139).
+([atyrode/code](https://github.com/atyrode/code)’s `suggest.go` + [cli-kit](https://github.com/atyrode/cli-kit)’s `ollama` backend, PR #139).
 
 It answers two questions:
 

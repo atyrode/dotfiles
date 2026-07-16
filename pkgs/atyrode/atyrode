@@ -28,8 +28,9 @@ usage() {
 Usage:
   atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
   atyrode capabilities list [--json]
-  atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
   atyrode capabilities show [HOST] [--json]
+  atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
+  atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
   atyrode doctor tools [--json]
@@ -51,6 +52,8 @@ keep-or-reset review on a terminal.
 inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
+lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
+cache/state paths under the configured home. It is read-only; --json emits a stable report.
 generations lists the activation profile's generations (nix-darwin system on
 macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
@@ -266,6 +269,175 @@ inventory() {
         }
         end
     ' <<<"$manifest" || die "$EX_DATAERR" "unknown host or alias in evaluated inventory: $host"
+  fi
+}
+
+# lifecycle reports a deliberately small, named set of operator-owned lifecycle
+# artifacts. It never traverses HOME: Home Manager's profile, the configured
+# dotfiles checkout, OMP's own worktree root, and three documented OMP/atyrode
+# cache/state paths are the entire probe surface. A report is advisory only;
+# classifications are conservative and this command has no mutating branch.
+lifecycle_append() {
+  local rows="$1" category="$2" path="$3" bytes="$4" evidence="$5" owner="$6" classification="$7" state="$8"
+  jq -c --argjson rows "$rows" --arg category "$category" --arg path "$path" \
+    --arg evidence "$evidence" --arg owner "$owner" --arg classification "$classification" --arg state "$state" \
+    --argjson bytes "$bytes" \
+    '$rows + [{category:$category,path:$path,bytes:$bytes,evidence:$evidence,owner:$owner,classification:$classification,state:$state}]' \
+    <<<'null'
+}
+
+lifecycle_diagnostic() {
+  local diagnostics="$1" scope="$2" path="$3" code="$4" message="$5"
+  jq -c --argjson diagnostics "$diagnostics" --arg scope "$scope" --arg path "$path" \
+    --arg code "$code" --arg message "$message" \
+    '$diagnostics + [{scope:$scope,path:$path,code:$code,message:$message}]' <<<'null'
+}
+
+lifecycle_bytes() {
+  local path="$1" size
+  [[ -e "$path" || -L "$path" ]] || { printf 'null'; return; }
+  size="$(du -sb "$path" 2>/dev/null | awk 'NR == 1 { print $1 }')" || true
+  [[ "$size" =~ ^[0-9]+$ ]] && printf '%s' "$size" || printf 'null'
+}
+
+# Home Manager profile links point into the Nix store. The link's own filesystem
+# bytes are not the generation's footprint, so ask Nix for its numeric closure
+# size instead. A missing/non-store link or a failed store query is explicitly
+# unknown rather than an invented or dereferenced directory size.
+lifecycle_generation_bytes() {
+  local link="$1" target size
+  target="$(readlink -f "$link" 2>/dev/null)" || { printf 'null'; return; }
+  [[ -n "$target" && -e "$target" ]] || { printf 'null'; return; }
+  size="$(nix path-info --json --closure-size "$target" 2>/dev/null \
+    | jq -er 'to_entries[0].value.closureSize | select(type == "number")' 2>/dev/null)" || true
+  [[ "$size" =~ ^[0-9]+$ ]] && printf '%s' "$size" || printf 'null'
+}
+
+lifecycle_git_available() {
+  local cmd=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || cmd="$ATYRODE_GIT"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+lifecycle_git() {
+  local cmd=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || cmd="$ATYRODE_GIT"
+  "$cmd" "$@"
+}
+
+lifecycle_worktree() {
+  local rows="$1" diagnostics="$2" category="$3" path="$4" owner="$5" active="$6"
+  local bytes classification=protected state=clean status
+  bytes="$(lifecycle_bytes "$path")"
+  if ! lifecycle_git_available; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$path" tool-unavailable "git is unavailable; worktree state is unknown")"
+    rows="$(lifecycle_append "$rows" "$category" "$path" "$bytes" "git worktree" "$owner" unknown unknown)"
+  elif ! status="$(lifecycle_git -C "$path" status --porcelain 2>/dev/null)"; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$path" malformed "cannot read Git worktree state")"
+    rows="$(lifecycle_append "$rows" "$category" "$path" "$bytes" "git worktree" "$owner" unknown malformed)"
+  else
+    [[ -z "$status" ]] || { classification=dirty; state=dirty; }
+    [[ "$active" == 1 && "$classification" == protected ]] && { classification=active; state=active; }
+    rows="$(lifecycle_append "$rows" "$category" "$path" "$bytes" "git status --porcelain" "$owner" "$classification" "$state")"
+  fi
+  printf '%s\n%s\n' "$rows" "$diagnostics"
+}
+
+lifecycle_nix_env_available() {
+  local cmd=nix-env
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX_ENV:-}" ]] || cmd="$ATYRODE_NIX_ENV"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+cmd_lifecycle() {
+  local json=0 rows='[]' diagnostics='[]' profile line gen current bytes output
+  local repo="$HOME/nix-dotfiles" omp_worktrees="$HOME/.omp/wt"
+  local cache="$HOME/.cache/oh-my-pi" untrusted_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-untrusted"
+  local seed_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-plain-seed"
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_LIFECYCLE_REPO:-}" ]] || repo="$ATYRODE_LIFECYCLE_REPO"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+
+      *) die "$EX_USAGE" "unknown lifecycle option: $1" ;;
+    esac
+    shift
+  done
+
+  profile="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/home-manager"
+  if [[ ! -e "$profile" && ! -L "$profile" ]]; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" absent "Home Manager generations profile is absent")"
+    rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" null "nix-env --list-generations" home-manager unknown absent)"
+  elif ! lifecycle_nix_env_available; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" tool-unavailable "nix-env is unavailable; generations are unknown")"
+    rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" "$(lifecycle_generation_bytes "$profile")" "nix-env --list-generations" home-manager unknown unknown)"
+  elif ! output="$(nix_env -p "$profile" --list-generations 2>/dev/null)"; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" unreadable "cannot list Home Manager generations")"
+    rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" "$(lifecycle_generation_bytes "$profile")" "nix-env --list-generations" home-manager unknown unknown)"
+  else
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      if [[ "$line" =~ ^[[:space:]]*([0-9]+)[[:space:]] ]]; then
+        gen="${BASH_REMATCH[1]}"; current=protected
+        [[ "$line" == *"(current)"* ]] && current=protected-current
+        rows="$(lifecycle_append "$rows" home-manager-generation "$profile-$gen-link" "$(lifecycle_generation_bytes "$profile-$gen-link")" "nix-env --list-generations" home-manager "$current" present)"
+      else
+        diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" malformed "unparseable nix-env generation row")"
+        rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" "$(lifecycle_generation_bytes "$profile")" "nix-env --list-generations" home-manager unknown malformed)"
+      fi
+    done <<<"$output"
+  fi
+
+  if [[ ! -d "$repo" ]]; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$repo" absent "configured native Git checkout is absent")"
+    rows="$(lifecycle_append "$rows" git-worktree "$repo" null "git worktree list --porcelain" dotfiles unknown absent)"
+  elif ! lifecycle_git_available; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$repo" tool-unavailable "git is unavailable; native worktrees are unknown")"
+    rows="$(lifecycle_append "$rows" git-worktree "$repo" "$(lifecycle_bytes "$repo")" "git worktree list --porcelain" dotfiles unknown unknown)"
+  elif ! output="$(lifecycle_git -C "$repo" worktree list --porcelain 2>/dev/null)"; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$repo" malformed "cannot enumerate native Git worktrees")"
+    rows="$(lifecycle_append "$rows" git-worktree "$repo" "$(lifecycle_bytes "$repo")" "git worktree list --porcelain" dotfiles unknown malformed)"
+  else
+    local worktree="" first=1
+    while IFS= read -r line; do
+      [[ "$line" == worktree\ * ]] || continue
+      worktree="${line#worktree }"
+      readarray -t pair < <(lifecycle_worktree "$rows" "$diagnostics" git-worktree "$worktree" dotfiles "$first")
+      rows="${pair[0]}"; diagnostics="${pair[1]}"; first=0
+    done <<<"$output"
+  fi
+
+  if [[ ! -d "$omp_worktrees" ]]; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$omp_worktrees" absent "OMP worktree root is absent")"
+    rows="$(lifecycle_append "$rows" omp-worktree-root "$omp_worktrees" null "OMP v17 worktree root" omp unknown absent)"
+  else
+    local path
+    for path in "$omp_worktrees"/*; do
+      [[ -d "$path" ]] || continue
+      readarray -t pair < <(lifecycle_worktree "$rows" "$diagnostics" omp-worktree "$path" omp 0)
+      rows="${pair[0]}"; diagnostics="${pair[1]}"
+    done
+  fi
+
+  for path in "$cache" "$untrusted_state" "$seed_state"; do
+    if [[ -e "$path" || -L "$path" ]]; then
+      if [[ "$path" == "$cache" ]]; then
+        rows="$(lifecycle_append "$rows" omp-cache "$path" "$(lifecycle_bytes "$path")" "explicit OMP cache path" omp disposable cache)"
+      else
+        rows="$(lifecycle_append "$rows" atyrode-state "$path" "$(lifecycle_bytes "$path")" "explicit atyrode state path" atyrode protected state)"
+      fi
+    else
+      rows="$(lifecycle_append "$rows" "$([[ "$path" == "$cache" ]] && echo omp-cache || echo atyrode-state)" "$path" null "explicit managed path" "$([[ "$path" == "$cache" ]] && echo omp || echo atyrode)" unknown absent)"
+    fi
+  done
+
+  if [[ "$json" == 1 ]]; then
+    jq -cn --argjson entries "$rows" --argjson diagnostics "$diagnostics" \
+      '{schemaVersion:1,entries:($entries | sort_by(.category, .path)),diagnostics:($diagnostics | sort_by(.scope, .path, .code))}'
+  else
+    printf 'atyrode: lifecycle inventory (read-only)\n'
+    jq -r '.[] | "\(.category): \(.classification) \(.path) [bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end); \(.evidence)]"' <<<"$rows"
+    jq -r '.[] | "diagnostic: \(.scope) \(.code) \(.path): \(.message)"' <<<"$diagnostics" >&2
   fi
 }
 
@@ -1549,6 +1721,7 @@ main() {
     apply) apply_config "$@" ;;
     clean) cmd_clean "$@" ;;
     generations) cmd_generations "$@" ;;
+    lifecycle) cmd_lifecycle "$@" ;;
     rollback) cmd_rollback "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)

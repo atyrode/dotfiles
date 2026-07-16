@@ -1,7 +1,7 @@
-# Plain OMP v16.5.2 CLI reference
+# Plain OMP v17.0.0 CLI reference
 
-> **Scope:** this page is a snapshot of the packaged **upstream `omp` v16.5.2**
-> executable, audited 2026-07-14. It is not a promise that `code`,
+> **Scope:** this page is a snapshot of the packaged **upstream `omp` v17.0.0**
+> executable, audited 2026-07-15. It is not a promise that `code`,
 > `omp-managed`, or `ompu` preserve every flag unchanged. See the
 > [launcher matrix](README.md#choose-the-correct-surface-first) first.
 
@@ -28,7 +28,7 @@ non-interactive execution.
 | `--prewalk` | Start on the active model, then hand off to a fast/cheap model at the first edit/write after the plan's todo list exists (default off; `prewalk.enabled`) |
 | `--no-prewalk` | Disable prewalk even when `prewalk.enabled` is set |
 | `--prewalk-into <selector>` | Target model for the prewalk handoff (defaults to the `smol` role) |
-| `--plan-yolo` | Force read-only plan mode at start, auto-approve the plan on the model's first resolve call, then implement it on the `--plan-yolo-into` model |
+| `--plan-yolo` | Force read-only plan mode at start, auto-approve the first plan proposal, then implement it on the `--plan-yolo-into` model |
 | `--plan-yolo-into <selector>` | Target model for plan-yolo execution (defaults to the `smol` role) |
 | `--provider <id>` | Legacy provider selector; prefer `--model` |
 | `--api-key <value>` | Supply a process-local credential override |
@@ -154,7 +154,7 @@ $ omp config managed --json
 ```
 
 The repository-packaged `omp` passthrough intercepts that one action before
-dispatching to upstream. `config managed` is not an upstream v16.5.2
+dispatching to upstream. `config managed` is not an upstream v17.0.0
 subcommand, despite the intentionally plain-looking invocation.
 
 ## Built-in agent tool catalog
@@ -173,12 +173,27 @@ The packaged root help advertises these default tools:
 | `inspect_image` | Vision-model image analysis |
 | `browser` | Puppeteer browser automation |
 | `task` | Parallel subagents |
+| `hub` | Peer messaging, background-job control, and supervised processes |
 | `todo` | Structured task-list state |
 | `web_search` | Search through configured web providers |
 | `ask` | Interactive operator questions |
 
 Extensions and MCP servers can add tools, so `/tools` is authoritative for the
 active session. A wrapper can also limit or deny tools through policy.
+
+In v17.0.0, the essential `hub` tool replaces the separate `irc`, `job`, and
+`launch` agent tools while preserving peer messaging, background-job control,
+and supervised-process operations. Discoverable custom, MCP, image-generation,
+and TTS tools mount as `xd://` virtual devices by default: use `read xd://` to
+list them, `read xd://<tool>` for a contract, and `write xd://<tool>` to invoke
+one. Plan and preview resolution likewise moved from the removed `resolve` tool
+to `xd://propose`, `xd://resolve`, and `xd://reject`.
+
+Upstream v17 also defaults `astGrep.enabled` and
+`edit.enforceSeenLines` off. These dotfiles deliberately enable both in the
+managed defaults and plain-profile seed: repository policy requires scoped,
+syntax-aware search, and the strict guard trades occasional extra targeted
+reads for protection against edits anchored on unseen source lines.
 
 ## Invocation examples, with surface made explicit
 
@@ -199,8 +214,8 @@ $ ompu "inspect this untrusted repository"
 ```
 
 Sources: packaged `omp --help`; tagged upstream
-[settings](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/settings.md),
-[providers](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/providers.md),
-[models](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/models.md), and
-[secrets](https://github.com/can1357/oh-my-pi/blob/v16.5.2/docs/secrets.md)
+[settings](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/settings.md),
+[providers](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/providers.md),
+[models](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/models.md), and
+[secrets](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/secrets.md)
 documentation; repository [Agent tools](../agent-tools.md).

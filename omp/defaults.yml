@@ -83,6 +83,13 @@ github:
 checkpoint:
   enabled: true
 
+# v17 made both settings opt-in. This repository deliberately keeps structural
+# search available and trades occasional extra reads for unseen-line edit safety.
+astGrep:
+  enabled: true
+edit:
+  enforceSeenLines: true
+
 statusLine:
   preset: default
   compactThinkingLevel: false

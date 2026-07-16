@@ -22,6 +22,15 @@ pkgs.runCommand "check-atyrode-cli"
 
     cat > "$TMPDIR/bin/git" <<'EOF'
     #!${pkgs.runtimeShell}
+    if [[ "$*" == *'worktree list --porcelain'* ]]; then
+      printf 'worktree %s\nworktree %s\n' "$TMPDIR/lifecycle-repo" "$HOME/.omp/wt/dirty"
+      exit 0
+    fi
+    if [[ "$*" == *'status --porcelain'* ]]; then
+      [[ "$*" == *'/malformed'* ]] && exit 1
+      [[ "$*" == *'/dirty'* ]] && printf ' M fixture\n'
+      exit 0
+    fi
     case "$*" in
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
@@ -73,6 +82,10 @@ pkgs.runCommand "check-atyrode-cli"
     # Stub nix-env's generation listing (clean --json / generations read it).
     cat > "$TMPDIR/bin/nix-env" <<'EOF'
     #!${pkgs.runtimeShell}
+    if [[ "''${ATYRODE_NIX_ENV_MALFORMED:-0}" == 1 ]]; then
+      echo 'not a generation row'
+      exit 0
+    fi
     case "$*" in
       *--list-generations*)
         echo "  1   2026-05-01 10:00:00"
@@ -687,6 +700,47 @@ pkgs.runCommand "check-atyrode-cli"
       || { echo "footer must reclaim the size the gc reported: $gc_out" >&2; exit 1; }
     rm -f "$TMPDIR/gc-args"
 
+    # Lifecycle is a read-only fixed-path report. The fixture HOME below is the
+    # full probe surface: no real-home data or arbitrary directory scan is used.
+    mkdir -p "$TMPDIR/lifecycle-repo" "$HOME/.omp/wt/dirty" "$HOME/.omp/wt/malformed" \
+      "$HOME/.cache/oh-my-pi" "$XDG_STATE_HOME/atyrode/omp-untrusted" "$XDG_STATE_HOME/atyrode/omp-plain-seed"
+    printf 'cache' > "$HOME/.cache/oh-my-pi/cache"
+    printf 'state' > "$XDG_STATE_HOME/atyrode/omp-untrusted/session"
+    printf 'seed' > "$XDG_STATE_HOME/atyrode/omp-plain-seed/seed"
+    mkdir -p "$TMPDIR/lifecycle-generation"
+    printf 'not-a-store-closure' > "$TMPDIR/lifecycle-generation/payload"
+    ln -s "$TMPDIR/lifecycle-generation" "$XDG_STATE_HOME/nix/profiles/home-manager-3-link"
+    test -L "$XDG_STATE_HOME/nix/profiles/home-manager-3-link"
+    export ATYRODE_LIFECYCLE_REPO="$TMPDIR/lifecycle-repo"
+    lifecycle_one="$(atyrode lifecycle --json)"
+    lifecycle_two="$(atyrode lifecycle --json)"
+    test "$lifecycle_one" = "$lifecycle_two" \
+      || { echo 'lifecycle JSON must be byte-stable for one fixture state' >&2; exit 1; }
+    jq -e '.schemaVersion == 1' <<<"$lifecycle_one" >/dev/null
+    jq -e '[.entries[] | select(.category == "home-manager-generation" and .classification == "protected-current")] | length == 1' <<<"$lifecycle_one" >/dev/null
+    jq -e --arg path "$XDG_STATE_HOME/nix/profiles/home-manager-3-link" '[.entries[] | select(.path == $path and .classification == "protected-current" and .bytes == null)] | length == 1' <<<"$lifecycle_one" >/dev/null \
+      || { echo 'lifecycle must not report symlink bytes as a Home Manager closure size' >&2; exit 1; }
+    jq -e --arg path "$TMPDIR/lifecycle-repo" '[.entries[] | select(.path == $path and .classification == "active")] | length == 1' <<<"$lifecycle_one" >/dev/null
+    jq -e --arg path "$HOME/.omp/wt/dirty" '[.entries[] | select(.category == "omp-worktree" and .path == $path and .classification == "dirty")] | length == 1' <<<"$lifecycle_one" >/dev/null
+    jq -e --arg path "$HOME/.omp/wt/malformed" '[.entries[] | select(.path == $path and .classification == "unknown" and .state == "malformed")] | length == 1' <<<"$lifecycle_one" >/dev/null
+    jq -e '[.entries[] | select(.category == "omp-cache" and .classification == "disposable")] | length == 1' <<<"$lifecycle_one" >/dev/null
+    jq -e '[.diagnostics[] | select(.code == "malformed")] | length >= 1' <<<"$lifecycle_one" >/dev/null \
+      || { echo "lifecycle JSON classification is wrong: $lifecycle_one" >&2; exit 1; }
+    lifecycle_human="$(atyrode lifecycle 2>&1)"
+    grep -qF 'lifecycle inventory (read-only)' <<<"$lifecycle_human" \
+      || { echo "lifecycle human output lacks a useful heading: $lifecycle_human" >&2; exit 1; }
+    grep -qF 'dirty' <<<"$lifecycle_human" \
+      || { echo "lifecycle human output must expose dirty worktrees: $lifecycle_human" >&2; exit 1; }
+    lifecycle_unavailable="$(ATYRODE_NIX_ENV="$TMPDIR/bin/missing-nix-env" atyrode lifecycle --json)"
+    jq -e '[.diagnostics[] | select(.code == "tool-unavailable" and .scope == "generations")] | length == 1' \
+      <<<"$lifecycle_unavailable" >/dev/null \
+      || { echo "lifecycle must report unavailable tools structurally: $lifecycle_unavailable" >&2; exit 1; }
+    grep -qx 'cache' "$HOME/.cache/oh-my-pi/cache" \
+      || { echo 'lifecycle must not mutate the fixture cache' >&2; exit 1; }
+    grep -qx 'state' "$XDG_STATE_HOME/atyrode/omp-untrusted/session" \
+      || { echo 'lifecycle must not mutate the fixture state' >&2; exit 1; }
+    unset ATYRODE_LIFECYCLE_REPO
+
     # Colour is opt-in on the outcome: forced on it wraps the footer in SGR codes,
     # and by default (no tty, no override) the output stays byte-plain so pipes and
     # this harness read clean text. \033 is the ESC that opens every SGR sequence.
@@ -748,6 +802,8 @@ pkgs.runCommand "check-atyrode-cli"
     help="$(atyrode --help)"
     grep -qF 'then prints preflight metadata without invoking nh; --dry-run invokes the normal' <<<"$help"
     grep -qF 'nh switch backend with --dry; --preview-json runs that dry backend and emits its' <<<"$help"
+    grep -qF 'atyrode capabilities list [--json]' <<<"$help"
+    grep -qF 'atyrode capabilities show [HOST] [--json]' <<<"$help"
     unset _ATYRODE_TEST_INVENTORY
 
     mkdir "$out"

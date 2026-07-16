@@ -103,6 +103,8 @@ atyrode inventory --json
 atyrode inventory --host alex-linux --json
 atyrode inventory --ref <branch-tag-or-commit> --json
 atyrode inventory --repo /absolute/path/to/checkout --json
+atyrode lifecycle
+atyrode lifecycle --json
 atyrode doctor host --json
 atyrode doctor system --json
 atyrode doctor tools --json
@@ -117,6 +119,16 @@ revision and `--repo` selects a local checkout; they are mutually exclusive.
 The command currently requires `--json`, returns compact key-sorted JSON, and
 does not inspect closures, credentials, sessions, or other mutable state.
 
+`lifecycle` is a local, read-only report rather than a cleanup command. It
+inspects only the Home Manager profile, native worktrees of the configured
+dotfiles checkout, OMP's documented `~/.omp/wt` root, and the named OMP/atyrode
+cache and state paths; it never recursively searches HOME. JSON rows carry a
+category, path, observed byte size (or `null`), evidence, owner, state, and
+conservative classification. Dirty, active, protected, malformed, and unknown
+entries are never disposable. Missing tools and malformed state remain visible
+as structured diagnostics. The command does not delete, prune, garbage-collect,
+install timers, or modify state.
+
 Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.
 `doctor system [HOST] [--json]` audits the boundary that package installation
@@ -124,5 +136,5 @@ alone cannot satisfy: the real login shell, Nix daemon and trust policy,
 container engine, antivirus ownership, Android device policy, and Homebrew
 drift. Its stable check IDs, row schema, statuses, exits, and read-only probe
 contract are documented in [Home Manager and system boundary](system-boundary.md).
-The `workspace`, `agent`, `generations`, `rollback`, and `clean` namespaces are
-reserved for their owning follow-up issues and currently fail clearly.
+The `workspace` and `agent` namespaces are reserved for their owning follow-up
+issues and currently fail clearly.

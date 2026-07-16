@@ -144,12 +144,14 @@ func buildAskGrounding(help []byte) (clikit.DocCorpus, error) {
 }
 
 type model struct {
-	cli    string
-	runner commandRunner
-	apply  applyFunc
-	asker  clikit.Asker
-	phase  phase
-	plan   applyPlan
+	cli            string
+	runner         commandRunner
+	apply          applyFunc
+	asker          clikit.Asker
+	nav            clikit.WorkspaceNav
+	phase          phase
+	plan           applyPlan
+	applyRequested bool
 
 	preview             previewdata.Document
 	previewLoading      bool
@@ -206,7 +208,8 @@ func newModel(cli string) model {
 		runner: execCommandRunner{},
 		apply:  execApply,
 		asker:  asker,
-		phase:  loadingPlan,
+		nav:    newCockpitNav(),
+		phase:  ready,
 		width:  100,
 		height: 30,
 	}
@@ -216,7 +219,7 @@ func (m model) Asker() clikit.Asker { return m.asker }
 
 func (model) BoxTitle() string { return "ASK ATYRODE · read-only" }
 
-func (m model) Init() tea.Cmd { return m.loadPlan() }
+func (m model) Init() tea.Cmd { return nil }
 
 func (m model) loadPlan() tea.Cmd {
 	runner := m.runner
@@ -455,10 +458,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case "ctrl+c", "q":
 			m.cancelInspections()
 			return m, tea.Quit
+		case "tab":
+			return m, m.nextWorkspace(1)
+		case "shift+tab":
+			return m, m.nextWorkspace(-1)
+		}
+		if id, ok := workspaceForShortcut(key); ok {
+			return m, m.activateWorkspace(id)
+		}
+		if m.nav.Active() != workspaceApply {
+			return m, nil
+		}
+		switch key {
 		case "r":
 			if m.phase != applying {
 				m.cancelInspections()
@@ -487,15 +503,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !m.isWide() {
 						m.capabilitiesOpen = false
 					}
-				} else {
-					m.focus, m.capabilitiesOpen = capabilityPane, true
-					return m, m.startInventory()
-				}
-			}
-		case "tab":
-			if m.isWide() && (m.phase == ready || m.phase == confirming || m.phase == applied) {
-				if m.focus == capabilityPane {
-					m.focus = previewPane
 				} else {
 					m.focus, m.capabilitiesOpen = capabilityPane, true
 					return m, m.startInventory()
@@ -587,7 +594,6 @@ func clampCursor(cursor, rows int) int {
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(clikit.CHead))
 	pillStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#11151c")).Background(lipgloss.Color(clikit.CAcc)).Padding(0, 1)
-	boxStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(clikit.CBord)).Padding(0, 1)
 	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(clikit.CDim)).Width(14)
 	chipStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(clikit.CHead)).Background(lipgloss.Color(clikit.CSelBg)).Padding(0, 1)
 	iconStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(clikit.CAcc))
@@ -595,6 +601,27 @@ var (
 
 func (m model) View() string {
 	margin, panelWidth := m.horizontalLayout()
+	var content string
+	switch m.nav.Active() {
+	case workspaceApply:
+		content = m.applyView(panelWidth)
+	case workspaceAsk:
+		content = m.askWorkspaceView(panelWidth)
+	case workspaceLifecycle, workspaceDoctor, workspaceCapability:
+		content = m.pendingWorkspaceView(panelWidth)
+	default:
+		content = m.overviewView(panelWidth)
+	}
+	sections := []string{
+		titleStyle.Render("ATYRODE") + "  " + pillStyle.Render(m.workspaceTitle()),
+		m.workspaceTabs(panelWidth),
+		content,
+		m.shellFooter(),
+	}
+	return clikit.PadLeft(strings.Join(sections, "\n\n"), margin)
+}
+
+func (m model) applyView(panelWidth int) string {
 	content := m.previewBox(panelWidth)
 	if m.isWide() {
 		previewWidth, capabilityWidth := m.splitWidths(panelWidth)
@@ -602,14 +629,7 @@ func (m model) View() string {
 	} else if m.capabilitiesOpen {
 		content = m.capabilityBox(panelWidth)
 	}
-
-	sections := []string{
-		titleStyle.Render("ATYRODE") + "  " + pillStyle.Render("apply"),
-		m.header(panelWidth),
-		content,
-		m.footer(),
-	}
-	return clikit.PadLeft(strings.Join(sections, "\n\n"), margin)
+	return strings.Join([]string{m.header(panelWidth), content, m.footer()}, "\n\n")
 }
 
 func (m model) isWide() bool { return m.width >= 112 }
@@ -637,7 +657,7 @@ func (m model) contentPanelWidth() int {
 
 func (m model) contentOuterHeight() int {
 	_, width := m.horizontalLayout()
-	fixed := 1 + lipgloss.Height(m.header(width)) + lipgloss.Height(m.footer()) + 7
+	fixed := 1 + lipgloss.Height(m.header(width)) + lipgloss.Height(m.footer()) + lipgloss.Height(m.shellFooter()) + 11
 	return max(4, m.height-fixed)
 }
 
@@ -660,16 +680,16 @@ func (m model) horizontalLayout() (margin, panelWidth int) {
 func (m model) header(width int) string {
 	if m.plan.Host == "" {
 		if m.phase == failed {
-			return panel(width, clikit.StBrk.Render("Unable to load apply plan"))
+			return clikit.Panel(width, clikit.StBrk.Render("Unable to load apply plan"))
 		}
-		return panel(width, clikit.StDim.Render("Resolving host and apply plan…"))
+		return clikit.Panel(width, clikit.StDim.Render("Resolving host and apply plan…"))
 	}
 
 	dirty := clikit.StOk.Render("clean")
 	if m.plan.Dirty {
 		dirty = clikit.StWarn.Render("dirty")
 	}
-	available := panelContentWidth(width)
+	available := clikit.PanelContentWidth(width)
 	targetWidth := available - lipgloss.Width(labelStyle.Render("target")) - 2
 	if targetWidth < 1 {
 		targetWidth = 1
@@ -705,32 +725,7 @@ func (m model) header(width int) string {
 			labelStyle.Render("capabilities") + capabilityChips(m.plan.Capabilities, available-14),
 		}
 	}
-	return panel(width, strings.Join(lines, "\n"))
-}
-
-func panel(width int, content string) string {
-	if width < 1 {
-		width = 1
-	}
-	inner := panelContentWidth(width)
-	content = clipLines(content, inner)
-	return boxStyle.Width(inner).Render(content)
-}
-
-func clipLines(content string, width int) string {
-	lines := strings.Split(content, "\n")
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "")
-	}
-	return strings.Join(lines, "\n")
-}
-
-func panelContentWidth(width int) int {
-	inner := width - boxStyle.GetHorizontalFrameSize() - 2 // padding is outside lipgloss Width
-	if inner < 1 {
-		return 1
-	}
-	return inner
+	return clikit.Panel(width, strings.Join(lines, "\n"))
 }
 
 func capabilityChips(capabilities []string, width int) string {
@@ -769,7 +764,7 @@ func (m model) previewHeight() int {
 }
 
 func (m model) previewBox(width int) string {
-	previewWidth := max(1, panelContentWidth(width)-4)
+	previewWidth := max(1, clikit.PanelContentWidth(width)-4)
 	var body string
 	if m.preview.SchemaVersion != 0 {
 		body = clikit.WindowList(m.previewRowsForWidth(max(1, previewWidth-1)), m.previewCursor, m.previewHeight(), previewWidth)
@@ -780,7 +775,7 @@ func (m model) previewBox(width int) string {
 	if m.focus == previewPane {
 		label += clikit.StHead.Render("  ·  FOCUSED")
 	}
-	return panel(width, label+"\n"+body)
+	return clikit.Panel(width, label+"\n"+body)
 }
 
 func (m model) previewStatusRows(width int) []string {
@@ -835,18 +830,18 @@ func (m model) capabilityPanelWidth() int {
 }
 
 func (m model) capabilityBox(width int) string {
-	bodyWidth := max(1, panelContentWidth(width)-4)
+	bodyWidth := max(1, clikit.PanelContentWidth(width)-4)
 	rows := m.capabilityRowsForWidth(max(1, bodyWidth-1))
 	body := clikit.WindowList(rows, m.capabilityCursor, m.paneBodyHeight(), bodyWidth)
 	label := iconStyle.Render("\uf085") + "  " + titleStyle.Render("CAPABILITIES")
 	if m.focus == capabilityPane {
 		label += clikit.StHead.Render("  ·  FOCUSED")
 	}
-	return panel(width, label+"\n"+body)
+	return clikit.Panel(width, label+"\n"+body)
 }
 
 func (m model) capabilityRows() []string {
-	width := max(1, panelContentWidth(m.capabilityPanelWidth())-5)
+	width := max(1, clikit.PanelContentWidth(m.capabilityPanelWidth())-5)
 	return m.capabilityRowsForWidth(width)
 }
 
@@ -997,7 +992,7 @@ func (m model) previewRows() []string {
 	if m.isWide() {
 		width, _ = m.splitWidths(width)
 	}
-	previewWidth := max(1, panelContentWidth(width)-4)
+	previewWidth := max(1, clikit.PanelContentWidth(width)-4)
 	return m.previewRowsForWidth(max(1, previewWidth-1))
 }
 

@@ -105,8 +105,8 @@ let
             };
 
             config = {
-              xdg.stateHome = "/build/xdg-state";
-              xdg.cacheHome = "/build/xdg-cache";
+              xdg.stateHome = "/tmp/check-agent-auth-vaults/xdg-state";
+              xdg.cacheHome = "/tmp/check-agent-auth-vaults/xdg-cache";
               atyrode.agentTools = {
                 enable = true;
                 migrateLegacy = false;
@@ -120,7 +120,15 @@ let
         ../modules/home/agent-tools.nix
       ];
     }).config;
-  linuxAgentTools = evalAgentTools pkgs;
+  linuxAgentTools = evalAgentTools (
+    pkgs
+    // {
+      stdenv = pkgs.stdenv // {
+        isLinux = true;
+        isDarwin = false;
+      };
+    }
+  );
   darwinAgentTools = evalAgentTools (
     pkgs
     // {
@@ -153,8 +161,8 @@ in
           and all(.codex == "Alex")
           and (map(.brokerUrl) | unique | length) == 3
           and all(.brokerUrl | test("^http://127[.]0[.]0[.]1:[0-9]+$"))
-          and all(.tokenFile | startswith("/build/xdg-state/atyrode/code-auth-vaults/"))
-          and all(.snapshotCache | startswith("/build/xdg-cache/atyrode/code-auth-vaults/"))
+          and all(.tokenFile | startswith("/tmp/check-agent-auth-vaults/xdg-state/atyrode/code-auth-vaults/"))
+          and all(.snapshotCache | startswith("/tmp/check-agent-auth-vaults/xdg-cache/atyrode/code-auth-vaults/"))
           and (map(.snapshotCache) | unique | length) == 3
           and all((keys | sort) == [
             "brokerUrl", "claude", "codex", "id", "label", "profile",
@@ -182,14 +190,16 @@ in
         grep -Fq 'chmod 0600 "$token_tmp"' "$mine_linux"
         grep -Fq 'mv -f "$token_tmp"' "$mine_linux"
 
+        rm -rf /tmp/check-agent-auth-vaults
         # The stub makes token acquisition observable without introducing a
         # credential: the wrapper persists its output, then starts the server.
         "$mine_linux" > "$TMPDIR/mine-serve.out"
-        test "$(stat -c %a /build/xdg-state/atyrode/code-auth-vaults/mine/token)" = 600
-        grep -Fxq -- '--profile' /build/xdg-state/atyrode/code-auth-vaults/mine/token
-        grep -Fxq default /build/xdg-state/atyrode/code-auth-vaults/mine/token
-        grep -Fq 'auth-broker' /build/xdg-state/atyrode/code-auth-vaults/mine/token
-        grep -Fq 'token' /build/xdg-state/atyrode/code-auth-vaults/mine/token
+        token=/tmp/check-agent-auth-vaults/xdg-state/atyrode/code-auth-vaults/mine/token
+        test "$(stat -c %a "$token")" = 600
+        grep -Fxq -- '--profile' "$token"
+        grep -Fxq default "$token"
+        grep -Fq 'auth-broker' "$token"
+        grep -Fq 'token' "$token"
         grep -Fq -- '--profile' "$TMPDIR/mine-serve.out"
         grep -Fq 'serve' "$TMPDIR/mine-serve.out"
         grep -Fq -- '--bind=127.0.0.1:46171' "$TMPDIR/mine-serve.out"

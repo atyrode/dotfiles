@@ -64,10 +64,14 @@ jobs:
           # GH_TOKEN; checkout never persists a token in .git/config.
           gh auth setup-git --hostname github.com
           git push -f origin "$branch"
-          gh pr create --base main --head "$branch" \
+          # An existing open PR for the branch makes `gh pr create` fail on
+          # re-runs; anything else must fail the job here instead of surfacing
+          # later as a confusing `gh pr merge` error with no PR open.
+          if ! gh pr create --base main --head "$branch" \
             --title "chore(pins): refresh repository-owned binaries" \
-            --body "$SUMMARY" \
-            || true
+            --body "$SUMMARY"; then
+            gh pr view "$branch" --json url --jq .url
+          fi
           gh workflow run nix.yml --ref "$branch"
           sleep 30
           run_id="$(gh run list --workflow nix.yml --branch "$branch" --limit 1 --json databaseId --jq '.[0].databaseId')"

@@ -79,9 +79,13 @@ jobs:
           # GH_TOKEN; checkout never persists a token in .git/config.
           gh auth setup-git --hostname github.com
           git push -f origin "$branch"
-          gh pr create --base main --head "$branch" \
+          # An existing open PR for the branch makes `gh pr create` fail on
+          # re-runs; anything else must fail the job rather than dispatch CI
+          # with no pull request open for review.
+          if ! gh pr create --base main --head "$branch" \
             --title "chore(deps): update flake inputs" \
-            --body-file "$summary_file" \
-            || true
+            --body-file "$summary_file"; then
+            gh pr view "$branch" --json url --jq .url
+          fi
           # GitHub does not trigger workflows for pushes made by this token.
           gh workflow run nix.yml --ref "$branch"

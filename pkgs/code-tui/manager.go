@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +17,36 @@ import (
 type loginDoneMsg struct {
 	vault string
 	err   error
+}
+
+var errLoginCancelled = errors.New("login cancelled")
+
+// loginProcess keeps upstream stderr buffered until the handoff finishes. OMP
+// v17 can close readline while cancelling browser authentication, then print an
+// ERR_USE_AFTER_CLOSE stack trace and exit non-zero. Treat that exact failure
+// as cancellation; preserve every other diagnostic verbatim.
+type loginProcess struct {
+	cmd            *exec.Cmd
+	stderr         bytes.Buffer
+	terminalStderr io.Writer
+}
+
+func (p *loginProcess) SetStdin(r io.Reader)  { p.cmd.Stdin = r }
+func (p *loginProcess) SetStdout(w io.Writer) { p.cmd.Stdout = w }
+func (p *loginProcess) SetStderr(w io.Writer) { p.terminalStderr = w }
+
+func (p *loginProcess) Run() error {
+	p.cmd.Stderr = &p.stderr
+	err := p.cmd.Run()
+	diagnostic := p.stderr.String()
+	if strings.Contains(diagnostic, "ERR_USE_AFTER_CLOSE") &&
+		strings.Contains(diagnostic, "readline was closed") {
+		return errLoginCancelled
+	}
+	if p.terminalStderr != nil && diagnostic != "" {
+		_, _ = io.WriteString(p.terminalStderr, diagnostic)
+	}
+	return err
 }
 
 // loginCmd suspends Bubble Tea and runs the plain-OMP login handoff for the
@@ -30,7 +63,8 @@ func (m model) loginCmd(i int, provider string) tea.Cmd {
 		raw = "omp"
 	}
 	c := exec.Command(raw, loginArgv(v.Profile, provider)...)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
+	p := &loginProcess{cmd: c}
+	return tea.Exec(p, func(err error) tea.Msg {
 		return loginDoneMsg{vault: v.ID, err: err}
 	})
 }
@@ -38,6 +72,9 @@ func (m model) loginCmd(i int, provider string) tea.Cmd {
 // updateManager handles keys while the vault manager is open. Every action is
 // scoped to the manager; the generator keys stay inert until it closes.
 func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.loginRunning {
+		return m, nil
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -75,9 +112,13 @@ func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fetching = m.usageCmd != ""
 		return m, fetchAllCmd(m.usageCmd, m.vaults)
 	case "c":
-		return m, m.loginCmd(m.mgrCursor, "anthropic")
+		cmd := m.loginCmd(m.mgrCursor, "anthropic")
+		m.loginRunning = cmd != nil
+		return m, cmd
 	case "o":
-		return m, m.loginCmd(m.mgrCursor, "openai-codex")
+		cmd := m.loginCmd(m.mgrCursor, "openai-codex")
+		m.loginRunning = cmd != nil
+		return m, cmd
 	}
 	return m, nil
 }
@@ -154,56 +195,75 @@ func (m model) managerRow(i, w int) string {
 		labelCol = stHead.Render(labelPlain)
 	}
 
-	usage := m.vaultUsageSummary(i)
-	left := cursor + mark + labelCol
-	// cursor(2)+mark(2)+label(10)=14; identity column is a fixed 26 cells.
-	const identW = 26
-	ident := stDim.Render(pad("Claude "+v.Claude+" · Codex "+v.Codex, identW))
-	if 14+2+identW+2+lipgloss.Width(usage) <= w {
-		return left + "  " + ident + "  " + usage
+	head := cursor + mark + labelCol
+	if w < 38 {
+		return head
 	}
-	return left + "  " + usage
+	indent := strings.Repeat(" ", 4)
+	return strings.Join([]string{
+		head,
+		indent + m.vaultProviderLine(i, "anthropic"),
+		indent + m.vaultProviderLine(i, "openai-codex"),
+	}, "\n")
 }
 
 // vaultUsageSummary is the manager's compact per-provider usage cell: the
 // highest-used window per provider, or a state word (disabled/loading/offline)
 // when there is no usable data.
-func (m model) vaultUsageSummary(i int) string {
+func (m model) vaultProviderLine(i int, provider string) string {
+	v := m.vaults[i]
+	line := providerHeading(provider, v)
 	if !m.isEnabled(i) {
-		return stDim.Render("disabled")
+		return line + stDim.Render(" · disabled")
 	}
-	a, ok := m.vaultUsage[m.vaults[i].ID]
-	if !ok {
-		return stDim.Render("loading…")
+	a, loaded := m.vaultUsage[v.ID]
+	if !loaded {
+		return line + stDim.Render(" · checking account…")
 	}
-	if !a.ok {
-		return stWarn.Render("offline")
+	if !a.accountsOK {
+		line += stWarn.Render(" · account status unavailable")
+	} else if accounts := a.accounts[provider]; len(accounts) == 0 {
+		line += stBrk.Render(" · not authenticated")
+	} else {
+		identities := make([]string, 0, len(accounts))
+		for _, account := range accounts {
+			identity := account.Email
+			if identity == "" {
+				identity = account.IdentityKey
+			}
+			if identity != "" {
+				identities = append(identities, identity)
+			}
+		}
+		switch {
+		case len(identities) == 0:
+			line += stDim.Render(" · authenticated")
+		case len(identities) == 1:
+			line += stDim.Render(" · " + identities[0])
+		default:
+			line += stDim.Render(" · " + strings.Join(identities, ", "))
+		}
+		if a.accountsStale {
+			line += stWarn.Render(" · identity cached")
+		}
 	}
-	var parts []string
-	if pct, has := maxPct(a, "openai-codex"); has {
-		parts = append(parts, provCell("Codex", pct))
-	}
-	if pct, has := maxPct(a, "anthropic"); has {
-		parts = append(parts, provCell("Claude", pct))
-	}
-	if len(parts) == 0 {
-		return stDim.Render("no usage")
-	}
-	return strings.Join(parts, stDim.Render(" · "))
-}
 
-// provCell renders one provider's compact "<name> NN%" figure, tinted to warn
-// as the window fills so a hot vault is legible at a glance.
-func provCell(name string, pct int) string {
-	fig := fmt.Sprintf("%s %d%%", name, pct)
-	switch {
-	case pct >= 100:
-		return stBrk.Render(fig)
-	case pct >= 80:
-		return stWarn.Render(fig)
-	default:
-		return stDim.Render(fig)
+	if pct, ok := maxPct(a, provider); ok {
+		usage := fmt.Sprintf(" · %d%% used", pct)
+		switch {
+		case pct >= 100:
+			line += stBrk.Render(usage + " · maxed")
+		case pct >= 80:
+			line += stWarn.Render(usage + " · tight")
+		default:
+			line += stDim.Render(usage)
+		}
+	} else if !a.ok {
+		line += stWarn.Render(" · usage unavailable")
+	} else {
+		line += stDim.Render(" · usage unavailable")
 	}
+	return line
 }
 
 // maxPct returns the highest used percentage across a provider's windows, and
@@ -226,13 +286,20 @@ func maxPct(a availability, prov string) (int, bool) {
 // the labelled form would not fit the width, keeping the footer within bounds.
 func (m model) managerControls(w int) string {
 	cue := func(k, label string) string { return stKey.Render(k) + stDim.Render(" "+label) }
-	full := strings.Join([]string{
-		cue("↑↓", "move"), cue("⏎", "activate"), cue("space", "enable"),
-		cue("r", "refresh"), cue("c", "claude login"), cue("o", "codex login"),
-		cue("v", "close"),
+	v := m.activeVault()
+	if m.mgrCursor >= 0 && m.mgrCursor < len(m.vaults) {
+		v = m.vaults[m.mgrCursor]
+	}
+	navigation := strings.Join([]string{
+		cue("↑↓", "move"), cue("⏎", "select"), cue("space", "enable"),
+		cue("r", "refresh"), cue("v", "close"),
 	}, stDim.Render("  ·  "))
-	if lipgloss.Width(full) <= w {
-		return full
+	login := strings.Join([]string{
+		cue("c", "login Claude for "+v.Claude+" in profile "+v.Profile),
+		cue("o", "login Codex for "+v.Codex+" in profile "+v.Profile),
+	}, stDim.Render("  ·  "))
+	if lipgloss.Width(navigation) <= w && lipgloss.Width(login) <= w {
+		return navigation + "\n" + login
 	}
 	return strings.Join([]string{
 		stKey.Render("↑↓"), stKey.Render("⏎"), stKey.Render("spc"),

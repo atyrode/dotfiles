@@ -1254,17 +1254,6 @@ let
       export CODE_OMP_RAW="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
       export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
-      if [[ ! -v CODE_AUTH_VAULTS ]]; then
-        auth_vaults_file="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/code-auth-vaults.json"
-        if [[ -r "$auth_vaults_file" ]]; then
-          CODE_AUTH_VAULTS="$(cat "$auth_vaults_file")"
-        else
-          CODE_AUTH_VAULTS='[]'
-        fi
-        # JSON quotes are data consumed by code-tui, not shell syntax.
-        # shellcheck disable=SC2090
-        export CODE_AUTH_VAULTS
-      fi
       export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-vault-state.json}"
       export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
       # The generator's prompt→profile classifier runs on the resident,

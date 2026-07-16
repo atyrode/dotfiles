@@ -85,6 +85,7 @@ let
                 default = { };
               };
               xdg.stateHome = lib.mkOption { type = lib.types.str; };
+              xdg.configHome = lib.mkOption { type = lib.types.str; };
               xdg.cacheHome = lib.mkOption { type = lib.types.str; };
               xdg.configFile = lib.mkOption {
                 type = lib.types.attrsOf lib.types.anything;
@@ -105,6 +106,7 @@ let
             };
 
             config = {
+              xdg.configHome = "/tmp/check-agent-auth-vaults/xdg-config";
               xdg.stateHome = "/tmp/check-agent-auth-vaults/xdg-state";
               xdg.cacheHome = "/tmp/check-agent-auth-vaults/xdg-cache";
               atyrode.agentTools = {
@@ -138,11 +140,9 @@ let
       };
     }
   );
-  authVaultManifest = pkgs.writeText "code-auth-vaults.json" (
-    linuxAgentTools.xdg.configFile."atyrode/code-auth-vaults.json".text
-  );
-  linuxBrokerServices = linuxAgentTools.systemd.user.services;
-  darwinBrokerAgents = darwinAgentTools.launchd.agents;
+  linuxBrokerSupervisor =
+    linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Service.ExecStart;
+  darwinBrokerAgent = darwinAgentTools.launchd.agents.atyrode-omp-auth-brokers;
 in
 {
   auth-vaults =
@@ -151,62 +151,54 @@ in
         nativeBuildInputs = [ pkgs.jq ];
       }
       ''
-        manifest=${authVaultManifest}
-        jq -e '
-          length == 3
-          and map(.id) == ["mine", "mum", "victor"]
-          and map(.profile) == ["default", "mum", "victor"]
-          and map(.label) == ["mine", "mum", "victor"]
-          and map(.claude) == ["Alex", "Mum", "Victor + Alex"]
-          and all(.codex == "Alex")
-          and (map(.brokerUrl) | unique | length) == 3
-          and all(.brokerUrl | test("^http://127[.]0[.]0[.]1:[0-9]+$"))
-          and all(.tokenFile | startswith("/tmp/check-agent-auth-vaults/xdg-state/atyrode/code-auth-vaults/"))
-          and all(.snapshotCache | startswith("/tmp/check-agent-auth-vaults/xdg-cache/atyrode/code-auth-vaults/"))
-          and (map(.snapshotCache) | unique | length) == 3
-          and all((keys | sort) == [
-            "brokerUrl", "claude", "codex", "id", "label", "profile",
-            "snapshotCache", "tokenFile"
-          ])
-          and all(has("token") | not)
-        ' "$manifest" >/dev/null
-
-        mine_linux=${lib.escapeShellArg linuxBrokerServices.atyrode-omp-auth-broker-mine.Service.ExecStart}
-        mum_linux=${lib.escapeShellArg linuxBrokerServices.atyrode-omp-auth-broker-mum.Service.ExecStart}
-        victor_linux=${lib.escapeShellArg linuxBrokerServices.atyrode-omp-auth-broker-victor.Service.ExecStart}
-        test ${lib.escapeShellArg (toString darwinBrokerAgents.atyrode-omp-auth-broker-mine.enable)} = 1
-        test ${lib.escapeShellArg (toString darwinBrokerAgents.atyrode-omp-auth-broker-mum.enable)} = 1
-        test ${lib.escapeShellArg (toString darwinBrokerAgents.atyrode-omp-auth-broker-victor.enable)} = 1
-        test ${lib.escapeShellArg (builtins.head darwinBrokerAgents.atyrode-omp-auth-broker-mine.config.ProgramArguments)} = "$mine_linux"
-        test ${lib.escapeShellArg (builtins.head darwinBrokerAgents.atyrode-omp-auth-broker-mum.config.ProgramArguments)} = "$mum_linux"
-        test ${lib.escapeShellArg (builtins.head darwinBrokerAgents.atyrode-omp-auth-broker-victor.config.ProgramArguments)} = "$victor_linux"
-
-        grep -Fq -- '--profile default auth-broker token' "$mine_linux"
-        grep -Fq -- '--profile mum auth-broker token' "$mum_linux"
-        grep -Fq -- '--profile victor auth-broker token' "$victor_linux"
-        grep -Fq -- '--profile default auth-broker serve --bind=127.0.0.1:46171' "$mine_linux"
-        grep -Fq -- '--profile mum auth-broker serve --bind=127.0.0.1:46172' "$mum_linux"
-        grep -Fq -- '--profile victor auth-broker serve --bind=127.0.0.1:46173' "$victor_linux"
-        grep -Fq 'chmod 0600 "$token_tmp"' "$mine_linux"
-        grep -Fq 'mv -f "$token_tmp"' "$mine_linux"
+        supervisor=${lib.escapeShellArg linuxBrokerSupervisor}
+        test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
+        test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
+        grep -Fq 'code-auth-vaults.json' "$supervisor"
+        grep -Fq 'chmod 0600 "$token_tmp"' "$supervisor"
+        grep -Fq 'auth-broker serve --bind="$bind"' "$supervisor"
 
         rm -rf /tmp/check-agent-auth-vaults
-        # The stub makes token acquisition observable without introducing a
-        # credential: the wrapper persists its output, then starts the server.
-        "$mine_linux" > "$TMPDIR/mine-serve.out"
-        token=/tmp/check-agent-auth-vaults/xdg-state/atyrode/code-auth-vaults/mine/token
-        test "$(stat -c %a "$token")" = 600
-        grep -Fxq -- '--profile' "$token"
-        grep -Fxq default "$token"
-        grep -Fq 'auth-broker' "$token"
-        grep -Fq 'token' "$token"
-        grep -Fq -- '--profile' "$TMPDIR/mine-serve.out"
-        grep -Fq 'serve' "$TMPDIR/mine-serve.out"
-        grep -Fq -- '--bind=127.0.0.1:46171' "$TMPDIR/mine-serve.out"
+        mkdir -p /tmp/check-agent-auth-vaults/xdg-config/atyrode
+        cat > /tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json <<'JSON'
+        [
+          {
+            "id": "primary",
+            "label": "primary",
+            "profile": "default",
+            "claude": "Operator",
+            "codex": "Operator",
+            "brokerUrl": "http://127.0.0.1:47101",
+            "tokenFile": "/tmp/check-agent-auth-vaults/state/primary/token",
+            "snapshotCache": "/tmp/check-agent-auth-vaults/cache/primary.json"
+          },
+          {
+            "id": "secondary",
+            "label": "secondary",
+            "profile": "team",
+            "claude": "Collaborator",
+            "codex": "Operator",
+            "brokerUrl": "http://127.0.0.1:47102",
+            "tokenFile": "/tmp/check-agent-auth-vaults/state/secondary/token",
+            "snapshotCache": "/tmp/check-agent-auth-vaults/cache/secondary.json"
+          }
+        ]
+        JSON
+        chmod 0600 /tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json
+
+        "$supervisor" > "$TMPDIR/broker-serve.out"
+
+        primary=/tmp/check-agent-auth-vaults/state/primary/token
+        secondary=/tmp/check-agent-auth-vaults/state/secondary/token
+        test "$(stat -c %a "$primary")" = 600
+        test "$(stat -c %a "$secondary")" = 600
+        grep -Fxq default "$primary"
+        grep -Fxq team "$secondary"
+        grep -Fq 'auth-broker' "$primary"
+        grep -Fq 'token' "$secondary"
 
         touch "$out"
       '';
-
   omp-stack =
     pkgs.runCommand "check-omp-stack"
       {
@@ -278,7 +270,7 @@ in
           ${pkgs.omp-configured}/bin/code
         grep -Fq 'export CODE_OMP_RAW="$omp_bin"' ${pkgs.omp-configured}/bin/code
         grep -Fq -- '--profile default usage --json' ${pkgs.omp-configured}/bin/code
-        grep -Fq 'code-auth-vaults.json' ${pkgs.omp-configured}/bin/code
+        ! grep -Fq 'CODE_AUTH_VAULTS=' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'CODE_AUTH_PROFILES' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'code-auth-profiles.json' ${pkgs.omp-configured}/bin/code
         test ! -e ${pkgs.omp-configured}/bin/pi
@@ -692,16 +684,16 @@ in
             unset OMP_PROFILE PI_CODING_AGENT_DIR PI_CONFIG_DIR
             # A resume hint emitted by a profiled session is usable verbatim.
             resume_id=019f6386-bbf6-7000-8e5c-8d88e87e3907
-            mkdir -p "$HOME/.omp/profiles/mum/agent/sessions/-dotfiles"
-            touch "$HOME/.omp/profiles/mum/agent/sessions/-dotfiles/2026-07-15T02-06-42-166Z_$resume_id.jsonl"
+            mkdir -p "$HOME/.omp/profiles/alternate/agent/sessions/-dotfiles"
+            touch "$HOME/.omp/profiles/alternate/agent/sessions/-dotfiles/2026-07-15T02-06-42-166Z_$resume_id.jsonl"
             ${configuredStub}/bin/omp --resume "''${resume_id:0:12}" > "$TMPDIR/actual"
-            printf '%s\n' --profile mum --resume "''${resume_id:0:12}" > "$TMPDIR/expected"
+            printf '%s\n' --profile alternate --resume "''${resume_id:0:12}" > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
             # Explicit state selection always wins, even when another profile
             # contains the same resume target.
-            ${configuredStub}/bin/omp --profile mine --resume "$resume_id" > "$TMPDIR/actual"
-            printf '%s\n' --profile mine --resume "$resume_id" > "$TMPDIR/expected"
+            ${configuredStub}/bin/omp --profile explicit --resume "$resume_id" > "$TMPDIR/actual"
+            printf '%s\n' --profile explicit --resume "$resume_id" > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
             default_id=029f6386-bbf6-7000-8e5c-8d88e87e3907
@@ -711,8 +703,8 @@ in
             printf '%s\n' "--resume=$default_id" > "$TMPDIR/expected"
             diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
-            mkdir -p "$HOME/.omp/profiles/mine/agent/sessions/-dotfiles"
-            touch "$HOME/.omp/profiles/mine/agent/sessions/-dotfiles/2026-07-15T04-00-00-000Z_$resume_id.jsonl"
+            mkdir -p "$HOME/.omp/profiles/candidate/agent/sessions/-dotfiles"
+            touch "$HOME/.omp/profiles/candidate/agent/sessions/-dotfiles/2026-07-15T04-00-00-000Z_$resume_id.jsonl"
             set +e
             ${configuredStub}/bin/omp -r"''${resume_id:0:12}" \
               > "$TMPDIR/ambiguous.out" 2> "$TMPDIR/ambiguous.err"

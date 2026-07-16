@@ -51,11 +51,11 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
 - Your bare `omp` configuration remains mutable. `code` keeps trusted client
   sessions/settings in profile `default` and changes only its auth-broker
   environment.
-- The wrapper reads non-secret vault metadata from
+- The wrapper reads machine-local vault metadata from
   `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; `CODE_AUTH_VAULTS` can
   override it. Without either source it falls back to the local OMP `default`
-  profile, keeping the standalone package neutral. The dotfiles' Home Manager
-  module owns the managed manifest and loopback broker services.
+  profile, keeping the package neutral. Home Manager runs an identity-agnostic
+  broker supervisor against that local file; it never generates the entries.
 - Broker bearer tokens remain mutable mode-0600 files outside the Nix store and
   are read fresh for each usage fetch or launch. The selected vault therefore
   cannot diverge between the displayed quota and subsequent session.

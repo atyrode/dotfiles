@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,7 +30,106 @@ type vault struct {
 	SnapshotCache string `json:"snapshotCache"`
 }
 
+// vaultAccount is the non-secret identity metadata exposed by the broker's
+// redacted snapshot. Access and refresh material are deliberately not decoded.
+type vaultAccount struct {
+	Provider    string
+	IdentityKey string
+	Email       string
+}
+
+// fetchVaultEndpoint performs one read-only broker request with the vault's
+// mutable token. It is the sole path used for identity and usage discovery.
+func fetchVaultEndpoint(v vault, endpoint string) ([]byte, error) {
+	if v.BrokerURL == "" || v.TokenFile == "" {
+		return nil, errors.New("vault broker discovery is not configured")
+	}
+	token, err := os.ReadFile(v.TokenFile)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(v.BrokerURL, "/")+endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	client := http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("vault broker endpoint unavailable")
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// loadVaultAccounts reads only redacted identity metadata from a vault. It
+// never opens or mutates OMP's credential database and never decodes token
+// fields from the response.
+func loadVaultAccounts(v vault) (map[string][]vaultAccount, error) {
+	body, err := fetchVaultEndpoint(v, "/v1/snapshot")
+	if err != nil {
+		return nil, err
+	}
+	var snapshot struct {
+		Credentials []struct {
+			Provider    string `json:"provider"`
+			IdentityKey string `json:"identityKey"`
+			Credential  struct {
+				Email string `json:"email"`
+			} `json:"credential"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return nil, err
+	}
+	accounts := map[string][]vaultAccount{}
+	for _, c := range snapshot.Credentials {
+		if c.Provider != "anthropic" && c.Provider != "openai-codex" {
+			continue
+		}
+		accounts[c.Provider] = append(accounts[c.Provider], vaultAccount{
+			Provider: c.Provider, IdentityKey: c.IdentityKey, Email: c.Credential.Email,
+		})
+	}
+	for provider := range accounts {
+		sort.Slice(accounts[provider], func(i, j int) bool {
+			return accounts[provider][i].IdentityKey < accounts[provider][j].IdentityKey
+		})
+	}
+	return accounts, nil
+}
+
 var validVaultID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// loadVaults resolves the machine-local manifest. CODE_AUTH_VAULTS remains an
+// explicit JSON override for tests and one-shot runs; otherwise the file path
+// override or the XDG config default is read. Missing files retain the neutral
+// single-vault fallback.
+func loadVaults(raw, path string) []vault {
+	if raw != "" {
+		return parseVaults(raw)
+	}
+	if path == "" {
+		configHome := os.Getenv("XDG_CONFIG_HOME")
+		if configHome == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				configHome = filepath.Join(home, ".config")
+			}
+		}
+		if configHome != "" {
+			path = filepath.Join(configHome, "atyrode", "code-auth-vaults.json")
+		}
+	}
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			raw = string(data)
+		}
+	}
+	return parseVaults(raw)
+}
 
 // parseVaults decodes the non-secret CODE_AUTH_VAULTS JSON manifest, dropping
 // entries with an unsafe or duplicate id and filling the display defaults. An

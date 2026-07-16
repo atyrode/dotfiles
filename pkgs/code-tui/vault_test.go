@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,14 +14,14 @@ const day = int64(86400)
 
 func TestParseVaults(t *testing.T) {
 	got := parseVaults(`[
-		{"id":"mine","label":"mine","profile":"default","claude":"Alex","codex":"Alex","brokerUrl":"u1","tokenFile":"t1","snapshotCache":"c1"},
-		{"id":"mum","profile":"mum","claude":"Mum"},
+		{"id":"primary","label":"primary","profile":"default","claude":"Operator","codex":"Operator","brokerUrl":"u1","tokenFile":"t1","snapshotCache":"c1"},
+		{"id":"secondary","profile":"secondary","claude":"Collaborator"},
 		{"id":"../bad","label":"bad"},
-		{"id":"mine","label":"duplicate"}
+		{"id":"primary","label":"duplicate"}
 	]`)
 	want := []vault{
-		{ID: "mine", Label: "mine", Profile: "default", Claude: "Alex", Codex: "Alex", BrokerURL: "u1", TokenFile: "t1", SnapshotCache: "c1"},
-		{ID: "mum", Label: "mum", Profile: "mum", Claude: "Mum", Codex: "mum"},
+		{ID: "primary", Label: "primary", Profile: "default", Claude: "Operator", Codex: "Operator", BrokerURL: "u1", TokenFile: "t1", SnapshotCache: "c1"},
+		{ID: "secondary", Label: "secondary", Profile: "secondary", Claude: "Collaborator", Codex: "secondary"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("vaults = %#v, want %#v", got, want)
@@ -33,15 +35,120 @@ func TestParseVaultsEmptyFallback(t *testing.T) {
 	}
 }
 
-func TestLoadVaultStateMigratesPlainFile(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "state")
-	if err := os.WriteFile(p, []byte("mum\n"), 0o600); err != nil {
+func TestLoadVaultsFromMachineLocalFile(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	path := filepath.Join(configHome, "atyrode", "code-auth-vaults.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	vaults := []vault{{ID: "mine"}, {ID: "mum"}, {ID: "victor"}}
+	if err := os.WriteFile(path, []byte(`[
+		{"id":"local","profile":"local-profile","claude":"Owner A","codex":"Owner B"}
+	]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadVaults("", "")
+	if len(got) != 1 || got[0].ID != "local" || got[0].Profile != "local-profile" {
+		t.Fatalf("XDG-local vault manifest was not loaded: %#v", got)
+	}
+
+	override := loadVaults(`[{"id":"override","profile":"one-shot"}]`, path)
+	if len(override) != 1 || override[0].ID != "override" {
+		t.Fatalf("explicit JSON must override the local file: %#v", override)
+	}
+}
+
+func TestLoadVaultAccountsReadsOnlyRedactedIdentityMetadata(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("vault-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/snapshot" {
+			t.Fatalf("identity discovery request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer vault-secret" {
+			t.Fatal("identity discovery omitted the vault bearer token")
+		}
+		_, _ = w.Write([]byte(`{"credentials":[
+			{"provider":"anthropic","identityKey":"email:collaborator@example.test","credential":{"email":"collaborator@example.test","access":"must-not-decode","refresh":"must-not-decode"}},
+			{"provider":"openai-codex","identityKey":"email:operator@example.test","credential":{"email":"operator@example.test","access":"must-not-decode"}},
+			{"provider":"cerebras","identityKey":"key:ignored","credential":{}}
+		]}`))
+	}))
+	defer server.Close()
+
+	accounts, err := loadVaultAccounts(vault{BrokerURL: server.URL, TokenFile: tokenPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("snapshot requests = %d, want 1", requests)
+	}
+	if got := accounts["anthropic"]; len(got) != 1 || got[0].Email != "collaborator@example.test" {
+		t.Fatalf("Claude identity = %#v", got)
+	}
+	if got := accounts["openai-codex"]; len(got) != 1 || got[0].IdentityKey != "email:operator@example.test" {
+		t.Fatalf("Codex identity = %#v", got)
+	}
+	if _, ok := accounts["cerebras"]; ok {
+		t.Fatal("unmanaged provider leaked into vault identity display")
+	}
+	if got, err := os.ReadFile(tokenPath); err != nil || string(got) != "vault-secret\n" {
+		t.Fatal("identity discovery mutated the token file")
+	}
+}
+
+func TestLoadAvailabilityUsesReadOnlyBrokerUsage(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("vault-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/snapshot":
+			_, _ = w.Write([]byte(`{"credentials":[
+				{"provider":"anthropic","identityKey":"email:collaborator@example.test","credential":{"email":"collaborator@example.test"}}
+			]}`))
+		case "/v1/usage":
+			_, _ = w.Write([]byte(`{"reports":[
+				{"provider":"anthropic","limits":[
+					{"label":"Claude 5 Hour","scope":{"tier":"-"},"amount":{"usedFraction":0.42},"window":{"resetsAt":4102444800000,"durationMs":18000000}}
+				]}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	v := vault{BrokerURL: server.URL, TokenFile: tokenPath}
+	got := loadAvailability("/definitely/not/a/command usage --json", v)
+	if !got.ok || !got.accountsOK {
+		t.Fatalf("broker availability was not loaded: %+v", got)
+	}
+	if len(got.wins) != 1 || got.wins[0].pct != 42 || got.wins[0].prov != "anthropic" {
+		t.Fatalf("broker usage = %+v", got.wins)
+	}
+	wantMethods := []string{"GET /v1/snapshot", "GET /v1/usage"}
+	if !reflect.DeepEqual(methods, wantMethods) {
+		t.Fatalf("broker discovery requests = %v, want read-only %v", methods, wantMethods)
+	}
+}
+
+func TestLoadVaultStateMigratesPlainFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state")
+	if err := os.WriteFile(p, []byte("secondary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vaults := []vault{{ID: "primary"}, {ID: "secondary"}, {ID: "tertiary"}}
 	sel, dis := loadVaultState(vaults, p)
-	if sel != "mum" {
-		t.Fatalf("plain selected-id file must migrate to selected=mum, got %q", sel)
+	if sel != "secondary" {
+		t.Fatalf("plain selected-id file must migrate to selected=secondary, got %q", sel)
 	}
 	if len(dis) != 0 {
 		t.Fatalf("migration must leave no disabled vaults, got %#v", dis)
@@ -49,39 +156,39 @@ func TestLoadVaultStateMigratesPlainFile(t *testing.T) {
 }
 
 func TestLoadVaultStateJSON(t *testing.T) {
-	vaults := []vault{{ID: "mine"}, {ID: "mum"}, {ID: "victor"}}
+	vaults := []vault{{ID: "primary"}, {ID: "secondary"}, {ID: "tertiary"}}
 	p := filepath.Join(t.TempDir(), "state")
 
-	// mine can never be disabled; unknown ids are dropped.
-	if err := os.WriteFile(p, []byte(`{"selected":"victor","disabled":["mum","mine","ghost"]}`), 0o600); err != nil {
+	// The first entry can never be disabled; unknown ids are dropped.
+	if err := os.WriteFile(p, []byte(`{"selected":"tertiary","disabled":["secondary","primary","ghost"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sel, dis := loadVaultState(vaults, p)
-	if sel != "victor" {
-		t.Fatalf("selected = %q, want victor", sel)
+	if sel != "tertiary" {
+		t.Fatalf("selected = %q, want tertiary", sel)
 	}
-	if !dis["mum"] || dis["mine"] || dis["ghost"] {
-		t.Fatalf("disabled must keep mum, strip mine, drop ghost, got %#v", dis)
+	if !dis["secondary"] || dis["primary"] || dis["ghost"] {
+		t.Fatalf("disabled must keep secondary, strip primary, drop ghost, got %#v", dis)
 	}
 
 	// A selection that is itself disabled collapses onto the fallback vault.
-	if err := os.WriteFile(p, []byte(`{"selected":"mum","disabled":["mum"]}`), 0o600); err != nil {
+	if err := os.WriteFile(p, []byte(`{"selected":"secondary","disabled":["secondary"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sel, _ = loadVaultState(vaults, p)
-	if sel != "mine" {
+	if sel != "primary" {
 		t.Fatalf("a disabled selection must fall back to the first vault, got %q", sel)
 	}
 }
 
 func TestVaultStatePersistRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "nested", "state")
-	if err := writeVaultState(p, "victor", map[string]bool{"mum": true}); err != nil {
+	if err := writeVaultState(p, "tertiary", map[string]bool{"secondary": true}); err != nil {
 		t.Fatal(err)
 	}
-	vaults := []vault{{ID: "mine"}, {ID: "mum"}, {ID: "victor"}}
+	vaults := []vault{{ID: "primary"}, {ID: "secondary"}, {ID: "tertiary"}}
 	sel, dis := loadVaultState(vaults, p)
-	if sel != "victor" || !dis["mum"] {
+	if sel != "tertiary" || !dis["secondary"] {
 		t.Fatalf("round trip lost state: selected=%q disabled=%#v", sel, dis)
 	}
 	info, err := os.Stat(p)
@@ -95,62 +202,62 @@ func TestVaultStatePersistRoundTrip(t *testing.T) {
 
 func TestCycleVaultSkipsDisabled(t *testing.T) {
 	m := model{
-		vaults:   []vault{{ID: "mine"}, {ID: "mum"}, {ID: "victor"}},
-		disabled: map[string]bool{"mum": true},
+		vaults:   []vault{{ID: "primary"}, {ID: "secondary"}, {ID: "tertiary"}},
+		disabled: map[string]bool{"secondary": true},
 		avail:    availability{bucket: map[string]string{}, reset: map[string]int64{}},
 	}
 	changed, err := m.cycleVault()
 	if err != nil || !changed {
-		t.Fatalf("cycle from mine must advance: changed=%v err=%v", changed, err)
+		t.Fatalf("cycle from the fallback must advance: changed=%v err=%v", changed, err)
 	}
-	if got := m.activeVault().ID; got != "victor" {
-		t.Fatalf("cycle skipped the disabled mum but landed on %q, want victor", got)
+	if got := m.activeVault().ID; got != "tertiary" {
+		t.Fatalf("cycle skipped the disabled secondary but landed on %q, want tertiary", got)
 	}
 	changed, _ = m.cycleVault()
-	if !changed || m.activeVault().ID != "mine" {
-		t.Fatalf("cycle from victor must wrap past disabled mum to mine, got %q", m.activeVault().ID)
+	if !changed || m.activeVault().ID != "primary" {
+		t.Fatalf("cycle from tertiary must wrap past disabled secondary to primary, got %q", m.activeVault().ID)
 	}
 }
 
 func TestCycleVaultSingleEnabledIsNoop(t *testing.T) {
 	m := model{
-		vaults:   []vault{{ID: "mine"}, {ID: "mum"}},
-		disabled: map[string]bool{"mum": true},
+		vaults:   []vault{{ID: "primary"}, {ID: "secondary"}},
+		disabled: map[string]bool{"secondary": true},
 		avail:    availability{bucket: map[string]string{}, reset: map[string]int64{}},
 	}
 	changed, err := m.cycleVault()
 	if err != nil || changed {
-		t.Fatalf("with only mine enabled, cycle must be a no-op: changed=%v err=%v", changed, err)
+		t.Fatalf("with only the fallback enabled, cycle must be a no-op: changed=%v err=%v", changed, err)
 	}
-	if m.activeVault().ID != "mine" {
-		t.Fatalf("active vault moved off mine: %q", m.activeVault().ID)
+	if m.activeVault().ID != "primary" {
+		t.Fatalf("active vault moved off the fallback: %q", m.activeVault().ID)
 	}
 }
 
-func TestMineProtection(t *testing.T) {
+func TestFallbackProtection(t *testing.T) {
 	m := model{
-		vaults:   []vault{{ID: "mine"}, {ID: "mum"}},
+		vaults:   []vault{{ID: "primary"}, {ID: "secondary"}},
 		disabled: map[string]bool{},
 		avail:    availability{bucket: map[string]string{}, reset: map[string]int64{}},
 	}
 	if changed, err := m.toggleVault(0); changed || err != nil {
 		t.Fatalf("toggling the fallback vault must be a no-op: changed=%v err=%v", changed, err)
 	}
-	if m.disabled["mine"] || !m.isEnabled(0) {
+	if m.disabled["primary"] || !m.isEnabled(0) {
 		t.Fatal("the fallback vault must never become disabled")
 	}
 
 	// Disabling the active vault falls the selection back to the fallback.
-	m.selected = "mum"
+	m.selected = "secondary"
 	changed, err := m.toggleVault(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.disabled["mum"] {
-		t.Fatal("mum must be disabled after toggle")
+	if !m.disabled["secondary"] {
+		t.Fatal("secondary must be disabled after toggle")
 	}
-	if !changed || m.activeVault().ID != "mine" {
-		t.Fatalf("disabling the active vault must fall back to mine (changed=%v active=%q)", changed, m.activeVault().ID)
+	if !changed || m.activeVault().ID != "primary" {
+		t.Fatalf("disabling the active vault must fall back to primary (changed=%v active=%q)", changed, m.activeVault().ID)
 	}
 	if m.enabledCount() != 1 {
 		t.Fatalf("at least one vault must stay enabled, enabledCount=%d", m.enabledCount())
@@ -162,14 +269,14 @@ func TestBrokerEnv(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("s3cr3t\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	v := vault{BrokerURL: "http://127.0.0.1:9", TokenFile: tokenPath, SnapshotCache: "/cache/mum"}
+	v := vault{BrokerURL: "http://127.0.0.1:9", TokenFile: tokenPath, SnapshotCache: "/cache/secondary"}
 	env, err := brokerEnv(v)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"OMP_AUTH_BROKER_URL=http://127.0.0.1:9",
-		"OMP_AUTH_BROKER_SNAPSHOT_CACHE=/cache/mum",
+		"OMP_AUTH_BROKER_SNAPSHOT_CACHE=/cache/secondary",
 		"OMP_AUTH_BROKER_TOKEN=s3cr3t",
 	}
 	if !reflect.DeepEqual(env, want) {
@@ -188,57 +295,42 @@ func TestBrokerEnvTokenFailure(t *testing.T) {
 	}
 }
 
-func TestLoadAvailabilityForcesDefaultProfileAndBrokerEnv(t *testing.T) {
+func TestLoadAvailabilityStandaloneForcesDefaultProfile(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")
-	envPath := filepath.Join(dir, "env")
-	tokenPath := filepath.Join(dir, "token")
-	if err := os.WriteFile(tokenPath, []byte("s3cr3t\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	script := filepath.Join(dir, "usage")
 	body := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > \"$ARGS_PATH\"\n" +
-		"printf '%s\\n' \"$OMP_AUTH_BROKER_URL\" \"$OMP_AUTH_BROKER_TOKEN\" \"$OMP_AUTH_BROKER_SNAPSHOT_CACHE\" > \"$ENV_PATH\"\n" +
 		"printf '%s\\n' '{\"reports\":[]}'\n"
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("ARGS_PATH", argsPath)
-	t.Setenv("ENV_PATH", envPath)
-	v := vault{ID: "mum", Profile: "mum", BrokerURL: "http://127.0.0.1:9", TokenFile: tokenPath, SnapshotCache: "/cache/mum"}
 
-	got := loadAvailability(script+" --profile mum usage --json", v)
+	got := loadAvailability(script+" --profile secondary usage --json", vault{ID: "standalone"})
 	if !got.ok {
-		t.Fatal("usage response was not accepted")
+		t.Fatal("standalone usage response was not accepted")
 	}
 	args, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := "--profile\ndefault\nusage\n--json\n"; string(args) != want {
-		t.Fatalf("usage must force the shared default profile: args = %q, want %q", args, want)
-	}
-	env, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "http://127.0.0.1:9\ns3cr3t\n/cache/mum\n"; string(env) != want {
-		t.Fatalf("usage must apply the vault broker env: %q, want %q", env, want)
+		t.Fatalf("standalone usage must force the shared default profile: args = %q, want %q", args, want)
 	}
 }
 
 func TestTrustedLaunchForcesDefaultProfile(t *testing.T) {
 	// Both trusted launch paths force --profile default and strip any forwarded
 	// profile, regardless of the selected vault's own profile.
-	forwarded := []string{"--config", "/tmp/x.yml", "--profile", "mum", "--resume"}
+	forwarded := []string{"--config", "/tmp/x.yml", "--profile", "secondary", "--resume"}
 	managed := managedLaunchArgv("/bin/omp", forwarded, "hello")
 	wantManaged := []string{"/bin/omp", "--profile", "default", "--config", "/tmp/x.yml", "--resume", "hello"}
 	if !reflect.DeepEqual(managed, wantManaged) {
 		t.Fatalf("managed launch argv = %#v, want %#v", managed, wantManaged)
 	}
 
-	gen := generatedLaunchArgv("/bin/omp", "/tmp/gen.yml", []string{"--profile", "mum", "--resume"}, "")
+	gen := generatedLaunchArgv("/bin/omp", "/tmp/gen.yml", []string{"--profile", "secondary", "--resume"}, "")
 	wantGen := []string{"/bin/omp", "--profile", "default", "--config", "/tmp/gen.yml", "--resume"}
 	if !reflect.DeepEqual(gen, wantGen) {
 		t.Fatalf("generated launch argv = %#v, want %#v", gen, wantGen)
@@ -246,7 +338,7 @@ func TestTrustedLaunchForcesDefaultProfile(t *testing.T) {
 }
 
 func TestSandboxLaunchStripsProfile(t *testing.T) {
-	got := sandboxLaunchArgv("/bin/ompu", []string{"--profile", "mum", "--resume"}, "")
+	got := sandboxLaunchArgv("/bin/ompu", []string{"--profile", "secondary", "--resume"}, "")
 	want := []string{"/bin/ompu", "--resume"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("sandbox launch argv = %#v, want %#v (profile must be stripped, none forced)", got, want)
@@ -254,10 +346,10 @@ func TestSandboxLaunchStripsProfile(t *testing.T) {
 }
 
 func TestLoginArgv(t *testing.T) {
-	if got := loginArgv("victor", "anthropic"); !reflect.DeepEqual(got, []string{"--profile", "victor", "auth-broker", "login", "anthropic"}) {
+	if got := loginArgv("tertiary", "anthropic"); !reflect.DeepEqual(got, []string{"--profile", "tertiary", "auth-broker", "login", "anthropic"}) {
 		t.Fatalf("anthropic login argv = %#v", got)
 	}
-	if got := loginArgv("mum", "openai-codex"); !reflect.DeepEqual(got, []string{"--profile", "mum", "auth-broker", "login", "openai-codex"}) {
+	if got := loginArgv("secondary", "openai-codex"); !reflect.DeepEqual(got, []string{"--profile", "secondary", "auth-broker", "login", "openai-codex"}) {
 		t.Fatalf("openai-codex login argv = %#v", got)
 	}
 }
@@ -288,13 +380,13 @@ func TestWithOMPProfileOverridesForwardedProfile(t *testing.T) {
 		{
 			name:    "separate override",
 			profile: "default",
-			args:    []string{"--config", "/tmp/generated.yml", "--profile", "mum", "--resume"},
+			args:    []string{"--config", "/tmp/generated.yml", "--profile", "secondary", "--resume"},
 			want:    []string{"--profile", "default", "--config", "/tmp/generated.yml", "--resume"},
 		},
 		{
 			name:    "equals override",
 			profile: "default",
-			args:    []string{"--profile=mum", "--resume"},
+			args:    []string{"--profile=secondary", "--resume"},
 			want:    []string{"--profile", "default", "--resume"},
 		},
 		{
@@ -306,7 +398,7 @@ func TestWithOMPProfileOverridesForwardedProfile(t *testing.T) {
 		{
 			name:    "sandbox strips override",
 			profile: "",
-			args:    []string{"--profile", "mum", "--resume"},
+			args:    []string{"--profile", "secondary", "--resume"},
 			want:    []string{"--resume"},
 		},
 	}
@@ -326,14 +418,14 @@ func TestWithOMPProfileOverridesForwardedProfile(t *testing.T) {
 func TestUsagePanelNamesWholeVaultCombination(t *testing.T) {
 	m := model{
 		vaults: []vault{
-			{ID: "mine", Label: "mine", Profile: "default", Claude: "Alex", Codex: "Alex"},
-			{ID: "mum", Label: "mum", Profile: "mum", Claude: "Mum", Codex: "Alex"},
+			{ID: "primary", Label: "primary", Profile: "default", Claude: "Operator", Codex: "Operator"},
+			{ID: "secondary", Label: "secondary", Profile: "secondary", Claude: "Collaborator", Codex: "Operator"},
 		},
-		selected: "mum",
+		selected: "secondary",
 		avail:    availability{bucket: map[string]string{}, reset: map[string]int64{}},
 	}
 	panel := stripAnsi(m.usagePanel())
-	for _, text := range []string{"usage", "Claude (Mum)", "Codex (Alex)", "a switch vault"} {
+	for _, text := range []string{"usage", "Claude (Collaborator)", "Codex (Operator)", "a switch vault"} {
 		if !strings.Contains(panel, text) {
 			t.Fatalf("usage panel missing %q: %q", text, panel)
 		}
@@ -376,7 +468,7 @@ func TestCreditLine(t *testing.T) {
 
 func TestUsagePanelShowsOpenAIResetCredits(t *testing.T) {
 	m := model{
-		vaults: []vault{{ID: "mine", Label: "mine", Profile: "default", Claude: "Alex", Codex: "Alex"}},
+		vaults: []vault{{ID: "primary", Label: "primary", Profile: "default", Claude: "Operator", Codex: "Operator"}},
 		avail: availability{
 			ok:      true,
 			bucket:  map[string]string{},
@@ -393,7 +485,7 @@ func TestUsagePanelShowsOpenAIResetCredits(t *testing.T) {
 
 func TestUsagePanelWithoutResetCredits(t *testing.T) {
 	m := model{
-		vaults: []vault{{ID: "mine", Label: "mine", Profile: "default", Claude: "Alex", Codex: "Alex"}},
+		vaults: []vault{{ID: "primary", Label: "primary", Profile: "default", Claude: "Operator", Codex: "Operator"}},
 		avail: availability{
 			ok:     true,
 			bucket: map[string]string{},

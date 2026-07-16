@@ -1,6 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -8,23 +13,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// managerModel is a three-vault model with the manager open and a
-// representative spread of per-vault usage states: mine has data, mum is
-// offline (a fetch returned unavailable), victor has never been fetched.
+// managerModel is a three-vault model with representative loaded, unavailable,
+// and never-fetched states.
 func managerModel() model {
 	m := layoutModel()
 	m.vaults = []vault{
-		{ID: "mine", Label: "mine", Profile: "default", Claude: "Alex", Codex: "Alex"},
-		{ID: "mum", Label: "mum", Profile: "mum", Claude: "Mum", Codex: "Alex"},
-		{ID: "victor", Label: "victor", Profile: "victor", Claude: "Victor", Codex: "Alex"},
+		{ID: "primary", Label: "primary", Profile: "default", Claude: "Operator", Codex: "Operator"},
+		{ID: "secondary", Label: "secondary", Profile: "secondary", Claude: "Collaborator", Codex: "Operator"},
+		{ID: "tertiary", Label: "tertiary", Profile: "tertiary", Claude: "Reviewer", Codex: "Operator"},
 	}
-	m.selected = "mine"
+	m.selected = "primary"
 	m.disabled = map[string]bool{}
 	m.vaultUsage = map[string]availability{
-		"mine": {ok: true, bucket: map[string]string{}, reset: map[string]int64{}, wins: []usageWin{
-			{prov: "openai-codex", pct: 12}, {prov: "anthropic", pct: 55},
-		}},
-		"mum": {ok: false, bucket: map[string]string{}, reset: map[string]int64{}},
+		"primary": {
+			ok: true, bucket: map[string]string{}, reset: map[string]int64{},
+			accountsOK: true, accounts: map[string][]vaultAccount{
+				"anthropic":    {{Provider: "anthropic", Email: "operator.claude@example.test"}},
+				"openai-codex": {{Provider: "openai-codex", Email: "operator.codex@example.test"}},
+			},
+			wins: []usageWin{{prov: "openai-codex", pct: 12}, {prov: "anthropic", pct: 55}},
+		},
+		"secondary": {
+			ok: false, bucket: map[string]string{}, reset: map[string]int64{},
+			accountsOK: true, accounts: map[string][]vaultAccount{},
+		},
 	}
 	m.manager = true
 	return m
@@ -102,9 +114,9 @@ func TestManagerCursorNavigation(t *testing.T) {
 
 func TestManagerActivateSelectsCursoredVault(t *testing.T) {
 	m := managerModel()
-	m.mgrCursor = 1 // mum
+	m.mgrCursor = 1 // secondary
 	m, cmd := sendKey(t, m, "enter")
-	if m.selected != "mum" {
+	if m.selected != "secondary" {
 		t.Fatalf("enter must activate the cursored vault, selected=%q", m.selected)
 	}
 	if cmd == nil {
@@ -113,32 +125,32 @@ func TestManagerActivateSelectsCursoredVault(t *testing.T) {
 }
 func TestManagerActivateEnablesDisabledVault(t *testing.T) {
 	m := managerModel()
-	m.disabled = map[string]bool{"victor": true}
-	m.mgrCursor = 2 // victor (disabled)
+	m.disabled = map[string]bool{"tertiary": true}
+	m.mgrCursor = 2 // tertiary (disabled)
 	m, _ = sendKey(t, m, "enter")
-	if m.disabled["victor"] {
+	if m.disabled["tertiary"] {
 		t.Fatal("activating a disabled vault must enable it")
 	}
-	if m.selected != "victor" {
-		t.Fatalf("enter must select victor, selected=%q", m.selected)
+	if m.selected != "tertiary" {
+		t.Fatalf("enter must select tertiary, selected=%q", m.selected)
 	}
 }
 
-func TestManagerSpaceTogglesEnabledAndProtectsMine(t *testing.T) {
+func TestManagerSpaceTogglesEnabledAndProtectsFallback(t *testing.T) {
 	m := managerModel()
-	m.mgrCursor = 1 // mum
+	m.mgrCursor = 1 // secondary
 	m, _ = sendKey(t, m, "space")
-	if !m.disabled["mum"] {
+	if !m.disabled["secondary"] {
 		t.Fatal("space must disable an enabled vault")
 	}
 	m, _ = sendKey(t, m, "space")
-	if m.disabled["mum"] {
+	if m.disabled["secondary"] {
 		t.Fatal("space must re-enable a disabled vault")
 	}
 
-	m.mgrCursor = 0 // mine — the protected fallback
+	m.mgrCursor = 0 // protected fallback
 	m, _ = sendKey(t, m, "space")
-	if m.disabled["mine"] || !m.isEnabled(0) {
+	if m.disabled["primary"] || !m.isEnabled(0) {
 		t.Fatal("the fallback vault must never be disabled from the manager")
 	}
 }
@@ -165,9 +177,84 @@ func TestManagerLoginKeysReturnCommands(t *testing.T) {
 	}
 }
 
+func TestManagerDoesNotQueueLoginHandoffs(t *testing.T) {
+	m := managerModel()
+	m.mgrCursor = 1
+	m, first := sendKey(t, m, "c")
+	if first == nil || !m.loginRunning {
+		t.Fatal("the first login must start and mark the handoff active")
+	}
+	m, second := sendKey(t, m, "o")
+	if second != nil {
+		t.Fatal("a second login key must be ignored while a handoff is active")
+	}
+
+	nm, _ := m.Update(loginDoneMsg{vault: "secondary", err: errLoginCancelled})
+	m = nm.(model)
+	if m.loginRunning {
+		t.Fatal("login completion must release the handoff guard")
+	}
+	if m.vaultErr != "" {
+		t.Fatalf("cancellation must not render as a failure: %q", m.vaultErr)
+	}
+
+	m.loginRunning = true
+	nm, _ = m.Update(loginDoneMsg{vault: "secondary", err: errors.New("provider failed")})
+	m = nm.(model)
+	if m.vaultErr != "login failed: provider failed" {
+		t.Fatalf("real login error was not preserved: %q", m.vaultErr)
+	}
+}
+
+func TestLoginProcessSuppressesReadlineCancellation(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLoginProcessHelper$")
+	cmd.Env = append(os.Environ(), "CODE_LOGIN_HELPER=cancel")
+	p := &loginProcess{cmd: cmd}
+	p.SetStdin(strings.NewReader(""))
+	p.SetStdout(io.Discard)
+	var visible bytes.Buffer
+	p.SetStderr(&visible)
+
+	if err := p.Run(); !errors.Is(err, errLoginCancelled) {
+		t.Fatalf("cancel error = %v, want errLoginCancelled", err)
+	}
+	if visible.Len() != 0 {
+		t.Fatalf("readline cancellation leaked to terminal: %q", visible.String())
+	}
+}
+
+func TestLoginProcessPreservesRealDiagnostics(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLoginProcessHelper$")
+	cmd.Env = append(os.Environ(), "CODE_LOGIN_HELPER=error")
+	p := &loginProcess{cmd: cmd}
+	p.SetStdin(strings.NewReader(""))
+	p.SetStdout(io.Discard)
+	var visible bytes.Buffer
+	p.SetStderr(&visible)
+
+	err := p.Run()
+	if err == nil || errors.Is(err, errLoginCancelled) {
+		t.Fatalf("real process error was misclassified: %v", err)
+	}
+	if visible.String() != "provider login failed\n" {
+		t.Fatalf("real diagnostic = %q", visible.String())
+	}
+}
+
+func TestLoginProcessHelper(t *testing.T) {
+	switch os.Getenv("CODE_LOGIN_HELPER") {
+	case "cancel":
+		_, _ = os.Stderr.WriteString("error: readline was closed\n code: \"ERR_USE_AFTER_CLOSE\"\n")
+		os.Exit(1)
+	case "error":
+		_, _ = os.Stderr.WriteString("provider login failed\n")
+		os.Exit(1)
+	}
+}
+
 func TestManagerStaleUsageScopedByVault(t *testing.T) {
 	m := managerModel()
-	m.selected = "mine"
+	m.selected = "primary"
 	m.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	m.hadUsage = false
 
@@ -175,7 +262,7 @@ func TestManagerStaleUsageScopedByVault(t *testing.T) {
 
 	// A reply for a non-active vault is stored under that vault and never
 	// touches the detailed panel or produces a command.
-	nm, cmd := m.Update(usageMsg{vault: "mum", avail: ok})
+	nm, cmd := m.Update(usageMsg{vault: "secondary", avail: ok})
 	m = nm.(model)
 	if cmd != nil {
 		t.Fatal("a non-active vault reply must not drive the detailed panel's fill")
@@ -183,23 +270,55 @@ func TestManagerStaleUsageScopedByVault(t *testing.T) {
 	if m.avail.ok {
 		t.Fatal("a non-active vault reply must not populate the detailed panel")
 	}
-	if !m.vaultUsage["mum"].ok {
+	if !m.vaultUsage["secondary"].ok {
 		t.Fatal("a reply must be stored under its own vault for the manager")
 	}
 
 	// A reply for the active vault does update the detailed panel.
-	nm, _ = m.Update(usageMsg{vault: "mine", avail: ok})
+	nm, _ = m.Update(usageMsg{vault: "primary", avail: ok})
 	m = nm.(model)
 	if !m.avail.ok {
 		t.Fatal("the active vault's reply must populate the detailed panel")
 	}
 }
 
+func TestManagerRetainsCachedFablePerVault(t *testing.T) {
+	m := managerModel()
+	m.selected = "primary"
+	first := availability{
+		ok: true, bucket: map[string]string{"claude-fable": "ok"}, reset: map[string]int64{},
+		wins: []usageWin{
+			{label: "Claude 5 Hour", prov: "anthropic", pct: 20},
+			{label: "Claude 7 Day (Fable)", prov: "anthropic", tier: "fable", pct: 45, observed: 1_752_665_040},
+		},
+	}
+	nm, _ := m.Update(usageMsg{vault: "secondary", avail: first})
+	m = nm.(model)
+	second := availability{
+		ok: true, bucket: map[string]string{"claude-fable": "ok"}, reset: map[string]int64{},
+		wins: []usageWin{{label: "Claude 5 Hour", prov: "anthropic", pct: 30}},
+	}
+	nm, _ = m.Update(usageMsg{vault: "secondary", avail: second})
+	m = nm.(model)
+
+	found := false
+	for _, w := range m.vaultUsage["secondary"].wins {
+		if w.tier == "fable" {
+			found = true
+			if !w.stale || w.pct != 45 || w.observed != 1_752_665_040 {
+				t.Fatalf("per-vault Fable cache was not retained: %+v", w)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("per-vault Fable cache disappeared after an omitted refresh")
+	}
+}
+
 func TestManagerRenderingWithinBounds(t *testing.T) {
 	base := managerModel()
-	// A fourth, disabled vault so one row exercises every state at once:
-	// mine has usage, mum is offline, victor is loading, guest is disabled.
-	base.vaults = append(base.vaults, vault{ID: "guest", Label: "guest", Profile: "guest", Claude: "Guest", Codex: "Alex"})
+	// A fourth, disabled vault so one row exercises every state at once.
+	base.vaults = append(base.vaults, vault{ID: "guest", Label: "guest", Profile: "guest", Claude: "Guest", Codex: "Operator"})
 	base.disabled = map[string]bool{"guest": true}
 	wideW := base.genRowWidth() + routingMinW
 	for _, s := range []termSize{{wideW + 20, 40}, {72, 30}, {50, 20}} {
@@ -211,14 +330,20 @@ func TestManagerRenderingWithinBounds(t *testing.T) {
 			}
 		}
 		plain := stripAnsi(view)
-		for _, want := range []string{"vaults", "mine", "mum", "victor", "guest", "offline", "loading", "disabled"} {
+		for _, want := range []string{
+			"vaults", "primary", "secondary", "tertiary", "guest",
+			"not authenticated", "checking account", "disabled",
+		} {
 			if !strings.Contains(plain, want) {
 				t.Errorf("width %d: manager view missing %q:\n%s", s.w, want, plain)
 			}
 		}
-		// The active vault's compact per-provider usage renders.
-		if !strings.Contains(plain, "Codex 12%") || !strings.Contains(plain, "Claude 55%") {
-			t.Errorf("width %d: manager missing active vault usage:\n%s", s.w, plain)
+		// Wide layouts keep verified identity and usage on the same owner row;
+		// narrow layouts deliberately clip detail without overflowing.
+		if s.w >= 100 &&
+			(!strings.Contains(plain, "Claude (Operator) · operator.claude@example.test · 55% used") ||
+				!strings.Contains(plain, "Codex (Operator) · operator.codex@example.test · 12% used")) {
+			t.Errorf("width %d: manager did not bind usage to an account owner:\n%s", s.w, plain)
 		}
 		// A control cue row is always present.
 		if !strings.Contains(plain, "v") {
@@ -230,11 +355,12 @@ func TestManagerRenderingWithinBounds(t *testing.T) {
 func TestManagerControlsCompactWhenNarrow(t *testing.T) {
 	m := managerModel()
 	wide := m.managerControls(200)
-	if !strings.Contains(stripAnsi(wide), "activate") {
-		t.Fatalf("wide controls must be labelled: %q", stripAnsi(wide))
+	if !strings.Contains(stripAnsi(wide), "select") ||
+		!strings.Contains(stripAnsi(wide), "login Claude for Operator in profile default") {
+		t.Fatalf("wide controls must name the target account and profile: %q", stripAnsi(wide))
 	}
 	narrow := m.managerControls(20)
-	if strings.Contains(stripAnsi(narrow), "activate") {
+	if strings.Contains(stripAnsi(narrow), "login") {
 		t.Fatalf("narrow controls must drop to keys only: %q", stripAnsi(narrow))
 	}
 	if lipgloss.Width(narrow) > 20 {

@@ -489,7 +489,7 @@ func layoutModel() model {
 			},
 		},
 		usageCmd:    "omp usage --json",
-		vaults:      []vault{{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"}},
+		vaults:      []vault{{ID: "default", Label: "primary", Claude: "Operator", Codex: "Operator"}},
 		spin:        spinner.New(),
 		help:        help.New(),
 		glyphs:      glyphs,
@@ -1142,8 +1142,8 @@ func press(t *testing.T, m model, k string) (model, tea.Cmd) {
 func multiProfileModel() model {
 	m := layoutModel()
 	m.vaults = []vault{
-		{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"},
-		{ID: "mum", Label: "mum", Claude: "Mum", Codex: "Alex"},
+		{ID: "default", Label: "primary", Claude: "Operator", Codex: "Operator"},
+		{ID: "secondary", Label: "secondary", Claude: "Collaborator", Codex: "Operator"},
 	}
 	return m
 }
@@ -1176,9 +1176,9 @@ func TestUsageHeadingsNameEffectiveProfile(t *testing.T) {
 		name          string
 		claude, codex string
 	}{
-		{"alex/alex", "Alex", "Alex"},
-		{"mum/alex mixed", "Mum", "Alex"},
-		{"mum/mum", "Mum", "Mum"},
+		{"same owner", "Operator", "Operator"},
+		{"mixed owners", "Collaborator", "Operator"},
+		{"same collaborator", "Collaborator", "Collaborator"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1237,7 +1237,7 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 	loading.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	loading.fetching = true
 	panel := stripAnsi(loading.usagePanel())
-	for _, want := range []string{"fetching usage…", "Codex (Alex)", "Claude (Alex)"} {
+	for _, want := range []string{"fetching usage…", "Codex (Operator)", "Claude (Operator)"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("loading: panel missing %q:\n%s", want, panel)
 		}
@@ -1249,7 +1249,7 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 	refreshing := m
 	refreshing.fetching = true
 	panel = stripAnsi(refreshing.usagePanel())
-	for _, want := range []string{"refreshing…", "Codex (Alex)", "Claude (Alex)", "% used"} {
+	for _, want := range []string{"refreshing…", "Codex (Operator)", "Claude (Operator)", "% used"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("refreshing: panel missing %q:\n%s", want, panel)
 		}
@@ -1261,7 +1261,7 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 	failed := m
 	failed.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	panel = stripAnsi(failed.usagePanel())
-	for _, want := range []string{"usage unavailable · press v to manage vaults", "Codex (Alex)", "Claude (Alex)"} {
+	for _, want := range []string{"usage unavailable · press v to manage vaults", "Codex (Operator)", "Claude (Operator)"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("unavailable: panel missing %q:\n%s", want, panel)
 		}
@@ -1508,12 +1508,12 @@ func TestSectionStatePreservation(t *testing.T) {
 	if !m.hideUsage || !m.collapse {
 		t.Fatal("an auth switch mutated section visibility")
 	}
-	if m.activeVault().ID != "mum" {
+	if m.activeVault().ID != "secondary" {
 		t.Fatalf("vault switch did not advance the selection: %q", m.activeVault().ID)
 	}
 	m.fetching = false
 	m.avail = multiProfileModel().avail
-	if panel := stripAnsi(m.usagePanel()); !strings.Contains(panel, "Claude (Mum)") {
+	if panel := stripAnsi(m.usagePanel()); !strings.Contains(panel, "Claude (Collaborator)") {
 		t.Errorf("usage headings must follow the switched profile:\n%s", panel)
 	}
 
@@ -1895,13 +1895,13 @@ func TestUsageSkeleton(t *testing.T) {
 
 	panel := stripAnsi(loading.usagePanel())
 	lines := strings.Split(panel, "\n")
-	for _, h := range []string{"Codex (Alex)", "Claude (Alex)"} {
+	for _, h := range []string{"Codex (Operator)", "Claude (Operator)"} {
 		if lineIndex(lines, h) < 0 {
 			t.Errorf("skeleton must keep the provider identity %q:\n%s", h, panel)
 		}
 	}
-	if got := strings.Count(panel, "··% used"); got != 4 {
-		t.Errorf("want two placeholder rows per provider (4 total), got %d:\n%s", got, panel)
+	if got := strings.Count(panel, "··% used"); got != 5 {
+		t.Errorf("want Codex's two rows plus Claude's three including Fable (5 total), got %d:\n%s", got, panel)
 	}
 	if regexp.MustCompile(`\d+% used`).MatchString(panel) {
 		t.Errorf("the skeleton must not fabricate numeric values:\n%s", panel)
@@ -1912,8 +1912,10 @@ func TestUsageSkeleton(t *testing.T) {
 	if status := lineIndex(lines, "fetching usage…"); status != len(lines)-1 {
 		t.Errorf("the loading status must stay pinned to the panel's last row (%d of %d):\n%s", status, len(lines)-1, panel)
 	}
-	if sh, lh := lipgloss.Height(loading.usageColumn()), lipgloss.Height(layoutModel().usageColumn()); sh != lh {
-		t.Errorf("skeleton column is %d rows, loaded column %d — the first fetch would pop the layout", sh, lh)
+	loaded := layoutModel()
+	loaded.avail, _ = reconcileUsage(availability{bucket: map[string]string{}, reset: map[string]int64{}}, loaded.avail)
+	if sh, lh := lipgloss.Height(loading.usageColumn()), lipgloss.Height(loaded.usageColumn()); sh != lh {
+		t.Errorf("skeleton column is %d rows, reconciled loaded column %d — the first fetch would pop the layout", sh, lh)
 	}
 
 	wide, medium, _, _ := layoutSizes(t, loading)
@@ -2174,7 +2176,7 @@ func TestReconcileUsageFableRetention(t *testing.T) {
 		reset:  map[string]int64{"claude-fable": 9000},
 		wins: []usageWin{
 			{label: "Claude 5 Hour", pct: 10, secs: 3600, dur: 5 * 3600, prov: "anthropic"},
-			{label: "Claude 7 Day (Fable)", pct: 100, tier: "fable", secs: 9000, dur: 7 * day, prov: "anthropic"},
+			{label: "Claude 7 Day (Fable)", pct: 100, tier: "fable", secs: 9000, dur: 7 * day, prov: "anthropic", observed: 1_752_665_040},
 		},
 	}
 	next := availability{
@@ -2215,8 +2217,9 @@ func TestReconcileUsageFableRetention(t *testing.T) {
 	}
 	m := layoutModel()
 	row := stripAnsi(m.usageRow(fable))
-	if !strings.Contains(row, "7d fable") || !strings.Contains(row, "stale") {
-		t.Errorf("the retained row must carry a visible stale warning: %q", row)
+	wantCached := "cached " + time.Unix(fable.observed, 0).Local().Format("15:04")
+	if !strings.Contains(row, "7d fable") || !strings.Contains(row, wantCached) {
+		t.Errorf("the retained row must carry its cache timestamp %q: %q", wantCached, row)
 	}
 	if !strings.Contains(row, "100% used") {
 		t.Errorf("the retained row must show the last observed value: %q", row)
@@ -2297,6 +2300,31 @@ func TestReconcileUsageFablePlaceholder(t *testing.T) {
 	got2, _ := reconcileUsage(got, withFable)
 	if len(got2.wins) != 2 || got2.wins[1].stale || got2.wins[1].missing || got2.wins[1].pct != 7 {
 		t.Errorf("a present fable window must pass through fresh: %+v", got2.wins)
+	}
+}
+
+func TestFableSkeletonAndUnavailableStatusStayStable(t *testing.T) {
+	m := layoutModel()
+	skeleton := stripAnsi(m.skeletonBody(0, vault{Claude: "Operator", Codex: "Operator"}))
+	if strings.Count(skeleton, "7d fable") != 1 {
+		t.Fatalf("the pre-fetch skeleton must always reserve one Fable row:\n%s", skeleton)
+	}
+
+	missing := stripAnsi(m.usageRow(usageWin{
+		label: "Claude 7 Day (Fable)", tier: "fable", missing: true,
+	}))
+	tight := stripAnsi(m.usageRow(usageWin{
+		label: "Claude 7 Day (Fable)", tier: "fable", pct: 85,
+		secs: 2 * day, dur: 7 * day,
+	}))
+	missingAt := strings.Index(missing, "unavailable")
+	tightAt := strings.Index(tight, "tight")
+	if missingAt < 0 || tightAt < 0 {
+		t.Fatalf("status labels missing: unavailable=%q tight=%q", missing, tight)
+	}
+	if got, want := lipgloss.Width(missing[:missingAt]), lipgloss.Width(tight[:tightAt]); got != want {
+		t.Fatalf("Fable unavailable status column = %d, want the normal status column %d\nmissing: %s\ntight:   %s",
+			got, want, missing, tight)
 	}
 }
 

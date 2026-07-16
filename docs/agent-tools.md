@@ -121,34 +121,41 @@ scaled by thinking level — above the `omp usage` panel (per-window `N% used`
 with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
 
 The usage widget names the active authentication vault. Press **`a`** to cycle
-enabled vaults. Press **`v`** for the full-screen vault manager: every configured
-vault gets a compact Claude/Codex usage summary, and **Space** enables or disables
-the highlighted vault, **Enter** selects it, **`r`** refreshes all summaries,
-**`c`** starts an Anthropic login, and **`o`** starts an OpenAI Codex login.
-`mine` is the non-disableable fallback. The selection and disabled set persist
-under the XDG state directory.
+enabled vaults. Press **`v`** for the full-screen vault manager. Each provider
+row keeps its configured owner, broker-reported account identity, and usage
+together, so mixed-owner pools remain explicit. **Space** enables or disables
+the highlighted vault, **Enter** selects it, and **`r`** refreshes all summaries.
+The first manifest entry is the non-disableable fallback. Selection and disabled
+state persist under the XDG state directory.
 
-The managed hosts declare three credential pools:
+Vault definitions are machine-local, not repository data. Put a mode-0600 JSON
+array at `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; each entry supplies
+the display id/label, provider owner labels, backing OMP profile, loopback broker
+URL, token file, and snapshot cache. The generic Home Manager service validates
+that file and starts one broker process per entry. Restart
+`atyrode-omp-auth-brokers` after changing it.
 
-- `mine`: Claude Alex + Codex Alex, backed by OMP profile `default`;
-- `mum`: Claude Mum + Codex Alex, backed by OMP profile `mum`;
-- `victor`: Claude Victor + Alex + Codex Alex, backed by OMP profile `victor`.
+Each backing OMP profile isolates provider credentials. Every trusted `code`
+launch still forces shared client profile `default`; sessions, resume history,
+settings, generated configuration, memory, and ordinary caches therefore do
+not split when the vault changes. The selected vault supplies only
+`OMP_AUTH_BROKER_*`. The `u` sandbox remains on its fixed,
+credential-sanitized `untrusted` profile.
 
-Each profile only backs a loopback OMP auth-broker service and its credentials.
-Every trusted `code` launch and usage request still forces the shared OMP client
-profile `default`; sessions, resume history, settings, generated configuration,
-memory, and ordinary caches therefore no longer split when the vault changes.
-The selected vault supplies only `OMP_AUTH_BROKER_*`. The `u` sandbox remains on
-its fixed, credential-sanitized `untrusted` profile.
+Broker bearer tokens stay in mutable mode-0600 files outside the Nix store.
+The manager reads the broker's redacted snapshot to show which accounts are
+actually authenticated; it never reads or mutates OMP's credential database.
+Press **`c`** or **`o`** to authenticate the highlighted vault's configured
+Claude or Codex owner. The footer names both the owner label and backing profile
+before the browser handoff starts. Cancelling a handoff is non-fatal, and a
+second handoff cannot be queued while one is active.
 
-Home Manager starts all three broker services and writes their bearer tokens as
-mutable mode-0600 files outside the Nix store. Existing credentials in the
-`default` and `mum` profile stores are immediately reusable after activation.
-To add Victor's first account, open **`v`**, highlight `victor`, press **`c`**,
-and finish the Anthropic flow. Repeat **`c`** to add another Anthropic identity
-to that vault, or press **`o`** to add its Codex identity. Runtime creation of a
-fourth vault is intentionally unsupported because each broker endpoint and
-service is declared by Home Manager.
+Managed vault usage comes directly from the broker's read-only aggregate usage
+endpoint, so an unrelated provider record cannot invalidate the display.
+Anthropic's Fable row is always reserved in the loading skeleton. If a refresh
+omits Fable, the last real value remains visible with its cache timestamp; when
+no value has ever been observed, the row shows `unavailable` in the same status
+column as `idle`, `tight`, and `maxed`.
 
 There are three ways to leave the TUI — every trusted launch goes through
 `omp-managed`; plain `omp` is reached by typing `omp` directly, never via

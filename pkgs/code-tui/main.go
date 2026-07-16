@@ -5,7 +5,8 @@
 //	CODE_GENERATED     : generated.plain (facet-grid blocks, keyed by combo id)
 //	CODE_USAGE         : optional command (space-split) that prints `omp usage --json`
 //	CODE_SELECTION_STATE: optional persisted generator facet choices; empty disables it
-//	CODE_AUTH_VAULTS   : non-secret JSON manifest of selectable auth-broker vaults
+//	CODE_AUTH_VAULTS   : optional JSON override for the machine-local vault manifest
+//	CODE_AUTH_VAULTS_FILE: optional path override for the XDG-local vault manifest
 //	CODE_AUTH_STATE    : persisted {selected,disabled} vault state (0600, mutable)
 //	CODE_OMP           : the omp-managed executable — launches every trusted session
 //	                     on the shared `default` client profile with the selected
@@ -18,6 +19,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -236,14 +238,15 @@ func loadBlocks(path string) map[string][]string {
 
 // ── usage + availability ─────────────────────────────────────────────────────
 type usageWin struct {
-	label   string
-	pct     int
-	tier    string
-	secs    int64 // seconds until reset (relative)
-	dur     int64 // window length in seconds
-	prov    string
-	stale   bool // retained from the last successful fetch after a refresh omitted this window
-	missing bool // never observed: rendered as a deterministic placeholder row
+	label    string
+	pct      int
+	tier     string
+	secs     int64 // seconds until reset (relative)
+	dur      int64 // window length in seconds
+	prov     string
+	stale    bool  // retained from the last successful fetch after a refresh omitted this window
+	missing  bool  // never observed: rendered as a deterministic placeholder row
+	observed int64 // Unix timestamp of the last real value; retained across cache fallback
 }
 
 // resetCredits tracks OpenAI reset credits: how many are currently available
@@ -254,32 +257,48 @@ type resetCredits struct {
 }
 
 type availability struct {
-	bucket  map[string]string // bucket -> "ok" | "maxed" | "unauthed"
-	reset   map[string]int64
-	wins    []usageWin
-	credits resetCredits
-	ok      bool
+	bucket        map[string]string // bucket -> "ok" | "maxed" | "unauthed"
+	reset         map[string]int64
+	wins          []usageWin
+	credits       resetCredits
+	ok            bool
+	accounts      map[string][]vaultAccount
+	accountsOK    bool
+	accountsStale bool
 }
 
-// loadAvailability fetches usage for a vault. It always runs on the shared
-// `default` client profile (stripping any forwarded profile flag) and applies
-// the vault's broker env, loaded fresh from its token file — so the figures
-// reflect the vault's credentials while the client profile stays shared. A
-// missing/unreadable token or a failed command yields an unavailable result.
+// loadAvailability fetches identity and usage for one vault. Managed broker
+// vaults read the broker's redacted snapshot and aggregate usage endpoints
+// directly, avoiding client-side credential-schema failures in unrelated
+// providers. Standalone configurations retain the forwarded CLI fallback.
+// Every path is read-only.
 func loadAvailability(cmd string, v vault) availability {
-	a := availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	a := availability{
+		bucket: map[string]string{}, reset: map[string]int64{},
+		accounts: map[string][]vaultAccount{},
+	}
+	if accounts, err := loadVaultAccounts(v); err == nil {
+		a.accounts, a.accountsOK = accounts, true
+	}
 	if cmd == "" {
 		return a
 	}
-	env, err := brokerEnv(v)
-	if err != nil {
-		return a
+
+	var out []byte
+	var err error
+	if v.BrokerURL != "" && v.TokenFile != "" {
+		out, err = fetchVaultEndpoint(v, "/v1/usage")
+	} else {
+		env, envErr := brokerEnv(v)
+		if envErr != nil {
+			return a
+		}
+		parts := strings.Fields(cmd)
+		args := withOMPProfile("default", parts[1:]...)
+		c := exec.Command(parts[0], args...)
+		c.Env = withBrokerEnv(os.Environ(), env)
+		out, err = c.Output()
 	}
-	parts := strings.Fields(cmd)
-	args := withOMPProfile("default", parts[1:]...)
-	c := exec.Command(parts[0], args...)
-	c.Env = withBrokerEnv(os.Environ(), env)
-	out, err := c.Output()
 	if err != nil || len(out) == 0 {
 		return a
 	}
@@ -319,7 +338,8 @@ func loadAvailability(cmd string, v vault) availability {
 		for _, l := range r.Limits {
 			pct := int(l.Amount.UsedFraction*100 + 0.5)
 			a.wins = append(a.wins, usageWin{label: l.Label, pct: pct, tier: l.Scope.Tier,
-				secs: l.Window.ResetsAt/1000 - now, dur: l.Window.DurationMs / 1000, prov: r.Provider})
+				secs: l.Window.ResetsAt/1000 - now, dur: l.Window.DurationMs / 1000,
+				prov: r.Provider, observed: now})
 			bkt := bucketForProviderTier(r.Provider, l.Scope.Tier)
 			if bkt == "" {
 				continue
@@ -400,8 +420,13 @@ func (a availability) down(bucket string) bool {
 // Fresh values always win; nothing is fabricated — retained rows are visibly
 // marked stale and placeholders carry no numbers.
 func reconcileUsage(prev, next availability) (availability, bool) {
+	if !next.accountsOK && prev.accountsOK {
+		next.accounts, next.accountsOK, next.accountsStale = prev.accounts, true, true
+	}
 	if !next.ok {
 		if prev.ok {
+			prev.accounts, prev.accountsOK, prev.accountsStale =
+				next.accounts, next.accountsOK, next.accountsStale
 			return prev, true
 		}
 		return next, false
@@ -1317,14 +1342,15 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
-	vaults     []vault
-	selected   string                  // active vault id
-	disabled   map[string]bool         // disabled vault ids (never includes the fallback)
-	vaultState string                  // CODE_AUTH_STATE path
-	vaultErr   string                  // last vault switch/persist/login error
-	vaultUsage map[string]availability // per-vault usage snapshots for the manager
-	manager    bool                    // v: the full-screen vault manager is open
-	mgrCursor  int                     // manager row cursor
+	vaults       []vault
+	selected     string                  // active vault id
+	disabled     map[string]bool         // disabled vault ids (never includes the fallback)
+	vaultState   string                  // CODE_AUTH_STATE path
+	vaultErr     string                  // last vault switch/persist/login error
+	vaultUsage   map[string]availability // per-vault usage snapshots for the manager
+	manager      bool                    // v: the full-screen vault manager is open
+	mgrCursor    int                     // manager row cursor
+	loginRunning bool                    // one suspended provider login may run at a time
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
@@ -1518,7 +1544,7 @@ func (m *model) usageCtrlLine() string {
 
 // providerHeading names a provider usage group by its effective identity —
 // "Codex (account)" / "Claude (account)", derived from the active auth
-// profile — so mixed profiles (Claude (Mum) + Codex (Alex)) read correctly
+// profile — so mixed profiles (Claude (Collaborator) + Codex (Operator)) read
 // with no prose equation, in text rather than color alone. The parenthesized
 // owner is dimmed so the provider name stays the heading's anchor.
 func providerHeading(prov string, p vault) string {
@@ -1664,17 +1690,18 @@ func (m *model) usageLoading() bool {
 	return m.usageCmd != "" && !m.avail.ok && (m.fetching || m.nextRefresh.IsZero())
 }
 
-// skeletonWins are the loading skeleton's placeholder windows: both supported
-// providers expose a 5-hour rolling window and a weekly window, so the
-// skeleton mirrors that standard shape — real labels, empty bars, dotted
-// placeholders — without fabricating numbers the fetch hasn't produced.
-var skeletonWins = [...]string{"5h", "7d"}
+// skeletonWinsByProvider mirrors each provider's stable usage shape. Anthropic
+// always reserves the Fable row, even before a first successful fetch.
+var skeletonWinsByProvider = map[string][]string{
+	"openai-codex": {"5h", "7d"},
+	"anthropic":    {"5h", "7d", "7d fable"},
+}
 
 // skeletonRow is a placeholder usage row: the real row's exact geometry with
 // an empty bar and ·· placeholders for the percentage and reset time.
 func skeletonRow(label string) string {
 	return fmt.Sprintf("  %-9s %s %s used  %s", label, barStr(0),
-		stDim.Render(" ··%"), stDim.Render(gReset+" ··"))
+		stDim.Render(" ··%"), stDim.Render(gReset+" ····"))
 }
 
 // skeletonBody is the pre-first-fetch Usage content: the provider/account
@@ -1685,7 +1712,7 @@ func (m *model) skeletonBody(w int, p vault) string {
 	blocks := map[string][]string{}
 	for _, prov := range order {
 		rows := []string{padLeft(providerHeading(prov, p), gut)}
-		for _, label := range skeletonWins {
+		for _, label := range skeletonWinsByProvider[prov] {
 			rows = append(rows, skeletonRow(label))
 		}
 		blocks[prov] = rows
@@ -1738,15 +1765,20 @@ func (m *model) usageRow(w usageWin) string {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
 	}
 	if w.stale {
-		// Retained from the last successful fetch after a refresh omitted
-		// this window — the value is old, and the row says so.
-		note += "  " + stWarn.Render("stale")
+		// Retained from the last successful fetch after a refresh omitted this
+		// window. Keep the value and expose the observation timestamp.
+		cached := "cached"
+		if w.observed > 0 {
+			cached += " " + time.Unix(w.observed, 0).Local().Format("15:04")
+		}
+		note += "  " + stWarn.Render(cached)
 	}
-	reset := stDim.Render(gReset + " " + fmtReset(w.secs))
+	resetText := gReset + " " + pad(fmtReset(w.secs), 4)
+	reset := stDim.Render(resetText)
 	if w.dur > 0 && w.secs*10 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(gReset + " " + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(resetText)
 	} else if w.dur > 0 && w.secs*4 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + " " + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(resetText)
 	}
 	// During the one-time first-load fill only the bar is scaled toward its
 	// target; the label, percentage, and reset text are real from frame one.
@@ -2021,12 +2053,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.vaultUsage == nil {
 			m.vaultUsage = map[string]availability{}
 		}
-		m.vaultUsage[msg.vault] = msg.avail // scoped snapshot for the manager
+		previous, known := m.vaultUsage[msg.vault]
+		if !known && msg.vault == m.activeVault().ID {
+			previous = m.avail
+		}
+		scoped, scopedStale := reconcileUsage(previous, msg.avail)
+		m.vaultUsage[msg.vault] = scoped
 		if msg.vault != m.activeVault().ID {
 			return m, nil // not the active vault: never touches the detailed panel or its fill
 		}
 		first := !m.hadUsage && msg.avail.ok
-		m.avail, m.usageStale = reconcileUsage(m.avail, msg.avail)
+		m.avail, m.usageStale = scoped, scopedStale
 		m.hadUsage = m.hadUsage || msg.avail.ok
 		m.fetching = false
 		m.nextRefresh = time.Now().Add(refreshEvery)
@@ -2038,8 +2075,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, barAnimCmd(2)
 		}
 	case loginDoneMsg:
+		m.loginRunning = false
 		m.vaultErr = ""
-		if msg.err != nil {
+		if msg.err != nil && !errors.Is(msg.err, errLoginCancelled) {
 			m.vaultErr = "login failed: " + msg.err.Error()
 		}
 		for _, v := range m.vaults {
@@ -2537,7 +2575,7 @@ func main() {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	generated := loadBlocks(os.Getenv("CODE_GENERATED"))
-	vaults := parseVaults(os.Getenv("CODE_AUTH_VAULTS"))
+	vaults := loadVaults(os.Getenv("CODE_AUTH_VAULTS"), os.Getenv("CODE_AUTH_VAULTS_FILE"))
 	vaultState := os.Getenv("CODE_AUTH_STATE")
 	selected, disabled := loadVaultState(vaults, vaultState)
 	facets := facetDefs(glyphs)

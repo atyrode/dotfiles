@@ -32,79 +32,73 @@ let
   policyConfig = ../../omp/policy.yml;
   untrustedConfig = ../../omp/untrusted.yml;
 
-  # Authentication vaults isolate only provider credentials. Trusted clients
-  # continue to use the default OMP profile for sessions, settings, and caches.
-  codeAuthVaultDefinitions = [
-    {
-      id = "mine";
-      label = "mine";
-      profile = "default";
-      claude = "Alex";
-      codex = "Alex";
-      port = 46171;
-    }
-    {
-      id = "mum";
-      label = "mum";
-      profile = "mum";
-      claude = "Mum";
-      codex = "Alex";
-      port = 46172;
-    }
-    {
-      id = "victor";
-      label = "victor";
-      profile = "victor";
-      claude = "Victor + Alex";
-      codex = "Alex";
-      port = 46173;
-    }
-  ];
-  vaultStateRoot = "${config.xdg.stateHome}/atyrode/code-auth-vaults";
-  vaultCacheRoot = "${config.xdg.cacheHome}/atyrode/code-auth-vaults";
+  # Vault names, profile bindings, owner labels, ports, and token paths are
+  # machine-local data. The repository ships only a generic supervisor that
+  # validates and launches the entries from this local manifest.
+  vaultManifest = "${config.xdg.configHome}/atyrode/code-auth-vaults.json";
   rawOmpPackage = cfg.ompPackage.rawOmp or pkgs.omp;
   rawOmp = lib.getExe rawOmpPackage;
-  codeAuthVaults = map (vault: {
-    inherit (vault)
-      id
-      label
-      profile
-      claude
-      codex
-      ;
-    brokerUrl = "http://127.0.0.1:${toString vault.port}";
-    tokenFile = "${vaultStateRoot}/${vault.id}/token";
-    snapshotCache = "${vaultCacheRoot}/${vault.id}/snapshot.json";
-  }) codeAuthVaultDefinitions;
-  brokerScripts = builtins.listToAttrs (
-    map (
-      vault:
-      let
-        stateDir = "${vaultStateRoot}/${vault.id}";
-        tokenFile = "${stateDir}/token";
-      in
-      {
-        name = vault.id;
-        value = pkgs.writeShellScript "omp-auth-broker-${vault.id}" ''
-          set -euo pipefail
-          umask 077
-          ${lib.getExe' pkgs.coreutils "mkdir"} -p ${lib.escapeShellArg stateDir}
-          token="$(${rawOmp} --profile ${lib.escapeShellArg vault.profile} auth-broker token)"
-          if [[ -z "$token" ]]; then
-            echo "omp auth-broker returned an empty token for ${vault.id}" >&2
-            exit 1
-          fi
-          token_tmp="$(${lib.getExe' pkgs.coreutils "mktemp"} ${lib.escapeShellArg "${stateDir}/.token.XXXXXX"})"
-          trap '${lib.getExe' pkgs.coreutils "rm"} -f "$token_tmp"' EXIT
-          printf '%s\n' "$token" > "$token_tmp"
-          ${lib.getExe' pkgs.coreutils "chmod"} 0600 "$token_tmp"
-          ${lib.getExe' pkgs.coreutils "mv"} -f "$token_tmp" ${lib.escapeShellArg tokenFile}
-          trap - EXIT
-          exec ${rawOmp} --profile ${lib.escapeShellArg vault.profile} auth-broker serve --bind=127.0.0.1:${toString vault.port}
-        '';
-      }
-    ) codeAuthVaultDefinitions
-  );
+  brokerSupervisor = pkgs.writeShellScript "omp-auth-brokers" ''
+    set -euo pipefail
+    umask 077
+
+    manifest=${lib.escapeShellArg vaultManifest}
+    if [[ ! -r "$manifest" ]]; then
+      echo "OMP auth vault manifest not found: $manifest" >&2
+      exit 1
+    fi
+
+    entries="$(${lib.getExe pkgs.jq} -er '
+      if type != "array" or length == 0 then
+        error("vault manifest must be a non-empty array")
+      elif all(.[];
+        (.id | type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$")) and
+        (.profile | type == "string" and test("^[A-Za-z0-9._-]+$")) and
+        (.brokerUrl | type == "string" and test("^http://127[.]0[.]0[.]1:[0-9]+$")) and
+        (.tokenFile | type == "string" and startswith("/"))
+      ) then
+        .[] | [.id, .profile, .brokerUrl, .tokenFile] | @tsv
+      else
+        error("vault entries contain unsafe or missing runtime fields")
+      end
+    ' "$manifest")"
+
+    pids=()
+    cleanup() {
+      for pid in "''${pids[@]}"; do
+        kill "$pid" 2>/dev/null || true
+      done
+      wait "''${pids[@]}" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+
+    while IFS=$'\t' read -r id profile broker_url token_file; do
+      bind="''${broker_url#http://}"
+      state_dir="$(${lib.getExe' pkgs.coreutils "dirname"} "$token_file")"
+      ${lib.getExe' pkgs.coreutils "mkdir"} -p "$state_dir"
+      token="$(${rawOmp} --profile "$profile" auth-broker token)"
+      if [[ -z "$token" ]]; then
+        echo "omp auth-broker returned an empty token for vault $id" >&2
+        exit 1
+      fi
+      token_tmp="$(${lib.getExe' pkgs.coreutils "mktemp"} "$state_dir/.token.XXXXXX")"
+      printf '%s\n' "$token" > "$token_tmp"
+      ${lib.getExe' pkgs.coreutils "chmod"} 0600 "$token_tmp"
+      ${lib.getExe' pkgs.coreutils "mv"} -f "$token_tmp" "$token_file"
+      ${rawOmp} --profile "$profile" auth-broker serve --bind="$bind" &
+      pids+=("$!")
+    done <<< "$entries"
+
+    while true; do
+      for pid in "''${pids[@]}"; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+          wait "$pid"
+          exit $?
+        fi
+      done
+      sleep 2
+    done
+  '';
 
 in
 {
@@ -190,7 +184,6 @@ in
           "omp/defaults.yml".source = defaultsConfig;
           "omp/policy.yml".source = policyConfig;
           "omp/untrusted.yml".source = untrustedConfig;
-          "atyrode/code-auth-vaults.json".text = builtins.toJSON codeAuthVaults;
         };
 
         home.file = {
@@ -243,42 +236,32 @@ in
       }
 
       {
-        systemd.user.services = lib.mkIf pkgs.stdenv.isLinux (
-          builtins.listToAttrs (
-            map (vault: {
-              name = "atyrode-omp-auth-broker-${vault.id}";
-              value = {
-                Unit = {
-                  Description = "OMP authentication broker (${vault.label})";
-                  After = [ "network.target" ];
-                };
-                Service = {
-                  Type = "simple";
-                  ExecStart = "${brokerScripts.${vault.id}}";
-                  Restart = "on-failure";
-                };
-                Install.WantedBy = [ "default.target" ];
-              };
-            }) codeAuthVaultDefinitions
-          )
-        );
+        systemd.user.services = lib.mkIf pkgs.stdenv.isLinux {
+          atyrode-omp-auth-brokers = {
+            Unit = {
+              Description = "Machine-local OMP authentication brokers";
+              After = [ "network.target" ];
+            };
+            Service = {
+              Type = "simple";
+              ExecStart = "${brokerSupervisor}";
+              Restart = "on-failure";
+            };
+            Install.WantedBy = [ "default.target" ];
+          };
+        };
 
-        launchd.agents = lib.mkIf pkgs.stdenv.isDarwin (
-          builtins.listToAttrs (
-            map (vault: {
-              name = "atyrode-omp-auth-broker-${vault.id}";
-              value = {
-                enable = true;
-                config = {
-                  ProgramArguments = [ "${brokerScripts.${vault.id}}" ];
-                  RunAtLoad = true;
-                  KeepAlive = true;
-                  ProcessType = "Background";
-                };
-              };
-            }) codeAuthVaultDefinitions
-          )
-        );
+        launchd.agents = lib.mkIf pkgs.stdenv.isDarwin {
+          atyrode-omp-auth-brokers = {
+            enable = true;
+            config = {
+              ProgramArguments = [ "${brokerSupervisor}" ];
+              RunAtLoad = true;
+              KeepAlive = true;
+              ProcessType = "Background";
+            };
+          };
+        };
       }
 
       (lib.mkIf lcfg.enable {

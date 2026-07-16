@@ -31,6 +31,10 @@ pkgs.runCommand "check-atyrode-cli"
       [[ "$*" == *'/dirty'* ]] && printf ' M fixture\n'
       exit 0
     fi
+    if [[ "$*" == *'symbolic-ref --quiet --short HEAD'* ]]; then
+      [[ "$*" == *'/branch-live'* ]] && printf 'omp/live\n' && exit 0
+      exit 1
+    fi
     case "$*" in
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
@@ -93,7 +97,23 @@ pkgs.runCommand "check-atyrode-cli"
         echo "  3   2026-07-01 10:00:00   (current)" ;;
     esac
     EOF
-    chmod +x "$TMPDIR/bin/git" "$TMPDIR/bin/nh" "$TMPDIR/bin/nix-env"
+    cat > "$TMPDIR/bin/omp" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/omp-args"
+    case "$*" in
+      gc)
+        printf 'GC dry-run: 2 stale sessions, 4096 bytes reclaimable\n'
+        ;;
+      'worktree clear --dry-run')
+        printf 'would remove %s\n' "$HOME/.omp/wt/stale"
+        ;;
+      *)
+        printf 'unexpected omp arguments: %s\n' "$*" >&2
+        exit 64
+        ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/git" "$TMPDIR/bin/nh" "$TMPDIR/bin/nix-env" "$TMPDIR/bin/omp"
     # Make the home-manager generations profile path exist so clean/generations
     # accept it (gen_profile → $XDG_STATE_HOME/nix/profiles/home-manager).
     mkdir -p "$XDG_STATE_HOME/nix/profiles"
@@ -701,9 +721,21 @@ pkgs.runCommand "check-atyrode-cli"
     rm -f "$TMPDIR/gc-args"
 
     # Lifecycle is a read-only fixed-path report. The fixture HOME below is the
-    # full probe surface: no real-home data or arbitrary directory scan is used.
-    mkdir -p "$TMPDIR/lifecycle-repo" "$HOME/.omp/wt/dirty" "$HOME/.omp/wt/malformed" \
-      "$HOME/.cache/oh-my-pi" "$XDG_STATE_HOME/atyrode/omp-untrusted" "$XDG_STATE_HOME/atyrode/omp-plain-seed"
+    # full probe surface: sessions, dirty/branch/marker live OMP worktrees, a
+    # clean stale worktree, malformed state, and caches. Every omp call reaches
+    # the PATH stub above; no command in this check can inspect the machine's
+    # real state.
+    mkdir -p "$TMPDIR/lifecycle-repo" "$HOME/.omp/agent/sessions/project" \
+      "$HOME/.omp/wt/dirty" "$HOME/.omp/wt/branch-live" "$HOME/.omp/wt/marker-live" \
+      "$HOME/.omp/wt/stale" "$HOME/.omp/wt/malformed" "$HOME/.cache/oh-my-pi" \
+      "$XDG_STATE_HOME/atyrode/omp-untrusted" "$XDG_STATE_HOME/atyrode/omp-plain-seed"
+    printf '{"session":"one"}\n' > "$HOME/.omp/agent/sessions/project/one.jsonl"
+    printf '{"session":"two"}\n' > "$HOME/.omp/agent/sessions/project/two.jsonl"
+    printf 'dirty worktree payload\n' > "$HOME/.omp/wt/dirty/fixture"
+    printf 'clean stale payload\n' > "$HOME/.omp/wt/stale/fixture"
+    printf 'checked-out branch payload\n' > "$HOME/.omp/wt/branch-live/fixture"
+    printf 'active worktree payload\n' > "$HOME/.omp/wt/marker-live/fixture"
+    touch "$HOME/.omp/wt/marker-live/.active"
     printf 'cache' > "$HOME/.cache/oh-my-pi/cache"
     printf 'state' > "$XDG_STATE_HOME/atyrode/omp-untrusted/session"
     printf 'seed' > "$XDG_STATE_HOME/atyrode/omp-plain-seed/seed"
@@ -711,6 +743,16 @@ pkgs.runCommand "check-atyrode-cli"
     printf 'not-a-store-closure' > "$TMPDIR/lifecycle-generation/payload"
     ln -s "$TMPDIR/lifecycle-generation" "$XDG_STATE_HOME/nix/profiles/home-manager-3-link"
     test -L "$XDG_STATE_HOME/nix/profiles/home-manager-3-link"
+    snapshot_lifecycle_state() {
+      local root
+      for root in "$HOME/.omp" "$HOME/.cache/oh-my-pi" "$XDG_STATE_HOME/atyrode"; do
+        printf 'root\t%s\n' "$root"
+        find "$root" -printf '%y\t%P\t%l\n' | LC_ALL=C sort
+        find "$root" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum
+      done
+    }
+    snapshot_lifecycle_state > "$TMPDIR/lifecycle-state.before"
+    rm -f "$TMPDIR/omp-args"
     export ATYRODE_LIFECYCLE_REPO="$TMPDIR/lifecycle-repo"
     lifecycle_one="$(atyrode lifecycle --json)"
     lifecycle_two="$(atyrode lifecycle --json)"
@@ -726,15 +768,82 @@ pkgs.runCommand "check-atyrode-cli"
     jq -e '[.entries[] | select(.category == "omp-cache" and .classification == "disposable")] | length == 1' <<<"$lifecycle_one" >/dev/null
     jq -e '[.diagnostics[] | select(.code == "malformed")] | length >= 1' <<<"$lifecycle_one" >/dev/null \
       || { echo "lifecycle JSON classification is wrong: $lifecycle_one" >&2; exit 1; }
+    jq -e --arg root "$HOME/.omp" --arg sessions "$HOME/.omp/agent/sessions" \
+      '.omp.stateRoot.path == $root and (.omp.stateRoot.bytes | type) == "number"
+        and .omp.sessions.path == $sessions and .omp.sessions.count == 2
+        and (.omp.sessions.bytes | type) == "number"' <<<"$lifecycle_one" >/dev/null \
+      || { echo "lifecycle OMP state/session summary is wrong: $lifecycle_one" >&2; exit 1; }
+    jq -e --arg cache "$HOME/.cache/oh-my-pi" \
+      '[.omp.caches[] | select(.path == $cache and (.bytes | type) == "number" and .state == "present")] | length == 1' \
+      <<<"$lifecycle_one" >/dev/null \
+      || { echo "lifecycle OMP cache summary is wrong: $lifecycle_one" >&2; exit 1; }
+    jq -e '.omp.dryRuns.available
+      and .omp.dryRuns.gc.command == ["omp","gc"] and .omp.dryRuns.gc.dryRun
+      and .omp.dryRuns.gc.status == "ok" and (.omp.dryRuns.gc.output | contains("GC dry-run"))
+      and .omp.dryRuns.worktreeClear.command == ["omp","worktree","clear","--dry-run"]
+      and .omp.dryRuns.worktreeClear.dryRun and .omp.dryRuns.worktreeClear.status == "ok"
+      and (.omp.dryRuns.worktreeClear.output | contains("would remove"))' \
+      <<<"$lifecycle_one" >/dev/null \
+      || { echo "lifecycle must capture only supported OMP dry-runs: $lifecycle_one" >&2; exit 1; }
+
+    test_lifecycle_omp_live_worktree_protection() {
+      jq -e --arg path "$HOME/.omp/wt/dirty" \
+        '[.omp.worktrees[] | select(.path == $path and .classification == "live" and .protected
+          and .state == "dirty" and ([.signals[].kind] | index("dirty-git-tree")))] | length == 1' \
+        <<<"$lifecycle_one" >/dev/null \
+        || { echo "dirty OMP worktree must be live and protected: $lifecycle_one" >&2; exit 1; }
+      jq -e --arg path "$HOME/.omp/wt/stale" \
+        '[.omp.worktrees[] | select(.path == $path and .classification == "reclaimable"
+          and (.protected | not) and .state == "clean")] | length == 1' \
+        <<<"$lifecycle_one" >/dev/null \
+        || { echo "clean stale OMP worktree must be reclaimable: $lifecycle_one" >&2; exit 1; }
+      jq -e --arg path "$HOME/.omp/wt/branch-live" \
+        '[.omp.worktrees[] | select(.path == $path and .classification == "live" and .protected
+          and .branch == "omp/live" and ([.signals[].kind] | index("checked-out-branch")))] | length == 1' \
+        <<<"$lifecycle_one" >/dev/null \
+        || { echo "checked-out OMP branch must be live and protected: $lifecycle_one" >&2; exit 1; }
+      jq -e --arg path "$HOME/.omp/wt/marker-live" \
+        '[.omp.worktrees[] | select(.path == $path and .classification == "live" and .protected
+          and ([.signals[].kind] | index("activity-marker")))] | length == 1' \
+        <<<"$lifecycle_one" >/dev/null \
+        || { echo "OMP activity marker must protect its worktree: $lifecycle_one" >&2; exit 1; }
+    }
+    test_lifecycle_omp_live_worktree_protection
     lifecycle_human="$(atyrode lifecycle 2>&1)"
     grep -qF 'lifecycle inventory (read-only)' <<<"$lifecycle_human" \
       || { echo "lifecycle human output lacks a useful heading: $lifecycle_human" >&2; exit 1; }
     grep -qF 'dirty' <<<"$lifecycle_human" \
       || { echo "lifecycle human output must expose dirty worktrees: $lifecycle_human" >&2; exit 1; }
+    grep -qF 'GC dry-run: 2 stale sessions, 4096 bytes reclaimable' <<<"$lifecycle_human" \
+      || { echo "lifecycle human output must include omp gc dry-run output: $lifecycle_human" >&2; exit 1; }
+    grep -qF "would remove $HOME/.omp/wt/stale" <<<"$lifecycle_human" \
+      || { echo "lifecycle human output must include omp worktree clear dry-run output: $lifecycle_human" >&2; exit 1; }
     lifecycle_unavailable="$(ATYRODE_NIX_ENV="$TMPDIR/bin/missing-nix-env" atyrode lifecycle --json)"
     jq -e '[.diagnostics[] | select(.code == "tool-unavailable" and .scope == "generations")] | length == 1' \
       <<<"$lifecycle_unavailable" >/dev/null \
       || { echo "lifecycle must report unavailable tools structurally: $lifecycle_unavailable" >&2; exit 1; }
+    set +e
+    lifecycle_omp_absent="$(ATYRODE_OMP="$TMPDIR/bin/missing-omp" atyrode lifecycle --json)"
+    lifecycle_omp_absent_status="$?"
+    set -e
+    test "$lifecycle_omp_absent_status" = 0 \
+      || { echo "lifecycle must succeed without omp (exit $lifecycle_omp_absent_status)" >&2; exit 1; }
+    jq -e '.omp.dryRuns.available == false
+      and .omp.dryRuns.gc.status == "unavailable" and .omp.dryRuns.gc.output == null
+      and .omp.dryRuns.worktreeClear.status == "unavailable"
+      and (.omp.worktrees | length) == 5' <<<"$lifecycle_omp_absent" >/dev/null \
+      || { echo "missing omp must retain the filesystem-only report: $lifecycle_omp_absent" >&2; exit 1; }
+    unexpected_omp_args="$(grep -Ev '^(gc|worktree clear --dry-run)$' "$TMPDIR/omp-args" || true)"
+    test -z "$unexpected_omp_args" \
+      || { echo "lifecycle invoked an unsafe/unsupported omp command: $unexpected_omp_args" >&2; exit 1; }
+    grep -qxF 'gc' "$TMPDIR/omp-args"
+    grep -qxF 'worktree clear --dry-run' "$TMPDIR/omp-args"
+    snapshot_lifecycle_state > "$TMPDIR/lifecycle-state.after"
+    test_lifecycle_omp_report_no_mutation() {
+      cmp "$TMPDIR/lifecycle-state.before" "$TMPDIR/lifecycle-state.after" \
+        || { echo 'lifecycle OMP report changed the fabricated state tree' >&2; exit 1; }
+    }
+    test_lifecycle_omp_report_no_mutation
     grep -qx 'cache' "$HOME/.cache/oh-my-pi/cache" \
       || { echo 'lifecycle must not mutate the fixture cache' >&2; exit 1; }
     grep -qx 'state' "$XDG_STATE_HOME/atyrode/omp-untrusted/session" \

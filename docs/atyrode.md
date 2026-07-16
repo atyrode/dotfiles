@@ -121,13 +121,24 @@ does not inspect closures, credentials, sessions, or other mutable state.
 
 `lifecycle` is a local, read-only report rather than a cleanup command. It
 inspects only the Home Manager profile, native worktrees of the configured
-dotfiles checkout, OMP's documented `~/.omp/wt` root, and the named OMP/atyrode
-cache and state paths; it never recursively searches HOME. JSON rows carry a
-category, path, observed byte size (or `null`), evidence, owner, state, and
-conservative classification. Dirty, active, protected, malformed, and unknown
-entries are never disposable. Missing tools and malformed state remain visible
-as structured diagnostics. The command does not delete, prune, garbage-collect,
-install timers, or modify state.
+dotfiles checkout, OMP's default `~/.omp` state root (including session
+count/size), OMP's documented `~/.omp/wt` worktree root, and the named
+OMP/atyrode cache and state paths; it never recursively searches HOME. JSON rows
+carry a category, path, observed byte size (or `null`), evidence, owner, state,
+and conservative classification. The additive top-level `omp` object contains
+`stateRoot`, `sessions`, `worktreeRoot`, per-worktree reports, `caches`, and
+`dryRuns`. OMP worktrees with a dirty Git tree, checked-out branch, or
+lock/activity marker are `live` and `protected`; a worktree is `reclaimable`
+only when all of those liveness probes are quiet. Unreadable Git state remains
+protected as `unknown`.
+
+When `omp` is available, the same `atyrode lifecycle` report captures the
+supported `omp gc` default dry-run and `omp worktree clear --dry-run` output.
+When it is absent, the command still exits successfully with the filesystem
+report and marks both dry-run probes `unavailable`. It never passes `--apply`,
+runs worktree clearing without `--dry-run`, deletes, prunes, installs timers, or
+modifies state. Applying OMP GC remains a deliberate manual operator action:
+review the report, then run `omp gc --apply` directly.
 
 Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.

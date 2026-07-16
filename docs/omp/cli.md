@@ -1,7 +1,7 @@
-# Plain OMP v17.0.0 CLI reference
+# Plain OMP v17.0.1 CLI reference
 
-> **Scope:** this page is a snapshot of the packaged **upstream `omp` v17.0.0**
-> executable, audited 2026-07-15. It is not a promise that `code`,
+> **Scope:** this page is a snapshot of the packaged **upstream `omp` v17.0.1**
+> executable, audited 2026-07-16. It is not a promise that `code`,
 > `omp-managed`, or `ompu` preserve every flag unchanged. See the
 > [launcher matrix](README.md#choose-the-correct-surface-first) first.
 
@@ -154,7 +154,7 @@ $ omp config managed --json
 ```
 
 The repository-packaged `omp` passthrough intercepts that one action before
-dispatching to upstream. `config managed` is not an upstream v17.0.0
+dispatching to upstream. `config managed` is not an upstream v17.0.1
 subcommand, despite the intentionally plain-looking invocation.
 
 ## Built-in agent tool catalog
@@ -173,7 +173,6 @@ The packaged root help advertises these default tools:
 | `inspect_image` | Vision-model image analysis |
 | `browser` | Puppeteer browser automation |
 | `task` | Parallel subagents |
-| `hub` | Peer messaging, background-job control, and supervised processes |
 | `todo` | Structured task-list state |
 | `web_search` | Search through configured web providers |
 | `ask` | Interactive operator questions |
@@ -181,13 +180,12 @@ The packaged root help advertises these default tools:
 Extensions and MCP servers can add tools, so `/tools` is authoritative for the
 active session. A wrapper can also limit or deny tools through policy.
 
-In v17.0.0, the essential `hub` tool replaces the separate `irc`, `job`, and
-`launch` agent tools while preserving peer messaging, background-job control,
-and supervised-process operations. Discoverable custom, MCP, image-generation,
-and TTS tools mount as `xd://` virtual devices by default: use `read xd://` to
-list them, `read xd://<tool>` for a contract, and `write xd://<tool>` to invoke
-one. Plan and preview resolution likewise moved from the removed `resolve` tool
-to `xd://propose`, `xd://resolve`, and `xd://reject`.
+The v17.0.1 root help does not advertise `hub`; do not assume it is available
+in a bare session. `/tools` is authoritative for the active surface.
+Discoverable custom, MCP, image-generation, and TTS tools can mount as `xd://`
+virtual devices: use `read xd://` to list mounted devices, `read xd://<tool>`
+for a contract, and `write xd://<tool>` to invoke one. Plan and preview
+resolution remains at `xd://propose`, `xd://resolve`, and `xd://reject`.
 
 Upstream v17 also defaults `astGrep.enabled` and
 `edit.enforceSeenLines` off. These dotfiles deliberately enable both in the
@@ -240,8 +238,8 @@ $ ompu "inspect this untrusted repository"
 ```
 
 Sources: packaged `omp --help`; tagged upstream
-[settings](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/settings.md),
-[providers](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/providers.md),
-[models](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/models.md), and
-[secrets](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/secrets.md)
+[settings](https://github.com/can1357/oh-my-pi/blob/v17.0.1/docs/settings.md),
+[providers](https://github.com/can1357/oh-my-pi/blob/v17.0.1/docs/providers.md),
+[models](https://github.com/can1357/oh-my-pi/blob/v17.0.1/docs/models.md), and
+[secrets](https://github.com/can1357/oh-my-pi/blob/v17.0.1/docs/secrets.md)
 documentation; repository [Agent tools](../agent-tools.md).

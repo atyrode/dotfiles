@@ -1,9 +1,9 @@
 # OMP feature wiki
 
-> - **Audited:** 2026-07-15
-> - **Repository pin:** `omp` v17.0.0
-> - **Upstream release:** [v17.0.0](https://github.com/can1357/oh-my-pi/releases/tag/v17.0.0) (2026-07-15)
-> - **Audit range:** v16.0.0 through v17.0.0, plus the v17.0.0 CLI help and documentation
+> - **Audited:** 2026-07-16
+> - **Repository pin:** `omp` v17.0.1
+> - **Upstream release:** [v17.0.1](https://github.com/can1357/oh-my-pi/releases/tag/v17.0.1) (2026-07-16)
+> - **Audit range:** v16.0.0 through v17.0.1, plus the v17.0.1 CLI help and documentation
 
 This is the compact “did you know this exists?” index for the OMP binary used by
 these dotfiles. It is for operators deciding what to invoke and for agents that
@@ -11,7 +11,7 @@ need to discover an OMP capability before proposing new wrapper code.
 
 ## Choose the correct surface first
 
-The [CLI reference](cli.md) describes **plain upstream `omp` v17.0.0**. These
+The [CLI reference](cli.md) describes **plain upstream `omp` v17.0.1**. These
 repository launchers are not interchangeable:
 
 | Invoke | Authentication and state | Configuration and policy |
@@ -59,16 +59,16 @@ managed launches, then directs the operator to the repository-owned edit paths.
 Claims in this wiki were checked against:
 
 1. the repository pin in [`pkgs/omp/default.nix`](../../pkgs/omp/default.nix);
-2. the output of the packaged `omp v17.0.0 --help` and each listed shell
+2. the output of the packaged `omp v17.0.1 --help` and each listed shell
    command's `--help`;
 3. the upstream documentation at the immutable
-   [`v17.0.0` tag](https://github.com/can1357/oh-my-pi/tree/v17.0.0/docs);
+   [`v17.0.1` tag](https://github.com/can1357/oh-my-pi/tree/v17.0.1/docs);
 4. upstream release notes from
    [v16.0.0](https://github.com/can1357/oh-my-pi/releases/tag/v16.0.0) through
-   [v17.0.0](https://github.com/can1357/oh-my-pi/releases/tag/v17.0.0); and
+   [v17.0.1](https://github.com/can1357/oh-my-pi/releases/tag/v17.0.1); and
 5. the repository-owned wrapper behavior in [Agent tools](../agent-tools.md).
 
-No upstream release newer than v17.0.0 had been published when this audit was
+No upstream release newer than v17.0.1 had been published when this audit was
 written. Availability in upstream `main` or a newer release is not proof that a
 feature exists in the packaged binary.
 

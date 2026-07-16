@@ -140,8 +140,8 @@ classify() {
 # caller passes the digest captured at load time).
 write_yaml_atomically() {
   local json="$1" target="$2" expected_digest="$3" mode temp real
-  jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1 \
-    || fail "refusing to write a non-mapping document to $target"
+  jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1 ||
+    fail "refusing to write a non-mapping document to $target"
   real="$(realpath -m -- "$target")"
   mode=600
   if [[ -f "$real" ]]; then
@@ -228,8 +228,8 @@ cmd_apply() {
   classification="$(classify "$live_json" "$seed_json" "$snap_json")"
 
   if [[ "$(jq -r '.set | length' <<<"$classification")" != 0 ]]; then
-    merged="$(apply_sets "$classification")" \
-      || fail "could not merge seed values into $config_path"
+    merged="$(apply_sets "$classification")" ||
+      fail "could not merge seed values into $config_path"
     write_yaml_atomically "$merged" "$config_path" "$live_digest"
   fi
   install -m 600 "$seed_file" "$snapshot_file"
@@ -289,7 +289,7 @@ cmd_resolve() {
       printf '\n'
     fi
     case "$answer" in
-      r|R)
+      r | R)
         # Resetting may need to displace a local non-mapping that blocks the
         # path; the operator explicitly chose the default here.
         updated="$(jq --arg key "$key" --argjson result "$classification" '
@@ -301,12 +301,12 @@ cmd_resolve() {
               else delpaths([$d.path[:$i]])
               end
             )
-          | setpath($d.path; $d.seed)' <<<"$updated")" \
-          || fail "could not reset $key"
+          | setpath($d.path; $d.seed)' <<<"$updated")" ||
+          fail "could not reset $key"
         printf '  reset %s\n' "$key"
         ;;
-      a|A) keep_all=1 ;;
-      q|Q) break ;;
+      a | A) keep_all=1 ;;
+      q | Q) break ;;
       *) printf '  kept %s\n' "$key" ;;
     esac
   done 3< <(jq -r '.drift[] | [.key, (.live | tojson), (.seed | tojson)] | @tsv' <<<"$classification")
@@ -335,9 +335,21 @@ EOF
 }
 
 case "${1:-}" in
-  apply) shift; cmd_apply "$@" ;;
-  status) shift; cmd_status "$@" ;;
-  resolve) shift; cmd_resolve "$@" ;;
-  -h|--help|help|'') usage ;;
-  *) usage >&2; exit 64 ;;
+  apply)
+    shift
+    cmd_apply "$@"
+    ;;
+  status)
+    shift
+    cmd_status "$@"
+    ;;
+  resolve)
+    shift
+    cmd_resolve "$@"
+    ;;
+  -h | --help | help | '') usage ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
 esac

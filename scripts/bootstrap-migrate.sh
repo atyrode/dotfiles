@@ -109,14 +109,14 @@ validate_receipt() {
           *) die "migration receipt contains an unsafe path: $relative" ;;
         esac
         case "$kind" in
-          file|symlink) ;;
+          file | symlink) ;;
           *) die "migration receipt contains an unsafe path type" ;;
         esac
         ;;
       '') ;;
       *) die "migration receipt contains an unknown record" ;;
     esac
-  done < "$receipt"
+  done <"$receipt"
 
   [[ "$version_count" -eq 1 ]] || die "migration receipt has no unique version"
   [[ "$zshrc_count" -le 1 && "$zshenv_count" -le 1 ]] ||
@@ -159,7 +159,7 @@ validate_complete_backups() {
       symlink) [[ -L "$backup" ]] || die "the recorded symlink backup for $relative is missing" ;;
       file) [[ -f "$backup" && ! -L "$backup" ]] || die "the recorded file backup for $relative is missing" ;;
     esac
-  done < "$transaction/receipt.tsv"
+  done <"$transaction/receipt.tsv"
 }
 
 print_plan_for_path() {
@@ -196,11 +196,11 @@ write_initial_receipt() {
   local receipt="$transaction/receipt.tsv"
   local relative source
 
-  printf 'version\t1\n' > "$receipt"
+  printf 'version\t1\n' >"$receipt"
   for relative in .zshrc .zshenv; do
     source="$HOME/$relative"
     if path_exists "$source" && ! is_managed_link "$source"; then
-      printf 'move\t%s\t%s\n' "$relative" "$(path_kind "$source")" >> "$receipt"
+      printf 'move\t%s\t%s\n' "$relative" "$(path_kind "$source")" >>"$receipt"
     fi
   done
   chmod 600 "$receipt"
@@ -227,12 +227,12 @@ resume_prepare() {
     [[ "$(path_kind "$source")" == "$kind" ]] ||
       die "$relative changed type before it could be backed up"
     mv "$source" "$backup"
-    if [[ "$BOOTSTRAP_MIGRATION_TEST_HOOKS" == 1 \
-      && "${BOOTSTRAP_MIGRATION_FAILPOINT:-}" == "after-${relative#.}" ]]; then
+    if [[ "$BOOTSTRAP_MIGRATION_TEST_HOOKS" == 1 &&
+      "${BOOTSTRAP_MIGRATION_FAILPOINT:-}" == "after-${relative#.}" ]]; then
       printf 'bootstrap migration: interrupted at test failpoint after-%s\n' "${relative#.}" >&2
       exit 75
     fi
-  done < "$pending/receipt.tsv"
+  done <"$pending/receipt.tsv"
 }
 
 prepare_migration() {
@@ -275,7 +275,7 @@ commit_migration() {
     source="$HOME/$relative"
     is_managed_link "$source" ||
       die "$relative is not linked by Home Manager; refusing to complete the migration"
-  done < "$pending/receipt.tsv"
+  done <"$pending/receipt.tsv"
 
   validate_complete_backups "$pending"
 
@@ -306,7 +306,7 @@ rollback_transaction() {
       [[ "$(path_kind "$source")" == "$kind" ]] ||
         die "$relative changed type before rollback"
     fi
-  done < "$transaction/receipt.tsv"
+  done <"$transaction/receipt.tsv"
 
   while IFS=$'\t' read -r record relative kind extra; do
     [[ "$record" == move ]] || continue
@@ -320,7 +320,7 @@ rollback_transaction() {
       rm "$source"
     fi
     mv "$backup" "$source"
-  done < "$transaction/receipt.tsv"
+  done <"$transaction/receipt.tsv"
 }
 
 rollback_migration() {
@@ -367,6 +367,9 @@ case "${1:-}" in
   commit) commit_migration ;;
   rollback) rollback_migration ;;
   status) status_migration ;;
-  -h|--help|help) usage ;;
-  *) usage >&2; exit 64 ;;
+  -h | --help | help) usage ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
 esac

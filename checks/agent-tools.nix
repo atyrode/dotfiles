@@ -41,7 +41,7 @@ let
   untrustedStubOmp =
     pkgs.runCommand "omp-untrusted-stub"
       {
-        meta = stubOmp.meta;
+        inherit (stubOmp) meta;
       }
       ''
         mkdir -p "$out/bin" "$out/share/zsh/site-functions"

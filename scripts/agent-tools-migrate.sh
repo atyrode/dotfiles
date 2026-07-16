@@ -198,7 +198,7 @@ validate_receipt() {
         fail "$receipt contains an unknown record"
         ;;
     esac
-  done < "$receipt"
+  done <"$receipt"
 
   [[ "$version_count" -eq 1 && "$config_count" -eq 1 ]] ||
     fail "$receipt is incomplete"
@@ -314,7 +314,7 @@ record_move_if_needed() {
   local source="$HOME/$relative"
   if path_exists "$source" && ! is_home_manager_link "$source"; then
     printf 'action\tmove\t%s\t%s\t%s\n' \
-      "$final" "$relative" "$(source_identity "$source")" >> "$receipt"
+      "$final" "$relative" "$(source_identity "$source")" >>"$receipt"
   fi
 }
 
@@ -324,7 +324,7 @@ discover_plan() {
   preflight_binary herdr
   preflight_bigpowers
 
-  printf 'version\t1\n' > "$receipt"
+  printf 'version\t1\n' >"$receipt"
   record_move_if_needed "$receipt" absent .local/bin/omp
   record_move_if_needed "$receipt" absent .local/bin/herdr
 
@@ -338,8 +338,7 @@ discover_plan() {
   local name
   for name in \
     architect-deep debugger-deep designer designer-deep explore librarian plan \
-    reviewer reviewer-deep sonic task Tester tester-deep
-  do
+    reviewer reviewer-deep sonic task Tester tester-deep; do
     record_move_if_needed "$receipt" absent ".omp/agent/agents/$name.md"
   done
 
@@ -373,9 +372,9 @@ discover_plan() {
     local digest
     digest="$(sha256sum "$config")"
     digest="${digest%% *}"
-    printf 'action\tconfig\ttransform\t%s\t%s\n' "$config_relative" "$digest" >> "$receipt"
+    printf 'action\tconfig\ttransform\t%s\t%s\n' "$config_relative" "$digest" >>"$receipt"
   else
-    printf 'action\tconfig\tabsent\t.omp/agent/config.yml\t-\n' >> "$receipt"
+    printf 'action\tconfig\tabsent\t.omp/agent/config.yml\t-\n' >>"$receipt"
   fi
 
   chmod 600 "$receipt"
@@ -389,7 +388,7 @@ for_each_action() {
   while IFS=$'\t' read -r record kind final relative detail extra; do
     [[ "$record" == "action" ]] || continue
     "$callback" "$transaction_dir" "$kind" "$final" "$relative" "$detail"
-  done < "$transaction_dir/receipt.tsv"
+  done <"$transaction_dir/receipt.tsv"
 }
 
 render_transformed_config() {
@@ -443,7 +442,7 @@ render_transformed_config() {
       .proseOnlyThinking,
       .defaultThinkingLevel
     )
-  " "$source" > "$destination"
+  " "$source" >"$destination"
   yq eval '.' "$destination" >/dev/null
   chmod 600 "$destination"
 }

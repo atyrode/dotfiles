@@ -1,4 +1,4 @@
-{ ... }:
+_:
 
 {
   # Nix owns Claude Code's durable operator policy: the standing-authorization

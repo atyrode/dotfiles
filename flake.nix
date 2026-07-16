@@ -15,6 +15,9 @@
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
 
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
+
     homebrew-core = {
       url = "github:homebrew/homebrew-core";
       flake = false;
@@ -34,12 +37,13 @@
       nix-darwin,
       nix-homebrew,
       nix-index-database,
+      treefmt-nix,
       homebrew-core,
       homebrew-cask,
       ...
     }:
     let
-      lib = nixpkgs.lib;
+      inherit (nixpkgs) lib;
 
       systems = [
         "aarch64-darwin"
@@ -272,7 +276,7 @@
           publicRegistry = lib.mapAttrs publicHost (validateHostRegistry hostRegistry);
         in
         lib.composeManyExtensions [
-          (final: previous: {
+          (final: _previous: {
             agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
             atyrode-tui = final.callPackage ./pkgs/atyrode-tui { };
             # Repository-owned on every platform: upstream releases outpace
@@ -345,6 +349,32 @@
           overlays = [ (mkPackageOverlay { }) ];
         };
 
+      treefmtEval = forAllSystems (
+        system: treefmt-nix.lib.evalModule (pkgsFor system) ./checks/treefmt.nix
+      );
+
+      # Keep unrelated documentation changes from invalidating the gate while
+      # automatically covering every file type handled by the treefmt module.
+      treefmtSources = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [
+          (lib.fileset.fileFilter (
+            file:
+            file.name == ".envrc"
+            || lib.hasPrefix ".envrc." file.name
+            || file.hasExt "bash"
+            || file.hasExt "go"
+            || file.hasExt "nix"
+            || file.hasExt "sh"
+            || file.hasExt "yaml"
+            || file.hasExt "yml"
+          ) ./.)
+          # The atyrode CLI is a first-class shell program without an .sh
+          # extension; ShellCheck gates it via an explicit include.
+          ./pkgs/atyrode/atyrode
+        ];
+      };
+
       mkServerHomeConfig =
         {
           homeDirectory ? "/home/fixture",
@@ -406,9 +436,9 @@
               homebrew-cask
               homebrew-core
               ;
-            homeDirectory = host.homeDirectory;
+            inherit (host) homeDirectory;
             homeModules = modulesForHost name host;
-            username = host.username;
+            inherit (host) username;
           };
 
           modules = [
@@ -622,16 +652,6 @@
                 fi
                 mkdir "$out"
               '';
-          baseOnlyConfig = home-manager.lib.homeManagerConfiguration {
-            inherit pkgs;
-            modules = [
-              capabilityModules.base
-              {
-                home.username = "fixture";
-                home.homeDirectory = if lib.hasSuffix "-darwin" system then "/Users/fixture" else "/home/fixture";
-              }
-            ];
-          };
         in
         import ./checks/agent-tools.nix { inherit lib pkgs; }
         // {
@@ -648,9 +668,9 @@
               .${system};
           };
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
-          codex-seed = import ./checks/codex-seed.nix { inherit lib pkgs; };
+          codex-seed = import ./checks/codex-seed.nix { inherit pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
-          omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };
+          omp-seed = import ./checks/omp-seed.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {
@@ -681,8 +701,7 @@
           docs-drift-guard = import ./checks/docs-drift-guard.nix { inherit pkgs; };
           classify-ci-paths = import ./checks/classify-ci-paths.nix { inherit pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
-          go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
-          nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };
+          treefmt = treefmtEval.${system}.config.build.check treefmtSources;
         }
         // lib.optionalAttrs isLinux {
           portable-profiles = import ./checks/portable-profiles.nix {
@@ -704,12 +723,12 @@
           darwin-evaluation = darwinEvaluation;
           spotify-signature = import ./checks/spotify-signature.nix {
             inherit pkgs;
-            spotify = pkgs.spotify;
+            inherit (pkgs) spotify;
           };
         }
       );
 
-      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
+      formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
 
       apps = forAllSystems (
         system:

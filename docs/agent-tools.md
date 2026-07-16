@@ -445,9 +445,19 @@ agent-named `retry.fallbackChains` key in the managed defaults
 still exists in that unpacked set, so an upstream agent rename or removal
 fails the build instead of silently misrouting models.
 
+For a local formatting and static-check pass, run `nix fmt`, then build the
+same consolidated gate that CI exposes:
+
+```bash
+nix build --no-link .#checks.x86_64-linux.treefmt
+```
+
+The formatter applies nixfmt, gofmt, shfmt, deadnix, and statix; the gate also
+enforces ShellCheck, actionlint, and zizmor.
+
 GitHub Actions runs the flake checks natively on x86_64 and aarch64 Linux and
-aarch64 macOS; platform-independent lints (docs-links, production-facts,
-nixfmt, go-fmt) are emitted on x86_64-linux only to avoid duplicate work
+aarch64 macOS; platform-independent gates (docs-links, production-facts,
+treefmt) are emitted on x86_64-linux only to avoid duplicate work
 (#169). Every pull request runs the platform matrix, including documentation
 changes: a path beneath `docs/` can affect derivation hashes through the flake
 source even when no deployed file references that document. The sole required

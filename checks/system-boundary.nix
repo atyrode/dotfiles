@@ -15,8 +15,8 @@ let
   knownCapabilities = builtins.attrNames (import ../home/profiles);
 
   sort = lib.sort builtins.lessThan;
-  normaliseHome = value: if value ? config then value.config else value;
-  normaliseDarwin = value: if value ? config then value.config else value;
+  normaliseHome = value: value.config or value;
+  normaliseDarwin = value: value.config or value;
 
   configuredHomes = map normaliseHome (builtins.attrValues homeConfigs);
   serverHomes = lib.optional (serverConfig != null) (normaliseHome serverConfig);

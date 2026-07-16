@@ -1,4 +1,4 @@
-{ lib, pkgs }:
+{ pkgs }:
 
 let
   seedConfig = ../omp/plain-seed.yml;

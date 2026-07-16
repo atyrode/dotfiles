@@ -6,7 +6,6 @@ tools:
     eval: deny
     browser: deny
     github: deny
-    ssh: deny
     debug: deny
 
 secrets:

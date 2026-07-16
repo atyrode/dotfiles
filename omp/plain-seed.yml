@@ -85,6 +85,13 @@ checkpoint:
 github:
   enabled: true
 
+# Match the managed profile: keep structural search available and retain the
+# seen-line guard even when it requires an extra targeted read before editing.
+astGrep:
+  enabled: true
+edit:
+  enforceSeenLines: true
+
 # Local-first memory: mnemopi SQLite banks, one global bank so recall works
 # across projects (provenance stays in each memory's metadata). Extraction
 # runs on the hosted tiny role (Luna minimal) — better facts than a local

@@ -65,6 +65,8 @@ let
     "autolearn.autoContinue"
     "github.enabled"
     "checkpoint.enabled"
+    "astGrep.enabled"
+    "edit.enforceSeenLines"
     "statusLine.preset"
     "statusLine.compactThinkingLevel"
     "statusLine.transparent"
@@ -1224,7 +1226,7 @@ let
         --append-system-prompt ${lib.escapeShellArg untrustedPrompt}
         --no-lsp
         --no-pty
-        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,inspect_image,checkpoint,rewind,task,job,todo,write'
+        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,inspect_image,checkpoint,rewind,task,hub,todo,write'
         --cwd "$target_cwd"
       )
 

@@ -590,10 +590,26 @@ func (m model) enabledCount() int {
 	return c
 }
 
-// selectVault points the active selection at index i and re-arms the detailed
-// usage panel (a fresh first-load fill for the new vault's context). It reports
-// whether the selection actually moved; re-selecting the active vault is a
-// no-op that preserves its usage on screen.
+// restoreCachedUsage swaps the detailed panel to an already-fetched vault
+// snapshot without network work. Each vault carries its own deadline and stale
+// state, so switching cannot inherit another account's countdown or warning.
+func (m *model) restoreCachedUsage(id string) bool {
+	cached, ok := m.vaultUsage[id]
+	if !ok {
+		return false
+	}
+	m.avail = cached
+	m.hadUsage = cached.ok
+	m.usageStale = m.vaultUsageStale[id]
+	m.nextRefresh = m.vaultUsageNext[id]
+	m.fetching = m.vaultFetching[id]
+	m.barAnim = 0
+	return true
+}
+
+// selectVault points the active selection at index i and immediately restores
+// its cached detailed Usage state when available. It reports whether selection
+// moved; re-selecting the active vault preserves the current panel.
 func (m *model) selectVault(i int) bool {
 	if i < 0 || i >= len(m.vaults) {
 		return false
@@ -603,6 +619,9 @@ func (m *model) selectVault(i int) bool {
 		return false
 	}
 	m.selected = id
+	if m.restoreCachedUsage(id) {
+		return true
+	}
 	m.hadUsage = false
 	m.barAnim = 0
 	m.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}

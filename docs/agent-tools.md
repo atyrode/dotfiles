@@ -135,6 +135,14 @@ enables or disables the highlighted vault, **Enter** selects it, and **`r`**
 refreshes all summaries. The first manifest entry is the non-disableable
 fallback. Selection and disabled state persist under the XDG state directory.
 
+At startup, `code` fills a per-vault usage cache in the background. Cycling or
+selecting a vault restores its own snapshot, refresh deadline, stale warning,
+and in-flight indicator immediately instead of issuing another request. The
+active vault refreshes when its five-minute deadline expires; **`r`** remains
+the explicit whole-manager refresh. Cached data stays visible while refreshing.
+When a retained Fable value is older than the latest response, its label reports
+relative age (for example, `cached 4m ago`) rather than a wall-clock timestamp.
+
 Vault definitions are machine-local, not repository data. Put a mode-0600 JSON
 array at `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; each entry supplies a
 display label, stable id and backing OMP profile, loopback broker URL, token
@@ -157,6 +165,16 @@ Only when Fable is absent, `code` performs a provider-scoped, read-only usage
 query against that vault's backing profile with ambient broker routing removed,
 then appends only the missing Fable limit. Broker identities, Codex usage, and
 all other limits remain authoritative.
+
+Fable is different from the shared 5-hour and 7-day windows: OMP learns that
+model-family limit from rate-limit headers observed during Claude requests.
+With trusted launches consolidated onto shared client profile `default`, a
+broker vault's backing profile can retain the correct credential identity while
+no longer receiving new header observations. In that state live OMP and broker
+reports for that backing profile legitimately contain only 5-hour/7-day data;
+`code` must show Fable unavailable rather than invent a current value. Historical
+records remain evidence that the account previously exposed the window, not a
+safe source for a live quota.
 
 Each backing OMP profile isolates provider credentials. Every trusted `code`
 launch still forces shared client profile `default`; sessions, resume history,

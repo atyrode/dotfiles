@@ -1452,18 +1452,21 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
-	vaults        []vault
-	selected      string                  // active vault id
-	disabled      map[string]bool         // disabled vault ids (never includes the fallback)
-	vaultState    string                  // CODE_AUTH_STATE path
-	vaultErr      string                  // last vault switch/persist/login error
-	vaultManifest string                  // resolved writable manifest path; empty for raw JSON/read-only
-	managerInput  string                  // "create" or "rename" while manager text entry is active
-	managerText   string                  // pending manager text-entry value
-	vaultUsage    map[string]availability // per-vault usage snapshots for the manager
-	manager       bool                    // v: the full-screen vault manager is open
-	mgrCursor     int                     // manager row cursor
-	loginRunning  bool                    // one suspended provider login may run at a time
+	vaults          []vault
+	selected        string                  // active vault id
+	disabled        map[string]bool         // disabled vault ids (never includes the fallback)
+	vaultState      string                  // CODE_AUTH_STATE path
+	vaultErr        string                  // last vault switch/persist/login error
+	vaultManifest   string                  // resolved writable manifest path; empty for raw JSON/read-only
+	managerInput    string                  // "create" or "rename" while manager text entry is active
+	managerText     string                  // pending manager text-entry value
+	vaultUsage      map[string]availability // per-vault snapshots, hydrated in the background
+	vaultUsageNext  map[string]time.Time    // independent auto-refresh deadline for each cached vault
+	vaultUsageStale map[string]bool         // whole-fetch failure retained per vault
+	vaultFetching   map[string]bool         // in-flight usage request state, isolated per vault
+	manager         bool                    // v: the full-screen vault manager is open
+	mgrCursor       int                     // manager row cursor
+	loginRunning    bool                    // one suspended provider login may run at a time
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
@@ -1504,12 +1507,28 @@ func fetchUsageCmd(cmd string, v vault) tea.Cmd {
 	return func() tea.Msg { return usageMsg{vault: v.ID, avail: loadAvailability(cmd, v)} }
 }
 
-// fetchAllCmd refreshes every vault at once — the manager's whole-list view.
-func fetchAllCmd(cmd string, vaults []vault) tea.Cmd {
-	var cmds []tea.Cmd
+// startUsageFetch records request state before returning the asynchronous
+// command. Cached data stays visible; only the matching vault shows the
+// refreshing indicator.
+func (m *model) startUsageFetch(v vault) tea.Cmd {
+	if m.usageCmd == "" {
+		return nil
+	}
+	if m.vaultFetching == nil {
+		m.vaultFetching = map[string]bool{}
+	}
+	m.vaultFetching[v.ID] = true
+	if v.ID == m.activeVault().ID {
+		m.fetching = true
+	}
+	return fetchUsageCmd(m.usageCmd, v)
+}
+
+func (m *model) startUsageFetchAll(vaults []vault) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(vaults))
 	for _, v := range vaults {
-		if c := fetchUsageCmd(cmd, v); c != nil {
-			cmds = append(cmds, c)
+		if cmd := m.startUsageFetch(v); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 	if len(cmds) == 0 {
@@ -1541,7 +1560,7 @@ func (m model) Init() tea.Cmd {
 	if m.usageCmd == "" {
 		return nil
 	}
-	return tea.Batch(fetchUsageCmd(m.usageCmd, m.activeVault()), m.spin.Tick, tickCmd())
+	return tea.Batch(m.startUsageFetchAll(m.vaults), m.spin.Tick, tickCmd())
 }
 
 func (m model) listW() int {
@@ -1916,6 +1935,27 @@ func (m model) secondaryMinH() int {
 	return h
 }
 
+func formatCachedAge(observed int64, now time.Time) string {
+	seconds := now.Unix() - observed
+	if seconds < 0 {
+		seconds = 0
+	}
+	switch {
+	case seconds < 60:
+		return "<1m ago"
+	case seconds < 60*60:
+		return fmt.Sprintf("%dm ago", seconds/60)
+	case seconds < 24*60*60:
+		return fmt.Sprintf("%dh ago", seconds/(60*60))
+	case seconds < 7*24*60*60:
+		return fmt.Sprintf("%dd ago", seconds/(24*60*60))
+	case seconds < 365*24*60*60:
+		return fmt.Sprintf("%dw ago", seconds/(7*24*60*60))
+	default:
+		return fmt.Sprintf("%dy ago", seconds/(365*24*60*60))
+	}
+}
+
 func (m *model) usageRow(w usageWin) string {
 	if w.missing {
 		// Never-observed window (the upstream payload omits it): the real
@@ -1934,11 +1974,11 @@ func (m *model) usageRow(w usageWin) string {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
 	}
 	if w.stale {
-		// Retained from the last successful fetch after a refresh omitted this
-		// window. Keep the value and expose the observation timestamp.
+		// Retained after a refresh omitted this window. Keep the value and
+		// show its age, which is faster to interpret while switching vaults.
 		cached := "cached"
 		if w.observed > 0 {
-			cached += " " + time.Unix(w.observed, 0).Local().Format("15:04")
+			cached += " " + formatCachedAge(w.observed, time.Now())
 		}
 		note += "  " + stWarn.Render(cached)
 	}
@@ -2073,15 +2113,15 @@ func (m *model) syncPreviewAt(yoff int) {
 // keeps Usage in the footer) then the controls help, each under a rule. Built
 // once here so relayout and View stay in sync.
 func (m *model) footer() string {
-	rule := stDim.Render(strings.Repeat("─", m.w))
-	var parts []string
+	usage := ""
 	if m.usageInFooter() {
-		if p := m.usagePanel(); p != "" {
-			parts = append(parts, rule, p)
-		}
+		usage = m.usagePanel()
 	}
-	parts = append(parts, rule, padLeft(m.help.View(m.contextHelp()), gut))
-	return strings.Join(parts, "\n")
+	return clikit.SeparatedSections(
+		m.w,
+		usage,
+		padLeft(m.help.View(m.contextHelp()), gut),
+	)
 }
 
 // usageInFooter says where Usage lives: the wide layout keeps it as the
@@ -2234,12 +2274,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.vaultUsage == nil {
 			m.vaultUsage = map[string]availability{}
 		}
+		if m.vaultUsageNext == nil {
+			m.vaultUsageNext = map[string]time.Time{}
+		}
+		if m.vaultUsageStale == nil {
+			m.vaultUsageStale = map[string]bool{}
+		}
+		if m.vaultFetching == nil {
+			m.vaultFetching = map[string]bool{}
+		}
 		previous, known := m.vaultUsage[msg.vault]
 		if !known && msg.vault == m.activeVault().ID {
 			previous = m.avail
 		}
 		scoped, scopedStale := reconcileUsage(previous, msg.avail)
+		refreshAt := time.Now().Add(refreshEvery)
 		m.vaultUsage[msg.vault] = scoped
+		m.vaultUsageNext[msg.vault] = refreshAt
+		m.vaultUsageStale[msg.vault] = scopedStale
+		m.vaultFetching[msg.vault] = false
 		if msg.vault != m.activeVault().ID {
 			return m, nil // not the active vault: never touches the detailed panel or its fill
 		}
@@ -2247,7 +2300,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.avail, m.usageStale = scoped, scopedStale
 		m.hadUsage = m.hadUsage || msg.avail.ok
 		m.fetching = false
-		m.nextRefresh = time.Now().Add(refreshEvery)
+		m.nextRefresh = refreshAt
 		m.relayout()
 		if first {
 			// The first real data replaces the skeleton: run the one-time
@@ -2268,7 +2321,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if v.ID == m.activeVault().ID {
 				m.fetching = m.usageCmd != ""
 			}
-			return m, fetchUsageCmd(m.usageCmd, v)
+			return m, m.startUsageFetch(v)
 		}
 		return m, nil
 	case barAnimMsg:
@@ -2287,8 +2340,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// re-arm the 1s tick; auto-refresh once the interval elapses.
 		cmds := []tea.Cmd{tickCmd()}
 		if !m.fetching && !m.nextRefresh.IsZero() && !time.Now().Before(m.nextRefresh) {
-			m.fetching = true
-			cmds = append(cmds, fetchUsageCmd(m.usageCmd, m.activeVault()))
+			cmds = append(cmds, m.startUsageFetch(m.activeVault()))
 		}
 		return m, tea.Batch(cmds...)
 	case spinner.TickMsg:
@@ -2369,10 +2421,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncPreview()
 		case "r":
 			if m.usageCmd != "" && !m.fetching {
-				m.fetching = true
-				return m, fetchUsageCmd(m.usageCmd, m.activeVault())
+				return m, m.startUsageFetch(m.activeVault())
 			}
 		case "a":
+			prev := m.selected
 			changed, err := m.cycleVault()
 			if err != nil {
 				m.vaultErr = err.Error()
@@ -2381,20 +2433,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if changed {
 				m.vaultErr = ""
-				m.usageStale = false // the wiped avail belongs to the new vault; no stale carry-over
-				m.fetching = m.usageCmd != ""
+				cmd := m.afterSelectionChange(prev)
 				m.relayout()
-				if m.fetching {
-					return m, fetchUsageCmd(m.usageCmd, m.activeVault())
+				if cmd != nil {
+					return m, cmd
 				}
 			}
 		case "v":
 			if len(m.vaults) > 0 {
 				m.manager = true
 				m.mgrCursor = m.activeIndex()
-				m.fetching = m.usageCmd != ""
+				m.fetching = m.vaultFetching[m.activeVault().ID]
 				m.relayout()
-				return m, fetchAllCmd(m.usageCmd, m.vaults)
 			}
 		case "up", "k":
 			m.moveUp()
@@ -2789,24 +2839,32 @@ func main() {
 	facets := facetDefs(glyphs)
 	selectionState := os.Getenv("CODE_SELECTION_STATE")
 	m := model{
-		generated:      generated,
-		advisors:       parseAdvisors(generated["__advisors__"]),
-		facts:          parseFacts(generated["__models__"]),
-		avail:          availability{bucket: map[string]string{}, reset: map[string]int64{}},
-		usageCmd:       os.Getenv("CODE_USAGE"),
-		vaults:         vaults,
-		selected:       selected,
-		disabled:       disabled,
-		vaultState:     vaultState,
-		vaultManifest:  vaultManifest,
-		vaultUsage:     map[string]availability{},
-		fetching:       os.Getenv("CODE_USAGE") != "",
-		spin:           sp,
-		help:           help.New(),
-		glyphs:         glyphs,
-		facets:         facets,
-		sel:            loadSelectionState(selectionState, facets),
-		selectionState: selectionState,
+		generated:       generated,
+		advisors:        parseAdvisors(generated["__advisors__"]),
+		facts:           parseFacts(generated["__models__"]),
+		avail:           availability{bucket: map[string]string{}, reset: map[string]int64{}},
+		vaultFetching:   map[string]bool{},
+		usageCmd:        os.Getenv("CODE_USAGE"),
+		vaults:          vaults,
+		selected:        selected,
+		disabled:        disabled,
+		vaultState:      vaultState,
+		vaultManifest:   vaultManifest,
+		vaultUsage:      map[string]availability{},
+		vaultUsageNext:  map[string]time.Time{},
+		vaultUsageStale: map[string]bool{},
+		fetching:        os.Getenv("CODE_USAGE") != "",
+		spin:            sp,
+		help:            clikit.NewHelp(),
+		glyphs:          glyphs,
+		facets:          facets,
+		sel:             loadSelectionState(selectionState, facets),
+		selectionState:  selectionState,
+	}
+	if m.usageCmd != "" {
+		for _, v := range m.vaults {
+			m.vaultFetching[v.ID] = true
+		}
 	}
 	// Cell-motion mouse reporting carries wheel events. Filter rejected
 	// momentum and unused motion before Bubble Tea's redraw-after-Update loop.

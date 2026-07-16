@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	clikit "cli-kit"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -229,8 +230,7 @@ func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.managerInput, m.managerText, m.vaultErr = "rename", m.vaults[m.mgrCursor].Label, ""
 		return m, nil
 	case "r":
-		m.fetching = m.usageCmd != ""
-		return m, fetchAllCmd(m.usageCmd, m.vaults)
+		return m, m.startUsageFetchAll(m.vaults)
 	case "c":
 		cmd := m.loginCmd(m.mgrCursor, "anthropic")
 		m.loginRunning = cmd != nil
@@ -243,14 +243,19 @@ func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// afterSelectionChange re-fetches the detailed panel's usage when the active
-// vault moved, so closing the manager lands on the right identity's data.
+// afterSelectionChange restores cached usage without fetching. An uncached
+// vault joins an existing startup prefetch when present, otherwise it starts
+// one request and keeps its own loading state.
 func (m *model) afterSelectionChange(prev string) tea.Cmd {
 	if m.selected == prev || m.usageCmd == "" {
 		return nil
 	}
-	m.fetching = true
-	return fetchUsageCmd(m.usageCmd, m.activeVault())
+	id := m.activeVault().ID
+	if _, cached := m.vaultUsage[id]; cached || m.vaultFetching[id] {
+		m.fetching = m.vaultFetching[id]
+		return nil
+	}
+	return m.startUsageFetch(m.activeVault())
 }
 
 // managerUsageModel scopes the existing full Usage layout to the highlighted
@@ -263,10 +268,12 @@ func (m model) managerUsageModel() model {
 	}
 	v := m.vaults[m.mgrCursor]
 	scoped.selected = v.ID
+	scoped.fetching = m.vaultFetching[v.ID]
+	scoped.nextRefresh = m.vaultUsageNext[v.ID]
+	scoped.usageStale = m.vaultUsageStale[v.ID]
 	if a, ok := m.vaultUsage[v.ID]; ok {
 		scoped.avail = a
 		scoped.hadUsage = a.ok
-		scoped.fetching = false
 	} else if v.ID != m.selected {
 		scoped.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 		scoped.hadUsage = false
@@ -301,31 +308,27 @@ func (m model) managerView() string {
 	body := strings.Join(lines, "\n")
 
 	controls := padLeft(m.managerControls(m.w-gut), gut)
-	rule := stDim.Render(strings.Repeat("─", m.w))
 	usage := ""
 	if !m.hideUsage {
 		usage = m.managerUsagePanel()
 	}
-	maxUsageH := m.h - lipgloss.Height(controls) - lipgloss.Height(rule) - topGap - 2
+	controlsFooterH := lipgloss.Height(clikit.SeparatedSections(m.w, controls))
+	maxUsageH := m.h - controlsFooterH - 1 - topGap - 2 // one Usage boundary plus a usable body
 	if maxUsageH < 0 {
 		maxUsageH = 0
 	}
 	if lipgloss.Height(usage) > maxUsageH {
 		usage = lipgloss.NewStyle().MaxHeight(maxUsageH).Render(usage)
 	}
-	ch := m.h - lipgloss.Height(usage) - lipgloss.Height(controls) - lipgloss.Height(rule)
+	footer := clikit.SeparatedSections(m.w, usage, controls)
+	ch := m.h - lipgloss.Height(footer)
 	if ch < 1 {
 		ch = 1
 	}
 	placed := lipgloss.Place(m.w, ch, lipgloss.Left, lipgloss.Top,
 		strings.Repeat("\n", topGap)+body)
-	parts := []string{placed}
-	if usage != "" {
-		parts = append(parts, usage)
-	}
-	parts = append(parts, rule, controls)
 	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(
-		lipgloss.JoinVertical(lipgloss.Left, parts...))
+		lipgloss.JoinVertical(lipgloss.Left, placed, footer))
 }
 
 // managerRow renders only list state and immutable profile context. Provider
@@ -376,58 +379,48 @@ func (m model) managerRow(i, w int) string {
 // managerControls wraps labelled actions without dropping create, rename, Usage
 // visibility, or provider/profile login context.
 func (m model) managerControls(w int) string {
-	cue := func(k, label string) string { return stKey.Render(k) + stDim.Render(" "+label) }
 	v := m.activeVault()
 	if m.mgrCursor >= 0 && m.mgrCursor < len(m.vaults) {
 		v = m.vaults[m.mgrCursor]
 	}
 	if m.managerInput != "" {
-		return cue("⏎", "save") + stDim.Render("  ·  ") + cue("esc", "cancel")
+		return clikit.WrapHelp(m.help, w, []clikit.HelpItem{
+			{Key: "⏎", Description: "save"},
+			{Key: "esc", Description: "cancel"},
+		})
 	}
 	usageAction := "hide usage"
 	if m.hideUsage {
 		usageAction = "show usage"
 	}
-	items := []string{
-		cue("↑↓", "move"),
-		cue("⏎", "select"),
-		cue("space", "enable"),
-		cue("n", "new vault"),
-		cue("e", "rename"),
-		cue("s", usageAction),
-		cue("r", "refresh"),
-		cue("v", "close"),
-		cue("o", "login Codex in profile "+v.Profile),
-		cue("c", "login Claude in profile "+v.Profile),
+	items := []clikit.HelpItem{
+		{Key: "↑↓", Description: "move"},
+		{Key: "⏎", Description: "select"},
+		{Key: "space", Description: "enable"},
+		{Key: "n", Description: "new vault"},
+		{Key: "e", Description: "rename"},
+		{Key: "s", Description: usageAction},
+		{Key: "r", Description: "refresh"},
+		{Key: "v", Description: "close"},
+		{Key: "o", Description: "login Codex in profile " + v.Profile},
+		{Key: "c", Description: "login Claude in profile " + v.Profile},
 	}
 	for _, item := range items {
-		if lipgloss.Width(item) > w {
-			items = []string{
-				cue("↑↓", "move"), cue("⏎", "select"), cue("spc", "enable"),
-				cue("n", "new"), cue("e", "rename"), cue("r", "refresh"), cue("v", "close"),
-				cue("o", "Codex login"), cue("c", "Claude login"),
+		if lipgloss.Width(clikit.WrapHelp(m.help, 0, []clikit.HelpItem{item})) > w {
+			items = []clikit.HelpItem{
+				{Key: "↑↓", Description: "move"},
+				{Key: "⏎", Description: "select"},
+				{Key: "spc", Description: "enable"},
+				{Key: "n", Description: "new"},
+				{Key: "e", Description: "rename"},
+				{Key: "s", Description: usageAction},
+				{Key: "r", Description: "refresh"},
+				{Key: "v", Description: "close"},
+				{Key: "o", Description: "Codex login"},
+				{Key: "c", Description: "Claude login"},
 			}
 			break
 		}
 	}
-
-	sep := stDim.Render("  ·  ")
-	rows := []string{}
-	row := ""
-	for _, item := range items {
-		next := item
-		if row != "" {
-			next = row + sep + item
-		}
-		if row != "" && lipgloss.Width(next) > w {
-			rows = append(rows, row)
-			row = item
-		} else {
-			row = next
-		}
-	}
-	if row != "" {
-		rows = append(rows, row)
-	}
-	return strings.Join(rows, "\n")
+	return clikit.WrapHelp(m.help, w, items)
 }

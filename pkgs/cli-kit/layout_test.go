@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TestWindowListNeverWraps locks the height contract: a row wider than the
@@ -40,5 +41,52 @@ func TestWindowListStableGeometry(t *testing.T) {
 		if rw := lipgloss.Width(r); rw != 20 {
 			t.Errorf("row %d width = %d, want 20", i, rw)
 		}
+	}
+}
+
+func TestSeparatedSectionsAlwaysBoundsContent(t *testing.T) {
+	out := SeparatedSections(8, "", "usage", "", "controls")
+	rows := strings.Split(out, "\n")
+	if len(rows) != 4 {
+		t.Fatalf("got %d rows, want two boundaries and two sections: %q", len(rows), out)
+	}
+	for _, i := range []int{0, 2} {
+		if lipgloss.Width(rows[i]) != 8 || strings.Trim(ansi.Strip(rows[i]), "─") != "" {
+			t.Errorf("row %d is not an 8-cell section boundary: %q", i, rows[i])
+		}
+	}
+	if rows[1] != "usage" || rows[3] != "controls" {
+		t.Fatalf("section order changed: %q", out)
+	}
+	if got := SeparatedSections(8, "", ""); got != "" {
+		t.Fatalf("empty sections must produce no orphan boundary: %q", got)
+	}
+}
+
+func TestWrapHelpUsesSharedStyleAndWrapsWholeCues(t *testing.T) {
+	h := NewHelp()
+	if h.Styles.ShortKey.GetForeground() != StHead.GetForeground() ||
+		h.Styles.ShortDesc.GetForeground() != StDim.GetForeground() ||
+		h.Styles.ShortSeparator.GetForeground() != StDim.GetForeground() {
+		t.Fatal("shared Help styles diverged from the cli-kit palette")
+	}
+	items := []HelpItem{
+		{Key: "a", Description: "alpha"},
+		{Key: "b", Description: "beta"},
+		{Key: "c", Description: "gamma"},
+	}
+	out := WrapHelp(h, 16, items)
+	for _, row := range strings.Split(out, "\n") {
+		if lipgloss.Width(row) > 16 {
+			t.Errorf("wrapped Help row exceeds 16 cells: %q", row)
+		}
+	}
+	for _, want := range []string{"a alpha", "b beta", "c gamma"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("wrapped Help dropped %q: %q", want, out)
+		}
+	}
+	if got := WrapHelp(h, 16, nil); got != "" {
+		t.Fatalf("empty Help items rendered content: %q", got)
 	}
 }

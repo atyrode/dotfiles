@@ -3,7 +3,6 @@ package main
 import (
 	clikit "cli-kit"
 	"fmt"
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -509,7 +508,7 @@ func layoutModel() model {
 		usageCmd:    "omp usage --json",
 		vaults:      []vault{{ID: "default", Label: "primary", Claude: "Operator", Codex: "Operator"}},
 		spin:        spinner.New(),
-		help:        help.New(),
+		help:        clikit.NewHelp(),
 		glyphs:      glyphs,
 		facets:      facetDefs(glyphs),
 		sel:         defaultSel(),
@@ -2290,12 +2289,37 @@ func TestReconcileUsageFableRetention(t *testing.T) {
 	}
 	m := layoutModel()
 	row := stripAnsi(m.usageRow(fable))
-	wantCached := "cached " + time.Unix(fable.observed, 0).Local().Format("15:04")
-	if !strings.Contains(row, "7d fable") || !strings.Contains(row, wantCached) {
-		t.Errorf("the retained row must carry its cache timestamp %q: %q", wantCached, row)
+	if !strings.Contains(row, "7d fable") ||
+		!strings.Contains(row, "cached ") ||
+		!strings.Contains(row, " ago") {
+		t.Errorf("the retained row must carry its relative cache age: %q", row)
 	}
 	if !strings.Contains(row, "100% used") {
 		t.Errorf("the retained row must show the last observed value: %q", row)
+	}
+}
+
+func TestFormatCachedAge(t *testing.T) {
+	now := time.Unix(2_000_000_000, 0)
+	tests := []struct {
+		name     string
+		observed int64
+		want     string
+	}{
+		{name: "future clock skew", observed: now.Unix() + 30, want: "<1m ago"},
+		{name: "seconds", observed: now.Unix() - 59, want: "<1m ago"},
+		{name: "minutes", observed: now.Unix() - 5*60, want: "5m ago"},
+		{name: "hours", observed: now.Unix() - 3*60*60, want: "3h ago"},
+		{name: "days", observed: now.Unix() - 2*24*60*60, want: "2d ago"},
+		{name: "weeks", observed: now.Unix() - 21*24*60*60, want: "3w ago"},
+		{name: "years", observed: now.Unix() - 2*365*24*60*60, want: "2y ago"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatCachedAge(tt.observed, now); got != tt.want {
+				t.Fatalf("formatCachedAge() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

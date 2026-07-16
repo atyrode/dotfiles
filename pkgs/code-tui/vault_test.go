@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const day = int64(86400)
@@ -375,6 +376,36 @@ func TestCycleVaultSkipsDisabled(t *testing.T) {
 	changed, _ = m.cycleVault()
 	if !changed || m.activeVault().ID != "primary" {
 		t.Fatalf("cycle from tertiary must wrap past disabled secondary to primary, got %q", m.activeVault().ID)
+	}
+}
+
+func TestSelectVaultRestoresIndependentUsageCache(t *testing.T) {
+	deadline := time.Now().Add(2 * time.Minute)
+	cached := availability{
+		ok:         true,
+		accountsOK: true,
+		bucket:     map[string]string{"claude-main": "ok"},
+		reset:      map[string]int64{"claude-main": 120},
+		wins:       []usageWin{{label: "Claude 5 Hour", pct: 37}},
+	}
+	m := model{
+		vaults:          []vault{{ID: "primary"}, {ID: "secondary"}},
+		selected:        "primary",
+		vaultUsage:      map[string]availability{"secondary": cached},
+		vaultUsageNext:  map[string]time.Time{"secondary": deadline},
+		vaultUsageStale: map[string]bool{"secondary": true},
+		vaultFetching:   map[string]bool{"secondary": true},
+	}
+
+	if !m.selectVault(1) {
+		t.Fatal("selectVault must move to secondary")
+	}
+	if !reflect.DeepEqual(m.avail, cached) {
+		t.Fatalf("cached Usage was not restored: got %+v want %+v", m.avail, cached)
+	}
+	if m.nextRefresh != deadline || !m.usageStale || !m.fetching || !m.hadUsage {
+		t.Fatalf("per-vault cache metadata was not restored: deadline=%v stale=%v fetching=%v had=%v",
+			m.nextRefresh, m.usageStale, m.fetching, m.hadUsage)
 	}
 }
 

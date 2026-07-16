@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -41,6 +42,12 @@ func managerModel() model {
 			accountsOK: true, accounts: map[string][]vaultAccount{},
 		},
 	}
+	m.vaultUsageNext = map[string]time.Time{
+		"primary":   time.Now().Add(refreshEvery),
+		"secondary": time.Now().Add(refreshEvery),
+	}
+	m.vaultUsageStale = map[string]bool{}
+	m.vaultFetching = map[string]bool{"tertiary": true}
 	m.manager = true
 	return m
 }
@@ -93,8 +100,8 @@ func TestManagerOpenAndClose(t *testing.T) {
 	if !opened.manager {
 		t.Fatal("v must open the manager")
 	}
-	if cmd == nil {
-		t.Fatal("opening the manager must kick off a whole-list refresh")
+	if cmd != nil {
+		t.Fatal("opening the manager must reuse the startup cache without refreshing")
 	}
 	if opened.mgrCursor != opened.activeIndex() {
 		t.Fatalf("manager must open on the active vault, cursor=%d active=%d", opened.mgrCursor, opened.activeIndex())
@@ -163,8 +170,11 @@ func TestManagerActivateSelectsCursoredVault(t *testing.T) {
 	if m.selected != "secondary" {
 		t.Fatalf("enter must activate the cursored vault, selected=%q", m.selected)
 	}
-	if cmd == nil {
-		t.Fatal("activating a different vault must refresh the detailed panel")
+	if cmd != nil {
+		t.Fatal("activating a cached vault must not refetch its usage")
+	}
+	if got := m.avail.accountsOK; !got {
+		t.Fatal("activating a cached vault must restore its detailed Usage immediately")
 	}
 }
 func TestManagerActivateEnablesDisabledVault(t *testing.T) {
@@ -207,6 +217,11 @@ func TestManagerRefreshAllRefetches(t *testing.T) {
 	}
 	if !m.fetching {
 		t.Fatal("r must mark the active fetch in flight")
+	}
+	for _, v := range m.vaults {
+		if !m.vaultFetching[v.ID] {
+			t.Errorf("r did not mark %q usage fetch in flight", v.ID)
+		}
 	}
 }
 
@@ -408,9 +423,9 @@ func TestManagerProviderAccountsAndOrdering(t *testing.T) {
 	if panel := stripAnsi(m.managerUsagePanel()); strings.Count(panel, "not authenticated") != 2 {
 		t.Errorf("zero-account providers must remain explicit:\n%s", panel)
 	}
-	m.mgrCursor, m.fetching = 2, true
+	m.mgrCursor = 2
 	if panel := stripAnsi(m.managerUsagePanel()); strings.Count(panel, "checking account…") != 2 {
-		t.Errorf("unloaded providers must remain explicit:\n%s", panel)
+		t.Errorf("an in-flight unloaded vault must remain explicit:\n%s", panel)
 	}
 }
 
@@ -453,6 +468,45 @@ func TestManagerRenderingWithinBounds(t *testing.T) {
 		if !strings.Contains(plain, "v") {
 			t.Errorf("width %d: manager missing control cues:\n%s", s.w, plain)
 		}
+	}
+}
+
+func TestManagerSectionsAndFooterShareVisualContract(t *testing.T) {
+	m := resize(t, managerModel(), 100, 40)
+	lines := strings.Split(stripAnsi(m.View()), "\n")
+	rule := strings.Repeat("─", m.w)
+	usage := lineIndex(lines, "usage", "primary")
+	controls := lineIndex(lines, "↑↓", "move")
+	if usage <= 0 || lines[usage-1] != rule {
+		t.Fatalf("visible Usage must have a full-width top boundary:\n%s", strings.Join(lines, "\n"))
+	}
+	if controls <= 0 || lines[controls-1] != rule {
+		t.Fatalf("manager controls must have a full-width top boundary:\n%s", strings.Join(lines, "\n"))
+	}
+	if got := strings.Count(strings.Join(lines, "\n"), rule); got != 2 {
+		t.Fatalf("visible Usage + controls must render exactly two boundaries, got %d", got)
+	}
+
+	styledCue := m.help.Styles.ShortKey.Inline(true).Render("↑↓") + " " +
+		m.help.Styles.ShortDesc.Inline(true).Render("move")
+	if !strings.Contains(m.managerControls(100), styledCue) {
+		t.Fatal("manager controls do not use the shared Help key/description styles")
+	}
+
+	m.hideUsage = true
+	hidden := strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(hidden, "usage", "primary") >= 0 {
+		t.Fatalf("hidden Usage remained visible:\n%s", strings.Join(hidden, "\n"))
+	}
+	hiddenControls := lineIndex(hidden, "↑↓", "move")
+	if hiddenControls <= 0 || hidden[hiddenControls-1] != rule {
+		t.Fatalf("hidden Usage left controls without their boundary:\n%s", strings.Join(hidden, "\n"))
+	}
+	if got := strings.Count(strings.Join(hidden, "\n"), rule); got != 1 {
+		t.Fatalf("hidden Usage must remove its boundary, got %d total boundaries", got)
+	}
+	if controls := stripAnsi(m.managerControls(20)); !strings.Contains(controls, "show usage") {
+		t.Fatalf("compact manager controls lost dynamic Usage state: %q", controls)
 	}
 }
 func TestManagerCreatePromptCommitAndExistingEntryInvariant(t *testing.T) {

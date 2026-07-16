@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Guard the docs-only CI fast path invariant (#169): a change confined to
-# docs/** and README.md must not alter any Nix derivation other than the
-# intentional whole-tree lints (docs-links, production-facts), which scan
-# documentation on purpose and are built directly by the fast path. Any
-# other drift means skipping the platform matrix would silently skip real
-# verification, so the guard fails and ci-gate blocks the merge.
+# README.md or docs/** outside the versioned docs/omp/** wiki must not alter
+# any Nix derivation other than the intentional whole-tree lints (docs-links,
+# production-facts), which scan documentation on purpose and are built directly
+# by the fast path. docs/omp/** is an intentional derivation input and the path
+# classifier sends it through the full matrix instead.
 #
 # The check is evaluation-only: it instantiates every flake check on every
 # CI platform (drvPath, no builds) at the base and head revisions and
@@ -48,10 +48,10 @@ compare() {
   if [ -n "$drift" ]; then
     echo "docs drift guard: documentation changes altered non-docs derivations:" >&2
     while IFS= read -r entry; do echo "  $entry" >&2; done <<< "$drift"
-    echo "A docs/** or README.md path has become a derivation input; either" >&2
-    echo "move it out of the inert set in .github/workflows/nix.yml (classify" >&2
-    echo "job) or, for a new intentional whole-tree lint, add it to this" >&2
-    echo "script's exclusions and build it in the docs fast path." >&2
+    echo "An inert docs path has become a derivation input; either move it out" >&2
+    echo "of the inert set in .github/workflows/nix.yml (classify job) or, for" >&2
+    echo "a new intentional whole-tree lint, add it to this script's exclusions" >&2
+    echo "and build it in the docs fast path." >&2
     return 1
   fi
   echo "docs drift guard: no derivation drift outside the intentional whole-tree lints"

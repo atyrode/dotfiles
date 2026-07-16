@@ -21,9 +21,9 @@ concurrency:
 jobs:
   # Docs-only changes skip the 3-platform matrix (#169). Classification fails
   # closed: any API error, empty file list, or non-PR event runs the full
-  # matrix. Only `docs/**` and `README.md` are inert; every other Markdown
-  # file is treated as code because it can be a derivation input (deployed
-  # agents/skills, omp rules, home/claude/CLAUDE.md).
+  # matrix. `README.md` and `docs/**` except the versioned `docs/omp/**` wiki
+  # are inert. The OMP wiki feeds package/capability metadata, so it runs the
+  # full matrix like every other derivation input.
   changes:
     name: classify
     runs-on: ubuntu-24.04
@@ -45,6 +45,7 @@ jobs:
               code=false
               while IFS= read -r f; do
                 case "$f" in
+                  docs/omp/*) code=true ;;
                   docs/* | README.md) ;;
                   *) code=true ;;
                 esac

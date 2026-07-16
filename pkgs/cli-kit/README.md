@@ -13,6 +13,12 @@ Consumed as a local Go module via `replace cli-kit => ../cli-kit`.
   `PadLeft`/`Pad`, `WindowList` (a clipped, scrollbar'd column), `Scrollbar`,
   meters, and full-width `Rule`/`SeparatedSections` boundaries. Widths are
   terminal cells; empty sections produce no orphan rule.
+- **Workspace and panel primitives** (`workspace.go`, `panel.go`) —
+  `WorkspaceNav` owns ordered selection, wrapping next/previous navigation, and
+  stable application-defined IDs; `Panel`, `PanelContentWidth`, and `ClipLines`
+  provide shared rounded chrome with terminal-cell clipping and no wrap-driven
+  footer displacement. Domain models retain their own loading and mutation
+  state.
 - **Footer conventions** (`palette.go`, `layout.go`) — `NewHelp` applies the
   shared key/description/separator palette to Bubble Help, while `WrapHelp`
   wraps complete required cues without dropping them. Both remain ANSI-aware

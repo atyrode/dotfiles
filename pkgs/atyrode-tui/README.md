@@ -1,33 +1,44 @@
 # atyrode-tui
 
-Interactive Bubble Tea cockpit for the scriptable `atyrode` Bash CLI. It uses
-`cli-kit` for the shared palette and layout primitives, and delegates every
-operation to the existing CLI rather than reimplementing activation logic.
+Interactive Bubble Tea cockpit for the scriptable `atyrode` Bash CLI. It inherits
+shared panel chrome, persistent workspace navigation, clipped lists, palette,
+and PromptBox behavior from `cli-kit`, while delegating every operation to the
+existing CLI rather than reimplementing activation or lifecycle policy.
 
 ## Entry behavior
 
-- Bare `atyrode` with stdin and stdout attached to a TTY opens the cockpit.
+- Bare `atyrode` with stdin and stdout attached to a TTY opens the cockpit on
+  its neutral Overview workspace.
+- Opening Overview performs no Apply evaluation or mutation.
 - Any subcommand continues through the Bash CLI unchanged.
 - Bare non-TTY invocation continues to print CLI help.
 
 The wrapper exports `ATYRODE_CLI` before launching the cockpit. The TUI uses
-that exact executable for plan, preview, apply, and Ask grounding, so packaged
-and checkout-specific behavior remain aligned.
+that exact executable for every JSON report, preview, confirmed mutation, and
+Ask grounding, so packaged and checkout-specific behavior remain aligned.
+
+## Overview and navigation
+
+Overview explains the cockpit and lists every workspace without preallocating
+empty panel height. `Tab` and `Shift+Tab` cycle persistent workspaces; `1`–`6`
+jump directly to Overview, Apply, Generations/Clean, Doctor, Capabilities, and
+Ask. Local loading, selection, scroll, preview, and confirmation state survives
+round trips between workspaces. Narrow and medium layouts shorten controls and
+clip navigation chrome without allowing a row to enter the terminal auto-wrap
+column.
 
 ## Apply panel
 
-Startup runs only `atyrode apply --plan --json`. That command supplies the host,
-system, immutable target revision, backend, and active capabilities rendered in
-the plan panel; remote plans include the full commit as `resolvedRevision`.
-Once the plan is validated, apply confirmation is immediately available.
+The first visit to Apply runs only `atyrode apply --plan --json`. That command
+supplies the host, system, immutable target revision, backend, and active
+capabilities rendered in the plan panel; remote plans include the full commit
+as `resolvedRevision`. Once validated, confirmation is immediately available.
 
-The expensive read-only inspections are opt-in so a constrained host never
-starts multiple Nix evaluations merely by opening the cockpit:
+The expensive read-only inspections remain opt-in:
 
 - Press `v` to start `atyrode apply --ref <resolvedRevision> --preview-json`.
-  It runs the same read-only `nh … --dry` preview and returns the stable schema
-  described below. Press `v` again to cancel it.
-- Press `c` (or `Tab`) to open capabilities and lazily start
+  Press `v` again to cancel it.
+- Press `c` to focus capabilities and lazily start
   `atyrode inventory --ref <resolvedRevision> --json`.
 
 Preview and inventory requests never overlap. Their subprocess groups are
@@ -37,36 +48,54 @@ apply plan.
 
 No activation occurs during startup or inspection. Pressing `a` or `enter`
 opens a confirmation step; only `y` then runs
-`atyrode apply --ref <resolvedRevision>` in the terminal. The preview,
-inventory, and activation therefore address the same immutable commit even if
-the published branch advances while the cockpit is open. `n` or `esc` cancels
-confirmation, `r` resolves the branch again, arrow keys or `j`/`k` scroll the
-focused pane, and `d` toggles normalized technical details after a preview is
-loaded. Press `c` to open or focus capabilities and `c`/`esc` to return to the
-preview without resetting either pane.
+`atyrode apply --ref <resolvedRevision>`. `n` or `esc` cancels, `r` resolves the
+branch again, arrow keys or `j`/`k` scroll the focused pane, and `d` toggles
+normalized technical details after a preview is loaded.
 
-## Capability panel
+## Capability workspace
 
-Capabilities appear in the apply plan's declared active order. The selected
+The standalone Capabilities workspace reuses the same exact-revision inventory
+authority as Apply. Before Apply resolves an identity it explains that
+dependency; afterwards it lazily loads and retains the validated inventory.
+
+Capabilities appear in the Apply plan's declared active order. The selected
 view shows `Title  n/N`, textual active/applicable state, resolved item count,
 purpose, deliverables grouped by kind, and delivery, system, security, and
-mutable-state boundaries. Deliberate marker capabilities such as `server`
-explicitly say that they have no direct deliverables. Descriptions lead each
-item; name, version, source, and delivery are secondary.
-
-Use `[`/`]` or left/right arrows to cycle backward and forward with wrapping.
-On wide terminals the activation preview remains beside a 42-cell capability
-panel; `Tab` moves scrolling focus between them. Medium terminals open a
-full-width capability view, while narrow terminals stack the selection summary
-over a safely wrapped, scrollable detail list. Selection and both independent
-scroll positions survive `c`, `esc`, focus changes, and the Ask overlay.
+mutable-state boundaries. Use `[`/`]` or left/right arrows to cycle. Apply uses
+`c` to move focus between preview and capability panes; global `Tab` remains
+workspace navigation.
 
 The parser accepts inventory schema version 1 only, requires the manifest's
-full revision and system to equal the apply plan, derives the platform from that
+full revision and system to equal the Apply plan, derives the platform from that
 system, and resolves the planned host through its canonical id or aliases.
-Loading, command failures, and identity/schema mismatches remain visible as
-text inside the capability view. They never substitute stale inventory and
-never change preview or confirmation state.
+Failures remain local and never substitute stale inventory or change Apply
+confirmation state.
+
+## Doctor workspace
+
+Doctor renders the existing `doctor host`, `doctor system`, and `doctor tools`
+JSON contracts as three lazy tabs. Valid reports remain visible when the CLI
+returns a semantic nonzero status, so host mismatches, incomplete system checks,
+and missing expected tools are diagnostics rather than transport failures.
+Malformed or absent JSON remains a local report error. Refresh, cancellation,
+and generation-scoped stale-reply rejection match the existing inspection
+behavior.
+
+## Generations / Clean workspace
+
+The lifecycle workspace lists `generations --json --sizes`, marks the current
+generation, and keeps rollback and cleanup behind preview-first confirmation:
+
+- rollback runs `rollback --to N --dry-run`, displays the exact target, then
+  requires `y` before `rollback --to N --yes`;
+- cleanup runs `clean --dry-run --json`, displays the exact `keep` and
+  `keepSince` policy and candidates, then requires `y` before forwarding those
+  same values to `clean --keep N --keep-since D --yes`.
+
+The current generation cannot be selected for rollback, cancellation before
+confirmation performs no mutation, and the cockpit never adds `--all`. Once
+confirmed, a real lifecycle mutation cannot be cancelled or left until its
+authoritative command result is reported.
 
 ## Ask panel
 
@@ -103,21 +132,19 @@ host, system, or full revision differs from the plan.
 
 ## Scope
 
-This package owns the apply cockpit from issue #110, its read-only Ask panel
-from issue #117, and the capability inventory panel from issue #196. Follow-up
-operational panels remain separate:
-
-- issue #111: generations, rollback, and clean;
-- issue #112: doctor and remaining operational read panels.
+This package owns the Apply cockpit from #110, Ask from #117, exact-revision
+capabilities from #196, the Overview/navigation shell from #215,
+Generations/Clean from #111, and Doctor/read panels from #112.
 
 ## Verification
 
-`nix build .#atyrode-tui` runs the focused Go tests. They cover plan, preview,
-and exact-revision inventory command sequencing; schema and identity
-validation; active order; cycling and focus; independent scroll preservation;
-grouping, empty markers, long text, platform state, loading and failure safety;
-explicit apply confirmation; responsive 140-, 100-, 72-, and 44-column
-layouts; CLI-derived Ask grounding; streaming; and cancellation. Visual changes
-also follow `docs/tui-verification.md`: capture the app in tmux under the
-truecolor environment, verify PUA codepoints and row bounds from the character
-grid, and inspect `freeze` renders.
+`nix build .#atyrode-tui` runs focused Go tests covering navigation and lazy
+Apply entry; state retention; exact-revision preview and inventory; Doctor
+semantic nonzero reports, malformed JSON, cancellation, and stale replies;
+rollback preview/confirmation; Clean policy propagation and cancellation;
+explicit Apply confirmation; and responsive 150-, 100-, 80-, 72-, and
+44-column layouts.
+
+Visual changes follow `docs/tui-verification.md`: drive the packaged cockpit in
+tmux under the truecolor environment, verify exact PUA codepoints and row bounds
+from the character grid, and inspect `freeze` PNG renders.

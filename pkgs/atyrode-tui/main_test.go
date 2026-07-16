@@ -25,6 +25,13 @@ func (f runnerFunc) Output(ctx context.Context, name string, args ...string) ([]
 	return f(ctx, name, args...)
 }
 
+func newApplyTestModel(cli string) model {
+	m := newModel(cli)
+	m.nav.Select(workspaceApply)
+	m.applyRequested = true
+	return m
+}
+
 func testPreviewDocument() previewdata.Document {
 	return previewdata.Document{
 		SchemaVersion:    previewdata.SchemaVersion,
@@ -193,7 +200,7 @@ func TestGroundedAskerCancellationClosesStream(t *testing.T) {
 	}
 }
 
-func TestInitLoadsOnlyPlanAndPreviewIsExplicit(t *testing.T) {
+func TestOverviewStartsWithoutApplyWorkAndApplyPreviewRemainsExplicit(t *testing.T) {
 	var calls [][]string
 	m := newModel("/bin/atyrode")
 	m.runner = runnerFunc(func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -209,14 +216,32 @@ func TestInitLoadsOnlyPlanAndPreviewIsExplicit(t *testing.T) {
 		}
 	})
 
-	plan := m.Init()().(planMsg)
-	next, cmd := m.Update(plan)
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("Overview startup unexpectedly scheduled an Apply command")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("Overview startup commands = %#v, want none", calls)
+	}
+	overview := stripTerminalControls(m.View())
+	for _, want := range []string{"overview", "Your Nix operating environment", "1  Overview", "2  Apply", "Tab/Shift+Tab navigate"} {
+		if !strings.Contains(overview, want) {
+			t.Errorf("Overview missing %q", want)
+		}
+	}
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = next.(model)
+	if cmd == nil || m.nav.Active() != workspaceApply || m.phase != loadingPlan {
+		t.Fatalf("enter Apply state = active %q phase %v cmd %v", m.nav.Active(), m.phase, cmd)
+	}
+	plan := cmd().(planMsg)
+	next, cmd = m.Update(plan)
 	m = next.(model)
 	if cmd != nil || m.phase != ready {
 		t.Fatalf("plan completion phase/cmd = %v/%v, want ready/nil", m.phase, cmd)
 	}
 	if want := [][]string{{"/bin/atyrode", "apply", "--plan", "--json"}}; !reflect.DeepEqual(calls, want) {
-		t.Fatalf("startup commands = %#v, want %#v", calls, want)
+		t.Fatalf("Apply entry commands = %#v, want %#v", calls, want)
 	}
 	unloaded := stripTerminalControls(m.View())
 	for _, want := range []string{"workstation", "feedfacefeed", "Preview not loaded", "v preview", "enter apply"} {
@@ -250,19 +275,72 @@ func TestInitLoadsOnlyPlanAndPreviewIsExplicit(t *testing.T) {
 	}
 }
 
-func TestRemotePlanRequiresResolvedRevision(t *testing.T) {
+func TestWorkspaceNavigationPreservesApplyState(t *testing.T) {
 	m := newModel("atyrode")
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(`{"host":"workstation","system":"x86_64-linux","resolvedRevision":"` + testRevision + `"}`), nil
+	})
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(model)
+	if m.nav.Active() != workspaceApply || cmd == nil {
+		t.Fatalf("Tab entered %q with cmd %v, want Apply load", m.nav.Active(), cmd)
+	}
+	next, _ = m.Update(cmd())
+	m = next.(model)
+	m.previewCursor = 3
+
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(model)
+	if m.nav.Active() != workspaceLifecycle || cmd == nil {
+		t.Fatalf("second Tab entered %q with cmd %v, want lifecycle load", m.nav.Active(), cmd)
+	}
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = next.(model)
+	if m.nav.Active() != workspaceApply || cmd != nil || m.previewCursor != 3 || m.plan.Host != "workstation" {
+		t.Fatalf("Apply state was not retained: active=%q cmd=%v cursor=%d host=%q", m.nav.Active(), cmd, m.previewCursor, m.plan.Host)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m = next.(model)
+	if m.nav.Active() != workspaceDoctor {
+		t.Fatalf("direct shortcut entered %q, want Doctor", m.nav.Active())
+	}
+}
+
+func TestOverviewAndAskStayWithinRepresentativeWindows(t *testing.T) {
+	for _, size := range []struct{ width, height int }{{44, 18}, {80, 26}, {100, 30}, {150, 44}} {
+		m := newModel("atyrode")
+		m.width, m.height = size.width, size.height
+		m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Revision: "feedfacefeed"}
+		for _, workspace := range []clikit.WorkspaceID{workspaceOverview, workspaceAsk} {
+			m.nav.Select(workspace)
+			view := m.View()
+			if rows := strings.Split(view, "\n"); len(rows) > m.height {
+				t.Errorf("%s at %dx%d rendered %d rows", workspace, m.width, m.height, len(rows))
+			}
+			for _, row := range strings.Split(view, "\n") {
+				if got := lipgloss.Width(row); got >= m.width {
+					t.Errorf("%s at %dx%d rendered row width %d: %q", workspace, m.width, m.height, got, stripTerminalControls(row))
+				}
+			}
+		}
+	}
+}
+
+func TestRemotePlanRequiresResolvedRevision(t *testing.T) {
+	m := newApplyTestModel("atyrode")
 	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
 		return []byte(`{"source":"remote","revision":"feedfacefeed"}`), nil
 	})
-	msg := m.Init()().(planMsg)
+	msg := m.loadPlan()().(planMsg)
 	if msg.err == nil || !strings.Contains(msg.err.Error(), "full resolved revision") {
 		t.Fatalf("missing resolved revision error = %v", msg.err)
 	}
 }
 
 func TestPreviewMustMatchPlannedIdentity(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.phase = ready
 	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Source: "remote", ResolvedRevision: testRevision}
 	result := testPreviewDocument()
@@ -283,7 +361,7 @@ func TestPreviewMustMatchPlannedIdentity(t *testing.T) {
 }
 
 func TestApplyRequiresExplicitConfirmation(t *testing.T) {
-	m := newModel("/bin/atyrode")
+	m := newApplyTestModel("/bin/atyrode")
 	m.phase = ready
 	m.plan = applyPlan{Source: "remote", ResolvedRevision: testRevision}
 	applies := 0
@@ -326,7 +404,7 @@ func TestApplyRequiresExplicitConfirmation(t *testing.T) {
 }
 
 func TestPreviewFailureIsPanelLocalAndApplyRemainsAvailable(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.phase = ready
 	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
 	m.previewGeneration = 3
@@ -352,7 +430,7 @@ func TestPreviewLoadingRemainsResponsiveAndCancellationIsStaleSafe(t *testing.T)
 	for _, key := range []string{"a", "v", "r", "q"} {
 		t.Run(key, func(t *testing.T) {
 			started, cancelled := make(chan struct{}), make(chan struct{})
-			m := newModel("atyrode")
+			m := newApplyTestModel("atyrode")
 			m.phase = ready
 			m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Source: "remote", ResolvedRevision: testRevision}
 			m.runner = runnerFunc(func(ctx context.Context, _ string, args ...string) ([]byte, error) {
@@ -406,7 +484,7 @@ func TestPreviewLoadingRemainsResponsiveAndCancellationIsStaleSafe(t *testing.T)
 }
 
 func TestPreviewRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.phase = ready
 	m.plan.ResolvedRevision = testRevision
 	m.previewGeneration = 9
@@ -427,7 +505,7 @@ func TestPreviewRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
 }
 
 func TestConfirmationExplainsOptionalPreviewStatus(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.phase = ready
 	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
 	m = press(m, "enter")
@@ -446,7 +524,7 @@ func TestConfirmationExplainsOptionalPreviewStatus(t *testing.T) {
 }
 
 func TestDetailsToggleLabelsGenerationPaths(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.phase = ready
 	m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
 	m.preview = testPreviewDocument()
@@ -479,7 +557,7 @@ func TestDetailsToggleLabelsGenerationPaths(t *testing.T) {
 }
 
 func TestSummaryOmitsEmptyGroupsAndUnreportedFacts(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.phase = ready
 	m.preview = previewdata.Document{
 		SchemaVersion:    previewdata.SchemaVersion,
@@ -541,19 +619,19 @@ func TestStripTerminalControlsUsesANSIParser(t *testing.T) {
 }
 
 func TestLongPlanFailureStaysInsideNarrowWindow(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.width, m.height = 44, 26
 	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
 		output := "\x1b]0;unsafe\x07" + strings.Repeat("plan-failure-with-an-unbroken-path/", 12)
 		return []byte(output), errors.New("exit status 69")
 	})
-	msg := m.Init()().(planMsg)
+	msg := m.loadPlan()().(planMsg)
 	next, _ := m.Update(msg)
 	assertFailureViewContained(t, next.(model))
 }
 
 func TestLongPreviewFailureStaysInsideNarrowWindow(t *testing.T) {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.width, m.height, m.phase = 44, 26, ready
 	m.plan = applyPlan{
 		Host: "fixture", System: "x86_64-linux", User: "alex",
@@ -600,7 +678,7 @@ func assertFailureViewContained(t *testing.T, m model) {
 
 func TestPanelsKeepRightBorderWithinWindow(t *testing.T) {
 	for _, windowWidth := range []int{44, 72, 80, 100} {
-		m := newModel("atyrode")
+		m := newApplyTestModel("atyrode")
 		m.width, m.height, m.phase = windowWidth, 26, ready
 		m.plan = applyPlan{
 			Host:         "alex-x86_64-linux",
@@ -652,7 +730,7 @@ func TestCapabilityChipsAdaptToAvailableWidth(t *testing.T) {
 }
 
 func readyInventoryModel(width int) model {
-	m := newModel("atyrode")
+	m := newApplyTestModel("atyrode")
 	m.width, m.height, m.phase = width, 34, ready
 	m.plan = applyPlan{
 		Host: "workstation", System: "x86_64-linux", User: "alex", Source: "remote",
@@ -715,9 +793,9 @@ func TestCapabilityCyclingWrapsBothDirectionsInPlanOrder(t *testing.T) {
 func TestCapabilityFocusAndIndependentScrollSurviveReturn(t *testing.T) {
 	m := readyInventoryModel(140)
 	m.previewCursor = 3
-	m = press(m, "tab")
+	m = press(m, "c")
 	if m.focus != capabilityPane {
-		t.Fatal("Tab did not move focus to capability pane")
+		t.Fatal("c did not move focus to capability pane")
 	}
 	for range 5 {
 		m = press(m, "j")
@@ -815,7 +893,7 @@ func TestInventoryLoadingAndFailureNeverAlterApplyConfirmation(t *testing.T) {
 
 func TestCapabilityInventoryIsLazyExactRevisionAndRequestedOnce(t *testing.T) {
 	var calls [][]string
-	m := newModel("/bin/atyrode")
+	m := newApplyTestModel("/bin/atyrode")
 	m.phase = ready
 	m.plan = applyPlan{
 		Host: "workstation", System: "x86_64-linux", Source: "remote",
@@ -848,7 +926,7 @@ func TestCapabilityInventoryIsLazyExactRevisionAndRequestedOnce(t *testing.T) {
 }
 
 func TestInspectionRequestsNeverOverlap(t *testing.T) {
-	previewing := newModel("atyrode")
+	previewing := newApplyTestModel("atyrode")
 	previewing.phase = ready
 	previewing.plan.ResolvedRevision = testRevision
 	previewing.previewLoading = true
@@ -858,7 +936,7 @@ func TestInspectionRequestsNeverOverlap(t *testing.T) {
 		t.Fatal("capability inspection overlapped a running preview")
 	}
 
-	inventoryLoading := newModel("atyrode")
+	inventoryLoading := newApplyTestModel("atyrode")
 	inventoryLoading.phase = ready
 	inventoryLoading.plan.ResolvedRevision = testRevision
 	inventoryLoading.inventoryRequested, inventoryLoading.inventoryLoading = true, true
@@ -873,7 +951,7 @@ func TestInventoryContextIsCancelledByRefreshAndQuit(t *testing.T) {
 	for _, key := range []string{"r", "q"} {
 		t.Run(key, func(t *testing.T) {
 			started, cancelled := make(chan struct{}), make(chan struct{})
-			m := newModel("atyrode")
+			m := newApplyTestModel("atyrode")
 			m.phase = ready
 			m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", ResolvedRevision: testRevision}
 			m.runner = runnerFunc(func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
@@ -1004,7 +1082,7 @@ func TestInventoryRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel("atyrode")
+			m := newApplyTestModel("atyrode")
 			m.plan.ResolvedRevision = currentRevision
 			m.inventoryGeneration, m.inventoryRequested, m.inventoryLoading = 8, true, true
 

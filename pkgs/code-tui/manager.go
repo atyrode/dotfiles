@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -69,11 +68,97 @@ func (m model) loginCmd(i int, provider string) tea.Cmd {
 	})
 }
 
+const managerEditDisabled = "vault editing is disabled: no writable machine-local manifest (CODE_AUTH_VAULTS JSON overrides are read-only)"
+
+func syntheticFallback(vaults []vault) bool {
+	return len(vaults) == 1 && vaults[0].ID == "default" &&
+		vaults[0].BrokerURL == "" && vaults[0].TokenFile == "" && vaults[0].SnapshotCache == ""
+}
+
+// commitManagerInput writes the complete validated manifest before changing
+// model state. Create derives metadata only; rename changes only Label.
+func (m *model) commitManagerInput() error {
+	switch m.managerInput {
+	case "create":
+		existing := m.vaults
+		replacingFallback := syntheticFallback(existing)
+		if replacingFallback {
+			existing = nil
+		}
+		v, err := newVault(m.managerText, existing)
+		if err != nil {
+			return err
+		}
+		next := append(append([]vault(nil), existing...), v)
+		if err := writeVaultManifest(m.vaultManifest, next); err != nil {
+			return err
+		}
+		m.vaults = next
+		m.mgrCursor = len(next) - 1
+		if replacingFallback {
+			m.selected = v.ID
+			m.disabled = map[string]bool{}
+		}
+		if m.vaultUsage == nil {
+			m.vaultUsage = map[string]availability{}
+		}
+	case "rename":
+		if m.mgrCursor < 0 || m.mgrCursor >= len(m.vaults) {
+			return errors.New("no vault is selected")
+		}
+		label := strings.TrimSpace(m.managerText)
+		if label == "" {
+			return errors.New("vault name cannot be empty")
+		}
+		next := append([]vault(nil), m.vaults...)
+		next[m.mgrCursor].Label = label
+		if err := writeVaultManifest(m.vaultManifest, next); err != nil {
+			return err
+		}
+		m.vaults = next
+	default:
+		return errors.New("no vault edit is active")
+	}
+	m.managerInput = ""
+	m.managerText = ""
+	return nil
+}
+
+func (m model) updateManagerInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.managerInput, m.managerText, m.vaultErr = "", "", ""
+	case "enter":
+		if err := m.commitManagerInput(); err != nil {
+			m.vaultErr = err.Error()
+		} else {
+			m.vaultErr = ""
+		}
+	case " ":
+		m.managerText += " "
+	case "backspace", "ctrl+h":
+		runes := []rune(m.managerText)
+		if len(runes) > 0 {
+			m.managerText = string(runes[:len(runes)-1])
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.managerText += string(msg.Runes)
+		}
+	}
+	return m, nil
+}
+
 // updateManager handles keys while the vault manager is open. Every action is
 // scoped to the manager; the generator keys stay inert until it closes.
 func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.loginRunning {
 		return m, nil
+	}
+	if m.managerInput != "" {
+		return m.updateManagerInput(msg)
 	}
 	switch msg.String() {
 	case "ctrl+c":
@@ -92,6 +177,23 @@ func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mgrCursor++
 		}
 		return m, nil
+	case "s":
+		m.hideUsage = !m.hideUsage
+		m.showUsage = false
+		m.relayout()
+		return m, nil
+	case "a":
+		prev := m.selected
+		changed, err := m.cycleVault()
+		if err != nil {
+			m.vaultErr = err.Error()
+			return m, nil
+		}
+		if changed {
+			m.mgrCursor = m.activeIndex()
+			m.vaultErr = ""
+		}
+		return m, m.afterSelectionChange(prev)
 	case "enter":
 		prev := m.selected
 		if _, err := m.activateVault(m.mgrCursor); err != nil {
@@ -108,6 +210,24 @@ func (m model) updateManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.vaultErr = ""
 		return m, m.afterSelectionChange(prev)
+	case "n":
+		if m.vaultManifest == "" {
+			m.vaultErr = managerEditDisabled
+			return m, nil
+		}
+		m.managerInput, m.managerText, m.vaultErr = "create", "", ""
+		return m, nil
+	case "e":
+		if m.vaultManifest == "" {
+			m.vaultErr = managerEditDisabled
+			return m, nil
+		}
+		if m.mgrCursor < 0 || m.mgrCursor >= len(m.vaults) {
+			m.vaultErr = "no vault is selected"
+			return m, nil
+		}
+		m.managerInput, m.managerText, m.vaultErr = "rename", m.vaults[m.mgrCursor].Label, ""
+		return m, nil
 	case "r":
 		m.fetching = m.usageCmd != ""
 		return m, fetchAllCmd(m.usageCmd, m.vaults)
@@ -133,15 +253,47 @@ func (m *model) afterSelectionChange(prev string) tea.Cmd {
 	return fetchUsageCmd(m.usageCmd, m.activeVault())
 }
 
-// managerView renders the collapsed-by-default full-screen vault manager: a
-// row per vault with its enabled/selected/offline state and compact
-// per-provider usage, over a pinned control rule. Overflow is clipped to the
-// terminal bounds, so the footer can never be pushed off-screen.
+// managerUsageModel scopes the existing full Usage layout to the highlighted
+// vault without selecting it. Cached snapshots stay per-vault; an uncached row
+// uses the same loading shape as the generator's Usage panel.
+func (m model) managerUsageModel() model {
+	scoped := m
+	if m.mgrCursor < 0 || m.mgrCursor >= len(m.vaults) {
+		return scoped
+	}
+	v := m.vaults[m.mgrCursor]
+	scoped.selected = v.ID
+	if a, ok := m.vaultUsage[v.ID]; ok {
+		scoped.avail = a
+		scoped.hadUsage = a.ok
+		scoped.fetching = false
+	} else if v.ID != m.selected {
+		scoped.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
+		scoped.hadUsage = false
+	}
+	return scoped
+}
+
+func (m model) managerUsagePanel() string {
+	scoped := m.managerUsageModel()
+	return scoped.usagePanel()
+}
+
+// managerView renders a compact vault list above the same full Usage footer
+// used by the generator. The highlighted row owns that detailed panel; inline
+// account and aggregate usage duplication is deliberately absent.
 func (m model) managerView() string {
 	title := padLeft(m.pill("vaults")+"  "+stCue.Render("isolated auth vaults · the trusted profile stays shared"), gut)
 	lines := []string{title, ""}
 	for i := range m.vaults {
 		lines = append(lines, padLeft(m.managerRow(i, m.w-gut), gut))
+	}
+	if m.managerInput != "" {
+		label := "New vault name"
+		if m.managerInput == "rename" {
+			label = "Rename vault"
+		}
+		lines = append(lines, "", padLeft(stKey.Render(label+": ")+m.managerText+"█", gut))
 	}
 	if m.vaultErr != "" {
 		lines = append(lines, "", padLeft(stBrk.Render(m.vaultErr), gut))
@@ -150,18 +302,34 @@ func (m model) managerView() string {
 
 	controls := padLeft(m.managerControls(m.w-gut), gut)
 	rule := stDim.Render(strings.Repeat("─", m.w))
-	ch := m.h - lipgloss.Height(controls) - lipgloss.Height(rule) - topGap
+	usage := ""
+	if !m.hideUsage {
+		usage = m.managerUsagePanel()
+	}
+	maxUsageH := m.h - lipgloss.Height(controls) - lipgloss.Height(rule) - topGap - 2
+	if maxUsageH < 0 {
+		maxUsageH = 0
+	}
+	if lipgloss.Height(usage) > maxUsageH {
+		usage = lipgloss.NewStyle().MaxHeight(maxUsageH).Render(usage)
+	}
+	ch := m.h - lipgloss.Height(usage) - lipgloss.Height(controls) - lipgloss.Height(rule)
 	if ch < 1 {
 		ch = 1
 	}
 	placed := lipgloss.Place(m.w, ch, lipgloss.Left, lipgloss.Top,
 		strings.Repeat("\n", topGap)+body)
+	parts := []string{placed}
+	if usage != "" {
+		parts = append(parts, usage)
+	}
+	parts = append(parts, rule, controls)
 	return lipgloss.NewStyle().MaxWidth(m.w).MaxHeight(m.h).Render(
-		lipgloss.JoinVertical(lipgloss.Left, placed, rule, controls))
+		lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
-// managerRow renders one vault: cursor + state mark + label, then (when the
-// width seats it) the backing accounts, then the compact usage summary.
+// managerRow renders only list state and immutable profile context. Provider
+// accounts and usage live once in the highlighted row's full Usage panel.
 func (m model) managerRow(i, w int) string {
 	v := m.vaults[i]
 	acc := m.accent()
@@ -179,7 +347,6 @@ func (m model) managerRow(i, w int) string {
 	default:
 		mark = stDim.Render("○ ")
 	}
-
 	label := v.Label
 	if label == "" {
 		label = v.ID
@@ -194,115 +361,73 @@ func (m model) managerRow(i, w int) string {
 	default:
 		labelCol = stHead.Render(labelPlain)
 	}
-
-	head := cursor + mark + labelCol
-	if w < 38 {
-		return head
+	row := cursor + mark + labelCol
+	profile := stDim.Render("  profile " + v.Profile)
+	if lipgloss.Width(row)+lipgloss.Width(profile) <= w {
+		row += profile
 	}
-	indent := strings.Repeat(" ", 4)
-	return strings.Join([]string{
-		head,
-		indent + m.vaultProviderLine(i, "anthropic"),
-		indent + m.vaultProviderLine(i, "openai-codex"),
-	}, "\n")
+	if disabled := stDim.Render("  disabled"); !m.isEnabled(i) &&
+		lipgloss.Width(row)+lipgloss.Width(disabled) <= w {
+		row += disabled
+	}
+	return row
 }
 
-// vaultUsageSummary is the manager's compact per-provider usage cell: the
-// highest-used window per provider, or a state word (disabled/loading/offline)
-// when there is no usable data.
-func (m model) vaultProviderLine(i int, provider string) string {
-	v := m.vaults[i]
-	line := providerHeading(provider, v)
-	if !m.isEnabled(i) {
-		return line + stDim.Render(" · disabled")
-	}
-	a, loaded := m.vaultUsage[v.ID]
-	if !loaded {
-		return line + stDim.Render(" · checking account…")
-	}
-	if !a.accountsOK {
-		line += stWarn.Render(" · account status unavailable")
-	} else if accounts := a.accounts[provider]; len(accounts) == 0 {
-		line += stBrk.Render(" · not authenticated")
-	} else {
-		identities := make([]string, 0, len(accounts))
-		for _, account := range accounts {
-			identity := account.Email
-			if identity == "" {
-				identity = account.IdentityKey
-			}
-			if identity != "" {
-				identities = append(identities, identity)
-			}
-		}
-		switch {
-		case len(identities) == 0:
-			line += stDim.Render(" · authenticated")
-		case len(identities) == 1:
-			line += stDim.Render(" · " + identities[0])
-		default:
-			line += stDim.Render(" · " + strings.Join(identities, ", "))
-		}
-		if a.accountsStale {
-			line += stWarn.Render(" · identity cached")
-		}
-	}
-
-	if pct, ok := maxPct(a, provider); ok {
-		usage := fmt.Sprintf(" · %d%% used", pct)
-		switch {
-		case pct >= 100:
-			line += stBrk.Render(usage + " · maxed")
-		case pct >= 80:
-			line += stWarn.Render(usage + " · tight")
-		default:
-			line += stDim.Render(usage)
-		}
-	} else if !a.ok {
-		line += stWarn.Render(" · usage unavailable")
-	} else {
-		line += stDim.Render(" · usage unavailable")
-	}
-	return line
-}
-
-// maxPct returns the highest used percentage across a provider's windows, and
-// whether the provider was present in the payload at all.
-func maxPct(a availability, prov string) (int, bool) {
-	max, has := 0, false
-	for _, w := range a.wins {
-		if w.prov != prov {
-			continue
-		}
-		has = true
-		if w.pct > max {
-			max = w.pct
-		}
-	}
-	return max, has
-}
-
-// managerControls is the manager's bottom cue row. It drops to keys-only when
-// the labelled form would not fit the width, keeping the footer within bounds.
+// managerControls wraps labelled actions without dropping create, rename, Usage
+// visibility, or provider/profile login context.
 func (m model) managerControls(w int) string {
 	cue := func(k, label string) string { return stKey.Render(k) + stDim.Render(" "+label) }
 	v := m.activeVault()
 	if m.mgrCursor >= 0 && m.mgrCursor < len(m.vaults) {
 		v = m.vaults[m.mgrCursor]
 	}
-	navigation := strings.Join([]string{
-		cue("↑↓", "move"), cue("⏎", "select"), cue("space", "enable"),
-		cue("r", "refresh"), cue("v", "close"),
-	}, stDim.Render("  ·  "))
-	login := strings.Join([]string{
-		cue("c", "login Claude for "+v.Claude+" in profile "+v.Profile),
-		cue("o", "login Codex for "+v.Codex+" in profile "+v.Profile),
-	}, stDim.Render("  ·  "))
-	if lipgloss.Width(navigation) <= w && lipgloss.Width(login) <= w {
-		return navigation + "\n" + login
+	if m.managerInput != "" {
+		return cue("⏎", "save") + stDim.Render("  ·  ") + cue("esc", "cancel")
 	}
-	return strings.Join([]string{
-		stKey.Render("↑↓"), stKey.Render("⏎"), stKey.Render("spc"),
-		stKey.Render("r"), stKey.Render("c"), stKey.Render("o"), stKey.Render("v"),
-	}, stDim.Render(" "))
+	usageAction := "hide usage"
+	if m.hideUsage {
+		usageAction = "show usage"
+	}
+	items := []string{
+		cue("↑↓", "move"),
+		cue("⏎", "select"),
+		cue("space", "enable"),
+		cue("n", "new vault"),
+		cue("e", "rename"),
+		cue("s", usageAction),
+		cue("r", "refresh"),
+		cue("v", "close"),
+		cue("o", "login Codex in profile "+v.Profile),
+		cue("c", "login Claude in profile "+v.Profile),
+	}
+	for _, item := range items {
+		if lipgloss.Width(item) > w {
+			items = []string{
+				cue("↑↓", "move"), cue("⏎", "select"), cue("spc", "enable"),
+				cue("n", "new"), cue("e", "rename"), cue("r", "refresh"), cue("v", "close"),
+				cue("o", "Codex login"), cue("c", "Claude login"),
+			}
+			break
+		}
+	}
+
+	sep := stDim.Render("  ·  ")
+	rows := []string{}
+	row := ""
+	for _, item := range items {
+		next := item
+		if row != "" {
+			next = row + sep + item
+		}
+		if row != "" && lipgloss.Width(next) > w {
+			rows = append(rows, row)
+			row = item
+		} else {
+			row = next
+		}
+	}
+	if row != "" {
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
 }

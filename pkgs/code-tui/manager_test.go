@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"reflect"
 	"os/exec"
 	"strings"
 	"testing"
@@ -65,6 +68,22 @@ func sendKey(t *testing.T, m model, k string) (model, tea.Cmd) {
 	return nm.(model), cmd
 }
 
+func editableManagerModel(t *testing.T) model {
+	t.Helper()
+	m := managerModel()
+	root := t.TempDir()
+	m.vaultManifest = filepath.Join(root, "config", "vaults.json")
+	m.vaultState = filepath.Join(root, "state", "selection.json")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg-state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "xdg-cache"))
+	for i := range m.vaults {
+		m.vaults[i].BrokerURL = fmt.Sprintf("http://127.0.0.1:%d", 43000+i)
+		m.vaults[i].TokenFile = filepath.Join(root, "tokens", m.vaults[i].ID)
+		m.vaults[i].SnapshotCache = filepath.Join(root, "cache", m.vaults[i].ID)
+	}
+	return m
+}
+
 func TestManagerOpenAndClose(t *testing.T) {
 	m := multiProfileModel()
 	wide, _, _, _ := layoutSizes(t, m)
@@ -109,6 +128,31 @@ func TestManagerCursorNavigation(t *testing.T) {
 	}
 	if m.mgrCursor != 0 {
 		t.Fatalf("up must clamp at the first vault, got %d", m.mgrCursor)
+	}
+}
+
+func TestManagerHighlightScopesUsageAndSharesVisibility(t *testing.T) {
+	m := managerModel()
+	m.hideUsage = false
+	if panel := stripAnsi(m.managerUsagePanel()); !strings.Contains(panel, "usage") || !strings.Contains(panel, "primary") ||
+		!strings.Contains(panel, "operator.codex@example.test") {
+		t.Fatalf("initial manager Usage is not scoped to highlighted primary:\n%s", panel)
+	}
+	m, _ = sendKey(t, m, "down")
+	if m.selected != "primary" {
+		t.Fatalf("arrow navigation must not select the highlighted vault, selected=%q", m.selected)
+	}
+	if panel := stripAnsi(m.managerUsagePanel()); !strings.Contains(panel, "usage") || !strings.Contains(panel, "secondary") ||
+		strings.Contains(panel, "operator.codex@example.test") {
+		t.Fatalf("arrow navigation did not retarget detailed Usage:\n%s", panel)
+	}
+	m, _ = sendKey(t, m, "s")
+	if !m.hideUsage {
+		t.Fatal("manager s must hide the shared Usage state")
+	}
+	m, _ = sendKey(t, m, "s")
+	if m.hideUsage {
+		t.Fatal("manager s must restore the shared Usage state")
 	}
 }
 
@@ -315,6 +359,61 @@ func TestManagerRetainsCachedFablePerVault(t *testing.T) {
 	}
 }
 
+func TestManagerProviderAccountsAndOrdering(t *testing.T) {
+	m := managerModel()
+	m.vaults[0].Claude = "Mum"
+	m.vaults[0].Codex = "Victor + Alex"
+	m.vaultUsage["primary"] = availability{
+		ok: true, accountsOK: true,
+		bucket: map[string]string{}, reset: map[string]int64{},
+		accounts: map[string][]vaultAccount{
+			"openai-codex": {
+				{Provider: "openai-codex", IdentityKey: "opaque-z", Email: "z@example.test"},
+				{Provider: "openai-codex", IdentityKey: "opaque-a", Email: "a@example.test"},
+			},
+			"anthropic": {
+				{Provider: "anthropic", IdentityKey: "opaque-claude", Email: "claude@example.test"},
+			},
+		},
+		wins: []usageWin{{prov: "openai-codex", pct: 12}, {prov: "anthropic", pct: 55}},
+	}
+
+	panel := stripAnsi(m.managerUsagePanel())
+	codex := strings.Index(panel, "Codex")
+	a := strings.Index(panel, "a@example.test")
+	z := strings.Index(panel, "z@example.test")
+	codexUsage := strings.Index(panel, "12% used")
+	claude := strings.Index(panel, "Claude")
+	claudeEmail := strings.Index(panel, "claude@example.test")
+	claudeUsage := strings.Index(panel, "55% used")
+	if !(codex >= 0 && codex < a && a < z && z < codexUsage &&
+		codexUsage < claude && claude < claudeEmail && claudeEmail < claudeUsage) {
+		t.Fatalf("manager detail must reuse full Usage with Codex first and sorted accounts:\n%s", panel)
+	}
+	for _, forbidden := range []string{"Mum", "Victor + Alex", "opaque-z", "opaque-a", "opaque-claude"} {
+		if strings.Contains(panel, forbidden) {
+			t.Errorf("manager rendered configured or opaque identity %q:\n%s", forbidden, panel)
+		}
+	}
+	if row := stripAnsi(m.managerRow(0, 200)); strings.Contains(row, "% used") ||
+		strings.Contains(row, "@example.test") || strings.Contains(row, "Codex") || strings.Contains(row, "Claude") {
+		t.Fatalf("vault row duplicated provider/account/usage detail: %q", row)
+	}
+	// Rendering sorts a copied email list and must not mutate the snapshot.
+	if got := m.vaultUsage["primary"].accounts["openai-codex"][0].Email; got != "z@example.test" {
+		t.Errorf("rendering mutated account snapshot order: first email = %q", got)
+	}
+
+	m.mgrCursor = 1
+	if panel := stripAnsi(m.managerUsagePanel()); strings.Count(panel, "not authenticated") != 2 {
+		t.Errorf("zero-account providers must remain explicit:\n%s", panel)
+	}
+	m.mgrCursor, m.fetching = 2, true
+	if panel := stripAnsi(m.managerUsagePanel()); strings.Count(panel, "checking account…") != 2 {
+		t.Errorf("unloaded providers must remain explicit:\n%s", panel)
+	}
+}
+
 func TestManagerRenderingWithinBounds(t *testing.T) {
 	base := managerModel()
 	// A fourth, disabled vault so one row exercises every state at once.
@@ -331,19 +430,24 @@ func TestManagerRenderingWithinBounds(t *testing.T) {
 		}
 		plain := stripAnsi(view)
 		for _, want := range []string{
-			"vaults", "primary", "secondary", "tertiary", "guest",
-			"not authenticated", "checking account", "disabled",
+			"vaults", "primary", "secondary", "tertiary", "usage",
 		} {
 			if !strings.Contains(plain, want) {
 				t.Errorf("width %d: manager view missing %q:\n%s", s.w, want, plain)
 			}
 		}
-		// Wide layouts keep verified identity and usage on the same owner row;
-		// narrow layouts deliberately clip detail without overflowing.
+
+		if s.h >= 30 && (!strings.Contains(plain, "guest") || !strings.Contains(plain, "disabled")) {
+			t.Errorf("width %d: manager view must show the disabled vault when height seats it:\n%s", s.w, plain)
+		}
+		// The highlighted vault's full Usage footer owns provider identity and
+		// aggregate usage; list rows never duplicate it.
 		if s.w >= 100 &&
-			(!strings.Contains(plain, "Claude (Operator) · operator.claude@example.test · 55% used") ||
-				!strings.Contains(plain, "Codex (Operator) · operator.codex@example.test · 12% used")) {
-			t.Errorf("width %d: manager did not bind usage to an account owner:\n%s", s.w, plain)
+			(!strings.Contains(plain, "operator.claude@example.test") ||
+				!strings.Contains(plain, "55% used") ||
+				!strings.Contains(plain, "operator.codex@example.test") ||
+				!strings.Contains(plain, "12% used")) {
+			t.Errorf("width %d: manager did not render provider accounts and usage:\n%s", s.w, plain)
 		}
 		// A control cue row is always present.
 		if !strings.Contains(plain, "v") {
@@ -351,19 +455,106 @@ func TestManagerRenderingWithinBounds(t *testing.T) {
 		}
 	}
 }
+func TestManagerCreatePromptCommitAndExistingEntryInvariant(t *testing.T) {
+	m := editableManagerModel(t)
+	before := append([]vault(nil), m.vaults...)
+	credential := filepath.Join(t.TempDir(), "auth.db")
+	if err := os.WriteFile(credential, []byte("credential sentinel"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-func TestManagerControlsCompactWhenNarrow(t *testing.T) {
+	m, _ = sendKey(t, m, "n")
+	if m.managerInput != "create" || !strings.Contains(stripAnsi(m.managerView()), "New vault name:") {
+		t.Fatalf("n must open an explicit create prompt:\n%s", stripAnsi(m.managerView()))
+	}
+	m, _ = sendKey(t, m, "Team")
+	m, _ = sendKey(t, m, "space")
+	m, _ = sendKey(t, m, "Vault")
+	m, _ = sendKey(t, m, "enter")
+	if m.managerInput != "" || len(m.vaults) != len(before)+1 {
+		t.Fatalf("create did not commit: mode=%q vaults=%#v", m.managerInput, m.vaults)
+	}
+	if !reflect.DeepEqual(m.vaults[:len(before)], before) {
+		t.Fatalf("create changed an existing entry:\nbefore=%#v\nafter=%#v", before, m.vaults[:len(before)])
+	}
+	created := m.vaults[len(before)]
+	if created.ID != "team-vault" || created.Profile != "team-vault" || created.Label != "Team Vault" {
+		t.Fatalf("created vault identity = %+v", created)
+	}
+	if data, err := os.ReadFile(credential); err != nil || string(data) != "credential sentinel" {
+		t.Fatalf("create touched credential sentinel: data=%q err=%v", data, err)
+	}
+}
+
+func TestManagerRenameChangesOnlyLabel(t *testing.T) {
+	m := editableManagerModel(t)
+	m.mgrCursor = 1
+	before := m.vaults[1]
+	selected, disabled := m.selected, map[string]bool{"tertiary": true}
+	m.disabled = disabled
+	m, _ = sendKey(t, m, "e")
+	if m.managerInput != "rename" || m.managerText != before.Label ||
+		!strings.Contains(stripAnsi(m.managerView()), "Rename vault:") {
+		t.Fatalf("e must open a prefilled rename prompt: mode=%q text=%q", m.managerInput, m.managerText)
+	}
+	for range len([]rune(before.Label)) {
+		m, _ = sendKey(t, m, "backspace")
+	}
+	m, _ = sendKey(t, m, "Display")
+	m, _ = sendKey(t, m, "space")
+	m, _ = sendKey(t, m, "Only")
+	m, _ = sendKey(t, m, "enter")
+	after := m.vaults[1]
+	want := before
+	want.Label = "Display Only"
+	if !reflect.DeepEqual(after, want) {
+		t.Fatalf("rename changed immutable fields:\nwant=%+v\ngot=%+v", want, after)
+	}
+	if m.selected != selected || !reflect.DeepEqual(m.disabled, disabled) {
+		t.Fatalf("rename changed selection state: selected=%q disabled=%v", m.selected, m.disabled)
+	}
+}
+
+func TestManagerEditCancelAndRawJSONDisabled(t *testing.T) {
+	m := editableManagerModel(t)
+	m, _ = sendKey(t, m, "n")
+	m, _ = sendKey(t, m, "discard me")
+	m, _ = sendKey(t, m, "esc")
+	if m.managerInput != "" || len(m.vaults) != 3 {
+		t.Fatalf("Esc must cancel edit without changing vaults: mode=%q count=%d", m.managerInput, len(m.vaults))
+	}
+
+	m.vaultManifest = ""
+	m, _ = sendKey(t, m, "n")
+	if m.managerInput != "" || !strings.Contains(m.vaultErr, "editing is disabled") ||
+		!strings.Contains(m.vaultErr, "CODE_AUTH_VAULTS") {
+		t.Fatalf("raw JSON editing error is unclear: %q", m.vaultErr)
+	}
+}
+
+
+func TestManagerControlsWrapLabelsWhenNarrow(t *testing.T) {
 	m := managerModel()
 	wide := m.managerControls(200)
 	if !strings.Contains(stripAnsi(wide), "select") ||
-		!strings.Contains(stripAnsi(wide), "login Claude for Operator in profile default") {
-		t.Fatalf("wide controls must name the target account and profile: %q", stripAnsi(wide))
+		!strings.Contains(stripAnsi(wide), "login Claude in profile default") {
+		t.Fatalf("wide controls must name only the provider and immutable profile: %q", stripAnsi(wide))
+	}
+	for _, forbidden := range []string{"Operator", "Collaborator", "Reviewer"} {
+		if strings.Contains(stripAnsi(wide), forbidden) {
+			t.Fatalf("login cue leaked configured owner alias %q: %q", forbidden, stripAnsi(wide))
+		}
 	}
 	narrow := m.managerControls(20)
-	if strings.Contains(stripAnsi(narrow), "login") {
-		t.Fatalf("narrow controls must drop to keys only: %q", stripAnsi(narrow))
+	plain := stripAnsi(narrow)
+	for _, label := range []string{"move", "select", "enable", "new", "rename", "refresh", "close", "Claude login", "Codex login"} {
+		if !strings.Contains(plain, label) {
+			t.Fatalf("narrow controls dropped %q: %q", label, plain)
+		}
 	}
-	if lipgloss.Width(narrow) > 20 {
-		t.Fatalf("narrow controls must fit the width, got %d", lipgloss.Width(narrow))
+	for _, line := range strings.Split(narrow, "\n") {
+		if lipgloss.Width(line) > 20 {
+			t.Fatalf("narrow control line must fit the width, got %d: %q", lipgloss.Width(line), stripAnsi(line))
+		}
 	}
 }

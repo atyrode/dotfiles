@@ -121,19 +121,32 @@ scaled by thinking level — above the `omp usage` panel (per-window `N% used`
 with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
 
 The usage widget names the active authentication vault. Press **`a`** to cycle
-enabled vaults. Press **`v`** for the full-screen vault manager. Each provider
-row keeps its configured owner, broker-reported account identity, and usage
-together, so mixed-owner pools remain explicit. **Space** enables or disables
-the highlighted vault, **Enter** selects it, and **`r`** refreshes all summaries.
-The first manifest entry is the non-disableable fallback. Selection and disabled
-state persist under the XDG state directory.
+enabled vaults. Press **`v`** for the full-screen vault manager. Its compact
+vault rows never duplicate quota data: the highlighted row drives the same full
+Usage panel shown by the generator, including provider-only headings,
+broker-reported account lists, and Codex-before-Claude ordering. Arrow keys
+retarget that detail without selecting the vault. The generator's **`s`** Usage
+visibility state transfers into the manager, where **`s`** toggles it too.
+Configured aliases are never presented as authenticated accounts. **Space**
+enables or disables the highlighted vault, **Enter** selects it, and **`r`**
+refreshes all summaries. The first manifest entry is the non-disableable
+fallback. Selection and disabled state persist under the XDG state directory.
 
 Vault definitions are machine-local, not repository data. Put a mode-0600 JSON
-array at `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; each entry supplies
-the display id/label, provider owner labels, backing OMP profile, loopback broker
-URL, token file, and snapshot cache. The generic Home Manager service validates
-that file and starts one broker process per entry. Restart
-`atyrode-omp-auth-brokers` after changing it.
+array at `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; each entry supplies a
+display label, stable id and backing OMP profile, loopback broker URL, token
+file, and snapshot cache. In the manager, **`n`** creates an empty vault and
+**`e`** changes only the highlighted vault's display label. Enter commits the
+text prompt and Escape cancels it. Creation derives a collision-safe id/profile,
+unused loopback port, and XDG state/cache paths; it never creates or reads
+credentials. A `CODE_AUTH_VAULTS` raw JSON override is intentionally read-only
+because it has no safe machine-local persistence target.
+
+The generic Home Manager supervisor validates the manifest and starts one
+broker process per entry. It watches atomic content changes and automatically
+reconciles all children after a valid edit; an invalid replacement leaves the
+current brokers running. No Home Manager apply or manual service restart is
+needed.
 
 Each backing OMP profile isolates provider credentials. Every trusted `code`
 launch still forces shared client profile `default`; sessions, resume history,
@@ -145,9 +158,9 @@ credential-sanitized `untrusted` profile.
 Broker bearer tokens stay in mutable mode-0600 files outside the Nix store.
 The manager reads the broker's redacted snapshot to show which accounts are
 actually authenticated; it never reads or mutates OMP's credential database.
-Press **`c`** or **`o`** to authenticate the highlighted vault's configured
-Claude or Codex owner. The footer names both the owner label and backing profile
-before the browser handoff starts. Cancelling a handoff is non-fatal, and a
+Press **`c`** or **`o`** to authenticate the highlighted vault with Claude or
+Codex. The footer names the provider and immutable backing profile before the
+browser handoff starts. Cancelling a handoff is non-fatal, and a
 second handoff cannot be queued while one is active.
 
 Managed vault usage comes directly from the broker's read-only aggregate usage

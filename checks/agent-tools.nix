@@ -24,6 +24,11 @@ let
             mkdir -p "$out/bin" "$out/share/zsh/site-functions"
             cat > "$out/bin/omp" <<'EOF'
         #!${pkgs.runtimeShell}
+        if [[ " $* " == *" auth-broker serve "* ]]; then
+          printf '%s\n' "$2" >> "''${BROKER_STUB_LOG:?}"
+          trap 'exit 0' INT TERM
+          while true; do sleep 1; done
+        fi
         printf '%s\n' "$@"
         EOF
             chmod +x "$out/bin/omp"
@@ -155,8 +160,9 @@ in
         test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
         test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
         grep -Fq 'code-auth-vaults.json' "$supervisor"
-        grep -Fq 'chmod 0600 "$token_tmp"' "$supervisor"
+        grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
         grep -Fq 'auth-broker serve --bind="$bind"' "$supervisor"
+        grep -Fq 'invalid OMP auth vault manifest; keeping current brokers' "$supervisor"
 
         rm -rf /tmp/check-agent-auth-vaults
         mkdir -p /tmp/check-agent-auth-vaults/xdg-config/atyrode
@@ -186,14 +192,61 @@ in
         JSON
         chmod 0600 /tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json
 
-        "$supervisor" > "$TMPDIR/broker-serve.out"
+        export BROKER_STUB_LOG="$TMPDIR/broker-starts"
+        : > "$BROKER_STUB_LOG"
+        "$supervisor" > "$TMPDIR/broker-serve.out" 2> "$TMPDIR/broker-serve.err" &
+        supervisor_pid=$!
+        trap 'kill "$supervisor_pid" 2>/dev/null || true' EXIT
+
+        for _ in $(seq 1 50); do
+          test "$(wc -l < "$BROKER_STUB_LOG")" -ge 2 && break
+          sleep 0.1
+        done
+        test "$(wc -l < "$BROKER_STUB_LOG")" = 2
+
+        manifest=/tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json
+        cp "$manifest" "$TMPDIR/valid-manifest.json"
+        jq '.[0].brokerUrl = "http://not-loopback:1"' "$manifest" > "$TMPDIR/invalid.json"
+        mv "$TMPDIR/invalid.json" "$manifest"
+        sleep 3
+        kill -0 "$supervisor_pid"
+        test "$(wc -l < "$BROKER_STUB_LOG")" = 2
+        grep -Fq 'keeping current brokers' "$TMPDIR/broker-serve.err"
+
+        cp "$TMPDIR/valid-manifest.json" "$TMPDIR/reverted.json"
+        mv "$TMPDIR/reverted.json" "$manifest"
+        sleep 3
+        kill -0 "$supervisor_pid"
+        test "$(wc -l < "$BROKER_STUB_LOG")" = 2
+
+        jq '.[0].label = "renamed" | . + [{
+          id: "third",
+          label: "third",
+          profile: "third",
+          brokerUrl: "http://127.0.0.1:47103",
+          tokenFile: "/tmp/check-agent-auth-vaults/state/third/token",
+          snapshotCache: "/tmp/check-agent-auth-vaults/cache/third.json"
+        }]' "$TMPDIR/valid-manifest.json" > "$TMPDIR/reloaded.json"
+        mv "$TMPDIR/reloaded.json" "$manifest"
+        for _ in $(seq 1 70); do
+          test "$(wc -l < "$BROKER_STUB_LOG")" -ge 5 && break
+          sleep 0.1
+        done
+        test "$(wc -l < "$BROKER_STUB_LOG")" = 5
+
+        kill "$supervisor_pid"
+        wait "$supervisor_pid"
+        trap - EXIT
 
         primary=/tmp/check-agent-auth-vaults/state/primary/token
         secondary=/tmp/check-agent-auth-vaults/state/secondary/token
+        third=/tmp/check-agent-auth-vaults/state/third/token
         test "$(stat -c %a "$primary")" = 600
         test "$(stat -c %a "$secondary")" = 600
+        test "$(stat -c %a "$third")" = 600
         grep -Fxq default "$primary"
         grep -Fxq team "$secondary"
+        grep -Fxq third "$third"
         grep -Fq 'auth-broker' "$primary"
         grep -Fq 'token' "$secondary"
 

@@ -53,9 +53,12 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
   environment.
 - The wrapper reads machine-local vault metadata from
   `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; `CODE_AUTH_VAULTS` can
-  override it. Without either source it falls back to the local OMP `default`
-  profile, keeping the package neutral. Home Manager runs an identity-agnostic
-  broker supervisor against that local file; it never generates the entries.
+  provide a read-only override. Without either source it falls back to the local
+  OMP `default` profile, keeping the package neutral. The `code` vault manager
+  can create entries and rename display labels only in the machine-local file.
+  Home Manager's identity-agnostic broker supervisor validates that file and
+  automatically reloads valid atomic changes while retaining current brokers
+  after an invalid edit; it never generates vault identities.
 - Broker bearer tokens remain mutable mode-0600 files outside the Nix store and
   are read fresh for each usage fetch or launch. The selected vault therefore
   cannot diverge between the displayed quota and subsequent session.

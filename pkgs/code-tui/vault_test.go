@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -55,6 +56,90 @@ func TestLoadVaultsFromMachineLocalFile(t *testing.T) {
 	override := loadVaults(`[{"id":"override","profile":"one-shot"}]`, path)
 	if len(override) != 1 || override[0].ID != "override" {
 		t.Fatalf("explicit JSON must override the local file: %#v", override)
+	}
+}
+
+func TestResolveVaultsRetainsOnlyWritableManifestPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vaults.json")
+	_, gotPath := resolveVaults("", path)
+	if gotPath != path {
+		t.Fatalf("resolved manifest path = %q, want %q", gotPath, path)
+	}
+	_, gotPath = resolveVaults(`[{"id":"raw"}]`, path)
+	if gotPath != "" {
+		t.Fatalf("raw JSON override must disable editing, path=%q", gotPath)
+	}
+	_, gotPath = resolveVaults("", "vaults-in-repository.json")
+	if gotPath != "" {
+		t.Fatalf("repository-relative manifest must disable editing, path=%q", gotPath)
+	}
+}
+
+func TestNewVaultSlugCollisionAndLocalPaths(t *testing.T) {
+	state, cache := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	existing := []vault{{
+		ID: "team-vault", Profile: "team-vault", BrokerURL: "http://127.0.0.1:43123",
+	}}
+	got, err := newVault("  Team Vault!  ", existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "team-vault-2" || got.Profile != "team-vault-2" || got.Label != "Team Vault!" {
+		t.Fatalf("collision-safe identity = %+v", got)
+	}
+	if !strings.HasPrefix(got.BrokerURL, "http://127.0.0.1:") || got.BrokerURL == existing[0].BrokerURL {
+		t.Fatalf("broker URL is not unique loopback: %q", got.BrokerURL)
+	}
+	if got.TokenFile != filepath.Join(state, "atyrode", "code-auth-vaults", got.ID, "broker.token") {
+		t.Fatalf("token path = %q", got.TokenFile)
+	}
+	if got.SnapshotCache != filepath.Join(cache, "atyrode", "code-auth-vaults", got.ID, "snapshot.json") {
+		t.Fatalf("snapshot path = %q", got.SnapshotCache)
+	}
+}
+
+func TestWriteVaultManifestAtomicPrivateAndPreservesEntries(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "private")
+	path := filepath.Join(parent, "vaults.json")
+	first := vault{
+		ID: "primary", Label: "Primary", Profile: "default", Claude: "configured owner",
+		Codex: "configured owner", BrokerURL: "http://127.0.0.1:43123",
+		TokenFile: "/state/primary/token", SnapshotCache: "/cache/primary/snapshot.json",
+	}
+	second := vault{
+		ID: "secondary", Label: "Secondary", Profile: "secondary",
+		BrokerURL: "http://127.0.0.1:43124", TokenFile: "/state/secondary/token",
+		SnapshotCache: "/cache/secondary/snapshot.json",
+	}
+	if err := writeVaultManifest(path, []vault{first, second}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("manifest mode = %o, want 600", info.Mode().Perm())
+	}
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parentInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("manifest parent mode = %o, want 700", parentInfo.Mode().Perm())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip []vault
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(roundTrip, []vault{first, second}) {
+		t.Fatalf("manifest round trip changed entries: %#v", roundTrip)
 	}
 }
 
@@ -412,10 +497,10 @@ func TestWithOMPProfileOverridesForwardedProfile(t *testing.T) {
 	}
 }
 
-// TestUsagePanelNamesWholeVaultCombination locks the identity move: the effective
-// provider/account combination lives in the provider headings ("Codex
-// (account)", "Claude (account)") and the switch cue names vaults.
-func TestUsagePanelNamesWholeVaultCombination(t *testing.T) {
+// TestUsagePanelNamesActiveVaultAndBrokerAccounts locks the identity boundary:
+// the title names the custom vault, provider headings stay provider-only, and
+// account identity never comes from configured login-owner labels.
+func TestUsagePanelNamesActiveVaultAndBrokerAccounts(t *testing.T) {
 	m := model{
 		vaults: []vault{
 			{ID: "primary", Label: "primary", Profile: "default", Claude: "Operator", Codex: "Operator"},
@@ -425,13 +510,15 @@ func TestUsagePanelNamesWholeVaultCombination(t *testing.T) {
 		avail:    availability{bucket: map[string]string{}, reset: map[string]int64{}},
 	}
 	panel := stripAnsi(m.usagePanel())
-	for _, text := range []string{"usage", "Claude (Collaborator)", "Codex (Operator)", "a switch vault"} {
+	for _, text := range []string{"usage", "secondary", "Codex", "Claude", "account status unavailable", "a switch vault"} {
 		if !strings.Contains(panel, text) {
 			t.Fatalf("usage panel missing %q: %q", text, panel)
 		}
 	}
-	if strings.Contains(panel, "auth ·") || strings.Contains(panel, " + ") {
-		t.Fatalf("usage panel must not repeat the auth equation: %q", panel)
+	for _, configuredOwner := range []string{"Collaborator", "Operator", "Claude (", "Codex ("} {
+		if strings.Contains(panel, configuredOwner) {
+			t.Fatalf("usage panel leaked configured owner %q: %q", configuredOwner, panel)
+		}
 	}
 }
 

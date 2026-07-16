@@ -1212,14 +1212,14 @@ func (m model) routingColW() int {
 // ── trackpad / mouse wheel ───────────────────────────────────────────────────
 // The wheel drives the generator directly: vertical scroll moves the facet
 // selection, horizontal scroll changes the selected facet's value. Terminal
-// mouse protocols expose direction-only press events — no magnitude, release,
-// or gesture identity — and different terminals emit different event counts
-// for the same physical motion. Coalesce one leading-edge step per Bubble Tea
-// render quantum: the first event acts immediately, same-direction momentum
-// and diagonal jitter are dropped before Update/View, and an explicit reversal
-// acts immediately. No raw event can extend the window, so scrolling never
-// inherits the old trailing-debounce lockout. Routing remains continuous.
-const wheelQuantum = time.Second / 60
+// mouse protocols expose direction-only press events rather than trackpad
+// distance, so require a small burst before committing one generator step.
+// This gives fine Mac trackpad motion room to settle without making every raw
+// event select a new row or option. Routing remains continuous and ungated.
+const (
+	wheelStepEvents = 5
+	wheelGestureGap = 200 * time.Millisecond
+)
 
 const (
 	wheelAxisNone = iota
@@ -1227,23 +1227,9 @@ const (
 	wheelAxisH
 )
 
-// admittedWheelMsg marks a generator wheel event admitted before Bubble Tea's
-// Update/render cycle and carries the generation of its bounded coalescing
-// window.
-type admittedWheelMsg struct {
-	tea.MouseMsg
-	generation uint64
-}
-
-// wheelWindowDoneMsg closes one render-quantum input window. It is consumed by
-// the pre-dispatch filter, so it does not trigger an otherwise-useless redraw.
-type wheelWindowDoneMsg struct{ generation uint64 }
-
-func wheelWindowCmd(generation uint64) tea.Cmd {
-	return tea.Tick(wheelQuantum, func(time.Time) tea.Msg {
-		return wheelWindowDoneMsg{generation: generation}
-	})
-}
+// admittedWheelMsg marks a generator wheel event whose same-direction burst
+// crossed the step threshold before Bubble Tea's Update/render cycle.
+type admittedWheelMsg struct{ tea.MouseMsg }
 
 // wheelTarget is the layout state the pre-dispatch filter needs. Keeping this
 // interface narrow also lets the raw-input regression test wrap model while
@@ -1254,25 +1240,18 @@ type wheelTarget interface {
 }
 
 // wheelInputFilter removes mouse traffic before Bubble Tea's unconditional
-// redraw-after-Update. Generator momentum is coalesced to one leading-edge step
-// per render quantum; motion, non-wheel presses, routing horizontal wheel, and
-// clamped routing scroll are dropped because none can change the view.
+// redraw-after-Update. Generator motion accumulates by axis and direction;
+// only each complete threshold reaches Update. Motion, non-wheel presses,
+// routing horizontal wheel, and clamped routing scroll are dropped because
+// none can change the view.
 type wheelInputFilter struct {
-	open       bool
-	axis       int
-	button     tea.MouseButton
-	generation uint64
+	axis   int
+	button tea.MouseButton
+	count  int
+	last   time.Time
 }
 
 func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
-	if done, ok := msg.(wheelWindowDoneMsg); ok {
-		if done.generation == f.generation {
-			f.open = false
-			f.axis = wheelAxisNone
-			f.button = tea.MouseButtonNone
-		}
-		return nil
-	}
 
 	mouse, ok := msg.(tea.MouseMsg)
 	if !ok {
@@ -1304,18 +1283,24 @@ func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
 	default:
 		return nil
 	}
-	if f.open {
-		// A same-axis reversal is new intent, not momentum. Orthogonal input is
-		// diagonal jitter for no longer than this one render quantum.
-		if axis != f.axis || mouse.Button == f.button {
-			return nil
-		}
+	now := time.Now()
+	if f.count > 0 && now.Sub(f.last) <= wheelGestureGap && axis != f.axis {
+		// Ignore brief orthogonal trackpad jitter without discarding progress
+		// along the operator's dominant gesture axis.
+		return nil
 	}
-	f.open = true
-	f.axis = axis
-	f.button = mouse.Button
-	f.generation++
-	return admittedWheelMsg{MouseMsg: mouse, generation: f.generation}
+	if axis != f.axis || mouse.Button != f.button || now.Sub(f.last) > wheelGestureGap {
+		f.axis = axis
+		f.button = mouse.Button
+		f.count = 0
+	}
+	f.last = now
+	f.count++
+	if f.count < wheelStepEvents {
+		return nil
+	}
+	f.count = 0
+	return admittedWheelMsg{MouseMsg: mouse}
 }
 
 type model struct {
@@ -1329,6 +1314,7 @@ type model struct {
 	collapse   bool // p: hide the Routing section
 	showResult bool // in collapsed mode: show the preview full-width
 	hideUsage  bool // s: hide the Usage section (#198); fetch state keeps running unseen
+	showUsage  bool // narrow mode: show Usage full-screen instead of silently shedding it
 
 	facets         []facet
 	fcur           int
@@ -1347,6 +1333,9 @@ type model struct {
 	disabled     map[string]bool         // disabled vault ids (never includes the fallback)
 	vaultState   string                  // CODE_AUTH_STATE path
 	vaultErr     string                  // last vault switch/persist/login error
+	vaultManifest string                  // resolved writable manifest path; empty for raw JSON/read-only
+	managerInput  string                  // "create" or "rename" while manager text entry is active
+	managerText   string                  // pending manager text-entry value
 	vaultUsage   map[string]availability // per-vault usage snapshots for the manager
 	manager      bool                    // v: the full-screen vault manager is open
 	mgrCursor    int                     // manager row cursor
@@ -1542,44 +1531,99 @@ func (m *model) usageCtrlLine() string {
 	return line
 }
 
-// providerHeading names a provider usage group by its effective identity —
-// "Codex (account)" / "Claude (account)", derived from the active auth
-// profile — so mixed profiles (Claude (Collaborator) + Codex (Operator)) read
-// with no prose equation, in text rather than color alone. The parenthesized
-// owner is dimmed so the provider name stays the heading's anchor.
-func providerHeading(prov string, p vault) string {
-	col, name, acct := "#62a7ff", "Codex", p.Codex
+// providerHeading names a provider usage group without deriving identity from
+// configured vault owner labels. Account identity is rendered separately from
+// the broker's redacted snapshot.
+func providerHeading(prov string) string {
+	col, name := "#62a7ff", "Codex"
 	if prov == "anthropic" {
-		col, name, acct = "#ff9f52", "Claude", p.Claude
+		col, name = "#ff9f52", "Claude"
 	}
-	out := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
-	if acct != "" {
-		out += " " + stDim.Render("("+acct+")")
-	}
-	return out
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
 }
 
-// identityLines renders the effective provider/account headings on their own —
-// the loading and error states keep the active identity visible even before
-// any usage rows exist.
+// providerAccountRows renders only identities reported by the broker's
+// redacted snapshot. Email is preferred; the snapshot identity key is used
+// when a connected account has no email. Sorting the copied display values
+// keeps injected, cached, and fetched account sets deterministic without
+// deriving identity from configured owner labels.
+func providerAccountRows(a availability, prov string, checking bool) []string {
+	if checking {
+		return []string{stDim.Render("  checking account…")}
+	}
+	if !a.accountsOK {
+		return []string{stWarn.Render("  account status unavailable")}
+	}
+	accounts := a.accounts[prov]
+	if len(accounts) == 0 {
+		return []string{stBrk.Render("  not authenticated")}
+	}
+	identities := make([]string, 0, len(accounts))
+	unknown := 0
+	for _, account := range accounts {
+		identity := account.Email
+		if identity == "" {
+			identity = account.IdentityKey
+		}
+		if identity == "" {
+			unknown++
+			continue
+		}
+		identities = append(identities, identity)
+	}
+	sort.Strings(identities)
+	rows := make([]string, 0, len(identities)+unknown+1)
+	for _, identity := range identities {
+		rows = append(rows, stDim.Render("  "+identity))
+	}
+	for range unknown {
+		rows = append(rows, stDim.Render("  authenticated · identity unavailable"))
+	}
+	if a.accountsStale {
+		rows = append(rows, stWarn.Render("  identity cached"))
+	}
+	return rows
+}
+
+func providerIdentityBlock(a availability, prov string, checking bool) []string {
+	rows := []string{padLeft(providerHeading(prov), gut)}
+	rows = append(rows, providerAccountRows(a, prov, checking)...)
+	return rows
+}
+
+// identityLines keeps provider and broker-reported account state visible even
+// when no usage rows exist.
 func (m *model) identityLines() string {
-	p := m.activeVault()
-	return padLeft(providerHeading("openai-codex", p), gut) + "\n" +
-		padLeft(providerHeading("anthropic", p), gut)
+	var lines []string
+	for i, prov := range []string{"openai-codex", "anthropic"} {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, providerIdentityBlock(m.avail, prov, false)...)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // usagePanel is the composition-agnostic Usage band sized for the current
 // terminal width — the wide layout's full-width footer form.
 func (m *model) usagePanel() string { return m.usagePanelFor(m.w) }
 
-// usagePanelFor renders the first-class Usage section: the pilled title with
-// its local hide cue, the per-provider usage groups headed by the effective
-// provider/account identity, and the refresh/switch control row at the
-// section's bottom edge — below the content it governs. Provider groups sit
-// side by side only when w seats every column; w <= 0 forces the vertical
-// stack (the medium layout's narrow usage column).
+// usagePanelFor renders the first-class Usage section: the pilled title names
+// the active vault and carries its local hide cue, followed by per-provider
+// account lists and usage groups, then the refresh/switch control row at the
+// section's bottom edge. Provider groups sit side by side only when w seats
+// every column; w <= 0 forces the vertical stack used by medium layouts.
 func (m *model) usagePanelFor(w int) string {
-	title := m.pill("usage") + "  " + stCueKey.Render("s") + stCue.Render(" · hide")
+	v := m.activeVault()
+	vaultName := v.Label
+	if vaultName == "" {
+		vaultName = v.ID
+	}
+	title := m.pill("usage")
+	if vaultName != "" {
+		title += stCue.Render(" · " + vaultName)
+	}
+	title += "  " + stCueKey.Render("s") + stCue.Render(" · hide")
 	if len(m.vaults) > 1 {
 		title += "  " + stCueKey.Render("v") + stCue.Render(" · vaults")
 	}
@@ -1595,10 +1639,9 @@ func (m *model) usagePanelFor(w int) string {
 // and the bottom control row: the identity-headed usage groups, or the
 // loading/unavailable identity block.
 func (m *model) usageBodyFor(w int) string {
-	p := m.activeVault()
 	if !m.avail.ok {
 		if m.usageLoading() {
-			return m.skeletonBody(w, p)
+			return m.skeletonBody(w)
 		}
 		out := m.identityLines()
 		if m.usageCmd != "" && !m.fetching && !m.nextRefresh.IsZero() {
@@ -1640,7 +1683,7 @@ func (m *model) usageBodyFor(w int) string {
 	for _, win := range wins {
 		if _, ok := blocks[win.prov]; !ok {
 			order = append(order, win.prov)
-			blocks[win.prov] = []string{padLeft(providerHeading(win.prov, p), gut)}
+			blocks[win.prov] = providerIdentityBlock(m.avail, win.prov, false)
 		}
 		blocks[win.prov] = append(blocks[win.prov], m.usageRow(win))
 	}
@@ -1657,12 +1700,14 @@ func (m *model) usageBodyFor(w int) string {
 // shared by the real usage body and the loading skeleton so the two agree on
 // geometry and the first fetch never pops the layout. colW must fit the
 // widest row (label · bar · pct · ↻reset · note) without wrapping the note;
-// a long account name widens the column instead of truncating the identity.
+// a long broker-reported email widens the column instead of truncating it.
 func layoutGroups(w int, order []string, blocks map[string][]string) string {
 	colW := 49
 	for _, prov := range order {
-		if hw := lipgloss.Width(blocks[prov][0]) + 2; hw > colW {
-			colW = hw
+		for _, row := range blocks[prov] {
+			if rowW := lipgloss.Width(row) + 2; rowW > colW {
+				colW = rowW
+			}
 		}
 	}
 	if w > 0 && len(order) > 1 && w >= colW*len(order) {
@@ -1704,14 +1749,14 @@ func skeletonRow(label string) string {
 		stDim.Render(" ··%"), stDim.Render(gReset+" ····"))
 }
 
-// skeletonBody is the pre-first-fetch Usage content: the provider/account
-// headings with generic placeholder window rows, laid out by the same group
-// logic as real data so the first result lands without a layout pop.
-func (m *model) skeletonBody(w int, p vault) string {
+// skeletonBody is the pre-first-fetch Usage content: provider headings,
+// explicit checking state, and generic placeholder window rows, laid out by
+// the same group logic as real data so the first result lands predictably.
+func (m *model) skeletonBody(w int) string {
 	order := []string{"openai-codex", "anthropic"}
 	blocks := map[string][]string{}
 	for _, prov := range order {
-		rows := []string{padLeft(providerHeading(prov, p), gut)}
+		rows := providerIdentityBlock(m.avail, prov, true)
 		for _, label := range skeletonWinsByProvider[prov] {
 			rows = append(rows, skeletonRow(label))
 		}
@@ -1937,6 +1982,9 @@ func (m *model) usageInFooter() bool {
 // routingShown reports whether the Routing section (and so its title-local
 // p · hide cue) is on screen in the current composition.
 func (m model) routingShown() bool {
+	if m.showUsage && m.sizeMode() == sizeNarrow {
+		return false
+	}
 	if m.collapse {
 		return false
 	}
@@ -1947,27 +1995,36 @@ func (m model) routingShown() bool {
 }
 
 // usageShown reports whether the Usage panel is rendered anywhere — the
-// wide/collapsed footer band or medium's secondary column. Narrow sheds it
-// regardless of the s toggle.
+// wide/collapsed footer band, medium's secondary column, or narrow's dedicated
+// full-screen view.
 func (m model) usageShown() bool {
 	if m.hideUsage {
 		return false
 	}
+	if m.sizeMode() == sizeNarrow {
+		return m.showUsage
+	}
 	return m.usageInFooter() || m.mode() == modeMedium
 }
 
-// usageCanShow reports whether restoring Usage would actually render it — the
-// compact footer must never advertise a recovery action the narrow layout
-// would immediately shed anyway.
+// usageCanShow reports whether restoring Usage would actually render it.
+// Narrow terminals use a dedicated full-width view when they can seat the
+// stacked Usage column; extremely small terminals still suppress a dead cue.
 func (m model) usageCanShow() bool {
+	if m.sizeMode() == sizeNarrow {
+		return m.w >= m.usageColW()
+	}
 	t := m
 	t.hideUsage = false
 	return t.usageShown()
 }
 
 // generatorShown: the Generator (and its launch footer advertising ⏎/m/u) is
-// visible in every composition except the narrow routing-full-screen swap.
+// visible in every composition except a narrow full-screen secondary view.
 func (m model) generatorShown() bool {
+	if m.sizeMode() == sizeNarrow && m.showUsage {
+		return false
+	}
 	return !(m.mode() == modeCollapsed && !m.collapse && m.showResult)
 }
 
@@ -2003,7 +2060,7 @@ func (m model) contextHelp() helpKeys {
 	if !m.routingShown() {
 		short = append(short, key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "show routing")))
 	}
-	if m.hideUsage && m.usageCanShow() {
+	if !m.usageShown() && m.usageCanShow() {
 		short = append(short, key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "show usage")))
 	}
 	// Keep full-help discovery and quit ahead of optional contextual actions:
@@ -2118,7 +2175,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case admittedWheelMsg:
 		m.applyWheelStep(msg.Button)
-		return m, wheelWindowCmd(msg.generation)
+		return m, nil
 	case tea.MouseMsg:
 		// Wheel dispatch by pointer position: inside the visible Routing pane
 		// the viewport owns vertical scrolling — continuous, ungated, clamped
@@ -2146,6 +2203,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "p":
 			switch {
+			case m.showUsage && m.sizeMode() == sizeNarrow:
+				m.showUsage = false
+				m.showResult = true
+				m.collapse = false
 			case m.collapse:
 				m.collapse = false // restore the hidden preview
 			case m.mode() == modeCollapsed:
@@ -2155,10 +2216,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.relayout()
 		case "s":
-			// Usage collapse (#198): a pure display toggle. Fetch state and the
-			// refresh cadence keep running unseen; nothing is refetched on
-			// restore, and the freed rows reallocate to the active composition.
-			m.hideUsage = !m.hideUsage
+			// Narrow terminals give Usage a dedicated full-screen view instead
+			// of treating s as a hidden-state toggle that accidentally reveals
+			// Routing. Wider layouts keep the inline section collapse.
+			if m.sizeMode() == sizeNarrow {
+				if m.showUsage {
+					m.showUsage = false
+					m.hideUsage = true
+				} else {
+					m.showUsage = true
+					m.hideUsage = false
+					m.showResult = false
+					m.collapse = false
+				}
+			} else {
+				m.showUsage = false
+				m.hideUsage = !m.hideUsage
+			}
 			m.relayout()
 		case "?":
 			m.help.ShowAll = !m.help.ShowAll
@@ -2335,8 +2409,16 @@ func (m *model) cycleFacet(dir int) {
 			idx = i
 		}
 	}
-	idx = (idx + dir + len(f.values)) % len(f.values)
-	m.sel[f.key] = f.values[idx]
+	next := idx + dir
+	if next < 0 {
+		next = 0
+	} else if next >= len(f.values) {
+		next = len(f.values) - 1
+	}
+	if next == idx {
+		return
+	}
+	m.sel[f.key] = f.values[next]
 	// main is fable's sub-setting: whenever fable leaves "on" it must clear too,
 	// so a later fable re-enable never silently resurrects the (expensive)
 	// fable-as-main escalation — it is re-chosen deliberately every time.
@@ -2466,9 +2548,12 @@ func (m model) View() string {
 	var content string
 	switch m.mode() {
 	case modeCollapsed:
-		if m.showResult && !m.collapse {
+		switch {
+		case m.showUsage && m.sizeMode() == sizeNarrow:
+			content = padLeft(m.usagePanelFor(m.w-gut), gut)
+		case m.showResult && !m.collapse:
 			content = padLeft(m.previewColumn(), gut)
-		} else {
+		default:
 			content = m.leftColumn(m.w, ch)
 		}
 	case modeMedium:
@@ -2575,7 +2660,7 @@ func main() {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	generated := loadBlocks(os.Getenv("CODE_GENERATED"))
-	vaults := loadVaults(os.Getenv("CODE_AUTH_VAULTS"), os.Getenv("CODE_AUTH_VAULTS_FILE"))
+	vaults, vaultManifest := resolveVaults(os.Getenv("CODE_AUTH_VAULTS"), os.Getenv("CODE_AUTH_VAULTS_FILE"))
 	vaultState := os.Getenv("CODE_AUTH_STATE")
 	selected, disabled := loadVaultState(vaults, vaultState)
 	facets := facetDefs(glyphs)
@@ -2590,6 +2675,7 @@ func main() {
 		selected:       selected,
 		disabled:       disabled,
 		vaultState:     vaultState,
+		vaultManifest:  vaultManifest,
 		vaultUsage:     map[string]availability{},
 		fetching:       os.Getenv("CODE_USAGE") != "",
 		spin:           sp,

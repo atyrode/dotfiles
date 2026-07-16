@@ -237,6 +237,24 @@ func TestCycleFacetClearsMain(t *testing.T) {
 	}
 }
 
+func TestCycleFacetClampsAtEndpoints(t *testing.T) {
+	m := &model{facets: facetDefs(map[string]string{}), sel: defaultSel()}
+	m.fcur = 0 // lane
+
+	m.sel["lane"] = m.facets[0].values[0]
+	m.cycleFacet(-1)
+	if got := m.sel["lane"]; got != m.facets[0].values[0] {
+		t.Fatalf("left at first option wrapped to %q", got)
+	}
+
+	last := m.facets[0].values[len(m.facets[0].values)-1]
+	m.sel["lane"] = last
+	m.cycleFacet(1)
+	if got := m.sel["lane"]; got != last {
+		t.Fatalf("right at last option wrapped to %q", got)
+	}
+}
+
 // TestLaunchKeys locks the launch decision: Enter always launches the generated
 // profile for the current facets — even at defaults with no prompt — while m
 // requests omp-managed on the managed defaults with no generated overlay.
@@ -892,7 +910,7 @@ func TestWheelThroughUpdate(t *testing.T) {
 	}
 }
 
-func TestWheelInputFilterCoalescesOneRenderQuantum(t *testing.T) {
+func TestWheelInputFilterRequiresDeliberateBurst(t *testing.T) {
 	m := layoutModel()
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
@@ -900,65 +918,46 @@ func TestWheelInputFilterCoalescesOneRenderQuantum(t *testing.T) {
 	wheel := func(b tea.MouseButton) tea.MouseMsg {
 		return tea.MouseMsg{Action: tea.MouseActionPress, Button: b, X: 2, Y: topGap + 2}
 	}
-
-	first, ok := filter.Filter(m, wheel(tea.MouseButtonWheelUp)).(admittedWheelMsg)
-	if !ok {
-		t.Fatal("leading vertical event was not admitted")
+	admit := func(b tea.MouseButton) admittedWheelMsg {
+		t.Helper()
+		for i := 1; i < wheelStepEvents; i++ {
+			if got := filter.Filter(m, wheel(b)); got != nil {
+				t.Fatalf("event %d/%d admitted early as %T", i, wheelStepEvents, got)
+			}
+			if i == 2 && (b == tea.MouseButtonWheelUp || b == tea.MouseButtonWheelDown) {
+				if got := filter.Filter(m, wheel(tea.MouseButtonWheelRight)); got != nil {
+					t.Fatalf("orthogonal jitter reached Update as %T", got)
+				}
+			}
+		}
+		msg, ok := filter.Filter(m, wheel(b)).(admittedWheelMsg)
+		if !ok {
+			t.Fatalf("event %d/%d was not admitted", wheelStepEvents, wheelStepEvents)
+		}
+		return msg
 	}
+
+	first := admit(tea.MouseButtonWheelUp)
 	nm, cmd := m.Update(first)
 	m = nm.(model)
-	if cmd == nil || m.fcur != 1 {
-		t.Fatalf("leading event: cmd nil = %t, fcur = %d", cmd == nil, m.fcur)
-	}
-	for range 100 {
-		if got := filter.Filter(m, wheel(tea.MouseButtonWheelUp)); got != nil {
-			t.Fatalf("same-direction momentum reached Update as %T", got)
-		}
-		if got := filter.Filter(m, wheel(tea.MouseButtonWheelRight)); got != nil {
-			t.Fatalf("orthogonal jitter reached Update as %T", got)
-		}
+	if cmd != nil || m.fcur != 1 {
+		t.Fatalf("first deliberate burst: cmd nil = %t, fcur = %d", cmd == nil, m.fcur)
 	}
 
-	// A reversal is explicit intent and must act immediately rather than wait
-	// behind momentum from the old direction.
-	reverse, ok := filter.Filter(m, wheel(tea.MouseButtonWheelDown)).(admittedWheelMsg)
-	if !ok {
-		t.Fatal("same-axis reversal was not admitted immediately")
-	}
+	reverse := admit(tea.MouseButtonWheelDown)
 	nm, cmd = m.Update(reverse)
 	m = nm.(model)
-	if cmd == nil || m.fcur != 0 {
-		t.Fatalf("reversal: cmd nil = %t, fcur = %d", cmd == nil, m.fcur)
+	if cmd != nil || m.fcur != 0 {
+		t.Fatalf("reverse burst: cmd nil = %t, fcur = %d", cmd == nil, m.fcur)
 	}
 
-	// The stale close from the superseded window cannot re-arm the new one.
-	if got := filter.Filter(m, wheelWindowDoneMsg{generation: first.generation}); got != nil {
-		t.Fatalf("stale close reached Update as %T", got)
-	}
-	if got := filter.Filter(m, wheel(tea.MouseButtonWheelDown)); got != nil {
-		t.Fatalf("stale close re-armed current window: %T", got)
-	}
-	if got := filter.Filter(m, wheelWindowDoneMsg{generation: reverse.generation}); got != nil {
-		t.Fatalf("current close reached Update as %T", got)
-	}
-
-	left, ok := filter.Filter(m, wheel(tea.MouseButtonWheelLeft)).(admittedWheelMsg)
-	if !ok {
-		t.Fatal("horizontal event was not admitted after one render quantum")
-	}
+	// A later orthogonal gesture starts cleanly after the prior gesture gap.
+	filter.last = time.Now().Add(-wheelGestureGap - time.Millisecond)
+	left := admit(tea.MouseButtonWheelLeft)
 	nm, _ = m.Update(left)
 	m = nm.(model)
 	if m.sel["lane"] != "claude-led" {
-		t.Fatalf("horizontal wheel did not move lane: %q", m.sel["lane"])
-	}
-	right, ok := filter.Filter(m, wheel(tea.MouseButtonWheelRight)).(admittedWheelMsg)
-	if !ok {
-		t.Fatal("horizontal reversal was not admitted immediately")
-	}
-	nm, _ = m.Update(right)
-	m = nm.(model)
-	if m.sel["lane"] != "mixed" {
-		t.Fatalf("horizontal reversal did not restore lane: %q", m.sel["lane"])
+		t.Fatalf("horizontal burst did not move lane: %q", m.sel["lane"])
 	}
 }
 
@@ -970,23 +969,33 @@ func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
 	filter := wheelInputFilter{}
 	left := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelLeft, X: 2, Y: topGap + 2}
 
-	msg := filter.Filter(m, left)
-	nm, _ := m.Update(msg)
-	m = nm.(model)
-	for range 100 {
+	var msg tea.Msg
+	for range wheelStepEvents {
 		if got := filter.Filter(m, left); got != nil {
-			t.Fatalf("coalesced wheel event reached Update as %T", got)
+			msg = got
 		}
 	}
+	if msg == nil {
+		t.Fatal("deliberate wheel-left burst was not admitted")
+	}
+	nm, _ := m.Update(msg)
+	m = nm.(model)
 	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "claude-led" {
 		t.Fatalf("persisted lane after wheel-left = %q, want claude-led", got)
 	}
 
+	filter.last = time.Now().Add(-wheelGestureGap - time.Millisecond)
 	right := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelRight, X: 2, Y: topGap + 2}
-	nm, _ = m.Update(filter.Filter(m, right))
+	msg = nil
+	for range wheelStepEvents {
+		if got := filter.Filter(m, right); got != nil {
+			msg = got
+		}
+	}
+	nm, _ = m.Update(msg)
 	m = nm.(model)
 	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "mixed" {
-		t.Fatalf("persisted lane after immediate reversal = %q, want mixed", got)
+		t.Fatalf("persisted lane after wheel-right burst = %q, want mixed", got)
 	}
 }
 
@@ -1055,9 +1064,9 @@ func (p burstProbe) View() string {
 }
 
 // TestRawMouseBurstRemainsResponsive drives the real Bubble Tea ANSI parser
-// with two dense trackpad-like wheel/jitter/motion bursts separated by one
-// render quantum. Coalesced events must never reach Update/View, and the second
-// burst must re-arm independently of the first burst's rejected tail.
+// with two dense trackpad-like wheel/jitter/motion bursts separated by a
+// gesture gap. Rejected sub-threshold events must never reach Update/View, and
+// each deliberate burst produces only one generator step.
 func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 	m := layoutModel()
 	wide, _, _, _ := layoutSizes(t, m)
@@ -1082,7 +1091,7 @@ func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 	started := time.Now()
 	var redrawsAtKey int64
 	var fcurAtKey int
-	for range 3 {
+	for range wheelStepEvents {
 		fmt.Fprint(inW, "\x1b[<64;3;4M") // vertical wheel
 		fmt.Fprint(inW, "\x1b[<67;3;4M") // horizontal axis jitter
 		fmt.Fprint(inW, "\x1b[<35;4;4M") // cell motion with no button
@@ -1098,13 +1107,13 @@ func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 		t.Fatal("keyboard input was starved after the first trackpad burst")
 	}
 
-	time.Sleep(2 * wheelQuantum)
-	for range 3 {
-		fmt.Fprint(inW, "\x1b[<64;3;4M") // same direction, newly re-armed quantum
+	time.Sleep(wheelGestureGap + 10*time.Millisecond)
+	for range wheelStepEvents {
+		fmt.Fprint(inW, "\x1b[<64;3;4M") // same direction, new gesture
 		fmt.Fprint(inW, "\x1b[<66;3;4M") // horizontal axis jitter
 		fmt.Fprint(inW, "\x1b[<35;4;4M") // cell motion
 	}
-	time.Sleep(2 * wheelQuantum)
+	time.Sleep(20 * time.Millisecond)
 	fmt.Fprint(inW, "q")
 	inW.Close()
 
@@ -1124,8 +1133,8 @@ func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 	if got := views.Load(); got > 10 {
 		t.Fatalf("raw bursts produced %d views, want bounded redraw count <= 10", got)
 	}
-	t.Logf("18 raw mouse messages + keyboard + second burst: %d views, key after %d views, %s total",
-		views.Load(), redrawsAtKey, time.Since(started))
+	t.Logf("%d raw mouse messages + keyboard: %d views, key after %d views, %s total",
+		2*wheelStepEvents*3, views.Load(), redrawsAtKey, time.Since(started))
 }
 
 // ── usage identity · collapsible sections · contextual help (#198) ──────────
@@ -1167,39 +1176,55 @@ func hasDesc(descs []string, want string) bool {
 	return false
 }
 
-// TestUsageHeadingsNameEffectiveProfile locks the identity move: provider
-// group headings carry the effective account ("Codex <account>",
-// "Claude <account>") for every supported profile combination — including
-// mixed profiles — and the standalone auth equation is gone.
-func TestUsageHeadingsNameEffectiveProfile(t *testing.T) {
-	cases := []struct {
-		name          string
-		claude, codex string
-	}{
-		{"same owner", "Operator", "Operator"},
-		{"mixed owners", "Collaborator", "Operator"},
-		{"same collaborator", "Collaborator", "Collaborator"},
+// TestUsageProviderAccountsComeFromSnapshot locks the identity boundary:
+// headings name only providers, while account emails come from the broker's
+// redacted snapshot in deterministic order. Configured owner labels are never
+// rendered as provider identity.
+func TestUsageProviderAccountsComeFromSnapshot(t *testing.T) {
+	m := layoutModel()
+	m.vaults = []vault{{
+		ID: "p", Label: "custom vault", Claude: "Mum", Codex: "Victor + Alex",
+	}}
+	m.avail.accountsOK = true
+	m.avail.accounts = map[string][]vaultAccount{
+		"openai-codex": {
+			{Provider: "openai-codex", IdentityKey: "opaque-z", Email: "z@example.test"},
+			{Provider: "openai-codex", IdentityKey: "opaque-a", Email: "a@example.test"},
+		},
+		"anthropic": {
+			{Provider: "anthropic", IdentityKey: "do-not-render", Email: "claude@example.test"},
+		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := layoutModel()
-			m.vaults = []vault{{ID: "p", Label: "p", Claude: tc.claude, Codex: tc.codex}}
-			lines := strings.Split(stripAnsi(m.usagePanel()), "\n")
-			codexHead := lineIndex(lines, "Codex ("+tc.codex+")")
-			claudeHead := lineIndex(lines, "Claude ("+tc.claude+")")
-			if codexHead < 0 || claudeHead < 0 {
-				t.Fatalf("provider headings must name the effective accounts:\n%s", strings.Join(lines, "\n"))
-			}
-			if trimmed := strings.TrimSpace(lines[codexHead]); trimmed != "Codex ("+tc.codex+")" {
-				t.Errorf("Codex heading must be a standalone group title, got %q", trimmed)
-			}
-			if lineIndex(lines, "auth ·") >= 0 || lineIndex(lines, "Claude "+tc.claude+" + ") >= 0 {
-				t.Errorf("the standalone auth equation must be gone:\n%s", strings.Join(lines, "\n"))
-			}
-			if lines[0] == "" || !strings.Contains(lines[0], "usage") || !strings.Contains(lines[0], "s · hide") {
-				t.Errorf("usage must open with its first-class title and local hide cue, got %q", lines[0])
-			}
-		})
+
+	panel := stripAnsi(m.usagePanel())
+	lines := strings.Split(panel, "\n")
+	for _, provider := range []string{"Codex", "Claude"} {
+		idx := lineIndex(lines, provider)
+		if idx < 0 || strings.TrimSpace(lines[idx]) != provider {
+			t.Fatalf("%s must be a provider-only heading:\n%s", provider, panel)
+		}
+	}
+	for _, forbidden := range []string{"Mum", "Victor + Alex", "opaque-z", "opaque-a", "do-not-render"} {
+		if strings.Contains(panel, forbidden) {
+			t.Errorf("rendered configured or opaque identity %q:\n%s", forbidden, panel)
+		}
+	}
+	a, z := strings.Index(panel, "a@example.test"), strings.Index(panel, "z@example.test")
+	if a < 0 || z < 0 || a > z {
+		t.Errorf("multiple snapshot emails must render deterministically: a=%d z=%d\n%s", a, z, panel)
+	}
+	if claude := strings.Index(panel, "claude@example.test"); claude < 0 {
+		t.Errorf("single snapshot email missing:\n%s", panel)
+	}
+	if used := strings.Index(panel, "% used"); used < z {
+		t.Errorf("usage rows must follow the provider/account list:\n%s", panel)
+	}
+
+	m.avail.accounts["anthropic"] = []vaultAccount{{
+		Provider: "anthropic", IdentityKey: "email:snapshot-identity@example.test",
+	}}
+	if panel := stripAnsi(m.usagePanel()); !strings.Contains(panel, "email:snapshot-identity@example.test") {
+		t.Errorf("snapshot identity must identify an account without an email:\n%s", panel)
 	}
 }
 
@@ -1227,9 +1252,8 @@ func TestUsageSwitchCue(t *testing.T) {
 	}
 }
 
-// TestUsageLoadingErrorStates: the loading, refreshing, unavailable, and
-// switch-failure states each keep the effective identity visible and replace
-// only the status — errors stay attached to the Usage section.
+// TestUsageLoadingErrorStates: loading, refreshing, and unavailable states keep
+// provider-only headings and explicit broker account status visible.
 func TestUsageLoadingErrorStates(t *testing.T) {
 	m := layoutModel()
 
@@ -1237,7 +1261,7 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 	loading.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	loading.fetching = true
 	panel := stripAnsi(loading.usagePanel())
-	for _, want := range []string{"fetching usage…", "Codex (Operator)", "Claude (Operator)"} {
+	for _, want := range []string{"fetching usage…", "Codex", "Claude", "checking account…"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("loading: panel missing %q:\n%s", want, panel)
 		}
@@ -1248,8 +1272,13 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 
 	refreshing := m
 	refreshing.fetching = true
+	refreshing.avail.accountsOK = true
+	refreshing.avail.accounts = map[string][]vaultAccount{
+		"openai-codex": {{Provider: "openai-codex", Email: "operator.codex@example.test"}},
+		"anthropic":    {{Provider: "anthropic", Email: "operator.claude@example.test"}},
+	}
 	panel = stripAnsi(refreshing.usagePanel())
-	for _, want := range []string{"refreshing…", "Codex (Operator)", "Claude (Operator)", "% used"} {
+	for _, want := range []string{"refreshing…", "Codex", "Claude", "operator.codex@example.test", "operator.claude@example.test", "% used"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("refreshing: panel missing %q:\n%s", want, panel)
 		}
@@ -1261,7 +1290,7 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 	failed := m
 	failed.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	panel = stripAnsi(failed.usagePanel())
-	for _, want := range []string{"usage unavailable · press v to manage vaults", "Codex (Operator)", "Claude (Operator)"} {
+	for _, want := range []string{"usage unavailable · press v to manage vaults", "Codex", "Claude", "account status unavailable"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("unavailable: panel missing %q:\n%s", want, panel)
 		}
@@ -1341,8 +1370,7 @@ func TestSectionToggleCombinations(t *testing.T) {
 // visible actions never repeat in the compact line, hidden sections add their
 // recovery cue, refresh hides while a fetch is in flight or unusable, the
 // launch trio surfaces only when the generator's launch footer is off screen,
-// and the usage recovery cue never advertises a restore the narrow layout
-// would immediately shed.
+// and narrow terminals advertise the dedicated full-screen Usage view.
 func TestCompactHelpDerivation(t *testing.T) {
 	m := multiProfileModel()
 	wide, _, narrow, _ := layoutSizes(t, m)
@@ -1362,13 +1390,10 @@ func TestCompactHelpDerivation(t *testing.T) {
 
 	m = resize(t, m, narrow.w, narrow.h)
 	descs = shortDescs(m)
-	for _, d := range []string{"show routing", "switch vault", "refresh usage"} {
+	for _, d := range []string{"show routing", "show usage", "switch vault", "refresh usage"} {
 		if !hasDesc(descs, d) {
 			t.Errorf("narrow compact help missing %q: %v", d, descs)
 		}
-	}
-	if hasDesc(descs, "show usage") {
-		t.Errorf("narrow sheds usage by size, not by state — no show-usage cue: %v", descs)
 	}
 	ordered := strings.Join(descs, "|")
 	for _, optional := range []string{"switch vault", "refresh usage"} {
@@ -1449,13 +1474,16 @@ func TestFullHelpComplete(t *testing.T) {
 	}
 }
 
-// TestLongAccountLabelsWidthInvariant: over-long account names widen the
-// measured usage column (shifting the breakpoints) instead of overflowing or
-// truncating the identity, at every representative terminal size.
-func TestLongAccountLabelsWidthInvariant(t *testing.T) {
-	const longName = "Alexander-Maximilian-Extremely-Long-Name"
+// TestLongAccountEmailsWidthInvariant: a long broker-reported email widens the
+// measured usage column instead of overflowing or truncating the identity.
+func TestLongAccountEmailsWidthInvariant(t *testing.T) {
+	const longEmail = "alexander-maximilian-extremely-long-name@example.test"
 	m := layoutModel()
-	m.vaults = []vault{{ID: "long", Label: "long", Claude: longName, Codex: longName}}
+	m.avail.accountsOK = true
+	m.avail.accounts = map[string][]vaultAccount{
+		"openai-codex": {{Provider: "openai-codex", Email: longEmail}},
+		"anthropic":    {{Provider: "anthropic", Email: "claude@example.test"}},
+	}
 	wideW := m.genRowWidth() + routingMinW
 	sizes := []termSize{
 		{wideW + 30, 40},
@@ -1466,11 +1494,11 @@ func TestLongAccountLabelsWidthInvariant(t *testing.T) {
 	}
 	for _, s := range sizes {
 		m = resize(t, m, s.w, s.h)
-		label := fmt.Sprintf("long labels %dx%d", s.w, s.h)
+		label := fmt.Sprintf("long email %dx%d", s.w, s.h)
 		assertLayoutInvariants(t, m, label)
 		view := stripAnsi(m.View())
-		if strings.Contains(view, "% used") && !strings.Contains(view, "Codex ("+longName+")") {
-			t.Errorf("%s: visible usage must keep the full account identity:\n%s", label, view)
+		if strings.Contains(view, "% used") && !strings.Contains(view, longEmail) {
+			t.Errorf("%s: visible usage must keep the full snapshot email:\n%s", label, view)
 		}
 	}
 }
@@ -1513,8 +1541,8 @@ func TestSectionStatePreservation(t *testing.T) {
 	}
 	m.fetching = false
 	m.avail = multiProfileModel().avail
-	if panel := stripAnsi(m.usagePanel()); !strings.Contains(panel, "Claude (Collaborator)") {
-		t.Errorf("usage headings must follow the switched profile:\n%s", panel)
+	if panel := stripAnsi(m.usagePanel()); strings.Contains(panel, "Collaborator") {
+		t.Errorf("switching vaults must not expose configured owner labels:\n%s", panel)
 	}
 
 	nm, _ = m.Update(clikit.ActionsProposedMsg{})
@@ -1601,14 +1629,17 @@ func TestCollapseReallocation(t *testing.T) {
 		t.Fatalf("fixture: %dx%d must start collapsed", narrow.w, narrow.h)
 	}
 	n, _ = press(t, n, "s")
-	if n.mode() != modeMedium {
-		t.Fatalf("narrow: freeing the usage column must let routing return, mode = %d", n.mode())
+	if !n.showUsage || !n.usageShown() {
+		t.Fatal("narrow s must open the dedicated Usage view")
 	}
 	lines := strings.Split(stripAnsi(n.View()), "\n")
-	if lineIndex(lines, "routing", "p · hide") < 0 {
-		t.Errorf("narrow with usage hidden: the routing section must reappear:\n%s", strings.Join(lines, "\n"))
+	if lineIndex(lines, "usage", "s · hide") < 0 || lineIndex(lines, "routing", "p · hide") >= 0 {
+		t.Errorf("narrow s must show Usage, not Routing:\n%s", strings.Join(lines, "\n"))
 	}
-	assertLayoutInvariants(t, n, "narrow usage hidden")
+	n, _ = press(t, n, "s")
+	if n.showUsage || !n.hideUsage || n.usageShown() {
+		t.Fatal("second narrow s must return to the generator with Usage hidden")
+	}
 }
 
 // ── bottom-pinned section chrome · secondary separator · defaults cue ────────
@@ -1670,7 +1701,7 @@ func TestUsageCtrlRowPinned(t *testing.T) {
 		if ctrl != len(lines)-1 {
 			t.Errorf("%s: control row on line %d of %d, want the panel's last row:\n%s", label, ctrl, len(lines)-1, panel)
 		}
-		for _, needle := range []string{"Codex (", "Claude (", "% used"} {
+		for _, needle := range []string{"Codex", "Claude", "% used"} {
 			if idx := lineIndex(lines, needle); idx < 0 || idx > ctrl {
 				t.Errorf("%s: %q (line %d) must sit above the control row (%d)", label, needle, idx, ctrl)
 			}
@@ -1882,12 +1913,9 @@ func TestCreditExpiryUrgency(t *testing.T) {
 
 // ── loading skeleton · first-load bar fill ───────────────────────────────────
 
-// TestUsageSkeleton locks the pre-first-fetch Usage shape: provider/account
-// headings over generic placeholder window rows (real labels, empty bars, no
-// fabricated numbers), the loading status pinned to the panel's last row, the
-// stacked skeleton exactly as tall as the loaded column (no layout pop), the
-// frame invariants at wide and medium, and standalone runs (no usage command)
-// staying neutral.
+// TestUsageSkeleton locks the pre-first-fetch Usage shape: provider-only
+// headings, explicit checking state, generic placeholder window rows, and the
+// loading status pinned to the panel's last row.
 func TestUsageSkeleton(t *testing.T) {
 	loading := layoutModel()
 	loading.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
@@ -1895,10 +1923,13 @@ func TestUsageSkeleton(t *testing.T) {
 
 	panel := stripAnsi(loading.usagePanel())
 	lines := strings.Split(panel, "\n")
-	for _, h := range []string{"Codex (Operator)", "Claude (Operator)"} {
+	for _, h := range []string{"Codex", "Claude"} {
 		if lineIndex(lines, h) < 0 {
-			t.Errorf("skeleton must keep the provider identity %q:\n%s", h, panel)
+			t.Errorf("skeleton must keep the provider heading %q:\n%s", h, panel)
 		}
+	}
+	if got := strings.Count(panel, "checking account…"); got != 2 {
+		t.Errorf("skeleton must show one checking state per provider, got %d:\n%s", got, panel)
 	}
 	if got := strings.Count(panel, "··% used"); got != 5 {
 		t.Errorf("want Codex's two rows plus Claude's three including Fable (5 total), got %d:\n%s", got, panel)
@@ -2305,7 +2336,7 @@ func TestReconcileUsageFablePlaceholder(t *testing.T) {
 
 func TestFableSkeletonAndUnavailableStatusStayStable(t *testing.T) {
 	m := layoutModel()
-	skeleton := stripAnsi(m.skeletonBody(0, vault{Claude: "Operator", Codex: "Operator"}))
+	skeleton := stripAnsi(m.skeletonBody(0))
 	if strings.Count(skeleton, "7d fable") != 1 {
 		t.Fatalf("the pre-fetch skeleton must always reserve one Fable row:\n%s", skeleton)
 	}

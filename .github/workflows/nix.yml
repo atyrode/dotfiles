@@ -19,11 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Docs-only changes skip the 3-platform matrix (#169). Classification fails
-  # closed: any API error, empty file list, or non-PR event runs the full
-  # matrix. `README.md` and `docs/**` except the versioned `docs/omp/**` wiki
-  # are inert. The OMP wiki feeds package/capability metadata, so it runs the
-  # full matrix like every other derivation input.
+  # Every change runs the 3-platform matrix. Documentation can affect derivation
+  # hashes through the flake source, so it is not safe to classify `docs/**` or
+  # `README.md` as inert.
   changes:
     name: classify
     runs-on: ubuntu-24.04
@@ -45,8 +43,6 @@ jobs:
               code=false
               while IFS= read -r f; do
                 case "$f" in
-                  docs/omp/*) code=true ;;
-                  docs/* | README.md) ;;
                   *) code=true ;;
                 esac
               done <<EOF

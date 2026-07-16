@@ -448,19 +448,10 @@ fails the build instead of silently misrouting models.
 GitHub Actions runs the flake checks natively on x86_64 and aarch64 Linux and
 aarch64 macOS; platform-independent lints (docs-links, production-facts,
 nixfmt, go-fmt) are emitted on x86_64-linux only to avoid duplicate work
-(#169). Changes confined to `docs/**` and `README.md` skip the platform
-matrix entirely and build only the two intentional whole-tree lints —
-docs-links and production-facts, which scan documentation on purpose; the
-sole required status check is the always-reporting `ci-gate` job, so a
-skipped matrix can never leave a pull request stuck on a missing check. Any
-other Markdown file counts as code because it can be a derivation input
-(deployed `agents/skills`, omp rules, the managed Claude policy). The fast
-path guards its own invariant: `scripts/docs-drift-guard.sh` instantiates
-every check on every CI platform at the pull request's base and head
-(evaluation-only, no builds) and fails if the docs change altered any
-derivation other than those two lints — so a `docs/**` path silently
-becoming a derivation input blocks the merge instead of skipping real
-verification. The guard's comparison logic is regression-tested by the
-`docs-drift-guard` flake check, and it adds roughly three minutes of pure
-evaluation to a docs-only pull request (six instantiations: three systems
-at base and head).
+(#169). Every pull request runs the platform matrix, including documentation
+changes: a path beneath `docs/` can affect derivation hashes through the flake
+source even when no deployed file references that document. The sole required
+status check is the always-reporting `ci-gate` job. The
+`docs-drift-guard` flake check regression-tests the comparison logic used when
+evaluating a docs-only fast path; the fast path is not enabled while
+documentation remains a derivation input.

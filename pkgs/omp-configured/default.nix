@@ -1,7 +1,7 @@
 {
   bash,
   cacert,
-  code-tui,
+  code,
   coreutils,
   findutils,
   gitMinimal,
@@ -1294,7 +1294,7 @@ let
         exit 2
       fi
 
-      exec ${lib.getExe code-tui} "$@"
+      exec ${lib.getExe code} "$@"
     '';
   };
 in

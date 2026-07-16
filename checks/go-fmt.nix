@@ -1,8 +1,8 @@
 { lib, pkgs }:
 
 let
-  # buildGoModule does not gofmt-check, so drift in the Go packages (code-tui,
-  # cli-kit) builds green. Scope this guard to the .go sources alone so edits to
+  # buildGoModule does not gofmt-check, so drift in the Go packages (atyrode-tui
+  # today) builds green. Scope this guard to the .go sources alone so edits to
   # default.nix / go.mod don't invalidate it, and so it grows to cover any future
   # Go package under pkgs/ automatically.
   goSources = lib.fileset.toSource {

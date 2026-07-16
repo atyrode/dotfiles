@@ -62,7 +62,7 @@ This is deterministic and assertable:
 - **Colors / style bleed** — inspect the SGR sequences in the `-e` capture
   around a suspect region (e.g. text that wraps and loses its dim style).
 
-For `code` specifically: build with `nix build .#code-tui`, generate the grid
+For `code` specifically: build with `nix build .#code`, generate the grid
 with `MODELS_YML=omp/models.yml python3 pkgs/omp-configured/generate-profiles.py`,
 and point `CODE_GENERATED` at the output. No further wrapper env is required.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh the repository-owned binary pins (omp, codex) to the latest
+# Refresh the repository-owned binary pins (omp, code, codex) to the latest
 # upstream releases. Prints one line per bumped package; exits quietly when
 # everything is already current. Requires curl, jq, awk, and nix.
 set -euo pipefail
@@ -47,6 +47,10 @@ bump() { # name file repo tag_prefix url_template assets...
 bump omp "$repo_root/pkgs/omp/default.nix" can1357/oh-my-pi v \
   'https://github.com/can1357/oh-my-pi/releases/download/@tag@/@asset@' \
   omp-linux-x64 omp-linux-arm64 omp-darwin-x64 omp-darwin-arm64
+
+bump code "$repo_root/pkgs/code/default.nix" atyrode/code v \
+  'https://github.com/atyrode/code/releases/download/@tag@/@asset@.tar.gz' \
+  code-linux-amd64 code-linux-arm64 code-darwin-amd64 code-darwin-arm64
 
 bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
   'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \

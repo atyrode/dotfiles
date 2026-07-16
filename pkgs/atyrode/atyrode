@@ -53,7 +53,8 @@ inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
-cache/state paths under the configured home. It is read-only; --json emits a stable report.
+cache/state paths under the configured home. It is read-only, includes OMP's
+supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
 generations lists the activation profile's generations (nix-darwin system on
 macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
@@ -273,10 +274,10 @@ inventory() {
 }
 
 # lifecycle reports a deliberately small, named set of operator-owned lifecycle
-# artifacts. It never traverses HOME: Home Manager's profile, the configured
-# dotfiles checkout, OMP's own worktree root, and three documented OMP/atyrode
-# cache/state paths are the entire probe surface. A report is advisory only;
-# classifications are conservative and this command has no mutating branch.
+# artifacts. It never searches HOME: Home Manager's profile, the configured
+# dotfiles checkout, OMP's default state/session/worktree roots, and the named
+# OMP/atyrode cache/state paths are the entire probe surface. A report is
+# advisory only; classifications are conservative and no branch mutates state.
 lifecycle_append() {
   local rows="$1" category="$2" path="$3" bytes="$4" evidence="$5" owner="$6" classification="$7" state="$8"
   jq -c --argjson rows "$rows" --arg category "$category" --arg path "$path" \
@@ -349,10 +350,242 @@ lifecycle_nix_env_available() {
   command -v "$cmd" >/dev/null 2>&1
 }
 
+lifecycle_omp_command() {
+  local cmd=omp
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_OMP:-}" ]] || cmd="$ATYRODE_OMP"
+  printf '%s\n' "$cmd"
+}
+
+lifecycle_omp_available() {
+  local cmd
+  cmd="$(lifecycle_omp_command)"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+lifecycle_omp() {
+  local cmd
+  cmd="$(lifecycle_omp_command)"
+  "$cmd" "$@"
+}
+
+lifecycle_omp_signal() {
+  local signals="$1" kind="$2" value="${3:-}"
+  jq -c --argjson signals "$signals" --arg kind "$kind" --arg value "$value" \
+    '$signals + [({kind:$kind} + (if $value == "" then {} else {value:$value} end))]' <<<'null'
+}
+
+# OMP worktrees are reclaim candidates only when every conservative liveness
+# probe is quiet. A dirty Git tree, a branch checked out in the worktree, or an
+# explicit activity/lock marker protects the directory. Git probe failures are
+# also protected as unknown; this report never turns uncertainty into deletion.
+lifecycle_omp_worktree_report() {
+  local path="$1" bytes inside="" status="" branch="" git_dir=""
+  local classification=reclaimable state=clean git_state=not-a-worktree protected=false
+  local signals='[]' marker marker_path
+  bytes="$(lifecycle_bytes "$path")"
+
+  if lifecycle_git_available; then
+    if inside="$(lifecycle_git -C "$path" rev-parse --is-inside-work-tree 2>/dev/null)" &&
+      [[ "$inside" == true ]]; then
+      git_state=clean
+      if status="$(lifecycle_git -C "$path" status --porcelain 2>/dev/null)"; then
+        if [[ -n "$status" ]]; then
+          signals="$(lifecycle_omp_signal "$signals" dirty-git-tree)"
+          state=dirty
+        fi
+      else
+        git_state=unreadable
+        classification=unknown
+        state=unknown
+        protected=true
+      fi
+      if branch="$(lifecycle_git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null)" &&
+        [[ -n "$branch" ]]; then
+        signals="$(lifecycle_omp_signal "$signals" checked-out-branch "$branch")"
+      else
+        branch=""
+      fi
+      if git_dir="$(lifecycle_git -C "$path" rev-parse --absolute-git-dir 2>/dev/null)" &&
+        [[ -n "$git_dir" ]]; then
+        for marker in locked index.lock; do
+          marker_path="$git_dir/$marker"
+          [[ -e "$marker_path" || -L "$marker_path" ]] || continue
+          signals="$(lifecycle_omp_signal "$signals" git-lock-marker "$marker_path")"
+        done
+      fi
+    fi
+  else
+    git_state=tool-unavailable
+    classification=unknown
+    state=unknown
+    protected=true
+  fi
+
+  for marker in .omp-active .active active .activity activity .lock lock; do
+    marker_path="$path/$marker"
+    [[ -e "$marker_path" || -L "$marker_path" ]] || continue
+    case "$marker" in
+      .lock | lock) signals="$(lifecycle_omp_signal "$signals" lock-marker "$marker_path")" ;;
+      *) signals="$(lifecycle_omp_signal "$signals" activity-marker "$marker_path")" ;;
+    esac
+  done
+
+  if jq -e 'length > 0' <<<"$signals" >/dev/null; then
+    classification=live
+    protected=true
+    [[ "$state" == dirty ]] || state=active
+  fi
+
+  jq -cn --arg path "$path" --argjson bytes "$bytes" --arg classification "$classification" \
+    --arg state "$state" --arg gitState "$git_state" --arg branch "$branch" \
+    --argjson protected "$protected" --argjson signals "$signals" \
+    '{path:$path,bytes:$bytes,classification:$classification,protected:$protected,state:$state,
+      gitState:$gitState,branch:(if $branch == "" then null else $branch end),signals:$signals}'
+}
+
+lifecycle_omp_is_recognized_worktree() {
+  local path="$1"
+  [[ -e "$path/.git" || -L "$path/.git" || -d "$path/m" || -d "$path/merged" ]]
+}
+
+# Match OMP's current direct layout and its legacy one-directory nesting without
+# recursively wandering elsewhere. Unrecognized top-level directories remain
+# visible as reclaim candidates instead of disappearing from the inventory.
+lifecycle_omp_worktrees() {
+  local root="$1" worktrees='[]' top child report nested
+  [[ -d "$root" ]] || { printf '[]\n'; return; }
+  for top in "$root"/*; do
+    [[ -d "$top" ]] || continue
+    if lifecycle_omp_is_recognized_worktree "$top"; then
+      report="$(lifecycle_omp_worktree_report "$top")"
+      worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
+        '$worktrees + [$report]' <<<'null')"
+      continue
+    fi
+    nested=0
+    for child in "$top"/*; do
+      [[ -d "$child" ]] || continue
+      lifecycle_omp_is_recognized_worktree "$child" || continue
+      report="$(lifecycle_omp_worktree_report "$child")"
+      worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
+        '$worktrees + [$report]' <<<'null')"
+      nested=1
+    done
+    if [[ "$nested" == 0 ]]; then
+      report="$(lifecycle_omp_worktree_report "$top")"
+      worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
+        '$worktrees + [$report]' <<<'null')"
+    fi
+  done
+  jq -c 'sort_by(.path)' <<<"$worktrees"
+}
+
+lifecycle_omp_session_count() {
+  local path="$1" count
+  [[ -d "$path" ]] || { printf '0\n'; return; }
+  count="$(find "$path" -type f \( -name '*.jsonl' -o -name '*.jsonl.gz' \) -printf '\n' 2>/dev/null |
+    awk 'END { print NR + 0 }')" || count=0
+  [[ "$count" =~ ^[0-9]+$ ]] && printf '%s\n' "$count" || printf '0\n'
+}
+
+# `omp gc` is dry-run by default. `omp worktree clear` is only safe with its
+# explicit flag, so keep the argv literal here and expose it in JSON for audit.
+# Probe failures are data in the report, never a reason for lifecycle to fail.
+lifecycle_omp_dry_runs() {
+  local available=false binary="" gc_output="" clear_output=""
+  local gc_status=unavailable clear_status=unavailable gc_exit=null clear_exit=null
+  if lifecycle_omp_available; then
+    available=true
+    binary="$(command -v "$(lifecycle_omp_command)")"
+    if gc_output="$(lifecycle_omp gc 2>&1)"; then
+      gc_status=ok
+      gc_exit=0
+    else
+      gc_exit=$?
+      gc_status=error
+    fi
+    if clear_output="$(lifecycle_omp worktree clear --dry-run 2>&1)"; then
+      clear_status=ok
+      clear_exit=0
+    else
+      clear_exit=$?
+      clear_status=error
+    fi
+  fi
+  jq -cn --argjson available "$available" --arg binary "$binary" \
+    --arg gcStatus "$gc_status" --argjson gcExit "$gc_exit" --arg gcOutput "$gc_output" \
+    --arg clearStatus "$clear_status" --argjson clearExit "$clear_exit" --arg clearOutput "$clear_output" \
+    '{available:$available,binary:(if $available then $binary else null end),
+      gc:{command:["omp","gc"],dryRun:true,status:$gcStatus,exitCode:$gcExit,
+        output:(if $available then $gcOutput else null end)},
+      worktreeClear:{command:["omp","worktree","clear","--dry-run"],dryRun:true,status:$clearStatus,
+        exitCode:$clearExit,output:(if $available then $clearOutput else null end)}}'
+}
+
+lifecycle_omp_report() {
+  local state_root="$1" sessions="$2" worktree_root="$3" cache="$4"
+  local state_state=absent sessions_state=absent worktree_state=absent cache_state=absent
+  local state_bytes session_bytes worktree_bytes cache_bytes session_count worktrees dry_runs
+  local worktree_count live_count reclaimable_count unknown_count
+  [[ -e "$state_root" || -L "$state_root" ]] && state_state=present
+  [[ -d "$sessions" ]] && sessions_state=present
+  [[ -d "$worktree_root" ]] && worktree_state=present
+  [[ -e "$cache" || -L "$cache" ]] && cache_state=present
+  state_bytes="$(lifecycle_bytes "$state_root")"
+  session_bytes="$(lifecycle_bytes "$sessions")"
+  worktree_bytes="$(lifecycle_bytes "$worktree_root")"
+  cache_bytes="$(lifecycle_bytes "$cache")"
+  session_count="$(lifecycle_omp_session_count "$sessions")"
+  worktrees="$(lifecycle_omp_worktrees "$worktree_root")"
+  worktree_count="$(jq 'length' <<<"$worktrees")"
+  live_count="$(jq '[.[] | select(.classification == "live")] | length' <<<"$worktrees")"
+  reclaimable_count="$(jq '[.[] | select(.classification == "reclaimable")] | length' <<<"$worktrees")"
+  unknown_count="$(jq '[.[] | select(.classification == "unknown")] | length' <<<"$worktrees")"
+  dry_runs="$(lifecycle_omp_dry_runs)"
+
+  jq -cn --arg stateRoot "$state_root" --arg stateState "$state_state" --argjson stateBytes "$state_bytes" \
+    --arg sessions "$sessions" --arg sessionsState "$sessions_state" --argjson sessionBytes "$session_bytes" \
+    --argjson sessionCount "$session_count" --arg worktreeRoot "$worktree_root" \
+    --arg worktreeState "$worktree_state" --argjson worktreeBytes "$worktree_bytes" \
+    --argjson worktreeCount "$worktree_count" --argjson liveCount "$live_count" \
+    --argjson reclaimableCount "$reclaimable_count" --argjson unknownCount "$unknown_count" \
+    --arg cache "$cache" --arg cacheState "$cache_state" --argjson cacheBytes "$cache_bytes" \
+    --argjson worktrees "$worktrees" --argjson dryRuns "$dry_runs" \
+    '{stateRoot:{path:$stateRoot,bytes:$stateBytes,state:$stateState},
+      sessions:{path:$sessions,bytes:$sessionBytes,count:$sessionCount,state:$sessionsState},
+      worktreeRoot:{path:$worktreeRoot,bytes:$worktreeBytes,count:$worktreeCount,state:$worktreeState,
+        classifications:{live:$liveCount,reclaimable:$reclaimableCount,unknown:$unknownCount}},
+      worktrees:$worktrees,caches:[{path:$cache,bytes:$cacheBytes,state:$cacheState}],
+      dryRuns:$dryRuns,mutationBoundary:"read-only; omp gc default dry-run; omp worktree clear --dry-run"}'
+}
+
+lifecycle_print_omp() {
+  local report="$1" output
+  jq -r '
+    "omp-state-root: \(.stateRoot.state) \(.stateRoot.path) [bytes: \(if .stateRoot.bytes == null then "unknown" else (.stateRoot.bytes|tostring) end)]",
+    "omp-sessions: \(.sessions.state) \(.sessions.path) [count: \(.sessions.count); bytes: \(if .sessions.bytes == null then "unknown" else (.sessions.bytes|tostring) end)]",
+    "omp-worktree-root: \(.worktreeRoot.state) \(.worktreeRoot.path) [count: \(.worktreeRoot.count); live: \(.worktreeRoot.classifications.live); reclaimable: \(.worktreeRoot.classifications.reclaimable); unknown: \(.worktreeRoot.classifications.unknown); bytes: \(if .worktreeRoot.bytes == null then "unknown" else (.worktreeRoot.bytes|tostring) end)]",
+    (.worktrees[] | "omp-worktree: \(.classification) \(.path) [protected: \(.protected); state: \(.state); bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end); signals: \([.signals[].kind] | join(","))]"),
+    (.caches[] | "omp-cache: \(.state) \(.path) [bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end)]")
+  ' <<<"$report"
+  if jq -e '.dryRuns.available' <<<"$report" >/dev/null; then
+    printf 'omp gc (default dry-run): %s\n' "$(jq -r '.dryRuns.gc.status' <<<"$report")"
+    output="$(jq -r '.dryRuns.gc.output // empty' <<<"$report")"
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+    printf 'omp worktree clear --dry-run: %s\n' "$(jq -r '.dryRuns.worktreeClear.status' <<<"$report")"
+    output="$(jq -r '.dryRuns.worktreeClear.output // empty' <<<"$report")"
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+  else
+    printf 'omp dry-runs: unavailable (filesystem-only report)\n'
+  fi
+}
+
+
 cmd_lifecycle() {
-  local json=0 rows='[]' diagnostics='[]' profile line gen current bytes output
-  local repo="$HOME/nix-dotfiles" omp_worktrees="$HOME/.omp/wt"
-  local cache="$HOME/.cache/oh-my-pi" untrusted_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-untrusted"
+  local json=0 rows='[]' diagnostics='[]' profile line gen current bytes output omp_report
+  local repo="$HOME/nix-dotfiles" omp_state="$HOME/.omp" omp_sessions="$HOME/.omp/agent/sessions"
+  local omp_worktrees="$HOME/.omp/wt" cache="$HOME/.cache/oh-my-pi"
+  local untrusted_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-untrusted"
   local seed_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-plain-seed"
   [[ "$test_hooks" != 1 || -z "${ATYRODE_LIFECYCLE_REPO:-}" ]] || repo="$ATYRODE_LIFECYCLE_REPO"
   while [[ $# -gt 0 ]]; do
@@ -379,7 +612,7 @@ cmd_lifecycle() {
       [[ -z "$line" ]] && continue
       if [[ "$line" =~ ^[[:space:]]*([0-9]+)[[:space:]] ]]; then
         gen="${BASH_REMATCH[1]}"; current=protected
-        [[ "$line" == *"(current)"* ]] && current=protected-current
+        [[ "$line" == *"(current)"* ]] && current="protected-current"
         rows="$(lifecycle_append "$rows" home-manager-generation "$profile-$gen-link" "$(lifecycle_generation_bytes "$profile-$gen-link")" "nix-env --list-generations" home-manager "$current" present)"
       else
         diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" malformed "unparseable nix-env generation row")"
@@ -431,12 +664,17 @@ cmd_lifecycle() {
     fi
   done
 
+  omp_report="$(lifecycle_omp_report "$omp_state" "$omp_sessions" "$omp_worktrees" "$cache")"
+
   if [[ "$json" == 1 ]]; then
-    jq -cn --argjson entries "$rows" --argjson diagnostics "$diagnostics" \
-      '{schemaVersion:1,entries:($entries | sort_by(.category, .path)),diagnostics:($diagnostics | sort_by(.scope, .path, .code))}'
+    jq -cn --argjson entries "$rows" --argjson diagnostics "$diagnostics" --argjson omp "$omp_report" \
+      '{schemaVersion:1,entries:($entries | sort_by(.category, .path)),
+        diagnostics:($diagnostics | sort_by(.scope, .path, .code)),omp:$omp}'
   else
     printf 'atyrode: lifecycle inventory (read-only)\n'
-    jq -r '.[] | "\(.category): \(.classification) \(.path) [bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end); \(.evidence)]"' <<<"$rows"
+    jq -r '.[] | select(.category != "omp-worktree" and .category != "omp-worktree-root" and .category != "omp-cache")
+      | "\(.category): \(.classification) \(.path) [bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end); \(.evidence)]"' <<<"$rows"
+    lifecycle_print_omp "$omp_report"
     jq -r '.[] | "diagnostic: \(.scope) \(.code) \(.path): \(.message)"' <<<"$diagnostics" >&2
   fi
 }

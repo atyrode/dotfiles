@@ -5,7 +5,8 @@
 //	CODE_GENERATED     : generated.plain (facet-grid blocks, keyed by combo id)
 //	CODE_USAGE         : optional command (space-split) that prints `omp usage --json`
 //	CODE_SELECTION_STATE: optional persisted generator facet choices; empty disables it
-//	CODE_AUTH_VAULTS   : non-secret JSON manifest of selectable auth-broker vaults
+//	CODE_AUTH_VAULTS   : optional JSON override for the machine-local vault manifest
+//	CODE_AUTH_VAULTS_FILE: optional path override for the XDG-local vault manifest
 //	CODE_AUTH_STATE    : persisted {selected,disabled} vault state (0600, mutable)
 //	CODE_OMP           : the omp-managed executable — launches every trusted session
 //	                     on the shared `default` client profile with the selected
@@ -18,6 +19,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -236,14 +238,15 @@ func loadBlocks(path string) map[string][]string {
 
 // ── usage + availability ─────────────────────────────────────────────────────
 type usageWin struct {
-	label   string
-	pct     int
-	tier    string
-	secs    int64 // seconds until reset (relative)
-	dur     int64 // window length in seconds
-	prov    string
-	stale   bool // retained from the last successful fetch after a refresh omitted this window
-	missing bool // never observed: rendered as a deterministic placeholder row
+	label    string
+	pct      int
+	tier     string
+	secs     int64 // seconds until reset (relative)
+	dur      int64 // window length in seconds
+	prov     string
+	stale    bool  // retained from the last successful fetch after a refresh omitted this window
+	missing  bool  // never observed: rendered as a deterministic placeholder row
+	observed int64 // Unix timestamp of the last real value; retained across cache fallback
 }
 
 // resetCredits tracks OpenAI reset credits: how many are currently available
@@ -254,32 +257,172 @@ type resetCredits struct {
 }
 
 type availability struct {
-	bucket  map[string]string // bucket -> "ok" | "maxed" | "unauthed"
-	reset   map[string]int64
-	wins    []usageWin
-	credits resetCredits
-	ok      bool
+	bucket        map[string]string // bucket -> "ok" | "maxed" | "unauthed"
+	reset         map[string]int64
+	wins          []usageWin
+	credits       resetCredits
+	ok            bool
+	accounts      map[string][]vaultAccount
+	accountsOK    bool
+	accountsStale bool
 }
 
-// loadAvailability fetches usage for a vault. It always runs on the shared
-// `default` client profile (stripping any forwarded profile flag) and applies
-// the vault's broker env, loaded fresh from its token file — so the figures
-// reflect the vault's credentials while the client profile stays shared. A
-// missing/unreadable token or a failed command yields an unavailable result.
+// withoutBrokerRouting removes inherited client-side broker variables before a
+// profile-local, read-only usage query. The selected vault's Profile is the
+// credential store used by that vault's broker service; clearing these values
+// prevents an ambient session from silently redirecting the query elsewhere.
+func withoutBrokerRouting(base []string) []string {
+	out := make([]string, 0, len(base))
+	for _, e := range base {
+		key := e
+		if i := strings.IndexByte(e, '='); i >= 0 {
+			key = e[:i]
+		}
+		switch key {
+		case "OMP_AUTH_BROKER_URL", "OMP_AUTH_BROKER_TOKEN", "OMP_AUTH_BROKER_SNAPSHOT_CACHE":
+			continue
+		default:
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// supplementFableUsage works around an OMP v17 auth-broker discrepancy: its
+// aggregate /v1/usage response can omit an Anthropic Fable limit that the same
+// vault profile returns from a provider-scoped `omp usage` query. Only that
+// missing limit is appended; broker-sourced identities and every other usage
+// datum remain authoritative. Any direct-query or shape failure is a no-op.
+func supplementFableUsage(cmd string, v vault, brokerOut []byte) []byte {
+	type envelope struct {
+		Reports []json.RawMessage `json:"reports"`
+	}
+	type report struct {
+		Provider string            `json:"provider"`
+		Limits   []json.RawMessage `json:"limits"`
+	}
+	type limitIdentity struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+		Scope struct {
+			Tier string `json:"tier"`
+		} `json:"scope"`
+	}
+
+	fableLimit := func(raw json.RawMessage) bool {
+		var l limitIdentity
+		if json.Unmarshal(raw, &l) != nil {
+			return false
+		}
+		return l.Scope.Tier == "fable" || l.ID == "anthropic:7d:fable" ||
+			l.Label == "Claude 7 Day (Fable)"
+	}
+
+	var brokerDoc envelope
+	if json.Unmarshal(brokerOut, &brokerDoc) != nil {
+		return brokerOut
+	}
+	brokerReportIndex := -1
+	var brokerAnthropic report
+	for i, raw := range brokerDoc.Reports {
+		var r report
+		if json.Unmarshal(raw, &r) != nil || r.Provider != "anthropic" {
+			continue
+		}
+		for _, limit := range r.Limits {
+			if fableLimit(limit) {
+				return brokerOut
+			}
+		}
+		brokerReportIndex, brokerAnthropic = i, r
+		break
+	}
+	if brokerReportIndex < 0 {
+		return brokerOut
+	}
+
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 || v.Profile == "" {
+		return brokerOut
+	}
+	args := withOMPProfile(v.Profile, parts[1:]...)
+	args = append(args, "--provider", "anthropic")
+	c := exec.Command(parts[0], args...)
+	c.Env = withoutBrokerRouting(os.Environ())
+	directOut, err := c.Output()
+	if err != nil || len(directOut) == 0 {
+		return brokerOut
+	}
+
+	var directDoc envelope
+	if json.Unmarshal(directOut, &directDoc) != nil {
+		return brokerOut
+	}
+	var directFable json.RawMessage
+	for _, raw := range directDoc.Reports {
+		var r report
+		if json.Unmarshal(raw, &r) != nil || r.Provider != "anthropic" {
+			continue
+		}
+		for _, limit := range r.Limits {
+			if fableLimit(limit) {
+				directFable = limit
+				break
+			}
+		}
+	}
+	if len(directFable) == 0 {
+		return brokerOut
+	}
+
+	brokerAnthropic.Limits = append(brokerAnthropic.Limits, directFable)
+	updated, err := json.Marshal(brokerAnthropic)
+	if err != nil {
+		return brokerOut
+	}
+	brokerDoc.Reports[brokerReportIndex] = updated
+	merged, err := json.Marshal(brokerDoc)
+	if err != nil {
+		return brokerOut
+	}
+	return merged
+}
+
+// loadAvailability fetches identity and usage for one vault. Managed broker
+// vaults read the broker's redacted snapshot and aggregate usage endpoints
+// directly, avoiding client-side credential-schema failures in unrelated
+// providers. Standalone configurations retain the forwarded CLI fallback.
+// Every path is read-only.
 func loadAvailability(cmd string, v vault) availability {
-	a := availability{bucket: map[string]string{}, reset: map[string]int64{}}
+	a := availability{
+		bucket: map[string]string{}, reset: map[string]int64{},
+		accounts: map[string][]vaultAccount{},
+	}
+	if accounts, err := loadVaultAccounts(v); err == nil {
+		a.accounts, a.accountsOK = accounts, true
+	}
 	if cmd == "" {
 		return a
 	}
-	env, err := brokerEnv(v)
-	if err != nil {
-		return a
+
+	var out []byte
+	var err error
+	if v.BrokerURL != "" && v.TokenFile != "" {
+		out, err = fetchVaultEndpoint(v, "/v1/usage")
+		if err == nil {
+			out = supplementFableUsage(cmd, v, out)
+		}
+	} else {
+		env, envErr := brokerEnv(v)
+		if envErr != nil {
+			return a
+		}
+		parts := strings.Fields(cmd)
+		args := withOMPProfile("default", parts[1:]...)
+		c := exec.Command(parts[0], args...)
+		c.Env = withBrokerEnv(os.Environ(), env)
+		out, err = c.Output()
 	}
-	parts := strings.Fields(cmd)
-	args := withOMPProfile("default", parts[1:]...)
-	c := exec.Command(parts[0], args...)
-	c.Env = withBrokerEnv(os.Environ(), env)
-	out, err := c.Output()
 	if err != nil || len(out) == 0 {
 		return a
 	}
@@ -319,7 +462,8 @@ func loadAvailability(cmd string, v vault) availability {
 		for _, l := range r.Limits {
 			pct := int(l.Amount.UsedFraction*100 + 0.5)
 			a.wins = append(a.wins, usageWin{label: l.Label, pct: pct, tier: l.Scope.Tier,
-				secs: l.Window.ResetsAt/1000 - now, dur: l.Window.DurationMs / 1000, prov: r.Provider})
+				secs: l.Window.ResetsAt/1000 - now, dur: l.Window.DurationMs / 1000,
+				prov: r.Provider, observed: now})
 			bkt := bucketForProviderTier(r.Provider, l.Scope.Tier)
 			if bkt == "" {
 				continue
@@ -400,8 +544,13 @@ func (a availability) down(bucket string) bool {
 // Fresh values always win; nothing is fabricated — retained rows are visibly
 // marked stale and placeholders carry no numbers.
 func reconcileUsage(prev, next availability) (availability, bool) {
+	if !next.accountsOK && prev.accountsOK {
+		next.accounts, next.accountsOK, next.accountsStale = prev.accounts, true, true
+	}
 	if !next.ok {
 		if prev.ok {
+			prev.accounts, prev.accountsOK, prev.accountsStale =
+				next.accounts, next.accountsOK, next.accountsStale
 			return prev, true
 		}
 		return next, false
@@ -1187,14 +1336,14 @@ func (m model) routingColW() int {
 // ── trackpad / mouse wheel ───────────────────────────────────────────────────
 // The wheel drives the generator directly: vertical scroll moves the facet
 // selection, horizontal scroll changes the selected facet's value. Terminal
-// mouse protocols expose direction-only press events — no magnitude, release,
-// or gesture identity — and different terminals emit different event counts
-// for the same physical motion. Coalesce one leading-edge step per Bubble Tea
-// render quantum: the first event acts immediately, same-direction momentum
-// and diagonal jitter are dropped before Update/View, and an explicit reversal
-// acts immediately. No raw event can extend the window, so scrolling never
-// inherits the old trailing-debounce lockout. Routing remains continuous.
-const wheelQuantum = time.Second / 60
+// mouse protocols expose direction-only press events rather than trackpad
+// distance, so require a small burst before committing one generator step.
+// This gives fine Mac trackpad motion room to settle without making every raw
+// event select a new row or option. Routing remains continuous and ungated.
+const (
+	wheelStepEvents = 5
+	wheelGestureGap = 200 * time.Millisecond
+)
 
 const (
 	wheelAxisNone = iota
@@ -1202,23 +1351,9 @@ const (
 	wheelAxisH
 )
 
-// admittedWheelMsg marks a generator wheel event admitted before Bubble Tea's
-// Update/render cycle and carries the generation of its bounded coalescing
-// window.
-type admittedWheelMsg struct {
-	tea.MouseMsg
-	generation uint64
-}
-
-// wheelWindowDoneMsg closes one render-quantum input window. It is consumed by
-// the pre-dispatch filter, so it does not trigger an otherwise-useless redraw.
-type wheelWindowDoneMsg struct{ generation uint64 }
-
-func wheelWindowCmd(generation uint64) tea.Cmd {
-	return tea.Tick(wheelQuantum, func(time.Time) tea.Msg {
-		return wheelWindowDoneMsg{generation: generation}
-	})
-}
+// admittedWheelMsg marks a generator wheel event whose same-direction burst
+// crossed the step threshold before Bubble Tea's Update/render cycle.
+type admittedWheelMsg struct{ tea.MouseMsg }
 
 // wheelTarget is the layout state the pre-dispatch filter needs. Keeping this
 // interface narrow also lets the raw-input regression test wrap model while
@@ -1229,25 +1364,18 @@ type wheelTarget interface {
 }
 
 // wheelInputFilter removes mouse traffic before Bubble Tea's unconditional
-// redraw-after-Update. Generator momentum is coalesced to one leading-edge step
-// per render quantum; motion, non-wheel presses, routing horizontal wheel, and
-// clamped routing scroll are dropped because none can change the view.
+// redraw-after-Update. Generator motion accumulates by axis and direction;
+// only each complete threshold reaches Update. Motion, non-wheel presses,
+// routing horizontal wheel, and clamped routing scroll are dropped because
+// none can change the view.
 type wheelInputFilter struct {
-	open       bool
-	axis       int
-	button     tea.MouseButton
-	generation uint64
+	axis   int
+	button tea.MouseButton
+	count  int
+	last   time.Time
 }
 
 func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
-	if done, ok := msg.(wheelWindowDoneMsg); ok {
-		if done.generation == f.generation {
-			f.open = false
-			f.axis = wheelAxisNone
-			f.button = tea.MouseButtonNone
-		}
-		return nil
-	}
 
 	mouse, ok := msg.(tea.MouseMsg)
 	if !ok {
@@ -1279,18 +1407,24 @@ func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
 	default:
 		return nil
 	}
-	if f.open {
-		// A same-axis reversal is new intent, not momentum. Orthogonal input is
-		// diagonal jitter for no longer than this one render quantum.
-		if axis != f.axis || mouse.Button == f.button {
-			return nil
-		}
+	now := time.Now()
+	if f.count > 0 && now.Sub(f.last) <= wheelGestureGap && axis != f.axis {
+		// Ignore brief orthogonal trackpad jitter without discarding progress
+		// along the operator's dominant gesture axis.
+		return nil
 	}
-	f.open = true
-	f.axis = axis
-	f.button = mouse.Button
-	f.generation++
-	return admittedWheelMsg{MouseMsg: mouse, generation: f.generation}
+	if axis != f.axis || mouse.Button != f.button || now.Sub(f.last) > wheelGestureGap {
+		f.axis = axis
+		f.button = mouse.Button
+		f.count = 0
+	}
+	f.last = now
+	f.count++
+	if f.count < wheelStepEvents {
+		return nil
+	}
+	f.count = 0
+	return admittedWheelMsg{MouseMsg: mouse}
 }
 
 type model struct {
@@ -1304,6 +1438,7 @@ type model struct {
 	collapse   bool // p: hide the Routing section
 	showResult bool // in collapsed mode: show the preview full-width
 	hideUsage  bool // s: hide the Usage section (#198); fetch state keeps running unseen
+	showUsage  bool // narrow mode: show Usage full-screen instead of silently shedding it
 
 	facets         []facet
 	fcur           int
@@ -1317,14 +1452,21 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
-	vaults     []vault
-	selected   string                  // active vault id
-	disabled   map[string]bool         // disabled vault ids (never includes the fallback)
-	vaultState string                  // CODE_AUTH_STATE path
-	vaultErr   string                  // last vault switch/persist/login error
-	vaultUsage map[string]availability // per-vault usage snapshots for the manager
-	manager    bool                    // v: the full-screen vault manager is open
-	mgrCursor  int                     // manager row cursor
+	vaults          []vault
+	selected        string                  // active vault id
+	disabled        map[string]bool         // disabled vault ids (never includes the fallback)
+	vaultState      string                  // CODE_AUTH_STATE path
+	vaultErr        string                  // last vault switch/persist/login error
+	vaultManifest   string                  // resolved writable manifest path; empty for raw JSON/read-only
+	managerInput    string                  // "create" or "rename" while manager text entry is active
+	managerText     string                  // pending manager text-entry value
+	vaultUsage      map[string]availability // per-vault snapshots, hydrated in the background
+	vaultUsageNext  map[string]time.Time    // independent auto-refresh deadline for each cached vault
+	vaultUsageStale map[string]bool         // whole-fetch failure retained per vault
+	vaultFetching   map[string]bool         // in-flight usage request state, isolated per vault
+	manager         bool                    // v: the full-screen vault manager is open
+	mgrCursor       int                     // manager row cursor
+	loginRunning    bool                    // one suspended provider login may run at a time
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
@@ -1365,12 +1507,28 @@ func fetchUsageCmd(cmd string, v vault) tea.Cmd {
 	return func() tea.Msg { return usageMsg{vault: v.ID, avail: loadAvailability(cmd, v)} }
 }
 
-// fetchAllCmd refreshes every vault at once — the manager's whole-list view.
-func fetchAllCmd(cmd string, vaults []vault) tea.Cmd {
-	var cmds []tea.Cmd
+// startUsageFetch records request state before returning the asynchronous
+// command. Cached data stays visible; only the matching vault shows the
+// refreshing indicator.
+func (m *model) startUsageFetch(v vault) tea.Cmd {
+	if m.usageCmd == "" {
+		return nil
+	}
+	if m.vaultFetching == nil {
+		m.vaultFetching = map[string]bool{}
+	}
+	m.vaultFetching[v.ID] = true
+	if v.ID == m.activeVault().ID {
+		m.fetching = true
+	}
+	return fetchUsageCmd(m.usageCmd, v)
+}
+
+func (m *model) startUsageFetchAll(vaults []vault) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(vaults))
 	for _, v := range vaults {
-		if c := fetchUsageCmd(cmd, v); c != nil {
-			cmds = append(cmds, c)
+		if cmd := m.startUsageFetch(v); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 	if len(cmds) == 0 {
@@ -1402,7 +1560,7 @@ func (m model) Init() tea.Cmd {
 	if m.usageCmd == "" {
 		return nil
 	}
-	return tea.Batch(fetchUsageCmd(m.usageCmd, m.activeVault()), m.spin.Tick, tickCmd())
+	return tea.Batch(m.startUsageFetchAll(m.vaults), m.spin.Tick, tickCmd())
 }
 
 func (m model) listW() int {
@@ -1516,44 +1674,99 @@ func (m *model) usageCtrlLine() string {
 	return line
 }
 
-// providerHeading names a provider usage group by its effective identity —
-// "Codex (account)" / "Claude (account)", derived from the active auth
-// profile — so mixed profiles (Claude (Mum) + Codex (Alex)) read correctly
-// with no prose equation, in text rather than color alone. The parenthesized
-// owner is dimmed so the provider name stays the heading's anchor.
-func providerHeading(prov string, p vault) string {
-	col, name, acct := "#62a7ff", "Codex", p.Codex
+// providerHeading names a provider usage group without deriving identity from
+// configured vault owner labels. Account identity is rendered separately from
+// the broker's redacted snapshot.
+func providerHeading(prov string) string {
+	col, name := "#62a7ff", "Codex"
 	if prov == "anthropic" {
-		col, name, acct = "#ff9f52", "Claude", p.Claude
+		col, name = "#ff9f52", "Claude"
 	}
-	out := lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
-	if acct != "" {
-		out += " " + stDim.Render("("+acct+")")
-	}
-	return out
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(col)).Bold(true).Render(name)
 }
 
-// identityLines renders the effective provider/account headings on their own —
-// the loading and error states keep the active identity visible even before
-// any usage rows exist.
+// providerAccountRows renders only identities reported by the broker's
+// redacted snapshot. Email is preferred; the snapshot identity key is used
+// when a connected account has no email. Sorting the copied display values
+// keeps injected, cached, and fetched account sets deterministic without
+// deriving identity from configured owner labels.
+func providerAccountRows(a availability, prov string, checking bool) []string {
+	if checking {
+		return []string{stDim.Render("  checking account…")}
+	}
+	if !a.accountsOK {
+		return []string{stWarn.Render("  account status unavailable")}
+	}
+	accounts := a.accounts[prov]
+	if len(accounts) == 0 {
+		return []string{stBrk.Render("  not authenticated")}
+	}
+	identities := make([]string, 0, len(accounts))
+	unknown := 0
+	for _, account := range accounts {
+		identity := account.Email
+		if identity == "" {
+			identity = account.IdentityKey
+		}
+		if identity == "" {
+			unknown++
+			continue
+		}
+		identities = append(identities, identity)
+	}
+	sort.Strings(identities)
+	rows := make([]string, 0, len(identities)+unknown+1)
+	for _, identity := range identities {
+		rows = append(rows, stDim.Render("  "+identity))
+	}
+	for range unknown {
+		rows = append(rows, stDim.Render("  authenticated · identity unavailable"))
+	}
+	if a.accountsStale {
+		rows = append(rows, stWarn.Render("  identity cached"))
+	}
+	return rows
+}
+
+func providerIdentityBlock(a availability, prov string, checking bool) []string {
+	rows := []string{padLeft(providerHeading(prov), gut)}
+	rows = append(rows, providerAccountRows(a, prov, checking)...)
+	return rows
+}
+
+// identityLines keeps provider and broker-reported account state visible even
+// when no usage rows exist.
 func (m *model) identityLines() string {
-	p := m.activeVault()
-	return padLeft(providerHeading("openai-codex", p), gut) + "\n" +
-		padLeft(providerHeading("anthropic", p), gut)
+	var lines []string
+	for i, prov := range []string{"openai-codex", "anthropic"} {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, providerIdentityBlock(m.avail, prov, false)...)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // usagePanel is the composition-agnostic Usage band sized for the current
 // terminal width — the wide layout's full-width footer form.
 func (m *model) usagePanel() string { return m.usagePanelFor(m.w) }
 
-// usagePanelFor renders the first-class Usage section: the pilled title with
-// its local hide cue, the per-provider usage groups headed by the effective
-// provider/account identity, and the refresh/switch control row at the
-// section's bottom edge — below the content it governs. Provider groups sit
-// side by side only when w seats every column; w <= 0 forces the vertical
-// stack (the medium layout's narrow usage column).
+// usagePanelFor renders the first-class Usage section: the pilled title names
+// the active vault and carries its local hide cue, followed by per-provider
+// account lists and usage groups, then the refresh/switch control row at the
+// section's bottom edge. Provider groups sit side by side only when w seats
+// every column; w <= 0 forces the vertical stack used by medium layouts.
 func (m *model) usagePanelFor(w int) string {
-	title := m.pill("usage") + "  " + stCueKey.Render("s") + stCue.Render(" · hide")
+	v := m.activeVault()
+	vaultName := v.Label
+	if vaultName == "" {
+		vaultName = v.ID
+	}
+	title := m.pill("usage")
+	if vaultName != "" {
+		title += stCue.Render(" · " + vaultName)
+	}
+	title += "  " + stCueKey.Render("s") + stCue.Render(" · hide")
 	if len(m.vaults) > 1 {
 		title += "  " + stCueKey.Render("v") + stCue.Render(" · vaults")
 	}
@@ -1569,10 +1782,9 @@ func (m *model) usagePanelFor(w int) string {
 // and the bottom control row: the identity-headed usage groups, or the
 // loading/unavailable identity block.
 func (m *model) usageBodyFor(w int) string {
-	p := m.activeVault()
 	if !m.avail.ok {
 		if m.usageLoading() {
-			return m.skeletonBody(w, p)
+			return m.skeletonBody(w)
 		}
 		out := m.identityLines()
 		if m.usageCmd != "" && !m.fetching && !m.nextRefresh.IsZero() {
@@ -1614,7 +1826,7 @@ func (m *model) usageBodyFor(w int) string {
 	for _, win := range wins {
 		if _, ok := blocks[win.prov]; !ok {
 			order = append(order, win.prov)
-			blocks[win.prov] = []string{padLeft(providerHeading(win.prov, p), gut)}
+			blocks[win.prov] = providerIdentityBlock(m.avail, win.prov, false)
 		}
 		blocks[win.prov] = append(blocks[win.prov], m.usageRow(win))
 	}
@@ -1631,12 +1843,14 @@ func (m *model) usageBodyFor(w int) string {
 // shared by the real usage body and the loading skeleton so the two agree on
 // geometry and the first fetch never pops the layout. colW must fit the
 // widest row (label · bar · pct · ↻reset · note) without wrapping the note;
-// a long account name widens the column instead of truncating the identity.
+// a long broker-reported email widens the column instead of truncating it.
 func layoutGroups(w int, order []string, blocks map[string][]string) string {
 	colW := 49
 	for _, prov := range order {
-		if hw := lipgloss.Width(blocks[prov][0]) + 2; hw > colW {
-			colW = hw
+		for _, row := range blocks[prov] {
+			if rowW := lipgloss.Width(row) + 2; rowW > colW {
+				colW = rowW
+			}
 		}
 	}
 	if w > 0 && len(order) > 1 && w >= colW*len(order) {
@@ -1664,28 +1878,29 @@ func (m *model) usageLoading() bool {
 	return m.usageCmd != "" && !m.avail.ok && (m.fetching || m.nextRefresh.IsZero())
 }
 
-// skeletonWins are the loading skeleton's placeholder windows: both supported
-// providers expose a 5-hour rolling window and a weekly window, so the
-// skeleton mirrors that standard shape — real labels, empty bars, dotted
-// placeholders — without fabricating numbers the fetch hasn't produced.
-var skeletonWins = [...]string{"5h", "7d"}
+// skeletonWinsByProvider mirrors each provider's stable usage shape. Anthropic
+// always reserves the Fable row, even before a first successful fetch.
+var skeletonWinsByProvider = map[string][]string{
+	"openai-codex": {"5h", "7d"},
+	"anthropic":    {"5h", "7d", "7d fable"},
+}
 
 // skeletonRow is a placeholder usage row: the real row's exact geometry with
 // an empty bar and ·· placeholders for the percentage and reset time.
 func skeletonRow(label string) string {
 	return fmt.Sprintf("  %-9s %s %s used  %s", label, barStr(0),
-		stDim.Render(" ··%"), stDim.Render(gReset+" ··"))
+		stDim.Render(" ··%"), stDim.Render(gReset+" ····"))
 }
 
-// skeletonBody is the pre-first-fetch Usage content: the provider/account
-// headings with generic placeholder window rows, laid out by the same group
-// logic as real data so the first result lands without a layout pop.
-func (m *model) skeletonBody(w int, p vault) string {
+// skeletonBody is the pre-first-fetch Usage content: provider headings,
+// explicit checking state, and generic placeholder window rows, laid out by
+// the same group logic as real data so the first result lands predictably.
+func (m *model) skeletonBody(w int) string {
 	order := []string{"openai-codex", "anthropic"}
 	blocks := map[string][]string{}
 	for _, prov := range order {
-		rows := []string{padLeft(providerHeading(prov, p), gut)}
-		for _, label := range skeletonWins {
+		rows := providerIdentityBlock(m.avail, prov, true)
+		for _, label := range skeletonWinsByProvider[prov] {
 			rows = append(rows, skeletonRow(label))
 		}
 		blocks[prov] = rows
@@ -1720,6 +1935,27 @@ func (m model) secondaryMinH() int {
 	return h
 }
 
+func formatCachedAge(observed int64, now time.Time) string {
+	seconds := now.Unix() - observed
+	if seconds < 0 {
+		seconds = 0
+	}
+	switch {
+	case seconds < 60:
+		return "<1m ago"
+	case seconds < 60*60:
+		return fmt.Sprintf("%dm ago", seconds/60)
+	case seconds < 24*60*60:
+		return fmt.Sprintf("%dh ago", seconds/(60*60))
+	case seconds < 7*24*60*60:
+		return fmt.Sprintf("%dd ago", seconds/(24*60*60))
+	case seconds < 365*24*60*60:
+		return fmt.Sprintf("%dw ago", seconds/(7*24*60*60))
+	default:
+		return fmt.Sprintf("%dy ago", seconds/(365*24*60*60))
+	}
+}
+
 func (m *model) usageRow(w usageWin) string {
 	if w.missing {
 		// Never-observed window (the upstream payload omits it): the real
@@ -1738,15 +1974,20 @@ func (m *model) usageRow(w usageWin) string {
 		note = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(cGreen)).Render("idle")
 	}
 	if w.stale {
-		// Retained from the last successful fetch after a refresh omitted
-		// this window — the value is old, and the row says so.
-		note += "  " + stWarn.Render("stale")
+		// Retained after a refresh omitted this window. Keep the value and
+		// show its age, which is faster to interpret while switching vaults.
+		cached := "cached"
+		if w.observed > 0 {
+			cached += " " + formatCachedAge(w.observed, time.Now())
+		}
+		note += "  " + stWarn.Render(cached)
 	}
-	reset := stDim.Render(gReset + " " + fmtReset(w.secs))
+	resetText := gReset + " " + pad(fmtReset(w.secs), 4)
+	reset := stDim.Render(resetText)
 	if w.dur > 0 && w.secs*10 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(gReset + " " + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Bold(true).Render(resetText)
 	} else if w.dur > 0 && w.secs*4 < w.dur {
-		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(gReset + " " + fmtReset(w.secs))
+		reset = lipgloss.NewStyle().Foreground(lipgloss.Color("#c8d0dc")).Render(resetText)
 	}
 	// During the one-time first-load fill only the bar is scaled toward its
 	// target; the label, percentage, and reset text are real from frame one.
@@ -1872,15 +2113,15 @@ func (m *model) syncPreviewAt(yoff int) {
 // keeps Usage in the footer) then the controls help, each under a rule. Built
 // once here so relayout and View stay in sync.
 func (m *model) footer() string {
-	rule := stDim.Render(strings.Repeat("─", m.w))
-	var parts []string
+	usage := ""
 	if m.usageInFooter() {
-		if p := m.usagePanel(); p != "" {
-			parts = append(parts, rule, p)
-		}
+		usage = m.usagePanel()
 	}
-	parts = append(parts, rule, padLeft(m.help.View(m.contextHelp()), gut))
-	return strings.Join(parts, "\n")
+	return clikit.SeparatedSections(
+		m.w,
+		usage,
+		padLeft(m.help.View(m.contextHelp()), gut),
+	)
 }
 
 // usageInFooter says where Usage lives: the wide layout keeps it as the
@@ -1905,6 +2146,9 @@ func (m *model) usageInFooter() bool {
 // routingShown reports whether the Routing section (and so its title-local
 // p · hide cue) is on screen in the current composition.
 func (m model) routingShown() bool {
+	if m.showUsage && m.sizeMode() == sizeNarrow {
+		return false
+	}
 	if m.collapse {
 		return false
 	}
@@ -1915,27 +2159,36 @@ func (m model) routingShown() bool {
 }
 
 // usageShown reports whether the Usage panel is rendered anywhere — the
-// wide/collapsed footer band or medium's secondary column. Narrow sheds it
-// regardless of the s toggle.
+// wide/collapsed footer band, medium's secondary column, or narrow's dedicated
+// full-screen view.
 func (m model) usageShown() bool {
 	if m.hideUsage {
 		return false
 	}
+	if m.sizeMode() == sizeNarrow {
+		return m.showUsage
+	}
 	return m.usageInFooter() || m.mode() == modeMedium
 }
 
-// usageCanShow reports whether restoring Usage would actually render it — the
-// compact footer must never advertise a recovery action the narrow layout
-// would immediately shed anyway.
+// usageCanShow reports whether restoring Usage would actually render it.
+// Narrow terminals use a dedicated full-width view when they can seat the
+// stacked Usage column; extremely small terminals still suppress a dead cue.
 func (m model) usageCanShow() bool {
+	if m.sizeMode() == sizeNarrow {
+		return m.w >= m.usageColW()
+	}
 	t := m
 	t.hideUsage = false
 	return t.usageShown()
 }
 
 // generatorShown: the Generator (and its launch footer advertising ⏎/m/u) is
-// visible in every composition except the narrow routing-full-screen swap.
+// visible in every composition except a narrow full-screen secondary view.
 func (m model) generatorShown() bool {
+	if m.sizeMode() == sizeNarrow && m.showUsage {
+		return false
+	}
 	return !(m.mode() == modeCollapsed && !m.collapse && m.showResult)
 }
 
@@ -1971,7 +2224,7 @@ func (m model) contextHelp() helpKeys {
 	if !m.routingShown() {
 		short = append(short, key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "show routing")))
 	}
-	if m.hideUsage && m.usageCanShow() {
+	if !m.usageShown() && m.usageCanShow() {
 		short = append(short, key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "show usage")))
 	}
 	// Keep full-help discovery and quit ahead of optional contextual actions:
@@ -2021,15 +2274,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.vaultUsage == nil {
 			m.vaultUsage = map[string]availability{}
 		}
-		m.vaultUsage[msg.vault] = msg.avail // scoped snapshot for the manager
+		if m.vaultUsageNext == nil {
+			m.vaultUsageNext = map[string]time.Time{}
+		}
+		if m.vaultUsageStale == nil {
+			m.vaultUsageStale = map[string]bool{}
+		}
+		if m.vaultFetching == nil {
+			m.vaultFetching = map[string]bool{}
+		}
+		previous, known := m.vaultUsage[msg.vault]
+		if !known && msg.vault == m.activeVault().ID {
+			previous = m.avail
+		}
+		scoped, scopedStale := reconcileUsage(previous, msg.avail)
+		refreshAt := time.Now().Add(refreshEvery)
+		m.vaultUsage[msg.vault] = scoped
+		m.vaultUsageNext[msg.vault] = refreshAt
+		m.vaultUsageStale[msg.vault] = scopedStale
+		m.vaultFetching[msg.vault] = false
 		if msg.vault != m.activeVault().ID {
 			return m, nil // not the active vault: never touches the detailed panel or its fill
 		}
 		first := !m.hadUsage && msg.avail.ok
-		m.avail, m.usageStale = reconcileUsage(m.avail, msg.avail)
+		m.avail, m.usageStale = scoped, scopedStale
 		m.hadUsage = m.hadUsage || msg.avail.ok
 		m.fetching = false
-		m.nextRefresh = time.Now().Add(refreshEvery)
+		m.nextRefresh = refreshAt
 		m.relayout()
 		if first {
 			// The first real data replaces the skeleton: run the one-time
@@ -2038,8 +2309,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, barAnimCmd(2)
 		}
 	case loginDoneMsg:
+		m.loginRunning = false
 		m.vaultErr = ""
-		if msg.err != nil {
+		if msg.err != nil && !errors.Is(msg.err, errLoginCancelled) {
 			m.vaultErr = "login failed: " + msg.err.Error()
 		}
 		for _, v := range m.vaults {
@@ -2049,7 +2321,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if v.ID == m.activeVault().ID {
 				m.fetching = m.usageCmd != ""
 			}
-			return m, fetchUsageCmd(m.usageCmd, v)
+			return m, m.startUsageFetch(v)
 		}
 		return m, nil
 	case barAnimMsg:
@@ -2068,8 +2340,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// re-arm the 1s tick; auto-refresh once the interval elapses.
 		cmds := []tea.Cmd{tickCmd()}
 		if !m.fetching && !m.nextRefresh.IsZero() && !time.Now().Before(m.nextRefresh) {
-			m.fetching = true
-			cmds = append(cmds, fetchUsageCmd(m.usageCmd, m.activeVault()))
+			cmds = append(cmds, m.startUsageFetch(m.activeVault()))
 		}
 		return m, tea.Batch(cmds...)
 	case spinner.TickMsg:
@@ -2080,7 +2351,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case admittedWheelMsg:
 		m.applyWheelStep(msg.Button)
-		return m, wheelWindowCmd(msg.generation)
+		return m, nil
 	case tea.MouseMsg:
 		// Wheel dispatch by pointer position: inside the visible Routing pane
 		// the viewport owns vertical scrolling — continuous, ungated, clamped
@@ -2108,6 +2379,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "p":
 			switch {
+			case m.showUsage && m.sizeMode() == sizeNarrow:
+				m.showUsage = false
+				m.showResult = true
+				m.collapse = false
 			case m.collapse:
 				m.collapse = false // restore the hidden preview
 			case m.mode() == modeCollapsed:
@@ -2117,10 +2392,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.relayout()
 		case "s":
-			// Usage collapse (#198): a pure display toggle. Fetch state and the
-			// refresh cadence keep running unseen; nothing is refetched on
-			// restore, and the freed rows reallocate to the active composition.
-			m.hideUsage = !m.hideUsage
+			// Toggle the rendered section, not the pre-toggle size class. Usage
+			// changes the responsive minima, so a layout that fits while it is
+			// hidden may become narrow when it returns. In that case open the
+			// dedicated view atomically. It overlays the existing generator /
+			// Routing state so closing it restores that exact composition.
+			switch {
+			case m.showUsage:
+				m.showUsage = false
+				m.hideUsage = true
+			case !m.usageShown():
+				m.hideUsage = false
+				m.showUsage = m.sizeMode() == sizeNarrow
+			default:
+				m.showUsage = false
+				m.hideUsage = true
+			}
 			m.relayout()
 		case "?":
 			m.help.ShowAll = !m.help.ShowAll
@@ -2134,10 +2421,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncPreview()
 		case "r":
 			if m.usageCmd != "" && !m.fetching {
-				m.fetching = true
-				return m, fetchUsageCmd(m.usageCmd, m.activeVault())
+				return m, m.startUsageFetch(m.activeVault())
 			}
 		case "a":
+			prev := m.selected
 			changed, err := m.cycleVault()
 			if err != nil {
 				m.vaultErr = err.Error()
@@ -2146,20 +2433,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if changed {
 				m.vaultErr = ""
-				m.usageStale = false // the wiped avail belongs to the new vault; no stale carry-over
-				m.fetching = m.usageCmd != ""
+				cmd := m.afterSelectionChange(prev)
 				m.relayout()
-				if m.fetching {
-					return m, fetchUsageCmd(m.usageCmd, m.activeVault())
+				if cmd != nil {
+					return m, cmd
 				}
 			}
 		case "v":
 			if len(m.vaults) > 0 {
 				m.manager = true
 				m.mgrCursor = m.activeIndex()
-				m.fetching = m.usageCmd != ""
+				m.fetching = m.vaultFetching[m.activeVault().ID]
 				m.relayout()
-				return m, fetchAllCmd(m.usageCmd, m.vaults)
 			}
 		case "up", "k":
 			m.moveUp()
@@ -2297,8 +2582,16 @@ func (m *model) cycleFacet(dir int) {
 			idx = i
 		}
 	}
-	idx = (idx + dir + len(f.values)) % len(f.values)
-	m.sel[f.key] = f.values[idx]
+	next := idx + dir
+	if next < 0 {
+		next = 0
+	} else if next >= len(f.values) {
+		next = len(f.values) - 1
+	}
+	if next == idx {
+		return
+	}
+	m.sel[f.key] = f.values[next]
 	// main is fable's sub-setting: whenever fable leaves "on" it must clear too,
 	// so a later fable re-enable never silently resurrects the (expensive)
 	// fable-as-main escalation — it is re-chosen deliberately every time.
@@ -2428,9 +2721,12 @@ func (m model) View() string {
 	var content string
 	switch m.mode() {
 	case modeCollapsed:
-		if m.showResult && !m.collapse {
+		switch {
+		case m.showUsage && m.sizeMode() == sizeNarrow:
+			content = padLeft(m.usagePanelFor(m.w-gut), gut)
+		case m.showResult && !m.collapse:
 			content = padLeft(m.previewColumn(), gut)
-		} else {
+		default:
 			content = m.leftColumn(m.w, ch)
 		}
 	case modeMedium:
@@ -2537,29 +2833,38 @@ func main() {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	generated := loadBlocks(os.Getenv("CODE_GENERATED"))
-	vaults := parseVaults(os.Getenv("CODE_AUTH_VAULTS"))
+	vaults, vaultManifest := resolveVaults(os.Getenv("CODE_AUTH_VAULTS"), os.Getenv("CODE_AUTH_VAULTS_FILE"))
 	vaultState := os.Getenv("CODE_AUTH_STATE")
 	selected, disabled := loadVaultState(vaults, vaultState)
 	facets := facetDefs(glyphs)
 	selectionState := os.Getenv("CODE_SELECTION_STATE")
 	m := model{
-		generated:      generated,
-		advisors:       parseAdvisors(generated["__advisors__"]),
-		facts:          parseFacts(generated["__models__"]),
-		avail:          availability{bucket: map[string]string{}, reset: map[string]int64{}},
-		usageCmd:       os.Getenv("CODE_USAGE"),
-		vaults:         vaults,
-		selected:       selected,
-		disabled:       disabled,
-		vaultState:     vaultState,
-		vaultUsage:     map[string]availability{},
-		fetching:       os.Getenv("CODE_USAGE") != "",
-		spin:           sp,
-		help:           help.New(),
-		glyphs:         glyphs,
-		facets:         facets,
-		sel:            loadSelectionState(selectionState, facets),
-		selectionState: selectionState,
+		generated:       generated,
+		advisors:        parseAdvisors(generated["__advisors__"]),
+		facts:           parseFacts(generated["__models__"]),
+		avail:           availability{bucket: map[string]string{}, reset: map[string]int64{}},
+		vaultFetching:   map[string]bool{},
+		usageCmd:        os.Getenv("CODE_USAGE"),
+		vaults:          vaults,
+		selected:        selected,
+		disabled:        disabled,
+		vaultState:      vaultState,
+		vaultManifest:   vaultManifest,
+		vaultUsage:      map[string]availability{},
+		vaultUsageNext:  map[string]time.Time{},
+		vaultUsageStale: map[string]bool{},
+		fetching:        os.Getenv("CODE_USAGE") != "",
+		spin:            sp,
+		help:            clikit.NewHelp(),
+		glyphs:          glyphs,
+		facets:          facets,
+		sel:             loadSelectionState(selectionState, facets),
+		selectionState:  selectionState,
+	}
+	if m.usageCmd != "" {
+		for _, v := range m.vaults {
+			m.vaultFetching[v.ID] = true
+		}
 	}
 	// Cell-motion mouse reporting carries wheel events. Filter rejected
 	// momentum and unused motion before Bubble Tea's redraw-after-Update loop.

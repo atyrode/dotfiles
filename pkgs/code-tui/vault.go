@@ -2,10 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,7 +34,133 @@ type vault struct {
 	SnapshotCache string `json:"snapshotCache"`
 }
 
-var validVaultID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+// vaultAccount is the non-secret identity metadata exposed by the broker's
+// redacted snapshot. Access and refresh material are deliberately not decoded.
+type vaultAccount struct {
+	Provider    string
+	IdentityKey string
+	Email       string
+}
+
+// fetchVaultEndpoint performs one read-only broker request with the vault's
+// mutable token. It is the sole path used for identity and usage discovery.
+func fetchVaultEndpoint(v vault, endpoint string) ([]byte, error) {
+	if v.BrokerURL == "" || v.TokenFile == "" {
+		return nil, errors.New("vault broker discovery is not configured")
+	}
+	token, err := os.ReadFile(v.TokenFile)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(v.BrokerURL, "/")+endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	client := http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("vault broker endpoint unavailable")
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// loadVaultAccounts reads only redacted identity metadata from a vault. It
+// never opens or mutates OMP's credential database and never decodes token
+// fields from the response.
+func loadVaultAccounts(v vault) (map[string][]vaultAccount, error) {
+	body, err := fetchVaultEndpoint(v, "/v1/snapshot")
+	if err != nil {
+		return nil, err
+	}
+	var snapshot struct {
+		Credentials []struct {
+			Provider    string `json:"provider"`
+			IdentityKey string `json:"identityKey"`
+			Credential  struct {
+				Email string `json:"email"`
+			} `json:"credential"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return nil, err
+	}
+	accounts := map[string][]vaultAccount{}
+	for _, c := range snapshot.Credentials {
+		if c.Provider != "anthropic" && c.Provider != "openai-codex" {
+			continue
+		}
+		accounts[c.Provider] = append(accounts[c.Provider], vaultAccount{
+			Provider: c.Provider, IdentityKey: c.IdentityKey, Email: c.Credential.Email,
+		})
+	}
+	for provider := range accounts {
+		sort.Slice(accounts[provider], func(i, j int) bool {
+			return accounts[provider][i].IdentityKey < accounts[provider][j].IdentityKey
+		})
+	}
+	return accounts, nil
+}
+
+var (
+	validVaultID      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	validVaultProfile = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	unsafeVaultSlug   = regexp.MustCompile(`[^a-z0-9]+`)
+	repeatedVaultDash = regexp.MustCompile(`-+`)
+)
+
+func machineLocalPath(path string) bool {
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) || path == "/nix/store" || strings.HasPrefix(path, "/nix/store/") {
+		return false
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(cwd, path); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveVaults retains the resolved manifest path alongside its entries.
+// Raw JSON is deliberately read-only: it has no safe machine-local persistence
+// target. A missing file at a resolved XDG path remains editable and starts
+// with the neutral fallback until the first manifest write.
+func resolveVaults(raw, path string) ([]vault, string) {
+	if raw != "" {
+		return parseVaults(raw), ""
+	}
+	if path == "" {
+		configHome := os.Getenv("XDG_CONFIG_HOME")
+		if configHome == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				configHome = filepath.Join(home, ".config")
+			}
+		}
+		if configHome != "" {
+			path = filepath.Join(configHome, "atyrode", "code-auth-vaults.json")
+		}
+	}
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			raw = string(data)
+		}
+	}
+	if !machineLocalPath(path) {
+		path = ""
+	}
+	return parseVaults(raw), path
+}
+
+func loadVaults(raw, path string) []vault {
+	vaults, _ := resolveVaults(raw, path)
+	return vaults
+}
 
 // parseVaults decodes the non-secret CODE_AUTH_VAULTS JSON manifest, dropping
 // entries with an unsafe or duplicate id and filling the display defaults. An
@@ -68,6 +201,181 @@ func parseVaults(raw string) []vault {
 		return []vault{{ID: "default", Label: "default", Profile: "default", Claude: "current", Codex: "current"}}
 	}
 	return valid
+}
+
+// vaultSlug converts a display name into the safe stable base used for both
+// the manifest id and backing OMP profile. Uniquification is deterministic
+// against the current manifest and never renames an existing entry.
+func vaultSlug(name string) string {
+	s := strings.ToLower(strings.TrimSpace(name))
+	s = unsafeVaultSlug.ReplaceAllString(s, "-")
+	s = repeatedVaultDash.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-.")
+	if s == "" {
+		s = "vault"
+	}
+	if len(s) > 64 {
+		s = strings.TrimRight(s[:64], "-.")
+	}
+	return s
+}
+
+func uniqueVaultName(base string, used map[string]bool) string {
+	if !used[base] {
+		return base
+	}
+	for n := 2; ; n++ {
+		suffix := "-" + strconv.Itoa(n)
+		stem := strings.TrimRight(base, "-.")
+		if len(stem)+len(suffix) > 64 {
+			stem = strings.TrimRight(stem[:64-len(suffix)], "-.")
+		}
+		candidate := stem + suffix
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+func xdgLocalHome(env, fallback string) (string, error) {
+	path := os.Getenv(env)
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", fmt.Errorf("%s is unavailable", env)
+		}
+		path = filepath.Join(home, fallback)
+	}
+	path = filepath.Clean(path)
+	if !machineLocalPath(path) {
+		return "", fmt.Errorf("%s must be an absolute mutable path outside the repository and Nix store", env)
+	}
+	return path, nil
+}
+
+// newVault derives only machine-local metadata. It never opens an OMP profile,
+// auth database, token file, or snapshot. Asking the kernel for an ephemeral
+// loopback port avoids both manifest collisions and ports already in use.
+func newVault(name string, existing []vault) (vault, error) {
+	label := strings.TrimSpace(name)
+	if label == "" {
+		return vault{}, errors.New("vault name cannot be empty")
+	}
+	ids, profiles, ports := map[string]bool{}, map[string]bool{}, map[int]bool{}
+	for _, v := range existing {
+		ids[v.ID], profiles[v.Profile] = true, true
+		if u, err := url.Parse(v.BrokerURL); err == nil {
+			if port, err := strconv.Atoi(u.Port()); err == nil {
+				ports[port] = true
+			}
+		}
+	}
+	base := vaultSlug(label)
+	id := uniqueVaultName(base, ids)
+	profile := uniqueVaultName(base, profiles)
+
+	port := 0
+	for port == 0 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return vault{}, fmt.Errorf("allocate broker port: %w", err)
+		}
+		candidate := listener.Addr().(*net.TCPAddr).Port
+		if err := listener.Close(); err != nil {
+			return vault{}, fmt.Errorf("release broker port: %w", err)
+		}
+		if !ports[candidate] {
+			port = candidate
+		}
+	}
+	stateHome, err := xdgLocalHome("XDG_STATE_HOME", filepath.Join(".local", "state"))
+	if err != nil {
+		return vault{}, err
+	}
+	cacheHome, err := xdgLocalHome("XDG_CACHE_HOME", ".cache")
+	if err != nil {
+		return vault{}, err
+	}
+	return vault{
+		ID:            id,
+		Label:         label,
+		Profile:       profile,
+		BrokerURL:     fmt.Sprintf("http://127.0.0.1:%d", port),
+		TokenFile:     filepath.Join(stateHome, "atyrode", "code-auth-vaults", id, "broker.token"),
+		SnapshotCache: filepath.Join(cacheHome, "atyrode", "code-auth-vaults", id, "snapshot.json"),
+	}, nil
+}
+
+// writeVaultManifest validates and atomically replaces the complete
+// machine-local manifest. Parent directories are private and the final file is
+// always 0600. No credential path is read or written.
+func writeVaultManifest(path string, vaults []vault) error {
+	if path == "" {
+		return errors.New("vault editing is disabled: no writable machine-local manifest path")
+	}
+	if len(vaults) == 0 {
+		return errors.New("vault manifest cannot be empty")
+	}
+	seenIDs, seenProfiles, seenURLs := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, v := range vaults {
+		if !validVaultID.MatchString(v.ID) || strings.HasSuffix(v.ID, ".") || seenIDs[v.ID] {
+			return fmt.Errorf("invalid or duplicate vault id %q", v.ID)
+		}
+		if strings.TrimSpace(v.Label) == "" {
+			return fmt.Errorf("vault %q has an empty label", v.ID)
+		}
+		if !validVaultProfile.MatchString(v.Profile) || seenProfiles[v.Profile] {
+			return fmt.Errorf("vault %q has an invalid or duplicate profile", v.ID)
+		}
+		if !filepath.IsAbs(v.TokenFile) || !filepath.IsAbs(v.SnapshotCache) {
+			return fmt.Errorf("vault %q must use absolute XDG-local runtime paths", v.ID)
+		}
+		u, err := url.Parse(v.BrokerURL)
+		port, portErr := strconv.Atoi(u.Port())
+		if err != nil || portErr != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" ||
+			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" ||
+			port < 1 || port > 65535 || seenURLs[v.BrokerURL] {
+			return fmt.Errorf("vault %q has an unsafe or duplicate broker URL", v.ID)
+		}
+		seenIDs[v.ID], seenProfiles[v.Profile], seenURLs[v.BrokerURL] = true, true, true
+	}
+	data, err := json.MarshalIndent(vaults, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(parent, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(parent, ".code-auth-vaults.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // vaultStateFile is the persisted CODE_AUTH_STATE payload: the selected vault id
@@ -282,10 +590,26 @@ func (m model) enabledCount() int {
 	return c
 }
 
-// selectVault points the active selection at index i and re-arms the detailed
-// usage panel (a fresh first-load fill for the new vault's context). It reports
-// whether the selection actually moved; re-selecting the active vault is a
-// no-op that preserves its usage on screen.
+// restoreCachedUsage swaps the detailed panel to an already-fetched vault
+// snapshot without network work. Each vault carries its own deadline and stale
+// state, so switching cannot inherit another account's countdown or warning.
+func (m *model) restoreCachedUsage(id string) bool {
+	cached, ok := m.vaultUsage[id]
+	if !ok {
+		return false
+	}
+	m.avail = cached
+	m.hadUsage = cached.ok
+	m.usageStale = m.vaultUsageStale[id]
+	m.nextRefresh = m.vaultUsageNext[id]
+	m.fetching = m.vaultFetching[id]
+	m.barAnim = 0
+	return true
+}
+
+// selectVault points the active selection at index i and immediately restores
+// its cached detailed Usage state when available. It reports whether selection
+// moved; re-selecting the active vault preserves the current panel.
 func (m *model) selectVault(i int) bool {
 	if i < 0 || i >= len(m.vaults) {
 		return false
@@ -295,6 +619,9 @@ func (m *model) selectVault(i int) bool {
 		return false
 	}
 	m.selected = id
+	if m.restoreCachedUsage(id) {
+		return true
+	}
 	m.hadUsage = false
 	m.barAnim = 0
 	m.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}

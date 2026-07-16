@@ -4,7 +4,10 @@
 // code-tui (its first proven consumer) and grown as new CLIs need more.
 package clikit
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Palette — colour tokens and semantic roles shared across the CLIs.
 const (
@@ -52,3 +55,18 @@ var (
 	StOk     = lipgloss.NewStyle().Foreground(lipgloss.Color(CGreen))
 	StStruck = lipgloss.NewStyle().Strikethrough(true).Faint(true).Foreground(lipgloss.Color(CDim))
 )
+
+// NewHelp returns Bubble Tea's help model with the shared CLI palette applied.
+// Consumers keep their own key maps and layout policies while keys,
+// descriptions, separators, and truncation use one visual language.
+func NewHelp() help.Model {
+	h := help.New()
+	h.Styles.ShortKey = StHead
+	h.Styles.ShortDesc = StDim
+	h.Styles.ShortSeparator = StDim
+	h.Styles.Ellipsis = StDim
+	h.Styles.FullKey = StHead
+	h.Styles.FullDesc = StDim
+	h.Styles.FullSeparator = StDim
+	return h
+}

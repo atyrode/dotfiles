@@ -3,6 +3,7 @@ package clikit
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -23,6 +24,66 @@ func Pad(s string, n int) string {
 		s += " "
 	}
 	return s
+}
+
+// Rule renders a full-width section boundary using the shared visual palette.
+func Rule(width int) string {
+	if width < 0 {
+		width = 0
+	}
+	return StDim.Render(strings.Repeat("─", width))
+}
+
+// SeparatedSections stacks every non-empty section behind a full-width Rule.
+// The result always begins with a boundary, so callers can attach it below any
+// independently laid-out body without allowing adjacent sections to run
+// together. Empty sections are omitted along with their boundary.
+func SeparatedSections(width int, sections ...string) string {
+	parts := make([]string, 0, len(sections)*2)
+	for _, section := range sections {
+		if section == "" {
+			continue
+		}
+		parts = append(parts, Rule(width), section)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// HelpItem is one reusable key/description pair in a TUI control footer.
+type HelpItem struct {
+	Key         string
+	Description string
+}
+
+// WrapHelp renders every control using the supplied shared help model and wraps
+// whole cues across rows without dropping any. This complements Bubble Help's
+// intentionally truncating single-line renderer for screens whose controls are
+// all required, such as modal managers.
+func WrapHelp(h help.Model, width int, items []HelpItem) string {
+	cue := func(item HelpItem) string {
+		return h.Styles.ShortKey.Inline(true).Render(item.Key) + " " +
+			h.Styles.ShortDesc.Inline(true).Render(item.Description)
+	}
+	separator := h.Styles.ShortSeparator.Inline(true).Render(h.ShortSeparator)
+	rows := make([]string, 0, len(items))
+	row := ""
+	for _, item := range items {
+		rendered := cue(item)
+		next := rendered
+		if row != "" {
+			next = row + separator + rendered
+		}
+		if row != "" && lipgloss.Width(next) > width {
+			rows = append(rows, row)
+			row = rendered
+		} else {
+			row = next
+		}
+	}
+	if row != "" {
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
 }
 
 // WindowList clips a list to h lines, scrolled to keep the cursor visible, fixes

@@ -54,9 +54,9 @@ non-interactive execution.
 | `--no-title` | Disable session-title generation |
 
 An OMP profile isolates the **entire** state root, not just one provider's OAuth
-record. Authentication in `--profile mine` is independent of authentication in
-`--profile mum`. This is why `code` names complete Claude + Codex combinations
-rather than presenting provider credentials as independently swappable parts.
+record. Authentication in one profile is independent of authentication in
+another. `code` therefore reads machine-local vault definitions that name
+complete Claude + Codex combinations instead of swapping providers implicitly.
 
 ### Tools and extensibility
 
@@ -235,7 +235,7 @@ $ omp-managed --profile work --resume
 # Pick auth in the code TUI, then forward --resume to the chosen launch path
 $ code --resume
 
-# Fixed restricted sandbox; never inherits code's mine/mum selection
+# Fixed restricted sandbox; never inherits code's selected local vault
 $ ompu "inspect this untrusted repository"
 ```
 

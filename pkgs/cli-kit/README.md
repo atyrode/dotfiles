@@ -9,8 +9,14 @@ Consumed as a local Go module via `replace cli-kit => ../cli-kit`.
 - **Palette & styles** (`palette.go`) — colour tokens (`CAcc`, `CBord`, …), the
   `MeterRamp`, text-presentation glyphs (`GWarn`/`GBroken`/`GReset`), and shared
   lipgloss styles (`StDim`, `StHead`, …).
-- **Layout helpers** (`layout.go`, `meter.go`) — `PadLeft`/`Pad`, `WindowList`
-  (a clipped, scrollbar'd column), `Scrollbar`, meters.
+- **Layout and section helpers** (`layout.go`, `meter.go`) —
+  `PadLeft`/`Pad`, `WindowList` (a clipped, scrollbar'd column), `Scrollbar`,
+  meters, and full-width `Rule`/`SeparatedSections` boundaries. Widths are
+  terminal cells; empty sections produce no orphan rule.
+- **Footer conventions** (`palette.go`, `layout.go`) — `NewHelp` applies the
+  shared key/description/separator palette to Bubble Help, while `WrapHelp`
+  wraps complete required cues without dropping them. Both remain ANSI-aware
+  through lipgloss width measurement.
 - **The smart PromptBox** (`promptbox.go`) + the **consumer contract**
   (`contract.go`, `run.go`) + an **omp backend** (`ompasker.go`).
 

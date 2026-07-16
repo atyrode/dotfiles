@@ -27,7 +27,7 @@ pick_host() {
   [[ -r "$inventory" ]] || die 'host inventory missing from the clone; pass a registered host explicitly'
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64) system='aarch64-darwin' ;;
-    Linux:arm64|Linux:aarch64) system='aarch64-linux' ;;
+    Linux:arm64 | Linux:aarch64) system='aarch64-linux' ;;
     Linux:x86_64) system='x86_64-linux' ;;
     *) die "unsupported platform: $(uname -s) $(uname -m)" ;;
   esac

@@ -1,4 +1,4 @@
-{ lib, pkgs }:
+{ pkgs }:
 
 # Exercises the one-time Codex config seed: it installs the curated defaults
 # once, backs up (never merges) a pre-existing config.toml so machine-local

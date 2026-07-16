@@ -316,7 +316,7 @@ in
       (lib.mkIf lcfg.enable {
         services.ollama = {
           enable = true;
-          port = lcfg.port;
+          inherit (lcfg) port;
           environmentVariables.OLLAMA_KEEP_ALIVE = lcfg.keepAlive;
         };
 

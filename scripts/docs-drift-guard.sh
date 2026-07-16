@@ -47,7 +47,7 @@ compare() {
   drift="$(drift_list "$1" "$2")"
   if [ -n "$drift" ]; then
     echo "docs drift guard: documentation changes altered non-docs derivations:" >&2
-    while IFS= read -r entry; do echo "  $entry" >&2; done <<< "$drift"
+    while IFS= read -r entry; do echo "  $entry" >&2; done <<<"$drift"
     echo "An inert docs path has become a derivation input; either move it out" >&2
     echo "of the inert set in .github/workflows/nix.yml (classify job) or, for" >&2
     echo "a new intentional whole-tree lint, add it to this script's exclusions" >&2
@@ -77,7 +77,7 @@ snapshot() {
         --apply 'checks: builtins.mapAttrs (_: drv: drv.drvPath) checks'
     done
     printf '}'
-  } > "$outfile"
+  } >"$outfile"
 }
 
 TEMP_REFS=()
@@ -91,21 +91,21 @@ cleanup() {
 }
 
 case "${1:-}" in
---compare)
-  [ $# -eq 3 ] || usage
-  compare "$2" "$3"
-  ;;
--h | --help | "")
-  usage
-  ;;
-*)
-  [ $# -eq 2 ] || usage
-  trap cleanup EXIT
-  WORKDIR="$(mktemp -d)"
-  echo "docs drift guard: instantiating checks at base $1" >&2
-  snapshot "$1" "$WORKDIR/base.json"
-  echo "docs drift guard: instantiating checks at head $2" >&2
-  snapshot "$2" "$WORKDIR/head.json"
-  compare "$WORKDIR/base.json" "$WORKDIR/head.json"
-  ;;
+  --compare)
+    [ $# -eq 3 ] || usage
+    compare "$2" "$3"
+    ;;
+  -h | --help | "")
+    usage
+    ;;
+  *)
+    [ $# -eq 2 ] || usage
+    trap cleanup EXIT
+    WORKDIR="$(mktemp -d)"
+    echo "docs drift guard: instantiating checks at base $1" >&2
+    snapshot "$1" "$WORKDIR/base.json"
+    echo "docs drift guard: instantiating checks at head $2" >&2
+    snapshot "$2" "$WORKDIR/head.json"
+    compare "$WORKDIR/base.json" "$WORKDIR/head.json"
+    ;;
 esac

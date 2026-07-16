@@ -20,7 +20,7 @@ replace_hash() { # file asset new_hash
     index($0, "\"" asset "\"") { pending = 1 }
     pending && $1 == "hash" { sub(/sha256-[A-Za-z0-9+\/=]+/, hash); pending = 0 }
     { print }
-  ' "$1" > "$1.bump" && mv "$1.bump" "$1"
+  ' "$1" >"$1.bump" && mv "$1.bump" "$1"
 }
 
 bump() { # name file repo tag_prefix url_template assets...

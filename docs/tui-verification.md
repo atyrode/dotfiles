@@ -66,7 +66,60 @@ For `code` specifically: build with `nix build .#code-tui`, generate the grid
 with `MODELS_YML=omp/models.yml python3 pkgs/omp-configured/generate-profiles.py`,
 and point `CODE_GENERATED` at the output. No further wrapper env is required.
 
-## 2. Pixel-level view with freeze (deterministic screenshots)
+## 2. Content-dependent responsive layouts
+
+A frame can stay within the terminal and still be wrong: dynamic data may make
+unrelated panes move, widen every sibling, or select a different composition
+when the content would fit without that reflow. Treat structural stability as a
+separate contract from overflow safety.
+
+### Measure and allocate deliberately
+
+- Measure the complete rendered row in terminal cells, after styling, with the
+  same width function production uses. Byte length and rune count are not
+  terminal width; include labels, bars, notes, separators, borders, and padding.
+- Measure sibling panes or columns independently. Do not multiply one child's
+  intrinsic maximum across every sibling unless equal allocation is an explicit
+  product requirement with its own tests.
+- Base horizontal-fit decisions on the sum of the independently allocated
+  widths. An extreme value owned by one child must not silently redefine every
+  peer's requirement.
+- Keep outer layout breakpoints independent of volatile runtime data where
+  practical. If identities, timestamps, warnings, network responses, or error
+  states may change the composition, define and test the allowed transitions.
+- Define a degradation order instead of letting arbitrary string length choose
+  it. Preserve primary state and controls first, then essential values; shorten
+  secondary notes and omit optional identity or explanation before hiding a
+  surface or changing the macro composition.
+
+### Test the decision, boundaries, and transitions
+
+- Pair breakpoints derived from the implementation with fixed, externally
+  chosen viewports immediately below, at, and above meaningful boundaries. A
+  fixture calculated entirely by the code under test can move with the defect.
+- At one fixed viewport, vary one input at a time. Cover balanced and asymmetric
+  sibling content, short and long labels, optional metadata, multiple records,
+  and loading, ready, stale, unavailable, and error states.
+- Assert structural invariants as well as bounds: column starts, pane height,
+  selected-control position, footer position, horizontal versus stacked
+  orientation, unrelated-sibling movement, and the documented degradation
+  order.
+- Exercise transitions without resize and resize without state changes. The
+  focused oracle must fail on a plausible bad allocation or unnecessary mode
+  change; a representative end-to-end render remains a guard, not a substitute.
+
+Use character-exact tmux captures at identical terminal dimensions as the
+authoritative geometry check, and compare related states as a set rather than
+reviewing each frame independently. Use a pixel render when color, contrast,
+glyph appearance, or visual hierarchy changed and the renderer is reliable; it
+is a diagnostic for those visual properties, not the structural gate.
+
+For reusable layout code, keep measurement and composition selection in a pure
+internal decision that unit tests can exercise directly. Frame-level tests then
+verify that rendering honors that decision without wrapping, clipping, or
+moving persistent controls.
+
+## 3. Pixel-level view with freeze (deterministic screenshots)
 
 To actually *look* at a frame (colors, pills, contrast), render the ANSI
 capture to PNG with `freeze` — no server, no browser, no client sizing:
@@ -91,7 +144,7 @@ Known limitations:
 - Background color runs can smear to end-of-line (pill labels render as a
   full-width band) — a capture artifact, not an app bug.
 
-## 3. Alternatives for live or scripted viewing
+## 4. Alternatives for live or scripted viewing
 
 - **vhs** (`nixpkgs#vhs`) — scripted terminal driver: `.tape` files with
   `Type`/`Down`/`Sleep`/`Screenshot`/`Set FontFamily`. Best on an operator
@@ -105,7 +158,7 @@ Known limitations:
   after any resize, and pass `-t 'fontFamily=Symbols Nerd Font Mono,monospace'`
   for glyphs.
 
-## 4. Cleanup
+## 5. Cleanup
 
 Kill the session and any server when done: `tmux kill-server`,
 `kill $(cat /tmp/ttyd.pid)`.

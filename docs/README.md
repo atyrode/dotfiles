@@ -16,7 +16,7 @@ not in a checklist.
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
-| [tui-verification.md](tui-verification.md) | Headless TUI verification — driving and screenshotting terminal UIs without a graphical session |
+| [tui-verification.md](tui-verification.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
 | [omp/](omp/README.md) | Versioned upstream OMP CLI and capability field guide, explicitly separated from repository wrapper behavior |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
 | [shell.md](shell.md) | The interactive shell surface (a launcher, not a dev environment) |

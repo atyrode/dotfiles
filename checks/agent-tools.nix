@@ -63,8 +63,150 @@ let
   configuredUntrustedStub = pkgs.callPackage ../pkgs/omp-configured {
     omp = untrustedStubOmp;
   };
+  evalAgentTools =
+    platformPkgs:
+    (lib.evalModules {
+      specialArgs.pkgs = platformPkgs;
+      modules = [
+        (
+          { lib, ... }:
+          {
+            options = {
+              home.packages = lib.mkOption {
+                type = lib.types.listOf lib.types.package;
+                default = [ ];
+              };
+              home.file = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+              home.activation = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+              xdg.stateHome = lib.mkOption { type = lib.types.str; };
+              xdg.cacheHome = lib.mkOption { type = lib.types.str; };
+              xdg.configFile = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+              services.ollama = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+              systemd.user.services = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+              launchd.agents = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+            };
+
+            config = {
+              xdg.stateHome = "/tmp/check-agent-auth-vaults/xdg-state";
+              xdg.cacheHome = "/tmp/check-agent-auth-vaults/xdg-cache";
+              atyrode.agentTools = {
+                enable = true;
+                migrateLegacy = false;
+                seedPlainConfig = false;
+                ompPackage = configuredStub;
+                localClassifier.enable = false;
+              };
+            };
+          }
+        )
+        ../modules/home/agent-tools.nix
+      ];
+    }).config;
+  linuxAgentTools = evalAgentTools (
+    pkgs
+    // {
+      stdenv = pkgs.stdenv // {
+        isLinux = true;
+        isDarwin = false;
+      };
+    }
+  );
+  darwinAgentTools = evalAgentTools (
+    pkgs
+    // {
+      stdenv = pkgs.stdenv // {
+        isLinux = false;
+        isDarwin = true;
+      };
+    }
+  );
+  authVaultManifest = pkgs.writeText "code-auth-vaults.json" (
+    linuxAgentTools.xdg.configFile."atyrode/code-auth-vaults.json".text
+  );
+  linuxBrokerServices = linuxAgentTools.systemd.user.services;
+  darwinBrokerAgents = darwinAgentTools.launchd.agents;
 in
 {
+  auth-vaults =
+    pkgs.runCommand "check-agent-auth-vaults"
+      {
+        nativeBuildInputs = [ pkgs.jq ];
+      }
+      ''
+        manifest=${authVaultManifest}
+        jq -e '
+          length == 3
+          and map(.id) == ["mine", "mum", "victor"]
+          and map(.profile) == ["default", "mum", "victor"]
+          and map(.label) == ["mine", "mum", "victor"]
+          and map(.claude) == ["Alex", "Mum", "Victor + Alex"]
+          and all(.codex == "Alex")
+          and (map(.brokerUrl) | unique | length) == 3
+          and all(.brokerUrl | test("^http://127[.]0[.]0[.]1:[0-9]+$"))
+          and all(.tokenFile | startswith("/tmp/check-agent-auth-vaults/xdg-state/atyrode/code-auth-vaults/"))
+          and all(.snapshotCache | startswith("/tmp/check-agent-auth-vaults/xdg-cache/atyrode/code-auth-vaults/"))
+          and (map(.snapshotCache) | unique | length) == 3
+          and all((keys | sort) == [
+            "brokerUrl", "claude", "codex", "id", "label", "profile",
+            "snapshotCache", "tokenFile"
+          ])
+          and all(has("token") | not)
+        ' "$manifest" >/dev/null
+
+        mine_linux=${lib.escapeShellArg linuxBrokerServices.atyrode-omp-auth-broker-mine.Service.ExecStart}
+        mum_linux=${lib.escapeShellArg linuxBrokerServices.atyrode-omp-auth-broker-mum.Service.ExecStart}
+        victor_linux=${lib.escapeShellArg linuxBrokerServices.atyrode-omp-auth-broker-victor.Service.ExecStart}
+        test ${lib.escapeShellArg (toString darwinBrokerAgents.atyrode-omp-auth-broker-mine.enable)} = 1
+        test ${lib.escapeShellArg (toString darwinBrokerAgents.atyrode-omp-auth-broker-mum.enable)} = 1
+        test ${lib.escapeShellArg (toString darwinBrokerAgents.atyrode-omp-auth-broker-victor.enable)} = 1
+        test ${lib.escapeShellArg (builtins.head darwinBrokerAgents.atyrode-omp-auth-broker-mine.config.ProgramArguments)} = "$mine_linux"
+        test ${lib.escapeShellArg (builtins.head darwinBrokerAgents.atyrode-omp-auth-broker-mum.config.ProgramArguments)} = "$mum_linux"
+        test ${lib.escapeShellArg (builtins.head darwinBrokerAgents.atyrode-omp-auth-broker-victor.config.ProgramArguments)} = "$victor_linux"
+
+        grep -Fq -- '--profile default auth-broker token' "$mine_linux"
+        grep -Fq -- '--profile mum auth-broker token' "$mum_linux"
+        grep -Fq -- '--profile victor auth-broker token' "$victor_linux"
+        grep -Fq -- '--profile default auth-broker serve --bind=127.0.0.1:46171' "$mine_linux"
+        grep -Fq -- '--profile mum auth-broker serve --bind=127.0.0.1:46172' "$mum_linux"
+        grep -Fq -- '--profile victor auth-broker serve --bind=127.0.0.1:46173' "$victor_linux"
+        grep -Fq 'chmod 0600 "$token_tmp"' "$mine_linux"
+        grep -Fq 'mv -f "$token_tmp"' "$mine_linux"
+
+        rm -rf /tmp/check-agent-auth-vaults
+        # The stub makes token acquisition observable without introducing a
+        # credential: the wrapper persists its output, then starts the server.
+        "$mine_linux" > "$TMPDIR/mine-serve.out"
+        token=/tmp/check-agent-auth-vaults/xdg-state/atyrode/code-auth-vaults/mine/token
+        test "$(stat -c %a "$token")" = 600
+        grep -Fxq -- '--profile' "$token"
+        grep -Fxq default "$token"
+        grep -Fq 'auth-broker' "$token"
+        grep -Fq 'token' "$token"
+        grep -Fq -- '--profile' "$TMPDIR/mine-serve.out"
+        grep -Fq 'serve' "$TMPDIR/mine-serve.out"
+        grep -Fq -- '--bind=127.0.0.1:46171' "$TMPDIR/mine-serve.out"
+
+        touch "$out"
+      '';
+
   omp-stack =
     pkgs.runCommand "check-omp-stack"
       {
@@ -125,15 +267,20 @@ in
         done
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"
-        grep -q 'a switches the' "$TMPDIR/code-help.txt"
-        grep -q 'visible OMP auth combination' "$TMPDIR/code-help.txt"
+        grep -q 'a cycles enabled' "$TMPDIR/code-help.txt"
+        grep -q 'v opens the vault manager' "$TMPDIR/code-help.txt"
         ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
-        # The managed generator owns private selection/auth state defaults while
-        # preserving both variables as caller-overridable wrapper inputs.
-        grep -Fq 'export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-profile}"' \
+        # The generator owns mutable vault/selection state while broker
+        # credentials stay outside the package and its generated manifest.
+        grep -Fq 'export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-vault-state.json}"' \
           ${pkgs.omp-configured}/bin/code
         grep -Fq 'export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"' \
           ${pkgs.omp-configured}/bin/code
+        grep -Fq 'export CODE_OMP_RAW="$omp_bin"' ${pkgs.omp-configured}/bin/code
+        grep -Fq -- '--profile default usage --json' ${pkgs.omp-configured}/bin/code
+        grep -Fq 'code-auth-vaults.json' ${pkgs.omp-configured}/bin/code
+        ! grep -Fq 'CODE_AUTH_PROFILES' ${pkgs.omp-configured}/bin/code
+        ! grep -Fq 'code-auth-profiles.json' ${pkgs.omp-configured}/bin/code
         test ! -e ${pkgs.omp-configured}/bin/pi
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -

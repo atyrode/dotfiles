@@ -22,12 +22,13 @@ mutable base**, plus a **generator or a one-time seed** — not a curated set of
 switchable profiles.
 
 - **OMP**: the `code` tool generates a profile from a prompt (or dials) and
-  launches it through the zero-preset `omp-managed` layer; the hand-curated preset
-  launchers and the profiles wiki were removed (#151). This concerns *model
-  routing*. OMP's native `--profile` mechanism is retained for a distinct
-  purpose — **authentication and state isolation** (which account/credentials a
-  session uses, e.g. `mine` vs `mum`) — which the managed layer applies on top and
-  is not what was retired here.
+  launches it through the zero-preset `omp-managed` layer; the hand-curated
+  preset launchers and profiles wiki were removed (#151). This concerns *model
+  routing*. Complete native profiles initially remained as the authentication
+  boundary, but that also split sessions and settings. Issue #212 replaces
+  runtime profile switching with isolated OMP v17 auth-broker vaults: credentials
+  remain in their existing profile-local stores, while every trusted `code`
+  client runs on shared profile `default`.
 - **Codex**: runs vanilla against `~/.codex`; the curated defaults are a one-time
   seed into `config.toml` (then user-owned), and the multi-profile switcher was
   removed (#153).

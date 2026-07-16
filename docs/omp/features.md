@@ -24,9 +24,11 @@ account selection. See upstream
 [Providers](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/providers.md)
 and [Secrets](https://github.com/can1357/oh-my-pi/blob/v17.0.0/docs/secrets.md).
 
-In these dotfiles, use `code`'s usage widget instead of typing profile names:
-`a` switches the visible `mine`/`mum` combination and every trusted launch gets
-that selected `--profile`. `ompu` remains fixed to `untrusted`.
+In these dotfiles, `code` keeps all trusted sessions and settings in client
+profile `default` while choosing credentials through isolated auth-broker
+vaults. Press `a` to cycle enabled vaults or `v` to inspect per-vault usage,
+enable/disable access, select a vault, and launch provider login. `ompu` remains
+fixed to `untrusted`.
 
 ### Assign models by role instead of choosing one model for everything
 

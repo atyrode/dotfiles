@@ -120,35 +120,51 @@ model routing — model names coloured by provider (blue/orange) and brightness
 scaled by thinking level — above the `omp usage` panel (per-window `N% used`
 with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
 
-The usage widget also shows the active authentication combination. Press **`a`**
-to switch between `mine` (**Claude Alex + Codex Alex**) and `mum`
-(**Claude Mum + Codex Alex**); the selection is persisted under the XDG state
-directory and is reused on the next launch. Usage is fetched from the selected
-OMP profile. Both the bare and generated trusted launch paths receive that same
-`--profile`; the `u` sandbox remains on its fixed, credential-sanitized
-`untrusted` profile.
+The usage widget names the active authentication vault. Press **`a`** to cycle
+enabled vaults. Press **`v`** for the full-screen vault manager: every configured
+vault gets a compact Claude/Codex usage summary, and **Space** enables or disables
+the highlighted vault, **Enter** selects it, **`r`** refreshes all summaries,
+**`c`** starts an Anthropic login, and **`o`** starts an OpenAI Codex login.
+`mine` is the non-disableable fallback. The selection and disabled set persist
+under the XDG state directory.
 
-OMP profiles isolate their complete state, including every provider credential.
-Consequently the `mum` profile must authenticate both providers independently:
-open `omp --profile mum`, run `/login anthropic` with Mum's Claude identity, and
-run `/login openai-codex` with Alex's Codex identity. The existing `default`
-profile is the `mine` combination and remains the initial selection.
+The managed hosts declare three credential pools:
+
+- `mine`: Claude Alex + Codex Alex, backed by OMP profile `default`;
+- `mum`: Claude Mum + Codex Alex, backed by OMP profile `mum`;
+- `victor`: Claude Victor + Alex + Codex Alex, backed by OMP profile `victor`.
+
+Each profile only backs a loopback OMP auth-broker service and its credentials.
+Every trusted `code` launch and usage request still forces the shared OMP client
+profile `default`; sessions, resume history, settings, generated configuration,
+memory, and ordinary caches therefore no longer split when the vault changes.
+The selected vault supplies only `OMP_AUTH_BROKER_*`. The `u` sandbox remains on
+its fixed, credential-sanitized `untrusted` profile.
+
+Home Manager starts all three broker services and writes their bearer tokens as
+mutable mode-0600 files outside the Nix store. Existing credentials in the
+`default` and `mum` profile stores are immediately reusable after activation.
+To add Victor's first account, open **`v`**, highlight `victor`, press **`c`**,
+and finish the Anthropic flow. Repeat **`c`** to add another Anthropic identity
+to that vault, or press **`o`** to add its Codex identity. Runtime creation of a
+fourth vault is intentionally unsupported because each broker endpoint and
+service is declared by Home Manager.
 
 There are three ways to leave the TUI — every trusted launch goes through
 `omp-managed`; plain `omp` is reached by typing `omp` directly, never via
 `code`:
 
 - **Enter** always launches the generated routing profile for the current
-  facets through `omp-managed` as a one-shot `--config` — the untouched
-  default combo is a profile like any other — with the selected authentication
-  profile and any typed prompt carried into the session. The generated profile
-  carries `task.agentModelOverrides` mirroring its agent-backed roles, so
-  spawned task agents follow the generated routing instead of staying pinned
-  to the static managed defaults.
-- **`m`** runs `omp-managed` with no overlay — the managed defaults — inside
-  the selected authentication profile.
+  facets through `omp-managed` as a one-shot `--config`, with the selected
+  vault's broker environment and any typed prompt carried into the shared
+  `default` client profile. The generated profile carries
+  `task.agentModelOverrides` mirroring its agent-backed roles, so spawned task
+  agents follow the generated routing instead of staying pinned to the static
+  managed defaults.
+- **`m`** runs `omp-managed` with no overlay — the managed defaults — against
+  the same selected vault and shared client profile.
 - **`u`** opens the untrusted sandbox (`ompu`) for the current context; it never
-  inherits the selected personal authentication profile.
+  inherits a personal authentication vault.
 
 `code --no-usage` (`-U`) skips the usage fetch, and `code --help` (`-h`) prints
 help. The full facet grid of profiles is enumerated at package build time by

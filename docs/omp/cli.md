@@ -195,6 +195,32 @@ managed defaults and plain-profile seed: repository policy requires scoped,
 syntax-aware search, and the strict guard trades occasional extra targeted
 reads for protection against edits anchored on unseen source lines.
 
+### Why these two v17 defaults are overridden
+
+The overrides are deliberate but revisitable:
+
+- **`astGrep.enabled: true`** — upstream changed the default in
+  [e4bbe34](https://github.com/can1357/oh-my-pi/commit/e4bbe34f6118667245694289c1eb2eff557b9b70)
+  without recording a rationale. One known cost is that broad native AST
+  searches currently materialize every match before paging
+  ([upstream #3932](https://github.com/can1357/oh-my-pi/issues/3932)).
+  Repository policy already mitigates that cost by requiring narrow paths and
+  prohibiting broad repository-root AST scans. Within those bounds, structural
+  matching is safer than text substitution and remains worth exposing. Revisit
+  this override if scoped searches show material resource cost or OMP replaces
+  the tool with a bounded implementation.
+- **`edit.enforceSeenLines: true`** — upstream made the guard opt-in in
+  [d50cc4](https://github.com/can1357/oh-my-pi/commit/d50cc4e2d3b62e597f7dc9cf05f4f90fd2dcfedd)
+  after real false rejections and extra read/retry round trips, including
+  [upstream #4224](https://github.com/can1357/oh-my-pi/issues/4224) and
+  [upstream #2773](https://github.com/can1357/oh-my-pi/issues/2773). These
+  dotfiles accept that friction because rejecting an edit anchored inside
+  elided or unread source is safer than validating only the snapshot hash. This
+  repository has also lost invisible Nerd Font literals when a source line was
+  reconstructed instead of byte-preserved. Revisit the override if upstream
+  eliminates the false-rejection paths or a replacement provides equivalent
+  unseen-source protection with fewer round trips.
+
 ## Invocation examples, with surface made explicit
 
 ```console

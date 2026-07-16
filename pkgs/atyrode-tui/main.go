@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -89,7 +90,16 @@ func (execCommandRunner) Output(ctx context.Context, name string, args ...string
 		}
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	return cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if stdout.Len() > 0 {
+		if err != nil && stderr.Len() > 0 {
+			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return stdout.Bytes(), err
+	}
+	return stderr.Bytes(), err
 }
 
 type applyFunc func(string, ...string) tea.Cmd
@@ -176,6 +186,7 @@ type model struct {
 	lifecycleCursor     int
 	generations         []generation
 	clean               cleanPreview
+	cleanDraft          cleanPolicyDraft
 
 	doctorReports    [3]doctorReport
 	doctorErrors     [3]error
@@ -225,14 +236,15 @@ func newModel(cli string) model {
 		backend:   newAskBackend,
 	}
 	return model{
-		cli:    cli,
-		runner: execCommandRunner{},
-		apply:  execApply,
-		asker:  asker,
-		nav:    newCockpitNav(),
-		phase:  ready,
-		width:  100,
-		height: 30,
+		cli:        cli,
+		runner:     execCommandRunner{},
+		apply:      execApply,
+		asker:      asker,
+		nav:        newCockpitNav(),
+		phase:      ready,
+		cleanDraft: defaultCleanPolicyDraft(),
+		width:      100,
+		height:     30,
 	}
 }
 
@@ -496,6 +508,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+		if m.nav.Active() == workspaceLifecycle && m.lifecyclePhase == lifecycleCleanConfiguring && key != "q" && key != "ctrl+c" {
+			return m, m.lifecycleUpdate(key)
+		}
 		if m.lifecyclePhase == lifecycleMutating {
 			switch key {
 			case "ctrl+c", "q", "tab", "shift+tab":
@@ -648,7 +663,6 @@ func clampCursor(cursor, rows int) int {
 
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(clikit.CHead))
-	pillStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#11151c")).Background(lipgloss.Color(clikit.CAcc)).Padding(0, 1)
 	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(clikit.CDim)).Width(14)
 	chipStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(clikit.CHead)).Background(lipgloss.Color(clikit.CSelBg)).Padding(0, 1)
 	iconStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(clikit.CAcc))
@@ -672,7 +686,7 @@ func (m model) View() string {
 		content = m.overviewView(panelWidth)
 	}
 	sections := []string{
-		titleStyle.Render("ATYRODE") + "  " + pillStyle.Render(m.workspaceTitle()),
+		titleStyle.Render("ATYRODE"),
 		m.workspaceTabs(panelWidth),
 		content,
 		m.shellFooter(),

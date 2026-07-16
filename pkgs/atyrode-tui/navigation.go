@@ -6,6 +6,7 @@ import (
 	clikit "cli-kit"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -78,26 +79,56 @@ func (m *model) nextWorkspace(delta int) tea.Cmd {
 	return m.activateWorkspace(id)
 }
 
-func (m model) workspaceTitle() string {
-	item, ok := m.nav.ActiveItem()
-	if !ok {
-		return "overview"
+func workspaceTabStyle(width int, active bool) lipgloss.Style {
+	style := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(clikit.CHead)).
+		Align(lipgloss.Center).
+		Width(width).
+		MaxWidth(width)
+	if active {
+		style = style.
+			Foreground(lipgloss.Color("#11151c")).
+			Background(lipgloss.Color(clikit.CAcc))
 	}
-	return strings.ToLower(item.Label)
+	return style
 }
 
 func (m model) workspaceTabs(width int) string {
-	items := m.nav.Items()
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		label := item.Shortcut + " " + item.Label
-		if item.ID == m.nav.Active() {
-			parts = append(parts, pillStyle.Render(label))
-		} else {
-			parts = append(parts, clikit.StDim.Render(label))
-		}
+	if width < 1 {
+		return ""
 	}
-	return clikit.ClipLines(lipgloss.JoinHorizontal(lipgloss.Top, intersperse(parts, "  ")...), width)
+	items := m.nav.Items()
+	columns := 2
+	switch {
+	case width >= 132:
+		columns = 6
+	case width >= 64:
+		columns = 3
+	}
+	rows := make([]string, 0, (len(items)+columns-1)/columns)
+	for start := 0; start < len(items); start += columns {
+		end := min(start+columns, len(items))
+		cells := make([]string, 0, end-start)
+		for index := start; index < end; index++ {
+			cellWidth := width / columns
+			if index%columns < width%columns {
+				cellWidth++
+			}
+			item := items[index]
+			label := item.Shortcut + ". " + item.Label
+			if item.ID == workspaceLifecycle && lipgloss.Width(label) > cellWidth {
+				label = item.Shortcut + ". Gen / Clean"
+			}
+			if cellWidth > 1 {
+				label = ansi.Truncate(label, cellWidth, "…")
+			}
+			style := workspaceTabStyle(cellWidth, item.ID == m.nav.Active())
+			cells = append(cells, style.Render(label))
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m model) shellFooter() string {
@@ -120,6 +151,8 @@ func (m model) workspaceBodyHeight() int {
 	if m.nav.Active() == workspaceDoctor {
 		chromeRows++
 	}
+	_, panelWidth := m.horizontalLayout()
+	chromeRows += max(0, lipgloss.Height(m.workspaceTabs(panelWidth))-1)
 	return max(1, m.height-chromeRows)
 }
 

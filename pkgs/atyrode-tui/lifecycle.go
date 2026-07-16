@@ -18,6 +18,7 @@ type lifecyclePhase int
 
 const (
 	lifecycleBrowsing lifecyclePhase = iota
+	lifecycleCleanConfiguring
 	lifecycleRollbackPreviewing
 	lifecycleRollbackConfirming
 	lifecycleCleanPreviewing
@@ -53,6 +54,29 @@ type cleanPreview struct {
 	} `json:"generations"`
 	ReclaimCandidates []cleanCandidate `json:"reclaimCandidates"`
 	Note              string           `json:"note"`
+}
+
+type cleanPolicyField int
+
+const (
+	cleanKeepField cleanPolicyField = iota
+	cleanKeepSinceField
+	cleanScopeField
+	cleanVerboseField
+	cleanPolicyFieldCount
+)
+
+type cleanPolicyDraft struct {
+	Keep      string
+	KeepSince string
+	All       bool
+	Verbose   bool
+	Field     cleanPolicyField
+	Err       string
+}
+
+func defaultCleanPolicyDraft() cleanPolicyDraft {
+	return cleanPolicyDraft{Keep: "5", KeepSince: "30d"}
 }
 
 type lifecycleAction int
@@ -112,7 +136,8 @@ func validateGenerations(generations []generation) error {
 }
 
 func validateCleanPreview(preview cleanPreview) error {
-	if preview.Keep < 0 || strings.TrimSpace(preview.KeepSince) == "" || !preview.DryRun {
+	if preview.Keep < 0 || strings.TrimSpace(preview.KeepSince) == "" || !preview.DryRun ||
+		(preview.Scope != "user" && preview.Scope != "all") || strings.TrimSpace(preview.Profile) == "" {
 		return fmt.Errorf("clean preview has invalid retention policy")
 	}
 	seen := make(map[uint64]struct{}, len(preview.ReclaimCandidates))
@@ -160,6 +185,7 @@ func (m *model) lifecycleCommand(action lifecycleAction, args ...string) tea.Cmd
 	m.lifecycleCancel = cancel
 	m.lifecycleErr = nil
 	runner, cli := m.runner, m.cli
+	cleanDraft := m.cleanDraft
 	return func() tea.Msg {
 		out, err := runner.Output(ctx, cli, args...)
 		if err != nil {
@@ -172,6 +198,14 @@ func (m *model) lifecycleCommand(action lifecycleAction, args ...string) tea.Cmd
 			}
 			if err := validateCleanPreview(preview); err != nil {
 				return lifecycleMsg{generation: generation, action: action, err: fmt.Errorf("decode clean preview: %w", err)}
+			}
+			expectedKeep, parseErr := strconv.Atoi(cleanDraft.Keep)
+			expectedScope := "user"
+			if cleanDraft.All {
+				expectedScope = "all"
+			}
+			if parseErr != nil || preview.Keep != expectedKeep || preview.KeepSince != cleanDraft.KeepSince || preview.Scope != expectedScope {
+				return lifecycleMsg{generation: generation, action: action, err: fmt.Errorf("clean preview does not match the requested retention policy")}
 			}
 			return lifecycleMsg{generation: generation, action: action, clean: preview}
 		}
@@ -194,7 +228,97 @@ func (m model) selectedGeneration() (generation, bool) {
 	return m.generations[m.lifecycleCursor], true
 }
 
+func (d cleanPolicyDraft) values() (int, string, error) {
+	keep, err := strconv.Atoi(d.Keep)
+	if err != nil || keep < 0 {
+		return 0, "", fmt.Errorf("keep newest must be a non-negative number")
+	}
+	keepSince := strings.TrimSpace(d.KeepSince)
+	if keepSince == "" {
+		return 0, "", fmt.Errorf("keep since must not be empty")
+	}
+	return keep, keepSince, nil
+}
+
+func cleanCommandArgs(keep int, keepSince string, all, verbose, preview bool) []string {
+	args := []string{"clean", "--keep", strconv.Itoa(keep), "--keep-since", keepSince}
+	if all {
+		args = append(args, "--all")
+	}
+	if verbose {
+		args = append(args, "--verbose")
+	}
+	if preview {
+		return append(args, "--dry-run", "--json")
+	}
+	return append(args, "--yes")
+}
+
+func trimLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return value
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func (m *model) cleanPolicyUpdate(key string) tea.Cmd {
+	switch key {
+	case "esc":
+		m.cleanDraft.Err = ""
+		m.lifecyclePhase = lifecycleBrowsing
+	case "tab", "down":
+		m.cleanDraft.Field = cleanPolicyField((int(m.cleanDraft.Field) + 1) % int(cleanPolicyFieldCount))
+	case "shift+tab", "up":
+		m.cleanDraft.Field = cleanPolicyField((int(m.cleanDraft.Field) + int(cleanPolicyFieldCount) - 1) % int(cleanPolicyFieldCount))
+	case "ctrl+x":
+		m.cleanDraft.Keep, m.cleanDraft.KeepSince, m.cleanDraft.Err = "0", "0d", ""
+	case "left", "right", "space":
+		switch m.cleanDraft.Field {
+		case cleanScopeField:
+			m.cleanDraft.All = !m.cleanDraft.All
+		case cleanVerboseField:
+			m.cleanDraft.Verbose = !m.cleanDraft.Verbose
+		}
+	case "backspace", "delete":
+		switch m.cleanDraft.Field {
+		case cleanKeepField:
+			m.cleanDraft.Keep = trimLastRune(m.cleanDraft.Keep)
+		case cleanKeepSinceField:
+			m.cleanDraft.KeepSince = trimLastRune(m.cleanDraft.KeepSince)
+		}
+	case "enter":
+		keep, keepSince, err := m.cleanDraft.values()
+		if err != nil {
+			m.cleanDraft.Err = err.Error()
+			return nil
+		}
+		m.cleanDraft.Keep, m.cleanDraft.KeepSince, m.cleanDraft.Err = strconv.Itoa(keep), keepSince, ""
+		m.lifecyclePhase = lifecycleCleanPreviewing
+		return m.lifecycleCommand(previewClean, cleanCommandArgs(keep, keepSince, m.cleanDraft.All, m.cleanDraft.Verbose, true)...)
+	default:
+		runes := []rune(key)
+		if len(runes) != 1 || len(key) > 4 {
+			return nil
+		}
+		switch m.cleanDraft.Field {
+		case cleanKeepField:
+			if runes[0] >= '0' && runes[0] <= '9' && len(m.cleanDraft.Keep) < 6 {
+				m.cleanDraft.Keep += key
+			}
+		case cleanKeepSinceField:
+			if !strings.ContainsAny(key, " \t\r\n") && len(m.cleanDraft.KeepSince) < 32 {
+				m.cleanDraft.KeepSince += key
+			}
+		}
+	}
+	return nil
+}
+
 func (m *model) lifecycleUpdate(key string) tea.Cmd {
+	if m.lifecyclePhase == lifecycleCleanConfiguring {
+		return m.cleanPolicyUpdate(key)
+	}
 	switch key {
 	case "r":
 		if m.lifecyclePhase == lifecycleBrowsing || m.lifecyclePhase == lifecycleSucceeded || m.lifecyclePhase == lifecycleFailed {
@@ -206,8 +330,9 @@ func (m *model) lifecycleUpdate(key string) tea.Cmd {
 		}
 	case "c":
 		if m.lifecyclePhase == lifecycleBrowsing || m.lifecyclePhase == lifecycleSucceeded || m.lifecyclePhase == lifecycleFailed {
-			m.lifecyclePhase = lifecycleCleanPreviewing
-			return m.lifecycleCommand(previewClean, "clean", "--dry-run", "--json")
+			m.cleanDraft.Err = ""
+			m.lifecycleErr = nil
+			m.lifecyclePhase = lifecycleCleanConfiguring
 		}
 	case "y":
 		switch m.lifecyclePhase {
@@ -216,7 +341,7 @@ func (m *model) lifecycleUpdate(key string) tea.Cmd {
 			return m.lifecycleCommand(executeRollback, "rollback", "--to", strconv.FormatUint(m.lifecycleTarget, 10), "--yes")
 		case lifecycleCleanConfirming:
 			m.lifecyclePhase = lifecycleMutating
-			return m.lifecycleCommand(executeClean, "clean", "--keep", strconv.Itoa(m.clean.Keep), "--keep-since", m.clean.KeepSince, "--yes")
+			return m.lifecycleCommand(executeClean, cleanCommandArgs(m.clean.Keep, m.clean.KeepSince, m.clean.Scope == "all", m.cleanDraft.Verbose, false)...)
 		}
 	case "n", "esc":
 		switch m.lifecyclePhase {
@@ -305,6 +430,8 @@ func (m model) lifecycleView(width int) string {
 		if m.lifecycleStatus != "" {
 			rowCursor += 2
 		}
+	} else if m.lifecyclePhase == lifecycleCleanConfiguring {
+		rowCursor = 1 + int(m.cleanDraft.Field)
 	}
 	body := clikit.WindowList(rows, rowCursor, bodyHeight, bodyWidth)
 	panel := clikit.Panel(width, titleStyle.Render("Generations / Clean")+"\n\n"+body)
@@ -319,6 +446,37 @@ func (m model) lifecycleRowsForWidth(width int) []string {
 		return []string{clikit.StBrk.Render("Lifecycle command failed"), clikit.StDim.Render(ansi.Truncate(m.lifecycleErr.Error(), width, "…"))}
 	}
 	switch m.lifecyclePhase {
+	case lifecycleCleanConfiguring:
+		scope := "user profile"
+		if m.cleanDraft.All {
+			scope = "all profiles (--all)"
+		}
+		verbose := "off"
+		if m.cleanDraft.Verbose {
+			verbose = "on"
+		}
+		values := []string{
+			"Keep newest: " + m.cleanDraft.Keep,
+			"Keep since: " + m.cleanDraft.KeepSince,
+			"Scope: " + scope,
+			"Verbose plan: " + verbose,
+		}
+		rows := []string{titleStyle.Render("Configure cleanup")}
+		for field, value := range values {
+			marker := "  "
+			if cleanPolicyField(field) == m.cleanDraft.Field {
+				marker = "> "
+			}
+			rows = append(rows, marker+value)
+		}
+		rows = append(rows, "",
+			clikit.StDim.Render("Ctrl+X selects maximum reclaim (keep 0, since 0d)."),
+			clikit.StDim.Render("The current generation is always retained."),
+		)
+		if m.cleanDraft.Err != "" {
+			rows = append(rows, clikit.StBrk.Render(m.cleanDraft.Err))
+		}
+		return rows
 	case lifecycleRollbackPreviewing:
 		return []string{clikit.StDim.Render("Previewing rollback…")}
 	case lifecycleRollbackConfirming:
@@ -330,6 +488,8 @@ func (m model) lifecycleRowsForWidth(width int) []string {
 			clikit.StWarn.Render("Cleanup preview"),
 			fmt.Sprintf("Keep newest: %d", m.clean.Keep),
 			"Keep since: " + m.clean.KeepSince,
+			"Scope: " + m.clean.Scope,
+			fmt.Sprintf("Verbose plan: %t", m.cleanDraft.Verbose),
 			clikit.StDim.Render("Current generation is always retained."),
 		}
 		for _, candidate := range m.clean.ReclaimCandidates {
@@ -366,11 +526,17 @@ func (m model) lifecycleRowsForWidth(width int) []string {
 }
 
 func (m model) lifecycleFooter(width int) string {
-	text := "↑↓ select  ·  r preview rollback  ·  c preview clean  ·  Ctrl+R refresh"
+	text := "↑↓ select  ·  r preview rollback  ·  c configure clean  ·  Ctrl+R refresh"
 	if width < 60 {
 		text = "↑↓ select  ·  r rollback  ·  c clean"
 	}
-	if m.lifecyclePhase == lifecycleRollbackConfirming || m.lifecyclePhase == lifecycleCleanConfirming {
+	switch m.lifecyclePhase {
+	case lifecycleCleanConfiguring:
+		text = "Tab field  ·  type edit  ·  ←/→ toggle  ·  Ctrl+X max  ·  Enter preview  ·  Esc cancel"
+		if width < 60 {
+			text = "Tab field  ·  ←/→ toggle  ·  Enter preview"
+		}
+	case lifecycleRollbackConfirming, lifecycleCleanConfirming:
 		text = "y confirm  ·  n / Esc cancel"
 	}
 	return clikit.ClipLines(clikit.StDim.Render(text), width)

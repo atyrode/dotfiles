@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: read
-  # cache-nix-action purges superseded platform caches after saving.
-  actions: write
   # The classify job lists pull-request files.
   pull-requests: read
 
@@ -19,16 +17,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Every change runs the 3-platform matrix. Documentation can affect derivation
-  # hashes through the flake source, so it is not safe to classify `docs/**` or
-  # `README.md` as inert.
+  # Documentation paths are guarded before the full matrix is skipped. For
+  # code changes, only an explicit Linux-only allowlist can skip native Darwin;
+  # shared, Darwin-specific, workflow, and unknown paths fail safe to Darwin.
   changes:
     name: classify
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      darwin: ${{ steps.classify.outputs.darwin }}
+      matrix: ${{ steps.classify.outputs.matrix }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
       - name: Classify changed paths
         id: classify
         env:
@@ -36,39 +41,38 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Pushes to main and manual runs retain the complete native matrix.
           code=true
+          darwin=true
           if [ -n "$PR_NUMBER" ]; then
             if files="$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" \
               --paginate --jq '.[].filename')" && [ -n "$files" ]; then
-              code=false
-              while IFS= read -r f; do
-                case "$f" in
-                  *) code=true ;;
-                esac
-              done <<EOF
-          $files
-          EOF
+              classification="$(printf '%s\n' "$files" | ./scripts/classify-ci-paths.sh)"
+              code="$(printf '%s\n' "$classification" | sed -n 's/^code=//p')"
+              darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"
             fi
           fi
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "classified: code=$code"
+          if "$darwin"; then
+            matrix='{"include":[{"system":"x86_64-linux","runner":"ubuntu-24.04"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"},{"system":"aarch64-darwin","runner":"macos-15"}]}'
+          else
+            matrix='{"include":[{"system":"x86_64-linux","runner":"ubuntu-24.04"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"}]}'
+          fi
+          printf 'code=%s\ndarwin=%s\nmatrix=%s\n' "$code" "$darwin" "$matrix" >> "$GITHUB_OUTPUT"
+          echo "classified: code=$code darwin=$darwin"
 
   check:
     name: ${{ matrix.system }}
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      # cache-nix-action purges superseded platform caches after saving.
+      actions: write
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-24.04
-          - system: aarch64-linux
-            runner: ubuntu-24.04-arm
-          - system: aarch64-darwin
-            runner: macos-15
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
       - name: Check out repository

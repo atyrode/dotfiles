@@ -291,6 +291,17 @@
               revision = inventoryRevision;
             };
           })
+          (
+            _final: previous:
+            lib.optionalAttrs previous.stdenv.isDarwin {
+              # nixpkgs Darwin fixup replaces Spotify's Developer ID signature
+              # with an ad-hoc one, breaking macOS privacy identity (TN3179).
+              # The focused test in #89 validated that skipping fixup preserves it.
+              spotify = previous.spotify.overrideAttrs (_: {
+                dontFixup = true;
+              });
+            }
+          )
         ];
 
       agentToolsOverlay = mkPackageOverlay { hostRegistry = rawHosts; };
@@ -691,6 +702,10 @@
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-evaluation = darwinEvaluation;
+          spotify-signature = import ./checks/spotify-signature.nix {
+            inherit pkgs;
+            spotify = pkgs.spotify;
+          };
         }
       );
 

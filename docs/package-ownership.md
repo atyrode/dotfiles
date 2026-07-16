@@ -48,6 +48,12 @@ Desktop applications are retained as an operator-use decision, separate from
 the agent platform. Pi and Zed remain absent, coherent experiments owned by #29
 and #30; neither is pulled into the baseline for harness symmetry.
 
+Vendor-signed macOS application bundles must retain their upstream signing
+identity; package fixup must not replace a Developer ID signature with an ad-hoc
+one. The Darwin package overlay disables fixup for Spotify specifically so its
+`com.spotify.client` / `2FNC3A47ZF` identity survives Home Manager delivery.
+The full application audit and any other package decisions remain tracked by #89.
+
 ## Harness and surface contract
 
 | Harness/surface | Hosts | Version owner | Mutable state | Supported launch modes |

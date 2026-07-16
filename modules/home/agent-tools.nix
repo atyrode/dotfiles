@@ -196,7 +196,8 @@ in
         default = "qwen2.5:3b";
         description = ''
           The ollama model tag the generator classifies with. Must match the model
-          `code` requests (CODE_EVAL_MODEL / cli-kit's DefaultLocalModel).
+          `code` requests (CODE_EVAL_MODEL / ollama.DefaultModel in
+          github.com/atyrode/cli-kit — keep the two in sync by hand).
         '';
       };
 

@@ -3,7 +3,8 @@ package main
 import (
 	"os"
 
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
+	"github.com/atyrode/cli-kit/ollama"
 )
 
 // maxClassifyChars caps how much of the prompt is shown to the evaluator. On a
@@ -52,28 +53,28 @@ func truncateForClassify(task string) string {
 }
 
 // evalModel is the local model the generator classifies with. A resident 3B model
-// on the nix-managed ollama daemon answers in a fraction of a second once warm,
+// on a resident local ollama daemon answers in a fraction of a second once warm,
 // with no auth and no network — the whole point of ctrl+o is a snappy suggestion.
 // Override with CODE_EVAL_MODEL (any tag the daemon has pulled).
 func evalModel() string {
 	if v := os.Getenv("CODE_EVAL_MODEL"); v != "" {
 		return v
 	}
-	return clikit.DefaultLocalModel
+	return ollama.DefaultModel
 }
 
-// evalCommander wraps the local OllamaCommander so Parse yields only actions the
+// evalCommander wraps the local ollama Commander so Parse yields only actions the
 // generator can actually apply: the box then shows exactly what will change, with no
 // invalid facet value (e.g. a hallucinated lane) leaking into the displayed
 // proposal. Embedding carries Load/Unload/Loaded/Propose through unchanged, so
 // the load/unload toggle still works.
 type evalCommander struct {
-	clikit.OllamaCommander
+	ollama.Commander
 	facets []facet
 }
 
 func (c evalCommander) Parse(output string) ([]clikit.Action, error) {
-	actions, err := c.OllamaCommander.Parse(output)
+	actions, err := c.Commander.Parse(output)
 	if err != nil {
 		return nil, err
 	}
@@ -85,13 +86,13 @@ func (c evalCommander) Parse(output string) ([]clikit.Action, error) {
 // user-controlled via the box's load/unload toggle (cli-kit Loadable), so nothing
 // is pinned here. CODE_OLLAMA_ENDPOINT points it at a non-default daemon.
 func (m model) Commander() clikit.Commander {
-	c := clikit.NewOllamaCommander(evalSystemPrompt)
+	c := ollama.NewCommander(evalSystemPrompt)
 	if ep := os.Getenv("CODE_OLLAMA_ENDPOINT"); ep != "" {
 		c.Endpoint = ep
 	}
 	c.Model = evalModel()
 	c.Wrap = func(task string) string { return classifyMessage(task) }
-	return evalCommander{OllamaCommander: c, facets: m.facets}
+	return evalCommander{Commander: c, facets: m.facets}
 }
 
 // repairConstraints enforces the deterministic rules a suggestion (or selection)

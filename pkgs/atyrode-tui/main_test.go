@@ -12,7 +12,8 @@ import (
 
 	inventorydata "atyrode-tui/inventory"
 	previewdata "atyrode-tui/preview"
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
+	ompkit "github.com/atyrode/cli-kit/omp"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -136,7 +137,7 @@ normalized package/action preview as JSON.
 	if _, err := buildAskGrounding([]byte("not command help")); err == nil {
 		t.Fatal("unrecognizable help unexpectedly produced grounding")
 	}
-	if backend, ok := newAskBackend(docs).(clikit.OmpAsker); !ok || !backend.ReplaceSystem {
+	if backend, ok := newAskBackend(docs).(ompkit.Asker); !ok || !backend.ReplaceSystem {
 		t.Fatal("atyrode Ask backend did not isolate its grounded system prompt")
 	}
 }

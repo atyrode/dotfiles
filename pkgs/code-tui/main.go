@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	inventorydata "atyrode-tui/inventory"
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )

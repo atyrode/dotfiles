@@ -165,6 +165,26 @@ type model struct {
 	inventoryGeneration uint64
 	inventoryCancel     context.CancelFunc
 
+	lifecyclePhase      lifecyclePhase
+	lifecycleGeneration uint64
+	lifecycleCancel     context.CancelFunc
+	lifecycleLoading    bool
+	lifecycleErr        error
+	lifecycleStatus     string
+	lifecyclePreview    string
+	lifecycleTarget     uint64
+	lifecycleCursor     int
+	generations         []generation
+	clean               cleanPreview
+
+	doctorReports    [3]doctorReport
+	doctorErrors     [3]error
+	doctorLoading    [3]bool
+	doctorTab        doctorTab
+	doctorCursor     int
+	doctorGeneration uint64
+	doctorCancel     context.CancelFunc
+
 	inventoryDiagnostic  string
 	inventoryDetailsOpen bool
 	details              bool
@@ -327,8 +347,10 @@ func (m *model) cancelInventory() {
 }
 
 func (m *model) cancelInspections() {
+	m.cancelDoctor()
 	m.cancelPreview()
 	m.cancelInventory()
+	m.cancelLifecycle()
 }
 
 func (m model) applyArgs(preview bool) []string {
@@ -450,6 +472,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case doctorMsg:
+		if msg.generation != m.doctorGeneration {
+			return m, nil
+		}
+		m.doctorLoading[msg.tab] = false
+		if msg.report.err != nil {
+			m.doctorReports[msg.tab], m.doctorErrors[msg.tab] = doctorReport{}, msg.report.err
+		} else {
+			m.doctorReports[msg.tab], m.doctorErrors[msg.tab] = msg.report, nil
+			m.doctorCursor = 0
+		}
+		return m, nil
+	case lifecycleMsg:
+		m.handleLifecycleMsg(msg)
+		return m, nil
 	case applyDoneMsg:
 		if msg.err != nil {
 			m.phase, m.err = failed, fmt.Errorf("apply failed: %w", msg.err)
@@ -470,6 +507,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if id, ok := workspaceForShortcut(key); ok {
 			return m, m.activateWorkspace(id)
+		}
+		if m.nav.Active() == workspaceDoctor {
+			return m, m.doctorUpdate(key)
+		}
+		if m.nav.Active() == workspaceCapability {
+			return m, m.capabilitiesWorkspaceUpdate(key)
+		}
+		if m.nav.Active() == workspaceLifecycle {
+			return m, m.lifecycleUpdate(key)
 		}
 		if m.nav.Active() != workspaceApply {
 			return m, nil
@@ -605,10 +651,14 @@ func (m model) View() string {
 	switch m.nav.Active() {
 	case workspaceApply:
 		content = m.applyView(panelWidth)
+	case workspaceLifecycle:
+		content = m.lifecycleView(panelWidth)
 	case workspaceAsk:
 		content = m.askWorkspaceView(panelWidth)
-	case workspaceLifecycle, workspaceDoctor, workspaceCapability:
-		content = m.pendingWorkspaceView(panelWidth)
+	case workspaceDoctor:
+		content = m.doctorView(panelWidth)
+	case workspaceCapability:
+		content = m.capabilitiesWorkspaceView(panelWidth)
 	default:
 		content = m.overviewView(panelWidth)
 	}
@@ -1181,7 +1231,7 @@ func (m model) footer() string {
 	if m.focus == capabilityPane {
 		controls := "↑/↓ scroll  ·  [/] cycle  ·  c back"
 		if m.isWide() {
-			controls = "↑/↓ capability  ·  [/] cycle  ·  Tab/c preview"
+			controls = "↑/↓ capability  ·  [/] cycle  ·  c preview"
 		}
 		if m.inventoryErr != nil && m.inventoryDiagnostic != "" && m.width >= 80 {
 			diagnosticMode := "diagnostics"
@@ -1235,7 +1285,7 @@ func (m model) footer() string {
 			}
 			return clikit.StDim.Render("↑/↓ scroll  ·  " + mediumControl + "  ·  c capabilities  ·  enter apply  ·  q")
 		}
-		return clikit.StDim.Render("↑/↓ preview  ·  " + previewControl + "  ·  Tab/c capabilities  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
+		return clikit.StDim.Render("↑/↓ preview  ·  " + previewControl + "  ·  c capabilities  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
 	default:
 		return clikit.StDim.Render("^O ask  ·  q quit")
 	}

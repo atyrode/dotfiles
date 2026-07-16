@@ -41,12 +41,31 @@ func workspaceForShortcut(key string) (clikit.WorkspaceID, bool) {
 
 func (m *model) activateWorkspace(id clikit.WorkspaceID) tea.Cmd {
 	m.nav.Select(id)
-	if id != workspaceApply || m.applyRequested {
+	switch id {
+	case workspaceApply:
+		if m.applyRequested {
+			return nil
+		}
+		m.applyRequested = true
+		m.phase, m.err, m.status = loadingPlan, nil, ""
+		return m.loadPlan()
+	case workspaceLifecycle:
+		if m.lifecycleLoading || len(m.generations) > 0 || m.lifecycleErr != nil {
+			return nil
+		}
+		return m.loadLifecycle()
+	case workspaceDoctor:
+		if m.doctorReportMissing(m.doctorTab) && !m.doctorLoading[m.doctorTab] {
+			return m.startDoctor(m.doctorTab)
+		}
+	case workspaceCapability:
+		if m.plan.ResolvedRevision != "" {
+			return m.startInventory()
+		}
+	default:
 		return nil
 	}
-	m.applyRequested = true
-	m.phase, m.err, m.status = loadingPlan, nil, ""
-	return m.loadPlan()
+	return nil
 }
 
 func (m *model) nextWorkspace(delta int) tea.Cmd {
@@ -84,10 +103,21 @@ func (m model) workspaceTabs(width int) string {
 func (m model) shellFooter() string {
 	_, width := m.horizontalLayout()
 	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–6 jump  ·  Ctrl+O ask  ·  q quit"
-	if m.width < 60 {
-		text = "Tab next  ·  ⇧Tab back  ·  1–6 jump  ·  q"
+	switch {
+	case m.width < 60:
+		text = "Tab/⇧Tab navigate  ·  1–6 jump  ·  q"
+	case m.width < 112:
+		text = "Tab/Shift+Tab navigate  ·  1–6 jump  ·  ^O ask  ·  q quit"
 	}
 	return clikit.ClipLines(clikit.StDim.Render(text), width)
+}
+
+// workspaceBodyHeight reserves the shared shell title, tabs, footer, section
+// gaps, panel borders/title, and one local control row. Workspaces cap their
+// clipped lists with this value instead of preallocating unused terminal rows.
+func (m model) workspaceBodyHeight() int {
+	const shellAndPanelChromeRows = 12
+	return max(1, m.height-shellAndPanelChromeRows)
 }
 
 func intersperse(values []string, separator string) []string {

@@ -223,7 +223,7 @@ func TestOverviewStartsWithoutApplyWorkAndApplyPreviewRemainsExplicit(t *testing
 		t.Fatalf("Overview startup commands = %#v, want none", calls)
 	}
 	overview := stripTerminalControls(m.View())
-	for _, want := range []string{"overview", "Your Nix operating environment", "1  Overview", "2  Apply", "Tab next workspace"} {
+	for _, want := range []string{"overview", "Your Nix operating environment", "1  Overview", "2  Apply", "Tab/Shift+Tab navigate"} {
 		if !strings.Contains(overview, want) {
 			t.Errorf("Overview missing %q", want)
 		}
@@ -292,8 +292,8 @@ func TestWorkspaceNavigationPreservesApplyState(t *testing.T) {
 
 	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = next.(model)
-	if m.nav.Active() != workspaceLifecycle || cmd != nil {
-		t.Fatalf("second Tab entered %q with cmd %v, want lifecycle/nil", m.nav.Active(), cmd)
+	if m.nav.Active() != workspaceLifecycle || cmd == nil {
+		t.Fatalf("second Tab entered %q with cmd %v, want lifecycle load", m.nav.Active(), cmd)
 	}
 	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	m = next.(model)
@@ -305,6 +305,26 @@ func TestWorkspaceNavigationPreservesApplyState(t *testing.T) {
 	m = next.(model)
 	if m.nav.Active() != workspaceDoctor {
 		t.Fatalf("direct shortcut entered %q, want Doctor", m.nav.Active())
+	}
+}
+
+func TestOverviewAndAskStayWithinRepresentativeWindows(t *testing.T) {
+	for _, size := range []struct{ width, height int }{{44, 18}, {80, 26}, {100, 30}, {150, 44}} {
+		m := newModel("atyrode")
+		m.width, m.height = size.width, size.height
+		m.plan = applyPlan{Host: "workstation", System: "x86_64-linux", Revision: "feedfacefeed"}
+		for _, workspace := range []clikit.WorkspaceID{workspaceOverview, workspaceAsk} {
+			m.nav.Select(workspace)
+			view := m.View()
+			if rows := strings.Split(view, "\n"); len(rows) > m.height {
+				t.Errorf("%s at %dx%d rendered %d rows", workspace, m.width, m.height, len(rows))
+			}
+			for _, row := range strings.Split(view, "\n") {
+				if got := lipgloss.Width(row); got >= m.width {
+					t.Errorf("%s at %dx%d rendered row width %d: %q", workspace, m.width, m.height, got, stripTerminalControls(row))
+				}
+			}
+		}
 	}
 }
 

@@ -8,28 +8,33 @@ import (
 )
 
 func (m model) overviewView(width int) string {
+	rows := make([]string, 0, len(m.nav.Items())*2)
+	detailed := m.height >= 34
+	for _, item := range m.nav.Items() {
+		rows = append(rows, clikit.StHead.Render(item.Shortcut+"  "+item.Label))
+		if detailed {
+			rows = append(rows, "   "+clikit.StDim.Render(workspacePurpose(item.ID)))
+		}
+	}
+	workspaces := clikit.Panel(width, titleStyle.Render("Workspaces")+"\n\n"+strings.Join(rows, "\n"))
+	if m.height < 24 {
+		return workspaces
+	}
+
 	identity := []string{
 		titleStyle.Render("Your Nix operating environment"),
 		clikit.StDim.Render("Inspect, plan, and maintain every registered configuration from one cockpit."),
 	}
-	if m.plan.Host != "" {
-		identity = append(identity, "", labelStyle.Render("host")+m.plan.Host, labelStyle.Render("system")+m.plan.System, labelStyle.Render("revision")+m.plan.Revision)
-	} else {
-		identity = append(identity, "", clikit.StDim.Render("Open Apply to resolve the current host and revision."))
+	if detailed {
+		if m.plan.Host != "" {
+			identity = append(identity, "", labelStyle.Render("host")+m.plan.Host, labelStyle.Render("system")+m.plan.System, labelStyle.Render("revision")+m.plan.Revision)
+		} else {
+			identity = append(identity, "", clikit.StDim.Render("Open Apply to resolve the current host and revision."))
+		}
+	} else if m.plan.Host != "" {
+		identity = append(identity, clikit.StDim.Render(m.plan.Host+" · "+m.plan.System+" · "+m.plan.Revision))
 	}
-
-	rows := make([]string, 0, len(m.nav.Items())*2)
-	for _, item := range m.nav.Items() {
-		purpose := workspacePurpose(item.ID)
-		rows = append(rows, clikit.StHead.Render(item.Shortcut+"  "+item.Label))
-		rows = append(rows, "   "+clikit.StDim.Render(purpose))
-	}
-
-	content := strings.Join([]string{
-		clikit.Panel(width, strings.Join(identity, "\n")),
-		clikit.Panel(width, titleStyle.Render("Workspaces")+"\n\n"+strings.Join(rows, "\n")),
-	}, "\n\n")
-	return content
+	return strings.Join([]string{clikit.Panel(width, strings.Join(identity, "\n")), workspaces}, "\n\n")
 }
 
 func workspacePurpose(id clikit.WorkspaceID) string {

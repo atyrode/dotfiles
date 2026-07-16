@@ -25,6 +25,18 @@ func (f runnerFunc) Output(ctx context.Context, name string, args ...string) ([]
 	return f(ctx, name, args...)
 }
 
+func TestExecCommandRunnerKeepsJSONSeparateFromStderr(t *testing.T) {
+	runner := execCommandRunner{}
+	out, err := runner.Output(context.Background(), "/bin/sh", "-c", `printf '{"ok":true}'; printf 'progress' >&2`)
+	if err != nil || string(out) != `{"ok":true}` {
+		t.Fatalf("successful split output = %q, %v", out, err)
+	}
+	out, err = runner.Output(context.Background(), "/bin/sh", "-c", `printf '{"ok":false}'; printf 'diagnostic' >&2; exit 65`)
+	if string(out) != `{"ok":false}` || err == nil || !strings.Contains(err.Error(), "diagnostic") {
+		t.Fatalf("failed split output = %q, %v", out, err)
+	}
+}
+
 func newApplyTestModel(cli string) model {
 	m := newModel(cli)
 	m.nav.Select(workspaceApply)
@@ -223,7 +235,7 @@ func TestOverviewStartsWithoutApplyWorkAndApplyPreviewRemainsExplicit(t *testing
 		t.Fatalf("Overview startup commands = %#v, want none", calls)
 	}
 	overview := stripTerminalControls(m.View())
-	for _, want := range []string{"overview", "Your Nix operating environment", "1  Overview", "2  Apply", "Tab/Shift+Tab navigate"} {
+	for _, want := range []string{"ATYRODE", "Your Nix operating environment", "1. Overview", "2. Apply", "Tab/Shift+Tab navigate"} {
 		if !strings.Contains(overview, want) {
 			t.Errorf("Overview missing %q", want)
 		}
@@ -271,6 +283,43 @@ func TestOverviewStartsWithoutApplyWorkAndApplyPreviewRemainsExplicit(t *testing
 	for _, want := range []string{"ACTIVATION PREVIEW", "Applying revision feedfacefeed", "Preview built", "1 added", "2 updated", "1 removed", "Disk usage decreases by 5.59 MiB"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("visible summary missing %q", want)
+		}
+	}
+}
+
+func TestWorkspaceTabsStayAlignedAndOnlyMoveSelection(t *testing.T) {
+	m := newModel("atyrode")
+	for _, tc := range []struct {
+		width int
+		rows  int
+	}{{34, 3}, {64, 2}, {92, 2}, {142, 1}} {
+		tabs := m.workspaceTabs(tc.width)
+		lines := strings.Split(tabs, "\n")
+		if len(lines) != tc.rows {
+			t.Fatalf("tabs at width %d rendered %d rows, want %d", tc.width, len(lines), tc.rows)
+		}
+		for _, line := range lines {
+			if got := lipgloss.Width(line); got != tc.width {
+				t.Fatalf("tabs at width %d rendered row width %d", tc.width, got)
+			}
+		}
+	}
+
+	overview := m.workspaceTabs(142)
+	m.nav.Select(workspaceApply)
+	apply := m.workspaceTabs(142)
+	if stripTerminalControls(overview) != stripTerminalControls(apply) {
+		t.Fatal("selecting a workspace moved or changed tab labels")
+	}
+	if fmt.Sprint(workspaceTabStyle(20, false).GetBackground()) == fmt.Sprint(workspaceTabStyle(20, true).GetBackground()) {
+		t.Fatal("selected workspace tab has no distinct background")
+	}
+	if !strings.Contains(stripTerminalControls(m.workspaceTabs(34)), "3. Gen / Clean") {
+		t.Fatal("narrow workspace tabs obscured the Generations / Clean destination")
+	}
+	for _, want := range []string{"1. Overview", "2. Apply", "3. Generations / Clean", "4. Doctor", "5. Capabilities", "6. Ask"} {
+		if !strings.Contains(stripTerminalControls(apply), want) {
+			t.Fatalf("workspace tabs missing %q", want)
 		}
 	}
 }

@@ -20,11 +20,12 @@ Ask grounding, so packaged and checkout-specific behavior remain aligned.
 ## Overview and navigation
 
 Overview explains the cockpit and lists every workspace without preallocating
-empty panel height. `Tab` and `Shift+Tab` cycle persistent workspaces; `1`–`6`
-jump directly to Overview, Apply, Generations/Clean, Doctor, Capabilities, and
-Ask. Local loading, selection, scroll, preview, and confirmation state survives
-round trips between workspaces. Narrow and medium layouts shorten controls and
-clip navigation chrome without allowing a row to enter the terminal auto-wrap
+empty panel height. The top navigation is an aligned responsive grid of numbered
+titles (`1. Overview` through `6. Ask`); only the selected cell's background
+moves. `Tab` and `Shift+Tab` cycle persistent workspaces, while `1`–`6` jump
+directly. Local loading, selection, scroll, preview, and confirmation state
+survives round trips between workspaces. Narrow and medium layouts wrap the
+complete grid and shorten controls without entering the terminal auto-wrap
 column.
 
 ## Apply panel
@@ -88,14 +89,19 @@ generation, and keeps rollback and cleanup behind preview-first confirmation:
 
 - rollback runs `rollback --to N --dry-run`, displays the exact target, then
   requires `y` before `rollback --to N --yes`;
-- cleanup runs `clean --dry-run --json`, displays the exact `keep` and
-  `keepSince` policy and candidates, then requires `y` before forwarding those
-  same values to `clean --keep N --keep-since D --yes`.
+- cleanup opens a policy editor for every `atyrode clean` capability: keep
+  count, keep-since duration, user or all-profile scope (`--all`), and verbose
+  planning (`--verbose`);
+- `Ctrl+X` selects maximum reclaim (`--keep 0 --keep-since 0d`), which still
+  retains the current generation;
+- Enter runs the exact configured policy through `clean --dry-run --json`,
+  validates that the returned scope and retention values match, and displays
+  every candidate before `y` forwards the same policy with `--yes`.
 
-The current generation cannot be selected for rollback, cancellation before
-confirmation performs no mutation, and the cockpit never adds `--all`. Once
-confirmed, a real lifecycle mutation cannot be cancelled or left until its
-authoritative command result is reported.
+JSON stdout is decoded separately from progress and diagnostics on stderr. The
+current generation cannot be selected for rollback, cancellation before
+confirmation performs no mutation, and a confirmed lifecycle mutation cannot
+be cancelled or left until its authoritative command result is reported.
 
 ## Ask panel
 

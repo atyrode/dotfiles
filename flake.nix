@@ -640,6 +640,9 @@
               .${system};
           };
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
+          # cli-kit is library-only, so no build depends on its derivation;
+          # exposing it as a check is what makes CI run its unit tests.
+          cli-kit = pkgs.cli-kit;
           codex-seed = import ./checks/codex-seed.nix { inherit lib pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };

@@ -1,5 +1,11 @@
 name: Update pins
 
+# Dependency-update policy (#13):
+# - Narrow, repository-owned binary pins are validated by explicitly dispatched
+#   CI and retain this workflow's existing auto-merge behavior.
+# - Environment-wide flake.lock updates are opened for operator review by
+#   flake-update.yml and are never auto-merged, as required by #13.
+
 on:
   schedule:
     - cron: "17 */6 * * *"
@@ -21,6 +27,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
@@ -52,6 +60,9 @@ jobs:
           git checkout -B "$branch"
           git add pkgs
           git commit -m "chore(pins): refresh repository-owned binaries" -m "$SUMMARY"
+          # Configure Git's ephemeral credential helper from this step's
+          # GH_TOKEN; checkout never persists a token in .git/config.
+          gh auth setup-git --hostname github.com
           git push -f origin "$branch"
           gh pr create --base main --head "$branch" \
             --title "chore(pins): refresh repository-owned binaries" \

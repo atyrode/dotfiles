@@ -1,0 +1,87 @@
+name: Update flake inputs
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # 05:00 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: flake-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update flake inputs
+        id: update
+        run: |
+          set -euo pipefail
+          output_file="$(mktemp)"
+          trap 'rm -f "$output_file"' EXIT
+          nix flake update 2>&1 | tee "$output_file"
+          if git diff --quiet -- flake.lock; then
+            exit 0
+          fi
+
+          summary_file="$RUNNER_TEMP/flake-update-summary.md"
+          {
+            printf '## Flake input changes\n\n'
+            if [ -s "$output_file" ]; then
+              printf '```text\n'
+              cat "$output_file"
+              printf '\n```\n'
+            else
+              printf 'nix flake update changed flake.lock.\n'
+            fi
+            printf '\n## Lockfile diff\n\n```text\n'
+            git diff --stat -- flake.lock
+            printf '```\n'
+          } > "$summary_file"
+          printf 'changed=true\n' >> "$GITHUB_OUTPUT"
+
+      # Policy (#13: "Avoid automatic merges for environment-wide dependency
+      # updates"): flake.lock affects the whole managed environment, so this
+      # workflow stops after opening a review-only PR and dispatching CI. It
+      # intentionally does not watch the run, merge the PR, or delete the branch.
+      - name: Open review-only update
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="bot/update-flake-lock"
+          summary_file="$RUNNER_TEMP/flake-update-summary.md"
+          summary="$(cat "$summary_file")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add flake.lock
+          git commit -m "chore(deps): update flake inputs" -m "$summary"
+          # Configure Git's ephemeral credential helper from this step's
+          # GH_TOKEN; checkout never persists a token in .git/config.
+          gh auth setup-git --hostname github.com
+          git push -f origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(deps): update flake inputs" \
+            --body-file "$summary_file" \
+            || true
+          # GitHub does not trigger workflows for pushes made by this token.
+          gh workflow run nix.yml --ref "$branch"

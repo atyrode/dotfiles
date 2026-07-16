@@ -267,6 +267,127 @@ type availability struct {
 	accountsStale bool
 }
 
+// withoutBrokerRouting removes inherited client-side broker variables before a
+// profile-local, read-only usage query. The selected vault's Profile is the
+// credential store used by that vault's broker service; clearing these values
+// prevents an ambient session from silently redirecting the query elsewhere.
+func withoutBrokerRouting(base []string) []string {
+	out := make([]string, 0, len(base))
+	for _, e := range base {
+		key := e
+		if i := strings.IndexByte(e, '='); i >= 0 {
+			key = e[:i]
+		}
+		switch key {
+		case "OMP_AUTH_BROKER_URL", "OMP_AUTH_BROKER_TOKEN", "OMP_AUTH_BROKER_SNAPSHOT_CACHE":
+			continue
+		default:
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// supplementFableUsage works around an OMP v17 auth-broker discrepancy: its
+// aggregate /v1/usage response can omit an Anthropic Fable limit that the same
+// vault profile returns from a provider-scoped `omp usage` query. Only that
+// missing limit is appended; broker-sourced identities and every other usage
+// datum remain authoritative. Any direct-query or shape failure is a no-op.
+func supplementFableUsage(cmd string, v vault, brokerOut []byte) []byte {
+	type envelope struct {
+		Reports []json.RawMessage `json:"reports"`
+	}
+	type report struct {
+		Provider string            `json:"provider"`
+		Limits   []json.RawMessage `json:"limits"`
+	}
+	type limitIdentity struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+		Scope struct {
+			Tier string `json:"tier"`
+		} `json:"scope"`
+	}
+
+	fableLimit := func(raw json.RawMessage) bool {
+		var l limitIdentity
+		if json.Unmarshal(raw, &l) != nil {
+			return false
+		}
+		return l.Scope.Tier == "fable" || l.ID == "anthropic:7d:fable" ||
+			l.Label == "Claude 7 Day (Fable)"
+	}
+
+	var brokerDoc envelope
+	if json.Unmarshal(brokerOut, &brokerDoc) != nil {
+		return brokerOut
+	}
+	brokerReportIndex := -1
+	var brokerAnthropic report
+	for i, raw := range brokerDoc.Reports {
+		var r report
+		if json.Unmarshal(raw, &r) != nil || r.Provider != "anthropic" {
+			continue
+		}
+		for _, limit := range r.Limits {
+			if fableLimit(limit) {
+				return brokerOut
+			}
+		}
+		brokerReportIndex, brokerAnthropic = i, r
+		break
+	}
+	if brokerReportIndex < 0 {
+		return brokerOut
+	}
+
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 || v.Profile == "" {
+		return brokerOut
+	}
+	args := withOMPProfile(v.Profile, parts[1:]...)
+	args = append(args, "--provider", "anthropic")
+	c := exec.Command(parts[0], args...)
+	c.Env = withoutBrokerRouting(os.Environ())
+	directOut, err := c.Output()
+	if err != nil || len(directOut) == 0 {
+		return brokerOut
+	}
+
+	var directDoc envelope
+	if json.Unmarshal(directOut, &directDoc) != nil {
+		return brokerOut
+	}
+	var directFable json.RawMessage
+	for _, raw := range directDoc.Reports {
+		var r report
+		if json.Unmarshal(raw, &r) != nil || r.Provider != "anthropic" {
+			continue
+		}
+		for _, limit := range r.Limits {
+			if fableLimit(limit) {
+				directFable = limit
+				break
+			}
+		}
+	}
+	if len(directFable) == 0 {
+		return brokerOut
+	}
+
+	brokerAnthropic.Limits = append(brokerAnthropic.Limits, directFable)
+	updated, err := json.Marshal(brokerAnthropic)
+	if err != nil {
+		return brokerOut
+	}
+	brokerDoc.Reports[brokerReportIndex] = updated
+	merged, err := json.Marshal(brokerDoc)
+	if err != nil {
+		return brokerOut
+	}
+	return merged
+}
+
 // loadAvailability fetches identity and usage for one vault. Managed broker
 // vaults read the broker's redacted snapshot and aggregate usage endpoints
 // directly, avoiding client-side credential-schema failures in unrelated
@@ -288,6 +409,9 @@ func loadAvailability(cmd string, v vault) availability {
 	var err error
 	if v.BrokerURL != "" && v.TokenFile != "" {
 		out, err = fetchVaultEndpoint(v, "/v1/usage")
+		if err == nil {
+			out = supplementFableUsage(cmd, v, out)
+		}
 	} else {
 		env, envErr := brokerEnv(v)
 		if envErr != nil {
@@ -2216,22 +2340,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.relayout()
 		case "s":
-			// Narrow terminals give Usage a dedicated full-screen view instead
-			// of treating s as a hidden-state toggle that accidentally reveals
-			// Routing. Wider layouts keep the inline section collapse.
-			if m.sizeMode() == sizeNarrow {
-				if m.showUsage {
-					m.showUsage = false
-					m.hideUsage = true
-				} else {
-					m.showUsage = true
-					m.hideUsage = false
-					m.showResult = false
-					m.collapse = false
-				}
-			} else {
+			// Toggle the rendered section, not the pre-toggle size class. Usage
+			// changes the responsive minima, so a layout that fits while it is
+			// hidden may become narrow when it returns. In that case open the
+			// dedicated view atomically. It overlays the existing generator /
+			// Routing state so closing it restores that exact composition.
+			switch {
+			case m.showUsage:
 				m.showUsage = false
-				m.hideUsage = !m.hideUsage
+				m.hideUsage = true
+			case !m.usageShown():
+				m.hideUsage = false
+				m.showUsage = m.sizeMode() == sizeNarrow
+			default:
+				m.showUsage = false
+				m.hideUsage = true
 			}
 			m.relayout()
 		case "?":

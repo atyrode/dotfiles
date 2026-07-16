@@ -225,6 +225,80 @@ func TestLoadAvailabilityUsesReadOnlyBrokerUsage(t *testing.T) {
 	}
 }
 
+func TestLoadAvailabilitySupplementsMissingFableFromVaultProfile(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	argsPath := filepath.Join(dir, "args")
+	envPath := filepath.Join(dir, "env")
+	if err := os.WriteFile(tokenPath, []byte("vault-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "usage")
+	body := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$ARGS_PATH\"\n" +
+		"printf '%s|%s|%s\\n' \"${OMP_AUTH_BROKER_URL+set}\" \"${OMP_AUTH_BROKER_TOKEN+set}\" \"${OMP_AUTH_BROKER_SNAPSHOT_CACHE+set}\" > \"$ENV_PATH\"\n" +
+		"printf '%s\\n' '{\"reports\":[{\"provider\":\"anthropic\",\"limits\":[{\"id\":\"anthropic:5h\",\"label\":\"Claude 5 Hour\",\"scope\":{\"provider\":\"anthropic\",\"windowId\":\"5h\",\"shared\":true},\"amount\":{\"usedFraction\":0.12},\"window\":{\"resetsAt\":4102444800000,\"durationMs\":18000000}},{\"id\":\"anthropic:7d:fable\",\"label\":\"Claude 7 Day (Fable)\",\"scope\":{\"provider\":\"anthropic\",\"windowId\":\"7d\",\"tier\":\"fable\"},\"amount\":{\"usedFraction\":0.27},\"window\":{\"resetsAt\":4102444800000,\"durationMs\":604800000}}]}]}'\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ARGS_PATH", argsPath)
+	t.Setenv("ENV_PATH", envPath)
+	t.Setenv("OMP_AUTH_BROKER_URL", "http://ambient.invalid")
+	t.Setenv("OMP_AUTH_BROKER_TOKEN", "ambient-secret")
+	t.Setenv("OMP_AUTH_BROKER_SNAPSHOT_CACHE", "/ambient/cache")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/snapshot":
+			_, _ = w.Write([]byte(`{"credentials":[]}`))
+		case "/v1/usage":
+			_, _ = w.Write([]byte(`{"reports":[
+				{"provider":"openai-codex","limits":[
+					{"id":"openai-codex:primary","label":"7 days","scope":{"tier":"-"},"amount":{"usedFraction":0.31},"window":{"resetsAt":4102444800000,"durationMs":604800000}}
+				]},
+				{"provider":"anthropic","limits":[
+					{"id":"anthropic:5h","label":"Claude 5 Hour","scope":{"tier":"-"},"amount":{"usedFraction":0.42},"window":{"resetsAt":4102444800000,"durationMs":18000000}}
+				]}
+			]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	v := vault{ID: "mine", Profile: "mine", BrokerURL: server.URL, TokenFile: tokenPath}
+	got := loadAvailability(script+" --profile default usage --json", v)
+	var codex, fable *usageWin
+	for i := range got.wins {
+		switch {
+		case got.wins[i].prov == "openai-codex":
+			codex = &got.wins[i]
+		case got.wins[i].tier == "fable":
+			fable = &got.wins[i]
+		}
+	}
+	if codex == nil || codex.pct != 31 {
+		t.Fatalf("broker Codex usage was not preserved: %+v", got.wins)
+	}
+	if fable == nil || fable.pct != 27 || got.bucket["claude-fable"] != "ok" {
+		t.Fatalf("profile-local Fable usage was not supplemented: wins=%+v buckets=%+v", got.wins, got.bucket)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "--profile\nmine\nusage\n--json\n--provider\nanthropic\n"; string(args) != want {
+		t.Fatalf("Fable supplement argv = %q, want %q", args, want)
+	}
+	env, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env) != "||\n" {
+		t.Fatalf("Fable supplement inherited broker routing: %q", env)
+	}
+}
+
 func TestLoadVaultStateMigratesPlainFile(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state")
 	if err := os.WriteFile(p, []byte("secondary\n"), 0o600); err != nil {

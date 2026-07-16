@@ -1642,6 +1642,48 @@ func TestCollapseReallocation(t *testing.T) {
 	}
 }
 
+// TestUsageRestoreFallsBackToFullscreen locks the state transition at the
+// responsive boundary where Routing fits only while Usage is hidden. Restoring
+// Usage must choose its dedicated view immediately, then return to the exact
+// generator-only composition instead of leaking Routing into view.
+func TestUsageRestoreFallsBackToFullscreen(t *testing.T) {
+	m := layoutModel()
+	m.hideUsage = true
+	m.collapse = true
+	m.showResult = false
+
+	withUsage := m
+	withUsage.hideUsage = false
+	w := withUsage.mediumMinW() - 1
+	if w < routingMinW {
+		t.Fatalf("fixture: fallback width %d is below Routing minimum %d", w, routingMinW)
+	}
+	m = resize(t, m, w, 40)
+	if m.sizeMode() != sizeMedium || m.mode() != modeCollapsed {
+		t.Fatalf("fixture: hidden Usage must leave a collapsed medium layout, size/mode = %d/%d", m.sizeMode(), m.mode())
+	}
+
+	m, _ = press(t, m, "s")
+	if m.hideUsage || !m.showUsage || !m.usageShown() {
+		t.Fatalf("first s must open Usage full-screen immediately: hidden=%v show=%v shown=%v", m.hideUsage, m.showUsage, m.usageShown())
+	}
+	full := strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(full, "usage", "s · hide") < 0 ||
+		lineIndex(full, "generator") >= 0 ||
+		lineIndex(full, "routing", "p · hide") >= 0 {
+		t.Fatalf("fallback must render only Usage:\n%s", strings.Join(full, "\n"))
+	}
+
+	m, _ = press(t, m, "s")
+	if !m.hideUsage || m.showUsage || !m.collapse || m.showResult {
+		t.Fatalf("second s must restore prior generator state: hidden=%v show=%v collapse=%v result=%v", m.hideUsage, m.showUsage, m.collapse, m.showResult)
+	}
+	restored := strings.Split(stripAnsi(m.View()), "\n")
+	if lineIndex(restored, "generator") < 0 || lineIndex(restored, "routing", "p · hide") >= 0 {
+		t.Fatalf("return from Usage must restore generator without Routing:\n%s", strings.Join(restored, "\n"))
+	}
+}
+
 // ── bottom-pinned section chrome · secondary separator · defaults cue ────────
 
 // TestRoutingFallbackCuePinned locks the moved fallback-display cue: it is

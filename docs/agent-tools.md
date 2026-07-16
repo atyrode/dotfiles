@@ -127,6 +127,9 @@ Usage panel shown by the generator, including provider-only headings,
 broker-reported account lists, and Codex-before-Claude ordering. Arrow keys
 retarget that detail without selecting the vault. The generator's **`s`** Usage
 visibility state transfers into the manager, where **`s`** toggles it too.
+If restoring Usage would make the current composition too small, **`s`** opens
+Usage full-screen immediately; closing it restores the exact prior Generator
+and Routing composition rather than exposing a different panel.
 Configured aliases are never presented as authenticated accounts. **Space**
 enables or disables the highlighted vault, **Enter** selects it, and **`r`**
 refreshes all summaries. The first manifest entry is the non-disableable
@@ -147,6 +150,13 @@ broker process per entry. It watches atomic content changes and automatically
 reconciles all children after a valid edit; an invalid replacement leaves the
 current brokers running. No Home Manager apply or manual service restart is
 needed.
+
+Usage and identity normally remain broker-sourced. OMP v17's broker aggregate
+can omit the Anthropic Fable limit even when that same vault profile returns it.
+Only when Fable is absent, `code` performs a provider-scoped, read-only usage
+query against that vault's backing profile with ambient broker routing removed,
+then appends only the missing Fable limit. Broker identities, Codex usage, and
+all other limits remain authoritative.
 
 Each backing OMP profile isolates provider credentials. Every trusted `code`
 launch still forces shared client profile `default`; sessions, resume history,

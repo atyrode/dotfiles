@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -531,7 +531,6 @@ func TestManagerEditCancelAndRawJSONDisabled(t *testing.T) {
 		t.Fatalf("raw JSON editing error is unclear: %q", m.vaultErr)
 	}
 }
-
 
 func TestManagerControlsWrapLabelsWhenNarrow(t *testing.T) {
 	m := managerModel()

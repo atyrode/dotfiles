@@ -1328,18 +1328,18 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
-	vaults       []vault
-	selected     string                  // active vault id
-	disabled     map[string]bool         // disabled vault ids (never includes the fallback)
-	vaultState   string                  // CODE_AUTH_STATE path
-	vaultErr     string                  // last vault switch/persist/login error
+	vaults        []vault
+	selected      string                  // active vault id
+	disabled      map[string]bool         // disabled vault ids (never includes the fallback)
+	vaultState    string                  // CODE_AUTH_STATE path
+	vaultErr      string                  // last vault switch/persist/login error
 	vaultManifest string                  // resolved writable manifest path; empty for raw JSON/read-only
 	managerInput  string                  // "create" or "rename" while manager text entry is active
 	managerText   string                  // pending manager text-entry value
-	vaultUsage   map[string]availability // per-vault usage snapshots for the manager
-	manager      bool                    // v: the full-screen vault manager is open
-	mgrCursor    int                     // manager row cursor
-	loginRunning bool                    // one suspended provider login may run at a time
+	vaultUsage    map[string]availability // per-vault usage snapshots for the manager
+	manager       bool                    // v: the full-screen vault manager is open
+	mgrCursor     int                     // manager row cursor
+	loginRunning  bool                    // one suspended provider login may run at a time
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires

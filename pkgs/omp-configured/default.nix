@@ -1235,50 +1235,48 @@ let
     '';
   };
 
+  # The generator always shares the default client profile. Authentication
+  # vault selection is conveyed exclusively through broker environment values.
+  ompManagedDefault = writeShellApplication {
+    name = "omp-managed-default";
+    text = ''
+      exec ${lib.getExe ompManaged} --profile default "$@"
+    '';
+  };
+
   codeLauncher = writeShellApplication {
     name = "code";
     runtimeInputs = [ coreutils ];
     text = ''
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
       export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
-      export CODE_OMP=${lib.getExe ompManaged}
+      export CODE_OMP=${lib.getExe ompManagedDefault}
+      export CODE_OMP_RAW="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
-      export CODE_USAGE="$omp_bin usage --json"
-      if [[ ! -v CODE_AUTH_PROFILES ]]; then
-        auth_profiles_file="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/code-auth-profiles.json"
-        if [[ -r "$auth_profiles_file" ]]; then
-          CODE_AUTH_PROFILES="$(cat "$auth_profiles_file")"
+      export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
+      if [[ ! -v CODE_AUTH_VAULTS ]]; then
+        auth_vaults_file="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/code-auth-vaults.json"
+        if [[ -r "$auth_vaults_file" ]]; then
+          CODE_AUTH_VAULTS="$(cat "$auth_vaults_file")"
         else
-          # shellcheck disable=SC2089
-          CODE_AUTH_PROFILES=${
-            lib.escapeShellArg (
-              builtins.toJSON [
-                {
-                  id = "default";
-                  label = "default";
-                  claude = "current";
-                  codex = "current";
-                }
-              ]
-            )
-          }
+          CODE_AUTH_VAULTS='[]'
         fi
         # JSON quotes are data consumed by code-tui, not shell syntax.
         # shellcheck disable=SC2090
-        export CODE_AUTH_PROFILES
+        export CODE_AUTH_VAULTS
       fi
-      export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-profile}"
+      export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-vault-state.json}"
       export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
       # The generator's prompt→profile classifier runs on the resident,
       # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
-      # daemon/model. The Bubble Tea usage widget owns the active OMP auth profile:
-      # `a` switches it, usage is fetched from that profile, and every trusted launch
-      # receives the same --profile. Launch targets: ↵ always runs the generated
-      # profile for the current facets through the managed layering (CODE_OMP);
-      # `m` runs the managed defaults with no overlay; `u` opens the fixed
-      # untrusted sandbox (CODE_OMP_UNTRUSTED). Plain omp is reached by typing
-      # `omp`, never via code.
+      # daemon/model. The Bubble Tea usage widget owns the active authentication
+      # vault: `a` cycles enabled vaults, `v` opens the vault manager, and usage
+      # plus every trusted launch receives that vault's broker environment while
+      # remaining on the shared default client profile. Launch targets: ↵ always
+      # runs the generated profile for the current facets through the managed
+      # layering (CODE_OMP); `m` runs managed defaults with no overlay; `u` opens
+      # the fixed untrusted sandbox (CODE_OMP_UNTRUSTED).
 
       usage() {
         printf '%s\n' \
@@ -1290,10 +1288,10 @@ let
           '  code -U, --no-usage  open without fetching the usage panel' \
           '  code -h, --help      this help' \
           "" \
-          'In the generator: type a prompt or adjust the dials, a switches the' \
-          'visible OMP auth combination, ? shows all keys, Enter launches the' \
-          'generated profile through the managed layering, m runs the managed' \
-          'defaults with no overlay, and u opens an untrusted sandbox.'
+          'In the generator: type a prompt or adjust the dials, a cycles enabled' \
+          'auth vaults, v opens the vault manager, and ? shows all keys. Enter' \
+          'launches through the managed layering, m runs the managed defaults' \
+          'with no overlay, and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in
@@ -1317,6 +1315,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     version = lib.getVersion omp;
 
     passthru = {
+      rawOmp = omp;
       inherit
         defaultsConfig
         neutralRoot

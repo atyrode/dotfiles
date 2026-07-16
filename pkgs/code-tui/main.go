@@ -5,9 +5,13 @@
 //	CODE_GENERATED     : generated.plain (facet-grid blocks, keyed by combo id)
 //	CODE_USAGE         : optional command (space-split) that prints `omp usage --json`
 //	CODE_SELECTION_STATE: optional persisted generator facet choices; empty disables it
-//	CODE_OMP           : the omp-managed executable — launches every trusted session:
-//	                     a generated profile as a one-shot --config, or the managed
-//	                     defaults when nothing was generated
+//	CODE_AUTH_VAULTS   : non-secret JSON manifest of selectable auth-broker vaults
+//	CODE_AUTH_STATE    : persisted {selected,disabled} vault state (0600, mutable)
+//	CODE_OMP           : the omp-managed executable — launches every trusted session
+//	                     on the shared `default` client profile with the selected
+//	                     vault's broker env: a generated profile as a one-shot
+//	                     --config, or the managed defaults when nothing was generated
+//	CODE_OMP_RAW       : plain omp, used for the per-vault login handoff
 //	CODE_OMP_UNTRUSTED : the ompu sandbox executable — launched by the u key
 package main
 
@@ -36,7 +40,7 @@ import (
 
 // ── keybindings (drive both input handling and the bubbles/help footer) ───────
 type keyMap struct {
-	Move, Change, Reset, Depth, Refresh, Auth, Collapse, Usage, Launch, Managed, Untrusted, Help, Quit key.Binding
+	Move, Change, Reset, Depth, Refresh, Auth, Manager, Collapse, Usage, Launch, Managed, Untrusted, Help, Quit key.Binding
 }
 
 // ShortHelp is a static single-line stand-in used only when measuring the
@@ -49,7 +53,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Move, k.Change, k.Reset},
-		{k.Depth, k.Refresh, k.Auth, k.Collapse, k.Usage},
+		{k.Depth, k.Refresh, k.Auth, k.Manager, k.Collapse, k.Usage},
 		{k.Launch, k.Managed, k.Untrusted, k.Help, k.Quit},
 	}
 }
@@ -60,7 +64,8 @@ var keys = keyMap{
 	Reset:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", gReset+" defaults")),
 	Depth:     key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "primary ⇄ full chains")),
 	Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh usage")),
-	Auth:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch profile")),
+	Auth:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch vault")),
+	Manager:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "manage vaults")),
 	Collapse:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "show/hide routing")),
 	Usage:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "show/hide usage")),
 	Launch:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "launch")),
@@ -256,14 +261,25 @@ type availability struct {
 	ok      bool
 }
 
-func loadAvailability(cmd, profile string) availability {
+// loadAvailability fetches usage for a vault. It always runs on the shared
+// `default` client profile (stripping any forwarded profile flag) and applies
+// the vault's broker env, loaded fresh from its token file — so the figures
+// reflect the vault's credentials while the client profile stays shared. A
+// missing/unreadable token or a failed command yields an unavailable result.
+func loadAvailability(cmd string, v vault) availability {
 	a := availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	if cmd == "" {
 		return a
 	}
+	env, err := brokerEnv(v)
+	if err != nil {
+		return a
+	}
 	parts := strings.Fields(cmd)
-	args := withOMPProfile(profile, parts[1:]...)
-	out, err := exec.Command(parts[0], args...).Output()
+	args := withOMPProfile("default", parts[1:]...)
+	c := exec.Command(parts[0], args...)
+	c.Env = withBrokerEnv(os.Environ(), env)
+	out, err := c.Output()
 	if err != nil || len(out) == 0 {
 		return a
 	}
@@ -1170,48 +1186,39 @@ func (m model) routingColW() int {
 
 // ── trackpad / mouse wheel ───────────────────────────────────────────────────
 // The wheel drives the generator directly: vertical scroll moves the facet
-// selection, horizontal scroll changes the selected facet's value. Terminals
-// (and SSH) offer no haptic channel, so the "detent" is temporal — and HARD:
-// a wheelGate axis-locks each gesture and grants exactly ONE step per
-// gesture; every further event (same-axis repeats and diagonal jitter alike)
-// is swallowed until an idle pause releases the detent. A single detented
-// wheel click still acts immediately. The hard detent is scoped to the
-// generator: the Routing viewport scrolls continuously (see wheelInRouting).
+// selection, horizontal scroll changes the selected facet's value. Terminal
+// mouse protocols expose direction-only press events — no magnitude, release,
+// or gesture identity — and different terminals emit different event counts
+// for the same physical motion. Coalesce one leading-edge step per Bubble Tea
+// render quantum: the first event acts immediately, same-direction momentum
+// and diagonal jitter are dropped before Update/View, and an explicit reversal
+// acts immediately. No raw event can extend the window, so scrolling never
+// inherits the old trailing-debounce lockout. Routing remains continuous.
+const wheelQuantum = time.Second / 60
+
 const (
 	wheelAxisNone = iota
 	wheelAxisV
 	wheelAxisH
 )
 
-// wheelIdle is the longest gap between wheel events that still reads as one
-// continuous gesture — only a pause beyond it (a release) re-arms the next
-// immediate step.
-const wheelIdle = 200 * time.Millisecond
-
-// wheelGate arbitrates raw wheel events into discrete facet steps.
-type wheelGate struct {
-	axis int       // locked gesture axis (wheelAxisNone when idle)
-	last time.Time // last event seen — any event keeps the gesture (and lock) alive
-}
-
-// admit reports whether a wheel event on axis a at time t may act. The first
-// event after an idle pause acts immediately and locks the gesture to its
-// axis; everything else inside the gesture — orthogonal jitter and same-axis
-// repeats — is swallowed. There is no held-gesture repeat: the pointer must
-// pause (or lift) for wheelIdle before the next step.
-func (g *wheelGate) admit(a int, t time.Time) bool {
-	fresh := g.axis == wheelAxisNone || t.Sub(g.last) > wheelIdle
-	g.last = t
-	if fresh {
-		g.axis = a
-		return true
-	}
-	return false
-}
-
 // admittedWheelMsg marks a generator wheel event admitted before Bubble Tea's
-// Update/render cycle. Routing wheel events remain ordinary tea.MouseMsgs.
-type admittedWheelMsg tea.MouseMsg
+// Update/render cycle and carries the generation of its bounded coalescing
+// window.
+type admittedWheelMsg struct {
+	tea.MouseMsg
+	generation uint64
+}
+
+// wheelWindowDoneMsg closes one render-quantum input window. It is consumed by
+// the pre-dispatch filter, so it does not trigger an otherwise-useless redraw.
+type wheelWindowDoneMsg struct{ generation uint64 }
+
+func wheelWindowCmd(generation uint64) tea.Cmd {
+	return tea.Tick(wheelQuantum, func(time.Time) tea.Msg {
+		return wheelWindowDoneMsg{generation: generation}
+	})
+}
 
 // wheelTarget is the layout state the pre-dispatch filter needs. Keeping this
 // interface narrow also lets the raw-input regression test wrap model while
@@ -1222,15 +1229,26 @@ type wheelTarget interface {
 }
 
 // wheelInputFilter removes mouse traffic before Bubble Tea's unconditional
-// redraw-after-Update. Generator momentum is hard-detented here; motion,
-// non-wheel presses, routing horizontal wheel, and clamped routing scroll are
-// dropped because none can change the view.
+// redraw-after-Update. Generator momentum is coalesced to one leading-edge step
+// per render quantum; motion, non-wheel presses, routing horizontal wheel, and
+// clamped routing scroll are dropped because none can change the view.
 type wheelInputFilter struct {
-	gate wheelGate
-	now  func() time.Time
+	open       bool
+	axis       int
+	button     tea.MouseButton
+	generation uint64
 }
 
 func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
+	if done, ok := msg.(wheelWindowDoneMsg); ok {
+		if done.generation == f.generation {
+			f.open = false
+			f.axis = wheelAxisNone
+			f.button = tea.MouseButtonNone
+		}
+		return nil
+	}
+
 	mouse, ok := msg.(tea.MouseMsg)
 	if !ok {
 		return msg
@@ -1251,6 +1269,7 @@ func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
 		}
 		return nil
 	}
+
 	axis := wheelAxisNone
 	switch mouse.Button {
 	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
@@ -1260,14 +1279,18 @@ func (f *wheelInputFilter) Filter(app tea.Model, msg tea.Msg) tea.Msg {
 	default:
 		return nil
 	}
-	now := time.Now()
-	if f.now != nil {
-		now = f.now()
+	if f.open {
+		// A same-axis reversal is new intent, not momentum. Orthogonal input is
+		// diagonal jitter for no longer than this one render quantum.
+		if axis != f.axis || mouse.Button == f.button {
+			return nil
+		}
 	}
-	if !f.gate.admit(axis, now) {
-		return nil
-	}
-	return admittedWheelMsg(mouse)
+	f.open = true
+	f.axis = axis
+	f.button = mouse.Button
+	f.generation++
+	return admittedWheelMsg{MouseMsg: mouse, generation: f.generation}
 }
 
 type model struct {
@@ -1287,8 +1310,6 @@ type model struct {
 	sel            map[string]string
 	selectionState string // CODE_SELECTION_STATE; empty keeps standalone runs stateless
 
-	wheel wheelGate // direct-Update detent; live input is admitted by wheelInputFilter before redraw
-
 	vp       viewport.Model
 	spin     spinner.Model
 	help     help.Model
@@ -1296,10 +1317,14 @@ type model struct {
 	rdy      bool
 	usageCmd string
 
-	authProfiles []authProfile
-	authIdx      int
-	authState    string
-	authErr      string
+	vaults     []vault
+	selected   string                  // active vault id
+	disabled   map[string]bool         // disabled vault ids (never includes the fallback)
+	vaultState string                  // CODE_AUTH_STATE path
+	vaultErr   string                  // last vault switch/persist/login error
+	vaultUsage map[string]availability // per-vault usage snapshots for the manager
+	manager    bool                    // v: the full-screen vault manager is open
+	mgrCursor  int                     // manager row cursor
 
 	fetching    bool      // a usage fetch is in flight (manual or auto)
 	nextRefresh time.Time // when the next auto-refresh fires
@@ -1324,19 +1349,34 @@ func tickCmd() tea.Cmd {
 }
 
 // usageMsg carries availability fetched off the main thread so startup never
-// blocks on `omp --profile <id> usage --json` (a network call). The profile ID
-// travels with the result so a slow response from the old profile cannot replace
-// the newly selected profile's usage after an auth switch.
+// blocks on the usage command (a network call). The vault id travels with the
+// result so a slow response is stored against its own vault: it can never
+// overwrite the detailed panel of a vault that has since become active, and the
+// manager keeps a per-vault snapshot regardless of which one is selected.
 type usageMsg struct {
-	profile string
-	avail   availability
+	vault string
+	avail availability
 }
 
-func fetchUsageCmd(cmd, profile string) tea.Cmd {
+func fetchUsageCmd(cmd string, v vault) tea.Cmd {
 	if cmd == "" {
 		return nil
 	}
-	return func() tea.Msg { return usageMsg{profile: profile, avail: loadAvailability(cmd, profile)} }
+	return func() tea.Msg { return usageMsg{vault: v.ID, avail: loadAvailability(cmd, v)} }
+}
+
+// fetchAllCmd refreshes every vault at once — the manager's whole-list view.
+func fetchAllCmd(cmd string, vaults []vault) tea.Cmd {
+	var cmds []tea.Cmd
+	for _, v := range vaults {
+		if c := fetchUsageCmd(cmd, v); c != nil {
+			cmds = append(cmds, c)
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // First-load bar fill: the per-profile-context animation that grows each usage
@@ -1362,7 +1402,7 @@ func (m model) Init() tea.Cmd {
 	if m.usageCmd == "" {
 		return nil
 	}
-	return tea.Batch(fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID), m.spin.Tick, tickCmd())
+	return tea.Batch(fetchUsageCmd(m.usageCmd, m.activeVault()), m.spin.Tick, tickCmd())
 }
 
 func (m model) listW() int {
@@ -1463,15 +1503,15 @@ func (m *model) usageCtrlLine() string {
 					stKey.Render("r")+stDim.Render(" now"))
 		}
 	}
-	if len(m.authProfiles) > 1 {
-		parts = append(parts, stKey.Render("a")+stDim.Render(" switch profile"))
+	if m.enabledCount() > 1 {
+		parts = append(parts, stKey.Render("a")+stDim.Render(" switch vault"))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	line := "  " + strings.Join(parts, stDim.Render("  ·  "))
-	if m.authErr != "" {
-		line += "\n" + stBrk.Render("  profile switch failed: "+m.authErr)
+	if m.vaultErr != "" {
+		line += "\n" + stBrk.Render("  vault switch failed: "+m.vaultErr)
 	}
 	return line
 }
@@ -1481,7 +1521,7 @@ func (m *model) usageCtrlLine() string {
 // profile — so mixed profiles (Claude (Mum) + Codex (Alex)) read correctly
 // with no prose equation, in text rather than color alone. The parenthesized
 // owner is dimmed so the provider name stays the heading's anchor.
-func providerHeading(prov string, p authProfile) string {
+func providerHeading(prov string, p vault) string {
 	col, name, acct := "#62a7ff", "Codex", p.Codex
 	if prov == "anthropic" {
 		col, name, acct = "#ff9f52", "Claude", p.Claude
@@ -1497,7 +1537,7 @@ func providerHeading(prov string, p authProfile) string {
 // the loading and error states keep the active identity visible even before
 // any usage rows exist.
 func (m *model) identityLines() string {
-	p := m.activeAuthProfile()
+	p := m.activeVault()
 	return padLeft(providerHeading("openai-codex", p), gut) + "\n" +
 		padLeft(providerHeading("anthropic", p), gut)
 }
@@ -1513,7 +1553,11 @@ func (m *model) usagePanel() string { return m.usagePanelFor(m.w) }
 // side by side only when w seats every column; w <= 0 forces the vertical
 // stack (the medium layout's narrow usage column).
 func (m *model) usagePanelFor(w int) string {
-	out := padLeft(m.pill("usage")+"  "+stCueKey.Render("s")+stCue.Render(" · hide"), gut) + "\n" +
+	title := m.pill("usage") + "  " + stCueKey.Render("s") + stCue.Render(" · hide")
+	if len(m.vaults) > 1 {
+		title += "  " + stCueKey.Render("v") + stCue.Render(" · vaults")
+	}
+	out := padLeft(title, gut) + "\n" +
 		"\n" + m.usageBodyFor(w)
 	if ctrl := m.usageCtrlLine(); ctrl != "" {
 		out += "\n\n" + ctrl // blank row: air between provider content and the control row
@@ -1525,20 +1569,20 @@ func (m *model) usagePanelFor(w int) string {
 // and the bottom control row: the identity-headed usage groups, or the
 // loading/unavailable identity block.
 func (m *model) usageBodyFor(w int) string {
-	p := m.activeAuthProfile()
+	p := m.activeVault()
 	if !m.avail.ok {
 		if m.usageLoading() {
 			return m.skeletonBody(w, p)
 		}
 		out := m.identityLines()
 		if m.usageCmd != "" && !m.fetching && !m.nextRefresh.IsZero() {
-			out += "\n" + stWarn.Render("  usage unavailable · authenticate with omp --profile "+p.ID)
+			out += "\n" + stWarn.Render("  usage unavailable · press v to manage vaults")
 		}
 		return out
 	}
 	if len(m.avail.wins) == 0 {
 		return m.identityLines() + "\n" +
-			stWarn.Render("  no provider usage · authenticate with omp --profile "+p.ID)
+			stWarn.Render("  no provider usage · press v to manage vaults")
 	}
 	wins := append([]usageWin(nil), m.avail.wins...)
 	provOrder := func(p string) int {
@@ -1636,7 +1680,7 @@ func skeletonRow(label string) string {
 // skeletonBody is the pre-first-fetch Usage content: the provider/account
 // headings with generic placeholder window rows, laid out by the same group
 // logic as real data so the first result lands without a layout pop.
-func (m *model) skeletonBody(w int, p authProfile) string {
+func (m *model) skeletonBody(w int, p vault) string {
 	order := []string{"openai-codex", "anthropic"}
 	blocks := map[string][]string{}
 	for _, prov := range order {
@@ -1934,8 +1978,11 @@ func (m model) contextHelp() helpKeys {
 	// bubbles truncates a compact line from the right on narrow terminals.
 	short = append(short, keys.Help, keys.Quit)
 	if !m.usageShown() {
-		if len(m.authProfiles) > 1 {
+		if m.enabledCount() > 1 {
 			short = append(short, keys.Auth)
+		}
+		if len(m.vaults) > 1 {
+			short = append(short, keys.Manager)
 		}
 		if m.usageCmd != "" && !m.fetching {
 			short = append(short, keys.Refresh)
@@ -1971,8 +2018,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 		m.relayout()
 	case usageMsg:
-		if msg.profile != m.activeAuthProfile().ID {
-			return m, nil // stale profile: never applied, never starts the fill
+		if m.vaultUsage == nil {
+			m.vaultUsage = map[string]availability{}
+		}
+		m.vaultUsage[msg.vault] = msg.avail // scoped snapshot for the manager
+		if msg.vault != m.activeVault().ID {
+			return m, nil // not the active vault: never touches the detailed panel or its fill
 		}
 		first := !m.hadUsage && msg.avail.ok
 		m.avail, m.usageStale = reconcileUsage(m.avail, msg.avail)
@@ -1986,6 +2037,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.barAnim = 1
 			return m, barAnimCmd(2)
 		}
+	case loginDoneMsg:
+		m.vaultErr = ""
+		if msg.err != nil {
+			m.vaultErr = "login failed: " + msg.err.Error()
+		}
+		for _, v := range m.vaults {
+			if v.ID != msg.vault {
+				continue
+			}
+			if v.ID == m.activeVault().ID {
+				m.fetching = m.usageCmd != ""
+			}
+			return m, fetchUsageCmd(m.usageCmd, v)
+		}
+		return m, nil
 	case barAnimMsg:
 		// Bounded and self-terminating: apply the frame, arm the next tick,
 		// and stop at the final step (barAnim 0 = inactive, bars at value).
@@ -2003,7 +2069,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd()}
 		if !m.fetching && !m.nextRefresh.IsZero() && !time.Now().Before(m.nextRefresh) {
 			m.fetching = true
-			cmds = append(cmds, fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID))
+			cmds = append(cmds, fetchUsageCmd(m.usageCmd, m.activeVault()))
 		}
 		return m, tea.Batch(cmds...)
 	case spinner.TickMsg:
@@ -2014,14 +2080,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case admittedWheelMsg:
 		m.applyWheelStep(msg.Button)
-		return m, nil
+		return m, wheelWindowCmd(msg.generation)
 	case tea.MouseMsg:
 		// Wheel dispatch by pointer position: inside the visible Routing pane
 		// the viewport owns vertical scrolling — continuous, ungated, clamped
 		// by the viewport itself, with horizontal wheel deliberately inert.
-		// Everywhere else the wheel drives the generator through the hard
-		// one-step-per-gesture detent (see wheelGate). Scrolling never touches
-		// the facet selection, so only real generator changes persist.
+		// Everywhere else direct Update calls apply one generator step; live
+		// input is coalesced before dispatch by wheelInputFilter.
 		if msg.Action == tea.MouseActionPress {
 			if m.wheelInRouting(msg.X, msg.Y) {
 				switch msg.Button {
@@ -2032,9 +2097,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			m.wheelStep(msg.Button, time.Now())
+			m.applyWheelStep(msg.Button)
 		}
 	case tea.KeyMsg:
+		if m.manager {
+			return m.updateManager(msg)
+		}
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
@@ -2067,22 +2135,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.usageCmd != "" && !m.fetching {
 				m.fetching = true
-				return m, fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID)
+				return m, fetchUsageCmd(m.usageCmd, m.activeVault())
 			}
 		case "a":
-			if len(m.authProfiles) > 1 {
-				if err := m.switchAuthProfile(); err != nil {
-					m.authErr = err.Error()
-					m.relayout()
-					break
-				}
-				m.authErr = ""
-				m.usageStale = false // the wiped avail belongs to the new profile; no stale carry-over
+			changed, err := m.cycleVault()
+			if err != nil {
+				m.vaultErr = err.Error()
+				m.relayout()
+				break
+			}
+			if changed {
+				m.vaultErr = ""
+				m.usageStale = false // the wiped avail belongs to the new vault; no stale carry-over
 				m.fetching = m.usageCmd != ""
 				m.relayout()
 				if m.fetching {
-					return m, fetchUsageCmd(m.usageCmd, m.activeAuthProfile().ID)
+					return m, fetchUsageCmd(m.usageCmd, m.activeVault())
 				}
+			}
+		case "v":
+			if len(m.vaults) > 0 {
+				m.manager = true
+				m.mgrCursor = m.activeIndex()
+				m.fetching = m.usageCmd != ""
+				m.relayout()
+				return m, fetchAllCmd(m.usageCmd, m.vaults)
 			}
 		case "up", "k":
 			m.moveUp()
@@ -2178,13 +2255,12 @@ func (m model) routingWheelCanMove(b tea.MouseButton) bool {
 	}
 }
 
-// wheelStep translates an admitted wheel event into the matching facet action:
-// vertical scroll moves the selection, horizontal scroll changes the value.
-// The raw mapping is INVERTED on both axes — operator-confirmed trackpad
+// applyWheelStep translates one admitted wheel event into the matching facet
+// action: vertical scroll moves the selection, horizontal scroll changes the
+// value. The raw mapping is INVERTED on both axes — operator-confirmed trackpad
 // direction: WheelUp moves the selection down, WheelDown up; WheelLeft cycles
-// to the next (right) option, WheelRight to the previous. Arrow keys keep
-// their literal semantics; the handlers themselves are untouched and merely
-// rationed by the wheelGate.
+// to the next (right) option, WheelRight to the previous. Arrow keys keep their
+// literal semantics.
 func (m *model) applyWheelStep(b tea.MouseButton) {
 	switch b {
 	case tea.MouseButtonWheelUp:
@@ -2195,19 +2271,6 @@ func (m *model) applyWheelStep(b tea.MouseButton) {
 		m.cycleFacet(1)
 	case tea.MouseButtonWheelRight:
 		m.cycleFacet(-1)
-	}
-}
-
-func (m *model) wheelStep(b tea.MouseButton, t time.Time) {
-	axis := wheelAxisNone
-	switch b {
-	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
-		axis = wheelAxisV
-	case tea.MouseButtonWheelLeft, tea.MouseButtonWheelRight:
-		axis = wheelAxisH
-	}
-	if axis != wheelAxisNone && m.wheel.admit(axis, t) {
-		m.applyWheelStep(b)
 	}
 }
 
@@ -2356,6 +2419,9 @@ func (m model) View() string {
 	if !m.rdy {
 		return "loading…"
 	}
+	if m.manager {
+		return m.managerView()
+	}
 	foot := m.footer()
 	bodyH := m.bodyH()
 	ch := m.contentH()
@@ -2471,9 +2537,9 @@ func main() {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	generated := loadBlocks(os.Getenv("CODE_GENERATED"))
-	authProfiles := parseAuthProfiles(os.Getenv("CODE_AUTH_PROFILES"))
-	authState := os.Getenv("CODE_AUTH_STATE")
-	authIdx := selectedAuthIndex(authProfiles, authState)
+	vaults := parseVaults(os.Getenv("CODE_AUTH_VAULTS"))
+	vaultState := os.Getenv("CODE_AUTH_STATE")
+	selected, disabled := loadVaultState(vaults, vaultState)
 	facets := facetDefs(glyphs)
 	selectionState := os.Getenv("CODE_SELECTION_STATE")
 	m := model{
@@ -2482,9 +2548,11 @@ func main() {
 		facts:          parseFacts(generated["__models__"]),
 		avail:          availability{bucket: map[string]string{}, reset: map[string]int64{}},
 		usageCmd:       os.Getenv("CODE_USAGE"),
-		authProfiles:   authProfiles,
-		authIdx:        authIdx,
-		authState:      authState,
+		vaults:         vaults,
+		selected:       selected,
+		disabled:       disabled,
+		vaultState:     vaultState,
+		vaultUsage:     map[string]availability{},
 		fetching:       os.Getenv("CODE_USAGE") != "",
 		spin:           sp,
 		help:           help.New(),
@@ -2503,26 +2571,64 @@ func main() {
 		os.Exit(1)
 	}
 	fm, _ := final.(model)
-	profile := fm.activeAuthProfile().ID
 	switch {
 	case fm.launchUntrusted:
-		// The sandbox owns the fixed `untrusted` profile and must never inherit the
-		// selected personal auth state.
-		execForward("CODE_OMP_UNTRUSTED", "ompu", fm.firstPrompt, "")
+		// The sandbox owns its own fixed profile and must never inherit the
+		// selected vault's broker env — no forced default, no broker vars.
+		runExec("CODE_OMP_UNTRUSTED", "ompu", sandboxLaunchArgv, fm.firstPrompt, nil)
 	case fm.launchManaged:
-		// m — omp-managed on the managed defaults, no generated overlay, inside
-		// the selected auth profile. Plain omp is reached by typing `omp` directly.
-		execForward("CODE_OMP", "omp-managed", fm.firstPrompt, profile)
+		// m — omp-managed on the managed defaults, no generated overlay, on the
+		// shared default client profile with the selected vault's broker env.
+		runExec("CODE_OMP", "omp-managed", managedLaunchArgv, fm.firstPrompt, mustBrokerEnv(fm))
 	case fm.genConfig != "":
-		launchGenerated(fm.genConfig, fm.firstPrompt, profile)
+		launchGenerated(fm.genConfig, fm.firstPrompt, mustBrokerEnv(fm))
 	}
 }
 
-// execForward execs the launcher named by env (falling back to a bare command
-// name on PATH), forwarding this process's args plus, when non-empty, the typed
-// prompt as a trailing first message. The selected OMP profile is inserted before
-// forwarded arguments; an empty profile is reserved for the fixed ompu sandbox.
-func execForward(env, fallback, prompt, profile string) {
+// mustBrokerEnv loads the active vault's broker environment for a trusted
+// launch, aborting rather than launching with absent/stale credentials.
+func mustBrokerEnv(m model) []string {
+	env, err := brokerEnv(m.activeVault())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "code: vault token unavailable:", err)
+		os.Exit(1)
+	}
+	return env
+}
+
+// forwardArgv builds an exec argv: the resolved path, the forwarded args with
+// the given client profile forced (any forwarded --profile stripped first), and
+// the optional trailing suggest-box prompt.
+func forwardArgv(path, profile string, forwarded []string, prompt string) []string {
+	out := append([]string{path}, withOMPProfile(profile, forwarded...)...)
+	if prompt != "" {
+		out = append(out, prompt)
+	}
+	return out
+}
+
+// managedLaunchArgv and sandboxLaunchArgv are the two trusted/sandbox argv
+// forms. Trusted launches force the shared `default` client profile; the
+// sandbox strips the profile entirely (it owns its own fixed one).
+func managedLaunchArgv(path string, forwarded []string, prompt string) []string {
+	return forwardArgv(path, "default", forwarded, prompt)
+}
+
+func sandboxLaunchArgv(path string, forwarded []string, prompt string) []string {
+	return forwardArgv(path, "", forwarded, prompt)
+}
+
+// generatedLaunchArgv prepends the one-shot generated --config, then forces the
+// shared default client profile like every other trusted launch.
+func generatedLaunchArgv(path, cfgPath string, forwarded []string, prompt string) []string {
+	args := append([]string{"--config", cfgPath}, forwarded...)
+	return forwardArgv(path, "default", args, prompt)
+}
+
+// runExec execs the launcher named by env (falling back to a bare command name
+// on PATH), forwarding this process's args via argv and overlaying extraEnv (the
+// vault broker environment) onto the inherited environment.
+func runExec(env, fallback string, argv func(string, []string, string) []string, prompt string, extraEnv []string) {
 	cmd := os.Getenv(env)
 	if cmd == "" {
 		cmd = fallback
@@ -2532,22 +2638,19 @@ func execForward(env, fallback, prompt, profile string) {
 		fmt.Fprintln(os.Stderr, "code: not found:", err)
 		os.Exit(1)
 	}
-	args := append([]string{path}, withOMPProfile(profile, os.Args[1:]...)...)
-	if prompt != "" { // forward the suggest-box prompt as the first message
-		args = append(args, prompt)
-	}
-	if err := syscall.Exec(path, args, os.Environ()); err != nil {
+	args := argv(path, os.Args[1:], prompt)
+	if err := syscall.Exec(path, args, withBrokerEnv(os.Environ(), extraEnv)); err != nil {
 		fmt.Fprintln(os.Stderr, "code: exec:", err)
 		os.Exit(1)
 	}
 }
 
 // launchGenerated writes the generated routing to a temp file and execs the
-// managed omp wrapper with it as a single one-shot --config. The wrapper itself
-// supplies the platform extensions, managed defaults, and policy (and caps the
-// overlay), so we must NOT re-layer defaults/policy here — doing so both
-// double-applies them and breaks when their paths aren't valid from the cwd.
-func launchGenerated(cfg, prompt, profile string) {
+// managed omp wrapper with it as a single one-shot --config, on the shared
+// default client profile with the selected vault's broker env. The wrapper
+// supplies the platform extensions, managed defaults, and policy, so we must
+// NOT re-layer defaults/policy here.
+func launchGenerated(cfg, prompt string, extraEnv []string) {
 	tmp, err := os.CreateTemp("", "code-gen-*.yml")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "code:", err)
@@ -2564,12 +2667,8 @@ func launchGenerated(cfg, prompt, profile string) {
 		fmt.Fprintln(os.Stderr, "code: omp not found:", err)
 		os.Exit(1)
 	}
-	forwarded := append([]string{"--config", tmp.Name()}, os.Args[1:]...)
-	args := append([]string{path}, withOMPProfile(profile, forwarded...)...)
-	if prompt != "" { // forward the suggest-box prompt as omp's first message
-		args = append(args, prompt)
-	}
-	if err := syscall.Exec(path, args, os.Environ()); err != nil {
+	args := generatedLaunchArgv(path, tmp.Name(), os.Args[1:], prompt)
+	if err := syscall.Exec(path, args, withBrokerEnv(os.Environ(), extraEnv)); err != nil {
 		fmt.Fprintln(os.Stderr, "code: exec:", err)
 		os.Exit(1)
 	}

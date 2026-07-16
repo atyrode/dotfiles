@@ -11,14 +11,16 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
   "main" sub-dial that hands Fable the default-agent role; that escalation is manual
   only, never suggested); a local prompt→profile classifier
   (running on the resident ollama daemon) suggests settings. The usage widget
-  names the active OMP authentication combination; **`a`** switches it and
-  refreshes usage from that profile. **Enter** launches:
-  - with nothing changed → bare `omp` in the selected auth profile;
-  - after a prompt or a dial change → the **generated** routing profile, layered over the
-    managed defaults and policy, in that same auth profile.
+  names the active authentication vault; **`a`** cycles enabled vaults and
+  **`v`** opens the vault manager for all-vault usage, selection, enable/disable,
+  refresh, and provider login. **Enter** launches the generated routing profile,
+  layered over the managed defaults and policy. Every trusted launch and usage
+  fetch stays in the shared OMP client profile `default` while the selected
+  auth-broker vault supplies credentials.
 
-  Press **`u`** to open the fixed untrusted sandbox for the current directory,
-  or `?` for all keys.
+  Press **`m`** to launch the managed defaults without a generated overlay,
+  **`u`** to open the fixed untrusted sandbox for the current directory, or `?`
+  for all keys.
 - **`omp`** — passthrough to your own **unmanaged** `~/.omp` config (the one mutable base;
   `omp update` is blocked since the package is Nix-managed).
 - **`omp-managed`** — the managed-layering primitive: platform extensions + managed defaults
@@ -46,15 +48,17 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
 
 - The managed config (`defaults.yml`, `policy.yml`, `untrusted.yml`) and the generated
   routing grid are **baked into the package**.
-- Your bare `omp` configuration remains mutable; `code` only selects its OMP
-  state root at launch time.
-- The wrapper reads named combinations from
-  `$XDG_CONFIG_HOME/atyrode/code-auth-profiles.json`; `CODE_AUTH_PROFILES` can
-  override that file with a JSON array of `{id, label, claude, codex}` objects.
-  Without either source it exposes only OMP's `default` profile, keeping the
-  standalone package neutral. The dotfiles' Home Manager module owns the file.
-- Every usage fetch runs against the selected profile, so the displayed quota
-  and the profile used for the subsequent launch cannot diverge.
+- Your bare `omp` configuration remains mutable. `code` keeps trusted client
+  sessions/settings in profile `default` and changes only its auth-broker
+  environment.
+- The wrapper reads non-secret vault metadata from
+  `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; `CODE_AUTH_VAULTS` can
+  override it. Without either source it falls back to the local OMP `default`
+  profile, keeping the standalone package neutral. The dotfiles' Home Manager
+  module owns the managed manifest and loopback broker services.
+- Broker bearer tokens remain mutable mode-0600 files outside the Nix store and
+  are read fresh for each usage fetch or launch. The selected vault therefore
+  cannot diverge between the displayed quota and subsequent session.
 
 ## How the managed layering stays reliable
 

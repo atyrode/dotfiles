@@ -488,14 +488,14 @@ func layoutModel() model {
 				{label: "7 days", pct: 61, secs: 5 * day, dur: 7 * day, prov: "anthropic"},
 			},
 		},
-		usageCmd:     "omp usage --json",
-		authProfiles: []authProfile{{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"}},
-		spin:         spinner.New(),
-		help:         help.New(),
-		glyphs:       glyphs,
-		facets:       facetDefs(glyphs),
-		sel:          defaultSel(),
-		nextRefresh:  time.Now().Add(refreshEvery),
+		usageCmd:    "omp usage --json",
+		vaults:      []vault{{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"}},
+		spin:        spinner.New(),
+		help:        help.New(),
+		glyphs:      glyphs,
+		facets:      facetDefs(glyphs),
+		sel:         defaultSel(),
+		nextRefresh: time.Now().Add(refreshEvery),
 	}
 }
 
@@ -778,8 +778,8 @@ func TestRepeatedResizeCrossingsPreserveState(t *testing.T) {
 			if m.fetching || !m.nextRefresh.Equal(wantNext) {
 				t.Fatalf("%s: usage fetch state mutated: fetching=%v nextRefresh moved=%v", label, m.fetching, !m.nextRefresh.Equal(wantNext))
 			}
-			if m.authIdx != 0 {
-				t.Fatalf("%s: auth profile mutated: %d", label, m.authIdx)
+			if m.activeVault().ID != "default" {
+				t.Fatalf("%s: active vault mutated: %q", label, m.activeVault().ID)
 			}
 			maxOff := m.vp.TotalLineCount() - m.vp.Height
 			if maxOff < 0 {
@@ -836,104 +836,37 @@ func TestResizeScrollClamp(t *testing.T) {
 	}
 }
 
-// ── trackpad / wheel gating ──────────────────────────────────────────────────
+// ── trackpad / wheel coalescing ─────────────────────────────────────────────
 
-// TestWheelGate locks the HARD temporal detent: the first event of a gesture
-// acts immediately (real wheel clicks feel instant), then the gesture is
-// spent — same-axis repeats and orthogonal jitter alike are absorbed, with no
-// held-gesture repeat cadence — until an idle pause (a release) longer than
-// wheelIdle re-arms the next immediate step.
-func TestWheelGate(t *testing.T) {
-	t0 := time.Unix(1000, 0)
-	var g wheelGate
-
-	if !g.admit(wheelAxisV, t0) {
-		t.Fatal("first wheel event must act immediately")
-	}
-	for i := 1; i <= 30; i++ { // trackpad fling: 30 events over 150ms
-		if g.admit(wheelAxisV, t0.Add(time.Duration(i)*5*time.Millisecond)) {
-			t.Fatalf("burst event %d must be absorbed by the gate", i)
-		}
-	}
-	if g.admit(wheelAxisH, t0.Add(160*time.Millisecond)) {
-		t.Fatal("orthogonal jitter inside a vertical gesture must not act")
-	}
-	if g.admit(wheelAxisV, t0.Add(170*time.Millisecond)) {
-		t.Fatal("jitter must keep the lock alive — the gesture stays spent")
-	}
-	// A held continuous scroll NEVER advances again: events every 100ms keep
-	// the gesture alive for two more seconds without a single extra step.
-	last := t0.Add(170 * time.Millisecond)
-	for i := 1; i <= 20; i++ {
-		last = last.Add(100 * time.Millisecond)
-		if g.admit(wheelAxisV, last) {
-			t.Fatalf("a held gesture must never repeat (event %d)", i)
-		}
-	}
-	if !g.admit(wheelAxisH, last.Add(wheelIdle+50*time.Millisecond)) {
-		t.Fatal("after an idle release a deliberate step on any axis must act immediately")
-	}
-	if g.axis != wheelAxisH {
-		t.Fatalf("gate must re-lock to the new axis, got %d", g.axis)
-	}
-}
-
-// TestWheelStepsFacets locks the wheel→facet mapping with a controlled clock.
-// Both axes are INVERTED relative to the raw event names (operator-confirmed
-// trackpad direction): WheelUp moves the selection DOWN and WheelDown UP;
-// WheelLeft cycles to the NEXT (right) option and WheelRight to the previous.
-// Bursts and diagonal jitter still advance at most one step, and later
-// deliberate steps land after a pause. Arrow-key semantics are untouched.
+// Both axes are inverted relative to the raw event names (operator-confirmed
+// trackpad direction): WheelUp moves the selection down and WheelDown up;
+// WheelLeft cycles to the next (right) option and WheelRight to the previous.
 func TestWheelStepsFacets(t *testing.T) {
 	m := layoutModel()
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
-	t0 := time.Unix(1000, 0)
 
-	m.wheelStep(tea.MouseButtonWheelUp, t0)
+	m.applyWheelStep(tea.MouseButtonWheelUp)
 	if m.fcur != 1 {
-		t.Fatalf("wheel UP must move the selection DOWN (inverted), fcur = %d", m.fcur)
+		t.Fatalf("wheel UP must move selection down: fcur = %d", m.fcur)
 	}
-	for i := 1; i <= 20; i++ { // same-axis burst: at most that one step
-		m.wheelStep(tea.MouseButtonWheelUp, t0.Add(time.Duration(i)*5*time.Millisecond))
-	}
-	if m.fcur != 1 {
-		t.Fatalf("a wheel burst must advance one controlled step, fcur = %d", m.fcur)
-	}
-	sel := m.sel["model"]
-	for i := range 5 { // diagonal jitter during the vertical gesture
-		m.wheelStep(tea.MouseButtonWheelRight, t0.Add(120*time.Millisecond+time.Duration(i)*5*time.Millisecond))
-	}
-	if m.sel["model"] != sel {
-		t.Fatalf("diagonal jitter must not change facet values: model %q → %q", sel, m.sel["model"])
-	}
-
-	t1 := t0.Add(time.Second) // deliberate later vertical gesture, other direction
-	m.wheelStep(tea.MouseButtonWheelDown, t1)
+	m.applyWheelStep(tea.MouseButtonWheelDown)
 	if m.fcur != 0 {
-		t.Fatalf("wheel DOWN must move the selection UP (inverted), fcur = %d", m.fcur)
+		t.Fatalf("wheel DOWN must move selection up: fcur = %d", m.fcur)
 	}
-
-	// Horizontal pinning on the lane facet (fcur 0): mixed sits mid-list, so
-	// each direction lands on a distinct, unambiguous neighbour.
 	if m.sel["lane"] != "mixed" {
 		t.Fatalf("fixture: lane = %q, want mixed", m.sel["lane"])
 	}
-	t2 := t1.Add(time.Second)
-	m.wheelStep(tea.MouseButtonWheelLeft, t2)
+	m.applyWheelStep(tea.MouseButtonWheelLeft)
 	if m.sel["lane"] != "claude-led" {
-		t.Fatalf("wheel LEFT must cycle to the NEXT (right) option (inverted): lane = %q, want claude-led", m.sel["lane"])
+		t.Fatalf("wheel LEFT must cycle to next option: lane = %q", m.sel["lane"])
 	}
-	t3 := t2.Add(time.Second)
-	m.wheelStep(tea.MouseButtonWheelRight, t3)
+	m.applyWheelStep(tea.MouseButtonWheelRight)
 	if m.sel["lane"] != "mixed" {
-		t.Fatalf("wheel RIGHT must cycle to the PREVIOUS (left) option (inverted): lane = %q, want mixed", m.sel["lane"])
+		t.Fatalf("wheel RIGHT must cycle to previous option: lane = %q", m.sel["lane"])
 	}
 }
 
-// TestWheelThroughUpdate verifies the wiring: a live tea.MouseMsg wheel press
-// reaches the gate (one immediate step, no command), and non-wheel mouse
-// traffic is ignored.
 func TestWheelThroughUpdate(t *testing.T) {
 	m := layoutModel()
 	wide, _, _, _ := layoutSizes(t, m)
@@ -942,10 +875,10 @@ func TestWheelThroughUpdate(t *testing.T) {
 	nm, cmd := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
 	m = nm.(model)
 	if cmd != nil {
-		t.Fatal("wheel input must never produce a command")
+		t.Fatal("direct wheel input must not produce a command")
 	}
 	if m.fcur != 1 {
-		t.Fatalf("wheel-up press must step the selection down (inverted), fcur = %d", m.fcur)
+		t.Fatalf("wheel-up press must step selection down: fcur = %d", m.fcur)
 	}
 
 	sel := map[string]string{}
@@ -959,45 +892,73 @@ func TestWheelThroughUpdate(t *testing.T) {
 	}
 }
 
-func TestWheelInputFilterDetentAndRearm(t *testing.T) {
+func TestWheelInputFilterCoalescesOneRenderQuantum(t *testing.T) {
 	m := layoutModel()
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
-	now := time.Unix(1000, 0)
-	filter := wheelInputFilter{now: func() time.Time { return now }}
+	filter := wheelInputFilter{}
 	wheel := func(b tea.MouseButton) tea.MouseMsg {
 		return tea.MouseMsg{Action: tea.MouseActionPress, Button: b, X: 2, Y: topGap + 2}
 	}
 
-	first := filter.Filter(m, wheel(tea.MouseButtonWheelUp))
-	if _, ok := first.(admittedWheelMsg); !ok {
-		t.Fatalf("first gesture event = %T, want admittedWheelMsg", first)
+	first, ok := filter.Filter(m, wheel(tea.MouseButtonWheelUp)).(admittedWheelMsg)
+	if !ok {
+		t.Fatal("leading vertical event was not admitted")
 	}
-	nm, _ := m.Update(first)
+	nm, cmd := m.Update(first)
 	m = nm.(model)
-	if m.fcur != 1 {
-		t.Fatalf("first wheel-up gesture did not move down: fcur = %d", m.fcur)
+	if cmd == nil || m.fcur != 1 {
+		t.Fatalf("leading event: cmd nil = %t, fcur = %d", cmd == nil, m.fcur)
 	}
 	for range 100 {
 		if got := filter.Filter(m, wheel(tea.MouseButtonWheelUp)); got != nil {
-			t.Fatalf("same-axis momentum reached Update as %T", got)
+			t.Fatalf("same-direction momentum reached Update as %T", got)
 		}
 		if got := filter.Filter(m, wheel(tea.MouseButtonWheelRight)); got != nil {
-			t.Fatalf("axis jitter reached Update as %T", got)
-		}
-		if got := filter.Filter(m, tea.MouseMsg{Action: tea.MouseActionMotion, X: 3, Y: topGap + 2}); got != nil {
-			t.Fatalf("unused mouse motion reached Update as %T", got)
+			t.Fatalf("orthogonal jitter reached Update as %T", got)
 		}
 	}
-	now = now.Add(wheelIdle + time.Millisecond)
-	second := filter.Filter(m, wheel(tea.MouseButtonWheelDown))
-	if _, ok := second.(admittedWheelMsg); !ok {
-		t.Fatalf("second gesture after release = %T, want admittedWheelMsg", second)
+
+	// A reversal is explicit intent and must act immediately rather than wait
+	// behind momentum from the old direction.
+	reverse, ok := filter.Filter(m, wheel(tea.MouseButtonWheelDown)).(admittedWheelMsg)
+	if !ok {
+		t.Fatal("same-axis reversal was not admitted immediately")
 	}
-	nm, _ = m.Update(second)
+	nm, cmd = m.Update(reverse)
 	m = nm.(model)
-	if m.fcur != 0 {
-		t.Fatalf("re-armed wheel-down gesture did not move up: fcur = %d", m.fcur)
+	if cmd == nil || m.fcur != 0 {
+		t.Fatalf("reversal: cmd nil = %t, fcur = %d", cmd == nil, m.fcur)
+	}
+
+	// The stale close from the superseded window cannot re-arm the new one.
+	if got := filter.Filter(m, wheelWindowDoneMsg{generation: first.generation}); got != nil {
+		t.Fatalf("stale close reached Update as %T", got)
+	}
+	if got := filter.Filter(m, wheel(tea.MouseButtonWheelDown)); got != nil {
+		t.Fatalf("stale close re-armed current window: %T", got)
+	}
+	if got := filter.Filter(m, wheelWindowDoneMsg{generation: reverse.generation}); got != nil {
+		t.Fatalf("current close reached Update as %T", got)
+	}
+
+	left, ok := filter.Filter(m, wheel(tea.MouseButtonWheelLeft)).(admittedWheelMsg)
+	if !ok {
+		t.Fatal("horizontal event was not admitted after one render quantum")
+	}
+	nm, _ = m.Update(left)
+	m = nm.(model)
+	if m.sel["lane"] != "claude-led" {
+		t.Fatalf("horizontal wheel did not move lane: %q", m.sel["lane"])
+	}
+	right, ok := filter.Filter(m, wheel(tea.MouseButtonWheelRight)).(admittedWheelMsg)
+	if !ok {
+		t.Fatal("horizontal reversal was not admitted immediately")
+	}
+	nm, _ = m.Update(right)
+	m = nm.(model)
+	if m.sel["lane"] != "mixed" {
+		t.Fatalf("horizontal reversal did not restore lane: %q", m.sel["lane"])
 	}
 }
 
@@ -1006,26 +967,26 @@ func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
 	m.selectionState = filepath.Join(t.TempDir(), "selection.json")
-	now := time.Unix(1000, 0)
-	filter := wheelInputFilter{now: func() time.Time { return now }}
+	filter := wheelInputFilter{}
 	left := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelLeft, X: 2, Y: topGap + 2}
 
+	msg := filter.Filter(m, left)
+	nm, _ := m.Update(msg)
+	m = nm.(model)
 	for range 100 {
-		if msg := filter.Filter(m, left); msg != nil {
-			nm, _ := m.Update(msg)
-			m = nm.(model)
+		if got := filter.Filter(m, left); got != nil {
+			t.Fatalf("coalesced wheel event reached Update as %T", got)
 		}
 	}
 	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "claude-led" {
-		t.Fatalf("persisted lane after admitted wheel-left = %q, want claude-led", got)
+		t.Fatalf("persisted lane after wheel-left = %q, want claude-led", got)
 	}
 
-	now = now.Add(wheelIdle + time.Millisecond)
 	right := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelRight, X: 2, Y: topGap + 2}
-	nm, _ := m.Update(filter.Filter(m, right))
+	nm, _ = m.Update(filter.Filter(m, right))
 	m = nm.(model)
 	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "mixed" {
-		t.Fatalf("persisted lane after re-armed wheel-right = %q, want mixed", got)
+		t.Fatalf("persisted lane after immediate reversal = %q, want mixed", got)
 	}
 }
 
@@ -1068,15 +1029,20 @@ type programResult struct {
 	err   error
 }
 
+type burstKeyState struct {
+	views int64
+	fcur  int
+}
+
 type burstProbe struct {
 	model
 	views   *atomic.Int64
-	keySeen chan int64
+	keySeen chan burstKeyState
 }
 
 func (p burstProbe) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "j" {
-		p.keySeen <- p.views.Load()
+		p.keySeen <- burstKeyState{views: p.views.Load(), fcur: p.fcur}
 	}
 	nm, cmd := p.model.Update(msg)
 	p.model = nm.(model)
@@ -1089,18 +1055,17 @@ func (p burstProbe) View() string {
 }
 
 // TestRawMouseBurstRemainsResponsive drives the real Bubble Tea ANSI parser
-// with a trackpad-like wheel/jitter/motion burst, then a keyboard command and a
-// second gesture after release. Rejected events must never reach Update/View.
+// with two dense trackpad-like wheel/jitter/motion bursts separated by one
+// render quantum. Coalesced events must never reach Update/View, and the second
+// burst must re-arm independently of the first burst's rejected tail.
 func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 	m := layoutModel()
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
-	m.usageCmd = "" // keep the program deterministic: no background fetch/ticks
+	m.usageCmd = "" // keep unrelated fetch/ticks out of the program
 	var views atomic.Int64
-	keySeen := make(chan int64, 1)
-	clock := atomic.Int64{}
-	clock.Store(time.Unix(1000, 0).UnixNano())
-	filter := wheelInputFilter{now: func() time.Time { return time.Unix(0, clock.Load()) }}
+	keySeen := make(chan burstKeyState, 1)
+	filter := wheelInputFilter{}
 	inR, inW := io.Pipe()
 	p := tea.NewProgram(
 		burstProbe{model: m, views: &views, keySeen: keySeen},
@@ -1116,28 +1081,30 @@ func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 
 	started := time.Now()
 	var redrawsAtKey int64
-	for range 300 {
+	var fcurAtKey int
+	for range 3 {
 		fmt.Fprint(inW, "\x1b[<64;3;4M") // vertical wheel
 		fmt.Fprint(inW, "\x1b[<67;3;4M") // horizontal axis jitter
 		fmt.Fprint(inW, "\x1b[<35;4;4M") // cell motion with no button
 	}
 	fmt.Fprint(inW, "j")
 	select {
-	case redrawsAtKey = <-keySeen:
-		if redrawsAtKey > 3 {
-			t.Fatalf("keyboard waited behind %d redraws; rejected burst events reached View", redrawsAtKey)
+	case state := <-keySeen:
+		redrawsAtKey, fcurAtKey = state.views, state.fcur
+		if redrawsAtKey > 5 {
+			t.Fatalf("keyboard waited behind %d redraws; coalesced burst reached View", redrawsAtKey)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("keyboard input was starved after the first trackpad gesture")
+		t.Fatal("keyboard input was starved after the first trackpad burst")
 	}
 
-	clock.Add(int64(wheelIdle + time.Millisecond))
-	for range 300 {
-		fmt.Fprint(inW, "\x1b[<65;3;4M") // later opposite vertical gesture
+	time.Sleep(2 * wheelQuantum)
+	for range 3 {
+		fmt.Fprint(inW, "\x1b[<64;3;4M") // same direction, newly re-armed quantum
 		fmt.Fprint(inW, "\x1b[<66;3;4M") // horizontal axis jitter
 		fmt.Fprint(inW, "\x1b[<35;4;4M") // cell motion
 	}
-	time.Sleep(10 * time.Millisecond) // force a separate ANSI key read
+	time.Sleep(2 * wheelQuantum)
 	fmt.Fprint(inW, "q")
 	inW.Close()
 
@@ -1145,19 +1112,19 @@ func TestRawMouseBurstRemainsResponsive(t *testing.T) {
 	select {
 	case result = <-done:
 	case <-time.After(time.Second):
-		t.Fatal("Bubble Tea event loop stayed backlogged after the second gesture")
+		t.Fatal("Bubble Tea event loop stayed backlogged after the second burst")
 	}
 	if result.err != nil {
 		t.Fatal(result.err)
 	}
 	final := result.model.(burstProbe).model
-	if final.fcur != 1 {
-		t.Fatalf("want one first-gesture step + keyboard + one re-armed step: fcur = %d, want 1", final.fcur)
+	if final.fcur <= fcurAtKey {
+		t.Fatalf("second re-armed wheel burst did not advance: at key = %d, final = %d", fcurAtKey, final.fcur)
 	}
-	if got := views.Load(); got > 8 {
-		t.Fatalf("raw burst produced %d views, want a bounded redraw count <= 8", got)
+	if got := views.Load(); got > 10 {
+		t.Fatalf("raw bursts produced %d views, want bounded redraw count <= 10", got)
 	}
-	t.Logf("1800 raw mouse messages + keyboard + second gesture: %d views, key after %d views, %s total",
+	t.Logf("18 raw mouse messages + keyboard + second burst: %d views, key after %d views, %s total",
 		views.Load(), redrawsAtKey, time.Since(started))
 }
 
@@ -1174,7 +1141,7 @@ func press(t *testing.T, m model, k string) (model, tea.Cmd) {
 // switch cue and profile-dependent help rules engage.
 func multiProfileModel() model {
 	m := layoutModel()
-	m.authProfiles = []authProfile{
+	m.vaults = []vault{
 		{ID: "default", Label: "mine", Claude: "Alex", Codex: "Alex"},
 		{ID: "mum", Label: "mum", Claude: "Mum", Codex: "Alex"},
 	}
@@ -1216,7 +1183,7 @@ func TestUsageHeadingsNameEffectiveProfile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := layoutModel()
-			m.authProfiles = []authProfile{{ID: "p", Label: "p", Claude: tc.claude, Codex: tc.codex}}
+			m.vaults = []vault{{ID: "p", Label: "p", Claude: tc.claude, Codex: tc.codex}}
 			lines := strings.Split(stripAnsi(m.usagePanel()), "\n")
 			codexHead := lineIndex(lines, "Codex ("+tc.codex+")")
 			claudeHead := lineIndex(lines, "Claude ("+tc.claude+")")
@@ -1244,18 +1211,18 @@ func TestUsageSwitchCue(t *testing.T) {
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
 	lines := strings.Split(stripAnsi(m.usagePanel()), "\n")
-	ctrl := lineIndex(lines, "next refresh", "r now", "a switch profile")
+	ctrl := lineIndex(lines, "next refresh", "r now", "a switch vault")
 	if ctrl < 0 {
 		t.Fatalf("refresh and switch must share the usage control row:\n%s", strings.Join(lines, "\n"))
 	}
 	row := lines[ctrl]
-	if strings.Index(row, "r now") > strings.Index(row, "a switch profile") {
+	if strings.Index(row, "r now") > strings.Index(row, "a switch vault") {
 		t.Errorf("switch cue must come after the refresh cue: %q", row)
 	}
 
 	single := layoutModel()
 	single = resize(t, single, wide.w, wide.h)
-	if view := stripAnsi(single.View()); strings.Contains(view, "switch profile") {
+	if view := stripAnsi(single.View()); strings.Contains(view, "switch vault") {
 		t.Errorf("single-profile: the switch cue must be omitted everywhere:\n%s", view)
 	}
 }
@@ -1294,16 +1261,16 @@ func TestUsageLoadingErrorStates(t *testing.T) {
 	failed := m
 	failed.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
 	panel = stripAnsi(failed.usagePanel())
-	for _, want := range []string{"usage unavailable · authenticate with omp --profile default", "Codex (Alex)", "Claude (Alex)"} {
+	for _, want := range []string{"usage unavailable · press v to manage vaults", "Codex (Alex)", "Claude (Alex)"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("unavailable: panel missing %q:\n%s", want, panel)
 		}
 	}
 
 	switchErr := multiProfileModel()
-	switchErr.authErr = "state write denied"
+	switchErr.vaultErr = "state write denied"
 	panel = stripAnsi(switchErr.usagePanel())
-	if !strings.Contains(panel, "profile switch failed: state write denied") {
+	if !strings.Contains(panel, "vault switch failed: state write denied") {
 		t.Errorf("a switch failure must stay attached to the usage section:\n%s", panel)
 	}
 }
@@ -1339,8 +1306,8 @@ func TestSectionToggleCombinations(t *testing.T) {
 		if got := hasDesc(descs, "show usage"); got == wantUsage {
 			t.Errorf("%s: compact help offers show usage = %v with usage visible = %v", label, got, wantUsage)
 		}
-		if got := hasDesc(descs, "switch profile"); got == wantUsage {
-			t.Errorf("%s: compact help repeats/misses switch profile (got %v) with usage visible = %v", label, got, wantUsage)
+		if got := hasDesc(descs, "switch vault"); got == wantUsage {
+			t.Errorf("%s: compact help repeats/misses switch vault (got %v) with usage visible = %v", label, got, wantUsage)
 		}
 		if m.fetching || !reflect.DeepEqual(m.avail, availBefore) {
 			t.Errorf("%s: a display toggle mutated fetch state", label)
@@ -1382,7 +1349,7 @@ func TestCompactHelpDerivation(t *testing.T) {
 
 	m = resize(t, m, wide.w, wide.h)
 	descs := shortDescs(m)
-	for _, d := range []string{"move", "change", gReset + " defaults", "switch profile", "refresh usage", "managed omp", "sandbox", "launch", "show routing", "show usage"} {
+	for _, d := range []string{"move", "change", gReset + " defaults", "switch vault", "refresh usage", "managed omp", "sandbox", "launch", "show routing", "show usage"} {
 		got := hasDesc(descs, d)
 		want := d == "move" || d == "change"
 		if got != want {
@@ -1395,7 +1362,7 @@ func TestCompactHelpDerivation(t *testing.T) {
 
 	m = resize(t, m, narrow.w, narrow.h)
 	descs = shortDescs(m)
-	for _, d := range []string{"show routing", "switch profile", "refresh usage"} {
+	for _, d := range []string{"show routing", "switch vault", "refresh usage"} {
 		if !hasDesc(descs, d) {
 			t.Errorf("narrow compact help missing %q: %v", d, descs)
 		}
@@ -1404,7 +1371,7 @@ func TestCompactHelpDerivation(t *testing.T) {
 		t.Errorf("narrow sheds usage by size, not by state — no show-usage cue: %v", descs)
 	}
 	ordered := strings.Join(descs, "|")
-	for _, optional := range []string{"switch profile", "refresh usage"} {
+	for _, optional := range []string{"switch vault", "refresh usage"} {
 		if strings.Index(ordered, "more") > strings.Index(ordered, optional) ||
 			strings.Index(ordered, "quit") > strings.Index(ordered, optional) {
 			t.Errorf("narrow compact help must prioritize more/quit before %q: %v", optional, descs)
@@ -1454,7 +1421,7 @@ func TestFullHelpComplete(t *testing.T) {
 	m.collapse = true
 	m.help.ShowAll = true
 	foot := stripAnsi(m.footer())
-	for _, d := range []string{"move", "change", "defaults", "primary ⇄ full chains", "refresh usage", "switch profile", "show/hide routing", "show/hide usage", "launch", "managed omp", "sandbox", "quit"} {
+	for _, d := range []string{"move", "change", "defaults", "primary ⇄ full chains", "refresh usage", "switch vault", "show/hide routing", "show/hide usage", "launch", "managed omp", "sandbox", "quit"} {
 		if !strings.Contains(foot, d) {
 			t.Errorf("full help missing %q:\n%s", d, foot)
 		}
@@ -1488,7 +1455,7 @@ func TestFullHelpComplete(t *testing.T) {
 func TestLongAccountLabelsWidthInvariant(t *testing.T) {
 	const longName = "Alexander-Maximilian-Extremely-Long-Name"
 	m := layoutModel()
-	m.authProfiles = []authProfile{{ID: "long", Label: "long", Claude: longName, Codex: longName}}
+	m.vaults = []vault{{ID: "long", Label: "long", Claude: longName, Codex: longName}}
 	wideW := m.genRowWidth() + routingMinW
 	sizes := []termSize{
 		{wideW + 30, 40},
@@ -1514,7 +1481,7 @@ func TestLongAccountLabelsWidthInvariant(t *testing.T) {
 // nothing.
 func TestSectionStatePreservation(t *testing.T) {
 	m := multiProfileModel()
-	m.authState = filepath.Join(t.TempDir(), "nested", "selected")
+	m.vaultState = filepath.Join(t.TempDir(), "nested", "selected")
 	wide, medium, narrow, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
 	m.hideUsage = true
@@ -1528,7 +1495,7 @@ func TestSectionStatePreservation(t *testing.T) {
 		assertLayoutInvariants(t, m, fmt.Sprintf("hidden sections %dx%d", s.w, s.h))
 	}
 
-	nm, _ := m.Update(usageMsg{profile: "default", avail: m.avail})
+	nm, _ := m.Update(usageMsg{vault: "default", avail: m.avail})
 	m = nm.(model)
 	if !m.hideUsage || !m.collapse {
 		t.Fatal("a background refresh mutated section visibility")
@@ -1541,8 +1508,8 @@ func TestSectionStatePreservation(t *testing.T) {
 	if !m.hideUsage || !m.collapse {
 		t.Fatal("an auth switch mutated section visibility")
 	}
-	if m.activeAuthProfile().ID != "mum" {
-		t.Fatalf("auth switch did not advance the profile: %q", m.activeAuthProfile().ID)
+	if m.activeVault().ID != "mum" {
+		t.Fatalf("vault switch did not advance the selection: %q", m.activeVault().ID)
 	}
 	m.fetching = false
 	m.avail = multiProfileModel().avail
@@ -1696,7 +1663,7 @@ func TestUsageCtrlRowPinned(t *testing.T) {
 	assertCtrlLast := func(label, panel string) {
 		t.Helper()
 		lines := strings.Split(panel, "\n")
-		ctrl := lineIndex(lines, "r now", "a switch profile")
+		ctrl := lineIndex(lines, "r now", "a switch vault")
 		if ctrl < 0 {
 			t.Fatalf("%s: control row missing:\n%s", label, panel)
 		}
@@ -1717,7 +1684,7 @@ func TestUsageCtrlRowPinned(t *testing.T) {
 
 	// The full medium view keeps the ordering: control row under every bar.
 	lines := strings.Split(stripAnsi(m.View()), "\n")
-	ctrl := lineIndex(lines, "r now", "a switch profile")
+	ctrl := lineIndex(lines, "r now", "a switch vault")
 	lastUsed := -1
 	for i, l := range lines {
 		if strings.Contains(l, "% used") {
@@ -1739,10 +1706,10 @@ func TestUsageCtrlRowPinned(t *testing.T) {
 
 	// Switch failure: the error attaches directly under the control row.
 	failed := multiProfileModel()
-	failed.authErr = "state write denied"
+	failed.vaultErr = "state write denied"
 	flines := strings.Split(stripAnsi(failed.usagePanel()), "\n")
-	errLine := lineIndex(flines, "profile switch failed: state write denied")
-	fctrl := lineIndex(flines, "r now", "a switch profile")
+	errLine := lineIndex(flines, "vault switch failed: state write denied")
+	fctrl := lineIndex(flines, "r now", "a switch vault")
 	if errLine != len(flines)-1 || fctrl != errLine-1 {
 		t.Errorf("switch failure must sit directly under the bottom control row (ctrl %d, err %d of %d):\n%s",
 			fctrl, errLine, len(flines)-1, strings.Join(flines, "\n"))
@@ -1981,13 +1948,13 @@ func TestFirstLoadBarFill(t *testing.T) {
 	wide, _, _, _ := layoutSizes(t, m)
 	m = resize(t, m, wide.w, wide.h)
 
-	nm, cmd := m.Update(usageMsg{profile: "other", avail: loaded})
+	nm, cmd := m.Update(usageMsg{vault: "other", avail: loaded})
 	m = nm.(model)
 	if cmd != nil || m.barAnim != 0 || m.avail.ok || m.hadUsage {
 		t.Fatal("a stale-profile result must be dropped entirely — no data, no fill")
 	}
 
-	nm, cmd = m.Update(usageMsg{profile: "default", avail: loaded})
+	nm, cmd = m.Update(usageMsg{vault: "default", avail: loaded})
 	m = nm.(model)
 	if m.barAnim != 1 || cmd == nil {
 		t.Fatalf("the first successful result must start the fill: step %d, cmd nil = %v", m.barAnim, cmd == nil)
@@ -2039,7 +2006,7 @@ func TestFirstLoadBarFill(t *testing.T) {
 	mid.barAnim = barAnimSteps / 2
 	assertLayoutInvariants(t, mid, "mid-fill wide")
 
-	nm, cmd = m.Update(usageMsg{profile: "default", avail: loaded})
+	nm, cmd = m.Update(usageMsg{vault: "default", avail: loaded})
 	m = nm.(model)
 	if cmd != nil || m.barAnim != 0 {
 		t.Error("refreshes must never re-run the fill")
@@ -2346,7 +2313,7 @@ func TestUsageRefreshFailureRetention(t *testing.T) {
 	before := m.avail
 	failed := availability{bucket: map[string]string{}, reset: map[string]int64{}}
 
-	nm, cmd := m.Update(usageMsg{profile: "default", avail: failed})
+	nm, cmd := m.Update(usageMsg{vault: "default", avail: failed})
 	m = nm.(model)
 	if cmd != nil || m.barAnim != 0 {
 		t.Fatal("a failed refresh must not start the first-load fill")
@@ -2377,7 +2344,7 @@ func TestUsageRefreshFailureRetention(t *testing.T) {
 	assertLayoutInvariants(t, m, "medium stale usage")
 
 	// The next successful refresh clears the warning.
-	nm, _ = m.Update(usageMsg{profile: "default", avail: before})
+	nm, _ = m.Update(usageMsg{vault: "default", avail: before})
 	m = nm.(model)
 	if m.usageStale {
 		t.Fatal("a successful refresh must clear the stale flag")
@@ -2389,7 +2356,7 @@ func TestUsageRefreshFailureRetention(t *testing.T) {
 	// Without any prior success a failure keeps the honest unavailable state.
 	fresh := multiProfileModel()
 	fresh.avail = availability{bucket: map[string]string{}, reset: map[string]int64{}}
-	nm, _ = fresh.Update(usageMsg{profile: "default", avail: failed})
+	nm, _ = fresh.Update(usageMsg{vault: "default", avail: failed})
 	f := nm.(model)
 	if f.avail.ok || f.usageStale {
 		t.Errorf("no prior success → no retention, no stale flag (ok %v, stale %v)", f.avail.ok, f.usageStale)

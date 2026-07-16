@@ -674,6 +674,7 @@
           # fast path builds directly and scripts/docs-drift-guard.sh excludes.
           docs-links = import ./checks/docs-links.nix { inherit lib pkgs; };
           docs-drift-guard = import ./checks/docs-drift-guard.nix { inherit pkgs; };
+          classify-ci-paths = import ./checks/classify-ci-paths.nix { inherit pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           go-fmt = import ./checks/go-fmt.nix { inherit lib pkgs; };
           nixfmt = import ./checks/nixfmt.nix { inherit lib pkgs; };

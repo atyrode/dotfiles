@@ -65,14 +65,3 @@ func (m model) askWorkspaceView(width int) string {
 	}, "\n")
 	return clikit.Panel(width, body)
 }
-
-func (m model) pendingWorkspaceView(width int) string {
-	item, _ := m.nav.ActiveItem()
-	body := strings.Join([]string{
-		titleStyle.Render(item.Label),
-		"",
-		clikit.StDim.Render(workspacePurpose(item.ID)),
-		clikit.StDim.Render("This workspace is being connected to its existing atyrode JSON contract."),
-	}, "\n")
-	return clikit.Panel(width, body)
-}

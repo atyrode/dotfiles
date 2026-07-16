@@ -55,7 +55,7 @@ func (m *model) activateWorkspace(id clikit.WorkspaceID) tea.Cmd {
 		}
 		return m.loadLifecycle()
 	case workspaceDoctor:
-		if m.doctorReportMissing(m.doctorTab) && !m.doctorLoading[m.doctorTab] {
+		if m.doctorReportUnrequested(m.doctorTab) && !m.doctorLoading[m.doctorTab] {
 			return m.startDoctor(m.doctorTab)
 		}
 	case workspaceCapability:
@@ -112,12 +112,15 @@ func (m model) shellFooter() string {
 	return clikit.ClipLines(clikit.StDim.Render(text), width)
 }
 
-// workspaceBodyHeight reserves the shared shell title, tabs, footer, section
-// gaps, panel borders/title, and one local control row. Workspaces cap their
-// clipped lists with this value instead of preallocating unused terminal rows.
+// workspaceBodyHeight reserves the shared shell and panel chrome plus each
+// workspace's local tabs and controls. Workspaces cap clipped lists with this
+// value instead of preallocating unused terminal rows.
 func (m model) workspaceBodyHeight() int {
-	const shellAndPanelChromeRows = 12
-	return max(1, m.height-shellAndPanelChromeRows)
+	chromeRows := 12
+	if m.nav.Active() == workspaceDoctor {
+		chromeRows++
+	}
+	return max(1, m.height-chromeRows)
 }
 
 func intersperse(values []string, separator string) []string {

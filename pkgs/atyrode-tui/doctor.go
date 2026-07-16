@@ -153,7 +153,7 @@ func (m *model) startDoctor(tab doctorTab) tea.Cmd {
 	}
 	m.doctorGeneration++
 	generation := m.doctorGeneration
-	m.doctorLoading[tab], m.doctorErrors[tab] = true, nil
+	m.doctorRequested[tab], m.doctorLoading[tab], m.doctorErrors[tab] = true, true, nil
 	ctx, cancel := context.WithCancel(context.Background())
 	m.doctorCancel = cancel
 	runner, cli := m.runner, m.cli
@@ -176,6 +176,11 @@ func (m *model) cancelDoctor() {
 	}
 	if m.doctorLoading[doctorHostTab] || m.doctorLoading[doctorSystemTab] || m.doctorLoading[doctorToolsTab] {
 		m.doctorGeneration++
+		for tab := range m.doctorLoading {
+			if m.doctorLoading[tab] {
+				m.doctorRequested[tab] = false
+			}
+		}
 		m.doctorLoading = [3]bool{}
 	}
 }
@@ -188,9 +193,8 @@ func (m *model) doctorRefresh() tea.Cmd {
 	return m.startDoctor(m.doctorTab)
 }
 
-func (m model) doctorReportMissing(tab doctorTab) bool {
-	report := m.doctorReports[tab]
-	return report.host == nil && report.system == nil && report.tools == nil
+func (m model) doctorReportUnrequested(tab doctorTab) bool {
+	return !m.doctorRequested[tab]
 }
 
 func (m *model) doctorUpdate(key string) tea.Cmd {
@@ -212,13 +216,15 @@ func (m *model) doctorUpdate(key string) tea.Cmd {
 	case "pgdown":
 		m.doctorCursor = clampCursor(m.doctorCursor+m.paneBodyHeight(), len(m.doctorRows(m.contentPanelWidth()-4)))
 	}
-	if m.doctorReportMissing(m.doctorTab) && !m.doctorLoading[m.doctorTab] {
+	if m.doctorReportUnrequested(m.doctorTab) && !m.doctorLoading[m.doctorTab] {
 		return m.startDoctor(m.doctorTab)
 	}
 	return nil
 }
 
 func (m *model) capabilitiesWorkspaceUpdate(key string) tea.Cmd {
+	_, panelWidth := m.horizontalLayout()
+	rowCount := len(m.capabilitiesWorkspaceRows(panelWidth))
 	switch key {
 	case "r":
 		if m.plan.ResolvedRevision == "" {
@@ -233,13 +239,13 @@ func (m *model) capabilitiesWorkspaceUpdate(key string) tea.Cmd {
 	case "right", "]":
 		*m = m.cycleCapability(1)
 	case "up", "k":
-		m.capabilityCursor = clampCursor(m.capabilityCursor-1, len(m.capabilityRows()))
+		m.capabilityCursor = clampCursor(m.capabilityCursor-1, rowCount)
 	case "down", "j":
-		m.capabilityCursor = clampCursor(m.capabilityCursor+1, len(m.capabilityRows()))
+		m.capabilityCursor = clampCursor(m.capabilityCursor+1, rowCount)
 	case "pgup":
-		m.capabilityCursor = clampCursor(m.capabilityCursor-m.paneBodyHeight(), len(m.capabilityRows()))
+		m.capabilityCursor = clampCursor(m.capabilityCursor-m.paneBodyHeight(), rowCount)
 	case "pgdown":
-		m.capabilityCursor = clampCursor(m.capabilityCursor+m.paneBodyHeight(), len(m.capabilityRows()))
+		m.capabilityCursor = clampCursor(m.capabilityCursor+m.paneBodyHeight(), rowCount)
 	}
 	return nil
 }
@@ -313,12 +319,17 @@ func truncateDoctorRow(row string, width int) string {
 	return ansi.Truncate(row, width, "…")
 }
 
+func (m model) capabilitiesWorkspaceRows(width int) []string {
+	bodyWidth := max(1, clikit.PanelContentWidth(width)-1)
+	return m.capabilityRowsForWidth(max(1, bodyWidth-1))
+}
+
 func (m model) capabilitiesWorkspaceView(width int) string {
 	if m.plan.ResolvedRevision == "" {
 		return clikit.Panel(width, titleStyle.Render("Capabilities")+"\n\n"+clikit.StDim.Render("Open Apply to resolve the current host and exact revision."))
 	}
 	bodyWidth := max(1, clikit.PanelContentWidth(width)-1)
-	rows := m.capabilityRowsForWidth(max(1, bodyWidth-1))
+	rows := m.capabilitiesWorkspaceRows(width)
 	bodyHeight := min(max(1, len(rows)), m.workspaceBodyHeight())
 	body := clikit.WindowList(rows, m.capabilityCursor, bodyHeight, bodyWidth)
 	return clikit.Panel(width, titleStyle.Render("Capabilities")+"\n\n"+body+"\n\n"+clikit.StDim.Render("r refresh · ←/→ capability · ↑/↓ scroll"))

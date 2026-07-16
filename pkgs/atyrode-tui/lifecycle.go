@@ -14,11 +14,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const (
-	defaultCleanKeep      = 5
-	defaultCleanKeepSince = "30d"
-)
-
 type lifecyclePhase int
 
 const (
@@ -228,7 +223,7 @@ func (m *model) lifecycleUpdate(key string) tea.Cmd {
 		case lifecycleRollbackConfirming, lifecycleCleanConfirming:
 			m.lifecyclePhase = lifecycleBrowsing
 			m.lifecycleStatus = "Cancelled — nothing changed."
-		case lifecycleRollbackPreviewing, lifecycleCleanPreviewing, lifecycleMutating:
+		case lifecycleRollbackPreviewing, lifecycleCleanPreviewing:
 			m.cancelLifecycle()
 			m.lifecycleGeneration++
 			m.lifecyclePhase, m.lifecycleStatus = lifecycleBrowsing, "Cancelled — nothing changed."
@@ -258,14 +253,18 @@ func (m *model) lifecycleUpdate(key string) tea.Cmd {
 	return nil
 }
 
-func (m *model) handleLifecycleMsg(msg lifecycleMsg) {
+func (m *model) handleLifecycleMsg(msg lifecycleMsg) tea.Cmd {
 	if msg.generation != m.lifecycleGeneration {
-		return
+		return nil
 	}
 	m.lifecycleCancel, m.lifecycleLoading = nil, false
+	if msg.err != nil && msg.action == loadGenerations && m.lifecyclePhase == lifecycleSucceeded {
+		m.lifecycleStatus += " Refresh failed: " + msg.err.Error()
+		return nil
+	}
 	if msg.err != nil {
 		m.lifecycleErr, m.lifecyclePhase = msg.err, lifecycleFailed
-		return
+		return nil
 	}
 	switch msg.action {
 	case loadGenerations:
@@ -276,9 +275,12 @@ func (m *model) handleLifecycleMsg(msg lifecycleMsg) {
 		m.clean, m.lifecyclePhase = msg.clean, lifecycleCleanConfirming
 	case executeRollback:
 		m.lifecyclePreview, m.lifecycleStatus, m.lifecyclePhase = msg.output, fmt.Sprintf("Rolled back to generation %d.", m.lifecycleTarget), lifecycleSucceeded
+		return m.loadLifecycle()
 	case executeClean:
 		m.lifecyclePreview, m.lifecycleStatus, m.lifecyclePhase = msg.output, "Clean completed successfully.", lifecycleSucceeded
+		return m.loadLifecycle()
 	}
+	return nil
 }
 
 func boundedLifecycleOutput(out []byte) string {

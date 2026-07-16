@@ -145,6 +145,74 @@ func TestLifecycleStaleAndFailureRepliesStayLocal(t *testing.T) {
 	}
 }
 
+func TestConfirmedLifecycleMutationCannotBeCancelledOrQuit(t *testing.T) {
+	cancelled := false
+	m := lifecycleTestModel(t, runnerFunc(func(context.Context, string, ...string) ([]byte, error) { return nil, nil }))
+	m.lifecyclePhase = lifecycleMutating
+	m.lifecycleCancel = func() { cancelled = true }
+
+	if cmd := m.lifecycleUpdate("n"); cmd != nil {
+		t.Fatal("n scheduled work during confirmed mutation")
+	}
+	if cancelled || m.lifecyclePhase != lifecycleMutating {
+		t.Fatalf("n interrupted confirmed mutation: cancelled=%t phase=%v", cancelled, m.lifecyclePhase)
+	}
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = next.(model)
+	if cancelled || cmd != nil || m.lifecyclePhase != lifecycleMutating {
+		t.Fatalf("q interrupted confirmed mutation: cancelled=%t cmd=%v phase=%v", cancelled, cmd, m.lifecyclePhase)
+	}
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(model)
+	if cmd != nil || m.nav.Active() != workspaceLifecycle {
+		t.Fatalf("Tab left confirmed mutation: active=%q cmd=%v", m.nav.Active(), cmd)
+	}
+}
+
+func TestLifecycleSuccessReloadsAuthoritativeGenerations(t *testing.T) {
+	m := lifecycleTestModel(t, runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(`[
+			{"generation":42,"date":"2026-07-14 10:00:00","current":true},
+			{"generation":43,"date":"2026-07-15 10:00:00","current":false}
+		]`), nil
+	}))
+	m.lifecycleGeneration = 7
+	m.lifecyclePhase = lifecycleMutating
+	m.lifecycleTarget = 42
+	m.generations = []generation{{Generation: 42, Date: "old", Current: false}, {Generation: 43, Date: "old", Current: true}}
+
+	cmd := m.handleLifecycleMsg(lifecycleMsg{generation: 7, action: executeRollback, output: "activated"})
+	if cmd == nil || !m.lifecycleLoading {
+		t.Fatalf("successful mutation did not start refresh: cmd=%v loading=%t", cmd, m.lifecycleLoading)
+	}
+	next, _ := m.Update(cmd())
+	m = next.(model)
+	if len(m.generations) != 2 || !m.generations[0].Current || m.generations[1].Current {
+		t.Fatalf("authoritative generations were not refreshed: %#v", m.generations)
+	}
+}
+
+func TestLifecycleRefreshFailurePreservesSuccessfulMutation(t *testing.T) {
+	m := lifecycleTestModel(t, runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("inventory unavailable")
+	}))
+	m.lifecycleGeneration = 9
+	m.lifecyclePhase = lifecycleMutating
+	m.lifecycleTarget = 42
+
+	cmd := m.handleLifecycleMsg(lifecycleMsg{generation: 9, action: executeRollback, output: "activated"})
+	next, _ := m.Update(cmd())
+	m = next.(model)
+	if m.lifecyclePhase != lifecycleSucceeded || m.lifecycleErr != nil {
+		t.Fatalf("refresh failure replaced mutation success: phase=%v err=%v", m.lifecyclePhase, m.lifecycleErr)
+	}
+	for _, want := range []string{"Rolled back to generation 42.", "Refresh failed:", "inventory unavailable"} {
+		if !strings.Contains(m.lifecycleStatus, want) {
+			t.Fatalf("mutation status missing %q: %q", want, m.lifecycleStatus)
+		}
+	}
+}
+
 func TestLifecycleRenderingIsBounded(t *testing.T) {
 	m := lifecycleTestModel(t, runnerFunc(func(context.Context, string, ...string) ([]byte, error) { return nil, nil }))
 	m.width, m.height = 44, 12

@@ -62,6 +62,63 @@ func TestDoctorCancelsAndRejectsStaleReply(t *testing.T) {
 	}
 }
 
+func TestDoctorFailureWaitsForExplicitRefresh(t *testing.T) {
+	calls := 0
+	m := newModel("atyrode")
+	m.doctorTab = doctorSystemTab
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		return nil, errors.New("exit status 65")
+	})
+	cmd := m.startDoctor(doctorSystemTab)
+	next, _ := m.Update(cmd())
+	m = next.(model)
+
+	if cmd := m.doctorUpdate("j"); cmd != nil {
+		t.Fatal("failed Doctor report retried on navigation")
+	}
+	if calls != 1 || m.doctorErrors[doctorSystemTab] == nil {
+		t.Fatalf("failed Doctor request calls=%d error=%v", calls, m.doctorErrors[doctorSystemTab])
+	}
+	if cmd := m.doctorUpdate("r"); cmd == nil {
+		t.Fatal("explicit Doctor refresh did not retry")
+	}
+}
+
+func TestCancelledDoctorTabCanBeRequestedAgain(t *testing.T) {
+	m := newModel("atyrode")
+	m.runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(doctorHostJSON), nil
+	})
+	if cmd := m.startDoctor(doctorHostTab); cmd == nil {
+		t.Fatal("initial Doctor request was not started")
+	}
+	if cmd := m.startDoctor(doctorSystemTab); cmd == nil {
+		t.Fatal("switching Doctor tabs did not start the next report")
+	}
+	if m.doctorRequested[doctorHostTab] {
+		t.Fatal("cancelled Doctor request remained marked requested")
+	}
+	if cmd := m.startDoctor(doctorHostTab); cmd == nil {
+		t.Fatal("cancelled Doctor tab could not be requested again")
+	}
+}
+
+func TestDoctorFullListStaysInsideTerminalHeight(t *testing.T) {
+	m := newModel("atyrode")
+	m.width, m.height = 80, 20
+	m.nav.Select(workspaceDoctor)
+	m.doctorTab = doctorToolsTab
+	m.doctorRequested[doctorToolsTab] = true
+	m.doctorReports[doctorToolsTab].tools = make([]doctorTool, 20)
+	for i := range m.doctorReports[doctorToolsTab].tools {
+		m.doctorReports[doctorToolsTab].tools[i] = doctorTool{Name: "tool", Capability: "base", Status: "ok"}
+	}
+	if rows := len(strings.Split(m.View(), "\n")); rows > m.height {
+		t.Fatalf("Doctor view rendered %d rows into %d-row terminal", rows, m.height)
+	}
+}
+
 func TestDoctorTabsShowPartialFailureAndStayBounded(t *testing.T) {
 	m := newModel("atyrode")
 	m.width, m.height = 30, 12
@@ -94,5 +151,25 @@ func TestStandaloneCapabilitiesWaitForApplyIdentityAndRetainInventory(t *testing
 	m.inventory = readyInventoryModel(80).inventory
 	if view := stripTerminalControls(m.capabilitiesWorkspaceView(44)); !strings.Contains(view, "Base") {
 		t.Fatalf("inventory was not retained: %q", view)
+	}
+}
+
+func TestStandaloneCapabilitiesScrollUsesRenderedWidth(t *testing.T) {
+	m := newModel("atyrode")
+	m.width, m.height = 150, 30
+	m.nav.Select(workspaceCapability)
+	m.plan.ResolvedRevision = testRevision
+	m.inventoryRequested = true
+	m.inventory = readyInventoryModel(80).inventory
+	_, panelWidth := m.horizontalLayout()
+	standaloneRows := m.capabilitiesWorkspaceRows(panelWidth)
+	if len(standaloneRows) == len(m.capabilityRows()) {
+		t.Fatal("capability fixture does not distinguish standalone and Apply pane widths")
+	}
+
+	m.capabilityCursor = len(standaloneRows) - 1
+	m.capabilitiesWorkspaceUpdate("j")
+	if m.capabilityCursor != len(standaloneRows)-1 {
+		t.Fatalf("standalone cursor escaped rendered rows: cursor=%d rows=%d", m.capabilityCursor, len(standaloneRows))
 	}
 }

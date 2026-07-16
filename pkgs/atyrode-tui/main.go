@@ -180,6 +180,7 @@ type model struct {
 	doctorReports    [3]doctorReport
 	doctorErrors     [3]error
 	doctorLoading    [3]bool
+	doctorRequested  [3]bool
 	doctorTab        doctorTab
 	doctorCursor     int
 	doctorGeneration uint64
@@ -485,8 +486,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case lifecycleMsg:
-		m.handleLifecycleMsg(msg)
-		return m, nil
+		return m, m.handleLifecycleMsg(msg)
 	case applyDoneMsg:
 		if msg.err != nil {
 			m.phase, m.err = failed, fmt.Errorf("apply failed: %w", msg.err)
@@ -496,6 +496,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+		if m.lifecyclePhase == lifecycleMutating {
+			switch key {
+			case "ctrl+c", "q", "tab", "shift+tab":
+				return m, nil
+			}
+			if _, ok := workspaceForShortcut(key); ok {
+				return m, nil
+			}
+		}
 		switch key {
 		case "ctrl+c", "q":
 			m.cancelInspections()

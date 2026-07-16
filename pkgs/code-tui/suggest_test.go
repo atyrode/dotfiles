@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
 )
 
 func TestValidFacetActions(t *testing.T) {

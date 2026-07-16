@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
 )
 
 func (m model) overviewView(width int) string {

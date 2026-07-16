@@ -255,7 +255,6 @@
         "atyrode-agent-tools-migrate"
         "atyrode"
         "atyrode-tui"
-        "cli-kit"
         "code-tui"
         "codex"
         "atyrode-codex-seed"
@@ -278,7 +277,6 @@
             atyrode-tui = final.callPackage ./pkgs/atyrode-tui { };
             # Repository-owned on every platform: upstream releases outpace
             # nixpkgs, which also cannot build codex on aarch64-darwin.
-            cli-kit = final.callPackage ./pkgs/cli-kit { };
             code-tui = final.callPackage ./pkgs/code-tui { };
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-seed = final.callPackage ./pkgs/codex-seed { };
@@ -492,7 +490,6 @@
             agent-tools-migrate
             atyrode
             atyrode-tui
-            cli-kit
             code-tui
             codex
             codex-seed
@@ -640,9 +637,6 @@
               .${system};
           };
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
-          # cli-kit is library-only, so no build depends on its derivation;
-          # exposing it as a check is what makes CI run its unit tests.
-          cli-kit = pkgs.cli-kit;
           codex-seed = import ./checks/codex-seed.nix { inherit lib pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit lib pkgs; };

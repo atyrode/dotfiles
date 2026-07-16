@@ -1,8 +1,8 @@
 package main
 
 import (
-	clikit "cli-kit"
 	"fmt"
+	clikit "github.com/atyrode/cli-kit"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"

@@ -15,7 +15,8 @@ import (
 
 	inventorydata "atyrode-tui/inventory"
 	previewdata "atyrode-tui/preview"
-	clikit "cli-kit"
+	clikit "github.com/atyrode/cli-kit"
+	ompkit "github.com/atyrode/cli-kit/omp"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -224,7 +225,7 @@ func execApply(cli string, args ...string) tea.Cmd {
 }
 
 func newAskBackend(docs clikit.DocCorpus) clikit.Asker {
-	asker := clikit.NewOmpAsker(docs)
+	asker := ompkit.NewAsker(docs)
 	asker.ReplaceSystem = true
 	return asker
 }

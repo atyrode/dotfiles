@@ -6,20 +6,22 @@
 buildGoModule {
   pname = "atyrode-tui";
   version = "0.1.0";
+  # cli-kit is a published module (github.com/atyrode/cli-kit) since its
+  # extraction, so the source is just this directory and the vendor FOD is plain
+  # vendoring: the hash moves on any go.mod/go.sum change (e.g. a cli-kit bump).
   src = lib.fileset.toSource {
-    root = ./..;
+    root = ./.;
     fileset = lib.fileset.unions [
-      ./.
-      ../cli-kit
+      (lib.fileset.fileFilter (f: f.hasExt "go") ./.)
+      ./go.mod
+      ./go.sum
     ];
   };
-  modRoot = "atyrode-tui";
   subPackages = [
     "."
     "cmd/atyrode-preview-parser"
   ];
-  proxyVendor = true;
-  vendorHash = "sha256-8Ay9Rav9W+kM84C4DUqCZuwUJJ70nphS3tG6gdoTv64=";
+  vendorHash = "sha256-JpezTkfJ6J8W/8onXYK+oRl++JksH6+x67Sk+bcHd/U=";
 
   meta = {
     description = "Interactive Bubble Tea cockpit for atyrode";

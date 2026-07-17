@@ -1,7 +1,7 @@
 {
   fetchurl,
   lib,
-  makeWrapper,
+  patchelf,
   stdenv,
 }:
 
@@ -42,23 +42,25 @@ stdenv.mkDerivation {
   dontPatchELF = true;
   dontStrip = true;
 
-  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ];
+  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ patchelf ];
 
   installPhase = ''
     runHook preInstall
 
-    ${
-      if stdenv.hostPlatform.isLinux then
-        ''
-          install -Dm755 "$src" "$out/libexec/omp"
-          makeWrapper ${stdenv.cc.bintools.dynamicLinker} "$out/bin/omp" \
-            --add-flags "$out/libexec/omp"
-        ''
-      else
-        ''
-          install -Dm755 "$src" "$out/bin/omp"
-        ''
-    }
+    install -Dm755 "$src" "$out/bin/omp"
+
+    ${lib.optionalString stdenv.hostPlatform.isLinux ''
+      # omp is a Bun single-file executable that re-execs itself
+      # (process.execPath) to spawn its subprocess workers
+      # (__omp_worker_stt & co). Launching it through an ld.so wrapper
+      # turns execPath into the loader, so every worker spawn dies with
+      # code 127. --set-interpreter rewrites PT_INTERP in place and keeps
+      # the appended Bun payload intact; --set-rpath would relocate
+      # sections and corrupt it (and is unnecessary: the binary needs
+      # nothing beyond glibc, which the pinned loader resolves from its
+      # own store path).
+      patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} "$out/bin/omp"
+    ''}
 
     runHook postInstall
   '';

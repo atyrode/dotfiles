@@ -39,12 +39,17 @@ explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
 caches. The vault-usage footer renders one responsive below-editor row for
-the launch vault: per broker-reported provider it shows a single labeled
-summary window (exhausted first, then most-used, then nearest reset — never
-an invented aggregate), with the active model's provider ordered first;
-`/vault-usage` lists the full window/scope set. It reads only the aggregate
-usage report and non-secret auth-state booleans — never credentials or
-account identity — and hides itself instead of wrapping on narrow terminals.
+the launch vault with `code`-parity visuals (cli-kit palette, green→red
+gradient bars, `claude`/`codex` display names, `↻︎` reset countdowns with
+urgency tinting, `cached <age> ago` staleness): per broker-reported provider
+it shows up to two labeled windows — the best window per duration group
+(exhausted first, then most-used, then nearest reset — never an invented
+aggregate), shortest window first — with the active model's provider ordered
+first; `/vault-usage` lists the full window/scope set. It reads only the
+aggregate usage report, non-secret auth-state booleans, and the read-only
+display identity (masked to `x…@domain` at capture, shown only at very wide
+widths) — never credentials, tokens, or raw report metadata — and it hides
+itself instead of wrapping on narrow terminals.
 
 The package overlay lives in `flake.nix`, reusable package derivations live in
 `pkgs/`, and Home Manager deployment lives in

@@ -41,7 +41,7 @@ let
       formatCountdown,
       formatPercent,
       labelGroups,
-      maskEmail,
+      buildRedactionMap,
       paint,
       pickSummary,
       projectReports,
@@ -145,7 +145,20 @@ let
       kind: "data",
       providers: projected.providers,
       fetchedAt: projected.fetchedAt,
-      identities: { anthropic: "a…@example.com" },
+      identities: { anthropic: "al*" },
+    };
+    // Tight-width regression: a quiet short-term quota is still a core
+    // window. Variant buckets may shed first, but 5h and 7d must both remain.
+    const quietFiveHourProviders = projected.providers.map(view => {
+      const windows = view.windows.map(window =>
+        window.limitId === "anthropic-5h" ? { ...window, usedFraction: 0.02 } : window,
+      );
+      return { ...view, windows, summary: pickSummary(windows) };
+    });
+    const quietFiveHourState: FooterState = {
+      kind: "data",
+      providers: quietFiveHourProviders,
+      fetchedAt: projected.fetchedAt,
     };
     const base = { now, staleAfterMs: 15 * 60_000, color: false };
     const active = { provider: "anthropic", authenticated: true };
@@ -176,11 +189,11 @@ let
     // Identities render only when nothing is sacrificed for them. The row
     // is inset 4 columns on both edges (mirroring the border's corner-to-π
     // indent) and its bars stretch so the inset width is filled exactly.
-    const bareIdMin = minWidth(row => row.includes("a…@example.com"), bare);
+    const bareIdMin = minWidth(row => row.includes("al*"), bare);
     const fullWidth = bareIdMin + 20;
     const full = renderRow(state, { ...base, width: fullWidth, active });
     assert.equal(full.length, 1);
-    assert.ok(full[0].startsWith("    *claude a…@example.com 5h "));
+    assert.ok(full[0].startsWith("    *claude al* 5h "));
     assert.equal(visibleWidth(full[0]), fullWidth - 4);
     assert.ok(full[0].includes("62% " + RESET_GLYPH + "1h30m"));
     assert.ok(full[0].includes("31% " + RESET_GLYPH + "3d4h"));
@@ -199,29 +212,22 @@ let
     // One short of the identity boundary: window data always outranks
     // identity decoration.
     const noEmail = bare(bareIdMin - 1);
-    assert.ok(!noEmail.includes("a…@example.com"));
+    assert.ok(!noEmail.includes("al*"));
     assert.ok(noEmail.includes("31%"));
-    assert.ok(noEmail.includes("7d spark"));
 
-    // Shedding order is priority-based and boundary-monotonic: the idle 3%
-    // spark window sheds first (it needs the most width), then claude's
-    // least-used 7d; exhausted codex windows and the busy Fable window
-    // survive down to the narrow end of wide.
-    const sparkMin = minWidth(row => row.includes("7d spark"), bare);
-    const claude7dMin = minWidth(row => row.includes("31%"), bare);
-    assert.ok(claude7dMin < sparkMin);
-    assert.ok(sparkMin < bareIdMin);
-    const wide = bare(claude7dMin - 1);
-    assert.ok(wide.startsWith("    *claude 5h "));
-    assert.ok(!wide.includes("a…@example.com"));
-    assert.ok(!wide.includes("31%"));
-    assert.ok(!wide.includes("spark"));
-    assert.ok(wide.includes("7d fable"));
-    assert.ok(wide.includes("58%"));
-    assert.ok(wide.includes("codex 5h "));
-    assert.ok(wide.includes("100% " + RESET_GLYPH + "30m maxed"));
-    assert.ok(wide.includes("45%"));
-    assert.equal(visibleWidth(wide), claude7dMin - 1 - 4);
+    // At the first wide breakpoint, bars yield before any quota window.
+    // Named variants shed before core duration buckets.
+    const wide = bare(100);
+    assert.ok(!wide.includes("█"), "tight wide row must drop bars before windows");
+    assert.ok(wide.startsWith("    *claude 5h "), "active Claude chunk must lead");
+    assert.ok(!wide.includes("al*"), "identity must shed before windows");
+    assert.ok(wide.includes("7d 31%"), "Claude core 7d window must remain");
+    assert.ok(!wide.includes("7d fable"), "Claude variant must shed before core windows");
+    assert.ok(wide.includes("codex 5h "), "Codex core 5h window must remain");
+    assert.ok(wide.includes("100%!"), "exhausted Codex core window must remain");
+    assert.ok(wide.includes("45%"), "Codex core 7d window must remain");
+    assert.ok(!wide.includes("7d spark"), "Codex variant must shed before core windows");
+    assert.ok(visibleWidth(wide) <= 96, "tight row must stay inside its inset budget");
 
     // Active-provider reordering follows the live selection.
     const wideCodex = renderRow(state, {
@@ -231,15 +237,34 @@ let
     });
     assert.ok(wideCodex[0].startsWith("    *codex 5h "));
 
-    // Medium: bars dropped, both windows kept, exhausted marker.
+    // At the first wide breakpoint, bars must yield before core windows.
+    // This reproduces the live failure where Claude 5h disappeared behind
+    // the busier 7d Fable bucket even though the broker reported both.
+    const tightCoreWindows = renderRow(quietFiveHourState, { ...base, width: 100, active })[0];
+    assert.ok(!tightCoreWindows.includes("█"), "quiet-5h fixture must drop bars first");
+    assert.ok(
+      tightCoreWindows.includes("5h 2% " + RESET_GLYPH + "1h30m"),
+      "quiet Claude 5h window must remain",
+    );
+    assert.ok(
+      tightCoreWindows.includes("7d 31% " + RESET_GLYPH + "3d4h"),
+      "Claude core 7d window must remain",
+    );
+    assert.ok(tightCoreWindows.includes("codex 5h 100%!"), "Codex core 5h window must remain");
+    assert.ok(tightCoreWindows.includes("7d 45%"), "Codex core 7d window must remain");
+    assert.ok(!tightCoreWindows.includes("7d fable"), "Claude variant must shed first");
+    assert.ok(!tightCoreWindows.includes("7d spark"), "Codex variant must shed first");
+    // Medium: bars and variants drop before the four core windows.
     const medium = renderRow(state, { ...base, width: 84, active });
     assert.equal(medium.length, 1);
     assert.ok(!medium[0].includes("█"));
     assert.ok(medium[0].includes("5h 62%"));
-    assert.ok(medium[0].includes("7d fable 58%"));
+    assert.ok(medium[0].includes("7d 31%"));
+    assert.ok(!medium[0].includes("7d fable"));
     assert.ok(medium[0].includes("100%!"));
+    assert.ok(medium[0].includes("45%"));
     assert.ok(medium[0].includes(" │ codex"));
-    assert.ok(!medium[0].includes("45%"));
+    assert.ok(!medium[0].includes("7d spark"));
 
     // Narrow: active provider's summary window only; hidden below minimum.
     const narrow = renderRow(state, { ...base, width: 54, active });
@@ -259,7 +284,7 @@ let
       nextRefreshAt: now + 3 * 60_000,
     });
     assert.ok(withTimer[0].includes("· refresh in 3m"));
-    assert.ok(withTimer[0].includes("a…@example.com"));
+    assert.ok(withTimer[0].includes("al*"));
     const staleOverTimer = renderRow(state, {
       ...base,
       width: 150,
@@ -277,21 +302,21 @@ let
     const armed = (w: number) => renderRow(state, { ...timerOpts, width: w, refreshHint: "alt+u" })[0];
     const unarmed = (w: number) => renderRow(state, { ...timerOpts, width: w })[0];
     const cueFull = armed(500);
-    assert.ok(cueFull.includes("a…@example.com"));
+    assert.ok(cueFull.includes("al*"));
     assert.ok(cueFull.includes("· refresh in 3m (alt+u)"));
     assert.equal(visibleWidth(cueFull), 500 - 4);
     // With the hotkey armed the identity tier always carries the cue: below
     // the armed-identity boundary the ladder drops straight to the cue tier
     // rather than showing identity without its cue (monotonicity).
-    const armedIdMin = minWidth(row => row.includes("a…@example.com"), armed);
+    const armedIdMin = minWidth(row => row.includes("al*"), armed);
     assert.ok(armed(armedIdMin).includes("(alt+u)"));
     const cueOnly = armed(armedIdMin - 1);
-    assert.ok(!cueOnly.includes("a…@example.com"));
+    assert.ok(!cueOnly.includes("al*"));
     assert.ok(cueOnly.includes("(alt+u)"));
     assert.ok(cueOnly.includes("7d spark"));
     // The cue costs columns, so unarmed identity appears earlier (and never
     // shows a cue it does not have).
-    const unarmedIdMin = minWidth(row => row.includes("a…@example.com"), unarmed);
+    const unarmedIdMin = minWidth(row => row.includes("al*"), unarmed);
     assert.ok(unarmedIdMin < armedIdMin);
     assert.ok(!unarmed(armedIdMin).includes("alt+u"));
     // Plain tier: below the cue boundary the hint is dropped rather than
@@ -438,16 +463,21 @@ let
     assert.equal(resetEmphasis(4 * HOUR, 5 * HOUR), "dim");
     assert.equal(resetEmphasis(1_000_000, undefined), "dim");
 
-    // Identity masking: mask once, idempotent, non-email keys clipped.
-    assert.equal(maskEmail("alex@example.com"), "a…@example.com");
-    assert.equal(maskEmail("a…@example.com"), "a…@example.com");
-    assert.equal(maskEmail("user-key-123"), "us…");
-    assert.equal(maskEmail("ab"), "ab");
+    // Identity masking parity with OMP usage --redact, including collisions.
+    const uniqueMasks = buildRedactionMap(["alpha@example.test", "bravo@example.test"]);
+    assert.equal(uniqueMasks.get("alpha@example.test"), "al*");
+    assert.equal(uniqueMasks.get("bravo@example.test"), "br*");
+    const collidingValues = ["dum.my@example.org", "dum.my9@example.net", "dummy@example.net"];
+    const collidingMasks = collidingValues.map(value => buildRedactionMap(collidingValues).get(value)!);
+    assert.equal(new Set(collidingMasks).size, collidingMasks.length);
+    assert.ok(collidingMasks.every(mask => /^du\*(.{1,2}\*)?$/.test(mask)));
+    assert.equal(buildRedactionMap(collidingValues).get("dum.my9@example.net"), "du*9*");
+    assert.equal(buildRedactionMap(["user@example.test", "user@example.test"]).get("user@example.test"), "us*");
 
     // Detail view lists every original window/scope with masked identity.
     const details = detailLines(state, now);
     assert.equal(details.length, 6);
-    assert.ok(details.some(line => line.startsWith("claude a…@example.com · Claude 5 Hour")));
+    assert.ok(details.some(line => line.startsWith("claude al* · Claude 5 Hour")));
     assert.ok(details.some(line => line.includes("max")));
     assert.ok(details.some(line => line.includes("100% used (exhausted)")));
     assert.ok(details.some(line => line.includes("spark")));
@@ -587,7 +617,7 @@ pkgs.runCommand "check-omp-vault-usage-footer"
 
     jq -e '
       .ok == true
-      and (.samples.full | startswith("    *claude a…@example.com 5h "))
+      and (.samples.full | startswith("    *claude al* 5h "))
       and (.samples.wide | startswith("    *claude 5h "))
       and (.samples.narrow | contains("codex") | not)
       and (.samples.hidden | length == 0)

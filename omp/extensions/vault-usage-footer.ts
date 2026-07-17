@@ -21,10 +21,11 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
  * calls only read-only, non-mutating AuthStorage methods —
  * `fetchUsageReports()` (aggregate, broker-routed and coalesced upstream),
  * `hasAuth()` (non-secret boolean), and `getOAuthAccountIdentity()` (the
- * same display-identity call the upstream status line makes). The identity's
- * display field is masked to `x…@domain` form immediately at capture; raw
- * values are never stored, logged, or rendered, and credentials, tokens,
- * broker environment values, and raw report metadata are never read.
+ * same display-identity call the upstream status line makes). Display fields
+ * are masked together with OMP's collision-aware `usage --redact` algorithm
+ * before state assignment; raw values are never assigned to state, logged, or
+ * rendered, and credentials, tokens, broker environment values, and raw report
+ * metadata are never read.
  *
  * Layout contract: at supported widths `renderRow` produces exactly one
  * content row (loading, data, stale, or unavailable) and the widget adds a
@@ -154,6 +155,19 @@ function summaryBefore(a: WindowView, b: WindowView): boolean {
 	const bReset = b.resetsAt ?? Number.MAX_SAFE_INTEGER;
 	if (aReset !== bReset) return aReset < bReset;
 	return a.limitId.localeCompare(b.limitId) < 0;
+}
+
+/**
+ * Retention priority for responsive shedding. Exhausted limits remain first;
+ * core duration buckets (5h/7d) then outrank named variants such as Fable or
+ * Spark, with the summary risk order breaking ties inside each class.
+ */
+function retentionBefore(a: WindowView, b: WindowView): boolean {
+	if (a.exhausted !== b.exhausted) return a.exhausted;
+	const aVariant = shortWindowLabel(a.fullLabel, a.windowLabel).includes(" ");
+	const bVariant = shortWindowLabel(b.fullLabel, b.windowLabel).includes(" ");
+	if (aVariant !== bVariant) return !aVariant;
+	return summaryBefore(a, b);
 }
 
 export function pickSummary(windows: readonly WindowView[]): WindowView {
@@ -347,14 +361,68 @@ export function renderBarAnsi(fraction: number | undefined, cells: number, color
 }
 
 /**
- * Masked display identity: first character of the local part, `…@`, domain.
- * Broker-redacted inputs (already `x…@domain`) pass through unchanged;
- * non-email identity keys keep at most two leading characters.
+ * OMP usage CLI redaction parity (`buildRedactionMap`, usage-cli.ts).
+ * Every value keeps a two-character anchor. Colliding anchors gain the
+ * shortest middle-out differentiator; residual collisions extend the prefix.
+ * The full set must be supplied together so masks remain distinguishable.
  */
-export function maskEmail(identity: string): string {
-	const at = identity.indexOf("@");
-	if (at <= 0) return identity.length <= 3 ? identity : `${identity.slice(0, 2)}…`;
-	return `${identity[0]}…@${identity.slice(at + 1)}`;
+export function buildRedactionMap(values: Iterable<string>): Map<string, string> {
+	const unique = [...new Set(values)];
+	const masks = new Map<string, string>();
+	const byAnchor = new Map<string, string[]>();
+	for (const value of unique) {
+		const anchor = value.slice(0, 2);
+		const peers = byAnchor.get(anchor) ?? [];
+		peers.push(value);
+		byAnchor.set(anchor, peers);
+	}
+	for (const value of unique) {
+		const anchor = value.slice(0, 2);
+		const peers = (byAnchor.get(anchor) ?? []).filter(other => other !== value);
+		if (peers.length === 0) {
+			masks.set(value, `${anchor}*`);
+			continue;
+		}
+		const infix = findDistinguishingInfix(value, peers);
+		masks.set(value, infix === undefined ? `${anchor}*` : `${anchor}*${infix}*`);
+	}
+	const byMask = new Map<string, string[]>();
+	for (const value of unique) {
+		const mask = masks.get(value)!;
+		const collided = byMask.get(mask) ?? [];
+		collided.push(value);
+		byMask.set(mask, collided);
+	}
+	for (const collided of byMask.values()) {
+		if (collided.length < 2) continue;
+		for (const value of collided) {
+			let length = Math.min(2, value.length);
+			while (
+				length < value.length &&
+				collided.some(other => other !== value && other.startsWith(value.slice(0, length)))
+			) {
+				length += 1;
+			}
+			masks.set(value, `${value.slice(0, length)}*`);
+		}
+	}
+	return masks;
+}
+
+function findDistinguishingInfix(value: string, peers: readonly string[]): string | undefined {
+	const start = Math.min(2, value.length);
+	const center = value.length / 2;
+	for (let length = 1; length <= value.length - start; length += 1) {
+		let best: { infix: string; distance: number } | undefined;
+		for (let position = start; position + length <= value.length; position += 1) {
+			const candidate = value.slice(position, position + length);
+			if (peers.some(peer => peer.includes(candidate))) continue;
+			const distance = Math.abs(position + length / 2 - center);
+			if (!best || distance < best.distance) best = { infix: candidate, distance };
+		}
+		if (best) return best.infix;
+	}
+	return undefined;
 }
 
 /**
@@ -547,11 +615,11 @@ export function renderRule(width: number, color: boolean = COLOR_DEFAULT): strin
  * (bars + notes), medium (compact windows), narrow (active provider's
  * best window), hidden below MIN_WIDTH. Wide and medium start from every
  * labeled window per provider and degrade deterministically: identities
- * render only when the complete row fits with them; otherwise the
- * lowest-priority window is shed (summary order — exhausted and
- * high-usage windows survive longest; never a provider's last window)
- * until the row fits, and whole trailing provider chunks go last. On wide
- * rows, leftover columns stretch the usage bars (leftmost first) so the
+ * render only when the complete row fits with them; if wide bars would
+ * cost a window, the row falls back to compact medium cells first. Only
+ * then are named variant buckets shed before core duration buckets
+ * (never a provider's last window), followed by whole trailing providers.
+ * When wide content fits, leftover columns stretch its bars (leftmost first) so the
  * row fills the inset width exactly; the fit is recomputed every paint,
  * so resizes adapt. Provider chunks are delimited by a dim `│`. The row
  * is truncated to the inset width as the final guard and never wraps.
@@ -564,7 +632,7 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	if (state.kind === "unavailable") return emit(paint("usage: unavailable", PALETTE.dim, color));
 
 	// Levels key on the physical width; fitting math uses the inset budget.
-	const level: DetailLevel =
+	let level: DetailLevel =
 		options.width >= WIDE_WIDTH ? "wide" : options.width >= MEDIUM_WIDTH ? "medium" : "narrow";
 	const width = options.width - LEFT_PAD - RIGHT_PAD;
 
@@ -665,13 +733,24 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 			return emit(joinCells(stretched, providerSeparator).ansi + cueSuffix.ansi);
 		}
 	}
+
+	// Bars are decoration: before sacrificing any quota window, retry the
+	// complete row with compact cells. This also prevents crossing the wide
+	// breakpoint from making information disappear.
+	if (level === "wide" && rowWidth(chunks) > budget) {
+		level = "medium";
+		chunks = buildChunks(state, options, level, color, windowLists, false);
+		if (cueSuffix !== undefined && rowWidth(chunks) + visibleWidth(cueSuffix.plain) <= width) {
+			return emit(joinCells(chunks, providerSeparator).ansi + cueSuffix.ansi);
+		}
+	}
 	while (rowWidth(chunks) > budget) {
 		let worstProvider: string | undefined;
 		let worst: WindowView | undefined;
 		for (const [provider, windows] of windowLists) {
 			if (windows.length < 2) continue;
 			for (const candidate of windows) {
-				if (worst === undefined || summaryBefore(worst, candidate)) {
+				if (worst === undefined || retentionBefore(worst, candidate)) {
 					worst = candidate;
 					worstProvider = provider;
 				}
@@ -795,7 +874,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		providers: readonly ProviderView[],
 	): Record<string, string> | undefined => {
-		let identities: Record<string, string> | undefined;
+		const raw: Array<{ provider: string; value: string }> = [];
 		for (const view of providers) {
 			try {
 				const info = ctx.modelRegistry.authStorage.getOAuthAccountIdentity(
@@ -804,13 +883,15 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 				);
 				const display = info?.email ?? info?.accountId;
 				if (typeof display === "string" && display.length > 0) {
-					(identities ??= {})[view.provider] = maskEmail(display);
+					raw.push({ provider: view.provider, value: display });
 				}
 			} catch {
 				// Identity is optional decoration; never let it break usage.
 			}
 		}
-		return identities;
+		if (raw.length === 0) return undefined;
+		const masks = buildRedactionMap(raw.map(entry => entry.value));
+		return Object.fromEntries(raw.map(entry => [entry.provider, masks.get(entry.value)!]));
 	};
 
 	const scheduleNext = (): void => {

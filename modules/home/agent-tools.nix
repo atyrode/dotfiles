@@ -168,6 +168,17 @@ in
       '';
     };
 
+    seedSpeechModels = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Pre-download the omp speech stack (STT/TTS models and the sherpa
+        runtime) during activation so speech is ready on first use. The
+        downloads are mutable harness-owned cache state, not Nix artifacts;
+        seeding is best-effort and warns instead of failing activation.
+      '';
+    };
+
     ompPackage = lib.mkPackageOption pkgs "omp-configured" { };
     ompAgentsPackage = lib.mkPackageOption pkgs "omp-agents" { };
     migrationPackage = lib.mkPackageOption pkgs "agent-tools-migrate" { };
@@ -285,6 +296,35 @@ in
                   fi
                   if ! ${lib.getExe cfg.seedPackage} apply; then
                     echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
+                  fi
+                '';
+          })
+          (lib.mkIf cfg.seedSpeechModels {
+            # Speech models live in mutable harness-owned cache state
+            # (~/.omp/agent/cache), so this is a seed, not a build product.
+            # `--check --json` is offline and cheap; the download runs only
+            # when something is missing. Non-interactive stdin makes
+            # `omp setup speech` select the curated defaults (Parakeet TDT v3
+            # + Kokoro-82M). rawOmp is the wrapped omp, so the sherpa addon's
+            # LD_LIBRARY_PATH and the fallback ffmpeg ride along.
+            seedOmpSpeechModels =
+              lib.hm.dag.entryAfter
+                (
+                  [
+                    "installPackages"
+                    "linkGeneration"
+                  ]
+                  ++ lib.optional cfg.seedPlainConfig "seedPlainOmpConfig"
+                )
+                ''
+                  if [[ -v DRY_RUN ]]; then
+                    echo "(dry run) would seed omp speech models via 'omp setup speech'"
+                  elif ! ${rawOmp} setup speech --check --json 2>/dev/null \
+                    | ${lib.getExe pkgs.jq} -e '[.[].ready] | all' >/dev/null 2>&1; then
+                    echo "agent-tools: seeding omp speech models (first run downloads ~700 MB)..."
+                    if ! ${pkgs.coreutils}/bin/timeout 1800 ${rawOmp} setup speech </dev/null; then
+                      echo "warning: omp speech seeding failed; run 'omp setup speech' manually" >&2
+                    fi
                   fi
                 '';
           })

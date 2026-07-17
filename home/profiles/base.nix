@@ -33,6 +33,13 @@
     nix-direnv.enable = true;
   };
 
-  programs.fzf.enable = true;
+  programs.fzf = {
+    enable = true;
+    # fzf's generated zshrc hook restores shell options via eval, and
+    # restoring the zle option fails ("can't change option: zle") in
+    # interactive shells without a TTY — which is every agent eval shell.
+    # The TTY-guarded replacement lives in home/zsh.nix. (#255)
+    enableZshIntegration = false;
+  };
   programs.zoxide.enable = true;
 }

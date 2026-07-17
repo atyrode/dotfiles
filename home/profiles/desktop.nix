@@ -6,6 +6,7 @@ let
 in
 {
   imports = [
+    ../cmux.nix
     ../ghostty.nix
     ../linux-desktop.nix
   ];

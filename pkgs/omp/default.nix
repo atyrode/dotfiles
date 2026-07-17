@@ -1,6 +1,7 @@
 {
   fetchurl,
   lib,
+  makeWrapper,
   patchelf,
   stdenv,
 }:
@@ -42,25 +43,42 @@ stdenv.mkDerivation {
   dontPatchELF = true;
   dontStrip = true;
 
-  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ patchelf ];
+  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+    makeWrapper
+    patchelf
+  ];
 
   installPhase = ''
     runHook preInstall
 
-    install -Dm755 "$src" "$out/bin/omp"
+    ${
+      if stdenv.hostPlatform.isLinux then
+        ''
+          # omp is a Bun single-file executable. It re-execs itself
+          # (process.execPath) to spawn its subprocess workers
+          # (__omp_worker_stt & co), so it must run as the binary itself,
+          # not via an `ld.so <binary>` wrapper: that makes process.execPath
+          # the loader and every worker dies with `error while loading
+          # shared libraries: __omp_worker_*` (exit 127). Patch PT_INTERP in
+          # place instead -- --set-interpreter rewrites one page and leaves
+          # the appended Bun payload intact (--set-rpath relocates sections
+          # and segfaults it).
+          install -Dm755 "$src" "$out/libexec/omp"
+          patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} "$out/libexec/omp"
 
-    ${lib.optionalString stdenv.hostPlatform.isLinux ''
-      # omp is a Bun single-file executable that re-execs itself
-      # (process.execPath) to spawn its subprocess workers
-      # (__omp_worker_stt & co). Launching it through an ld.so wrapper
-      # turns execPath into the loader, so every worker spawn dies with
-      # code 127. --set-interpreter rewrites PT_INTERP in place and keeps
-      # the appended Bun payload intact; --set-rpath would relocate
-      # sections and corrupt it (and is unnecessary: the binary needs
-      # nothing beyond glibc, which the pinned loader resolves from its
-      # own store path).
-      patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} "$out/bin/omp"
-    ''}
+          # The speech workers dlopen a downloaded manylinux prebuilt
+          # (sherpa-onnx.node) that needs libstdc++/libgcc_s; under the pinned
+          # loader those are not on the default search path. Expose them via
+          # the wrapper -- the re-exec'd workers inherit the env, and execPath
+          # stays correct because the wrapper execs the patched binary itself.
+          makeWrapper "$out/libexec/omp" "$out/bin/omp" \
+            --suffix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}
+        ''
+      else
+        ''
+          install -Dm755 "$src" "$out/bin/omp"
+        ''
+    }
 
     runHook postInstall
   '';

@@ -11,8 +11,8 @@ Nix owns:
 - the pinned OMP binary and generated Zsh completion;
 - the managed OMP defaults, enforced policy, and model catalog;
 - the curated plain-omp seed and its drift-aware activation step;
-- the pinned bundled agents, global generic skills, and managed-settings guard
-  extension;
+- the pinned bundled agents, global generic skills, managed-settings guard
+  extension, and vault-usage footer extension;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
@@ -33,11 +33,18 @@ the exact managed OMP binary set — the `omp`, `omp-managed`, and `ompu`
 launchers plus the `code` generator — and verifies that an OMP clean-home
 startup does not create `.pi` state.
 
-Agents, rules, and the settings guard are assembled into
-a read-only OMP extension-package root in the Nix store and injected explicitly
-by every managed session. They are not copied into OMP's mutable agent
-directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the
-same platform assets without sharing authentication, sessions, or caches.
+Agents, rules, the settings guard, and the vault-usage footer are assembled
+into a read-only OMP extension-package root in the Nix store and injected
+explicitly by every managed session. They are not copied into OMP's mutable
+agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
+receive the same platform assets without sharing authentication, sessions, or
+caches. The vault-usage footer renders one responsive below-editor row for
+the launch vault: per broker-reported provider it shows a single labeled
+summary window (exhausted first, then most-used, then nearest reset — never
+an invented aggregate), with the active model's provider ordered first;
+`/vault-usage` lists the full window/scope set. It reads only the aggregate
+usage report and non-secret auth-state booleans — never credentials or
+account identity — and hides itself instead of wrapping on narrow terminals.
 
 The package overlay lives in `flake.nix`, reusable package derivations live in
 `pkgs/`, and Home Manager deployment lives in

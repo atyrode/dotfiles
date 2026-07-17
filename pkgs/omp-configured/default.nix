@@ -579,7 +579,7 @@ let
             merged_json="$(printf '%s\n%s\n' "$merged_json" "$layer_json" | jq -cs '.[0] * .[1]')"
           done
           effective_managed="$(
-            # shellcheck disable=SC2016
+            # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
             jq -c --argjson paths "$all_managed_paths_json" '
               . as $source
               | reduce $paths[] as $key ({};
@@ -641,7 +641,7 @@ let
           one_shots_json="$(json_array "''${resolved_one_shot_configs[@]}")"
 
           diagnostic_json="$(
-            # shellcheck disable=SC2016
+            # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
             jq -n \
               --arg launcher "$launcher" \
               --arg profile "$active_profile" \

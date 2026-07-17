@@ -131,7 +131,7 @@ source_nix() {
   fi
   if [[ -n "$profile" && -f "$profile" ]]; then
     set +u
-    # shellcheck disable=SC1090
+    # shellcheck disable=SC1090 # The selected Nix profile script is runtime-dependent.
     . "$profile"
     set -u
   fi

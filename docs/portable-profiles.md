@@ -16,7 +16,7 @@ boundary](system-boundary.md).
 
 ## Exported contract
 
-- `homeManagerModules.profiles` contains the portable `base`, `development`,
+- `homeModules.profiles` contains the portable `base`, `development`,
   `agent-tools`, `server`, `desktop`, `containers`, `media`, `mobile`, and
   `security` capability modules. These are the exact modules used locally.
 - `lib.selectHomeManagerProfiles` validates a named capability selection and
@@ -30,9 +30,9 @@ boundary](system-boundary.md).
   reviewed unfree-package allowlist into NixOS. Its
   `atyrode.dotfiles.hostRegistry` option defaults to an empty registry; Home
   Manager uses the resulting global package set and user packages by default.
-- `homeManagerModules.agent-tools` retains its earlier meaning as the
-  low-level configurable agent-tools module. New compositions should use
-  `homeManagerModules.profiles.agent-tools`.
+- `homeModules.agent-tools` retains its earlier meaning as the low-level
+  configurable agent-tools module. New compositions should use
+  `homeModules.profiles.agent-tools`.
 - `darwinModules.default` remains the separate nix-darwin/Mac system layer.
 
 The reviewed server selection is recorded in
@@ -88,9 +88,9 @@ example intentionally leaves every production system option in the consumer:
 
             home-manager.users.${host.username} = {
               imports = [
-                dotfiles.homeManagerModules.profiles.base
-                dotfiles.homeManagerModules.profiles.server
-                dotfiles.homeManagerModules.profiles.agent-tools
+                dotfiles.homeModules.profiles.base
+                dotfiles.homeModules.profiles.server
+                dotfiles.homeModules.profiles.agent-tools
                 (dotfiles.lib.mkHostIdentityModule {
                   name = hostId;
                   inherit host;

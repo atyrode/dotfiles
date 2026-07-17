@@ -26,7 +26,7 @@ let
   registry = {
     ${hostId} = host;
   };
-  profiles = dotfiles.homeManagerModules.profiles;
+  profiles = dotfiles.homeModules.profiles;
 in
 {
   inherit

@@ -445,23 +445,70 @@ agent-named `retry.fallbackChains` key in the managed defaults
 still exists in that unpacked set, so an upstream agent rename or removal
 fails the build instead of silently misrouting models.
 
-For a local formatting and static-check pass, run `nix fmt`, then build the
-same consolidated gate that CI exposes:
+## Local CI equivalents
+
+Run `nix fmt` for the repository formatter. It applies nixfmt, gofmt, shfmt,
+deadnix, and statix. The consolidated Linux gate also enforces ShellCheck,
+actionlint, and zizmor:
 
 ```bash
 nix build --no-link .#checks.x86_64-linux.treefmt
 ```
 
-The formatter applies nixfmt, gofmt, shfmt, deadnix, and statix; the gate also
-enforces ShellCheck, actionlint, and zizmor.
+The required matrix command is `nix flake check --show-trace`, run natively on
+each supported system. Native execution matters: evaluating another system is
+not a substitute for building its derivations.
 
-GitHub Actions runs the flake checks natively on x86_64 and aarch64 Linux and
-aarch64 macOS; platform-independent gates (docs-links, production-facts,
-treefmt) are emitted on x86_64-linux only to avoid duplicate work
-(#169). Every pull request runs the platform matrix, including documentation
-changes: a path beneath `docs/` can affect derivation hashes through the flake
-source even when no deployed file references that document. The sole required
-status check is the always-reporting `ci-gate` job. The
-`docs-drift-guard` flake check regression-tests the comparison logic used when
-evaluating a docs-only fast path; the fast path is not enabled while
-documentation remains a derivation input.
+| Required matrix leg | Local equivalent |
+| --- | --- |
+| `x86_64-linux` | On an x86_64 Linux host, `nix flake check --show-trace` |
+| `aarch64-linux` | On an aarch64 Linux host, `nix flake check --show-trace` |
+| `aarch64-darwin` | On an Apple Silicon macOS host, `nix flake check --show-trace` |
+
+The `changes` job chooses that matrix or the documentation fast path. Its
+classifier and regression suite can be run locally on x86_64 Linux:
+
+```bash
+printf '%s\n' docs/agent-tools.md | ./scripts/classify-ci-paths.sh
+nix build --no-link .#checks.x86_64-linux.classify-ci-paths
+```
+
+For a documentation-only change, run the same two whole-tree checks as the
+`docs-links` job, then compare the check derivations at the base and head
+revisions:
+
+```bash
+nix build --no-link \
+  .#checks.x86_64-linux.docs-links \
+  .#checks.x86_64-linux.production-facts
+./scripts/docs-drift-guard.sh <base-revision> <head-revision>
+```
+
+The always-reporting `ci-gate` job is only an aggregate: it succeeds when
+classification succeeds and either the applicable native matrix or the
+documentation fast path succeeds. It has no additional local executable beyond
+the commands above.
+
+### Flake output metadata
+
+Nix's recognized reusable Home Manager output is `homeModules`; applications
+carry `meta.description`, so those outputs pass the supported schema checks.
+`inventory` and `capabilityInventory` deliberately remain public top-level
+evaluation interfaces: the former is the versioned source used by `atyrode
+inventory`, and both paths are documented for direct `nix eval` use. Nix 2.34
+has no custom-output schema registration, so `nix flake check --no-build`
+reports those two names as unknown. Relocating them under `lib` would silence
+the checker by changing the public paths rather than describing the existing
+contract. Those two warnings are therefore expected; app-metadata or
+`homeManagerModules` warnings are not.
+
+### CI cache strategy
+
+The native matrix in [nix.yml](../.github/workflows/nix.yml) restores and saves
+a per-system Nix store snapshot with `cache-nix-action` in GitHub Actions'
+repository cache. It uses no repository secret, remains an acceleration only,
+and is optional: local contributors run the commands above against their normal
+Nix store and configured substituters. A fleet-wide binary substituter would
+need a service, signing policy, and CI push credential; self-hosted Attic is
+deliberately deferred to [#54](https://github.com/atyrode/dotfiles/issues/54)
+until the managed VPS owns that security boundary.

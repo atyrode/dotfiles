@@ -26,19 +26,23 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
  * values are never stored, logged, or rendered, and credentials, tokens,
  * broker environment values, and raw report metadata are never read.
  *
- * Layout contract: at supported widths the component returns exactly one
- * physical row (loading, data, stale, or unavailable); only terminal width
- * may switch it to zero rows. Fetch completion changes text, never row
- * count, so network timing can never move the prompt. The row starts at
- * the π column of the border below (LEFT_PAD) and, on wide rows, its
- * usage bars stretch to fill the full line width, re-fit on every paint.
+ * Layout contract: at supported widths `renderRow` produces exactly one
+ * content row (loading, data, stale, or unavailable) and the widget adds a
+ * stable blank spacer above it (two physical rows below the editor box);
+ * only terminal width may switch it to zero rows. Fetch completion changes
+ * text, never row count, so network timing can never move the prompt. The
+ * row is inset LEFT_PAD/RIGHT_PAD columns from each edge (matching the
+ * border's corner-to-π indent); on wide rows its usage bars stretch to
+ * fill the inset width, re-fit on every paint.
  */
 
 const WIDGET_KEY = "vault-usage";
 const REFRESH_KEY = "alt+u";
 const BAR_CELLS = 10;
-/** Columns reserved so the row's first glyph sits over π in the editor border (`╭── π`). */
+/** Columns reserved on each edge so the row sits inset within the editor
+ * box footprint (matching the border's `╭── π` corner-to-π indent). */
 const LEFT_PAD = 4;
+const RIGHT_PAD = 4;
 const PAD_TEXT = " ".repeat(LEFT_PAD);
 const MIN_WIDTH = 40;
 const MEDIUM_WIDTH = 64;
@@ -526,8 +530,9 @@ function buildChunks(
 
 /**
  * Render the footer as zero rows (below MIN_WIDTH) or exactly one row.
- * The row is left-padded LEFT_PAD columns so its first glyph sits over π
- * in the editor border below; no right margin is reserved. Levels: wide
+ * The row is inset LEFT_PAD columns from the left edge and reserves
+ * RIGHT_PAD columns on the right, mirroring the editor border's
+ * corner-to-π indent on both sides. Levels: wide
  * (bars + notes), medium (compact windows), narrow (active provider's
  * best window), hidden below MIN_WIDTH. Wide and medium start from every
  * labeled window per provider and degrade deterministically: identities
@@ -536,9 +541,9 @@ function buildChunks(
  * high-usage windows survive longest; never a provider's last window)
  * until the row fits, and whole trailing provider chunks go last. On wide
  * rows, leftover columns stretch the usage bars (leftmost first) so the
- * row fills the line exactly; the fit is recomputed every paint, so
- * resizes adapt. Provider chunks are delimited by a dim `│`. The row is
- * truncated to the physical width as the final guard and never wraps.
+ * row fills the inset width exactly; the fit is recomputed every paint,
+ * so resizes adapt. Provider chunks are delimited by a dim `│`. The row
+ * is truncated to the inset width as the final guard and never wraps.
  */
 export function renderRow(state: FooterState, options: RenderOptions): string[] {
 	if (options.width < MIN_WIDTH) return [];
@@ -547,10 +552,10 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	if (state.kind === "loading") return emit(paint("usage: loading…", PALETTE.dim, color));
 	if (state.kind === "unavailable") return emit(paint("usage: unavailable", PALETTE.dim, color));
 
-	// Levels key on the physical width; fitting math uses the padded budget.
+	// Levels key on the physical width; fitting math uses the inset budget.
 	const level: DetailLevel =
 		options.width >= WIDE_WIDTH ? "wide" : options.width >= MEDIUM_WIDTH ? "medium" : "narrow";
-	const width = options.width - LEFT_PAD;
+	const width = options.width - LEFT_PAD - RIGHT_PAD;
 
 	// Stale parity with `code`: a failed refresh marks retained data stale
 	// immediately (`cached <age> ago`); the age threshold additionally covers
@@ -714,9 +719,10 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		}
 	}
 	const plain = PAD_TEXT + row.plain + suffix.plain;
+	const maxCols = options.width - RIGHT_PAD;
 	// Final guard: an overflowing row degrades to plain text so truncation
 	// can never slice an SGR sequence (cell-accurate, no ellipsis, no pad).
-	if (visibleWidth(plain) > options.width) return [truncateToWidth(plain, options.width, "", false)];
+	if (visibleWidth(plain) > maxCols) return [truncateToWidth(plain, maxCols, "", false)];
 	return emit(row.ansi + suffix.ansi);
 }
 
@@ -933,7 +939,9 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 				}
 				if (row !== cachedRow) {
 					cachedRow = row;
-					cachedRows = [row];
+					// One blank spacer line between the editor box and the row,
+					// so the footer breathes instead of abutting the border.
+					cachedRows = ["", row];
 				}
 				return cachedRows;
 			},
@@ -948,9 +956,9 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 		latestContext = ctx;
 		// Print/RPC mode: no widget surface, so stay fully inert (no polling).
 		if (!ctx.hasUI) return;
-		// Above the editor: the row rides flush on top of the status border,
-		// reading as part of the box stack instead of a stray line below it.
-		ctx.ui.setWidget(WIDGET_KEY, componentFactory, { placement: "aboveEditor" });
+		// Below the editor: the row hangs under the box (where `code` shows
+		// usage), never abutting the chat transcript above the editor.
+		ctx.ui.setWidget(WIDGET_KEY, componentFactory, { placement: "belowEditor" });
 		armHotkey(ctx);
 		startPolling();
 	});

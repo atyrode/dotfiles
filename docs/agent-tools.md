@@ -38,18 +38,19 @@ into a read-only OMP extension-package root in the Nix store and injected
 explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
-caches. The vault-usage footer renders one responsive row directly above the
-editor's status border, left-aligned to the border's π column, for the launch
-vault with `code`-parity visuals (cli-kit palette, green→red gradient bars,
-`claude`/`codex` display names, `↻︎` reset countdowns with urgency tinting,
-`cached <age> ago` staleness): per broker-reported provider it shows every
-distinct labeled window (the busiest per label — e.g. `5h · 7d · 7d fable`
-for Claude; never an invented aggregate), provider groups delimited by `│`,
-the active model's provider first, and a live minute-granular `refresh in Xm`
-suffix on healthy rows. On wide rows the usage bars stretch to fill the line
-exactly and re-fit on every paint, so resizes adapt; width is measured in
-terminal cells via the TUI's own `visibleWidth`, matching how the engine
-lays out the row.
+caches. The vault-usage footer renders one responsive row below the editor
+box (where `code` shows its own usage panel), separated from the box by one
+blank spacer line and inset 4 columns on both edges to mirror the border's
+corner-to-π indent, for the launch vault with `code`-parity visuals (cli-kit
+palette, green→red gradient bars, `claude`/`codex` display names, `↻︎` reset
+countdowns with urgency tinting, `cached <age> ago` staleness): per
+broker-reported provider it shows every distinct labeled window (the busiest
+per label — e.g. `5h · 7d · 7d fable` for Claude; never an invented
+aggregate), provider groups delimited by `│`, the active model's provider
+first, and a live minute-granular `refresh in Xm` suffix on healthy rows. On
+wide rows the usage bars stretch to fill the inset width exactly and re-fit
+on every paint, so resizes adapt; width is measured in terminal cells via
+the TUI's own `visibleWidth`, matching how the engine lays out the row.
 `alt+u` forces a fetch (a raw-input listener registered ahead of the editor;
 its `(alt+u)` cue decorates the suffix). When width runs short the row
 deterministically sheds identity first, then the cue, then the

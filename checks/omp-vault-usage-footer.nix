@@ -162,7 +162,8 @@ let
     assert.equal(shortWindowLabel("monthly quota", "30d"), "30d");
 
     // Layout probes: with elastic fill a wide row's length always equals
-    // the render width, so ladder boundaries are found by content.
+    // the render width minus the 4-column right inset, so ladder
+    // boundaries are found by content.
     const bare = (w: number) => renderRow(state, { ...base, width: w, active })[0];
     const minWidth = (has: (row: string) => boolean, render: (w: number) => string): number => {
       for (let w = 120; w <= 320; w += 1) if (has(render(w))) return w;
@@ -172,14 +173,14 @@ let
 
     // Full row: identity plus every labeled window, provider delimiter.
     // Identities render only when nothing is sacrificed for them. The row
-    // starts over the border's π column (4-column pad) and its bars
-    // stretch so the line is filled exactly.
+    // is inset 4 columns on both edges (mirroring the border's corner-to-π
+    // indent) and its bars stretch so the inset width is filled exactly.
     const bareIdMin = minWidth(row => row.includes("a…@example.com"), bare);
     const fullWidth = bareIdMin + 20;
     const full = renderRow(state, { ...base, width: fullWidth, active });
     assert.equal(full.length, 1);
     assert.ok(full[0].startsWith("    *claude a…@example.com 5h "));
-    assert.equal(visibleWidth(full[0]), fullWidth);
+    assert.equal(visibleWidth(full[0]), fullWidth - 4);
     assert.ok(full[0].includes("62% " + RESET_GLYPH + "1h30m"));
     assert.ok(full[0].includes("31% " + RESET_GLYPH + "3d4h"));
     assert.ok(full[0].includes("7d fable"));
@@ -191,7 +192,7 @@ let
     // Elasticity: 20 more columns land entirely in the bars; the fill is
     // recomputed per paint, which is what makes resizes adapt.
     const wider = renderRow(state, { ...base, width: fullWidth + 20, active });
-    assert.equal(visibleWidth(wider[0]), fullWidth + 20);
+    assert.equal(visibleWidth(wider[0]), fullWidth + 20 - 4);
     assert.equal(cells(wider[0]) - cells(full[0]), 20);
 
     // One short of the identity boundary: window data always outranks
@@ -219,7 +220,7 @@ let
     assert.ok(wide.includes("codex 5h "));
     assert.ok(wide.includes("100% " + RESET_GLYPH + "30m maxed"));
     assert.ok(wide.includes("45%"));
-    assert.equal(visibleWidth(wide), claude7dMin - 1);
+    assert.equal(visibleWidth(wide), claude7dMin - 1 - 4);
 
     // Active-provider reordering follows the live selection.
     const wideCodex = renderRow(state, {
@@ -230,7 +231,7 @@ let
     assert.ok(wideCodex[0].startsWith("    *codex 5h "));
 
     // Medium: bars dropped, both windows kept, exhausted marker.
-    const medium = renderRow(state, { ...base, width: 80, active });
+    const medium = renderRow(state, { ...base, width: 84, active });
     assert.equal(medium.length, 1);
     assert.ok(!medium[0].includes("█"));
     assert.ok(medium[0].includes("5h 62%"));
@@ -240,7 +241,7 @@ let
     assert.ok(!medium[0].includes("45%"));
 
     // Narrow: active provider's summary window only; hidden below minimum.
-    const narrow = renderRow(state, { ...base, width: 50, active });
+    const narrow = renderRow(state, { ...base, width: 54, active });
     assert.equal(narrow.length, 1);
     assert.ok(narrow[0].includes("*claude"));
     assert.ok(!narrow[0].includes("codex"));
@@ -277,7 +278,7 @@ let
     const cueFull = armed(500);
     assert.ok(cueFull.includes("a…@example.com"));
     assert.ok(cueFull.includes("· refresh in 3m (alt+u)"));
-    assert.equal(visibleWidth(cueFull), 500);
+    assert.equal(visibleWidth(cueFull), 500 - 4);
     // With the hotkey armed the identity tier always carries the cue: below
     // the armed-identity boundary the ladder drops straight to the cue tier
     // rather than showing identity without its cue (monotonicity).
@@ -312,7 +313,7 @@ let
     assert.ok(!narrowCue[0].includes("alt+u"));
 
     // Constant one-row height for every network state at supported widths;
-    // status rows carry the same π-aligned pad as data rows.
+    // status rows carry the same 4-column left inset as data rows.
     const loading = renderRow({ kind: "loading" }, { ...base, width: 60 });
     assert.equal(loading.length, 1);
     assert.ok(loading[0].startsWith("    usage: loading"));
@@ -569,6 +570,12 @@ pkgs.runCommand "check-omp-vault-usage-footer"
       > "$TMPDIR/omp.out"
 
     grep -Fq "footer-ok" "$TMPDIR/omp.out"
+
+    # Placement contract: print mode has no widget surface, so pin the
+    # runtime wiring textually against the deployed extension copy - the
+    # widget hangs below the editor with one blank spacer line above it.
+    grep -Fq 'placement: "belowEditor"' "$ext/vault-usage-footer.ts"
+    grep -Fq 'cachedRows = ["", row]' "$ext/vault-usage-footer.ts"
 
     jq -e '
       .ok == true

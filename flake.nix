@@ -27,6 +27,11 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
+
+    homebrew-cmux = {
+      url = "github:manaflow-ai/homebrew-cmux";
+      flake = false;
+    };
   };
 
   outputs =
@@ -40,6 +45,7 @@
       treefmt-nix,
       homebrew-core,
       homebrew-cask,
+      homebrew-cmux,
       ...
     }:
     let
@@ -298,10 +304,22 @@
           (
             _final: previous:
             lib.optionalAttrs previous.stdenv.isDarwin {
+              # nixpkgs Darwin fixup replaces Obsidian's Developer ID signature
+              # with an ad-hoc one. The pinned upstream DMG and derivation audit
+              # in #89 verified that skipping fixup preserves its signed bundle.
+              obsidian = previous.obsidian.overrideAttrs (_: {
+                dontFixup = true;
+              });
               # nixpkgs Darwin fixup replaces Spotify's Developer ID signature
               # with an ad-hoc one, breaking macOS privacy identity (TN3179).
               # The focused test in #89 validated that skipping fixup preserves it.
               spotify = previous.spotify.overrideAttrs (_: {
+                dontFixup = true;
+              });
+              # nixpkgs Darwin fixup likewise replaces VLC's verified upstream
+              # Developer ID signature even though the derivation only repacks
+              # the app bundle and creates a wrapper outside it (#89).
+              vlc-bin = previous.vlc-bin.overrideAttrs (_: {
                 dontFixup = true;
               });
             }
@@ -435,6 +453,7 @@
             inherit
               homebrew-cask
               homebrew-core
+              homebrew-cmux
               ;
             inherit (host) homeDirectory;
             homeModules = modulesForHost name host;
@@ -671,6 +690,8 @@
           codex-seed = import ./checks/codex-seed.nix { inherit pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           omp-seed = import ./checks/omp-seed.nix { inherit pkgs; };
+          omp-secret-obfuscation = import ./checks/omp-secret-obfuscation.nix { inherit pkgs; };
+          omp-isolated-writer = import ./checks/omp-isolated-writer.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {
@@ -721,9 +742,17 @@
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-evaluation = darwinEvaluation;
+          obsidian-signature = import ./checks/obsidian-signature.nix {
+            inherit pkgs;
+            inherit (pkgs) obsidian;
+          };
           spotify-signature = import ./checks/spotify-signature.nix {
             inherit pkgs;
             inherit (pkgs) spotify;
+          };
+          vlc-signature = import ./checks/vlc-signature.nix {
+            inherit pkgs;
+            inherit (pkgs) vlc-bin;
           };
         }
       );

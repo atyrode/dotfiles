@@ -224,6 +224,13 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
+        home.sessionVariables = lib.mkIf pkgs.stdenv.isLinux {
+          # cmux ssh exposes CMUX_SOCKET_PATH as host:port, while pinned OMP only
+          # dials Unix sockets. Temporary until upstream supports TCP; see #65:
+          # https://github.com/atyrode/dotfiles/issues/65
+          PI_BROWSER_CMUX = "0";
+        };
+
         home.packages = [
           cfg.ompPackage
         ]

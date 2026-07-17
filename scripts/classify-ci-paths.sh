@@ -14,16 +14,9 @@ while IFS= read -r path; do
   saw_path=true
 
   case "$path" in
-    # These documentation paths are guarded by docs-drift-guard.sh before the
-    # full matrix is skipped. docs/omp is versioned runtime documentation and
-    # remains a full-matrix input.
+    # Documentation-only changes are guarded by docs-drift-guard.sh before the
+    # full matrix is skipped.
     README.md | docs/*)
-      case "$path" in
-        docs/omp/*)
-          code=true
-          darwin=true
-          ;;
-      esac
       ;;
 
     # This module contributes configuration only when pkgs.stdenv.isLinux.

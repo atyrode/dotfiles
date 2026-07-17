@@ -21,7 +21,6 @@ let
       username
       ;
     platform = "linux";
-    aliases = [ ];
   };
   registry = {
     ${hostId} = host;

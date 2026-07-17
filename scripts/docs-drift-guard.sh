@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Guard the docs-only CI fast path invariant (#169): a change confined to
-# README.md or docs/** outside the versioned docs/omp/** wiki must not alter
-# any Nix derivation other than the intentional whole-tree lints (docs-links,
-# production-facts), which scan documentation on purpose and are built directly
-# by the fast path. docs/omp/** is an intentional derivation input and the path
-# classifier sends it through the full matrix instead.
+# README.md or docs/** must not alter any Nix derivation other than the
+# intentional whole-tree lints (docs-links, production-facts), which scan
+# documentation on purpose and are built directly by the fast path.
 #
 # The check is evaluation-only: it instantiates every flake check on every
 # CI platform (drvPath, no builds) at the base and head revisions and

@@ -1,4 +1,4 @@
-# Bootstrap and migrations
+# Bootstrap
 
 The bootstrap is the only supported path from an unmanaged machine to a
 registered dotfiles host. It is conservative because it runs before the
@@ -57,8 +57,8 @@ The phases are independently callable:
 raw and Git-resolved origin, branch/revision relationship to cached
 `origin/main`, required tools, and the absence of an interrupted transaction.
 It rejects staged, tracked, and untracked changes. `plan` adds the ordered Nix,
-migration, activation, and verification actions without creating state,
-downloading an artifact, fetching Git, or moving a file.
+activation, and verification actions without creating state, downloading an
+artifact, fetching Git, or moving a file.
 
 `apply` repeats both phases and asks for confirmation. Once Nix is available it
 uses the packaged `atyrode apply` plan and activation, so the host registry and
@@ -121,8 +121,6 @@ Bootstrap state lives under:
 ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/
 ├── apply.pending/
 ├── login-shell.incomplete
-├── migrations/
-│   └── migration-v1-shell-entrypoints.{pending,complete,rolled-back}
 └── transactions/
     └── apply-v1-<timestamp>-<process>.{complete,failed,rolled-back}
 ```
@@ -136,36 +134,25 @@ identifiers, hashes, relative logical actions, phases, host, system, revision,
 and outcome. They do not contain repository/home absolute paths, remote URLs,
 environment dumps, or credentials.
 
-The versioned shell-entrypoint migration applies only to unmanaged `.zshrc`
-and `.zshenv` files or symlinks. It writes a relative-path manifest before the
-first move, resumes safely after interruption, and commits only after Home
-Manager links both applicable paths. It never executes an unmanaged file to
-infer ownership. Actual backups may naturally contain private shell content;
-their parent directories are mode `0700` and must be protected like any other
-local backup.
-
-An activation or verification failure invokes the transaction-owned recovery
-copy, verifies its SHA-256, restores every migration-owned entrypoint only when
-there is no user-created collision, restores the previous active-host state,
-and archives the journal as failed. If the process is killed after the pending
-marker is published, run:
+An activation or verification failure verifies the transaction-owned recovery
+copy, restores the previous active-host state, and archives the journal as
+failed. If the process is killed after the pending marker is published, run:
 
 ```sh
 ./install.sh rollback --yes
 ```
 
-Rollback refuses ambiguous dual receipts, corrupted manifests, missing or
-changed backups, symlinked state namespaces, and newly-created destination
-data. On refusal, preserve both the pending transaction and live paths; do not
-delete either copy. If the checkout is unavailable, run the transaction-owned
-copy directly:
+Rollback refuses corrupted receipts, unsafe state namespaces, or a live
+active-host receipt that cannot be restored without overwriting newly created
+data. On refusal, preserve the pending transaction for inspection. If the
+checkout is unavailable, run the transaction-owned copy directly:
 
 ```sh
 bash "${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/apply.pending/recovery/install.sh" rollback --yes
 ```
 
-This rollback restores bootstrap-owned filesystem moves and the active-host
-receipt. It does not uninstall Nix or roll back a successfully activated Nix or
+Rollback restores the active-host receipt owned by the interrupted transaction.
+It does not uninstall Nix or roll back a successfully activated Home Manager or
 nix-darwin generation. Those are separate, explicit system operations.
 
 The login shell is deliberately outside the Home Manager transaction. On
@@ -189,10 +176,9 @@ with the required privilege. A passing verification removes the marker.
 plan, fresh and repeated application, successful and failed source updates,
 wrong and rewritten origins, dirty/staged/non-main revisions, download and
 checksum failure, partial installer failure, activation and verification
-failure, interruption before and after transaction publication, resumable
-migration, collisions, corrupt and dual receipts, missing backups, symlinked
-state namespaces, rollback, receipt privacy, login-shell marker interruption,
-unsafe marker types, privilege failure and recovery, production-only test-hook
+failure, interruption before and after transaction publication, rollback,
+receipt privacy, login-shell marker interruption, unsafe state types, privilege
+failure and recovery, recovery-script tampering, production-only test-hook
 gating, and idempotence. The same check runs natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git

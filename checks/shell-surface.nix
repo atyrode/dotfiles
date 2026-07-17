@@ -46,15 +46,6 @@ pkgs.runCommand "check-shell-surface"
     COLORTERM= TERM=vt100 zsh -dfc \
       'source ${../home/shell/colorterm.zsh}; [[ -z "$COLORTERM" ]]'
 
-    zsh -dfc '
-      source ${../home/shell/nix.zsh}
-      whence -w zconf >/dev/null
-      ! whence -w atmux >/dev/null
-      ! whence -w codex-login-main >/dev/null
-      ! alias ls >/dev/null 2>&1
-      ! alias htop >/dev/null 2>&1
-      ! alias cl >/dev/null 2>&1
-    '
 
     mkdir "$out"
   ''

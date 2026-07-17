@@ -17,7 +17,6 @@
     initContent = ''
       # Load shell configuration modules
       source ${./shell/colorterm.zsh}
-      source ${./shell/nix.zsh}
       source ${./shell/startup.zsh}
 
       # Ghostty shell integration, guarded on the file actually existing:

@@ -97,7 +97,7 @@ func testInventoryDocument() inventorydata.Manifest {
 			},
 		},
 		Hosts: map[string]inventorydata.Host{
-			"workstation": {ID: "workstation", Aliases: []string{"desk"}, Platform: "linux", System: "x86_64-linux", Capabilities: []string{"base", "agents", "server"}},
+			"workstation": {ID: "workstation", Platform: "linux", System: "x86_64-linux", Capabilities: []string{"base", "agents", "server"}},
 		},
 	}
 }

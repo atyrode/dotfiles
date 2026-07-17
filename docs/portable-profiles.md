@@ -67,7 +67,6 @@ example intentionally leaves every production system option in the consumer:
         platform = "linux";
         username = "<server-user>";
         homeDirectory = "/home/<server-user>";
-        aliases = [ ];
         capabilities = [ "base" "server" "agent-tools" ];
       };
     in {

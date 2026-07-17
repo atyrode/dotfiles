@@ -14,7 +14,6 @@
       "media"
       "containers"
     ];
-    aliases = [ "alex-darwin" ];
   };
 
   "alex-aarch64-linux" = {
@@ -28,7 +27,6 @@
       "development"
       "agent-tools"
     ];
-    aliases = [ ];
   };
 
   "alex-x86_64-linux" = {
@@ -42,10 +40,6 @@
       "development"
       "agent-tools"
       "containers"
-    ];
-    aliases = [
-      "alex"
-      "alex-linux"
     ];
   };
 
@@ -64,6 +58,5 @@
       "media"
       "containers"
     ];
-    aliases = [ "alex-linux-desktop" ];
   };
 }

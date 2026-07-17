@@ -39,7 +39,6 @@ type Capability struct {
 
 type Host struct {
 	ID           string   `json:"id"`
-	Aliases      []string `json:"aliases"`
 	Description  string   `json:"description"`
 	Hostname     string   `json:"hostname"`
 	Platform     string   `json:"platform"`

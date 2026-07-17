@@ -495,39 +495,7 @@ let
 
         normalize_layer_json() {
           local file="$1"
-          yq eval -o=json -I=0 '.' "$file" | jq -c '
-            if (.theme | type) == "string" then
-              if .theme == "light" or .theme == "dark" then
-                del(.theme)
-              else
-                .theme = { dark: .theme }
-              end
-            else . end
-            | if (.codexResets | type) == "object" and (.codexResets.autoRedeem | type) == "boolean" then
-                .codexResets.autoRedeem = (if .codexResets.autoRedeem then "yes" else "no" end)
-              else . end
-            | if (."codexResets.autoRedeem" | type) == "boolean" then
-                ."codexResets.autoRedeem" = (if ."codexResets.autoRedeem" then "yes" else "no" end)
-              else . end
-            | if (.memory | type) != "object" then .memory = {} else . end
-            | if ((.memory.backend | type) != "string")
-                and ((.memories | type) == "object")
-                and ((.memories.enabled | type) == "boolean") then
-                .memory.backend = (if .memories.enabled then "local" else "off" end)
-              else . end
-            | if .memory.backend == "mnemosyne" then .memory.backend = "mnemopi" else . end
-            | if (.memory | length) == 0 then del(.memory) else . end
-            | if ((.task | type) == "object")
-                and ((.task.isolation | type) == "object")
-                and ((.task.isolation.enabled | type) == "boolean") then
-                .task.isolation.mode = (if .task.isolation.enabled then "auto" else "none" end)
-                | del(.task.isolation.enabled)
-              else . end
-            | if (try .task.isolation.mode catch null) == "worktree" then .task.isolation.mode = "rcopy"
-              elif (try .task.isolation.mode catch null) == "fuse-overlay" then .task.isolation.mode = "overlayfs"
-              elif (try .task.isolation.mode catch null) == "fuse-projfs" then .task.isolation.mode = "projfs"
-              else . end
-          '
+          yq eval -o=json -I=0 '.' "$file"
         }
 
         emit_managed_config() {
@@ -771,12 +739,12 @@ let
           if [[ "$action" == set || "$action" == reset ]]; then
             if contains_managed_path "$key" "''${enforced_policy_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run zconf; machine, project, and --config values are intentionally shadowed." >&2
+                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run 'atyrode apply'; machine, project, and --config values are intentionally shadowed." >&2
               exit 2
             fi
             if contains_managed_path "$key" "''${managed_default_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run zconf." >&2
+                "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run 'atyrode apply'." >&2
               exit 2
             fi
           fi
@@ -867,7 +835,7 @@ let
             exec "$raw_omp" "''${original_args[@]}"
             ;;
           update)
-            printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+            printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
             exit 2
             ;;
           config)
@@ -937,7 +905,7 @@ let
     name = "omp";
     text = ''
       if [[ "''${1:-}" == update ]]; then
-        printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+        printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
         exit 2
       fi
 
@@ -1177,7 +1145,7 @@ let
           run_isolated "$raw_omp" --profile untrusted "''${forwarded_args[@]}"
           ;;
         update)
-          printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+          printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
           exit 2
           ;;
       esac

@@ -168,12 +168,9 @@ verify_checkout() {
   local root branch status counts local_ahead remote_ahead
 
   [[ -f "$DOTFILES_DIR/flake.nix" ]] || die "not a dotfiles flake checkout: $DOTFILES_DIR"
-  [[ -x "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" ]] ||
-    die "bootstrap migration script is missing or not executable"
   git -C "$DOTFILES_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
     die "repository is not a Git checkout: $DOTFILES_DIR"
-  git -C "$DOTFILES_DIR" ls-files --error-unmatch -- \
-    flake.nix install.sh scripts/bootstrap-migrate.sh >/dev/null 2>&1 ||
+  git -C "$DOTFILES_DIR" ls-files --error-unmatch -- flake.nix install.sh >/dev/null 2>&1 ||
     die "bootstrap entrypoints must be tracked by the verified repository"
   root="$(git -C "$DOTFILES_DIR" rev-parse --show-toplevel)"
   root="$(CDPATH='' cd -- "$root" && pwd -P)"
@@ -272,12 +269,9 @@ print_plan() {
   step=$((step + 1))
   printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$step"
   step=$((step + 1))
-  printf '  %s. Prepare versioned shell-entrypoint migration backups:\n' "$step"
-  "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" plan | sed 's/^/     - /'
-  step=$((step + 1))
   printf '  %s. Activate %s through atyrode/nh.\n' "$step" "$FLAKE_CONFIG"
   step=$((step + 1))
-  printf '  %s. Verify host state and complete the migration and bootstrap receipts.\n' "$step"
+  printf '  %s. Verify host state and complete the bootstrap receipt.\n' "$step"
   step=$((step + 1))
   if [[ "$SYSTEM" == *-darwin ]]; then
     printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$step"
@@ -364,7 +358,7 @@ archive_abandoned_transactions() {
 }
 
 begin_transaction() {
-  local root pending creating state_file state_status revision migration_sha installer_sha
+  local root pending creating state_file state_status revision installer_sha
 
   root="$(bootstrap_state_root)"
   state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/dotfiles-config"
@@ -390,10 +384,8 @@ begin_transaction() {
   chmod 700 "$TRANSACTION"
   mkdir "$TRANSACTION/backup" "$TRANSACTION/recovery"
   chmod 700 "$TRANSACTION/backup" "$TRANSACTION/recovery"
-  cp "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" "$TRANSACTION/recovery/bootstrap-migrate.sh"
   cp "${BASH_SOURCE[0]}" "$TRANSACTION/recovery/install.sh"
-  chmod 700 "$TRANSACTION/recovery/bootstrap-migrate.sh" "$TRANSACTION/recovery/install.sh"
-  migration_sha="$(sha256_file "$TRANSACTION/recovery/bootstrap-migrate.sh")"
+  chmod 700 "$TRANSACTION/recovery/install.sh"
   installer_sha="$(sha256_file "$TRANSACTION/recovery/install.sh")"
   revision="$(git -C "$DOTFILES_DIR" rev-parse HEAD)"
   {
@@ -403,7 +395,6 @@ begin_transaction() {
     printf 'revision\t%s\n' "$revision"
     printf 'nix-version\t%s\n' "$NIX_VERSION"
     printf 'nix-sha256\t%s\n' "$NIX_SHA256"
-    printf 'migration-sha256\t%s\n' "$migration_sha"
     printf 'installer-sha256\t%s\n' "$installer_sha"
     printf 'phase\tstarted\n'
   } >"$TRANSACTION/receipt.tsv"
@@ -497,10 +488,6 @@ finish_transaction() {
   printf 'Bootstrap receipt: %s\n' "${target#"$root/"}"
 }
 
-migration_owned_by_transaction() {
-  [[ -f "$TRANSACTION/migration-owned" && ! -L "$TRANSACTION/migration-owned" ]]
-}
-
 verify_recovery_script() {
   local name="$1"
   local key="$2"
@@ -513,22 +500,7 @@ verify_recovery_script() {
   [[ "$actual" == "$expected" ]] || die "transaction recovery copy $name failed verification"
 }
 
-migration_command() {
-  verify_recovery_script bootstrap-migrate.sh migration-sha256
-  bash "$TRANSACTION/recovery/bootstrap-migrate.sh" "$@"
-}
-
 rollback_current_transaction() {
-  local migration_status
-
-  if migration_owned_by_transaction; then
-    migration_status="$(migration_command status)"
-    case "$migration_status" in
-      pending | complete) migration_command rollback ;;
-      applicable) ;;
-      *) die "migration recovery returned an unknown state" ;;
-    esac
-  fi
   restore_previous_state
 }
 
@@ -674,7 +646,7 @@ activate_configuration() {
 }
 
 verify_installation() {
-  local state_file migration_status
+  local state_file
 
   source_nix
   command_exists nix || die "Nix is not available"
@@ -683,12 +655,6 @@ verify_installation() {
   [[ "$(cat "$state_file")" == "$FLAKE_CONFIG" ]] ||
     die "active host receipt does not match $FLAKE_CONFIG"
   run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null
-  if [[ -n "$TRANSACTION" ]]; then
-    migration_status="$(migration_command status)"
-  else
-    migration_status="$(bash "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" status)"
-  fi
-  [[ "$migration_status" == complete ]] || die "bootstrap migration is not complete"
   printf 'Verification passed for %s on %s\n' "$FLAKE_CONFIG" "$SYSTEM"
 }
 
@@ -805,7 +771,6 @@ verify_system_login_shell() {
 }
 
 apply_configuration() {
-  local migration_status
 
   preflight
   print_plan
@@ -832,30 +797,14 @@ apply_configuration() {
   append_transaction phase managed-preflight
   managed_activation_plan
 
-  ACTIVE_PHASE="migration state validation"
-  migration_status="$(migration_command status)"
-  if [[ "$migration_status" == complete ]]; then
-    append_transaction migration preexisting-complete
-  else
-    : >"$TRANSACTION/migration-owned"
-    chmod 600 "$TRANSACTION/migration-owned"
-    append_transaction migration owned
-  fi
-  ACTIVE_PHASE="migration preparation"
-  append_transaction phase preparing-migration
-  migration_command prepare
-
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == after-migration-prepare ]]; then
-    printf 'bootstrap: interrupted at test failpoint after-migration-prepare\n' >&2
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-activation ]]; then
+    printf 'bootstrap: interrupted at test failpoint before-activation\n' >&2
     exit 75
   fi
 
   ACTIVE_PHASE="configuration activation"
   append_transaction phase activating
   activate_configuration
-  ACTIVE_PHASE="migration completion"
-  append_transaction phase committing-migration
-  migration_command commit
   ACTIVE_PHASE="verification"
   append_transaction phase verifying
   verify_installation

@@ -29,7 +29,7 @@ func Parse(data []byte, expected Expected) (Document, error) {
 
 	host, ok := resolveHost(manifest.Hosts, expected.Host)
 	if !ok {
-		return Document{}, fmt.Errorf("inventory host mismatch: %q is not a canonical id or alias", expected.Host)
+		return Document{}, fmt.Errorf("inventory host mismatch: %q is not a canonical id", expected.Host)
 	}
 	if host.System != expected.System || host.Platform != manifest.Identity.Platform {
 		return Document{}, fmt.Errorf("inventory host identity mismatch for %q", host.ID)
@@ -75,27 +75,17 @@ func Parse(data []byte, expected Expected) (Document, error) {
 }
 
 func resolveHost(hosts map[string]Host, requested string) (Host, bool) {
-	for key, host := range hosts {
-		if host.ID == "" {
-			host.ID = key
-		}
-		if key == requested || host.ID == requested || contains(host.Aliases, requested) {
-			if host.ID != key {
-				return Host{}, false
-			}
-			return host, true
-		}
+	host, ok := hosts[requested]
+	if !ok {
+		return Host{}, false
 	}
-	return Host{}, false
-}
-
-func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
+	if host.ID == "" {
+		host.ID = requested
 	}
-	return false
+	if host.ID != requested {
+		return Host{}, false
+	}
+	return host, true
 }
 
 func platformForSystem(system string) string {

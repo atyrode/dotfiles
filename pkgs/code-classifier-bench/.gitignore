@@ -1,5 +1,0 @@
-# Raw, un-anonymized extraction from ~/.omp sessions — NEVER commit.
-raw_groundtruth.json
-# Generated benchmark output.
-report.md
-report.json

@@ -68,7 +68,7 @@ workspace navigation.
 
 The parser accepts inventory schema version 1 only, requires the manifest's
 full revision and system to equal the Apply plan, derives the platform from that
-system, and resolves the planned host through its canonical id or aliases.
+system, and resolves the planned host by its canonical ID.
 Failures remain local and never substitute stale inventory or change Apply
 confirmation state.
 

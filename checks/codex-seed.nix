@@ -51,21 +51,20 @@ pkgs.runCommand "check-codex-seed"
     atyrode-codex-seed status --json >"$TMPDIR/status.json" 2>&1
     grep -q '"seeded":true' "$TMPDIR/status.json" || fail "status did not report seeded"
 
-    # Scenario: a pre-existing config.toml with machine-local [projects] trust is
-    # backed up (never merged), replaced by the seed, and the trust survives in
-    # the backup — the critical migration case.
+    # A pre-existing config.toml with machine-local [projects] trust is backed
+    # up (never merged), replaced by the seed, and preserved in the backup.
     export HOME="$TMPDIR/existing"
     mkdir -p "$HOME/.codex"
     config="$HOME/.codex/config.toml"
     cat >"$config" <<'TOML'
-    model = "gpt-legacy"
+    model = "operator-custom"
 
     [projects."/home/alex/secret"]
     trust_level = "trusted"
     TOML
     atyrode-codex-seed apply >"$TMPDIR/existing.log" 2>&1
     grep -q 'model = "gpt-5.5"' "$config" || fail "existing config was not reseeded"
-    ! grep -q 'gpt-legacy' "$config" || fail "old base config was not replaced"
+    ! grep -q 'operator-custom' "$config" || fail "pre-existing config was not replaced"
     backup="$(ls "$HOME/.codex/"config.toml.pre-seed.* 2>/dev/null | head -1 || true)"
     [ -n "$backup" ] && [ -f "$backup" ] || fail "existing config was not backed up"
     grep -q 'trust_level = "trusted"' "$backup" || fail "project trust not preserved in backup"

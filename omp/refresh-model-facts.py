@@ -15,8 +15,8 @@ every comment are preserved. Run it from the repo root:
   nix run .#refresh-model-facts -- --skip-bench # cost/context/thinking only (free)
   nix run .#refresh-model-facts -- --runs 3     # average speed over 3 bench runs
 
-A model whose bench fails (e.g. its quota is maxed) keeps its existing speed/ttft
-and prints a warning — re-run once the bucket resets.
+If any selected model lacks a successful benchmark, the script aborts without
+writing the cache; re-run when every bucket is available.
 """
 import argparse
 import datetime
@@ -55,18 +55,6 @@ def omp_bench(selectors, runs, max_tokens):
     return bench_from(json.loads(out)["models"])
 
 
-def omp_stats():
-    """Per-model historical aggregate (what `/model` shows) — the fallback for a
-    model `omp bench` can't reach live (e.g. a maxed quota). Keyed by provider/id.
-    Note: stats are thinking-blended real usage, not a clean benchmark."""
-    out = subprocess.run(["omp", "stats", "--json"], capture_output=True, text=True, check=True).stdout
-    out = out[out.index("{"):]  # skip the "Syncing…" preamble
-    res = {}
-    for m in json.loads(out).get("byModel", []):
-        tps, ttft = m.get("avgTokensPerSecond"), m.get("avgTtft")
-        if tps and ttft:
-            res[f"{m['provider']}/{m['model']}"] = {"tokensPerSecond": tps, "ttftMs": ttft}
-    return res
 
 
 def main():
@@ -104,15 +92,12 @@ def main():
         else:
             selectors = [f"{POOL_PROVIDER[m['pool']]}/{m['id']}" for m in models.values()]
             bench = omp_bench(selectors, args.runs, args.max_tokens)
-        stats = omp_stats()  # fallback for models bench couldn't reach
+        missing = []
         for key, m in models.items():
             sel = f"{POOL_PROVIDER[m['pool']]}/{m['id']}"
             avg = bench.get(sel)
-            if not avg and sel in stats:
-                avg = stats[sel]
-                print(f"note: {key} benched from `omp stats` history (bench unavailable)", file=sys.stderr)
             if not avg:
-                print(f"warn: no bench or stats for {key} ({sel}); keeping existing speed/ttft", file=sys.stderr)
+                missing.append(f"{key} ({sel})")
                 continue
             m["speed"] = round(avg["tokensPerSecond"], 1)
             ttft = round(avg["ttftMs"] / 1000.0, 2)
@@ -121,7 +106,12 @@ def main():
             else:  # keep ttft next to speed, not appended at the end
                 ks = list(m.keys())
                 m.insert(ks.index("speed") + 1, "ttft", ttft)
-
+        if missing:
+            raise SystemExit(
+                "error: no successful benchmark for "
+                + ", ".join(missing)
+                + "; model facts were not written"
+            )
     # stamp the refresh date (top-level; consumers read only `models`) so a CI
     # freshness check can nudge a re-run when the cache goes stale.
     today = datetime.date.today().isoformat()

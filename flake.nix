@@ -304,10 +304,22 @@
           (
             _final: previous:
             lib.optionalAttrs previous.stdenv.isDarwin {
+              # nixpkgs Darwin fixup replaces Obsidian's Developer ID signature
+              # with an ad-hoc one. The pinned upstream DMG and derivation audit
+              # in #89 verified that skipping fixup preserves its signed bundle.
+              obsidian = previous.obsidian.overrideAttrs (_: {
+                dontFixup = true;
+              });
               # nixpkgs Darwin fixup replaces Spotify's Developer ID signature
               # with an ad-hoc one, breaking macOS privacy identity (TN3179).
               # The focused test in #89 validated that skipping fixup preserves it.
               spotify = previous.spotify.overrideAttrs (_: {
+                dontFixup = true;
+              });
+              # nixpkgs Darwin fixup likewise replaces VLC's verified upstream
+              # Developer ID signature even though the derivation only repacks
+              # the app bundle and creates a wrapper outside it (#89).
+              vlc-bin = previous.vlc-bin.overrideAttrs (_: {
                 dontFixup = true;
               });
             }
@@ -728,9 +740,17 @@
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-evaluation = darwinEvaluation;
+          obsidian-signature = import ./checks/obsidian-signature.nix {
+            inherit pkgs;
+            inherit (pkgs) obsidian;
+          };
           spotify-signature = import ./checks/spotify-signature.nix {
             inherit pkgs;
             inherit (pkgs) spotify;
+          };
+          vlc-signature = import ./checks/vlc-signature.nix {
+            inherit pkgs;
+            inherit (pkgs) vlc-bin;
           };
         }
       );

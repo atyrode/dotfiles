@@ -11,6 +11,7 @@ import (
 
 const doctorHostJSON = `{"ok":true,"host":"workstation","actual":{"system":"x86_64-linux","username":"alex","hostname":"desk"},"registered":{"id":"workstation"}}`
 const doctorSystemJSON = `{"schemaVersion":1,"command":"doctor system","ok":false,"host":"workstation","system":"x86_64-linux","platform":"linux","capabilities":["base"],"checks":[{"id":"nix-daemon","owner":"nixos","required":true,"status":"incomplete","code":"inactive","summary":"daemon inactive","remediation":"enable it","expected":{},"actual":{}}],"mutationBoundary":"read-only probes"}`
+const doctorGitJSON = `{"schemaVersion":1,"command":"doctor git","ok":false,"repository":{"insideWorkTree":true},"checks":[{"id":"gh-auth-storage","owner":"gh","required":true,"status":"failed","code":"gh-plaintext-token","summary":"plaintext token storage","remediation":"move it to the keyring","expected":{},"actual":{}}],"mutationBoundary":"read-only probes"}`
 const doctorToolsJSON = `[{"name":"Nix","command":"nix","capability":"base","version":"1","versionOwner":"nixpkgs","mutableState":"store","launchModes":["build"],"status":"missing","path":"","expected":true,"remediation":"apply"}]`
 
 func TestDoctorPreservesSemanticFailureJSON(t *testing.T) {
@@ -26,6 +27,23 @@ func TestDoctorPreservesSemanticFailureJSON(t *testing.T) {
 	}
 	if m.doctorErrors[doctorSystemTab] != nil || m.doctorReports[doctorSystemTab].semanticErr == nil {
 		t.Fatal("semantic nonzero was not retained separately")
+	}
+}
+
+func TestDoctorGitReportUsesFourthTab(t *testing.T) {
+	report, err := parseDoctorReport(doctorGitTab, []byte(doctorGitJSON))
+	if err != nil {
+		t.Fatalf("parse doctor git: %v", err)
+	}
+	if report.git == nil || report.git.OK || doctorCommand(doctorGitTab) != "git" {
+		t.Fatalf("doctor Git report = %#v", report.git)
+	}
+	m := newModel("atyrode")
+	m.doctorTab = doctorGitTab
+	m.doctorReports[doctorGitTab] = report
+	view := stripTerminalControls(m.doctorView(80))
+	if !strings.Contains(view, "[Git]") || !strings.Contains(view, "FAILED · gh-auth-storage") {
+		t.Fatalf("doctor Git view = %q", view)
 	}
 }
 

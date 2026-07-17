@@ -71,6 +71,28 @@ assert lib.assertMsg serverConfig.programs.home-manager.enable
   "portable server must enable Home Manager";
 assert lib.assertMsg serverConfig.programs.zsh.enable "portable server must enable Zsh";
 assert lib.assertMsg serverConfig.programs.git.enable "portable server must enable Git";
+assert lib.assertMsg serverConfig.programs.gh.enable "portable server must enable GitHub CLI";
+assert lib.assertMsg (
+  serverConfig.programs.gh.settings.git_protocol == "ssh"
+) "portable server must make gh clones use SSH";
+assert lib.assertMsg serverConfig.programs.gh.gitCredentialHelper.enable
+  "portable server must declare the gh Git credential helper";
+assert lib.assertMsg (builtins.any (lib.hasSuffix "/bin/gh auth git-credential")
+  serverConfig.programs.git.settings.credential."https://github.com".helper
+) "portable server must render the gh helper into Git configuration";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.url."git@github.com:".pushInsteadOf == "https://github.com/"
+) "portable server must rewrite GitHub pushes, not anonymous fetches, to SSH";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.url."git@gitlab.com:".pushInsteadOf == "https://gitlab.com/"
+) "portable server must rewrite GitLab pushes, not anonymous fetches, to SSH";
+assert lib.assertMsg (
+  serverConfig.xdg.configFile."git/allowed_signers".source == ../home/git-allowed-signers
+) "portable server must deploy the reviewed allowed_signers source";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.gpg.ssh.allowedSignersFile
+  == "${serverConfig.xdg.configHome}/git/allowed_signers"
+) "Git must use the Home Manager-owned allowed_signers path";
 assert lib.assertMsg serverConfig.programs.fzf.enable "portable server must enable fzf";
 assert lib.assertMsg serverConfig.programs.zoxide.enable "portable server must enable zoxide";
 assert lib.assertMsg serverConfig.programs.direnv.nix-direnv.enable

@@ -15,6 +15,7 @@ not in a checklist.
 | [package-ownership.md](package-ownership.md) | Evaluated capability/package inventory and its semantic authority boundaries |
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
+| [git-keys.md](git-keys.md) | SSH-first Git authentication/signing, public allowed signers, and machine-key lifecycle |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
 | [tui-verification.md](tui-verification.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
 | [omp/](omp/README.md) | Versioned upstream OMP CLI and capability field guide, explicitly separated from repository wrapper behavior |

@@ -9,6 +9,7 @@ pkgs.runCommand "check-atyrode-cli"
   {
     nativeBuildInputs = [
       atyrode
+      pkgs.gh
       pkgs.jq
     ];
   }
@@ -206,6 +207,180 @@ pkgs.runCommand "check-atyrode-cli"
         and (.versionOwner | length > 0))
       and all(.[]; .status != "missing" or (.remediation | contains("do not install globally")))
     ' <<< "$tools" >/dev/null
+
+    # doctor git is read-only and reports classifications only. The fixture
+    # gives it a real Git config, repository, SSH agent, and public key files;
+    # private fixture material remains inside TMPDIR.
+    (
+      export HOME="$TMPDIR/git-doctor-home"
+      export XDG_CONFIG_HOME="$HOME/.config"
+      export GH_CONFIG_DIR="$XDG_CONFIG_HOME/gh"
+      export GIT_CONFIG_GLOBAL="$XDG_CONFIG_HOME/git/config"
+      export GIT_CONFIG_NOSYSTEM=1
+      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+      mkdir -p "$HOME/.ssh" "$XDG_CONFIG_HOME/git" "$GH_CONFIG_DIR" "$TMPDIR/git-doctor-repo"
+
+      git_doctor=${pkgs.gitMinimal}/bin/git
+      read -r _ signing_type signing_blob < ${../home/git-allowed-signers}
+      printf '%s %s fixture-signing-key\n' "$signing_type" "$signing_blob" \
+        > "$HOME/.ssh/id_ed25519_git_signing.pub"
+      chmod 0644 "$HOME/.ssh/id_ed25519_git_signing.pub"
+      cp ${../home/git-allowed-signers} "$XDG_CONFIG_HOME/git/allowed_signers"
+      chmod 0644 "$XDG_CONFIG_HOME/git/allowed_signers"
+
+      "$git_doctor" config --global user.signingKey "$HOME/.ssh/id_ed25519_git_signing.pub"
+      "$git_doctor" config --global gpg.format ssh
+      "$git_doctor" config --global gpg.ssh.allowedSignersFile "$XDG_CONFIG_HOME/git/allowed_signers"
+      "$git_doctor" config --global --add credential.https://github.com.helper ""
+      "$git_doctor" config --global --add credential.https://github.com.helper \
+        "${pkgs.gh}/bin/gh auth git-credential"
+      "$git_doctor" config --global 'url.git@github.com:.pushInsteadOf' https://github.com/
+      "$git_doctor" -C "$TMPDIR/git-doctor-repo" init -q
+      "$git_doctor" -C "$TMPDIR/git-doctor-repo" remote add origin \
+        https://github.com/atyrode/fixture.git
+
+      ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -f "$TMPDIR/agent-key"
+      eval "$(${pkgs.openssh}/bin/ssh-agent -s)" >/dev/null
+      trap '${pkgs.openssh}/bin/ssh-agent -k >/dev/null 2>&1 || true' EXIT
+      ${pkgs.openssh}/bin/ssh-add "$TMPDIR/agent-key" >/dev/null 2>&1
+
+      cd "$TMPDIR/git-doctor-repo"
+      git_result="$(atyrode doctor git --json)"
+      jq -e '
+        .schemaVersion == 1
+        and .command == "doctor git"
+        and .ok
+        and .mutationBoundary == "read-only probes"
+        and (.checks | map(.id)) == [
+          "git-configuration",
+          "ssh-agent",
+          "ssh-agent-keys",
+          "signing-key",
+          "allowed-signers",
+          "remote-protocol",
+          "credential-helper-plaintext",
+          "credential-file-plaintext",
+          "gh-credential-helper",
+          "gh-auth-storage"
+        ]
+        and (.checks[] | select(.id == "allowed-signers") | .actual.signingKeyAuthorized)
+        and (.checks[] | select(.id == "remote-protocol") | .actual.httpsFetchUrls) == 1
+        and (.checks[] | select(.id == "remote-protocol") | .actual.sshPushUrls) == 1
+        and (.checks[] | select(.id == "gh-credential-helper") | .status) == "ok"
+        and (.checks[] | select(.id == "gh-auth-storage") | .status) == "not-applicable"
+      ' <<<"$git_result" >/dev/null
+
+      "$git_doctor" config --global --unset-all 'url.git@github.com:.pushInsteadOf'
+      "$git_doctor" config --global --unset-all credential.https://github.com.helper
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-https.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "remote-protocol") | .status) == "warning"
+        and (.checks[] | select(.id == "gh-credential-helper") | .status) == "failed"
+      ' "$TMPDIR/git-doctor-https.json" >/dev/null
+      "$git_doctor" config --global --add credential.https://github.com.helper ""
+      "$git_doctor" config --global --add credential.https://github.com.helper \
+        "${pkgs.gh}/bin/gh auth git-credential"
+      "$git_doctor" config --global 'url.git@github.com:.pushInsteadOf' https://github.com/
+
+      "$git_doctor" config --global credential.helper store
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-store.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "credential-helper-plaintext") | .status) == "failed"
+      ' "$TMPDIR/git-doctor-store.json" >/dev/null
+      "$git_doctor" config --global --unset-all credential.helper
+
+      printf 'https://fixture:placeholder@github.com\n' > "$HOME/.git-credentials"
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-credential-file.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "credential-file-plaintext") | .status) == "failed"
+      ' "$TMPDIR/git-doctor-credential-file.json" >/dev/null
+      rm "$HOME/.git-credentials"
+
+      printf '# drift\n' >> "$XDG_CONFIG_HOME/git/allowed_signers"
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-signers.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "allowed-signers") | .status) == "failed"
+      ' "$TMPDIR/git-doctor-signers.json" >/dev/null
+      cp ${../home/git-allowed-signers} "$XDG_CONFIG_HOME/git/allowed_signers"
+
+      chmod 0666 "$HOME/.ssh/id_ed25519_git_signing.pub"
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-key-mode.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "signing-key") | .actual.permissionsSafe) == false
+      ' "$TMPDIR/git-doctor-key-mode.json" >/dev/null
+      chmod 0644 "$HOME/.ssh/id_ed25519_git_signing.pub"
+
+      mkdir -p "$TMPDIR/git-doctor-bin"
+    cat > "$TMPDIR/git-doctor-bin/gh" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' '{"hosts":{"github.com":[{"tokenSource":"keyring"}]}}'
+    EOF
+      chmod +x "$TMPDIR/git-doctor-bin/gh"
+      export PATH="$TMPDIR/git-doctor-bin:$PATH"
+      printf '%s\n' 'github.com:' '    users:' '        atyrode:' \
+        > "$GH_CONFIG_DIR/hosts.yml"
+      keyring_result="$(atyrode doctor git --json)"
+      jq -e '
+        .ok
+        and (.checks[] | select(.id == "gh-auth-storage") | .status) == "ok"
+        and (.checks[] | select(.id == "gh-auth-storage") | .actual.keyringAccountCount) == 1
+      ' <<<"$keyring_result" >/dev/null
+
+    cat > "$GH_CONFIG_DIR/hosts.yml" <<'EOF'
+    github.com:
+        oauth_token: fixture-token-must-not-appear
+    EOF
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-gh-plaintext.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "gh-auth-storage") | .status) == "failed"
+        and (.checks[] | select(.id == "gh-auth-storage") | .actual.plaintextTokenFile)
+      ' "$TMPDIR/git-doctor-gh-plaintext.json" >/dev/null
+      ! grep -qF fixture-token-must-not-appear "$TMPDIR/git-doctor-gh-plaintext.json"
+      rm "$GH_CONFIG_DIR/hosts.yml"
+
+      ${pkgs.openssh}/bin/ssh-agent -k >/dev/null
+      unset SSH_AUTH_SOCK SSH_AGENT_PID
+      trap - EXIT
+      set +e
+      atyrode doctor git --json > "$TMPDIR/git-doctor-no-agent.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "ssh-agent") | .status) == "failed"
+        and (.checks[] | select(.id == "ssh-agent-keys") | .status) == "failed"
+      ' "$TMPDIR/git-doctor-no-agent.json" >/dev/null
+
+      set +e
+      atyrode doctor git --unknown >/dev/null 2>&1
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 64
+    )
     atyrode apply --repo "$HOME/nix-dotfiles" --plan --json | jq -e '
       .host == "alex-x86_64-linux"
       and .backend == "nh-home"

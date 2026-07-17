@@ -11,6 +11,7 @@ readonly homebrew_cask_inventory='@homebrew_casks@'
 readonly system_policy='@system_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
+readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
 readonly flake_remote_url="https://github.com/${flake_ref#github:}"
@@ -33,6 +34,7 @@ Usage:
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
+  atyrode doctor git [--json]
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
@@ -55,6 +57,9 @@ checkout. It is read-only and currently requires --json.
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
+doctor git is a read-only audit of SSH authentication, SSH signing, forge
+remotes, Git credential helpers, and GitHub CLI credential storage. It reports
+classifications only and never prints keys, tokens, helper arguments, or remotes.
 generations lists the activation profile's generations (nix-darwin system on
 macOS, home-manager on Linux); rollback activates an earlier one (previous by
 default, or --to N) after confirming. clean reclaims disk from generations the
@@ -679,6 +684,545 @@ cmd_lifecycle() {
   fi
 }
 
+git_checks='[]'
+
+git_check_add() {
+  local id="$1" owner="$2" required="$3" status="$4" code="$5"
+  local summary="$6" remediation="$7" expected="$8" actual="$9"
+
+  git_checks="$(jq -c \
+    --arg id "$id" \
+    --arg owner "$owner" \
+    --argjson required "$required" \
+    --arg status "$status" \
+    --arg code "$code" \
+    --arg summary "$summary" \
+    --arg remediation "$remediation" \
+    --argjson expected "$expected" \
+    --argjson actual "$actual" \
+    '. + [{
+      id: $id,
+      owner: $owner,
+      required: $required,
+      status: $status,
+      code: (if $code == "" then null else $code end),
+      summary: $summary,
+      remediation: (if $remediation == "" then null else $remediation end),
+      expected: $expected,
+      actual: $actual
+    }]' <<<"$git_checks")"
+}
+
+expand_home_path() {
+  local path="$1"
+  if [[ "$path" == \~/* ]]; then
+    printf '%s/%s\n' "$HOME" "${path:2}"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+git_helper_is_store() {
+  local helper="$1"
+  [[ "$helper" =~ ^store([[:space:]]|$) ||
+    "$helper" =~ (^|[[:space:]/])git-credential-store([[:space:]]|$) ]]
+}
+
+git_helper_is_gh() {
+  local helper="$1"
+  [[ "$helper" =~ (^|[[:space:]/])gh[[:space:]]+auth[[:space:]]+git-credential([[:space:]]|$) ]]
+}
+
+git_helper_is_secure() {
+  local helper="$1"
+  if git_helper_is_gh "$helper"; then
+    return 0
+  fi
+  [[ "$helper" =~ ^(osxkeychain|libsecret|manager|manager-core)([[:space:]]|$) ||
+    "$helper" =~ (^|[[:space:]/])git-credential-(osxkeychain|libsecret|manager|manager-core)([[:space:]]|$) ]]
+}
+
+git_forge_url_kind() {
+  local url="$1" rest authority host scheme
+  case "$url" in
+    git@github.com:* | ssh://git@github.com/* | ssh://github.com/*)
+      printf 'github-ssh\n'
+      return
+      ;;
+    git@gitlab.com:* | ssh://git@gitlab.com/* | ssh://gitlab.com/*)
+      printf 'gitlab-ssh\n'
+      return
+      ;;
+    git://github.com/*)
+      printf 'github-insecure\n'
+      return
+      ;;
+    git://gitlab.com/*)
+      printf 'gitlab-insecure\n'
+      return
+      ;;
+    https://* | http://*)
+      scheme="${url%%://*}"
+      rest="${url#*://}"
+      authority="${rest%%/*}"
+      host="${authority##*@}"
+      host="${host%%:*}"
+      case "$host:$scheme" in
+        github.com:https) printf 'github-https\n' ;;
+        gitlab.com:https) printf 'gitlab-https\n' ;;
+        github.com:http) printf 'github-insecure\n' ;;
+        gitlab.com:http) printf 'gitlab-insecure\n' ;;
+        *) printf 'other\n' ;;
+      esac
+      return
+      ;;
+  esac
+  printf 'other\n'
+}
+
+doctor_git() {
+  local json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown doctor git option: $1" ;;
+    esac
+    shift
+  done
+
+  git_checks='[]'
+  local config_readable=true helper_rows="" helper_status=0
+  local store_helpers=0 global_secure=false github_secure=false gitlab_secure=false
+  local github_helper=false line name value
+
+  if ! git config --list --show-origin >/dev/null 2>&1; then
+    config_readable=false
+  fi
+  helper_rows="$(git config --show-origin --get-regexp '^credential(\..*)?\.helper$' 2>/dev/null)" ||
+    helper_status=$?
+  if ((helper_status > 1)); then
+    config_readable=false
+    helper_rows=""
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    IFS=$'\t ' read -r _ name value <<<"$line"
+    if git_helper_is_store "$value"; then
+      store_helpers=$((store_helpers + 1))
+    fi
+    case "$name" in
+      credential.helper)
+        if [[ -z "$value" ]]; then
+          global_secure=false
+        elif git_helper_is_secure "$value"; then
+          global_secure=true
+        fi
+        ;;
+      credential.https://github.com.helper | credential.https://gist.github.com.helper)
+        if [[ -z "$value" ]]; then
+          github_secure=false
+        elif git_helper_is_secure "$value"; then
+          github_secure=true
+        fi
+        git_helper_is_gh "$value" && github_helper=true
+        ;;
+      credential.https://gitlab.com.helper)
+        if [[ -z "$value" ]]; then
+          gitlab_secure=false
+        elif git_helper_is_secure "$value"; then
+          gitlab_secure=true
+        fi
+        ;;
+    esac
+  done <<<"$helper_rows"
+  [[ "$global_secure" == false ]] || {
+    github_secure=true
+    gitlab_secure=true
+  }
+
+  local expected actual status code summary remediation
+  expected='{"readable":true}'
+  actual="$(jq -nc --argjson readable "$config_readable" '{readable:$readable}')"
+  if [[ "$config_readable" == true ]]; then
+    status=ok
+    code=""
+    summary="Git configuration is readable"
+    remediation=""
+  else
+    status=failed
+    code=configuration-unreadable
+    summary="Git configuration could not be read safely"
+    remediation="repair the Git configuration before relying on authentication or signing"
+  fi
+  git_check_add git-configuration home-manager true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local agent_socket=false agent_available=false agent_key_count=0 agent_status=0 agent_output=""
+  [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] && agent_socket=true
+  if command -v ssh-add >/dev/null 2>&1 && [[ "$agent_socket" == true ]]; then
+    agent_output="$(ssh-add -l 2>/dev/null)" || agent_status=$?
+    case "$agent_status" in
+      0)
+        agent_available=true
+        agent_key_count="$(jq -Rsc 'split("\n") | map(select(length > 0)) | length' <<<"$agent_output")"
+        ;;
+      1) agent_available=true ;;
+    esac
+  else
+    agent_status=2
+  fi
+  expected='{"available":true}'
+  actual="$(jq -nc --argjson socketPresent "$agent_socket" --argjson available "$agent_available" \
+    '{socketPresent:$socketPresent,available:$available}')"
+  if [[ "$agent_available" == true ]]; then
+    status=ok
+    code=""
+    summary="SSH agent is reachable"
+    remediation=""
+  else
+    status=failed
+    code=agent-unavailable
+    summary="SSH agent is unavailable"
+    remediation="start the platform SSH agent and export its socket; do not fall back to a plaintext HTTPS helper"
+  fi
+  git_check_add ssh-agent operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  expected='{"minimumKeyCount":1}'
+  actual="$(jq -nc --argjson keyCount "$agent_key_count" '{keyCount:$keyCount}')"
+  if [[ "$agent_available" == true && "$agent_key_count" -gt 0 ]]; then
+    status=ok
+    code=""
+    summary="SSH agent has at least one key loaded"
+    remediation=""
+  else
+    status=failed
+    code=no-agent-keys
+    summary="SSH agent has no usable keys"
+    remediation="load this machine's distinct authentication and signing keys into the agent"
+  fi
+  git_check_add ssh-agent-keys operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local signing_config="" signing_path="" signing_mode="" signing_readable=false
+  local signing_permissions=false signing_public=false signing_valid=false key_type="" key_blob=""
+  signing_config="$(git config --global --get user.signingKey 2>/dev/null || true)"
+  if [[ -n "$signing_config" ]]; then
+    signing_path="$(expand_home_path "$signing_config")"
+  fi
+  if [[ -n "$signing_path" && -f "$signing_path" && -r "$signing_path" ]]; then
+    signing_readable=true
+    signing_mode="$(stat -c '%a' -- "$signing_path" 2>/dev/null || true)"
+    if [[ "$signing_mode" =~ ^[0-7]{3,4}$ ]] &&
+      (((8#$signing_mode & 8#022) == 0)); then
+      signing_permissions=true
+    fi
+    IFS=' ' read -r key_type key_blob _ <"$signing_path" || true
+    case "$key_type" in
+      ssh-* | ecdsa-* | sk-*) signing_public=true ;;
+    esac
+    if [[ "$signing_public" == true ]] && ssh-keygen -lf "$signing_path" >/dev/null 2>&1; then
+      signing_valid=true
+    fi
+  fi
+  expected='{"configured":true,"readable":true,"publicKey":true,"valid":true,"permissionsSafe":true}'
+  actual="$(jq -nc \
+    --argjson configured "$([[ -n "$signing_config" ]] && echo true || echo false)" \
+    --argjson readable "$signing_readable" \
+    --argjson publicKey "$signing_public" \
+    --argjson valid "$signing_valid" \
+    --argjson permissionsSafe "$signing_permissions" \
+    --arg mode "$signing_mode" \
+    '{configured:$configured,readable:$readable,publicKey:$publicKey,valid:$valid,
+      permissionsSafe:$permissionsSafe,mode:(if $mode == "" then null else $mode end)}')"
+  if [[ "$signing_readable" == true && "$signing_public" == true &&
+    "$signing_valid" == true && "$signing_permissions" == true ]]; then
+    status=ok
+    code=""
+    summary="Configured SSH signing public key is readable, valid, and not writable by group or others"
+    remediation=""
+  else
+    status=failed
+    code=signing-key-invalid
+    summary="Configured SSH signing public key is missing, unreadable, invalid, or writable by group or others"
+    remediation="provision this machine's public signing key at user.signingKey with mode 0644 or stricter"
+  fi
+  git_check_add signing-key operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local signers_config="" signers_path="" signers_readable=false signers_match=false
+  local signers_authorize=false
+  signers_config="$(git config --global --get gpg.ssh.allowedSignersFile 2>/dev/null || true)"
+  if [[ -n "$signers_config" ]]; then
+    signers_path="$(expand_home_path "$signers_config")"
+  fi
+  if [[ -n "$signers_path" && -f "$signers_path" && -r "$signers_path" ]]; then
+    signers_readable=true
+    cmp -s -- "$signers_path" "$managed_git_allowed_signers" && signers_match=true
+    if [[ "$signing_valid" == true ]] &&
+      awk -v type="$key_type" -v blob="$key_blob" \
+        '$2 == type && $3 == blob { found = 1 } END { exit !found }' "$signers_path"; then
+      signers_authorize=true
+    fi
+  fi
+  expected='{"configured":true,"readable":true,"managedContent":true,"signingKeyAuthorized":true}'
+  actual="$(jq -nc \
+    --argjson configured "$([[ -n "$signers_config" ]] && echo true || echo false)" \
+    --argjson readable "$signers_readable" \
+    --argjson managedContent "$signers_match" \
+    --argjson signingKeyAuthorized "$signers_authorize" \
+    '{configured:$configured,readable:$readable,managedContent:$managedContent,
+      signingKeyAuthorized:$signingKeyAuthorized}')"
+  if [[ "$signers_readable" == true && "$signers_match" == true && "$signers_authorize" == true ]]; then
+    status=ok
+    code=""
+    summary="allowed_signers matches managed content and authorizes the configured signing key"
+    remediation=""
+  else
+    status=failed
+    code=allowed-signers-drift
+    summary="allowed_signers is missing, unreadable, drifting from managed content, or does not authorize the signing key"
+    remediation="apply the current Home Manager configuration; do not edit allowed_signers manually"
+  fi
+  git_check_add allowed-signers home-manager true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local inside_work_tree=false forge_remotes=0 ssh_fetch=0 https_fetch=0
+  local ssh_push=0 https_push=0 insecure_urls=0 unsafe_https_push=0
+  local remote remote_is_forge kind url
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    inside_work_tree=true
+    while IFS= read -r remote; do
+      [[ -n "$remote" ]] || continue
+      remote_is_forge=false
+      while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        kind="$(git_forge_url_kind "$url")"
+        case "$kind" in
+          github-ssh | gitlab-ssh)
+            ssh_fetch=$((ssh_fetch + 1))
+            remote_is_forge=true
+            ;;
+          github-https | gitlab-https)
+            https_fetch=$((https_fetch + 1))
+            remote_is_forge=true
+            ;;
+          github-insecure | gitlab-insecure)
+            insecure_urls=$((insecure_urls + 1))
+            remote_is_forge=true
+            ;;
+        esac
+      done < <(git remote get-url --all "$remote" 2>/dev/null || true)
+      while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        kind="$(git_forge_url_kind "$url")"
+        case "$kind" in
+          github-ssh | gitlab-ssh)
+            ssh_push=$((ssh_push + 1))
+            remote_is_forge=true
+            ;;
+          github-https)
+            https_push=$((https_push + 1))
+            remote_is_forge=true
+            [[ "$github_secure" == true ]] || unsafe_https_push=$((unsafe_https_push + 1))
+            ;;
+          gitlab-https)
+            https_push=$((https_push + 1))
+            remote_is_forge=true
+            [[ "$gitlab_secure" == true ]] || unsafe_https_push=$((unsafe_https_push + 1))
+            ;;
+          github-insecure | gitlab-insecure)
+            insecure_urls=$((insecure_urls + 1))
+            remote_is_forge=true
+            ;;
+        esac
+      done < <(git remote get-url --push --all "$remote" 2>/dev/null || true)
+      [[ "$remote_is_forge" == false ]] || forge_remotes=$((forge_remotes + 1))
+    done < <(git remote 2>/dev/null || true)
+  fi
+  expected='{"sshForAuthentication":true,"plaintextHelperRequired":false}'
+  actual="$(jq -nc \
+    --argjson insideWorkTree "$inside_work_tree" \
+    --argjson forgeRemotes "$forge_remotes" \
+    --argjson sshFetchUrls "$ssh_fetch" \
+    --argjson httpsFetchUrls "$https_fetch" \
+    --argjson sshPushUrls "$ssh_push" \
+    --argjson httpsPushUrls "$https_push" \
+    --argjson insecureUrls "$insecure_urls" \
+    --argjson httpsPushWithoutSecureHelper "$unsafe_https_push" \
+    '{insideWorkTree:$insideWorkTree,forgeRemotes:$forgeRemotes,sshFetchUrls:$sshFetchUrls,
+      httpsFetchUrls:$httpsFetchUrls,sshPushUrls:$sshPushUrls,httpsPushUrls:$httpsPushUrls,
+      insecureUrls:$insecureUrls,httpsPushWithoutSecureHelper:$httpsPushWithoutSecureHelper}')"
+  if [[ "$inside_work_tree" == false || "$forge_remotes" -eq 0 ]]; then
+    status=not-applicable
+    code=no-forge-remote
+    summary="Current directory has no GitHub or GitLab remote to classify"
+    remediation=""
+  elif [[ "$unsafe_https_push" -gt 0 || "$insecure_urls" -gt 0 ]]; then
+    status=warning
+    code=https-without-secure-helper
+    summary="A forge remote can authenticate without SSH or a recognized non-plaintext helper"
+    remediation="use an SSH remote, apply the managed pushInsteadOf rules, or configure an explicitly secure helper"
+  else
+    status=ok
+    code=""
+    summary="Current forge remotes use SSH for pushes or a recognized non-plaintext helper"
+    remediation=""
+  fi
+  git_check_add remote-protocol git true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  expected='{"storeHelperCount":0}'
+  actual="$(jq -nc --argjson storeHelperCount "$store_helpers" '{storeHelperCount:$storeHelperCount}')"
+  if [[ "$store_helpers" -eq 0 ]]; then
+    status=ok
+    code=""
+    summary="No git-credential-store helper is configured"
+    remediation=""
+  else
+    status=failed
+    code=plaintext-helper
+    summary="Git configuration contains a plaintext credential store helper"
+    remediation="remove every credential.helper=store entry and use SSH or a verified secure helper"
+  fi
+  git_check_add credential-helper-plaintext git true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local credential_files=0
+  [[ ! -e "$HOME/.git-credentials" && ! -L "$HOME/.git-credentials" ]] ||
+    credential_files=$((credential_files + 1))
+  local xdg_git_credentials="${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials"
+  [[ ! -e "$xdg_git_credentials" && ! -L "$xdg_git_credentials" ]] ||
+    credential_files=$((credential_files + 1))
+  expected='{"plaintextCredentialFileCount":0}'
+  actual="$(jq -nc --argjson plaintextCredentialFileCount "$credential_files" \
+    '{plaintextCredentialFileCount:$plaintextCredentialFileCount}')"
+  if [[ "$credential_files" -eq 0 ]]; then
+    status=ok
+    code=""
+    summary="No default git-credential-store file is present"
+    remediation=""
+  else
+    status=failed
+    code=plaintext-credential-file
+    summary="A default plaintext Git credential file is present"
+    remediation="confirm required credentials exist in SSH or a secure backend, then delete the plaintext file"
+  fi
+  git_check_add credential-file-plaintext operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local gh_available=false
+  command -v gh >/dev/null 2>&1 && gh_available=true
+  expected='{"declaredGhHelper":true,"ghAvailable":true}'
+  actual="$(jq -nc --argjson declaredGhHelper "$github_helper" --argjson ghAvailable "$gh_available" \
+    '{declaredGhHelper:$declaredGhHelper,ghAvailable:$ghAvailable}')"
+  if [[ "$github_helper" == true && "$gh_available" == true ]]; then
+    status=ok
+    code=""
+    summary="GitHub HTTPS exceptions delegate to the declared gh credential helper"
+    remediation=""
+  else
+    status=failed
+    code=gh-helper-unavailable
+    summary="The declared GitHub CLI credential helper is missing or gh is unavailable"
+    remediation="apply programs.gh.gitCredentialHelper.enable and repair the managed gh installation"
+  fi
+  git_check_add gh-credential-helper home-manager true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local gh_config_dir="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+  local gh_hosts_file="$gh_config_dir/hosts.yml" gh_hosts_present=false gh_hosts_readable=false
+  local gh_plaintext=false env_token=false auth_json="" account_count=0 keyring_count=0
+  local env_count=0 plaintext_source_count=0 unknown_source_count=0 auth_classified=false
+  [[ ! -e "$gh_hosts_file" && ! -L "$gh_hosts_file" ]] || gh_hosts_present=true
+  if [[ "$gh_hosts_present" == true && -r "$gh_hosts_file" ]]; then
+    gh_hosts_readable=true
+    grep -Eq '^[[:space:]]*oauth_token[[:space:]]*:' "$gh_hosts_file" && gh_plaintext=true
+  fi
+  [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GH_ENTERPRISE_TOKEN:-}${GITHUB_ENTERPRISE_TOKEN:-}" ]] ||
+    env_token=true
+
+  if [[ "$gh_available" == true && "$gh_plaintext" == false &&
+    "$gh_hosts_present" == true && "$gh_hosts_readable" == true ]]; then
+    if auth_json="$(timeout 10s gh auth status --json hosts 2>/dev/null)" &&
+      jq -e '.hosts | type == "object"' >/dev/null 2>&1 <<<"$auth_json"; then
+      auth_classified=true
+      account_count="$(jq '[.hosts[][]?] | length' <<<"$auth_json")"
+      keyring_count="$(jq '[.hosts[][]? | select(.tokenSource == "keyring")] | length' <<<"$auth_json")"
+      env_count="$(jq '[.hosts[][]? | select(.tokenSource | endswith("_TOKEN"))] | length' <<<"$auth_json")"
+      plaintext_source_count="$(jq \
+        '[.hosts[][]? | select(.tokenSource != "" and .tokenSource != "keyring"
+          and ((.tokenSource | endswith("_TOKEN")) | not))] | length' <<<"$auth_json")"
+      unknown_source_count="$(jq '[.hosts[][]? | select(.tokenSource == "")] | length' <<<"$auth_json")"
+    fi
+  fi
+
+  expected='{"plaintextTokenFile":false,"durableTokenSource":"keyring"}'
+  actual="$(jq -nc \
+    --argjson hostsPresent "$gh_hosts_present" \
+    --argjson hostsReadable "$gh_hosts_readable" \
+    --argjson plaintextTokenFile "$gh_plaintext" \
+    --argjson environmentToken "$env_token" \
+    --argjson accountCount "$account_count" \
+    --argjson keyringAccountCount "$keyring_count" \
+    --argjson environmentAccountCount "$env_count" \
+    --argjson plaintextSourceCount "$plaintext_source_count" \
+    --argjson unknownSourceCount "$unknown_source_count" \
+    '{hostsPresent:$hostsPresent,hostsReadable:$hostsReadable,plaintextTokenFile:$plaintextTokenFile,
+      environmentToken:$environmentToken,accountCount:$accountCount,
+      keyringAccountCount:$keyringAccountCount,environmentAccountCount:$environmentAccountCount,
+      plaintextSourceCount:$plaintextSourceCount,unknownSourceCount:$unknownSourceCount}')"
+  if [[ "$gh_plaintext" == true || "$plaintext_source_count" -gt 0 ]]; then
+    status=failed
+    code=gh-plaintext-token
+    summary="GitHub CLI authentication is stored in a plaintext configuration file"
+    remediation="log out, repair a platform keyring, log in again, and verify gh reports tokenSource=keyring"
+  elif [[ "$gh_hosts_present" == true && "$gh_hosts_readable" == false ]]; then
+    status=failed
+    code=gh-storage-unreadable
+    summary="GitHub CLI credential storage exists but cannot be classified"
+    remediation="repair permissions, then verify the token source before using gh authentication"
+  elif [[ "$gh_hosts_present" == false && "$env_token" == false ]]; then
+    status=not-applicable
+    code=gh-not-authenticated
+    summary="GitHub CLI has no persisted account to classify"
+    remediation=""
+  elif [[ "$env_token" == true || "$env_count" -gt 0 ]]; then
+    status=warning
+    code=gh-environment-token
+    summary="GitHub CLI is using a process token whose external storage cannot be verified"
+    remediation="inject it only from an approved secret manager and never persist it in shell or gh configuration"
+  elif [[ "$auth_classified" == true && "$account_count" -eq "$keyring_count" &&
+    "$unknown_source_count" -eq 0 ]]; then
+    status=ok
+    code=""
+    summary="GitHub CLI durable authentication is stored in the platform keyring"
+    remediation=""
+  else
+    status=failed
+    code=gh-storage-unverified
+    summary="GitHub CLI credential storage could not be verified as non-plaintext"
+    remediation="repair the platform keyring and require gh auth status to report tokenSource=keyring"
+  fi
+  git_check_add gh-auth-storage gh true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local ok=false result
+  jq -e 'all(.[]; .status != "failed")' <<<"$git_checks" >/dev/null && ok=true
+  result="$(jq -nc --argjson ok "$ok" --argjson insideWorkTree "$inside_work_tree" \
+    --argjson checks "$git_checks" \
+    '{schemaVersion:1,command:"doctor git",ok:$ok,
+      repository:{insideWorkTree:$insideWorkTree},checks:$checks,
+      mutationBoundary:"read-only probes"}')"
+  if [[ "$json" == 1 ]]; then
+    printf '%s\n' "$result"
+  else
+    jq -r '.checks[] | "\(.id): \(.status) — \(.summary)"' <<<"$result"
+    jq -r '"status: \(if .ok then "ready" else "problems found" end)"' <<<"$result"
+  fi
+  [[ "$ok" == true ]] || return "$EX_UNAVAILABLE"
+}
 doctor_tools() {
   local json=0 rows='[]' status path entry command capability platform host data expected remediation
   [[ "${1:-}" != --json ]] || json=1
@@ -1966,8 +2510,9 @@ main() {
       case "${1:-}" in
         host) shift; local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
         system) shift; doctor_system "$@" ;;
+        git) shift; doctor_git "$@" ;;
         tools) shift; doctor_tools "$@" ;;
-        *) die "$EX_USAGE" "doctor expects host, system, or tools" ;;
+        *) die "$EX_USAGE" "doctor expects host, system, git, or tools" ;;
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;

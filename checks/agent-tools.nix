@@ -521,6 +521,7 @@ in
         )" -eq 6
         test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 6
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
+        test -f ${pkgs.omp-configured.platformRoot}/extensions/vault-usage-footer.ts
         test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md
         test -f ${pkgs.omp-configured.platformRoot}/rules/parallel-write-isolation.md
 

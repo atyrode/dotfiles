@@ -11,8 +11,8 @@ Nix owns:
 - the pinned OMP binary and generated Zsh completion;
 - the managed OMP defaults, enforced policy, and model catalog;
 - the curated plain-omp seed and its drift-aware activation step;
-- the pinned bundled agents, global generic skills, and managed-settings guard
-  extension;
+- the pinned bundled agents, global generic skills, managed-settings guard
+  extension, and vault-usage footer extension;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
@@ -33,11 +33,36 @@ the exact managed OMP binary set — the `omp`, `omp-managed`, and `ompu`
 launchers plus the `code` generator — and verifies that an OMP clean-home
 startup does not create `.pi` state.
 
-Agents, rules, and the settings guard are assembled into
-a read-only OMP extension-package root in the Nix store and injected explicitly
-by every managed session. They are not copied into OMP's mutable agent
-directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the
-same platform assets without sharing authentication, sessions, or caches.
+Agents, rules, the settings guard, and the vault-usage footer are assembled
+into a read-only OMP extension-package root in the Nix store and injected
+explicitly by every managed session. They are not copied into OMP's mutable
+agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
+receive the same platform assets without sharing authentication, sessions, or
+caches. The vault-usage footer renders one responsive row below the editor
+box (where `code` shows its own usage panel), tied to the box by a dim `─`
+rule spanning the row's inset width (rule and row both sit inset 4 columns
+on each edge, mirroring the border's corner-to-π indent), for the launch
+vault with `code`-parity visuals (cli-kit
+palette, green→red gradient bars, `claude`/`codex` display names, `↻︎` reset
+countdowns with urgency tinting, `cached <age> ago` staleness): per
+broker-reported provider it shows every distinct labeled window (the busiest
+per label — e.g. `5h · 7d · 7d fable` for Claude; never an invented
+aggregate), provider groups delimited by `│`, the active model's provider
+first, and a live minute-granular `refresh in Xm` suffix on healthy rows. On
+wide rows the usage bars stretch to fill the inset width exactly and re-fit
+on every paint, so resizes adapt; width is measured in terminal cells via
+the TUI's own `visibleWidth`, matching how the engine lays out the row.
+`alt+u` forces a fetch (a raw-input listener registered ahead of the editor;
+its `(alt+u)` cue decorates the suffix). When width runs short the row
+deterministically sheds identity first, then the cue, then the
+lowest-priority windows (exhausted and high-usage windows survive longest),
+then trailing providers. `/vault-usage` opens a read-only viewer of the full
+window/scope set with a fetched/next-refresh status line (enter/esc close
+it); `/vault-usage refresh` matches the hotkey. It
+reads only the aggregate usage report, non-secret auth-state booleans, and
+the read-only display identity (masked to `x…@domain` at capture, shown
+only when the complete row fits) — never credentials, tokens, or raw report
+metadata — and it hides itself instead of wrapping on narrow terminals.
 
 The package overlay lives in `flake.nix`, reusable package derivations live in
 `pkgs/`, and Home Manager deployment lives in

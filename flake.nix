@@ -692,6 +692,7 @@
           omp-seed = import ./checks/omp-seed.nix { inherit pkgs; };
           omp-secret-obfuscation = import ./checks/omp-secret-obfuscation.nix { inherit pkgs; };
           omp-isolated-writer = import ./checks/omp-isolated-writer.nix { inherit pkgs; };
+          omp-vault-usage-footer = import ./checks/omp-vault-usage-footer.nix { inherit pkgs; };
           home-evaluation = homeEvaluation;
           host-registry = registryCheck;
           package-ownership = import ./checks/package-ownership.nix {

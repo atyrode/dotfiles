@@ -6,7 +6,7 @@ set of system-prompt VARIATIONS the benchmark sweeps. It has no third-party
 dependencies so the harness runs with a bare python3 and a live ollama daemon.
 
 The `baseline` variation mirrors the shipped classifier in
-`pkgs/code-tui/suggest.go` as of PR #139 (the local ollama/qwen2.5:3b evaluator).
+`suggest.go` in github.com/atyrode/code (extracted from this repo; recipe as of PR #139) (the local ollama/qwen2.5:3b evaluator).
 Keep it in sync by hand if that recipe changes — the whole point of this harness
 is to compare *alternatives* against that baseline, so a faithful baseline is the
 reference every other variation is measured against.

@@ -20,7 +20,7 @@ assert_classification $'code=true\ndarwin=true' docs/omp/README.md
 assert_classification $'code=true\ndarwin=true' darwin/default.nix
 assert_classification $'code=true\ndarwin=true' flake.nix flake.lock
 assert_classification $'code=true\ndarwin=true' modules/home/capability-contract.nix
-assert_classification $'code=true\ndarwin=true' pkgs/cli-kit/main.go
+assert_classification $'code=true\ndarwin=true' pkgs/atyrode-tui/main.go
 assert_classification $'code=true\ndarwin=true' checks/docs-links.nix
 assert_classification $'code=true\ndarwin=true' inventory/hosts.tsv
 assert_classification $'code=true\ndarwin=true' .github/workflows/nix.yml

@@ -305,7 +305,9 @@ ordered source paths, ownership, and effective managed values for the managed
 session. The diagnostic includes the writable machine layer, both native
 project settings files, one-shot overlays, and supported runtime overrides,
 but filters output to Nix-owned keys so credentials and unrelated private
-settings are never printed. `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, named
+settings are never printed. The diagnostic applies the same legacy-key
+migrations the pinned binary applies at load, so it reports what OMP actually
+resolves. `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, named
 profiles, the effective project directory, and OMP's selected writable config
 filename are reflected in the report.
 

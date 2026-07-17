@@ -1005,6 +1005,26 @@ in
               and (.sources[] | select(.kind == "one-shot-config") | .path == $oneShot)
             ' "$TMPDIR/current-managed.json" >/dev/null
 
+            # Old key shapes still load in pinned OMP (verified against 17.0.3);
+            # the diagnostic must apply the same migrations the binary does.
+            legacy_project="$TMPDIR/legacy-project"
+            mkdir -p "$legacy_project/.omp"
+            cat > "$legacy_project/.omp/config.yml" <<'EOF'
+        theme: custom-dark
+        codexResets:
+          autoRedeem: true
+        memories:
+          enabled: false
+        EOF
+            ${configuredStub}/bin/omp-managed \
+              --cwd "$legacy_project" \
+              config managed --json > "$TMPDIR/legacy-managed.json"
+            jq -e '
+              .effectiveManaged.theme.dark == "custom-dark"
+              and .effectiveManaged.codexResets.autoRedeem == "yes"
+              and .effectiveManaged.memory.backend == "off"
+            ' "$TMPDIR/legacy-managed.json" >/dev/null
+
             set +e
             ${configuredStub}/bin/omp-managed config get modelRoles --json \
               > "$TMPDIR/get.out" 2> "$TMPDIR/get.err"

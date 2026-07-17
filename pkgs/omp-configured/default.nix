@@ -493,9 +493,45 @@ let
           done
         }
 
+        # Apply the same legacy-key migrations pinned OMP performs at load
+        # (verified against 17.0.3: string theme, boolean autoRedeem,
+        # memories.enabled, task.isolation.enabled, and renamed isolation
+        # modes), so the diagnostic reports what the binary actually resolves.
         normalize_layer_json() {
           local file="$1"
-          yq eval -o=json -I=0 '.' "$file"
+          yq eval -o=json -I=0 '.' "$file" | jq -c '
+            if (.theme | type) == "string" then
+              if .theme == "light" or .theme == "dark" then
+                del(.theme)
+              else
+                .theme = { dark: .theme }
+              end
+            else . end
+            | if (.codexResets | type) == "object" and (.codexResets.autoRedeem | type) == "boolean" then
+                .codexResets.autoRedeem = (if .codexResets.autoRedeem then "yes" else "no" end)
+              else . end
+            | if (."codexResets.autoRedeem" | type) == "boolean" then
+                ."codexResets.autoRedeem" = (if ."codexResets.autoRedeem" then "yes" else "no" end)
+              else . end
+            | if (.memory | type) != "object" then .memory = {} else . end
+            | if ((.memory.backend | type) != "string")
+                and ((.memories | type) == "object")
+                and ((.memories.enabled | type) == "boolean") then
+                .memory.backend = (if .memories.enabled then "local" else "off" end)
+              else . end
+            | if .memory.backend == "mnemosyne" then .memory.backend = "mnemopi" else . end
+            | if (.memory | length) == 0 then del(.memory) else . end
+            | if ((.task | type) == "object")
+                and ((.task.isolation | type) == "object")
+                and ((.task.isolation.enabled | type) == "boolean") then
+                .task.isolation.mode = (if .task.isolation.enabled then "auto" else "none" end)
+                | del(.task.isolation.enabled)
+              else . end
+            | if (try .task.isolation.mode catch null) == "worktree" then .task.isolation.mode = "rcopy"
+              elif (try .task.isolation.mode catch null) == "fuse-overlay" then .task.isolation.mode = "overlayfs"
+              elif (try .task.isolation.mode catch null) == "fuse-projfs" then .task.isolation.mode = "projfs"
+              else . end
+          '
         }
 
         emit_managed_config() {

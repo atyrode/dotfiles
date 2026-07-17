@@ -27,6 +27,11 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
+
+    homebrew-cmux = {
+      url = "github:manaflow-ai/homebrew-cmux";
+      flake = false;
+    };
   };
 
   outputs =
@@ -40,6 +45,7 @@
       treefmt-nix,
       homebrew-core,
       homebrew-cask,
+      homebrew-cmux,
       ...
     }:
     let
@@ -435,6 +441,7 @@
             inherit
               homebrew-cask
               homebrew-core
+              homebrew-cmux
               ;
             inherit (host) homeDirectory;
             homeModules = modulesForHost name host;

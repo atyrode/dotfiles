@@ -2,6 +2,7 @@
   "arduino-ide"
   "bitwarden"
   "claude"
+  "cmux"
   "codex-app"
   "display-pilot"
   "discord"

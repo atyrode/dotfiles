@@ -32,6 +32,7 @@ let
       type UsageReport,
     } from "@oh-my-pi/pi-ai";
     import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+    import { visibleWidth } from "@oh-my-pi/pi-tui";
     import {
       barFillColor,
       detailLines,
@@ -160,42 +161,65 @@ let
     assert.equal(shortWindowLabel("Claude 7 Day (Fable)", "7d"), "7d fable");
     assert.equal(shortWindowLabel("monthly quota", "30d"), "30d");
 
+    // Layout probes: with elastic fill a wide row's length always equals
+    // the render width, so ladder boundaries are found by content.
+    const bare = (w: number) => renderRow(state, { ...base, width: w, active })[0];
+    const minWidth = (has: (row: string) => boolean, render: (w: number) => string): number => {
+      for (let w = 120; w <= 320; w += 1) if (has(render(w))) return w;
+      throw new Error("ladder boundary not found");
+    };
+    const cells = (row: string) => (row.match(/[█░]/g) ?? []).length;
+
     // Full row: identity plus every labeled window, provider delimiter.
-    // Identities render only when nothing is sacrificed for them.
-    const full = renderRow(state, { ...base, width: 210, active });
+    // Identities render only when nothing is sacrificed for them. The row
+    // starts over the border's π column (4-column pad) and its bars
+    // stretch so the line is filled exactly.
+    const bareIdMin = minWidth(row => row.includes("a…@example.com"), bare);
+    const fullWidth = bareIdMin + 20;
+    const full = renderRow(state, { ...base, width: fullWidth, active });
     assert.equal(full.length, 1);
-    assert.ok(full[0].startsWith("*claude a…@example.com 5h "));
-    assert.ok(full[0].includes("██████░░░░ 62% " + RESET_GLYPH + "1h30m"));
-    assert.ok(full[0].includes("7d ███░░░░░░░ 31% " + RESET_GLYPH + "3d4h"));
-    assert.ok(full[0].includes("7d fable ██████░░░░ 58%"));
-    assert.ok(full[0].includes(" │ codex 5h ██████████ 100% " + RESET_GLYPH + "30m maxed"));
-    assert.ok(full[0].includes("7d █████░░░░░ 45%"));
-    assert.ok(full[0].includes("7d spark ░░░░░░░░░░ 3%"));
-    assert.ok(full[0].length <= 210);
+    assert.ok(full[0].startsWith("    *claude a…@example.com 5h "));
+    assert.equal(visibleWidth(full[0]), fullWidth);
+    assert.ok(full[0].includes("62% " + RESET_GLYPH + "1h30m"));
+    assert.ok(full[0].includes("31% " + RESET_GLYPH + "3d4h"));
+    assert.ok(full[0].includes("7d fable"));
+    assert.ok(full[0].includes(" │ codex 5h "));
+    assert.ok(full[0].includes("100% " + RESET_GLYPH + "30m maxed"));
+    assert.ok(full[0].includes("45%"));
+    assert.ok(full[0].includes("7d spark"));
 
-    // At 195 everything still fits — but not the identity (window data
-    // always outranks identity decoration).
-    const noEmail = renderRow(state, { ...base, width: 195, active });
-    assert.ok(!noEmail[0].includes("a…@example.com"));
-    assert.ok(noEmail[0].includes("31%"));
-    assert.ok(noEmail[0].includes("7d spark"));
+    // Elasticity: 20 more columns land entirely in the bars; the fill is
+    // recomputed per paint, which is what makes resizes adapt.
+    const wider = renderRow(state, { ...base, width: fullWidth + 20, active });
+    assert.equal(visibleWidth(wider[0]), fullWidth + 20);
+    assert.equal(cells(wider[0]) - cells(full[0]), 20);
 
-    // Shedding order is priority-based: the idle 3% spark window goes
-    // first; claude's regular 7d survives it.
-    const at160 = renderRow(state, { ...base, width: 160, active });
-    assert.ok(!at160[0].includes("spark"));
-    assert.ok(at160[0].includes("31%"));
+    // One short of the identity boundary: window data always outranks
+    // identity decoration.
+    const noEmail = bare(bareIdMin - 1);
+    assert.ok(!noEmail.includes("a…@example.com"));
+    assert.ok(noEmail.includes("31%"));
+    assert.ok(noEmail.includes("7d spark"));
 
-    // Wide at 150: next shed is claude's least-used 7d (31%); exhausted
-    // codex windows and the busy Fable window survive.
-    const wide = renderRow(state, { ...base, width: 150, active });
-    assert.ok(wide[0].startsWith("*claude 5h "));
-    assert.ok(!wide[0].includes("a…@example.com"));
-    assert.ok(wide[0].includes("7d fable ██████░░░░ 58%"));
-    assert.ok(!wide[0].includes("31%"));
-    assert.ok(wide[0].includes("codex 5h ██████████ 100% " + RESET_GLYPH + "30m maxed"));
-    assert.ok(wide[0].includes("7d █████░░░░░ 45%"));
-    assert.ok(wide[0].length <= 150);
+    // Shedding order is priority-based and boundary-monotonic: the idle 3%
+    // spark window sheds first (it needs the most width), then claude's
+    // least-used 7d; exhausted codex windows and the busy Fable window
+    // survive down to the narrow end of wide.
+    const sparkMin = minWidth(row => row.includes("7d spark"), bare);
+    const claude7dMin = minWidth(row => row.includes("31%"), bare);
+    assert.ok(claude7dMin < sparkMin);
+    assert.ok(sparkMin < bareIdMin);
+    const wide = bare(claude7dMin - 1);
+    assert.ok(wide.startsWith("    *claude 5h "));
+    assert.ok(!wide.includes("a…@example.com"));
+    assert.ok(!wide.includes("31%"));
+    assert.ok(!wide.includes("spark"));
+    assert.ok(wide.includes("7d fable"));
+    assert.ok(wide.includes("58%"));
+    assert.ok(wide.includes("codex 5h "));
+    assert.ok(wide.includes("100% " + RESET_GLYPH + "30m maxed"));
+    assert.ok(wide.includes("45%"));
+    assert.equal(visibleWidth(wide), claude7dMin - 1);
 
     // Active-provider reordering follows the live selection.
     const wideCodex = renderRow(state, {
@@ -203,7 +227,7 @@ let
       width: 135,
       active: { provider: "openai-codex", authenticated: true },
     });
-    assert.ok(wideCodex[0].startsWith("*codex 5h "));
+    assert.ok(wideCodex[0].startsWith("    *codex 5h "));
 
     // Medium: bars dropped, both windows kept, exhausted marker.
     const medium = renderRow(state, { ...base, width: 80, active });
@@ -220,7 +244,7 @@ let
     assert.equal(narrow.length, 1);
     assert.ok(narrow[0].includes("*claude"));
     assert.ok(!narrow[0].includes("codex"));
-    assert.ok(narrow[0].length <= 50);
+    assert.ok(visibleWidth(narrow[0]) <= 50);
     const hidden = renderRow(state, { ...base, width: 39, active });
     assert.deepEqual(hidden, []);
 
@@ -228,7 +252,7 @@ let
     // staleness replaces it, and it competes in the same width budget.
     const withTimer = renderRow(state, {
       ...base,
-      width: 230,
+      width: bareIdMin + 30,
       active,
       nextRefreshAt: now + 3 * 60_000,
     });
@@ -248,31 +272,32 @@ let
     // blinks back in during a resize: identities+cue → cue → plain. No
     // decoration ever sheds a window.
     const timerOpts = { ...base, active, nextRefreshAt: now + 3 * 60_000 };
-    const cueFull = renderRow(state, { ...timerOpts, width: 500, refreshHint: "alt+u" });
-    assert.ok(cueFull[0].includes("a…@example.com"));
-    assert.ok(cueFull[0].includes("· refresh in 3m (alt+u)"));
-    const idWidth = renderRow(state, { ...timerOpts, width: 500 })[0].length;
-    // With the hotkey armed the identity tier always carries the cue: at the
-    // plain-identity width the ladder drops straight to the cue tier rather
-    // than showing identity without its cue (monotonicity).
-    const idOnly = renderRow(state, { ...timerOpts, width: idWidth, refreshHint: "alt+u" });
-    assert.ok(!idOnly[0].includes("a…@example.com"));
-    assert.ok(idOnly[0].includes("(alt+u)"));
-    assert.ok(idOnly[0].includes("7d spark"));
-    // Unarmed sessions keep the plain-identity tier at this width.
-    const idPlain = renderRow(state, { ...timerOpts, width: idWidth });
-    assert.ok(idPlain[0].includes("a…@example.com"));
-    // One short of identity: the cue tier keeps every window, drops identity.
-    const cueOnly = renderRow(state, { ...timerOpts, width: idWidth - 1, refreshHint: "alt+u" });
-    assert.ok(!cueOnly[0].includes("a…@example.com"));
-    assert.ok(cueOnly[0].includes("(alt+u)"));
-    assert.ok(cueOnly[0].includes("7d spark"));
-    // Plain tier: at the exact plain-row width every window survives and the
-    // cue is dropped rather than shedding one.
-    const plainWidth = renderRow(state, { ...timerOpts, width: idWidth - 1 })[0].length;
-    const plainFull = renderRow(state, { ...timerOpts, width: plainWidth, refreshHint: "alt+u" });
-    assert.ok(!plainFull[0].includes("(alt+u)"));
-    assert.ok(plainFull[0].includes("7d spark"));
+    const armed = (w: number) => renderRow(state, { ...timerOpts, width: w, refreshHint: "alt+u" })[0];
+    const unarmed = (w: number) => renderRow(state, { ...timerOpts, width: w })[0];
+    const cueFull = armed(500);
+    assert.ok(cueFull.includes("a…@example.com"));
+    assert.ok(cueFull.includes("· refresh in 3m (alt+u)"));
+    assert.equal(visibleWidth(cueFull), 500);
+    // With the hotkey armed the identity tier always carries the cue: below
+    // the armed-identity boundary the ladder drops straight to the cue tier
+    // rather than showing identity without its cue (monotonicity).
+    const armedIdMin = minWidth(row => row.includes("a…@example.com"), armed);
+    assert.ok(armed(armedIdMin).includes("(alt+u)"));
+    const cueOnly = armed(armedIdMin - 1);
+    assert.ok(!cueOnly.includes("a…@example.com"));
+    assert.ok(cueOnly.includes("(alt+u)"));
+    assert.ok(cueOnly.includes("7d spark"));
+    // The cue costs columns, so unarmed identity appears earlier (and never
+    // shows a cue it does not have).
+    const unarmedIdMin = minWidth(row => row.includes("a…@example.com"), unarmed);
+    assert.ok(unarmedIdMin < armedIdMin);
+    assert.ok(!unarmed(armedIdMin).includes("alt+u"));
+    // Plain tier: below the cue boundary the hint is dropped rather than
+    // shedding a window.
+    const cueMin = minWidth(row => row.includes("(alt+u)"), armed);
+    const plainFull = armed(cueMin - 1);
+    assert.ok(!plainFull.includes("(alt+u)"));
+    assert.ok(plainFull.includes("7d spark"));
     // The cue also decorates the stale suffix (refresh matters most then).
     const staleCue = renderRow(state, {
       ...base,
@@ -286,8 +311,11 @@ let
     const narrowCue = renderRow(state, { ...timerOpts, width: 50, refreshHint: "alt+u" });
     assert.ok(!narrowCue[0].includes("alt+u"));
 
-    // Constant one-row height for every network state at supported widths.
-    assert.equal(renderRow({ kind: "loading" }, { ...base, width: 60 }).length, 1);
+    // Constant one-row height for every network state at supported widths;
+    // status rows carry the same π-aligned pad as data rows.
+    const loading = renderRow({ kind: "loading" }, { ...base, width: 60 });
+    assert.equal(loading.length, 1);
+    assert.ok(loading[0].startsWith("    usage: loading"));
     assert.equal(renderRow({ kind: "unavailable" }, { ...base, width: 60 }).length, 1);
 
     // Stale: immediately on failed refresh, with code's cached-age wording.
@@ -356,6 +384,14 @@ let
     assert.equal(renderBar(0.62, 10), "██████░░░░");
     assert.equal(renderBar(0.95, 10), "██████████");
     assert.equal(renderBar(1.2, 10), "██████████");
+    assert.equal(renderBar(0.62, 14), "█████████░░░░░");
+    assert.equal(renderBar(1, 13), "█████████████");
+
+    // Width math counts terminal cells through the TUI's own visibleWidth:
+    // the reset glyph is two UTF-16 units (↻ plus U+FE0E) but one column.
+    assert.equal(RESET_GLYPH.length, 2);
+    assert.equal(visibleWidth(RESET_GLYPH), 1);
+    assert.equal(visibleWidth(RESET_GLYPH + "1h30m"), 6);
 
     // Cached-age fixtures against code v0.1.0 (formatCachedAge, main.go).
     assert.equal(formatCachedAge(0), "<1m ago");
@@ -414,7 +450,7 @@ let
       observationPath,
       JSON.stringify({
         ok: true,
-        samples: { full: full[0], wide: wide[0], medium: medium[0], narrow: narrow[0], hidden },
+        samples: { full: full[0], wide, medium: medium[0], narrow: narrow[0], hidden },
       }),
     );
 
@@ -536,8 +572,8 @@ pkgs.runCommand "check-omp-vault-usage-footer"
 
     jq -e '
       .ok == true
-      and (.samples.full | startswith("*claude a…@example.com 5h "))
-      and (.samples.wide | startswith("*claude 5h "))
+      and (.samples.full | startswith("    *claude a…@example.com 5h "))
+      and (.samples.wide | startswith("    *claude 5h "))
       and (.samples.narrow | contains("codex") | not)
       and (.samples.hidden | length == 0)
     ' "$ISSUE220_FOOTER_OBSERVATION" >/dev/null

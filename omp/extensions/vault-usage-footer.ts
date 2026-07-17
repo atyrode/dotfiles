@@ -1,14 +1,15 @@
 import { resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { matchesKey } from "@oh-my-pi/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 
 /**
  * Multi-provider vault usage footer (issue #220).
  *
- * Renders one below-editor row summarizing every provider usage window the
- * launch vault's broker reports, with the active model's provider first. The
- * footer represents the vault fixed at process launch; it never implies that
- * changing the globally selected `code` vault mutates this process.
+ * Renders one row riding directly on top of the editor's status border,
+ * summarizing every provider usage window the launch vault's broker
+ * reports, with the active model's provider first. The footer represents
+ * the vault fixed at process launch; it never implies that changing the
+ * globally selected `code` vault mutates this process.
  *
  * Visual parity: colors, gradient bar math, window shortnames, provider
  * display names, reset glyph/urgency tinting, and cached-age vocabulary are
@@ -28,12 +29,17 @@ import { matchesKey } from "@oh-my-pi/pi-tui";
  * Layout contract: at supported widths the component returns exactly one
  * physical row (loading, data, stale, or unavailable); only terminal width
  * may switch it to zero rows. Fetch completion changes text, never row
- * count, so network timing can never move the prompt.
+ * count, so network timing can never move the prompt. The row starts at
+ * the π column of the border below (LEFT_PAD) and, on wide rows, its
+ * usage bars stretch to fill the full line width, re-fit on every paint.
  */
 
 const WIDGET_KEY = "vault-usage";
 const REFRESH_KEY = "alt+u";
 const BAR_CELLS = 10;
+/** Columns reserved so the row's first glyph sits over π in the editor border (`╭── π`). */
+const LEFT_PAD = 4;
+const PAD_TEXT = " ".repeat(LEFT_PAD);
 const MIN_WIDTH = 40;
 const MEDIUM_WIDTH = 64;
 const WIDE_WIDTH = 100;
@@ -59,6 +65,12 @@ export const PALETTE = {
 
 /** Reset glyph with text-presentation selector, 1 cell wide (cli-kit GReset). */
 export const RESET_GLYPH = "↻\uFE0E";
+
+// All fitting, slack, and truncation math measures terminal cells through
+// the TUI's own `visibleWidth` (UAX#11 + grapheme model, ANSI-stripping),
+// so the footer can never disagree with how the engine lays out its rows —
+// the reset glyph's U+FE0E is 2 UTF-16 units but 1 column, and
+// provider-supplied labels may legally contain wide graphemes.
 
 const COLOR_DEFAULT = process.env.NO_COLOR === undefined && process.env.TERM !== "dumb";
 
@@ -374,15 +386,21 @@ const joinCells = (cells: readonly Cell[], separator: Cell): Cell => {
 	return { plain, ansi };
 };
 
-function windowCell(window: WindowView, level: DetailLevel, now: number, color: boolean): Cell {
+function windowCell(
+	window: WindowView,
+	level: DetailLevel,
+	now: number,
+	color: boolean,
+	barCells: number,
+): Cell {
 	const wide = level === "wide";
 	const label = shortWindowLabel(window.fullLabel, window.windowLabel);
 	const pct = window.usedFraction === undefined ? undefined : usedPercent(window.usedFraction);
 	const plainParts: string[] = [label];
 	const ansiParts: string[] = [label];
 	if (wide) {
-		plainParts.push(renderBar(window.usedFraction, BAR_CELLS));
-		ansiParts.push(renderBarAnsi(window.usedFraction, BAR_CELLS, color));
+		plainParts.push(renderBar(window.usedFraction, barCells));
+		ansiParts.push(renderBarAnsi(window.usedFraction, barCells, color));
 	}
 	const exhaustedMark = !wide && (window.exhausted || (pct ?? 0) >= 100) ? "!" : "";
 	const pctText = formatPercent(window.usedFraction) + exhaustedMark;
@@ -419,6 +437,7 @@ function providerChunk(
 	now: number,
 	color: boolean,
 	identity: string | undefined,
+	sizeBar: () => number,
 ): Cell {
 	const name = `${isActive ? "*" : ""}${displayProvider(view.provider)}`;
 	const head: Cell = {
@@ -429,10 +448,39 @@ function providerChunk(
 	if (identity !== undefined) {
 		cells.push({ plain: identity, ansi: paint(identity, PALETTE.dim, color) });
 	}
-	const windowCells = windows.map(window => windowCell(window, level, now, color));
+	const windowCells = windows.map(window => windowCell(window, level, now, color, sizeBar()));
 	const windowSeparator: Cell = { plain: " · ", ansi: ` ${paint("·", PALETTE.dim, color)} ` };
 	cells.push(joinCells(windowCells, windowSeparator));
 	return joinCells(cells, { plain: " ", ansi: " " });
+}
+
+/**
+ * Elastic bar sizer: hands out `BAR_CELLS` plus an even share of `slack`
+ * to each bar in render order, leftmost bars absorbing the remainder, so a
+ * stretched row fills its budget exactly.
+ */
+function makeBarSizer(slack: number, count: number): () => number {
+	if (count <= 0 || slack <= 0) return () => BAR_CELLS;
+	const base = BAR_CELLS + Math.floor(slack / count);
+	const remainder = slack % count;
+	let index = 0;
+	return () => base + (index++ < remainder ? 1 : 0);
+}
+
+/** Provider render order: active first; pseudo chunk when active is unreported. */
+function chunkOrder(
+	state: Extract<FooterState, { kind: "data" }>,
+	active: ActiveProviderInfo | undefined,
+): { pseudo: boolean; entries: ProviderView[] } {
+	const entries = [...state.providers];
+	if (active) {
+		const index = entries.findIndex(entry => entry.provider === active.provider);
+		if (index > 0) entries.unshift(...entries.splice(index, 1));
+	}
+	return {
+		pseudo: active !== undefined && !entries.some(entry => entry.provider === active.provider),
+		entries,
+	};
 }
 
 /** Active-first provider chunks; the active-but-unreported chunk leads. */
@@ -443,15 +491,12 @@ function buildChunks(
 	color: boolean,
 	windowLists: ReadonlyMap<string, readonly WindowView[]>,
 	withIdentity: boolean,
+	sizeBar: () => number = () => BAR_CELLS,
 ): Cell[] {
 	const active = options.active;
-	const ordered = [...state.providers];
-	if (active) {
-		const index = ordered.findIndex(entry => entry.provider === active.provider);
-		if (index > 0) ordered.unshift(...ordered.splice(index, 1));
-	}
+	const { pseudo, entries } = chunkOrder(state, active);
 	const chunks: Cell[] = [];
-	if (active && !ordered.some(entry => entry.provider === active.provider)) {
+	if (pseudo && active) {
 		// Distinct states: unauthenticated vs authenticated-but-unreported.
 		const name = `*${displayProvider(active.provider)}`;
 		const status = active.authenticated ? "usage n/a" : "unauthenticated";
@@ -460,7 +505,7 @@ function buildChunks(
 			ansi: `${paint(name, providerColor(active.provider), color, true)} ${paint(status, PALETTE.dim, color)}`,
 		});
 	}
-	for (const entry of ordered) {
+	for (const entry of entries) {
 		const windows = windowLists.get(entry.provider) ?? [];
 		if (windows.length === 0) continue;
 		chunks.push(
@@ -472,6 +517,7 @@ function buildChunks(
 				options.now,
 				color,
 				withIdentity ? state.identities?.[entry.provider] : undefined,
+				sizeBar,
 			),
 		);
 	}
@@ -480,24 +526,31 @@ function buildChunks(
 
 /**
  * Render the footer as zero rows (below MIN_WIDTH) or exactly one row.
- * Levels: wide (bars + notes), medium (compact windows), narrow (active
- * provider's best window), hidden below MIN_WIDTH. Wide and medium start
- * from every labeled window per provider and degrade deterministically:
- * identities render only when the complete row fits with them; otherwise
- * the lowest-priority window is shed (summary order — exhausted and
+ * The row is left-padded LEFT_PAD columns so its first glyph sits over π
+ * in the editor border below; no right margin is reserved. Levels: wide
+ * (bars + notes), medium (compact windows), narrow (active provider's
+ * best window), hidden below MIN_WIDTH. Wide and medium start from every
+ * labeled window per provider and degrade deterministically: identities
+ * render only when the complete row fits with them; otherwise the
+ * lowest-priority window is shed (summary order — exhausted and
  * high-usage windows survive longest; never a provider's last window)
- * until the row fits, and whole trailing provider chunks go last.
- * Provider chunks are delimited by a dim `│`. The row is truncated to the
- * physical width as the final guard and never wraps.
+ * until the row fits, and whole trailing provider chunks go last. On wide
+ * rows, leftover columns stretch the usage bars (leftmost first) so the
+ * row fills the line exactly; the fit is recomputed every paint, so
+ * resizes adapt. Provider chunks are delimited by a dim `│`. The row is
+ * truncated to the physical width as the final guard and never wraps.
  */
 export function renderRow(state: FooterState, options: RenderOptions): string[] {
-	const width = options.width;
-	if (width < MIN_WIDTH) return [];
+	if (options.width < MIN_WIDTH) return [];
+	const emit = (text: string): string[] => [PAD_TEXT + text];
 	const color = options.color ?? COLOR_DEFAULT;
-	if (state.kind === "loading") return [paint("usage: loading…", PALETTE.dim, color)];
-	if (state.kind === "unavailable") return [paint("usage: unavailable", PALETTE.dim, color)];
+	if (state.kind === "loading") return emit(paint("usage: loading…", PALETTE.dim, color));
+	if (state.kind === "unavailable") return emit(paint("usage: unavailable", PALETTE.dim, color));
 
-	const level: DetailLevel = width >= WIDE_WIDTH ? "wide" : width >= MEDIUM_WIDTH ? "medium" : "narrow";
+	// Levels key on the physical width; fitting math uses the padded budget.
+	const level: DetailLevel =
+		options.width >= WIDE_WIDTH ? "wide" : options.width >= MEDIUM_WIDTH ? "medium" : "narrow";
+	const width = options.width - LEFT_PAD;
 
 	// Stale parity with `code`: a failed refresh marks retained data stale
 	// immediately (`cached <age> ago`); the age threshold additionally covers
@@ -530,12 +583,13 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		options.refreshHint !== undefined && suffixText !== "" && level !== "narrow"
 			? paintSuffix(`${suffixText} (${options.refreshHint})`)
 			: undefined;
-	const budget = width - suffix.plain.length;
+	const budget = width - visibleWidth(suffix.plain);
 
 	const providerSeparator: Cell = { plain: " │ ", ansi: ` ${paint("│", PALETTE.group, color)} ` };
 	const rowWidth = (chunks: readonly Cell[]): number =>
 		chunks.reduce(
-			(sum, chunk, index) => sum + chunk.plain.length + (index > 0 ? providerSeparator.plain.length : 0),
+			(sum, chunk, index) =>
+				sum + visibleWidth(chunk.plain) + (index > 0 ? providerSeparator.plain.length : 0),
 			0,
 		);
 
@@ -546,6 +600,13 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		]),
 	);
 
+	const barCount = (lists: ReadonlyMap<string, readonly WindowView[]>): number => {
+		if (level !== "wide") return 0;
+		let count = 0;
+		for (const windows of lists.values()) count += windows.length;
+		return count;
+	};
+
 	// Tier ladder — monotonic as width shrinks, so no decoration blinks back
 	// in during a resize: identities+cue → cue → plain → shedding (when the
 	// hotkey is armed the identity tier always carries the cue).
@@ -553,8 +614,18 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		const withIdentities = buildChunks(state, options, level, color, windowLists, true);
 		if (withIdentities.length > 0) {
 			const idSuffix = cueSuffix ?? suffix;
-			if (rowWidth(withIdentities) <= width - idSuffix.plain.length) {
-				return [joinCells(withIdentities, providerSeparator).ansi + idSuffix.ansi];
+			const slack = width - visibleWidth(idSuffix.plain) - rowWidth(withIdentities);
+			if (slack >= 0) {
+				const stretched = buildChunks(
+					state,
+					options,
+					level,
+					color,
+					windowLists,
+					true,
+					makeBarSizer(slack, barCount(windowLists)),
+				);
+				return emit(joinCells(stretched, providerSeparator).ansi + idSuffix.ansi);
 			}
 		}
 	}
@@ -562,9 +633,21 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	// No identities: try the cue tier, then shed the lowest-priority window
 	// (never a provider's last) until the row fits.
 	let chunks = buildChunks(state, options, level, color, windowLists, false);
-	if (chunks.length === 0) return [paint("usage: none reported", PALETTE.dim, color)];
-	if (cueSuffix !== undefined && rowWidth(chunks) <= width - cueSuffix.plain.length) {
-		return [joinCells(chunks, providerSeparator).ansi + cueSuffix.ansi];
+	if (chunks.length === 0) return emit(paint("usage: none reported", PALETTE.dim, color));
+	if (cueSuffix !== undefined) {
+		const slack = width - visibleWidth(cueSuffix.plain) - rowWidth(chunks);
+		if (slack >= 0) {
+			const stretched = buildChunks(
+				state,
+				options,
+				level,
+				color,
+				windowLists,
+				false,
+				makeBarSizer(slack, barCount(windowLists)),
+			);
+			return emit(joinCells(stretched, providerSeparator).ansi + cueSuffix.ansi);
+		}
 	}
 	while (rowWidth(chunks) > budget) {
 		let worstProvider: string | undefined;
@@ -591,19 +674,50 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	const kept: Cell[] = [];
 	let used = 0;
 	for (const chunk of chunks) {
-		const cost = kept.length === 0 ? chunk.plain.length : chunk.plain.length + providerSeparator.plain.length;
+		const cost =
+			kept.length === 0
+				? visibleWidth(chunk.plain)
+				: visibleWidth(chunk.plain) + providerSeparator.plain.length;
 		if (used + cost > budget) break;
 		kept.push(chunk);
 		used += cost;
 		if (level === "narrow") break;
 	}
 	if (kept.length === 0) kept.push(chunks[0]);
-	const row = joinCells(kept, providerSeparator);
-	const plain = row.plain + suffix.plain;
+	let row = joinCells(kept, providerSeparator);
+	// Elastic bars: stretch the kept bars into the leftover budget so the
+	// row fills the line; recomputed per paint, so resizes adapt.
+	const slack = budget - rowWidth(kept);
+	if (level === "wide" && slack > 0) {
+		const { pseudo, entries } = chunkOrder(state, options.active);
+		const keptLists = new Map<string, readonly WindowView[]>();
+		let remaining = kept.length - (pseudo ? 1 : 0);
+		for (const entry of entries) {
+			if (remaining <= 0) break;
+			const windows = windowLists.get(entry.provider) ?? [];
+			if (windows.length === 0) continue;
+			keptLists.set(entry.provider, windows);
+			remaining -= 1;
+		}
+		const bars = barCount(keptLists);
+		if (bars > 0) {
+			const stretched = buildChunks(
+				state,
+				options,
+				level,
+				color,
+				keptLists,
+				false,
+				makeBarSizer(slack, bars),
+			);
+			if (stretched.length === kept.length) row = joinCells(stretched, providerSeparator);
+		}
+	}
+	const plain = PAD_TEXT + row.plain + suffix.plain;
 	// Final guard: an overflowing row degrades to plain text so truncation
-	// can never slice an SGR sequence.
-	if (plain.length > width) return [plain.slice(0, width)];
-	return [row.ansi + suffix.ansi];
+	// can never slice an SGR sequence (cell-accurate, no ellipsis, no pad).
+	if (visibleWidth(plain) > options.width) return [truncateToWidth(plain, options.width, "", false)];
+	return emit(row.ansi + suffix.ansi);
 }
 
 /** Every original window/scope for the /vault-usage detail view. */

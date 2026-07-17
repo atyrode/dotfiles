@@ -107,6 +107,7 @@ atyrode lifecycle
 atyrode lifecycle --json
 atyrode doctor host --json
 atyrode doctor system --json
+atyrode doctor git --json
 atyrode doctor tools --json
 ```
 
@@ -147,5 +148,16 @@ alone cannot satisfy: the real login shell, Nix daemon and trust policy,
 container engine, antivirus ownership, Android device policy, and Homebrew
 drift. Its stable check IDs, row schema, statuses, exits, and read-only probe
 contract are documented in [Home Manager and system boundary](system-boundary.md).
+`doctor git [--json]` is the matching user-side, read-only audit. Its ordered
+checks cover Git configuration readability, SSH-agent availability and loaded
+keys, the configured signing public key and permissions, exact managed
+`allowed_signers` content, the current repository's effective fetch/push
+protocols, plaintext Git helpers/files, the declarative `gh` helper, and `gh`
+token-storage classification. `failed` checks return 69; `warning` rows (for
+example, an HTTPS forge push with no recognized secure helper) remain visible
+without making the report fail. JSON uses schema version 1 and never includes
+keys, tokens, helper arguments, or remote URLs. Bootstrap, headless policy,
+rotation, revocation, recovery, and platform verification are documented in
+[Git SSH authentication and signing](git-keys.md).
 The `workspace` and `agent` namespaces are reserved for their owning follow-up
 issues and currently fail clearly.

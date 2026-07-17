@@ -74,10 +74,11 @@ confirmation state.
 
 ## Doctor workspace
 
-Doctor renders the existing `doctor host`, `doctor system`, and `doctor tools`
-JSON contracts as three lazy tabs. Valid reports remain visible when the CLI
-returns a semantic nonzero status, so host mismatches, incomplete system checks,
-and missing expected tools are diagnostics rather than transport failures.
+Doctor renders the existing `doctor host`, `doctor system`, `doctor git`, and
+`doctor tools` JSON contracts as four lazy tabs. Valid reports remain visible
+when the CLI returns a semantic nonzero status, so host mismatches, incomplete
+system or Git checks, and missing expected tools are diagnostics rather than
+transport failures.
 Malformed or absent JSON remains a local report error. Refresh, cancellation,
 and generation-scoped stale-reply rejection match the existing inspection
 behavior.

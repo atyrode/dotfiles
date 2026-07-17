@@ -189,10 +189,10 @@ type model struct {
 	clean               cleanPreview
 	cleanDraft          cleanPolicyDraft
 
-	doctorReports    [3]doctorReport
-	doctorErrors     [3]error
-	doctorLoading    [3]bool
-	doctorRequested  [3]bool
+	doctorReports    [4]doctorReport
+	doctorErrors     [4]error
+	doctorLoading    [4]bool
+	doctorRequested  [4]bool
 	doctorTab        doctorTab
 	doctorCursor     int
 	doctorGeneration uint64

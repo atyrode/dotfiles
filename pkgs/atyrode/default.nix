@@ -23,6 +23,7 @@
   makeWrapper,
   nh,
   nix,
+  openssh,
   omp-configured,
   runtimeShell,
   stdenvNoCC,
@@ -32,6 +33,7 @@
 
 let
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
+  gitAllowedSigners = ../../home/git-allowed-signers;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
   );
@@ -180,6 +182,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrode-preview-parser "atyrode-preview-parser"}' \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
+      --replace-fail '@git_allowed_signers@' '${gitAllowedSigners}' \
       --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \
       --replace-fail '@homebrew_casks@' '${homebrewCaskInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \
@@ -200,6 +203,7 @@ stdenvNoCC.mkDerivation {
           jq
           nh
           nix
+          openssh
         ]
       }
   '';

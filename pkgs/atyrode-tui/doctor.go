@@ -19,6 +19,7 @@ type doctorTab int
 const (
 	doctorHostTab doctorTab = iota
 	doctorSystemTab
+	doctorGitTab
 	doctorToolsTab
 )
 
@@ -57,6 +58,17 @@ type doctorSystemReport struct {
 	MutationBoundary string        `json:"mutationBoundary"`
 }
 
+type doctorGitReport struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Command       string `json:"command"`
+	OK            bool   `json:"ok"`
+	Repository    struct {
+		InsideWorkTree bool `json:"insideWorkTree"`
+	} `json:"repository"`
+	Checks           []doctorCheck `json:"checks"`
+	MutationBoundary string        `json:"mutationBoundary"`
+}
+
 type doctorTool struct {
 	Name         string   `json:"name"`
 	Command      string   `json:"command"`
@@ -75,6 +87,7 @@ type doctorTool struct {
 type doctorReport struct {
 	host        *doctorHostReport
 	system      *doctorSystemReport
+	git         *doctorGitReport
 	tools       []doctorTool
 	semanticErr error
 	err         error
@@ -127,6 +140,20 @@ func parseDoctorReport(tab doctorTab, out []byte) (doctorReport, error) {
 			}
 		}
 		report.system = value
+	case doctorGitTab:
+		value := new(doctorGitReport)
+		if err := decodeDoctorJSON(out, value); err != nil {
+			return report, fmt.Errorf("decode doctor git: %w", err)
+		}
+		if value.SchemaVersion != 1 || value.Command != "doctor git" || value.MutationBoundary != "read-only probes" {
+			return report, fmt.Errorf("decode doctor git: unsupported or incomplete report")
+		}
+		for _, check := range value.Checks {
+			if check.ID == "" || check.Owner == "" || check.Summary == "" || (check.Status != "ok" && check.Status != "failed" && check.Status != "warning" && check.Status != "not-applicable") || !json.Valid(check.Expected) || !json.Valid(check.Actual) {
+				return report, fmt.Errorf("decode doctor git: malformed check %q", check.ID)
+			}
+		}
+		report.git = value
 	case doctorToolsTab:
 		if err := decodeDoctorJSON(out, &report.tools); err != nil {
 			return report, fmt.Errorf("decode doctor tools: %w", err)
@@ -141,15 +168,18 @@ func parseDoctorReport(tab doctorTab, out []byte) (doctorReport, error) {
 }
 
 func doctorCommand(tab doctorTab) string {
-	return [...]string{"host", "system", "tools"}[tab]
+	return [...]string{"host", "system", "git", "tools"}[tab]
 }
 
 func (m *model) startDoctor(tab doctorTab) tea.Cmd {
 	if m.doctorLoading[tab] {
 		return nil
 	}
-	if m.doctorLoading[doctorHostTab] || m.doctorLoading[doctorSystemTab] || m.doctorLoading[doctorToolsTab] {
-		m.cancelDoctor()
+	for _, loading := range m.doctorLoading {
+		if loading {
+			m.cancelDoctor()
+			break
+		}
 	}
 	m.doctorGeneration++
 	generation := m.doctorGeneration
@@ -174,14 +204,18 @@ func (m *model) cancelDoctor() {
 		m.doctorCancel()
 		m.doctorCancel = nil
 	}
-	if m.doctorLoading[doctorHostTab] || m.doctorLoading[doctorSystemTab] || m.doctorLoading[doctorToolsTab] {
+	loading := false
+	for _, tabLoading := range m.doctorLoading {
+		loading = loading || tabLoading
+	}
+	if loading {
 		m.doctorGeneration++
 		for tab := range m.doctorLoading {
 			if m.doctorLoading[tab] {
 				m.doctorRequested[tab] = false
 			}
 		}
-		m.doctorLoading = [3]bool{}
+		m.doctorLoading = [4]bool{}
 	}
 }
 
@@ -202,10 +236,10 @@ func (m *model) doctorUpdate(key string) tea.Cmd {
 	case "r":
 		return m.doctorRefresh()
 	case "left", "[":
-		m.doctorTab = doctorTab((int(m.doctorTab) + 2) % 3)
+		m.doctorTab = doctorTab((int(m.doctorTab) + 3) % 4)
 		m.doctorCursor = 0
 	case "right", "]":
-		m.doctorTab = doctorTab((int(m.doctorTab) + 1) % 3)
+		m.doctorTab = doctorTab((int(m.doctorTab) + 1) % 4)
 		m.doctorCursor = 0
 	case "up", "k":
 		m.doctorCursor = clampCursor(m.doctorCursor-1, len(m.doctorRows(m.contentPanelWidth()-4)))
@@ -251,7 +285,7 @@ func (m *model) capabilitiesWorkspaceUpdate(key string) tea.Cmd {
 }
 
 func (m model) doctorView(width int) string {
-	tabs := []string{"Host", "System", "Tools"}
+	tabs := []string{"Host", "System", "Git", "Tools"}
 	for i := range tabs {
 		if doctorTab(i) == m.doctorTab {
 			tabs[i] = clikit.StHead.Render("[" + tabs[i] + "]")
@@ -296,6 +330,18 @@ func (m model) doctorRows(width int) []string {
 		}
 		rows = append(rows, titleStyle.Render(status), "Host: "+report.system.Host, "System: "+report.system.System)
 		for _, check := range report.system.Checks {
+			rows = append(rows, strings.ToUpper(check.Status)+" · "+check.ID+" · "+check.Summary)
+		}
+	case doctorGitTab:
+		if report.git == nil {
+			return []string{clikit.StDim.Render("Press r to load the Git report.")}
+		}
+		status := "OK"
+		if !report.git.OK {
+			status = "PROBLEMS FOUND"
+		}
+		rows = append(rows, titleStyle.Render(status))
+		for _, check := range report.git.Checks {
 			rows = append(rows, strings.ToUpper(check.Status)+" · "+check.ID+" · "+check.Summary)
 		}
 	case doctorToolsTab:

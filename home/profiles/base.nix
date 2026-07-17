@@ -21,7 +21,6 @@
     dua
     fd
     fastfetch
-    gh
     git
     jq
     ripgrep

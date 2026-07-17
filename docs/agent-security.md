@@ -77,6 +77,7 @@ untrusted profile are part of that profile's risk. Inspect generated patches
 before merging them and use a real VM/container sandbox when hostile code may
 need to execute.
 
-This is the OMP security slice of issue #17. Workspace trust, the Pi experiment,
-Zed/ACP integration, and SSH completion remain tracked by #22, #29, and #30;
-issue #17 stays open until those wider acceptance criteria are complete.
+This is the OMP security slice resolved under issue #17. Workspace
+trust/revocation and residual Codex and local/SSH workspace diagnostics are now
+owned by #22. The Pi experiment (#29) closed to operator notes on 2026-07-17 and
+ships no launcher; the Zed evaluation (#30) is closed and Zed remains absent.

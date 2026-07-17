@@ -31,13 +31,10 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
  */
 
 const WIDGET_KEY = "vault-usage";
-const SEPARATOR = "   ";
 const BAR_CELLS = 10;
 const MIN_WIDTH = 40;
 const MEDIUM_WIDTH = 64;
 const WIDE_WIDTH = 100;
-const XWIDE_WIDTH = 140;
-const MAX_WINDOWS_PER_PROVIDER = 2;
 const FETCH_TIMEOUT_MS = 10_000;
 const REFRESH_INTERVAL_MS = 5 * 60_000;
 const REFRESH_JITTER = 0.1;
@@ -52,6 +49,7 @@ export const PALETTE = {
 	green: "#78c8aa", // CGreen
 	warn: "#ff9f52", // CAcc — StWarn
 	head: "#9aa4b1", // CHead — fallback provider heading
+	group: "#69727e", // CGrp — provider-group delimiter
 	reset: "#c8d0dc", // usageRow's near-reset emphasis tint
 	codex: "#62a7ff", // providerHeading Codex
 	claude: "#ff9f52", // providerHeading Claude
@@ -116,6 +114,8 @@ export interface RenderOptions {
 	staleAfterMs: number;
 	/** True while the newest refresh attempt failed and old data is retained. */
 	refreshFailed?: boolean;
+	/** Next scheduled fetch; renders a live minute-granular row suffix. */
+	nextRefreshAt?: number;
 	/** Explicit for tests; defaults to NO_COLOR/TERM-derived behavior. */
 	color?: boolean;
 }
@@ -144,24 +144,22 @@ export function pickSummary(windows: readonly WindowView[]): WindowView {
 }
 
 /**
- * One representative window per duration group (window id), best-first by
- * the summary priority, ordered shortest window first, capped at
- * MAX_WINDOWS_PER_PROVIDER. Anthropic therefore shows its 5h and best 7d
- * windows; a provider with a single group shows one window.
+ * Every distinct labeled window — one winner per short label by summary
+ * priority — ordered shortest window first, then label. Claude therefore
+ * shows 5h, 7d, and 7d fable side by side when width permits.
  */
-export function groupWindows(windows: readonly WindowView[]): WindowView[] {
+export function labelGroups(windows: readonly WindowView[]): WindowView[] {
 	const groups = new Map<string, WindowView>();
 	for (const window of windows) {
-		const current = groups.get(window.windowLabel);
-		if (!current || summaryBefore(window, current)) groups.set(window.windowLabel, window);
+		const key = shortWindowLabel(window.fullLabel, window.windowLabel);
+		const current = groups.get(key);
+		if (!current || summaryBefore(window, current)) groups.set(key, window);
 	}
-	return [...groups.values()]
-		.sort(
-			(a, b) =>
-				(a.durationMs ?? Number.MAX_SAFE_INTEGER) - (b.durationMs ?? Number.MAX_SAFE_INTEGER) ||
-				a.windowLabel.localeCompare(b.windowLabel),
-		)
-		.slice(0, MAX_WINDOWS_PER_PROVIDER);
+	return [...groups.values()].sort(
+		(a, b) =>
+			(a.durationMs ?? Number.MAX_SAFE_INTEGER) - (b.durationMs ?? Number.MAX_SAFE_INTEGER) ||
+			shortWindowLabel(a.fullLabel, a.windowLabel).localeCompare(shortWindowLabel(b.fullLabel, b.windowLabel)),
+	);
 }
 
 /**
@@ -350,7 +348,7 @@ export function resetEmphasis(msLeft: number, durationMs: number | undefined): "
 	return "dim";
 }
 
-type DetailLevel = "xwide" | "wide" | "medium" | "narrow";
+type DetailLevel = "wide" | "medium" | "narrow";
 
 /** A rendered fragment: plain text for width math, ansi for display. */
 interface Cell {
@@ -373,8 +371,8 @@ const joinCells = (cells: readonly Cell[], separator: Cell): Cell => {
 };
 
 function windowCell(window: WindowView, level: DetailLevel, now: number, color: boolean): Cell {
-	const wide = level === "xwide" || level === "wide";
-	const label = wide ? shortWindowLabel(window.fullLabel, window.windowLabel) : window.windowLabel;
+	const wide = level === "wide";
+	const label = shortWindowLabel(window.fullLabel, window.windowLabel);
 	const pct = window.usedFraction === undefined ? undefined : usedPercent(window.usedFraction);
 	const plainParts: string[] = [label];
 	const ansiParts: string[] = [label];
@@ -411,6 +409,7 @@ function windowCell(window: WindowView, level: DetailLevel, now: number, color: 
 
 function providerChunk(
 	view: ProviderView,
+	windows: readonly WindowView[],
 	isActive: boolean,
 	level: DetailLevel,
 	now: number,
@@ -423,21 +422,23 @@ function providerChunk(
 		ansi: paint(name, providerColor(view.provider), color, isActive),
 	};
 	const cells: Cell[] = [head];
-	if (level === "xwide" && identity !== undefined) {
+	if (identity !== undefined) {
 		cells.push({ plain: identity, ansi: paint(identity, PALETTE.dim, color) });
 	}
-	const windows = level === "narrow" ? [view.summary] : groupWindows(view.windows);
 	const windowCells = windows.map(window => windowCell(window, level, now, color));
 	const windowSeparator: Cell = { plain: " · ", ansi: ` ${paint("·", PALETTE.dim, color)} ` };
 	cells.push(joinCells(windowCells, windowSeparator));
 	return joinCells(cells, { plain: " ", ansi: " " });
 }
 
+/** Active-first provider chunks; the active-but-unreported chunk leads. */
 function buildChunks(
 	state: Extract<FooterState, { kind: "data" }>,
 	options: RenderOptions,
 	level: DetailLevel,
 	color: boolean,
+	windowLists: ReadonlyMap<string, readonly WindowView[]>,
+	withIdentity: boolean,
 ): Cell[] {
 	const active = options.active;
 	const ordered = [...state.providers];
@@ -456,14 +457,17 @@ function buildChunks(
 		});
 	}
 	for (const entry of ordered) {
+		const windows = windowLists.get(entry.provider) ?? [];
+		if (windows.length === 0) continue;
 		chunks.push(
 			providerChunk(
 				entry,
+				windows,
 				entry.provider === active?.provider,
 				level,
 				options.now,
 				color,
-				state.identities?.[entry.provider],
+				withIdentity ? state.identities?.[entry.provider] : undefined,
 			),
 		);
 	}
@@ -472,9 +476,14 @@ function buildChunks(
 
 /**
  * Render the footer as zero rows (below MIN_WIDTH) or exactly one row.
- * Responsive levels: xwide = bars + identity + notes, wide = bars + notes,
- * medium = compact windows without bars, narrow = active provider's best
- * window only, below MIN_WIDTH = hidden. The row is truncated to the
+ * Levels: wide (bars + notes), medium (compact windows), narrow (active
+ * provider's best window), hidden below MIN_WIDTH. Wide and medium start
+ * from every labeled window per provider and degrade deterministically:
+ * identities render only when the complete row fits with them; otherwise
+ * the lowest-priority window is shed (summary order — exhausted and
+ * high-usage windows survive longest; never a provider's last window)
+ * until the row fits, and whole trailing provider chunks go last.
+ * Provider chunks are delimited by a dim `│`. The row is truncated to the
  * physical width as the final guard and never wraps.
  */
 export function renderRow(state: FooterState, options: RenderOptions): string[] {
@@ -484,10 +493,7 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	if (state.kind === "loading") return [paint("usage: loading…", PALETTE.dim, color)];
 	if (state.kind === "unavailable") return [paint("usage: unavailable", PALETTE.dim, color)];
 
-	const level: DetailLevel =
-		width >= XWIDE_WIDTH ? "xwide" : width >= WIDE_WIDTH ? "wide" : width >= MEDIUM_WIDTH ? "medium" : "narrow";
-	const chunks = buildChunks(state, options, level, color);
-	if (chunks.length === 0) return [paint("usage: none reported", PALETTE.dim, color)];
+	const level: DetailLevel = width >= WIDE_WIDTH ? "wide" : width >= MEDIUM_WIDTH ? "medium" : "narrow";
 
 	// Stale parity with `code`: a failed refresh marks retained data stale
 	// immediately (`cached <age> ago`); the age threshold additionally covers
@@ -496,28 +502,91 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	const staleFor = options.now - state.fetchedAt;
 	const isStale = options.refreshFailed === true || staleFor > options.staleAfterMs;
 	const staleText = isStale ? `cached ${formatCachedAge(staleFor)}` : "";
-	const staleSuffix: Cell =
-		staleText === ""
+	// Healthy rows carry the next-fetch countdown instead (minute-granular,
+	// ticked live by the widget's repaint interval); staleness outranks it.
+	const refreshText =
+		staleText === "" &&
+		level !== "narrow" &&
+		options.nextRefreshAt !== undefined &&
+		options.nextRefreshAt > options.now
+			? `refresh in ${formatCountdown(options.nextRefreshAt - options.now)}`
+			: "";
+	const suffixText = staleText !== "" ? staleText : refreshText;
+	const suffix: Cell =
+		suffixText === ""
 			? { plain: "", ansi: "" }
-			: { plain: ` · ${staleText}`, ansi: ` ${paint("·", PALETTE.dim, color)} ${paint(staleText, PALETTE.warn, color)}` };
-	const budget = width - staleSuffix.plain.length;
+			: {
+					plain: ` · ${suffixText}`,
+					ansi: ` ${paint("·", PALETTE.dim, color)} ${paint(suffixText, staleText !== "" ? PALETTE.warn : PALETTE.dim, color)}`,
+			  };
+	const budget = width - suffix.plain.length;
 
+	const providerSeparator: Cell = { plain: " │ ", ansi: ` ${paint("│", PALETTE.group, color)} ` };
+	const fitsAll = (chunks: readonly Cell[]): boolean =>
+		chunks.reduce(
+			(sum, chunk, index) => sum + chunk.plain.length + (index > 0 ? providerSeparator.plain.length : 0),
+			0,
+		) <= budget;
+
+	const windowLists = new Map<string, readonly WindowView[]>(
+		state.providers.map(view => [
+			view.provider,
+			level === "narrow" ? [view.summary] : labelGroups(view.windows),
+		]),
+	);
+
+	// Pass 1: the complete row with identities — identities are kept only
+	// when no window has to be sacrificed for them.
+	if (level === "wide" && state.identities !== undefined) {
+		const withIdentities = buildChunks(state, options, level, color, windowLists, true);
+		if (withIdentities.length > 0 && fitsAll(withIdentities)) {
+			const row = joinCells(withIdentities, providerSeparator);
+			return [row.ansi + suffix.ansi];
+		}
+	}
+
+	// Pass 2: no identities; shed the lowest-priority window (never a
+	// provider's last) until the row fits.
+	let chunks = buildChunks(state, options, level, color, windowLists, false);
+	if (chunks.length === 0) return [paint("usage: none reported", PALETTE.dim, color)];
+	while (!fitsAll(chunks)) {
+		let worstProvider: string | undefined;
+		let worst: WindowView | undefined;
+		for (const [provider, windows] of windowLists) {
+			if (windows.length < 2) continue;
+			for (const candidate of windows) {
+				if (worst === undefined || summaryBefore(worst, candidate)) {
+					worst = candidate;
+					worstProvider = provider;
+				}
+			}
+		}
+		if (worst === undefined || worstProvider === undefined) break;
+		const remaining = windowLists.get(worstProvider) ?? [];
+		windowLists.set(
+			worstProvider,
+			remaining.filter(candidate => candidate !== worst),
+		);
+		chunks = buildChunks(state, options, level, color, windowLists, false);
+	}
+
+	// Pass 3: drop whole trailing provider chunks as the last resort.
 	const kept: Cell[] = [];
 	let used = 0;
 	for (const chunk of chunks) {
-		const cost = kept.length === 0 ? chunk.plain.length : chunk.plain.length + SEPARATOR.length;
+		const cost = kept.length === 0 ? chunk.plain.length : chunk.plain.length + providerSeparator.plain.length;
 		if (used + cost > budget) break;
 		kept.push(chunk);
 		used += cost;
 		if (level === "narrow") break;
 	}
 	if (kept.length === 0) kept.push(chunks[0]);
-	const row = joinCells(kept, { plain: SEPARATOR, ansi: SEPARATOR });
-	const plain = row.plain + staleSuffix.plain;
+	const row = joinCells(kept, providerSeparator);
+	const plain = row.plain + suffix.plain;
 	// Final guard: an overflowing row degrades to plain text so truncation
 	// can never slice an SGR sequence.
 	if (plain.length > width) return [plain.slice(0, width)];
-	return [row.ansi + staleSuffix.ansi];
+	return [row.ansi + suffix.ansi];
 }
 
 /** Every original window/scope for the /vault-usage detail view. */
@@ -554,6 +623,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 	let repaint: (() => void) | undefined;
 	let shutdown = false;
 	let polling = false;
+	let nextRefreshAt: number | undefined;
 
 	const activeInfo = (): ActiveProviderInfo | undefined => {
 		const ctx = latestContext;
@@ -602,7 +672,9 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 				? REFRESH_INTERVAL_MS
 				: FAILURE_BACKOFF_MS[Math.min(failures - 1, FAILURE_BACKOFF_MS.length - 1)];
 		const jitter = 1 + (Math.random() * 2 - 1) * REFRESH_JITTER;
-		refreshTimer = setTimeout(() => void refresh(), Math.round(base * jitter));
+		const delay = Math.round(base * jitter);
+		nextRefreshAt = Date.now() + delay;
+		refreshTimer = setTimeout(() => void refresh(), delay);
 	};
 
 	const refresh = async (): Promise<void> => {
@@ -665,6 +737,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 		aborter?.abort();
 		clearTimeout(refreshTimer);
 		refreshTimer = undefined;
+		nextRefreshAt = undefined;
 		clearInterval(tickTimer);
 		tickTimer = undefined;
 	};
@@ -691,6 +764,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 					active: activeInfo(),
 					staleAfterMs: STALE_AFTER_MS,
 					refreshFailed: failures > 0,
+					nextRefreshAt,
 				});
 				const row = rows[0];
 				if (row === undefined) {
@@ -734,13 +808,30 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("vault-usage", {
-		description: "List every provider usage window for the launch vault",
-		handler: async (_args, ctx) => {
+		description: "List every provider usage window; 'refresh' forces a fetch now",
+		handler: async (args, ctx) => {
 			if (!ctx.hasUI) return;
-			const lines = detailLines(state, Date.now());
+			if (typeof args === "string" && args.trim().toLowerCase() === "refresh") {
+				// Manual refresh parity with code's usage panel: pull the next
+				// poll forward; the in-flight guard dedupes concurrent fetches.
+				clearTimeout(refreshTimer);
+				refreshTimer = undefined;
+				void refresh();
+				ctx.ui.notify("Vault usage: refreshing…", "info");
+				return;
+			}
+			const now = Date.now();
+			const lines = detailLines(state, now);
 			if (lines.length === 0) {
 				ctx.ui.notify("Vault usage: no report data yet.", "info");
 				return;
+			}
+			if (state.kind === "data") {
+				let status = `fetched ${formatCachedAge(now - state.fetchedAt)}`;
+				if (nextRefreshAt !== undefined && nextRefreshAt > now) {
+					status += ` · next refresh ~${formatCountdown(nextRefreshAt - now)}`;
+				}
+				lines.unshift(status + ' · "/vault-usage refresh" fetches now');
 			}
 			await ctx.ui.select("Vault usage windows", lines);
 		},

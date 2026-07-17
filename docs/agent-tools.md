@@ -42,14 +42,18 @@ caches. The vault-usage footer renders one responsive below-editor row for
 the launch vault with `code`-parity visuals (cli-kit palette, green→red
 gradient bars, `claude`/`codex` display names, `↻︎` reset countdowns with
 urgency tinting, `cached <age> ago` staleness): per broker-reported provider
-it shows up to two labeled windows — the best window per duration group
-(exhausted first, then most-used, then nearest reset — never an invented
-aggregate), shortest window first — with the active model's provider ordered
-first; `/vault-usage` lists the full window/scope set. It reads only the
-aggregate usage report, non-secret auth-state booleans, and the read-only
-display identity (masked to `x…@domain` at capture, shown only at very wide
-widths) — never credentials, tokens, or raw report metadata — and it hides
-itself instead of wrapping on narrow terminals.
+it shows every distinct labeled window (the busiest per label — e.g.
+`5h · 7d · 7d fable` for Claude; never an invented aggregate), provider
+groups delimited by `│`, the active model's provider first, and a live
+minute-granular `refresh in Xm` suffix on healthy rows. When width runs
+short it deterministically sheds identity first, then the lowest-priority
+windows (exhausted and high-usage windows survive longest), then trailing
+providers. `/vault-usage` lists the full window/scope set with a
+fetched/next-refresh status line; `/vault-usage refresh` forces a fetch. It
+reads only the aggregate usage report, non-secret auth-state booleans, and
+the read-only display identity (masked to `x…@domain` at capture, shown
+only when the complete row fits) — never credentials, tokens, or raw report
+metadata — and it hides itself instead of wrapping on narrow terminals.
 
 The package overlay lives in `flake.nix`, reusable package derivations live in
 `pkgs/`, and Home Manager deployment lives in

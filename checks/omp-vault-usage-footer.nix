@@ -39,7 +39,7 @@ let
       formatCachedAge,
       formatCountdown,
       formatPercent,
-      groupWindows,
+      labelGroups,
       maskEmail,
       paint,
       pickSummary,
@@ -132,12 +132,12 @@ let
     assert.equal(projected.providers[0].summary.limitId, "anthropic-5h");
     assert.equal(projected.providers[1].summary.exhausted, true);
 
-    // Window grouping: one winner per duration group, shortest window first,
-    // capped at two. The best 7d window (Fable, most used) represents its group.
-    const anthropicGroups = groupWindows(projected.providers[0].windows);
-    assert.deepEqual(anthropicGroups.map(w => w.limitId), ["anthropic-5h", "anthropic-7d-fable"]);
-    const codexGroups = groupWindows(projected.providers[1].windows);
-    assert.deepEqual(codexGroups.map(w => w.limitId), ["codex-5h", "codex-7d"]);
+    // Label groups: every distinct short label, one winner each (the busier
+    // Fable window represents "7d fable", not the whole 7d duration).
+    const anthropicGroups = labelGroups(projected.providers[0].windows);
+    assert.deepEqual(anthropicGroups.map(w => w.limitId), ["anthropic-5h", "anthropic-7d", "anthropic-7d-fable"]);
+    const codexGroups = labelGroups(projected.providers[1].windows);
+    assert.deepEqual(codexGroups.map(w => w.limitId), ["codex-5h", "codex-7d", "codex-7d-spark"]);
 
     const state: FooterState = {
       kind: "data",
@@ -160,21 +160,42 @@ let
     assert.equal(shortWindowLabel("Claude 7 Day (Fable)", "7d"), "7d fable");
     assert.equal(shortWindowLabel("monthly quota", "30d"), "30d");
 
-    // XWide: identity, dual windows with bars, group labels, notes.
-    const xwide = renderRow(state, { ...base, width: 150, active });
-    assert.equal(xwide.length, 1);
-    assert.ok(xwide[0].startsWith("*claude a…@example.com 5h "));
-    assert.ok(xwide[0].includes("██████░░░░ 62% " + RESET_GLYPH + "1h30m"));
-    assert.ok(xwide[0].includes("7d fable ██████░░░░ 58%"));
-    assert.ok(xwide[0].includes("codex 5h ██████████ 100% " + RESET_GLYPH + "30m maxed"));
-    assert.ok(xwide[0].includes("7d █████░░░░░ 45%"));
-    assert.ok(xwide[0].length <= 150);
+    // Full row: identity plus every labeled window, provider delimiter.
+    // Identities render only when nothing is sacrificed for them.
+    const full = renderRow(state, { ...base, width: 210, active });
+    assert.equal(full.length, 1);
+    assert.ok(full[0].startsWith("*claude a…@example.com 5h "));
+    assert.ok(full[0].includes("██████░░░░ 62% " + RESET_GLYPH + "1h30m"));
+    assert.ok(full[0].includes("7d ███░░░░░░░ 31% " + RESET_GLYPH + "3d4h"));
+    assert.ok(full[0].includes("7d fable ██████░░░░ 58%"));
+    assert.ok(full[0].includes(" │ codex 5h ██████████ 100% " + RESET_GLYPH + "30m maxed"));
+    assert.ok(full[0].includes("7d █████░░░░░ 45%"));
+    assert.ok(full[0].includes("7d spark ░░░░░░░░░░ 3%"));
+    assert.ok(full[0].length <= 210);
 
-    // Wide: same structure without identity.
-    const wide = renderRow(state, { ...base, width: 135, active });
+    // At 195 everything still fits — but not the identity (window data
+    // always outranks identity decoration).
+    const noEmail = renderRow(state, { ...base, width: 195, active });
+    assert.ok(!noEmail[0].includes("a…@example.com"));
+    assert.ok(noEmail[0].includes("31%"));
+    assert.ok(noEmail[0].includes("7d spark"));
+
+    // Shedding order is priority-based: the idle 3% spark window goes
+    // first; claude's regular 7d survives it.
+    const at160 = renderRow(state, { ...base, width: 160, active });
+    assert.ok(!at160[0].includes("spark"));
+    assert.ok(at160[0].includes("31%"));
+
+    // Wide at 150: next shed is claude's least-used 7d (31%); exhausted
+    // codex windows and the busy Fable window survive.
+    const wide = renderRow(state, { ...base, width: 150, active });
     assert.ok(wide[0].startsWith("*claude 5h "));
     assert.ok(!wide[0].includes("a…@example.com"));
-    assert.ok(wide[0].includes("codex"));
+    assert.ok(wide[0].includes("7d fable ██████░░░░ 58%"));
+    assert.ok(!wide[0].includes("31%"));
+    assert.ok(wide[0].includes("codex 5h ██████████ 100% " + RESET_GLYPH + "30m maxed"));
+    assert.ok(wide[0].includes("7d █████░░░░░ 45%"));
+    assert.ok(wide[0].length <= 150);
 
     // Active-provider reordering follows the live selection.
     const wideCodex = renderRow(state, {
@@ -189,9 +210,10 @@ let
     assert.equal(medium.length, 1);
     assert.ok(!medium[0].includes("█"));
     assert.ok(medium[0].includes("5h 62%"));
-    assert.ok(medium[0].includes("7d 58%"));
+    assert.ok(medium[0].includes("7d fable 58%"));
     assert.ok(medium[0].includes("100%!"));
-    assert.ok(medium[0].includes("codex"));
+    assert.ok(medium[0].includes(" │ codex"));
+    assert.ok(!medium[0].includes("45%"));
 
     // Narrow: active provider's summary window only; hidden below minimum.
     const narrow = renderRow(state, { ...base, width: 50, active });
@@ -201,6 +223,26 @@ let
     assert.ok(narrow[0].length <= 50);
     const hidden = renderRow(state, { ...base, width: 39, active });
     assert.deepEqual(hidden, []);
+
+    // Live next-fetch countdown suffix: healthy rows only, minute-granular;
+    // staleness replaces it, and it competes in the same width budget.
+    const withTimer = renderRow(state, {
+      ...base,
+      width: 230,
+      active,
+      nextRefreshAt: now + 3 * 60_000,
+    });
+    assert.ok(withTimer[0].includes("· refresh in 3m"));
+    assert.ok(withTimer[0].includes("a…@example.com"));
+    const staleOverTimer = renderRow(state, {
+      ...base,
+      width: 150,
+      active,
+      refreshFailed: true,
+      nextRefreshAt: now + 3 * 60_000,
+    });
+    assert.ok(staleOverTimer[0].includes("· cached 1m ago"));
+    assert.ok(!staleOverTimer[0].includes("refresh in"));
 
     // Constant one-row height for every network state at supported widths.
     assert.equal(renderRow({ kind: "loading" }, { ...base, width: 60 }).length, 1);
@@ -301,6 +343,7 @@ let
     const colored = renderRow(state, { ...base, width: 150, active, color: true });
     assert.ok(colored[0].includes("\u001b[1;38;2;255;159;82m*claude\u001b[0m"));
     assert.ok(colored[0].includes("38;2;98;167;255m"));
+    assert.ok(colored[0].includes("38;2;105;114;126m│"));
 
     // Reset-urgency tiers (usageRow reset emphasis).
     assert.equal(resetEmphasis(1_000_000, 5 * HOUR), "imminent");
@@ -329,7 +372,7 @@ let
       observationPath,
       JSON.stringify({
         ok: true,
-        samples: { xwide: xwide[0], wide: wide[0], medium: medium[0], narrow: narrow[0], hidden },
+        samples: { full: full[0], wide: wide[0], medium: medium[0], narrow: narrow[0], hidden },
       }),
     );
 
@@ -451,7 +494,7 @@ pkgs.runCommand "check-omp-vault-usage-footer"
 
     jq -e '
       .ok == true
-      and (.samples.xwide | startswith("*claude a…@example.com 5h "))
+      and (.samples.full | startswith("*claude a…@example.com 5h "))
       and (.samples.wide | startswith("*claude 5h "))
       and (.samples.narrow | contains("codex") | not)
       and (.samples.hidden | length == 0)

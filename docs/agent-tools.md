@@ -39,9 +39,10 @@ explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
 caches. The vault-usage footer renders one responsive row below the editor
-box (where `code` shows its own usage panel), separated from the box by one
-blank spacer line and inset 4 columns on both edges to mirror the border's
-corner-to-π indent, for the launch vault with `code`-parity visuals (cli-kit
+box (where `code` shows its own usage panel), tied to the box by a dim `─`
+rule spanning the row's inset width (rule and row both sit inset 4 columns
+on each edge, mirroring the border's corner-to-π indent), for the launch
+vault with `code`-parity visuals (cli-kit
 palette, green→red gradient bars, `claude`/`codex` display names, `↻︎` reset
 countdowns with urgency tinting, `cached <age> ago` staleness): per
 broker-reported provider it shows every distinct labeled window (the busiest

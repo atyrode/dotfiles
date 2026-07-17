@@ -28,7 +28,8 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
  *
  * Layout contract: at supported widths `renderRow` produces exactly one
  * content row (loading, data, stale, or unavailable) and the widget adds a
- * stable blank spacer above it (two physical rows below the editor box);
+ * dim `─` rule above it (two physical rows below the editor box) tying
+ * the row to the box's bottom border;
  * only terminal width may switch it to zero rows. Fetch completion changes
  * text, never row count, so network timing can never move the prompt. The
  * row is inset LEFT_PAD/RIGHT_PAD columns from each edge (matching the
@@ -529,6 +530,16 @@ function buildChunks(
 }
 
 /**
+ * Dim `─` rule tying the row to the editor box's bottom border (the
+ * "light" separator). Spans the same inset budget the bars fill and is
+ * re-fit on every paint; the widget emits it only above a rendered row,
+ * so it inherits the row's width gate.
+ */
+export function renderRule(width: number, color: boolean = COLOR_DEFAULT): string {
+	return PAD_TEXT + paint("─".repeat(Math.max(0, width - LEFT_PAD - RIGHT_PAD)), PALETTE.dim, color);
+}
+
+/**
  * Render the footer as zero rows (below MIN_WIDTH) or exactly one row.
  * The row is inset LEFT_PAD columns from the left edge and reserves
  * RIGHT_PAD columns on the right, mirroring the editor border's
@@ -916,6 +927,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 	const componentFactory = (tui: { requestRender(): void }) => {
 		let cachedRows: string[] = [];
 		let cachedRow: string | undefined;
+		let cachedWidth: number | undefined;
 		repaint = () => tui.requestRender();
 		startPolling();
 		return {
@@ -934,14 +946,18 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 					if (cachedRows.length > 0) {
 						cachedRows = [];
 						cachedRow = undefined;
+						cachedWidth = undefined;
 					}
 					return cachedRows;
 				}
-				if (row !== cachedRow) {
+				if (row !== cachedRow || width !== cachedWidth) {
 					cachedRow = row;
-					// One blank spacer line between the editor box and the row,
-					// so the footer breathes instead of abutting the border.
-					cachedRows = ["", row];
+					cachedWidth = width;
+					// A dim rule line between the editor box and the row ties
+					// the footer to the border instead of floating below it
+					// (width keys the cache: the rule resizes even when the
+					// row text does not, e.g. loading/unavailable states).
+					cachedRows = [renderRule(width), row];
 				}
 				return cachedRows;
 			},

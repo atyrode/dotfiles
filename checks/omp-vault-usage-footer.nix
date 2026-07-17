@@ -48,6 +48,7 @@ let
       renderBar,
       renderBarAnsi,
       renderRow,
+      renderRule,
       resetEmphasis,
       shortWindowLabel,
       usedPercent,
@@ -424,6 +425,13 @@ let
     assert.ok(colored[0].includes("38;2;98;167;255m"));
     assert.ok(colored[0].includes("38;2;105;114;126m│"));
 
+    // Separator rule: spans the inset budget, dim-painted, resize-adaptive.
+    assert.equal(renderRule(120, false), "    " + "─".repeat(112));
+    assert.equal(renderRule(64, false), "    " + "─".repeat(56));
+    assert.equal(visibleWidth(renderRule(120, false)), 116);
+    assert.equal(renderRule(120, true), "    " + paint("─".repeat(112), PALETTE.dim, true));
+    assert.equal(visibleWidth(renderRule(120, true)), 116);
+
     // Reset-urgency tiers (usageRow reset emphasis).
     assert.equal(resetEmphasis(1_000_000, 5 * HOUR), "imminent");
     assert.equal(resetEmphasis(1 * HOUR, 5 * HOUR), "soon");
@@ -573,9 +581,9 @@ pkgs.runCommand "check-omp-vault-usage-footer"
 
     # Placement contract: print mode has no widget surface, so pin the
     # runtime wiring textually against the deployed extension copy - the
-    # widget hangs below the editor with one blank spacer line above it.
+    # widget hangs below the editor with a dim rule line above the row.
     grep -Fq 'placement: "belowEditor"' "$ext/vault-usage-footer.ts"
-    grep -Fq 'cachedRows = ["", row]' "$ext/vault-usage-footer.ts"
+    grep -Fq 'cachedRows = [renderRule(width), row]' "$ext/vault-usage-footer.ts"
 
     jq -e '
       .ok == true

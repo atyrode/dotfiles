@@ -71,10 +71,12 @@ stt:
 branchSummary:
   enabled: true
 
+# Off with the memory backend (#258): the Auto-Learn prompt section and
+# capture nudges are the same class of context pollution (operator decision
+# 2026-07-17). Existing managed skills stay on disk under
+# ~/.omp/agent/managed-skills.
 autolearn:
-  enabled: true
-  # One extra billed self-reflection turn at every session end is not a
-  # default; capture lessons deliberately instead (operator review 2026-07-11).
+  enabled: false
   autoContinue: false
 
 github:

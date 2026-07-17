@@ -511,8 +511,8 @@
 
       overlays.default = agentToolsOverlay;
 
-      homeManagerModules = {
-        # Preserve the original low-level configurable module export.
+      homeModules = {
+        # Nix's recognized community schema for reusable Home Manager modules.
         agent-tools = import ./modules/home/agent-tools.nix;
         profiles = capabilityModules;
       };
@@ -750,16 +750,19 @@
           home-manager = {
             type = "app";
             program = "${home-manager.packages.${system}.home-manager}/bin/home-manager";
+            meta.description = "Run Home Manager configurations";
           };
           refresh-model-facts = {
             type = "app";
             program = "${refreshModelFacts}/bin/refresh-model-facts";
+            meta.description = "Refresh OMP model cost, context, and benchmark facts";
           };
         }
         // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
           darwin-rebuild = {
             type = "app";
             program = "${nix-darwin.packages.${system}.darwin-rebuild}/bin/darwin-rebuild";
+            meta.description = "Run nix-darwin configurations";
           };
         }
       );

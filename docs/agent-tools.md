@@ -38,18 +38,21 @@ into a read-only OMP extension-package root in the Nix store and injected
 explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
-caches. The vault-usage footer renders one responsive below-editor row for
-the launch vault with `code`-parity visuals (cli-kit palette, green→red
-gradient bars, `claude`/`codex` display names, `↻︎` reset countdowns with
-urgency tinting, `cached <age> ago` staleness): per broker-reported provider
-it shows every distinct labeled window (the busiest per label — e.g.
-`5h · 7d · 7d fable` for Claude; never an invented aggregate), provider
-groups delimited by `│`, the active model's provider first, and a live
-minute-granular `refresh in Xm` suffix on healthy rows. When width runs
-short it deterministically sheds identity first, then the lowest-priority
-windows (exhausted and high-usage windows survive longest), then trailing
-providers. `/vault-usage` lists the full window/scope set with a
-fetched/next-refresh status line; `/vault-usage refresh` forces a fetch. It
+caches. The vault-usage footer renders one responsive row directly above the
+editor's status border for the launch vault with `code`-parity visuals
+(cli-kit palette, green→red gradient bars, `claude`/`codex` display names,
+`↻︎` reset countdowns with urgency tinting, `cached <age> ago` staleness):
+per broker-reported provider it shows every distinct labeled window (the
+busiest per label — e.g. `5h · 7d · 7d fable` for Claude; never an invented
+aggregate), provider groups delimited by `│`, the active model's provider
+first, and a live minute-granular `refresh in Xm` suffix on healthy rows.
+`alt+u` forces a fetch (a raw-input listener registered ahead of the editor;
+its `(alt+u)` cue decorates the suffix). When width runs short the row
+deterministically sheds identity first, then the cue, then the
+lowest-priority windows (exhausted and high-usage windows survive longest),
+then trailing providers. `/vault-usage` opens a read-only viewer of the full
+window/scope set with a fetched/next-refresh status line (enter/esc close
+it); `/vault-usage refresh` matches the hotkey. It
 reads only the aggregate usage report, non-secret auth-state booleans, and
 the read-only display identity (masked to `x…@domain` at capture, shown
 only when the complete row fits) — never credentials, tokens, or raw report

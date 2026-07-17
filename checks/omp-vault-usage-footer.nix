@@ -244,6 +244,48 @@ let
     assert.ok(staleOverTimer[0].includes("· cached 1m ago"));
     assert.ok(!staleOverTimer[0].includes("refresh in"));
 
+    // Manual-refresh cue ladder — monotonic as width shrinks so nothing
+    // blinks back in during a resize: identities+cue → cue → plain. No
+    // decoration ever sheds a window.
+    const timerOpts = { ...base, active, nextRefreshAt: now + 3 * 60_000 };
+    const cueFull = renderRow(state, { ...timerOpts, width: 500, refreshHint: "alt+u" });
+    assert.ok(cueFull[0].includes("a…@example.com"));
+    assert.ok(cueFull[0].includes("· refresh in 3m (alt+u)"));
+    const idWidth = renderRow(state, { ...timerOpts, width: 500 })[0].length;
+    // With the hotkey armed the identity tier always carries the cue: at the
+    // plain-identity width the ladder drops straight to the cue tier rather
+    // than showing identity without its cue (monotonicity).
+    const idOnly = renderRow(state, { ...timerOpts, width: idWidth, refreshHint: "alt+u" });
+    assert.ok(!idOnly[0].includes("a…@example.com"));
+    assert.ok(idOnly[0].includes("(alt+u)"));
+    assert.ok(idOnly[0].includes("7d spark"));
+    // Unarmed sessions keep the plain-identity tier at this width.
+    const idPlain = renderRow(state, { ...timerOpts, width: idWidth });
+    assert.ok(idPlain[0].includes("a…@example.com"));
+    // One short of identity: the cue tier keeps every window, drops identity.
+    const cueOnly = renderRow(state, { ...timerOpts, width: idWidth - 1, refreshHint: "alt+u" });
+    assert.ok(!cueOnly[0].includes("a…@example.com"));
+    assert.ok(cueOnly[0].includes("(alt+u)"));
+    assert.ok(cueOnly[0].includes("7d spark"));
+    // Plain tier: at the exact plain-row width every window survives and the
+    // cue is dropped rather than shedding one.
+    const plainWidth = renderRow(state, { ...timerOpts, width: idWidth - 1 })[0].length;
+    const plainFull = renderRow(state, { ...timerOpts, width: plainWidth, refreshHint: "alt+u" });
+    assert.ok(!plainFull[0].includes("(alt+u)"));
+    assert.ok(plainFull[0].includes("7d spark"));
+    // The cue also decorates the stale suffix (refresh matters most then).
+    const staleCue = renderRow(state, {
+      ...base,
+      width: 500,
+      active,
+      refreshFailed: true,
+      refreshHint: "alt+u",
+    });
+    assert.ok(staleCue[0].includes("· cached 1m ago (alt+u)"));
+    // Narrow layouts never show the cue.
+    const narrowCue = renderRow(state, { ...timerOpts, width: 50, refreshHint: "alt+u" });
+    assert.ok(!narrowCue[0].includes("alt+u"));
+
     // Constant one-row height for every network state at supported widths.
     assert.equal(renderRow({ kind: "loading" }, { ...base, width: 60 }).length, 1);
     assert.equal(renderRow({ kind: "unavailable" }, { ...base, width: 60 }).length, 1);

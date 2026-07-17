@@ -1,5 +1,6 @@
 import { resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { matchesKey } from "@oh-my-pi/pi-tui";
 
 /**
  * Multi-provider vault usage footer (issue #220).
@@ -31,6 +32,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
  */
 
 const WIDGET_KEY = "vault-usage";
+const REFRESH_KEY = "alt+u";
 const BAR_CELLS = 10;
 const MIN_WIDTH = 40;
 const MEDIUM_WIDTH = 64;
@@ -116,6 +118,8 @@ export interface RenderOptions {
 	refreshFailed?: boolean;
 	/** Next scheduled fetch; renders a live minute-granular row suffix. */
 	nextRefreshAt?: number;
+	/** Hotkey label (e.g. "alt+u"); decorates the suffix when nothing is sacrificed. */
+	refreshHint?: string;
 	/** Explicit for tests; defaults to NO_COLOR/TERM-derived behavior. */
 	color?: boolean;
 }
@@ -512,21 +516,28 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 			? `refresh in ${formatCountdown(options.nextRefreshAt - options.now)}`
 			: "";
 	const suffixText = staleText !== "" ? staleText : refreshText;
-	const suffix: Cell =
-		suffixText === ""
+	const paintSuffix = (text: string): Cell =>
+		text === ""
 			? { plain: "", ansi: "" }
 			: {
-					plain: ` · ${suffixText}`,
-					ansi: ` ${paint("·", PALETTE.dim, color)} ${paint(suffixText, staleText !== "" ? PALETTE.warn : PALETTE.dim, color)}`,
+					plain: ` · ${text}`,
+					ansi: ` ${paint("·", PALETTE.dim, color)} ${paint(text, staleText !== "" ? PALETTE.warn : PALETTE.dim, color)}`,
 			  };
+	const suffix = paintSuffix(suffixText);
+	// The manual-refresh cue decorates a populated suffix one tier below
+	// identities: like them, it may never cost a window.
+	const cueSuffix =
+		options.refreshHint !== undefined && suffixText !== "" && level !== "narrow"
+			? paintSuffix(`${suffixText} (${options.refreshHint})`)
+			: undefined;
 	const budget = width - suffix.plain.length;
 
 	const providerSeparator: Cell = { plain: " │ ", ansi: ` ${paint("│", PALETTE.group, color)} ` };
-	const fitsAll = (chunks: readonly Cell[]): boolean =>
+	const rowWidth = (chunks: readonly Cell[]): number =>
 		chunks.reduce(
 			(sum, chunk, index) => sum + chunk.plain.length + (index > 0 ? providerSeparator.plain.length : 0),
 			0,
-		) <= budget;
+		);
 
 	const windowLists = new Map<string, readonly WindowView[]>(
 		state.providers.map(view => [
@@ -535,21 +546,27 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		]),
 	);
 
-	// Pass 1: the complete row with identities — identities are kept only
-	// when no window has to be sacrificed for them.
+	// Tier ladder — monotonic as width shrinks, so no decoration blinks back
+	// in during a resize: identities+cue → cue → plain → shedding (when the
+	// hotkey is armed the identity tier always carries the cue).
 	if (level === "wide" && state.identities !== undefined) {
 		const withIdentities = buildChunks(state, options, level, color, windowLists, true);
-		if (withIdentities.length > 0 && fitsAll(withIdentities)) {
-			const row = joinCells(withIdentities, providerSeparator);
-			return [row.ansi + suffix.ansi];
+		if (withIdentities.length > 0) {
+			const idSuffix = cueSuffix ?? suffix;
+			if (rowWidth(withIdentities) <= width - idSuffix.plain.length) {
+				return [joinCells(withIdentities, providerSeparator).ansi + idSuffix.ansi];
+			}
 		}
 	}
 
-	// Pass 2: no identities; shed the lowest-priority window (never a
-	// provider's last) until the row fits.
+	// No identities: try the cue tier, then shed the lowest-priority window
+	// (never a provider's last) until the row fits.
 	let chunks = buildChunks(state, options, level, color, windowLists, false);
 	if (chunks.length === 0) return [paint("usage: none reported", PALETTE.dim, color)];
-	while (!fitsAll(chunks)) {
+	if (cueSuffix !== undefined && rowWidth(chunks) <= width - cueSuffix.plain.length) {
+		return [joinCells(chunks, providerSeparator).ansi + cueSuffix.ansi];
+	}
+	while (rowWidth(chunks) > budget) {
 		let worstProvider: string | undefined;
 		let worst: WindowView | undefined;
 		for (const [provider, windows] of windowLists) {
@@ -624,6 +641,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 	let shutdown = false;
 	let polling = false;
 	let nextRefreshAt: number | undefined;
+	let unhookInput: (() => void) | undefined;
 
 	const activeInfo = (): ActiveProviderInfo | undefined => {
 		const ctx = latestContext;
@@ -751,6 +769,30 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 		void refresh();
 	};
 
+	const manualRefresh = (ctx: ExtensionContext): void => {
+		if (shutdown || !polling) return;
+		// Manual refresh parity with code's usage panel: pull the next poll
+		// forward; the in-flight guard dedupes concurrent fetches.
+		clearTimeout(refreshTimer);
+		refreshTimer = undefined;
+		void refresh();
+		if (ctx.hasUI) ctx.ui.notify("Vault usage: refreshing…", "info");
+	};
+
+	// A raw-input listener sees every chord before the editor and consumes
+	// only the refresh key. `newSession` clears extension listeners, so each
+	// `session_start` re-arms; the cue in the row renders only while armed.
+	const armHotkey = (ctx: ExtensionContext): void => {
+		if (!ctx.hasUI || typeof ctx.ui.onTerminalInput !== "function") return;
+		unhookInput?.();
+		unhookInput = ctx.ui.onTerminalInput(data => {
+			if (!matchesKey(data, REFRESH_KEY)) return undefined;
+			const current = latestContext;
+			if (current) manualRefresh(current);
+			return { consume: true };
+		});
+	};
+
 	const componentFactory = (tui: { requestRender(): void }) => {
 		let cachedRows: string[] = [];
 		let cachedRow: string | undefined;
@@ -765,6 +807,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 					staleAfterMs: STALE_AFTER_MS,
 					refreshFailed: failures > 0,
 					nextRefreshAt,
+					refreshHint: unhookInput !== undefined ? REFRESH_KEY : undefined,
 				});
 				const row = rows[0];
 				if (row === undefined) {
@@ -791,33 +834,34 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 		latestContext = ctx;
 		// Print/RPC mode: no widget surface, so stay fully inert (no polling).
 		if (!ctx.hasUI) return;
-		ctx.ui.setWidget(WIDGET_KEY, componentFactory, { placement: "belowEditor" });
+		// Above the editor: the row rides flush on top of the status border,
+		// reading as part of the box stack instead of a stray line below it.
+		ctx.ui.setWidget(WIDGET_KEY, componentFactory, { placement: "aboveEditor" });
+		armHotkey(ctx);
 		startPolling();
 	});
 
 	pi.on("session_switch", (_event, ctx) => {
 		latestContext = ctx;
+		armHotkey(ctx);
 		repaint?.();
 	});
 
 	pi.on("session_shutdown", () => {
 		shutdown = true;
 		stopPolling();
+		unhookInput?.();
+		unhookInput = undefined;
 		if (latestContext?.hasUI) latestContext.ui.setWidget(WIDGET_KEY, undefined);
 		repaint = undefined;
 	});
 
 	pi.registerCommand("vault-usage", {
-		description: "List every provider usage window; 'refresh' forces a fetch now",
+		description: "List every provider usage window; 'refresh' or alt+u forces a fetch now",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) return;
 			if (typeof args === "string" && args.trim().toLowerCase() === "refresh") {
-				// Manual refresh parity with code's usage panel: pull the next
-				// poll forward; the in-flight guard dedupes concurrent fetches.
-				clearTimeout(refreshTimer);
-				refreshTimer = undefined;
-				void refresh();
-				ctx.ui.notify("Vault usage: refreshing…", "info");
+				manualRefresh(ctx);
 				return;
 			}
 			const now = Date.now();
@@ -831,9 +875,30 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 				if (nextRefreshAt !== undefined && nextRefreshAt > now) {
 					status += ` · next refresh ~${formatCountdown(nextRefreshAt - now)}`;
 				}
-				lines.unshift(status + ' · "/vault-usage refresh" fetches now');
+				lines.unshift(status + ` · alt+u or "/vault-usage refresh" fetches now`);
 			}
-			await ctx.ui.select("Vault usage windows", lines);
+			// Read-only viewer: nothing here is selectable, so a select dialog
+			// would misleadingly invite a choice. esc/enter/q just close it.
+			await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => {
+				const rows = [
+					theme.bold("Vault usage"),
+					"",
+					...lines,
+					"",
+					theme.fg("muted", "enter/esc/q closes"),
+				];
+				return {
+					focused: false,
+					render(): readonly string[] {
+						return rows;
+					},
+					handleInput(data: string): void {
+						if (matchesKey(data, "escape") || matchesKey(data, "enter") || data === "q") {
+							done(undefined);
+						}
+					},
+				};
+			});
 		},
 	});
 }

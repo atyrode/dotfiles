@@ -119,8 +119,12 @@ task:
     task: openai-codex/gpt-5.6-terra:medium
   disabledAgents: []
 
+# Memory guidance in the system prompt pollutes agent context for no
+# proportionate recall value; keep the backend off across managed launches
+# (operator decision 2026-07-17). Re-enable per machine via
+# ~/.config/omp/local.yml if a profile ever needs it.
 memory:
-  backend: local
+  backend: off
 
 theme:
   dark: titanium

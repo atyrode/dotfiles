@@ -10,8 +10,9 @@ in
 assert lib.assertMsg baseline.programs.zsh.enableCompletion
   "the baseline shell must keep completion enabled";
 assert lib.assertMsg baseline.programs.fzf.enable "fzf must be configured through Home Manager";
-assert lib.assertMsg (!baseline.programs.fzf.enableZshIntegration)
-  "fzf's unguarded zsh hook must stay disabled; home/zsh.nix sources it behind a TTY guard (#255)";
+assert lib.assertMsg (
+  !baseline.programs.fzf.enableZshIntegration
+) "fzf's unguarded zsh hook must stay disabled; home/zsh.nix sources it behind a TTY guard (#255)";
 assert lib.assertMsg baseline.programs.zoxide.enable
   "zoxide must be configured through Home Manager";
 assert lib.assertMsg baseline.programs.direnv.nix-direnv.enable

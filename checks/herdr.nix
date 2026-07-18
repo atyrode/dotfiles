@@ -56,6 +56,7 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'update.manifest_check')" = false ]
     [ "$(taplo get -f ${renderedConfig} 'experimental.pane_history')" = false ]
     [ "$(taplo get -f ${renderedConfig} 'remote.manage_ssh_config')" = true ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.agent_panel_sort')" = priority ]
     [ "$(taplo get -f ${renderedConfig} 'ui.toast.delivery')" = herdr ]
 
     # The activation seed's real contract, under a scratch agent dir: the

@@ -4,7 +4,7 @@
   capabilities = {
     agent-tools = {
       title = "Agent tools";
-      purpose = "Codex, OMP, managed agents, and their configuration";
+      purpose = "Codex, OMP, herdr, managed agents, and their configuration";
       consumer = "Claude Code, Codex, OMP isolation, and TUI verification";
       group = "automation";
       deliveryBoundary = "Home Manager packages and repository overlays";

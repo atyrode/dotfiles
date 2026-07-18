@@ -249,6 +249,7 @@
         "code"
         "codex"
         "atyrode-codex-seed"
+        "herdr"
         "omp"
         "omp-agents"
         "omp-configured"
@@ -270,6 +271,7 @@
             code = final.callPackage ./pkgs/code { };
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-seed = final.callPackage ./pkgs/codex-seed { };
+            herdr = final.callPackage ./pkgs/herdr { };
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
@@ -523,6 +525,7 @@
             code
             codex
             codex-seed
+            herdr
             omp
             omp-agents
             omp-configured
@@ -657,6 +660,10 @@
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
           codex-seed = import ./checks/codex-seed.nix { inherit pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
+          herdr = import ./checks/herdr.nix {
+            inherit lib pkgs;
+            hostConfigs = canonicalHomeConfigs;
+          };
           omp-seed = import ./checks/omp-seed.nix { inherit pkgs; };
           omp-secret-obfuscation = import ./checks/omp-secret-obfuscation.nix { inherit pkgs; };
           omp-isolated-writer = import ./checks/omp-isolated-writer.nix { inherit pkgs; };

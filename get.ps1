@@ -117,6 +117,7 @@ $script:WslExe = $wslCommand.Source
 
 $revision = Resolve-Revision -RequestedRef $Ref
 $flake = "github:$Repository/$revision#$HostId"
+$rebuildPackage = "github:$Repository/$revision#nixosConfigurations.$HostId.pkgs.nixos-rebuild"
 $wslVersion = Get-WslVersion
 $distros = Get-WslDistros
 $distroExists = ($distros -contains $DistroName)
@@ -206,6 +207,10 @@ else {
 
 Write-Host "Activating $flake inside NixOS-WSL..."
 Invoke-ManagedDistro -Arguments @(
+    '/run/current-system/sw/bin/nix',
+    '--extra-experimental-features', 'nix-command flakes',
+    'shell', $rebuildPackage,
+    '--command',
     'nixos-rebuild', 'switch', '--flake', $flake,
     '--option', 'experimental-features', 'nix-command flakes'
 )

@@ -100,7 +100,7 @@ pkgs.runCommand "check-windows-control-plane"
       *'printf '*' /etc/atyrode-bootstrap-pending'*)
         touch "$WSL_STATE/pending"
         ;;
-      *'nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl'*)
+      *'shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.alex-x86_64-linux-wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl'*)
         touch "$WSL_STATE/managed"
         ;;
       *'rm -f /etc/atyrode-bootstrap-pending'*)
@@ -186,8 +186,9 @@ pkgs.runCommand "check-windows-control-plane"
     ! grep -qF -- '--install --from-file' "$WSL_STUB_LOG"
     test ! -e "$WSL_STATE/distro"
 
-    # The fresh-machine path installs the verified image, activates one exact
-    # Git revision, removes the pending marker, then invokes native reconciliation.
+    # A fresh image has no nixos-rebuild command yet. The bootstrap installs
+    # the target flake's pinned rebuild package, activates that exact revision,
+    # removes the pending marker, then invokes native reconciliation.
     rm -rf "$WSL_STATE" "$INSTALL_LOCATION"
     mkdir -p "$WSL_STATE"
     : > "$WSL_STUB_LOG"
@@ -197,7 +198,7 @@ pkgs.runCommand "check-windows-control-plane"
       > "$TMPDIR/bootstrap-apply.out"
     grep -qF 'Bootstrap complete.' "$TMPDIR/bootstrap-apply.out"
     grep -qF -- '--install --from-file' "$WSL_STUB_LOG"
-    grep -qF 'nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl --option experimental-features nix-command flakes' \
+    grep -qF -- '--exec /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.alex-x86_64-linux-wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl --option experimental-features nix-command flakes' \
       "$WSL_STUB_LOG"
     grep -qF -- '--exec /etc/profiles/per-user/alex/bin/atyrode windows apply' "$WSL_STUB_LOG"
     test -f "$WSL_STATE/distro"

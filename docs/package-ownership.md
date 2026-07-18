@@ -103,6 +103,7 @@ class (b), an upstream binary artifact modified inside its sealed bundle.
 | Claude Code CLI | `agent-tools` | pinned nixpkgs | `~/.claude`, `~/.claude.json` | interactive, print |
 | Codex CLI | `agent-tools` | pinned upstream release binaries (repository derivation) | `~/.codex` | interactive, exec |
 | OMP | `agent-tools` | repository derivation | profile-scoped auth, sessions, MCP, caches | normal, generated, untrusted, ACP |
+| herdr | `agent-tools` | pinned upstream release binaries (repository derivation) | `~/.local/state/herdr`, `~/.herdr/worktrees`, seeded OMP integration extension | server TUI, thin client (`--remote`), control CLI |
 | tmux adapter | `agent-tools` | pinned nixpkgs | tmux server sockets and sessions | interactive |
 | bubblewrap backend | Linux `agent-tools` | pinned nixpkgs | none | OMP task isolation |
 | comma + nix-index | `base` | pinned flake input | immutable index/shared store | lookup, on-demand command |

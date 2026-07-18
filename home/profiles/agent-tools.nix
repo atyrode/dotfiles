@@ -4,6 +4,7 @@
     ../../modules/home/agent-tools.nix
     ../claude.nix
     ../codex.nix
+    ../herdr.nix
   ];
 
   atyrode.agentTools.enable = true;

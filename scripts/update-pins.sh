@@ -55,3 +55,20 @@ bump code "$repo_root/pkgs/code/default.nix" atyrode/code v \
 bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
   'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
   codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
+
+bump herdr "$repo_root/pkgs/herdr/default.nix" ogulcancelik/herdr v \
+  'https://github.com/ogulcancelik/herdr/releases/download/@tag@/@asset@' \
+  herdr-linux-x86_64 herdr-linux-aarch64 herdr-macos-x86_64 herdr-macos-aarch64
+
+# The vendored herdr skill (agents/skills/herdr/SKILL.md) is reviewed agent
+# instructions sourced from a public repository; it is never overwritten
+# automatically. Point at the upstream diff whenever it lags the pin —
+# checks/herdr.nix fails CI on the same mismatch, so a herdr bump PR cannot
+# land without the reviewed skill refresh.
+herdr_pin="$(current_version "$repo_root/pkgs/herdr/default.nix")"
+herdr_skill="$(grep -oE 'HERDR_SKILL_UPSTREAM_VERSION=[0-9.]+' \
+  "$repo_root/agents/skills/herdr/SKILL.md" | grep -oE '[0-9.]+$')"
+if [[ "$herdr_pin" != "$herdr_skill" ]]; then
+  printf 'herdr skill vendored at %s lags pin %s: review https://github.com/ogulcancelik/herdr/blob/v%s/SKILL.md, then update agents/skills/herdr/SKILL.md\n' \
+    "$herdr_skill" "$herdr_pin" "$herdr_pin"
+fi

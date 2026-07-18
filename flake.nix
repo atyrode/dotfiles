@@ -158,7 +158,6 @@
             inherit (host) system;
             capabilities = host.capabilities or [ ];
           };
-          aliases = host.aliases or [ ];
         in
         assert lib.assertMsg (builtins.elem host.system systems)
           "host ${name} uses unsupported system ${host.system}";
@@ -174,37 +173,20 @@
         assert lib.assertMsg (builtins.isString (
           host.description or ""
         )) "host ${name} description must be a string";
-        assert lib.assertMsg (
-          builtins.length aliases == builtins.length (lib.unique aliases)
-        ) "host ${name} declares duplicate aliases";
         host
         // {
-          inherit aliases capabilities;
+          inherit capabilities;
           description = host.description or "";
           hostname = host.hostname or null;
         };
 
-      validateHostRegistry =
-        registry:
-        let
-          validated = lib.mapAttrs validateHost registry;
-          canonicalNames = builtins.attrNames validated;
-          aliases = lib.concatMap (name: validated.${name}.aliases) canonicalNames;
-        in
-        assert lib.assertMsg (
-          builtins.length aliases == builtins.length (lib.unique aliases)
-        ) "host aliases must be globally unique";
-        assert lib.assertMsg (lib.all (
-          alias: !(builtins.hasAttr alias validated)
-        ) aliases) "host aliases must not collide with canonical host names";
-        validated;
+      validateHostRegistry = registry: lib.mapAttrs validateHost registry;
 
       hosts = validateHostRegistry rawHosts;
 
       publicHost = name: host: {
         id = name;
         inherit (host)
-          aliases
           capabilities
           description
           homeDirectory
@@ -262,7 +244,6 @@
         ++ [ (mkHostIdentityModule { inherit host name; }) ];
 
       repositoryPackageNames = [
-        "atyrode-agent-tools-migrate"
         "atyrode"
         "atyrode-tui"
         "code"
@@ -283,7 +264,6 @@
         in
         lib.composeManyExtensions [
           (final: _previous: {
-            agent-tools-migrate = final.callPackage ./pkgs/agent-tools-migrate { };
             atyrode-tui = final.callPackage ./pkgs/atyrode-tui { };
             # Repository-owned on every platform: upstream releases outpace
             # nixpkgs, which also cannot build codex on aarch64-darwin.
@@ -498,20 +478,11 @@
         }
       );
 
-      aliasesFor =
-        selectedHosts: configs:
-        lib.foldl' (
-          aliases: name:
-          aliases
-          // builtins.listToAttrs (
-            map (alias: lib.nameValuePair alias configs.${name}) selectedHosts.${name}.aliases
-          )
-        ) { } (builtins.attrNames selectedHosts);
     in
     {
-      homeConfigurations = canonicalHomeConfigs // aliasesFor hosts canonicalHomeConfigs;
+      homeConfigurations = canonicalHomeConfigs;
 
-      darwinConfigurations = canonicalDarwinConfigs // aliasesFor darwinHosts canonicalDarwinConfigs;
+      darwinConfigurations = canonicalDarwinConfigs;
       inventory = inventoryBySystem;
       capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
 
@@ -547,7 +518,6 @@
         in
         {
           inherit (pkgs)
-            agent-tools-migrate
             atyrode
             atyrode-tui
             code
@@ -597,7 +567,6 @@
             hostRegistry = publicHosts // {
               fixture-server = {
                 id = "fixture-server";
-                aliases = [ ];
                 capabilities = [
                   "base"
                   "server"
@@ -611,7 +580,6 @@
               };
               fixture-security = {
                 id = "fixture-security";
-                aliases = [ ];
                 capabilities = [
                   "base"
                   "security"

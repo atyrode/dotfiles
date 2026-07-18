@@ -1,8 +1,8 @@
 # Agent tools
 
-OMP, the profile generator, agents, rules, and generic
-skills are part of the Home Manager profile. `zconf` is the only
-installation or activation command; there is no separate plugin or skill sync.
+OMP, the profile generator, agents, rules, and generic skills are part of the
+Home Manager profile. `atyrode apply` activates them; there is no separate
+plugin or skill sync.
 
 ## Ownership
 
@@ -22,6 +22,13 @@ Nix owns:
 OMP continues to own mutable runtime data such as authentication,
 sessions, caches, onboarding state, and machine-local UI state. Secrets never
 belong in this repository or the Nix store.
+
+Activation does not rewrite or back up pre-existing mutable paths before Home
+Manager links the managed agents, rules, extensions, and skills. If
+`checkLinkTargets` reports a collision, inspect the exact path named by Home
+Manager, preserve any content still wanted outside the managed namespace, then
+remove or move the collision and rerun `atyrode apply`. Do not delete an
+uninspected path merely to make activation pass.
 
 This subsystem deliberately owns neither a `pi` executable nor a `.pi`
 mutable-state namespace. The bounded Pi experiment in #29 may therefore install
@@ -54,15 +61,16 @@ on every paint, so resizes adapt; width is measured in terminal cells via
 the TUI's own `visibleWidth`, matching how the engine lays out the row.
 `alt+u` forces a fetch (a raw-input listener registered ahead of the editor;
 its `(alt+u)` cue decorates the suffix). When width runs short the row
-deterministically sheds identity first, then the cue, then the
-lowest-priority windows (exhausted and high-usage windows survive longest),
-then trailing providers. `/vault-usage` opens a read-only viewer of the full
-window/scope set with a fetched/next-refresh status line (enter/esc close
-it); `/vault-usage refresh` matches the hotkey. It
-reads only the aggregate usage report, non-secret auth-state booleans, and
-the read-only display identity (masked to `x…@domain` at capture, shown
-only when the complete row fits) — never credentials, tokens, or raw report
-metadata — and it hides itself instead of wrapping on narrow terminals.
+deterministically drops identity and cue decoration, replaces bars with compact
+cells, sheds named variant buckets before core duration windows, and drops
+trailing providers only as a final guard. `/vault-usage` opens a read-only
+viewer of the full window/scope set with a fetched/next-refresh status line
+(enter/esc close it); `/vault-usage refresh` matches the hotkey. It reads only
+the aggregate usage report, non-secret auth-state booleans, and the read-only
+display identities. Identities are masked together with OMP's collision-aware
+`usage --redact` algorithm and appear only when the complete row fits; credentials,
+tokens, and raw report metadata are never read. The footer hides itself instead
+of wrapping on narrow terminals.
 
 The package overlay lives in `flake.nix`, reusable package derivations live in
 `pkgs/`, and Home Manager deployment lives in
@@ -84,9 +92,10 @@ them together.
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
 | `code` | The profile generator TUI (see below) | Always launches through `omp-managed`: Enter passes the generated profile as a one-shot `--config`; `m` runs the managed defaults with no overlay |
 
-For discoverability beyond the wrapper contract, see the versioned
-[OMP feature wiki](omp/README.md). Its CLI tables describe plain upstream OMP;
-this document remains authoritative for `code`, `omp-managed`, and `ompu`.
+For plain upstream discoverability, use the pinned binary's `omp --help` and
+`omp <command> --help`; [upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
+may describe behavior newer than the repository pin. This document remains
+authoritative for `code`, `omp-managed`, and `ompu`.
 
 Plain `omp` executes upstream OMP directly: no extension, defaults, or policy
 overlay is injected, so its models, approvals, and interface belong to the
@@ -253,7 +262,7 @@ than from hand-curated preset files.
 `omp-managed` loads configuration in this order:
 
 1. OMP's writable machine config at `~/.omp/agent/config.yml`, with
-   `config.yaml` accepted as OMP's legacy fallback when `config.yml` is absent;
+   `config.yaml` selected only when the canonical filename is absent;
 2. the Nix-managed portable defaults;
 3. native project configuration from `<cwd>/.omp/settings.json` followed by
    `<cwd>/.omp/config.yml`, reapplied after the defaults so a repository can
@@ -296,10 +305,11 @@ ordered source paths, ownership, and effective managed values for the managed
 session. The diagnostic includes the writable machine layer, both native
 project settings files, one-shot overlays, and supported runtime overrides,
 but filters output to Nix-owned keys so credentials and unrelated private
-settings are never printed. OMP-compatible migrations are applied to legacy
-managed values before the diagnostic is merged. `PI_CODING_AGENT_DIR`,
-`PI_CONFIG_DIR`, named profiles, the effective project directory, and the
-`config.yml`/`config.yaml` fallback are reflected in the report.
+settings are never printed. The diagnostic applies the same legacy-key
+migrations the pinned binary applies at load, so it reports what OMP actually
+resolves. `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, named
+profiles, the effective project directory, and OMP's selected writable config
+filename are reflected in the report.
 
 `omp config set` and `omp config reset` refuse keys supplied by the managed
 defaults or enforced policy, including parent/child paths
@@ -330,8 +340,8 @@ the bundled-role model map and fallback chains, and interface preferences. It
 is deliberately not a managed layer: OMP's `--config` overlays always outrank
 the writable machine configuration, so a "defaults that lose to local edits"
 layer cannot exist at launch time. Instead, `atyrode-omp-seed apply` runs
-during activation (after the legacy migration) and three-way merges the seed
-into `~/.omp/agent/config.yml` against the last-applied seed recorded in
+during activation and three-way merges the seed into OMP's selected writable
+machine config against the last-applied seed recorded in
 `~/.local/state/atyrode/omp-plain-seed/`. The seeder always targets that
 default state root — a caller's profile-scoped environment (for example
 `atyrode apply` run from inside an omp session) never redirects it, and named
@@ -363,10 +373,8 @@ it at the next apply, or apply while managed sessions are closed.
 Known, accepted limits: the writable configuration is machine-formatted (OMP
 itself rewrites it without comments, and so does the seeder); a write aborts
 rather than merges when the file changed between read and write (rerun to
-pick up the new state); a seed path blocked by a local scalar reports drift
-instead of writing; and on the first activation of a legacy machine the v2
-migration removes managed-key copies before seeding writes the repository
-values — the original file survives in the migration backup receipt.
+pick up the new state); and a seed path blocked by a local scalar reports drift
+instead of writing.
 `ATYRODE_SEED_REVIEW=0` suppresses the interactive apply-time review for
 pty-backed automation.
 
@@ -391,61 +399,10 @@ that needs them while still making them available automatically when OMP runs
 inside that project. The same ownership rule applies to project-specific
 `.agents/AGENTS.md`, rules, prompts, and commands.
 
-Existing project-specific auto-learned skills under
-`~/.omp/agent/managed-skills` are intentionally left writable and global for
-now. Move them into their owning repositories one at a time after removing
-machine-specific assumptions; the first migration only relocates the generic
-`ts-react-dead-code-sweep` skill.
-
-## First activation
-
-Before Home Manager checks link targets, the activation hook examines legacy
-paths. Conflicting regular files or symlinks at the OMP and Herdr binary paths,
-the standalone Bigpowers plugin tree, managed agents, managed extensions,
-rules, and the old generic skill are moved into a pending migration
-receipt. The exact temporary `mcp.json` denylist previously used for
-`bigpowers-mcp` is also retired; MCP configurations containing any custom
-servers or settings are left untouched. Legacy binaries are never executed
-during detection:
-
-```text
-~/.local/state/atyrode/agent-tools-migration/migration-v2.pending/
-├── receipt.tsv
-├── backup/
-└── work/
-```
-
-The existing writable OMP `config.yml` or fallback `config.yaml` is copied into
-the same backup and only the keys now owned by Nix are removed. A dual-file
-state or ambiguous legacy scalar custom theme is refused for manual review.
-Onboarding version, consent, unknown keys, and other machine-local values remain
-writable. Invalid YAML, unsupported file types at managed binary paths, a mixed
-plugin tree, or a live path that collides with an existing backup stop
-activation instead of guessing. An interrupted activation reuses the pending
-receipt and never creates a second backup. Once
-Home Manager has installed the packages and selected the new generation, a
-finalizer verifies every retired path and transformed config, then atomically
-renames the pending directory to `migration-v2.complete`; the backups remain
-inside it for manual recovery. Existing installations with the former
-`migration-v2.complete` marker
-file remain recognized. A zero-length receipt produced by an earlier blank-home
-activation is also recognized only when both its backup and work trees are
-empty; retained data, malformed non-empty receipts, and unsafe links still stop
-activation for manual review.
-
-Receipts, backup/work directories, lock handling, and same-directory temporary
-files are validated so symlinks cannot redirect writes outside the transaction.
-The retired plugin cleanup accepts only the exact Bigpowers-only manifest and
-known package-manager files; mixed dependencies or any customized root state
-are preserved for manual review. Stale `~/.local/bin/omp` and `herdr` symlinks
-are backed up even when they target an old Nix store path, preventing them from
-shadowing the Home Manager profile.
-
-The migration is idempotent. It never restores backups automatically because
-that could overwrite a new user file or a managed Home Manager link; resolve a
-reported collision while preserving both copies, then run `zconf` again. Home
-Manager dry-runs inspect and print the plan without creating receipts or moving
-files.
+Project-specific auto-learned skills under `~/.omp/agent/managed-skills`
+remain OMP-owned mutable state. Move each one into its owning repository after
+removing machine-specific assumptions. The generic
+`ts-react-dead-code-sweep` skill is repository-managed under `agents/skills/`.
 
 ## Updating
 
@@ -461,7 +418,7 @@ below remains valid for hand-driven updates:
 2. Review model identifiers and routing in `omp/defaults.yml`,
    `omp/models.yml`, and `omp/plain-seed.yml`.
 3. Run `nix flake check --show-trace`.
-4. Apply the profile with `zconf`.
+4. Apply the profile with `atyrode apply`.
 
 `omp-agents` regenerates the upstream bundled agents from the pinned OMP
 binary, and the `omp-agent-references` check asserts that every agent name

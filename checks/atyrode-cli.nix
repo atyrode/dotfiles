@@ -186,7 +186,7 @@ pkgs.runCommand "check-atyrode-cli"
       and (.[] | select(.name == "base") | .active)
       and ((.[] | select(.name == "desktop") | .active) | not)
     ' >/dev/null
-    atyrode capabilities show alex-linux --json | jq -e '
+    atyrode capabilities show alex-x86_64-linux --json | jq -e '
       .host == "alex-x86_64-linux"
       and (.description | length > 0)
       and (.capabilities | map(.name) | index("agent-tools"))
@@ -1050,7 +1050,6 @@ pkgs.runCommand "check-atyrode-cli"
       "hosts": {
         "fixture-host": {
           "id":"fixture-host",
-          "aliases":["fixture-alias"],
           "description":"fixture",
           "homeDirectory":"/home/alex",
           "hostname":null,
@@ -1071,7 +1070,7 @@ pkgs.runCommand "check-atyrode-cli"
       || { echo 'inventory JSON must be byte-stable for one evaluated manifest' >&2; exit 1; }
     jq -e '.schemaVersion == 1 and .identity.revision == "0123456789abcdef"' \
       <<<"$inventory_one" >/dev/null
-    host_inventory="$(atyrode inventory --repo "$HOME/nix-dotfiles" --host fixture-alias --json)"
+    host_inventory="$(atyrode inventory --repo "$HOME/nix-dotfiles" --host fixture-host --json)"
     jq -e '.schemaVersion == 1 and .identity.system == "x86_64-linux"
       and .host.id == "fixture-host" and .host.capabilities == ["base"]' \
       <<<"$host_inventory" >/dev/null

@@ -120,7 +120,6 @@ let
               xdg.cacheHome = "/tmp/check-agent-auth-vaults/xdg-cache";
               atyrode.agentTools = {
                 enable = true;
-                migrateLegacy = false;
                 seedPlainConfig = false;
                 ompPackage = configuredStub;
                 localClassifier.enable = false;
@@ -338,12 +337,6 @@ in
         test "$(
           find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
         )" = "code,omp,omp-managed,ompu"
-        # None of the retired preset launchers (or the routing-help/wiki surface)
-        # survive.
-        for gone in ompb ompc ompe ompf ompg omph ompk ompl ompm ompn ompo omps ompx ompz; do
-          test ! -e ${pkgs.omp-configured}/bin/"$gone"
-        done
-        test ! -e ${pkgs.omp-configured}/share/omp/routes.html
 
         ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
         test ! -s "$TMPDIR/models.err"
@@ -435,7 +428,7 @@ in
         const agentDir = `''${process.env.HOME}/.omp/agent`;
         await Bun.write(`''${agentDir}/config.yaml`, "custom: baseline\n");
         if (!resolveMachineConfigPath().endsWith("config.yaml")) {
-          throw new Error("legacy yaml fallback was not selected");
+          throw new Error("upstream yaml fallback was not selected");
         }
 
         const handlers = new Map<string, Function>();
@@ -510,10 +503,9 @@ in
         test "$cfgset_status" -ne 0
         grep -q 'Nix-managed' "$TMPDIR/cfgset.err"
 
-        # The task-isolation mandate is retired (#175): isolation is upstream's
-        # per-spawn opt-in, so no guard extension may ship — only the guidance
-        # rule. A reintroduced guard must be a deliberate decision, not drift.
-        test ! -e ${pkgs.omp-configured.platformRoot}/extensions/task-isolation-guard.ts
+        test "$(
+          find ${pkgs.omp-configured.platformRoot}/extensions -maxdepth 1 -name '*.ts' -printf '%f\n' | sort | paste -sd, -
+        )" = "managed-settings-guard.ts,vault-usage-footer.ts"
         grep -q 'isolated: true' ${parallelWriteRule}
 
         test "$(
@@ -957,6 +949,7 @@ in
               and .effectiveManaged.modelRoles["yaml-machine"] == "machine/yaml:low"
             ' "$TMPDIR/yaml-state.json" >/dev/null
 
+
             ${configuredStub}/bin/omp-managed --system-prompt --cwd \
               config managed --json > "$TMPDIR/arity.json"
             jq -e --arg project "$project/.omp/config.yml" \
@@ -986,6 +979,34 @@ in
               .effectiveCwd == $cwd and .effectiveManaged.modelRoles["workspace-role"] == "home/project:high"
             ' "$TMPDIR/home-allowed.json" >/dev/null
 
+            current_project="$TMPDIR/current-project"
+            mkdir -p "$current_project/.omp"
+            cat > "$current_project/.omp/config.yml" <<'EOF'
+        theme:
+          dark: custom-dark
+        codexResets:
+          autoRedeem: "yes"
+        memory:
+          backend: "off"
+        EOF
+            cat > "$current_project/relative.yml" <<'EOF'
+        modelRoles:
+          default: relative/one-shot:high
+        EOF
+            ${configuredStub}/bin/omp-managed \
+              --cwd "$current_project" \
+              --config relative.yml \
+              config managed --json > "$TMPDIR/current-managed.json"
+            jq -e --arg oneShot "$current_project/relative.yml" '
+              .effectiveManaged.theme.dark == "custom-dark"
+              and .effectiveManaged.codexResets.autoRedeem == "yes"
+              and .effectiveManaged.memory.backend == "off"
+              and .effectiveManaged.modelRoles.default == "relative/one-shot:high"
+              and (.sources[] | select(.kind == "one-shot-config") | .path == $oneShot)
+            ' "$TMPDIR/current-managed.json" >/dev/null
+
+            # Old key shapes still load in pinned OMP (verified against 17.0.3);
+            # the diagnostic must apply the same migrations the binary does.
             legacy_project="$TMPDIR/legacy-project"
             mkdir -p "$legacy_project/.omp"
             cat > "$legacy_project/.omp/config.yml" <<'EOF'
@@ -995,20 +1016,13 @@ in
         memories:
           enabled: false
         EOF
-            cat > "$legacy_project/relative.yml" <<'EOF'
-        modelRoles:
-          default: relative/one-shot:high
-        EOF
             ${configuredStub}/bin/omp-managed \
               --cwd "$legacy_project" \
-              --config relative.yml \
               config managed --json > "$TMPDIR/legacy-managed.json"
-            jq -e --arg oneShot "$legacy_project/relative.yml" '
+            jq -e '
               .effectiveManaged.theme.dark == "custom-dark"
               and .effectiveManaged.codexResets.autoRedeem == "yes"
               and .effectiveManaged.memory.backend == "off"
-              and .effectiveManaged.modelRoles.default == "relative/one-shot:high"
-              and (.sources[] | select(.kind == "one-shot-config") | .path == $oneShot)
             ' "$TMPDIR/legacy-managed.json" >/dev/null
 
             set +e
@@ -1116,516 +1130,6 @@ in
             set -e
             test "$executable_project_status" -eq 2
             grep -q 'executable or policy-bearing project state' "$TMPDIR/untrusted-project.err"
-
-            mkdir "$out"
-      '';
-
-  agent-tools-migration =
-    pkgs.runCommand "check-agent-tools-migration"
-      {
-        nativeBuildInputs = [
-          pkgs.findutils
-          pkgs.flock
-          pkgs.gnugrep
-          pkgs.jq
-          pkgs.yq-go
-        ];
-      }
-      ''
-            migration=${lib.escapeShellArg (lib.getExe pkgs.agent-tools-migrate)}
-
-            empty_home_files="$TMPDIR/empty-home-files"
-            mkdir -p "$empty_home_files"
-
-            export HOME="$TMPDIR/home"
-            mkdir -p \
-              "$HOME/.local/bin" \
-              "$HOME/.omp/plugins/node_modules/bigpowers" \
-              "$HOME/.omp/agent/agents" \
-              "$HOME/.omp/agent/extensions" \
-              "$HOME/.omp/agent/rules" \
-              "$HOME/.omp/agent/managed-skills/ts-react-dead-code-sweep"
-
-            printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/omp"
-            printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/herdr"
-            chmod +x "$HOME/.local/bin/omp" "$HOME/.local/bin/herdr"
-            printf '{"dependencies":{"bigpowers":"2.76.2"}}\n' > "$HOME/.omp/plugins/package.json"
-            printf 'legacy\n' > "$HOME/.omp/agent/agents/task.md"
-            printf 'legacy\n' > "$HOME/.omp/agent/extensions/herdr-omp-agent-state.ts"
-            printf 'legacy\n' > "$HOME/.omp/agent/extensions/managed-settings-guard.ts"
-            printf 'legacy\n' > "$HOME/.omp/agent/rules/no-shell-text-surgery.md"
-            printf 'legacy\n' > "$HOME/.omp/agent/gpt56-only.yml"
-            printf 'legacy\n' > "$HOME/.omp/agent/managed-skills/ts-react-dead-code-sweep/SKILL.md"
-            cat > "$HOME/.omp/agent/mcp.json" <<'EOF'
-        {
-          "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
-          "mcpServers": {},
-          "disabledServers": ["bigpowers-mcp"]
-        }
-        EOF
-            cat > "$HOME/.omp/agent/config.yml" <<'EOF'
-        setupVersion: 7
-        "codexResets.autoRedeem": true
-        dev:
-          autoqa:
-            consent: accepted
-        modelRoles:
-          default: legacy/model
-        providers:
-          anthropic:
-            serverSideFallback: true
-        retry:
-          enabled: true
-          custom: preserved
-        tools:
-          approvalMode: yolo
-          approval:
-            bash: allow
-            eval: allow
-            browser: allow
-            task: allow
-            github: allow
-          custom: preserved
-        secrets:
-          enabled: false
-          custom: preserved
-        custom:
-          nested: preserved
-        advisor:
-          enabled: true
-          immuneTurns: 7
-        statusLine:
-          preset: default
-          separator: preserved
-        terminal:
-          showProgress: true
-          showImages: false
-        tui:
-          tight: false
-          renderMermaid: true
-        display:
-          shimmer: classic
-          smoothStreaming: false
-        codexResets:
-          autoRedeem: "no"
-          minBlockedMinutes: 42
-        task:
-          disabledAgents: []
-          isolation:
-            mode: none
-            merge: commits
-            commits: agent
-          maxConcurrency: 3
-        memory:
-          backend: local
-          custom: preserved
-        theme:
-          dark: dark
-          light: light
-        browser:
-          enabled: true
-          custom: preserved
-        EOF
-
-            "$migration" prepare
-            state_root="$HOME/.local/state/atyrode/agent-tools-migration"
-            pending="$state_root/migration-v2.pending"
-            complete="$state_root/migration-v2.complete"
-            test -d "$pending"
-            test ! -e "$complete"
-            test -x "$pending/backup/.local/bin/omp"
-            test -f "$pending/backup/.omp/agent/config.yml"
-            test ! -e "$HOME/.omp/agent/mcp.json"
-            test "$(yq eval '.setupVersion' "$HOME/.omp/agent/config.yml")" = "7"
-            test "$(yq eval '.custom.nested' "$HOME/.omp/agent/config.yml")" = "preserved"
-            test "$(yq eval '.modelRoles' "$HOME/.omp/agent/config.yml")" = "null"
-            # serverSideFallback is no longer Nix-managed (the fable preset that owned
-            # it is gone), so migration must PRESERVE the user's value, not strip it.
-            test "$(yq eval '.providers.anthropic.serverSideFallback' "$HOME/.omp/agent/config.yml")" = "true"
-            test "$(yq eval '."codexResets.autoRedeem"' "$HOME/.omp/agent/config.yml")" = "null"
-            test "$(yq eval '.retry.enabled' "$HOME/.omp/agent/config.yml")" = "null"
-            test "$(yq eval '.retry.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
-            test "$(yq eval '.tools.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
-            test "$(yq eval '.tools.approval' "$HOME/.omp/agent/config.yml")" = "null"
-            test "$(yq eval '.secrets.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
-            test "$(yq eval '.advisor.immuneTurns' "$HOME/.omp/agent/config.yml")" = "7"
-            test "$(yq eval '.statusLine.separator' "$HOME/.omp/agent/config.yml")" = "preserved"
-            test "$(yq eval '.terminal.showImages' "$HOME/.omp/agent/config.yml")" = "false"
-            test "$(yq eval '.tui.renderMermaid' "$HOME/.omp/agent/config.yml")" = "true"
-            test "$(yq eval '.display.smoothStreaming' "$HOME/.omp/agent/config.yml")" = "false"
-            test "$(yq eval '.codexResets.minBlockedMinutes' "$HOME/.omp/agent/config.yml")" = "42"
-            test "$(yq eval '.task.maxConcurrency' "$HOME/.omp/agent/config.yml")" = "3"
-            test "$(yq eval '.task.isolation' "$HOME/.omp/agent/config.yml")" = "null"
-            test "$(yq eval '.memory.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
-            test "$(yq eval '.theme.light' "$HOME/.omp/agent/config.yml")" = "light"
-            test "$(yq eval '.browser.custom' "$HOME/.omp/agent/config.yml")" = "preserved"
-
-            "$migration" finalize "$empty_home_files"
-            test -d "$complete"
-            test ! -e "$pending"
-            test -x "$complete/backup/.local/bin/omp"
-            test -f "$complete/backup/.omp/plugins/package.json"
-            test -f "$complete/backup/.omp/agent/agents/task.md"
-            test -f "$complete/backup/.omp/agent/extensions/managed-settings-guard.ts"
-            test -f "$complete/backup/.omp/agent/mcp.json"
-            test ! -e "$HOME/.omp/agent/agents/task.md"
-            test ! -e "$HOME/.omp/agent/extensions/managed-settings-guard.ts"
-
-            "$migration" prepare
-            "$migration" finalize "$empty_home_files"
-            test "$(find "$state_root" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
-
-            reboot_home="$TMPDIR/reboot-home"
-            HOME="$reboot_home" "$migration" prepare
-            reboot_complete="$reboot_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-            HOME="$reboot_home" "$migration" finalize "$empty_home_files"
-            : > "$reboot_complete/receipt.tsv"
-            HOME="$reboot_home" "$migration" prepare
-            HOME="$reboot_home" "$migration" finalize "$empty_home_files"
-            test -d "$reboot_complete"
-            test -z "$(find "$reboot_complete/backup" "$reboot_complete/work" -mindepth 1 -print -quit)"
-
-            retained_empty_home="$TMPDIR/retained-empty-home"
-            retained_empty_complete="$retained_empty_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-            mkdir -p "$retained_empty_complete/backup/.local/bin" "$retained_empty_complete/work"
-            : > "$retained_empty_complete/receipt.tsv"
-            printf 'unrecorded operator data\n' > "$retained_empty_complete/backup/.local/bin/omp"
-            if HOME="$retained_empty_home" "$migration" prepare \
-              > "$TMPDIR/retained-empty.out" 2> "$TMPDIR/retained-empty.err"; then
-              exit 1
-            fi
-            grep -q 'empty receipt with retained migration data' "$TMPDIR/retained-empty.err"
-
-            symlinked_complete_home="$TMPDIR/symlinked-complete-home"
-            mkdir -p "$symlinked_complete_home/state-target/backup" \
-              "$symlinked_complete_home/state-target/work" \
-              "$symlinked_complete_home/.local/state/atyrode/agent-tools-migration"
-            : > "$symlinked_complete_home/state-target/receipt.tsv"
-            ln -s "$symlinked_complete_home/state-target" \
-              "$symlinked_complete_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-            if HOME="$symlinked_complete_home" "$migration" prepare \
-              > "$TMPDIR/symlinked-complete.out" 2> "$TMPDIR/symlinked-complete.err"; then
-              exit 1
-            fi
-            grep -q 'not a migration receipt directory' "$TMPDIR/symlinked-complete.err"
-
-            dry_home="$TMPDIR/dry-home"
-            mkdir -p "$dry_home/.local/bin"
-            cp "$complete/backup/.local/bin/omp" "$dry_home/.local/bin/omp"
-            HOME="$dry_home" AGENT_TOOLS_DRY_RUN=1 "$migration" prepare >/dev/null
-            test -x "$dry_home/.local/bin/omp"
-            test ! -e "$dry_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-
-            interrupted_home="$TMPDIR/interrupted-home"
-            mkdir -p "$interrupted_home/.local/bin"
-            printf 'old omp\n' > "$interrupted_home/.local/bin/omp"
-            printf 'old herdr\n' > "$interrupted_home/.local/bin/herdr"
-            if HOME="$interrupted_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-first-move \
-              "$migration" prepare > "$TMPDIR/interrupted.out" 2> "$TMPDIR/interrupted.err"; then
-              exit 1
-            fi
-            interrupted_pending="$interrupted_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            test -d "$interrupted_pending"
-            test -f "$interrupted_pending/backup/.local/bin/omp"
-            test -f "$interrupted_home/.local/bin/herdr"
-            HOME="$interrupted_home" "$migration" prepare
-            test -f "$interrupted_pending/backup/.local/bin/herdr"
-            HOME="$interrupted_home" "$migration" finalize "$empty_home_files"
-            test -d "$interrupted_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-
-            receipt_home="$TMPDIR/receipt-home"
-            mkdir -p "$receipt_home/.local/bin"
-            printf 'old omp\n' > "$receipt_home/.local/bin/omp"
-            if HOME="$receipt_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-receipt \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            receipt_pending="$receipt_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            test -d "$receipt_pending"
-            test -f "$receipt_home/.local/bin/omp"
-            HOME="$receipt_home" "$migration" prepare
-            HOME="$receipt_home" "$migration" finalize "$empty_home_files"
-            test -d "$receipt_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-
-            config_interrupt_home="$TMPDIR/config-interrupt-home"
-            mkdir -p "$config_interrupt_home/.omp/agent"
-            cat > "$config_interrupt_home/.omp/agent/config.yml" <<'EOF'
-        modelRoles:
-          default: legacy/model
-        custom:
-          preserved: true
-        EOF
-            if HOME="$config_interrupt_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-config-replace \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            test -d "$config_interrupt_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            test "$(yq eval '.modelRoles' "$config_interrupt_home/.omp/agent/config.yml")" = "null"
-            test "$(yq eval '.custom.preserved' "$config_interrupt_home/.omp/agent/config.yml")" = "true"
-            HOME="$config_interrupt_home" "$migration" prepare
-            HOME="$config_interrupt_home" "$migration" finalize "$empty_home_files"
-            test -d "$config_interrupt_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-
-            yaml_migration_home="$TMPDIR/yaml-migration-home"
-            mkdir -p "$yaml_migration_home/.omp/agent"
-            cat > "$yaml_migration_home/.omp/agent/config.yaml" <<'EOF'
-        theme: dark
-        modelRoles:
-          default: legacy/model
-        custom:
-          preserved: true
-        EOF
-            HOME="$yaml_migration_home" "$migration" prepare
-            yaml_pending="$yaml_migration_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            test -f "$yaml_pending/backup/.omp/agent/config.yaml"
-            test ! -e "$yaml_migration_home/.omp/agent/config.yml"
-            test "$(yq eval '.theme' "$yaml_migration_home/.omp/agent/config.yaml")" = "null"
-            test "$(yq eval '.modelRoles' "$yaml_migration_home/.omp/agent/config.yaml")" = "null"
-            test "$(yq eval '.custom.preserved' "$yaml_migration_home/.omp/agent/config.yaml")" = "true"
-            HOME="$yaml_migration_home" "$migration" finalize "$empty_home_files"
-
-            dual_config_home="$TMPDIR/dual-config-home"
-            mkdir -p "$dual_config_home/.omp/agent"
-            printf 'custom: yml\n' > "$dual_config_home/.omp/agent/config.yml"
-            printf 'custom: yaml\n' > "$dual_config_home/.omp/agent/config.yaml"
-            if HOME="$dual_config_home" "$migration" prepare \
-              > "$TMPDIR/dual-config.out" 2> "$TMPDIR/dual-config.err"; then
-              exit 1
-            fi
-            grep -q 'both .*config.yml and .*config.yaml exist' "$TMPDIR/dual-config.err"
-            test -f "$dual_config_home/.omp/agent/config.yml"
-            test -f "$dual_config_home/.omp/agent/config.yaml"
-
-            scalar_theme_home="$TMPDIR/scalar-theme-home"
-            mkdir -p "$scalar_theme_home/.omp/agent"
-            printf 'theme: custom-light\n' > "$scalar_theme_home/.omp/agent/config.yml"
-            if HOME="$scalar_theme_home" "$migration" prepare \
-              > "$TMPDIR/scalar-theme.out" 2> "$TMPDIR/scalar-theme.err"; then
-              exit 1
-            fi
-            grep -q 'legacy scalar custom theme' "$TMPDIR/scalar-theme.err"
-            grep -q '^theme: custom-light$' "$scalar_theme_home/.omp/agent/config.yml"
-
-            transformed_tamper_home="$TMPDIR/transformed-tamper-home"
-            mkdir -p "$transformed_tamper_home/.omp/agent"
-            printf 'modelRoles: {default: legacy/model}\ncustom: preserved\n' \
-              > "$transformed_tamper_home/.omp/agent/config.yml"
-            if HOME="$transformed_tamper_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-config-transform \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            transformed_pending="$transformed_tamper_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            printf 'custom: tampered\n' > "$transformed_pending/work/config.transformed.yml"
-            if HOME="$transformed_tamper_home" "$migration" prepare \
-              > "$TMPDIR/transformed-tamper.out" 2> "$TMPDIR/transformed-tamper.err"; then
-              exit 1
-            fi
-            grep -q 'does not match the digest-verified original config' \
-              "$TMPDIR/transformed-tamper.err"
-            test "$(yq eval '.modelRoles.default' "$transformed_tamper_home/.omp/agent/config.yml")" = \
-              'legacy/model'
-
-            finalize_interrupt_home="$TMPDIR/finalize-interrupt-home"
-            mkdir -p "$finalize_interrupt_home/.local/bin"
-            printf 'old omp\n' > "$finalize_interrupt_home/.local/bin/omp"
-            HOME="$finalize_interrupt_home" "$migration" prepare
-            if HOME="$finalize_interrupt_home" AGENT_TOOLS_MIGRATION_FAILPOINT=before-finalize \
-              "$migration" finalize "$empty_home_files" >/dev/null 2>&1; then
-              exit 1
-            fi
-            test -d "$finalize_interrupt_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            HOME="$finalize_interrupt_home" "$migration" finalize "$empty_home_files"
-            test -d "$finalize_interrupt_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-
-            collision_home="$TMPDIR/collision-home"
-            mkdir -p "$collision_home/.local/bin"
-            printf 'original\n' > "$collision_home/.local/bin/omp"
-            if HOME="$collision_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-first-move \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            printf 'replacement\n' > "$collision_home/.local/bin/omp"
-            if HOME="$collision_home" "$migration" prepare > "$TMPDIR/collision.out" 2> "$TMPDIR/collision.err"; then
-              exit 1
-            fi
-            grep -q 'preserve both and resolve the collision' "$TMPDIR/collision.err"
-            grep -q '^replacement$' "$collision_home/.local/bin/omp"
-            grep -q '^original$' \
-              "$collision_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending/backup/.local/bin/omp"
-
-            opaque_home="$TMPDIR/opaque-home"
-            mkdir -p "$opaque_home/.local/bin"
-            cat > "$opaque_home/.local/bin/omp" <<'EOF'
-        #!/bin/sh
-        touch "$HOME/executed"
-        EOF
-            chmod +x "$opaque_home/.local/bin/omp"
-            HOME="$opaque_home" "$migration" prepare
-            test ! -e "$opaque_home/executed"
-            HOME="$opaque_home" "$migration" finalize "$empty_home_files"
-            test -x "$opaque_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete/backup/.local/bin/omp"
-
-            custom_mcp_home="$TMPDIR/custom-mcp-home"
-            mkdir -p "$custom_mcp_home/.omp/agent"
-            cat > "$custom_mcp_home/.omp/agent/mcp.json" <<'EOF'
-        {"mcpServers":{"custom":{"command":"custom-mcp"}},"disabledServers":["bigpowers-mcp"]}
-        EOF
-            HOME="$custom_mcp_home" "$migration" prepare
-            HOME="$custom_mcp_home" "$migration" finalize "$empty_home_files"
-            jq -e '.mcpServers.custom.command == "custom-mcp"' \
-              "$custom_mcp_home/.omp/agent/mcp.json" >/dev/null
-
-            mixed_plugin_home="$TMPDIR/mixed-plugin-home"
-            mkdir -p \
-              "$mixed_plugin_home/.omp/plugins/node_modules/bigpowers" \
-              "$mixed_plugin_home/.omp/plugins/node_modules/custom-plugin"
-            printf '%s\n' \
-              '{"dependencies":{"bigpowers":"2.76.2","custom-plugin":"1.0.0"}}' \
-              > "$mixed_plugin_home/.omp/plugins/package.json"
-            if HOME="$mixed_plugin_home" "$migration" prepare \
-              > "$TMPDIR/mixed-plugin.out" 2> "$TMPDIR/mixed-plugin.err"; then
-              exit 1
-            fi
-            grep -q 'mixed or customized plugin state' "$TMPDIR/mixed-plugin.err"
-            test -d "$mixed_plugin_home/.omp/plugins/node_modules/bigpowers"
-            test -d "$mixed_plugin_home/.omp/plugins/node_modules/custom-plugin"
-            test ! -e "$mixed_plugin_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-
-            stale_store_home="$TMPDIR/stale-store-home"
-            mkdir -p "$stale_store_home/.local/bin"
-            ln -s ${lib.getExe pkgs.hello} "$stale_store_home/.local/bin/omp"
-            HOME="$stale_store_home" "$migration" prepare
-            test ! -e "$stale_store_home/.local/bin/omp"
-            test -L \
-              "$stale_store_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending/backup/.local/bin/omp"
-            HOME="$stale_store_home" "$migration" finalize "$empty_home_files"
-
-            temp_link_home="$TMPDIR/temp-link-home"
-            mkdir -p "$temp_link_home/.omp/agent"
-            printf 'victim\n' > "$temp_link_home/victim"
-            printf 'modelRoles: {default: legacy/model}\n' > "$temp_link_home/.omp/agent/config.yml"
-            ln -s "$temp_link_home/victim" \
-              "$temp_link_home/.omp/agent/config.yml.agent-tools-migration-v2.tmp"
-            HOME="$temp_link_home" "$migration" prepare
-            grep -q '^victim$' "$temp_link_home/victim"
-            test -f "$temp_link_home/.omp/agent/config.yml"
-            test ! -L "$temp_link_home/.omp/agent/config.yml"
-            HOME="$temp_link_home" "$migration" finalize "$empty_home_files"
-
-            receipt_escape_home="$TMPDIR/receipt-escape-home"
-            mkdir -p "$receipt_escape_home/.local/bin" "$receipt_escape_home/escape"
-            printf 'old omp\n' > "$receipt_escape_home/.local/bin/omp"
-            if HOME="$receipt_escape_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-receipt \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            escape_pending="$receipt_escape_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            rm -rf "$escape_pending/backup"
-            ln -s "$receipt_escape_home/escape" "$escape_pending/backup"
-            if HOME="$receipt_escape_home" "$migration" prepare \
-              > "$TMPDIR/receipt-escape.out" 2> "$TMPDIR/receipt-escape.err"; then
-              exit 1
-            fi
-            grep -q 'not a safe receipt directory' "$TMPDIR/receipt-escape.err"
-            test -f "$receipt_escape_home/.local/bin/omp"
-            test -z "$(find "$receipt_escape_home/escape" -mindepth 1 -print -quit)"
-
-            unsafe_home="$TMPDIR/unsafe-home"
-            mkdir -p "$unsafe_home/.local/bin/omp"
-            if HOME="$unsafe_home" "$migration" prepare > "$TMPDIR/unsafe.out" 2> "$TMPDIR/unsafe.err"; then
-              exit 1
-            fi
-            grep -q 'not a regular file or symlink' "$TMPDIR/unsafe.err"
-            test -d "$unsafe_home/.local/bin/omp"
-            test ! -e "$unsafe_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-
-            invalid_home="$TMPDIR/invalid-home"
-            mkdir -p "$invalid_home/.local/bin" "$invalid_home/.omp/agent"
-            printf 'legacy\n' > "$invalid_home/.local/bin/omp"
-            printf '[invalid\n' > "$invalid_home/.omp/agent/config.yml"
-            if HOME="$invalid_home" "$migration" prepare > "$TMPDIR/invalid.out" 2> "$TMPDIR/invalid.err"; then
-              exit 1
-            fi
-            grep -q 'not valid YAML' "$TMPDIR/invalid.err"
-            test -f "$invalid_home/.local/bin/omp"
-            test ! -e "$invalid_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            test -z "$(
-              find "$invalid_home/.local/state/atyrode/agent-tools-migration" \
-                -maxdepth 1 -name '.migration-v2.creating.*' -print -quit
-            )"
-
-            corrupt_home="$TMPDIR/corrupt-home"
-            mkdir -p "$corrupt_home/.local/bin"
-            printf 'legacy\n' > "$corrupt_home/.local/bin/omp"
-            if HOME="$corrupt_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-receipt \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            corrupt_pending="$corrupt_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending"
-            printf 'invalid\treceipt\n' > "$corrupt_pending/receipt.tsv"
-            if HOME="$corrupt_home" "$migration" prepare \
-              > "$TMPDIR/corrupt.out" 2> "$TMPDIR/corrupt.err"; then
-              exit 1
-            fi
-            grep -q 'unknown record' "$TMPDIR/corrupt.err"
-            test -f "$corrupt_home/.local/bin/omp"
-
-            dual_state_home="$TMPDIR/dual-state-home"
-            mkdir -p "$dual_state_home/.local/bin"
-            printf 'legacy\n' > "$dual_state_home/.local/bin/omp"
-            if HOME="$dual_state_home" AGENT_TOOLS_MIGRATION_FAILPOINT=after-receipt \
-              "$migration" prepare >/dev/null 2>&1; then
-              exit 1
-            fi
-            mkdir "$dual_state_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-            if HOME="$dual_state_home" "$migration" prepare \
-              > "$TMPDIR/dual-state.out" 2> "$TMPDIR/dual-state.err"; then
-              exit 1
-            fi
-            grep -q 'both pending and completed migration state exist' "$TMPDIR/dual-state.err"
-
-            missing_backup_home="$TMPDIR/missing-backup-home"
-            mkdir -p "$missing_backup_home/.local/bin"
-            printf 'legacy\n' > "$missing_backup_home/.local/bin/omp"
-            HOME="$missing_backup_home" "$migration" prepare
-            rm "$missing_backup_home/.local/state/atyrode/agent-tools-migration/migration-v2.pending/backup/.local/bin/omp"
-            if HOME="$missing_backup_home" "$migration" finalize "$empty_home_files" \
-              > "$TMPDIR/missing-backup.out" 2> "$TMPDIR/missing-backup.err"; then
-              exit 1
-            fi
-            grep -q 'planned backup' "$TMPDIR/missing-backup.err"
-
-            legacy_home="$TMPDIR/legacy-home"
-            mkdir -p "$legacy_home/.local/bin" "$legacy_home/.local/state/atyrode/agent-tools-migration"
-            printf 'legacy binary\n' > "$legacy_home/.local/bin/omp"
-            printf 'completed\n' > \
-              "$legacy_home/.local/state/atyrode/agent-tools-migration/migration-v2.complete"
-            HOME="$legacy_home" "$migration" prepare
-            HOME="$legacy_home" "$migration" finalize "$empty_home_files"
-            test -f "$legacy_home/.local/bin/omp"
-
-            locked_home="$TMPDIR/locked-home"
-            locked_state="$locked_home/.local/state/atyrode/agent-tools-migration"
-            mkdir -p "$locked_home/.local/bin" "$locked_state"
-            printf 'legacy\n' > "$locked_home/.local/bin/omp"
-            exec 8< "$locked_state"
-            flock -n 8
-            if HOME="$locked_home" "$migration" prepare > "$TMPDIR/locked.out" 2> "$TMPDIR/locked.err"; then
-              exit 1
-            fi
-            flock -u 8
-            grep -q 'another agent tools migration is running' "$TMPDIR/locked.err"
-            test -f "$locked_home/.local/bin/omp"
-
-            lock_link_home="$TMPDIR/lock-link-home"
-            lock_link_state="$lock_link_home/.local/state/atyrode/agent-tools-migration"
-            mkdir -p "$lock_link_home/.local/bin" "$lock_link_state"
-            printf 'legacy\n' > "$lock_link_home/.local/bin/omp"
-            printf 'victim\n' > "$lock_link_home/victim"
-            ln -s "$lock_link_home/victim" "$lock_link_state/migration-v2.lock"
-            HOME="$lock_link_home" "$migration" prepare
-            grep -q '^victim$' "$lock_link_home/victim"
-            HOME="$lock_link_home" "$migration" finalize "$empty_home_files"
 
             mkdir "$out"
       '';

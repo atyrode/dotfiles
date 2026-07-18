@@ -493,6 +493,10 @@ let
           done
         }
 
+        # Apply the same legacy-key migrations pinned OMP performs at load
+        # (verified against 17.0.3: string theme, boolean autoRedeem,
+        # memories.enabled, task.isolation.enabled, and renamed isolation
+        # modes), so the diagnostic reports what the binary actually resolves.
         normalize_layer_json() {
           local file="$1"
           yq eval -o=json -I=0 '.' "$file" | jq -c '
@@ -771,12 +775,12 @@ let
           if [[ "$action" == set || "$action" == reset ]]; then
             if contains_managed_path "$key" "''${enforced_policy_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run zconf; machine, project, and --config values are intentionally shadowed." >&2
+                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run 'atyrode apply'; machine, project, and --config values are intentionally shadowed." >&2
               exit 2
             fi
             if contains_managed_path "$key" "''${managed_default_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run zconf." >&2
+                "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run 'atyrode apply'." >&2
               exit 2
             fi
           fi
@@ -867,7 +871,7 @@ let
             exec "$raw_omp" "''${original_args[@]}"
             ;;
           update)
-            printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+            printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
             exit 2
             ;;
           config)
@@ -937,7 +941,7 @@ let
     name = "omp";
     text = ''
       if [[ "''${1:-}" == update ]]; then
-        printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+        printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
         exit 2
       fi
 
@@ -1177,7 +1181,7 @@ let
           run_isolated "$raw_omp" --profile untrusted "''${forwarded_args[@]}"
           ;;
         update)
-          printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+          printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
           exit 2
           ;;
       esac

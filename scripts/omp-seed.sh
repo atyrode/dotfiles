@@ -43,10 +43,8 @@ fail() {
   exit 1
 }
 
-# Prefer config.yml, accept OMP's legacy config.yaml fallback. If the
-# preferred name later starts to exist alongside the legacy one, omp reads
-# the .yml and every previously seeded key in the .yaml reports as drift —
-# a safe failure mode that surfaces the dual-file state without writes.
+# Prefer config.yml, but follow pinned OMP's config.yaml selection when the
+# canonical filename does not exist so the seeder never writes a shadow file.
 resolve_config_path() {
   if [[ -f "$agent_dir/config.yml" ]]; then
     printf '%s\n' "$agent_dir/config.yml"

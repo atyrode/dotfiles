@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-time seed of the curated Codex defaults into the writable ~/.codex/config.toml.
-#
-# The Codex profile layer (atyrode.config.toml, selected by `--profile atyrode`) was
-# retired, so these defaults now live directly in the base config. Seeding is
-# ONE-TIME: once applied it is recorded and never re-applied, so the file becomes
-# fully yours — later repository changes do not overwrite it and your edits
-# (including Codex's machine-local [projects] trust) are never touched again. Any
-# pre-existing config.toml is timestamp-backed-up before the first install.
+# One-time seed of curated Codex defaults into writable
+# `~/.codex/config.toml`. Once applied, the marker prevents reapplication and
+# the file is fully user-owned. A pre-existing config is timestamp-backed-up
+# before the first install.
 
 seed_file="${CODEX_SEED_FILE:?CODEX_SEED_FILE must point at the seed config.toml}"
 codex_home="${CODEX_HOME:-$HOME/.codex}"

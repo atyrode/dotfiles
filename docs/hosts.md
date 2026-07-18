@@ -3,8 +3,8 @@
 `hosts/default.nix` is the authoritative registry for supported dotfiles
 configurations. A host entry contains stable, non-secret facts: its canonical
 configuration ID, a one-line description, system, platform, user, home
-directory, optional hostname, compatibility aliases, and selected
-capabilities. Hosts are the offered presets: `inventory/hosts.tsv` is the
+directory, optional hostname, and selected capabilities. Hosts are the offered
+presets: `inventory/hosts.tsv` is the
 committed flat projection the bootstrap picker reads before Nix exists, and
 the host-registry check keeps it identical to the registry.
 
@@ -62,31 +62,27 @@ The full Home Manager, nix-darwin, and NixOS ownership matrix is documented in
 2. Declare a supported `system`, matching `platform`, non-empty `username`,
    absolute `homeDirectory`, a non-empty one-line `description`, and at least
    one valid capability.
-3. Add only compatibility names that must remain accepted to `aliases`.
-4. Add or reuse capability modules under `home/profiles/`; do not put
+3. Add or reuse capability modules under `home/profiles/`; do not put
    host-specific packages directly in the registry.
-5. Regenerate `inventory/hosts.tsv` to match (the host-registry check diffs
+4. Regenerate `inventory/hosts.tsv` to match (the host-registry check diffs
    it against the registry).
-6. Run `nix flake check --all-systems --no-build --show-trace`. The aggregate
+5. Run `nix flake check --all-systems --no-build --show-trace`. The aggregate
    home and Darwin checks evaluate every canonical host on its native system.
 
 Registry evaluation refuses unsupported systems, platform mismatches, empty
 users, relative home directories, missing base capabilities, server/desktop
-or server/development conflicts, non-Linux server selections, duplicate or
-unknown capabilities, duplicate aliases, and aliases that collide with
-canonical host IDs. Portable consumers may omit `description`; for this
+or server/development conflicts, non-Linux server selections, and duplicate or
+unknown capabilities. Portable consumers may omit `description`; for this
 repository's own registry the host-registry check requires it non-empty.
 
 ## Renaming or retiring a host
 
-For a rename, create the new canonical entry and keep the former public name as
-an alias for a documented compatibility period. Aliases resolve to the new
-canonical configuration, so diagnostics and the generated JSON report the new
-identity. Remove the alias only after active-configuration state and automation
-no longer reference it.
+Host IDs are canonical and have no aliases. A rename is a clean cutover: update
+active-configuration state and automation, then replace the registry key. Do
+not leave the former name as a forwarding configuration.
 
 For retirement, first remove callers and machine state that select the host,
-then remove its canonical registry entry and aliases together. Never reuse an
-old host ID for a different machine or security boundary. Mutable sessions,
-credentials, trust state, and secrets are not registry data and require their
-own retirement procedure.
+then remove its canonical registry entry. Never reuse an old host ID for a
+different machine or security boundary. Mutable sessions, credentials, trust
+state, and secrets are not registry data and require their own retirement
+procedure.

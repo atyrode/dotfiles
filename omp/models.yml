@@ -124,10 +124,9 @@ models:
     bucket: claude-fable
     cost_in: 10
     cost_out: 50
-    # speed/ttft: from `omp stats` history (what `/model` shows), NOT `omp bench` —
-    # Fable's bucket was maxed so it couldn't be benched live. Stats are thinking-
-    # blended so not perfectly bench-comparable; re-run the refresh once the Fable
-    # quota resets to replace these with a clean benchmark.
+    # speed/ttft: retained from the previous historical sample because Fable's
+    # bucket was maxed during the last live benchmark. Re-run the refresh once
+    # the bucket is available to replace these with a clean benchmark.
     speed: 54
     ttft: 6.9
     context: 1000000

@@ -114,8 +114,8 @@ resolve_host() {
   fi
   if [[ -n "$requested" ]]; then
     jq -er --arg requested "$requested" '
-      to_entries[] | select(.key == $requested or (.value.aliases | index($requested))) | .key
-    ' "$registry" || die "$EX_DATAERR" "unknown host or alias: $requested"
+      if has($requested) then $requested else empty end
+    ' "$registry" || die "$EX_DATAERR" "unknown host: $requested"
     return
   fi
 
@@ -264,17 +264,16 @@ inventory() {
     jq -cS . <<<"$manifest"
   else
     jq -ceS --arg requested "$host" '
-      ([.hosts | to_entries[]
-        | select(.key == $requested or (.value.aliases | index($requested)))][0]) as $match
-      | if $match == null then error("unknown host or alias: " + $requested)
+      .hosts[$requested] as $match
+      | if $match == null then error("unknown host: " + $requested)
         else {
           schemaVersion,
           identity,
           authority,
-          host: $match.value
+          host: $match
         }
         end
-    ' <<<"$manifest" || die "$EX_DATAERR" "unknown host or alias in evaluated inventory: $host"
+    ' <<<"$manifest" || die "$EX_DATAERR" "unknown host in evaluated inventory: $host"
   fi
 }
 
@@ -448,39 +447,14 @@ lifecycle_omp_worktree_report() {
       gitState:$gitState,branch:(if $branch == "" then null else $branch end),signals:$signals}'
 }
 
-lifecycle_omp_is_recognized_worktree() {
-  local path="$1"
-  [[ -e "$path/.git" || -L "$path/.git" || -d "$path/m" || -d "$path/merged" ]]
-}
-
-# Match OMP's current direct layout and its legacy one-directory nesting without
-# recursively wandering elsewhere. Unrecognized top-level directories remain
-# visible as reclaim candidates instead of disappearing from the inventory.
 lifecycle_omp_worktrees() {
-  local root="$1" worktrees='[]' top child report nested
+  local root="$1" worktrees='[]' top report
   [[ -d "$root" ]] || { printf '[]\n'; return; }
   for top in "$root"/*; do
     [[ -d "$top" ]] || continue
-    if lifecycle_omp_is_recognized_worktree "$top"; then
-      report="$(lifecycle_omp_worktree_report "$top")"
-      worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
-        '$worktrees + [$report]' <<<'null')"
-      continue
-    fi
-    nested=0
-    for child in "$top"/*; do
-      [[ -d "$child" ]] || continue
-      lifecycle_omp_is_recognized_worktree "$child" || continue
-      report="$(lifecycle_omp_worktree_report "$child")"
-      worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
-        '$worktrees + [$report]' <<<'null')"
-      nested=1
-    done
-    if [[ "$nested" == 0 ]]; then
-      report="$(lifecycle_omp_worktree_report "$top")"
-      worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
-        '$worktrees + [$report]' <<<'null')"
-    fi
+    report="$(lifecycle_omp_worktree_report "$top")"
+    worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
+      '$worktrees + [$report]' <<<'null')"
   done
   jq -c 'sort_by(.path)' <<<"$worktrees"
 }

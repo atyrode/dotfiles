@@ -17,11 +17,9 @@
     atyrode
     bat
     btop
-    direnv
     dua
     fd
     fastfetch
-    git
     jq
     ripgrep
     tree

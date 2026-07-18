@@ -30,7 +30,7 @@ selection or either scroll position.
 
 Capability details are read only from the exact-revision CLI manifest. The
 cockpit validates schema version, full revision, system/platform identity, and
-the planned host's canonical id or alias before showing purpose, active state,
+the planned host's canonical ID before showing purpose, active state,
 resolved deliverables, and ownership/security/mutable-state boundaries.
 Loading and inventory failures remain textual and never block confirmation or
 fall back to stale data.
@@ -89,18 +89,14 @@ selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.
 Activation shows a generation package diff.
 
-`--restart-shell` only prints the explicit restart action after success. It
-never replaces an embedded terminal. The historical `zconf` command is now a
-thin wrapper around `atyrode apply`; it refreshes only Home Manager's realized
-session variables and leaves full startup to `exec zsh -l` or a new terminal.
 
 ## Inspection and diagnostics
 
 ```sh
 atyrode capabilities list --json
-atyrode capabilities show alex-linux --json
+atyrode capabilities show alex-x86_64-linux --json
 atyrode inventory --json
-atyrode inventory --host alex-linux --json
+atyrode inventory --host alex-x86_64-linux --json
 atyrode inventory --ref <branch-tag-or-commit> --json
 atyrode inventory --repo /absolute/path/to/checkout --json
 atyrode lifecycle
@@ -116,7 +112,7 @@ evaluated manifest. By default it evaluates the exact immutable revision baked
 into the installed CLI, so an older binary cannot accidentally describe its own
 packages while targeting a newer revision. `--ref` selects a published target
 revision and `--repo` selects a local checkout; they are mutually exclusive.
-`--host` resolves canonical names and aliases inside that evaluated revision.
+`--host` resolves a canonical host name inside that evaluated revision.
 The command currently requires `--json`, returns compact key-sorted JSON, and
 does not inspect closures, credentials, sessions, or other mutable state.
 

@@ -16,15 +16,15 @@ func manifestJSON(schema int, identityRevision, system, platform string) string 
 			"base":{"name":"base","title":"Base","purpose":"Shell baseline","consumer":"operator","group":"core","platforms":["linux","darwin"],"applicable":true,"marker":false,"deliveryBoundary":"Home Manager","mutableState":"Caches only","securityBoundary":"No credentials","selectedOnHosts":["workstation"],"deliverables":[{"kind":"package","name":"git","version":"2.50","description":"Distributed version control","homepage":"https://git-scm.com","delivery":"home-manager","source":"pinned-nixpkgs","system":%q,"platform":%q}]},
 			"server":{"name":"server","title":"Server","purpose":"Headless composition marker","consumer":"servers","group":"operations","platforms":["linux"],"applicable":true,"marker":true,"deliveryBoundary":"Marker capability","mutableState":"System-owned","securityBoundary":"No production facts","selectedOnHosts":["workstation"],"deliverables":[]}
 		},
-		"hosts":{"workstation":{"id":"workstation","aliases":["desk"],"description":"fixture","hostname":"desk","platform":%q,"system":%q,"capabilities":["base","server"]}}
+		"hosts":{"workstation":{"id":"workstation","description":"fixture","hostname":"desk","platform":%q,"system":%q,"capabilities":["base","server"]}}
 	}`, schema, identityRevision, system, platform, system, platform, platform, system)
 }
 
 func expected() Expected {
-	return Expected{Revision: revision, System: "x86_64-linux", Host: "desk", ActiveCapabilities: []string{"server", "base"}}
+	return Expected{Revision: revision, System: "x86_64-linux", Host: "workstation", ActiveCapabilities: []string{"server", "base"}}
 }
 
-func TestParseUsesPlanOrderAndCanonicalAlias(t *testing.T) {
+func TestParseUsesPlanOrderAndCanonicalHost(t *testing.T) {
 	doc, err := Parse([]byte(manifestJSON(1, revision, "x86_64-linux", "linux")), expected())
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestParseRejectsHostCapabilityAndDeliverableIdentityMismatch(t *testing.T) 
 	tests := []struct {
 		name, replace, with, want string
 	}{
-		{"host", `"desk"`, `"other"`, "host mismatch"},
+		{"host", `"id":"workstation"`, `"id":"other"`, "host mismatch"},
 		{"capability", `"capabilities":["base","server"]`, `"capabilities":["base"]`, "capability mismatch"},
 		{"extra capability", `"capabilities":["base","server"]`, `"capabilities":["base","server","desktop"]`, "unexpected \"desktop\""},
 		{"duplicate capability", `"capabilities":["base","server"]`, `"capabilities":["base","server","base"]`, "duplicate \"base\""},

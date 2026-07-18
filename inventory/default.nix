@@ -242,7 +242,6 @@ let
     {
       id = name;
       inherit (host)
-        aliases
         description
         homeDirectory
         hostname

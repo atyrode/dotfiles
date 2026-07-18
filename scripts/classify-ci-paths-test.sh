@@ -16,7 +16,6 @@ assert_classification() {
 }
 
 assert_classification $'code=false\ndarwin=false' README.md docs/guide.md
-assert_classification $'code=true\ndarwin=true' docs/omp/README.md
 assert_classification $'code=true\ndarwin=true' darwin/default.nix
 assert_classification $'code=true\ndarwin=true' flake.nix flake.lock
 assert_classification $'code=true\ndarwin=true' modules/home/capability-contract.nix

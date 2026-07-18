@@ -100,7 +100,8 @@ let
   darwinPolicyMatches =
     config:
     let
-      activation = config.system.activationScripts.postActivation.text;
+      postActivation = config.system.activationScripts.postActivation.text;
+      homebrewActivation = config.system.activationScripts.homebrew.text;
       shellPaths = map toString config.environment.shells;
       sudoPam = config.security.pam.services.${boundary.sudo.darwinService};
       configuredCasks = map (
@@ -127,9 +128,11 @@ let
     && config.homebrew.onActivation.upgrade == false
     && config.homebrew.onActivation.cleanup == "check"
     && sort configuredCasks == sort darwinCasks
-    && lib.hasInfix "/usr/bin/dscl" activation
-    && lib.hasInfix "/run/current-system/sw/bin/zsh" activation
-    && lib.hasInfix "refusing to create" activation;
+    && lib.hasInfix "manaflow-ai/cmux" homebrewActivation
+    && lib.hasInfix "untap --force" homebrewActivation
+    && lib.hasInfix "/usr/bin/dscl" postActivation
+    && lib.hasInfix "/run/current-system/sw/bin/zsh" postActivation
+    && lib.hasInfix "refusing to create" postActivation;
 in
 assert lib.assertMsg (boundary.schemaVersion == 1) "unknown system-boundary policy schema";
 assert lib.assertMsg (

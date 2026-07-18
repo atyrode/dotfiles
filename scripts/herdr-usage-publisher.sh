@@ -17,17 +17,17 @@ declare -A usage_by_id=()
 declare -A usage_by_broker=()
 
 usage_line() {
-	local broker_url=$1 token_file=$2 token response
-	[[ -r "$token_file" ]] || return 1
-	token="$(<"$token_file")"
-	[[ $token =~ ^[A-Za-z0-9._~+/=-]+$ ]] || return 1
+  local broker_url=$1 token_file=$2 token response
+  [[ -r "$token_file" ]] || return 1
+  token="$(<"$token_file")"
+  [[ $token =~ ^[A-Za-z0-9._~+/=-]+$ ]] || return 1
 
-	response="$(
-		printf 'header = "Authorization: Bearer %s"\n' "$token" |
-			curl --config - -sf --max-time 15 --url "${broker_url%/}/v1/usage"
-	)" || return 1
+  response="$(
+    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+      curl --config - -sf --max-time 15 --url "${broker_url%/}/v1/usage"
+  )" || return 1
 
-	jq -er --argjson max_line_chars "$max_line_chars" '
+  jq -er --argjson max_line_chars "$max_line_chars" '
 		def used_fraction:
 			if (.amount.usedFraction | type) == "number" then .amount.usedFraction
 			elif (.amount.used | type) == "number" and
@@ -110,41 +110,41 @@ usage_line() {
 }
 
 active_vault_id() {
-	local first selected="" state_raw="" is_disabled=0
-	first="$(jq -r '.[0].id // empty | strings' "$manifest" 2>/dev/null)"
+  local first selected="" state_raw="" is_disabled=0
+  first="$(jq -r '.[0].id // empty | strings' "$manifest" 2>/dev/null)"
 
-	if [[ -r "$selection_state" ]]; then
-		state_raw="$(<"$selection_state")"
-		if jq -e 'type == "object"' <<<"$state_raw" >/dev/null 2>&1; then
-			selected="$(jq -r '.selected // empty | strings' <<<"$state_raw" 2>/dev/null)"
-			if [[ -n "$selected" ]] && jq -e --arg id "$selected" \
-				'(.disabled // []) | index($id) != null' <<<"$state_raw" >/dev/null 2>&1; then
-				is_disabled=1
-			fi
-		else
-			selected="${state_raw#"${state_raw%%[![:space:]]*}"}"
-			selected="${selected%"${selected##*[![:space:]]}"}"
-		fi
-	fi
+  if [[ -r "$selection_state" ]]; then
+    state_raw="$(<"$selection_state")"
+    if jq -e 'type == "object"' <<<"$state_raw" >/dev/null 2>&1; then
+      selected="$(jq -r '.selected // empty | strings' <<<"$state_raw" 2>/dev/null)"
+      if [[ -n "$selected" ]] && jq -e --arg id "$selected" \
+        '(.disabled // []) | index($id) != null' <<<"$state_raw" >/dev/null 2>&1; then
+        is_disabled=1
+      fi
+    else
+      selected="${state_raw#"${state_raw%%[![:space:]]*}"}"
+      selected="${selected%"${selected##*[![:space:]]}"}"
+    fi
+  fi
 
-	if [[ -z "$selected" || $is_disabled -eq 1 ]] ||
-		! jq -e --arg id "$selected" 'any(.[]; .id == $id)' "$manifest" >/dev/null 2>&1; then
-		selected=$first
-	fi
-	printf '%s\n' "$selected"
+  if [[ -z "$selected" || $is_disabled -eq 1 ]] ||
+    ! jq -e --arg id "$selected" 'any(.[]; .id == $id)' "$manifest" >/dev/null 2>&1; then
+    selected=$first
+  fi
+  printf '%s\n' "$selected"
 }
 
 publish_session() {
-	local socket=$1 active_line=$2 seq=$3 workspace_json pane_json=""
-	local workspace_id pane_id broker workspace_line
-	declare -A workspace_broker=()
+  local socket=$1 active_line=$2 seq=$3 workspace_json pane_json=""
+  local workspace_id pane_id broker workspace_line
+  declare -A workspace_broker=()
 
-	if pane_json="$(HERDR_SOCKET_PATH="$socket" herdr pane list 2>/dev/null)"; then
-		while IFS=$'\t' read -r workspace_id broker; do
-			[[ -n "$workspace_id" && -n "$broker" ]] || continue
-			workspace_broker[$workspace_id]=${broker%/}
-		done < <(
-			jq -r '
+  if pane_json="$(HERDR_SOCKET_PATH="$socket" herdr pane list 2>/dev/null)"; then
+    while IFS=$'\t' read -r workspace_id broker; do
+      [[ -n "$workspace_id" && -n "$broker" ]] || continue
+      workspace_broker[$workspace_id]=${broker%/}
+    done < <(
+      jq -r '
 				(.result.panes // [])
 				| group_by(.workspace_id)[]
 				| .[0].workspace_id as $workspace
@@ -154,71 +154,71 @@ publish_session() {
 				| [$workspace, $brokers[0]]
 				| @tsv
 			' <<<"$pane_json" 2>/dev/null
-		)
+    )
 
-		while IFS=$'\t' read -r pane_id broker; do
-			[[ -n "$pane_id" && -n "$broker" ]] || continue
-			broker=${broker%/}
-			[[ -n "${usage_by_broker[$broker]:-}" ]] || continue
-			HERDR_SOCKET_PATH="$socket" herdr pane report-metadata "$pane_id" \
-				--source "$source_id" --token "usage=${usage_by_broker[$broker]}" \
-				--ttl-ms "$ttl_ms" --seq "$seq" >/dev/null 2>&1 || true
-		done < <(
-			jq -r '.result.panes[]? | select((.tokens.vault_broker // "") != "")
+    while IFS=$'\t' read -r pane_id broker; do
+      [[ -n "$pane_id" && -n "$broker" ]] || continue
+      broker=${broker%/}
+      [[ -n "${usage_by_broker[$broker]:-}" ]] || continue
+      HERDR_SOCKET_PATH="$socket" herdr pane report-metadata "$pane_id" \
+        --source "$source_id" --token "usage=${usage_by_broker[$broker]}" \
+        --ttl-ms "$ttl_ms" --seq "$seq" >/dev/null 2>&1 || true
+    done < <(
+      jq -r '.result.panes[]? | select((.tokens.vault_broker // "") != "")
 				| [.pane_id, .tokens.vault_broker] | @tsv' <<<"$pane_json" 2>/dev/null
-		)
-	fi
+    )
+  fi
 
-	if workspace_json="$(HERDR_SOCKET_PATH="$socket" herdr workspace list 2>/dev/null)"; then
-		while IFS= read -r workspace_id; do
-			[[ -n "$workspace_id" ]] || continue
-			if [[ -n "${workspace_broker[$workspace_id]:-}" ]]; then
-				workspace_line=${usage_by_broker[${workspace_broker[$workspace_id]}]:-}
-			else
-				workspace_line=$active_line
-			fi
-			[[ -n "$workspace_line" ]] || continue
-			HERDR_SOCKET_PATH="$socket" herdr workspace report-metadata "$workspace_id" \
-				--source "$source_id" --token "usage=$workspace_line" \
-				--ttl-ms "$ttl_ms" --seq "$seq" >/dev/null 2>&1 || true
-		done < <(jq -r '.result.workspaces[]?.workspace_id // empty' <<<"$workspace_json" 2>/dev/null)
-	fi
+  if workspace_json="$(HERDR_SOCKET_PATH="$socket" herdr workspace list 2>/dev/null)"; then
+    while IFS= read -r workspace_id; do
+      [[ -n "$workspace_id" ]] || continue
+      if [[ -n "${workspace_broker[$workspace_id]:-}" ]]; then
+        workspace_line=${usage_by_broker[${workspace_broker[$workspace_id]}]:-}
+      else
+        workspace_line=$active_line
+      fi
+      [[ -n "$workspace_line" ]] || continue
+      HERDR_SOCKET_PATH="$socket" herdr workspace report-metadata "$workspace_id" \
+        --source "$source_id" --token "usage=$workspace_line" \
+        --ttl-ms "$ttl_ms" --seq "$seq" >/dev/null 2>&1 || true
+    done < <(jq -r '.result.workspaces[]?.workspace_id // empty' <<<"$workspace_json" 2>/dev/null)
+  fi
 }
 
 publish_cycle() {
-	local id broker token_file line active_id active_line="" seq socket
-	usage_by_id=()
-	usage_by_broker=()
-	[[ -r "$manifest" ]] || return 0
-	jq -e 'type == "array" and length > 0' "$manifest" >/dev/null 2>&1 || return 0
+  local id broker token_file line active_id active_line="" seq socket
+  usage_by_id=()
+  usage_by_broker=()
+  [[ -r "$manifest" ]] || return 0
+  jq -e 'type == "array" and length > 0' "$manifest" >/dev/null 2>&1 || return 0
 
-	while IFS=$'\t' read -r id broker token_file; do
-		[[ -n "$id" && -n "$broker" && -n "$token_file" ]] || continue
-		broker=${broker%/}
-		if line="$(usage_line "$broker" "$token_file")"; then
-			usage_by_id[$id]=$line
-			usage_by_broker[$broker]=$line
-		fi
-	done < <(
-		jq -r '.[] | select(
+  while IFS=$'\t' read -r id broker token_file; do
+    [[ -n "$id" && -n "$broker" && -n "$token_file" ]] || continue
+    broker=${broker%/}
+    if line="$(usage_line "$broker" "$token_file")"; then
+      usage_by_id[$id]=$line
+      usage_by_broker[$broker]=$line
+    fi
+  done < <(
+    jq -r '.[] | select(
 			(.id | type) == "string" and
 			(.brokerUrl | type) == "string" and .brokerUrl != "" and
 			(.tokenFile | type) == "string" and .tokenFile != ""
 		) | [.id, .brokerUrl, .tokenFile] | @tsv' "$manifest" 2>/dev/null
-	)
+  )
 
-	active_id="$(active_vault_id)"
-	active_line=${usage_by_id[$active_id]:-}
-	seq=$(date +%s)
-	shopt -s nullglob
-	for socket in "$herdr_sessions"/*/herdr.sock; do
-		publish_session "$socket" "$active_line" "$seq"
-	done
-	shopt -u nullglob
+  active_id="$(active_vault_id)"
+  active_line=${usage_by_id[$active_id]:-}
+  seq=$(date +%s)
+  shopt -s nullglob
+  for socket in "$herdr_sessions"/*/herdr.sock; do
+    publish_session "$socket" "$active_line" "$seq"
+  done
+  shopt -u nullglob
 }
 
 while true; do
-	publish_cycle || true
-	[[ ${HERDR_USAGE_PUBLISHER_ONCE:-0} == 1 ]] && break
-	sleep $((interval_seconds * 9 / 10 + RANDOM % (interval_seconds / 5 + 1)))
+  publish_cycle || true
+  [[ ${HERDR_USAGE_PUBLISHER_ONCE:-0} == 1 ]] && break
+  sleep $((interval_seconds * 9 / 10 + RANDOM % (interval_seconds / 5 + 1)))
 done

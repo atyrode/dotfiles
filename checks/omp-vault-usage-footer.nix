@@ -215,8 +215,9 @@ let
     assert.ok(!noEmail.includes("al*"));
     assert.ok(noEmail.includes("31%"));
 
-    // At the first wide breakpoint, bars yield before any quota window.
-    // Named variants shed before core duration buckets.
+    // At width 100 neither one nor two wide rows hold every labeled window
+    // (the codex chunk alone overflows the inset budget), so bars yield
+    // before any quota window. Named variants shed before core buckets.
     const wide = bare(100);
     assert.ok(!wide.includes("█"), "tight wide row must drop bars before windows");
     assert.ok(wide.startsWith("    *claude 5h "), "active Claude chunk must lead");
@@ -236,6 +237,60 @@ let
       active: { provider: "openai-codex", authenticated: true },
     });
     assert.ok(wideCodex[0].startsWith("    *codex 5h "));
+
+    // Two-line wide tier: when one row cannot hold every labeled window
+    // with bars, the layout splits at a provider boundary across two rows
+    // (bars intact, no │ delimiter). All bars stretch to one shared
+    // uniform width — the largest both rows fit — and the rows
+    // column-align into a table: heads and every window column's slots
+    // pad to their widest counterpart, so bar runs start at the same
+    // columns on both rows.
+    const barRuns = (row: string) => [...row.matchAll(/[█░]+/g)].map(match => match.index);
+    const twoLine = renderRow(state, { ...base, width: 110, active });
+    assert.equal(twoLine.length, 2);
+    assert.ok(twoLine[0].startsWith("    *claude 5h "));
+    assert.ok(twoLine[0].includes("█"));
+    assert.ok(twoLine[0].includes("7d fable"));
+    assert.ok(!twoLine[0].includes("│"));
+    assert.ok(twoLine[1].startsWith("    codex   5h "), "head pads to align with *claude");
+    assert.ok(twoLine[1].includes("█"));
+    assert.ok(twoLine[1].includes("7d spark"));
+    assert.ok(twoLine[1].includes("maxed"));
+    const runWidths = [...twoLine[0].matchAll(/[█░]+/g), ...twoLine[1].matchAll(/[█░]+/g)]
+      .map(match => match[0].length);
+    assert.equal(runWidths.length, 6, "three bars per row");
+    assert.equal(new Set(runWidths).size, 1, "all bars share one width");
+    assert.ok(runWidths[0] >= 10, "shared width never shrinks below base");
+    assert.equal(cells(twoLine[0]), cells(twoLine[1]), "equal bar cells per row");
+    assert.deepEqual(barRuns(twoLine[0]), barRuns(twoLine[1]), "bar columns align");
+    assert.ok(visibleWidth(twoLine[0]) <= 110 - 4);
+    assert.ok(visibleWidth(twoLine[1]) <= 110 - 4);
+
+    // A suffix rides the bottom row of a two-line layout.
+    const twoLineStale = renderRow(state, { ...base, width: 130, active, refreshFailed: true });
+    assert.equal(twoLineStale.length, 2);
+    assert.ok(!twoLineStale[0].includes("cached"));
+    assert.ok(twoLineStale[1].includes("· cached 1m ago"));
+
+    // Single-provider overflow splits between window cells instead: the
+    // continuation row repeats the provider head so ownership stays
+    // legible, and bars survive widths that previously fell to text.
+    const claudeOnly: FooterState = {
+      kind: "data",
+      providers: [projected.providers[0]],
+      fetchedAt: projected.fetchedAt,
+    };
+    const splitWithin = renderRow(claudeOnly, { ...base, width: 72, active });
+    assert.equal(splitWithin.length, 2);
+    assert.ok(splitWithin[0].startsWith("    *claude 5h "));
+    assert.ok(splitWithin[0].includes("█"));
+    assert.ok(splitWithin[1].startsWith("    *claude 7d fable "));
+    assert.ok(splitWithin[1].includes("█"));
+    assert.equal(cells(splitWithin[0]), 20, "top row is budget-packed, so bars stay at base");
+    assert.equal(cells(splitWithin[1]), 10, "bottom shares the top row's bar width");
+    assert.equal(barRuns(splitWithin[0])[0], barRuns(splitWithin[1])[0], "first bars align");
+    assert.ok(visibleWidth(splitWithin[0]) <= 72 - 4);
+    assert.ok(visibleWidth(splitWithin[1]) <= 72 - 4);
 
     // At the first wide breakpoint, bars must yield before core windows.
     // This reproduces the live failure where Claude 5h disappeared behind
@@ -292,8 +347,9 @@ let
       refreshFailed: true,
       nextRefreshAt: now + 3 * 60_000,
     });
-    assert.ok(staleOverTimer[0].includes("· cached 1m ago"));
-    assert.ok(!staleOverTimer[0].includes("refresh in"));
+    assert.equal(staleOverTimer.length, 2);
+    assert.ok(staleOverTimer[1].includes("· cached 1m ago"));
+    assert.ok(!staleOverTimer.join("\n").includes("refresh in"));
 
     // Manual-refresh cue ladder — monotonic as width shrinks so nothing
     // blinks back in during a resize: identities+cue → cue → plain. No
@@ -347,7 +403,7 @@ let
 
     // Stale: immediately on failed refresh, with code's cached-age wording.
     const failed = renderRow(state, { ...base, width: 150, active, refreshFailed: true });
-    assert.ok(failed[0].includes("· cached 1m ago"));
+    assert.ok(failed[1].includes("· cached 1m ago"));
     const aged = renderRow(state, {
       width: 150,
       now: now + 20 * 60_000,
@@ -355,7 +411,7 @@ let
       active,
       color: false,
     });
-    assert.ok(aged[0].includes("· cached 21m ago"));
+    assert.ok(aged[1].includes("· cached 21m ago"));
 
     // Unauthenticated is distinct from authenticated-but-unreported.
     const unauth = renderRow(state, {
@@ -445,7 +501,8 @@ let
       renderBarAnsi(0.62, 10, true),
       paint("██████", "#eba446", true) + paint("░░░░", PALETTE.dim, true),
     );
-    const colored = renderRow(state, { ...base, width: 150, active, color: true });
+    // Width 250 keeps a single identity-tier row so the │ delimiter shows.
+    const colored = renderRow(state, { ...base, width: 250, active, color: true });
     assert.ok(colored[0].includes("\u001b[1;38;2;255;159;82m*claude\u001b[0m"));
     assert.ok(colored[0].includes("38;2;98;167;255m"));
     assert.ok(colored[0].includes("38;2;105;114;126m│"));
@@ -613,7 +670,7 @@ pkgs.runCommand "check-omp-vault-usage-footer"
     # runtime wiring textually against the deployed extension copy - the
     # widget hangs below the editor with a dim rule line above the row.
     grep -Fq 'placement: "belowEditor"' "$ext/vault-usage-footer.ts"
-    grep -Fq 'cachedRows = [renderRule(width), row]' "$ext/vault-usage-footer.ts"
+    grep -Fq 'cachedRows = [renderRule(width), ...rows]' "$ext/vault-usage-footer.ts"
 
     jq -e '
       .ok == true

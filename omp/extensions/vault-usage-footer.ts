@@ -27,15 +27,17 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
  * rendered, and credentials, tokens, broker environment values, and raw report
  * metadata are never read.
  *
- * Layout contract: at supported widths `renderRow` produces exactly one
- * content row (loading, data, stale, or unavailable) and the widget adds a
- * dim `─` rule above it (two physical rows below the editor box) tying
- * the row to the box's bottom border;
- * only terminal width may switch it to zero rows. Fetch completion changes
- * text, never row count, so network timing can never move the prompt. The
- * row is inset LEFT_PAD/RIGHT_PAD columns from each edge (matching the
- * border's corner-to-π indent); on wide rows its usage bars stretch to
- * fill the inset width, re-fit on every paint.
+ * Layout contract: at supported widths `renderRow` produces one content
+ * row (loading, data, stale, or unavailable) — or two when the complete
+ * wide (bars) layout needs a second row — and the widget adds a dim `─`
+ * rule above, tying the rows to the box's bottom border; only terminal
+ * width may switch it to zero rows. Fetch completion changes text and may
+ * switch a data layout between one and two rows, never anything larger.
+ * Rows are inset LEFT_PAD/RIGHT_PAD columns from each edge (matching the
+ * border's corner-to-π indent); on one-row wide layouts usage bars
+ * stretch to fill the inset width (re-fit on every paint), while two-row
+ * layouts column-align and stretch every bar to one shared uniform
+ * width — the largest both rows fit.
  */
 
 const WIDGET_KEY = "vault-usage";
@@ -48,7 +50,6 @@ const RIGHT_PAD = 4;
 const PAD_TEXT = " ".repeat(LEFT_PAD);
 const MIN_WIDTH = 40;
 const MEDIUM_WIDTH = 64;
-const WIDE_WIDTH = 100;
 const FETCH_TIMEOUT_MS = 10_000;
 const REFRESH_INTERVAL_MS = 5 * 60_000;
 const REFRESH_JITTER = 0.1;
@@ -459,6 +460,67 @@ const joinCells = (cells: readonly Cell[], separator: Cell): Cell => {
 	return { plain, ansi };
 };
 
+/** Provider chunk head: `*name` for the active provider, painted. */
+function providerHead(view: ProviderView, isActive: boolean, color: boolean): Cell {
+	const name = `${isActive ? "*" : ""}${displayProvider(view.provider)}`;
+	return { plain: name, ansi: paint(name, providerColor(view.provider), color, isActive) };
+}
+
+/** Dim `·` delimiter between a provider's window cells. */
+function windowJoiner(color: boolean): Cell {
+	return { plain: " · ", ansi: ` ${paint("·", PALETTE.dim, color)} ` };
+}
+
+const EMPTY_SLOT: Cell = { plain: "", ansi: "" };
+
+/**
+ * One window as fixed slots — label, bar, pct, reset, note — so callers
+ * can either join the populated slots with spaces (one-row cells) or pad
+ * each slot to a shared column width (two-row aligned cells). Absent
+ * slots are empty cells.
+ */
+function windowSlots(
+	window: WindowView,
+	level: DetailLevel,
+	now: number,
+	color: boolean,
+	barCells: number,
+): [Cell, Cell, Cell, Cell, Cell] {
+	const wide = level === "wide";
+	const label = shortWindowLabel(window.fullLabel, window.windowLabel);
+	const pct = window.usedFraction === undefined ? undefined : usedPercent(window.usedFraction);
+	const bar: Cell = wide
+		? {
+				plain: renderBar(window.usedFraction, barCells),
+				ansi: renderBarAnsi(window.usedFraction, barCells, color),
+		  }
+		: EMPTY_SLOT;
+	const exhaustedMark = !wide && (window.exhausted || (pct ?? 0) >= 100) ? "!" : "";
+	const pctText = formatPercent(window.usedFraction) + exhaustedMark;
+	let reset: Cell = EMPTY_SLOT;
+	if (window.resetsAt !== undefined && window.resetsAt > now) {
+		const left = window.resetsAt - now;
+		const resetText = `${RESET_GLYPH}${formatCountdown(left)}`;
+		const emphasis = resetEmphasis(left, window.durationMs);
+		reset = {
+			plain: resetText,
+			ansi:
+				emphasis === "dim"
+					? paint(resetText, PALETTE.dim, color)
+					: paint(resetText, PALETTE.reset, color, emphasis === "imminent"),
+		};
+	}
+	let note: Cell = EMPTY_SLOT;
+	if (wide) {
+		if (window.exhausted || (pct ?? 0) >= 100) {
+			note = { plain: "maxed", ansi: paint("maxed", PALETTE.red, color) };
+		} else if ((pct ?? 0) >= 80) {
+			note = { plain: "tight", ansi: paint("tight", PALETTE.warn, color) };
+		}
+	}
+	return [{ plain: label, ansi: label }, bar, { plain: pctText, ansi: pctText }, reset, note];
+}
+
 function windowCell(
 	window: WindowView,
 	level: DetailLevel,
@@ -466,40 +528,10 @@ function windowCell(
 	color: boolean,
 	barCells: number,
 ): Cell {
-	const wide = level === "wide";
-	const label = shortWindowLabel(window.fullLabel, window.windowLabel);
-	const pct = window.usedFraction === undefined ? undefined : usedPercent(window.usedFraction);
-	const plainParts: string[] = [label];
-	const ansiParts: string[] = [label];
-	if (wide) {
-		plainParts.push(renderBar(window.usedFraction, barCells));
-		ansiParts.push(renderBarAnsi(window.usedFraction, barCells, color));
-	}
-	const exhaustedMark = !wide && (window.exhausted || (pct ?? 0) >= 100) ? "!" : "";
-	const pctText = formatPercent(window.usedFraction) + exhaustedMark;
-	plainParts.push(pctText);
-	ansiParts.push(pctText);
-	if (window.resetsAt !== undefined && window.resetsAt > now) {
-		const left = window.resetsAt - now;
-		const resetText = `${RESET_GLYPH}${formatCountdown(left)}`;
-		const emphasis = resetEmphasis(left, window.durationMs);
-		plainParts.push(resetText);
-		ansiParts.push(
-			emphasis === "dim"
-				? paint(resetText, PALETTE.dim, color)
-				: paint(resetText, PALETTE.reset, color, emphasis === "imminent"),
-		);
-	}
-	if (wide) {
-		if (window.exhausted || (pct ?? 0) >= 100) {
-			plainParts.push("maxed");
-			ansiParts.push(paint("maxed", PALETTE.red, color));
-		} else if ((pct ?? 0) >= 80) {
-			plainParts.push("tight");
-			ansiParts.push(paint("tight", PALETTE.warn, color));
-		}
-	}
-	return { plain: plainParts.join(" "), ansi: ansiParts.join(" ") };
+	return joinCells(
+		windowSlots(window, level, now, color, barCells).filter(slot => slot.plain !== ""),
+		{ plain: " ", ansi: " " },
+	);
 }
 
 function providerChunk(
@@ -512,18 +544,13 @@ function providerChunk(
 	identity: string | undefined,
 	sizeBar: () => number,
 ): Cell {
-	const name = `${isActive ? "*" : ""}${displayProvider(view.provider)}`;
-	const head: Cell = {
-		plain: name,
-		ansi: paint(name, providerColor(view.provider), color, isActive),
-	};
+	const head = providerHead(view, isActive, color);
 	const cells: Cell[] = [head];
 	if (identity !== undefined) {
 		cells.push({ plain: identity, ansi: paint(identity, PALETTE.dim, color) });
 	}
 	const windowCells = windows.map(window => windowCell(window, level, now, color, sizeBar()));
-	const windowSeparator: Cell = { plain: " · ", ansi: ` ${paint("·", PALETTE.dim, color)} ` };
-	cells.push(joinCells(windowCells, windowSeparator));
+	cells.push(joinCells(windowCells, windowJoiner(color)));
 	return joinCells(cells, { plain: " ", ansi: " " });
 }
 
@@ -608,21 +635,25 @@ export function renderRule(width: number, color: boolean = COLOR_DEFAULT): strin
 }
 
 /**
- * Render the footer as zero rows (below MIN_WIDTH) or exactly one row.
- * The row is inset LEFT_PAD columns from the left edge and reserves
- * RIGHT_PAD columns on the right, mirroring the editor border's
- * corner-to-π indent on both sides. Levels: wide
- * (bars + notes), medium (compact windows), narrow (active provider's
- * best window), hidden below MIN_WIDTH. Wide and medium start from every
- * labeled window per provider and degrade deterministically: identities
- * render only when the complete row fits with them; if wide bars would
- * cost a window, the row falls back to compact medium cells first. Only
- * then are named variant buckets shed before core duration buckets
- * (never a provider's last window), followed by whole trailing providers.
- * When wide content fits, leftover columns stretch its bars (leftmost first) so the
- * row fills the inset width exactly; the fit is recomputed every paint,
- * so resizes adapt. Provider chunks are delimited by a dim `│`. The row
- * is truncated to the inset width as the final guard and never wraps.
+ * Render the footer as zero rows (below MIN_WIDTH), one row, or — when
+ * one row cannot hold every labeled window with bars — two rows. Rows
+ * are inset LEFT_PAD columns from the left edge and reserve RIGHT_PAD
+ * columns on the right, mirroring the editor border's corner-to-π
+ * indent on both sides. Levels: wide (bars + notes), medium (compact
+ * windows), narrow (active provider's best window), hidden below
+ * MIN_WIDTH. Wide starts from every labeled window per provider and
+ * degrades deterministically: identities render only when the complete
+ * single row fits with them; when one wide row overflows, the complete
+ * layout is retried across two rows (bars intact) before any downgrade
+ * to compact medium cells. Only then are named variant buckets shed
+ * before core duration buckets (never a provider's last window),
+ * followed by whole trailing providers. When one-row wide content fits,
+ * leftover columns stretch its bars (leftmost first) so the row fills
+ * the inset width exactly; the fit is recomputed every paint, so resizes
+ * adapt. Two-row layouts instead column-align the rows and stretch every
+ * bar to one shared uniform width (the largest both rows fit).
+ * Provider chunks are delimited by a dim `│`. A one-row result is
+ * truncated to the inset width as the final guard and never wraps.
  */
 export function renderRow(state: FooterState, options: RenderOptions): string[] {
 	if (options.width < MIN_WIDTH) return [];
@@ -631,9 +662,11 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	if (state.kind === "loading") return emit(paint("usage: loading…", PALETTE.dim, color));
 	if (state.kind === "unavailable") return emit(paint("usage: unavailable", PALETTE.dim, color));
 
-	// Levels key on the physical width; fitting math uses the inset budget.
-	let level: DetailLevel =
-		options.width >= WIDE_WIDTH ? "wide" : options.width >= MEDIUM_WIDTH ? "medium" : "narrow";
+	// The wide (bars) presentation is attempted at every width above the
+	// narrow breakpoint — one row first, then two — and medium is reached
+	// only by downgrade when neither fits. Fitting math uses the inset
+	// budget.
+	let level: DetailLevel = options.width >= MEDIUM_WIDTH ? "wide" : "narrow";
 	const width = options.width - LEFT_PAD - RIGHT_PAD;
 
 	// Stale parity with `code`: a failed refresh marks retained data stale
@@ -734,10 +767,198 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		}
 	}
 
-	// Bars are decoration: before sacrificing any quota window, retry the
-	// complete row with compact cells. This also prevents crossing the wide
-	// breakpoint from making information disappear.
+	// Two-line wide tier: bars carry more information than compact text,
+	// so before degrading to text the complete wide layout is retried
+	// across two rows. Splits prefer provider boundaries; when a single
+	// provider's windows are what overflow, the split lands between window
+	// cells instead and the continuation row repeats the provider head so
+	// ownership stays legible. The suffix rides the bottom row. All bars
+	// share one uniform width — the largest for which both rows fit their
+	// budgets — and, in the dominant one-provider-per-row shape, the rows
+	// column-align into a table.
+	// Greedy first fit is complete for two rows: the top row packs
+	// maximally, so the bottom row is as narrow as any two-row split can
+	// make it.
+	const renderTwoLineWide = (): string[] | undefined => {
+		const { entries } = chunkOrder(state, options.active);
+		const providers = entries.filter(
+			entry => (windowLists.get(entry.provider) ?? []).length > 0,
+		);
+		// buildChunks over empty window lists yields exactly the pseudo
+		// chunk (active-but-unreported), or nothing.
+		const pseudoCell: Cell | undefined = buildChunks(state, options, "wide", color, new Map(), false)[0];
+		const totalWindows = providers.reduce(
+			(sum, entry) => sum + (windowLists.get(entry.provider) ?? []).length,
+			0,
+		);
+		if (totalWindows + (pseudoCell !== undefined ? 1 : 0) < 2) return undefined;
+		interface Segment {
+			view: ProviderView;
+			windows: readonly WindowView[];
+		}
+		const segmentCell = (segment: Segment, sizeBar: () => number): Cell =>
+			providerChunk(
+				segment.view,
+				segment.windows,
+				segment.view.provider === options.active?.provider,
+				"wide",
+				options.now,
+				color,
+				undefined,
+				sizeBar,
+			);
+		const lineCells = (line: readonly Segment[], withPseudo: boolean, sizeBar: () => number): Cell[] => {
+			const cells: Cell[] = [];
+			if (withPseudo && pseudoCell !== undefined) cells.push(pseudoCell);
+			for (const segment of line) cells.push(segmentCell(segment, sizeBar));
+			return cells;
+		};
+		const lineWidth = (line: readonly Segment[], withPseudo: boolean): number =>
+			rowWidth(lineCells(line, withPseudo, () => BAR_CELLS));
+		// Largest uniform per-bar growth both rows can absorb within their
+		// budgets; undefined when a base row already overflows.
+		const sharedStretch = (
+			base: readonly [Cell, Cell],
+			bars: readonly [number, number],
+			budgets: readonly [number, number],
+		): number | undefined => {
+			let extra = Number.POSITIVE_INFINITY;
+			for (const row of [0, 1] as const) {
+				const slack = budgets[row] - visibleWidth(base[row].plain);
+				if (slack < 0) return undefined;
+				if (bars[row] > 0) extra = Math.min(extra, Math.floor(slack / bars[row]));
+			}
+			return Number.isFinite(extra) ? extra : 0;
+		};
+		// Table alignment for the one-segment-per-row shape: the head plus
+		// each window column's label/bar/pct/reset/note slots pad to the
+		// width of their widest counterpart (percent right-aligned), so the
+		// two rows read as one table. Skipped when a row carries several
+		// provider chunks or the padding would overflow a budget.
+		const alignedPair = (
+			rows: readonly [readonly Segment[], readonly Segment[]],
+			budgets: readonly [number, number],
+		): [Cell, Cell] | undefined => {
+			if (rows[0].length !== 1 || rows[1].length !== 1) return undefined;
+			const segments = [rows[0][0], rows[1][0]] as const;
+			const heads = segments.map(segment =>
+				providerHead(segment.view, segment.view.provider === options.active?.provider, color),
+			);
+			const headWidth = Math.max(...heads.map(head => visibleWidth(head.plain)));
+			const pad = (cell: Cell, target: number, alignRight: boolean): Cell => {
+				const fill = " ".repeat(Math.max(0, target - visibleWidth(cell.plain)));
+				return alignRight
+					? { plain: fill + cell.plain, ansi: fill + cell.ansi }
+					: { plain: cell.plain + fill, ansi: cell.ansi + fill };
+			};
+			const build = (barCells: number): [Cell, Cell] => {
+				const slots = segments.map(segment =>
+					segment.windows.map(window => windowSlots(window, "wide", options.now, color, barCells)),
+				);
+				const lines = segments.map((_, row) => {
+					const cells = slots[row].map((windowParts, column) => {
+						const peer = slots[1 - row][column];
+						const parts: Cell[] = [];
+						for (const [slot, part] of windowParts.entries()) {
+							const target = Math.max(
+								visibleWidth(part.plain),
+								peer === undefined ? 0 : visibleWidth(peer[slot].plain),
+							);
+							if (target === 0) continue;
+							parts.push(pad(part, target, slot === 2));
+						}
+						return joinCells(parts, { plain: " ", ansi: " " });
+					});
+					const body = joinCells(cells, windowJoiner(color));
+					const line = joinCells([pad(heads[row], headWidth, false), body], {
+						plain: " ",
+						ansi: " ",
+					});
+					// Trailing pad from the last column is dead weight.
+					return { plain: line.plain.trimEnd(), ansi: line.ansi.trimEnd() };
+				});
+				return [lines[0], lines[1]];
+			};
+			const base = build(BAR_CELLS);
+			const extra = sharedStretch(
+				base,
+				[segments[0].windows.length, segments[1].windows.length],
+				budgets,
+			);
+			if (extra === undefined) return undefined;
+			return extra > 0 ? build(BAR_CELLS + extra) : base;
+		};
+		const layout = (tail: Cell, granular: boolean): string[] | undefined => {
+			const budgets: readonly [number, number] = [width, width - visibleWidth(tail.plain)];
+			const atoms: Segment[] = [];
+			for (const view of providers) {
+				const windows = windowLists.get(view.provider) ?? [];
+				if (granular) for (const window of windows) atoms.push({ view, windows: [window] });
+				else atoms.push({ view, windows });
+			}
+			const lines: [Segment[], Segment[]] = [[], []];
+			let index: 0 | 1 = 0;
+			for (const atom of atoms) {
+				for (;;) {
+					const line = lines[index];
+					const last = line[line.length - 1];
+					const candidate: Segment[] =
+						last !== undefined && last.view.provider === atom.view.provider
+							? [
+									...line.slice(0, -1),
+									{ view: last.view, windows: [...last.windows, ...atom.windows] },
+							  ]
+							: [...line, atom];
+					if (lineWidth(candidate, index === 0) <= budgets[index]) {
+						lines[index] = candidate;
+						break;
+					}
+					if (index === 1) return undefined;
+					index = 1;
+				}
+			}
+			// The bottom row never sits empty under a full top row (a true
+			// one-line fit does not reach this tier; only the suffix pushed
+			// it over): pull the last window down beside the suffix.
+			if (lines[1].length === 0) {
+				const top = lines[0];
+				const last = top[top.length - 1];
+				if (last === undefined) return undefined;
+				const kept: Segment = { view: last.view, windows: last.windows.slice(0, -1) };
+				lines[0] = kept.windows.length > 0 ? [...top.slice(0, -1), kept] : top.slice(0, -1);
+				lines[1] = [{ view: last.view, windows: last.windows.slice(-1) }];
+				if (lineWidth(lines[1], false) > budgets[1]) return undefined;
+			}
+			// All bars share one uniform width — the largest for which both
+			// rows (bottom including its suffix) still fit — so the two rows
+			// never disagree on bar size.
+			const barsOn = (line: readonly Segment[]): number =>
+				line.reduce((sum, segment) => sum + segment.windows.length, 0);
+			const plainPair = (): [Cell, Cell] => {
+				const build = (barCells: number): [Cell, Cell] => [
+					joinCells(lineCells(lines[0], true, () => barCells), providerSeparator),
+					joinCells(lineCells(lines[1], false, () => barCells), providerSeparator),
+				];
+				const base = build(BAR_CELLS);
+				// The greedy fit guarantees the base rows fit their budgets.
+				const extra = sharedStretch(base, [barsOn(lines[0]), barsOn(lines[1])], budgets) ?? 0;
+				return extra > 0 ? build(BAR_CELLS + extra) : base;
+			};
+			const rendered =
+				(pseudoCell === undefined ? alignedPair(lines, budgets) : undefined) ?? plainPair();
+			return [PAD_TEXT + rendered[0].ansi, PAD_TEXT + rendered[1].ansi + tail.ansi];
+		};
+		const attempt = (tail: Cell): string[] | undefined => layout(tail, false) ?? layout(tail, true);
+		return (cueSuffix !== undefined ? attempt(cueSuffix) : undefined) ?? attempt(suffix);
+	};
+
+	// Bars outrank compact text: only when even two rows cannot hold every
+	// labeled window does the row degrade to compact cells. The medium
+	// retry also prevents shrinking width from making information
+	// disappear before the shedding ladder runs.
 	if (level === "wide" && rowWidth(chunks) > budget) {
+		const twoLine = renderTwoLineWide();
+		if (twoLine !== undefined) return twoLine;
 		level = "medium";
 		chunks = buildChunks(state, options, level, color, windowLists, false);
 		if (cueSuffix !== undefined && rowWidth(chunks) + visibleWidth(cueSuffix.plain) <= width) {
@@ -1007,8 +1228,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 
 	const componentFactory = (tui: { requestRender(): void }) => {
 		let cachedRows: string[] = [];
-		let cachedRow: string | undefined;
-		let cachedWidth: number | undefined;
+		let cachedKey: string | undefined;
 		repaint = () => tui.requestRender();
 		startPolling();
 		return {
@@ -1022,23 +1242,22 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 					nextRefreshAt,
 					refreshHint: unhookInput !== undefined ? REFRESH_KEY : undefined,
 				});
-				const row = rows[0];
-				if (row === undefined) {
+				if (rows.length === 0) {
 					if (cachedRows.length > 0) {
 						cachedRows = [];
-						cachedRow = undefined;
-						cachedWidth = undefined;
+						cachedKey = undefined;
 					}
 					return cachedRows;
 				}
-				if (row !== cachedRow || width !== cachedWidth) {
-					cachedRow = row;
-					cachedWidth = width;
-					// A dim rule line between the editor box and the row ties
-					// the footer to the border instead of floating below it
-					// (width keys the cache: the rule resizes even when the
-					// row text does not, e.g. loading/unavailable states).
-					cachedRows = [renderRule(width), row];
+				// Width keys the cache too: the rule resizes even when the
+				// row text does not (e.g. loading/unavailable states).
+				const key = width + "\u0000" + rows.join("\u0000");
+				if (key !== cachedKey) {
+					cachedKey = key;
+					// A dim rule line between the editor box and the rows
+					// ties the footer to the border instead of floating
+					// below it.
+					cachedRows = [renderRule(width), ...rows];
 				}
 				return cachedRows;
 			},

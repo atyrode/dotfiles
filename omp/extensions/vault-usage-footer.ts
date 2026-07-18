@@ -27,14 +27,14 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
  * rendered, and credentials, tokens, broker environment values, and raw report
  * metadata are never read.
  *
- * Layout contract: at supported widths `renderRow` produces exactly one
- * content row (loading, data, stale, or unavailable) and the widget adds a
- * dim `─` rule above it (two physical rows below the editor box) tying
- * the row to the box's bottom border;
- * only terminal width may switch it to zero rows. Fetch completion changes
- * text, never row count, so network timing can never move the prompt. The
- * row is inset LEFT_PAD/RIGHT_PAD columns from each edge (matching the
- * border's corner-to-π indent); on wide rows its usage bars stretch to
+ * Layout contract: at supported widths `renderRow` produces one content
+ * row (loading, data, stale, or unavailable) — or two when the complete
+ * wide (bars) layout needs a second row — and the widget adds a dim `─`
+ * rule above, tying the rows to the box's bottom border; only terminal
+ * width may switch it to zero rows. Fetch completion changes text and may
+ * switch a data layout between one and two rows, never anything larger.
+ * Rows are inset LEFT_PAD/RIGHT_PAD columns from each edge (matching the
+ * border's corner-to-π indent); on wide rows usage bars stretch to
  * fill the inset width, re-fit on every paint.
  */
 
@@ -48,7 +48,6 @@ const RIGHT_PAD = 4;
 const PAD_TEXT = " ".repeat(LEFT_PAD);
 const MIN_WIDTH = 40;
 const MEDIUM_WIDTH = 64;
-const WIDE_WIDTH = 100;
 const FETCH_TIMEOUT_MS = 10_000;
 const REFRESH_INTERVAL_MS = 5 * 60_000;
 const REFRESH_JITTER = 0.1;
@@ -608,21 +607,23 @@ export function renderRule(width: number, color: boolean = COLOR_DEFAULT): strin
 }
 
 /**
- * Render the footer as zero rows (below MIN_WIDTH) or exactly one row.
- * The row is inset LEFT_PAD columns from the left edge and reserves
- * RIGHT_PAD columns on the right, mirroring the editor border's
- * corner-to-π indent on both sides. Levels: wide
- * (bars + notes), medium (compact windows), narrow (active provider's
- * best window), hidden below MIN_WIDTH. Wide and medium start from every
- * labeled window per provider and degrade deterministically: identities
- * render only when the complete row fits with them; if wide bars would
- * cost a window, the row falls back to compact medium cells first. Only
- * then are named variant buckets shed before core duration buckets
- * (never a provider's last window), followed by whole trailing providers.
- * When wide content fits, leftover columns stretch its bars (leftmost first) so the
- * row fills the inset width exactly; the fit is recomputed every paint,
- * so resizes adapt. Provider chunks are delimited by a dim `│`. The row
- * is truncated to the inset width as the final guard and never wraps.
+ * Render the footer as zero rows (below MIN_WIDTH), one row, or — when
+ * one row cannot hold every labeled window with bars — two rows. Rows
+ * are inset LEFT_PAD columns from the left edge and reserve RIGHT_PAD
+ * columns on the right, mirroring the editor border's corner-to-π
+ * indent on both sides. Levels: wide (bars + notes), medium (compact
+ * windows), narrow (active provider's best window), hidden below
+ * MIN_WIDTH. Wide starts from every labeled window per provider and
+ * degrades deterministically: identities render only when the complete
+ * single row fits with them; when one wide row overflows, the complete
+ * layout is retried across two rows (bars intact) before any downgrade
+ * to compact medium cells. Only then are named variant buckets shed
+ * before core duration buckets (never a provider's last window),
+ * followed by whole trailing providers. When wide content fits, leftover
+ * columns stretch its bars (leftmost first) so each row fills the inset
+ * width exactly; the fit is recomputed every paint, so resizes adapt.
+ * Provider chunks are delimited by a dim `│`. A one-row result is
+ * truncated to the inset width as the final guard and never wraps.
  */
 export function renderRow(state: FooterState, options: RenderOptions): string[] {
 	if (options.width < MIN_WIDTH) return [];
@@ -631,9 +632,11 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 	if (state.kind === "loading") return emit(paint("usage: loading…", PALETTE.dim, color));
 	if (state.kind === "unavailable") return emit(paint("usage: unavailable", PALETTE.dim, color));
 
-	// Levels key on the physical width; fitting math uses the inset budget.
-	let level: DetailLevel =
-		options.width >= WIDE_WIDTH ? "wide" : options.width >= MEDIUM_WIDTH ? "medium" : "narrow";
+	// The wide (bars) presentation is attempted at every width above the
+	// narrow breakpoint — one row first, then two — and medium is reached
+	// only by downgrade when neither fits. Fitting math uses the inset
+	// budget.
+	let level: DetailLevel = options.width >= MEDIUM_WIDTH ? "wide" : "narrow";
 	const width = options.width - LEFT_PAD - RIGHT_PAD;
 
 	// Stale parity with `code`: a failed refresh marks retained data stale
@@ -734,10 +737,113 @@ export function renderRow(state: FooterState, options: RenderOptions): string[] 
 		}
 	}
 
-	// Bars are decoration: before sacrificing any quota window, retry the
-	// complete row with compact cells. This also prevents crossing the wide
-	// breakpoint from making information disappear.
+	// Two-line wide tier: bars carry more information than compact text,
+	// so before degrading to text the complete wide layout is retried
+	// across two rows. Splits prefer provider boundaries; when a single
+	// provider's windows are what overflow, the split lands between window
+	// cells instead and the continuation row repeats the provider head so
+	// ownership stays legible. The suffix rides the bottom row and each
+	// row's bars stretch independently to fill the inset width. Greedy
+	// first fit is complete for two rows: the top row packs maximally, so
+	// the bottom row is as narrow as any two-row split can make it.
+	const renderTwoLineWide = (): string[] | undefined => {
+		const { entries } = chunkOrder(state, options.active);
+		const providers = entries.filter(
+			entry => (windowLists.get(entry.provider) ?? []).length > 0,
+		);
+		// buildChunks over empty window lists yields exactly the pseudo
+		// chunk (active-but-unreported), or nothing.
+		const pseudoCell: Cell | undefined = buildChunks(state, options, "wide", color, new Map(), false)[0];
+		const totalWindows = providers.reduce(
+			(sum, entry) => sum + (windowLists.get(entry.provider) ?? []).length,
+			0,
+		);
+		if (totalWindows + (pseudoCell !== undefined ? 1 : 0) < 2) return undefined;
+		interface Segment {
+			view: ProviderView;
+			windows: readonly WindowView[];
+		}
+		const segmentCell = (segment: Segment, sizeBar: () => number): Cell =>
+			providerChunk(
+				segment.view,
+				segment.windows,
+				segment.view.provider === options.active?.provider,
+				"wide",
+				options.now,
+				color,
+				undefined,
+				sizeBar,
+			);
+		const lineCells = (line: readonly Segment[], withPseudo: boolean, sizeBar: () => number): Cell[] => {
+			const cells: Cell[] = [];
+			if (withPseudo && pseudoCell !== undefined) cells.push(pseudoCell);
+			for (const segment of line) cells.push(segmentCell(segment, sizeBar));
+			return cells;
+		};
+		const lineWidth = (line: readonly Segment[], withPseudo: boolean): number =>
+			rowWidth(lineCells(line, withPseudo, () => BAR_CELLS));
+		const layout = (tail: Cell, granular: boolean): string[] | undefined => {
+			const budgets: readonly [number, number] = [width, width - visibleWidth(tail.plain)];
+			const atoms: Segment[] = [];
+			for (const view of providers) {
+				const windows = windowLists.get(view.provider) ?? [];
+				if (granular) for (const window of windows) atoms.push({ view, windows: [window] });
+				else atoms.push({ view, windows });
+			}
+			const lines: [Segment[], Segment[]] = [[], []];
+			let index: 0 | 1 = 0;
+			for (const atom of atoms) {
+				for (;;) {
+					const line = lines[index];
+					const last = line[line.length - 1];
+					const candidate: Segment[] =
+						last !== undefined && last.view.provider === atom.view.provider
+							? [
+									...line.slice(0, -1),
+									{ view: last.view, windows: [...last.windows, ...atom.windows] },
+							  ]
+							: [...line, atom];
+					if (lineWidth(candidate, index === 0) <= budgets[index]) {
+						lines[index] = candidate;
+						break;
+					}
+					if (index === 1) return undefined;
+					index = 1;
+				}
+			}
+			// The bottom row never sits empty under a full top row (a true
+			// one-line fit does not reach this tier; only the suffix pushed
+			// it over): pull the last window down beside the suffix.
+			if (lines[1].length === 0) {
+				const top = lines[0];
+				const last = top[top.length - 1];
+				if (last === undefined) return undefined;
+				const kept: Segment = { view: last.view, windows: last.windows.slice(0, -1) };
+				lines[0] = kept.windows.length > 0 ? [...top.slice(0, -1), kept] : top.slice(0, -1);
+				lines[1] = [{ view: last.view, windows: last.windows.slice(-1) }];
+				if (lineWidth(lines[1], false) > budgets[1]) return undefined;
+			}
+			const emitLine = (line: readonly Segment[], withPseudo: boolean, budget: number): Cell => {
+				const slack = budget - lineWidth(line, withPseudo);
+				const bars = line.reduce((sum, segment) => sum + segment.windows.length, 0);
+				return joinCells(lineCells(line, withPseudo, makeBarSizer(slack, bars)), providerSeparator);
+			};
+			return [
+				PAD_TEXT + emitLine(lines[0], true, budgets[0]).ansi,
+				PAD_TEXT + emitLine(lines[1], false, budgets[1]).ansi + tail.ansi,
+			];
+		};
+		const attempt = (tail: Cell): string[] | undefined => layout(tail, false) ?? layout(tail, true);
+		return (cueSuffix !== undefined ? attempt(cueSuffix) : undefined) ?? attempt(suffix);
+	};
+
+	// Bars outrank compact text: only when even two rows cannot hold every
+	// labeled window does the row degrade to compact cells. The medium
+	// retry also prevents shrinking width from making information
+	// disappear before the shedding ladder runs.
 	if (level === "wide" && rowWidth(chunks) > budget) {
+		const twoLine = renderTwoLineWide();
+		if (twoLine !== undefined) return twoLine;
 		level = "medium";
 		chunks = buildChunks(state, options, level, color, windowLists, false);
 		if (cueSuffix !== undefined && rowWidth(chunks) + visibleWidth(cueSuffix.plain) <= width) {
@@ -1007,8 +1113,7 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 
 	const componentFactory = (tui: { requestRender(): void }) => {
 		let cachedRows: string[] = [];
-		let cachedRow: string | undefined;
-		let cachedWidth: number | undefined;
+		let cachedKey: string | undefined;
 		repaint = () => tui.requestRender();
 		startPolling();
 		return {
@@ -1022,23 +1127,22 @@ export default function vaultUsageFooter(pi: ExtensionAPI): void {
 					nextRefreshAt,
 					refreshHint: unhookInput !== undefined ? REFRESH_KEY : undefined,
 				});
-				const row = rows[0];
-				if (row === undefined) {
+				if (rows.length === 0) {
 					if (cachedRows.length > 0) {
 						cachedRows = [];
-						cachedRow = undefined;
-						cachedWidth = undefined;
+						cachedKey = undefined;
 					}
 					return cachedRows;
 				}
-				if (row !== cachedRow || width !== cachedWidth) {
-					cachedRow = row;
-					cachedWidth = width;
-					// A dim rule line between the editor box and the row ties
-					// the footer to the border instead of floating below it
-					// (width keys the cache: the rule resizes even when the
-					// row text does not, e.g. loading/unavailable states).
-					cachedRows = [renderRule(width), row];
+				// Width keys the cache too: the rule resizes even when the
+				// row text does not (e.g. loading/unavailable states).
+				const key = width + "\u0000" + rows.join("\u0000");
+				if (key !== cachedKey) {
+					cachedKey = key;
+					// A dim rule line between the editor box and the rows
+					// ties the footer to the border instead of floating
+					// below it.
+					cachedRows = [renderRule(width), ...rows];
 				}
 				return cachedRows;
 			},

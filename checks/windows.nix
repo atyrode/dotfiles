@@ -91,19 +91,19 @@ pkgs.runCommand "check-windows-control-plane"
       exit 0
     fi
     case "$*" in
-      *'test -f /etc/atyrode/wsl-host.json'*)
+      *'--exec /run/current-system/sw/bin/test -f /etc/atyrode/wsl-host.json'*)
         test -f "$WSL_STATE/managed"
         ;;
-      *'test -f /etc/atyrode-bootstrap-pending'*)
+      *'--exec /run/current-system/sw/bin/test -f /etc/atyrode-bootstrap-pending'*)
         test -f "$WSL_STATE/pending"
         ;;
-      *'printf '*' /etc/atyrode-bootstrap-pending'*)
+      *'--exec /bin/sh -c '*' /etc/atyrode-bootstrap-pending'*)
         touch "$WSL_STATE/pending"
         ;;
       *'shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.alex-x86_64-linux-wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl'*)
         touch "$WSL_STATE/managed"
         ;;
-      *'rm -f /etc/atyrode-bootstrap-pending'*)
+      *'--exec /run/current-system/sw/bin/rm -f /etc/atyrode-bootstrap-pending'*)
         rm -f "$WSL_STATE/pending"
         ;;
       *'--install --from-file '*' --name atyrode-nixos '*' --no-launch'*)

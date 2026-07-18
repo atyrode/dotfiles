@@ -91,7 +91,7 @@ function Test-Administrator {
 function Test-DistroFile {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    & $script:WslExe -d $DistroName -u root --exec test -f $Path 2>$null
+    & $script:WslExe -d $DistroName -u root --exec /run/current-system/sw/bin/test -f $Path 2>$null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -200,7 +200,7 @@ else {
         '--no-launch'
     ) | Out-Null
     Invoke-ManagedDistro -Arguments @(
-        'sh', '-c',
+        '/bin/sh', '-c',
         "umask 022; printf '%s\n' '$revision' > $PendingMarker"
     )
 }
@@ -217,7 +217,7 @@ Invoke-ManagedDistro -Arguments @(
 if (-not (Test-DistroFile -Path $ManagedMarker)) {
     throw "NixOS activation completed without creating $ManagedMarker"
 }
-Invoke-ManagedDistro -Arguments @('rm', '-f', $PendingMarker)
+Invoke-ManagedDistro -Arguments @('/run/current-system/sw/bin/rm', '-f', $PendingMarker)
 Invoke-Wsl -Arguments @('--terminate', $DistroName) | Out-Null
 
 Write-Host 'Reconciling native Windows packages from the managed WSL control plane...'

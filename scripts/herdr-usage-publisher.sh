@@ -4,8 +4,12 @@ set -uo pipefail
 readonly interval_seconds=300
 readonly ttl_ms=720000
 readonly source_id="atyrode:usage"
-# Herdr v0.7.4 metadata values have no schema maxLength; this is the UI budget.
-readonly max_line_chars=60
+# Herdr v0.7.4 sidebar geometry: non-first rows sit behind a 3-cell prefix
+# (5 when indented) and the workspace scrollbar can take one more column, so
+# the managed config widens the sidebar to 28 to guarantee 21 usable cells.
+# The glyph-fused positional grammar's worst case (`C100 100/100 X100 100`)
+# is exactly 21; the slice below is a safety net only.
+readonly max_line_chars=21
 
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
@@ -62,21 +66,14 @@ usage_line() {
 			| if length == 0 then null else (sort_by(.rank, .used) | last.used) end;
 		def pct:
 			([., 0] | max | [., 1] | min) * 100 + 0.5 | floor;
-		def provider_line($short; $five; $seven; $fable; $spark):
-			([
-				if $five != null then "\($five | pct)% 5h" else empty end,
-				if $seven != null then
-					if $fable != null then "\($seven | pct)/\($fable | pct)% 7d"
-					else "\($seven | pct)% 7d"
-					end
-				elif $fable != null then "\($fable | pct)% 7d"
-				else empty
-				end
-			] | join(" · ")) as $core
-			| if $core == "" then empty
-			  else $short + " " + $core
-				+ (if $spark != null and $spark >= 0.05 then " +sp \($spark | pct)%" else "" end)
-			  end;
+		def num($v):
+			if $v != null then "\($v | pct)" else "-" end;
+		def provider_line($glyph; $five; $seven; $fable):
+			if $five == null and $seven == null and $fable == null then empty
+			else
+				$glyph + num($five) + " " + num($seven)
+				+ (if $fable != null then "/\($fable | pct)" else "" end)
+			end;
 		(if type == "array" then . else (.reports // []) end)
 		| [
 			.[]?
@@ -98,12 +95,11 @@ usage_line() {
 		| (chosen($rows; "anthropic"; "7d"; "fable")) as $fable
 		| (chosen($rows; "openai-codex"; "5h"; "core")) as $cx5
 		| (chosen($rows; "openai-codex"; "7d"; "core")) as $cx7
-		| (chosen($rows; "openai-codex"; "7d"; "spark")) as $spark
 		| [
-			provider_line("cl"; $cl5; $cl7; $fable; null),
-			provider_line("cx"; $cx5; $cx7; null; $spark)
+			provider_line("C"; $cl5; $cl7; $fable),
+			provider_line("X"; $cx5; $cx7; null)
 		]
-		| join(" · ")
+		| join(" ")
 		| .[0:$max_line_chars]
 		| select(length > 0)
 	' <<<"$response" 2>/dev/null

@@ -377,6 +377,11 @@ workspace, falling back to `code`'s machine-active vault for mixed or unbound
 workspaces. Managed OMP's vault-identity extension publishes only its non-secret
 loopback broker URL as `vault_broker`; the daemon joins that URL to each vault's
 compact quota line and also publishes a vault-bound pane `$usage` token. The
+line is positional and glyph-fused — `C<5h> <7d>[/<fable>] X<5h> <7d>`, with
+`-` marking an unreported window and spark never shown — and its worst case
+(`C100 100/100 X100 100`, 21 cells) is guaranteed untruncated by the managed
+28-column sidebar even behind the 5-cell indented-row prefix and the
+workspace scrollbar column. The
 Agents-sidebar row is left as a commented, per-agent opt-in to avoid crowding.
 The daemon alone reads mode-0600 broker token files, feeds bearer headers to
 `curl` without putting tokens in process arguments, and sends herdr only plain

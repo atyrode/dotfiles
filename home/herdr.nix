@@ -89,11 +89,23 @@ in
     # The settings UI cannot persist changes through the read-only store
     # link, so make the operator's preferred agent ordering the startup default.
     agent_panel_sort = "priority"
+    # 28 columns guarantees the usage row's 21-cell worst case renders
+    # untruncated even behind the 5-cell indented-row prefix plus the
+    # workspace scrollbar column (26-col default leaves only 20). Runtime
+    # resizing stays free between sidebar_min_width and sidebar_max_width.
+    # Live sessions restore their persisted width (source Persisted), which
+    # reload-config does not override — double-click the sidebar divider (or
+    # drag it) once after applying to adopt the new default.
+    sidebar_width = 28
 
     # Arrays replace herdr's defaults rather than extending them, so retain
     # the v0.7.4 space rows explicitly before adding the permanent usage row.
     # `server.reload_config` assigns both sidebar configs into live state, so
     # `herdr server reload-config` applies this after activation without restart.
+    # $usage grammar (positional, glyph-fused): `<C|X><5h%> <7d%>[/<fable%>]`
+    # per provider, single-space joined, `-` for an unreported window, spark
+    # never shown. Worst case `C100 100/100 X100 100` is exactly 21 cells,
+    # guaranteed by sidebar_width = 28 above.
     [ui.sidebar.spaces]
     rows = [
       ["state_icon", "workspace"],

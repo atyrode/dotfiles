@@ -343,9 +343,9 @@ herdr is the remote-first agent multiplexer under trial in
 [#269](https://github.com/atyrode/dotfiles/issues/269): its server runs on
 the machine where the agents run, so OMP panes on the VPS keep their
 lifecycle integration, survive disconnects, and resume across server
-restarts — the topology the cmux relay cannot serve today (#65). The same
-pinned binary is the server on the Linux hosts and the thin client on the
-Mac:
+restarts — the topology the retired relay-based predecessor could not
+serve (#65). The same pinned binary is the server on the Linux hosts and
+the thin client on the Mac:
 
 ```bash
 herdr                                        # on the VPS: launch or attach the server
@@ -365,8 +365,8 @@ native OMP resume on, pane history kept off disk, the private managed-SSH
 keepalive config on, in-TUI toasts), and the vendored skill
 (`agents/skills/herdr/SKILL.md`). herdr owns its mutable state and the
 version-stamped OMP integration file that activation seeds via
-`herdr integration install omp` — the same machine-local stance as the cmux
-hooks in #65, and `checks/herdr.nix` exercises the installer contract
+`herdr integration install omp` — the machine-local stance settled in #65,
+and `checks/herdr.nix` exercises the installer contract
 against a scratch agent directory on every platform.
 
 The integration extension is inert outside herdr panes (env-gated on

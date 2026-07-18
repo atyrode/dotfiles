@@ -53,22 +53,6 @@
         "type": "github"
       }
     },
-    "homebrew-cmux": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1782212236,
-        "narHash": "sha256-GBfbIdIV0mazErHiN241x5K2TPB49ABE6n2X3S8Us14=",
-        "owner": "manaflow-ai",
-        "repo": "homebrew-cmux",
-        "rev": "acf60b95d5bf43f4cbeef2c6c81cf06c48c4caf6",
-        "type": "github"
-      },
-      "original": {
-        "owner": "manaflow-ai",
-        "repo": "homebrew-cmux",
-        "type": "github"
-      }
-    },
     "homebrew-core": {
       "flake": false,
       "locked": {
@@ -163,7 +147,6 @@
       "inputs": {
         "home-manager": "home-manager",
         "homebrew-cask": "homebrew-cask",
-        "homebrew-cmux": "homebrew-cmux",
         "homebrew-core": "homebrew-core",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",

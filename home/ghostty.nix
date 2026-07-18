@@ -5,11 +5,12 @@ lib.mkIf pkgs.stdenv.isDarwin {
     enable = true;
     # Home Manager's generated zshrc hook sources
     # $GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration guarded
-    # only by the variable being set. cmux (libghostty) exports
-    # GHOSTTY_RESOURCES_DIR into its own bundle, which lacks Ghostty's layout,
-    # so every cmux pane printed "no such file or directory" at startup. The
-    # guarded replacement lives in home/zsh.nix; real Ghostty auto-injects its
-    # integration regardless, so nothing is lost there.
+    # only by the variable being set. libghostty embedders can export
+    # GHOSTTY_RESOURCES_DIR pointing at their own bundle, which lacks
+    # Ghostty's layout, so such panes printed "no such file or directory" at
+    # startup (#252). The guarded replacement lives in home/zsh.nix; real
+    # Ghostty auto-injects its integration regardless, so nothing is lost
+    # there.
     enableZshIntegration = false;
     # The ghostty source package does not build on darwin; the binary
     # repackage tracks the official release and stays pinned to nixpkgs.

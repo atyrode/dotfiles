@@ -66,9 +66,9 @@ receipts. See [Bootstrap](docs/bootstrap.md).
 ### macOS Apps
 - **Nix/Home Manager apps** - ChatGPT, Ghostty, Lichess, Obsidian, OrbStack,
   Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, and WhatsApp
-- **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, cmux, Codex
-  Desktop, Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and
-  Zen Browser, managed through nix-darwin
+- **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
+  Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen
+  Browser, managed through nix-darwin
 - **Manual/vendor-managed macOS apps** - ROLI Connect, ROLI Dashboard, ROLI
   Studio Player, and Vital stay outside the declarative setup until they have a
   stable public installer or package source.

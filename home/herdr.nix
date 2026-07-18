@@ -17,10 +17,10 @@
   # is supported and unknown nested keys are ignored, but a parse error makes
   # herdr fall back to ALL defaults with only a startup diagnostic —
   # checks/herdr.nix therefore parses this rendered file and re-asserts the
-  # keys below. Ownership matches cmux.json: durable operator policy lives in
-  # the store; the settings UI (prefix+s) cannot write through the read-only
-  # link, so machine-local experiments go through a temporary
-  # HERDR_CONFIG_PATH instead.
+  # keys below. Ownership matches Claude's settings.json: durable operator
+  # policy lives in the store; the settings UI (prefix+s) cannot write
+  # through the read-only link, so machine-local experiments go through a
+  # temporary HERDR_CONFIG_PATH instead.
   xdg.configFile."herdr/config.toml".text = ''
     # Managed by Nix (home/herdr.nix); edits here do not survive activation.
 
@@ -61,7 +61,7 @@
   '';
 
   # The integration file is herdr-managed, version-stamped mutable state
-  # (same stance as the cmux hooks in #65): the installer overwrites exactly
+  # (same machine-local stance as #65): the installer overwrites exactly
   # <agent dir>/extensions/herdr-omp-agent-state.ts and nothing else, and
   # the extension is a no-op outside herdr panes (env-gated on
   # HERDR_ENV/HERDR_SOCKET_PATH/HERDR_PANE_ID), so installing on every

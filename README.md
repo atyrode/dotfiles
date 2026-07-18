@@ -46,6 +46,8 @@ receipts. See [Bootstrap](docs/bootstrap.md).
 - **tmux** - Terminal multiplexer
 - **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
+- **herdr** - Pinned agent multiplexer under trial (#269): server-side panes
+  for VPS OMP sessions, thin client from the Mac
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
   native compilers come from committed dev shells, `mise.toml`, or native
@@ -91,6 +93,7 @@ code          # Profile generator TUI: type a prompt or turn the facet dials
 omp           # Mutable user-owned OMP; profile-aware resume, blocked update
 omp-managed   # Managed-layering launch target: defaults + policy over --config
 ompu          # Restricted launcher for deliberately untrusted repositories
+herdr         # Agent multiplexer server; from the Mac: herdr --remote tyrode.dev
 ```
 
 `code` opens a TUI whose facet dials and generated profiles work without local

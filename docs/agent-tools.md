@@ -13,6 +13,8 @@ Nix owns:
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, managed-settings guard
   extension, and vault-usage footer extension;
+- the pinned herdr multiplexer, its managed `~/.config/herdr/config.toml`,
+  and the vendored, review-gated herdr pane-orchestration skill (#269);
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
@@ -20,7 +22,10 @@ Nix owns:
 - mise itself, with no globally declared mise tools.
 
 OMP continues to own mutable runtime data such as authentication,
-sessions, caches, onboarding state, and machine-local UI state. Secrets never
+sessions, caches, onboarding state, and machine-local UI state. herdr
+likewise owns its mutable state — `~/.local/state/herdr`,
+`~/.herdr/worktrees`, and the version-stamped OMP integration extension its
+installer seeds into `~/.omp/agent/extensions/`. Secrets never
 belong in this repository or the Nix store.
 
 Activation does not rewrite or back up pre-existing mutable paths before Home
@@ -332,6 +337,67 @@ instead.
 The readable managed copies are linked under `~/.config/omp/`. Edit their
 sources in this repository instead of editing the links.
 
+## herdr
+
+herdr is the remote-first agent multiplexer under trial in
+[#269](https://github.com/atyrode/dotfiles/issues/269): its server runs on
+the machine where the agents run, so OMP panes on the VPS keep their
+lifecycle integration, survive disconnects, and resume across server
+restarts — the topology the cmux relay cannot serve today (#65). The same
+pinned binary is the server on the Linux hosts and the thin client on the
+Mac:
+
+```bash
+herdr                                        # on the VPS: launch or attach the server
+herdr --remote tyrode.dev --session agents   # from the Mac (Ghostty): attach
+```
+
+Remote attach reuses the server-side `~/.nix-profile/bin/herdr` (herdr
+probes the Nix profile paths before offering its own `~/.local/bin`
+installer) whenever client and server versions match — keeping both
+platforms on the one repository pin is what prevents a mutable remote copy
+from ever being installed.
+
+Nix owns the binary pin (`pkgs/herdr`, upstream release binaries with
+published digests), the managed `~/.config/herdr/config.toml`
+(`home/herdr.nix` documents every knob: onboarding and update polling off,
+native OMP resume on, pane history kept off disk, the private managed-SSH
+keepalive config on, in-TUI toasts), and the vendored skill
+(`agents/skills/herdr/SKILL.md`). herdr owns its mutable state and the
+version-stamped OMP integration file that activation seeds via
+`herdr integration install omp` — the same machine-local stance as the cmux
+hooks in #65, and `checks/herdr.nix` exercises the installer contract
+against a scratch agent directory on every platform.
+
+The integration extension is inert outside herdr panes (env-gated on
+`HERDR_ENV`/`HERDR_SOCKET_PATH`/`HERDR_PANE_ID`), and OMP discovers it from
+the user extensions directory in every launch mode — plain `omp` included —
+with no settings changes. Inside a herdr pane it is the lifecycle authority
+(working/blocked/idle, with the real approval or ask prompt text) and
+reports the session file or ID, which is what lets
+`session.resume_agents_on_restore` relaunch panes as `omp --resume=<ref>`
+after a server restart. Headless OMP runs (print/RPC) intentionally report
+nothing. Verify after activation:
+
+```bash
+herdr integration status   # expect: omp: current (v5) (…/herdr-omp-agent-state.ts)
+```
+
+Known v17.0.3 edge, measured live: OMP's `session_shutdown` extension event
+carries no payload, so herdr's release-on-quit guard is inert and a quit
+`omp` pane keeps its stale lifecycle authority for ~5 s until herdr's
+process-exit scan clears it. Filed upstream as
+[can1357/oh-my-pi#5965](https://github.com/can1357/oh-my-pi/issues/5965)
+(expose the already-recorded disposal reason); harmless for the trial
+beyond the brief stale sidebar state.
+
+Orchestration from inside a pane goes through the vendored `herdr` skill
+(`herdr pane split/run/read`, `herdr wait agent-status`, `herdr agent`
+subcommands); it requires `HERDR_ENV=1` and is inert elsewhere. Within one
+OMP session, OMP's own subagents and hub remain the coordination layer —
+herdr adds the cross-session, cross-repo layer plus the human-facing
+sidebar.
+
 ## Seeded plain-omp defaults
 
 `omp/plain-seed.yml` holds the operator's agreed defaults for plain `omp` —
@@ -406,11 +472,16 @@ removing machine-specific assumptions. The generic
 
 ## Updating
 
-The `update-pins` workflow refreshes the repository-owned binary pins (OMP
-and Codex) every six hours: `scripts/update-pins.sh` bumps versions and
+The `update-pins` workflow refreshes the repository-owned binary pins (OMP,
+Codex, `code`, and herdr) every six hours: `scripts/update-pins.sh` bumps versions and
 hashes, a bot pull request runs the full dispatched CI, and a green run
 merges itself. A red run leaves the pull request open for curation — that is
-the expected outcome when upstream changes bundled content. The manual flow
+the expected outcome when upstream changes bundled content. A herdr bump in
+particular deliberately stays red until the vendored skill is re-reviewed:
+`checks/herdr.nix` fails while `agents/skills/herdr/SKILL.md` lags the pin,
+because upstream skill text becomes agent instructions and must never
+refresh without review (`scripts/update-pins.sh` prints the upstream diff
+pointer alongside the bump). The manual flow
 below remains valid for hand-driven updates:
 
 1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`

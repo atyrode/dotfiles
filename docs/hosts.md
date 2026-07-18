@@ -18,7 +18,7 @@ points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-stat
   diagnostics, and Home Manager itself.
 - `development`: cross-repository Nix and shell quality tools, not project
   language runtimes.
-- `agent-tools`: Codex, OMP, managed agents, and their configuration.
+- `agent-tools`: Codex, OMP, herdr, managed agents, and their configuration.
 - `desktop`: operator-selected graphical applications.
 - `mobile`: Android device tooling.
 - `media`: audio/video conversion and inspection.

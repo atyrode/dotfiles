@@ -116,13 +116,17 @@ in
       ["$usage"],
     ]
 
-    # Opt-in per-agent decoration; uncomment to add the vault-bound OMP line.
-    # [ui.sidebar.agents.rows_by_agent]
-    # omp = [
-    #   ["state_icon", "workspace", "tab"],
-    #   ["agent"],
-    #   ["$usage"],
-    # ]
+    # Per-agent decoration (operator-enabled 2026-07-18): each OMP entry in
+    # the Agents section carries its own session vault's usage line, fed by
+    # the pane vault_broker token published by the vault-identity extension.
+    # Sessions started before that extension deployed advertise no vault and
+    # show no row until relaunched.
+    [ui.sidebar.agents.rows_by_agent]
+    omp = [
+      ["state_icon", "workspace", "tab"],
+      ["agent"],
+      ["$usage"],
+    ]
 
     [ui.toast]
     # In-TUI toasts render inside the server's TUI and therefore reach the

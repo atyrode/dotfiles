@@ -78,10 +78,8 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar_width')" = 28 ]
     taplo get -o json -f ${renderedConfig} 'ui.sidebar.spaces.rows' \
       | jq -e '. == [["state_icon", "workspace"], ["branch", "git_status"], ["$usage"]]' >/dev/null
-    if taplo get -f ${renderedConfig} 'ui.sidebar.agents.rows_by_agent.omp' >/dev/null 2>&1; then
-      echo "the OMP agent usage row must remain opt-in" >&2
-      exit 1
-    fi
+    taplo get -o json -f ${renderedConfig} 'ui.sidebar.agents.rows_by_agent.omp' \
+      | jq -e '. == [["state_icon", "workspace", "tab"], ["agent"], ["$usage"]]' >/dev/null
     # Formatter contract, deterministically: run the repository script (the
     # wrapped unit bakes store curl/herdr into PATH, so stubs target the
     # bare names the repo script calls) against stub brokers and a stub

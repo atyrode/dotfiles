@@ -51,10 +51,7 @@ are assembled into a read-only OMP extension-package root in the Nix store and
 injected explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
-caches. Inside managed herdr panes the vault-usage footer stays fully inert —
-the usage display moved to herdr's sidebar (the publisher below) — while the
-footer remains the usage surface for bare-terminal and non-herdr sessions.
-There it renders one responsive row below the editor
+caches. The vault-usage footer renders one responsive row below the editor
 box (where `code` shows its own usage panel), tied to the box by a dim `─`
 rule spanning the row's inset width (rule and row both sit inset 4 columns
 on each edge, mirroring the border's corner-to-π indent), for the launch
@@ -385,7 +382,9 @@ line is positional and glyph-fused — `C<5h> <7d>[/<fable>] X<5h> <7d>`, with
 (`C100 100/100 X100 100`, 21 cells) is guaranteed untruncated by the managed
 28-column sidebar even behind the 5-cell indented-row prefix and the
 workspace scrollbar column. The
-Agents-sidebar row is left as a commented, per-agent opt-in to avoid crowding.
+Agents-sidebar rows show the same line under every OMP entry, bound to that
+session's own vault; entries whose sessions predate the vault-identity
+extension advertise no vault and carry no row until relaunched.
 The daemon alone reads mode-0600 broker token files, feeds bearer headers to
 `curl` without putting tokens in process arguments, and sends herdr only plain
 usage text and loopback URLs—never credentials or reports. A twelve-minute TTL

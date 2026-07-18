@@ -3,7 +3,6 @@
   homeDirectory,
   homeModules,
   homebrew-cask,
-  homebrew-cmux,
   homebrew-core,
   lib,
   pkgs,
@@ -97,7 +96,6 @@ in
     taps = {
       "homebrew/homebrew-core" = homebrew-core;
       "homebrew/homebrew-cask" = homebrew-cask;
-      "manaflow-ai/homebrew-cmux" = homebrew-cmux;
     };
 
     mutableTaps = false;

@@ -151,8 +151,6 @@ let
   linuxBrokerSupervisor =
     linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Service.ExecStart;
   darwinBrokerAgent = darwinAgentTools.launchd.agents.atyrode-omp-auth-brokers;
-  linuxCmuxBrowserOverride = linuxAgentTools.home.sessionVariables.PI_BROWSER_CMUX;
-  darwinHasCmuxBrowserOverride = darwinAgentTools.home.sessionVariables ? PI_BROWSER_CMUX;
 in
 {
   auth-vaults =
@@ -164,8 +162,6 @@ in
         supervisor=${lib.escapeShellArg linuxBrokerSupervisor}
         test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
         test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
-        test ${lib.escapeShellArg linuxCmuxBrowserOverride} = 0
-        test ${lib.escapeShellArg (builtins.toJSON darwinHasCmuxBrowserOverride)} = false
         grep -Fq 'code-auth-vaults.json' "$supervisor"
         grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
         grep -Fq 'auth-broker serve --bind="$bind"' "$supervisor"

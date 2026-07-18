@@ -240,20 +240,31 @@ let
 
     // Two-line wide tier: when one row cannot hold every labeled window
     // with bars, the layout splits at a provider boundary across two rows
-    // (bars intact, no │ delimiter) and each row stretches to fill the
-    // inset width exactly.
+    // (bars intact, no │ delimiter). All bars stretch to one shared
+    // uniform width — the largest both rows fit — and the rows
+    // column-align into a table: heads and every window column's slots
+    // pad to their widest counterpart, so bar runs start at the same
+    // columns on both rows.
+    const barRuns = (row: string) => [...row.matchAll(/[█░]+/g)].map(match => match.index);
     const twoLine = renderRow(state, { ...base, width: 110, active });
     assert.equal(twoLine.length, 2);
     assert.ok(twoLine[0].startsWith("    *claude 5h "));
     assert.ok(twoLine[0].includes("█"));
     assert.ok(twoLine[0].includes("7d fable"));
     assert.ok(!twoLine[0].includes("│"));
-    assert.ok(twoLine[1].startsWith("    codex 5h "));
+    assert.ok(twoLine[1].startsWith("    codex   5h "), "head pads to align with *claude");
     assert.ok(twoLine[1].includes("█"));
     assert.ok(twoLine[1].includes("7d spark"));
     assert.ok(twoLine[1].includes("maxed"));
-    assert.equal(visibleWidth(twoLine[0]), 110 - 4);
-    assert.equal(visibleWidth(twoLine[1]), 110 - 4);
+    const runWidths = [...twoLine[0].matchAll(/[█░]+/g), ...twoLine[1].matchAll(/[█░]+/g)]
+      .map(match => match[0].length);
+    assert.equal(runWidths.length, 6, "three bars per row");
+    assert.equal(new Set(runWidths).size, 1, "all bars share one width");
+    assert.ok(runWidths[0] >= 10, "shared width never shrinks below base");
+    assert.equal(cells(twoLine[0]), cells(twoLine[1]), "equal bar cells per row");
+    assert.deepEqual(barRuns(twoLine[0]), barRuns(twoLine[1]), "bar columns align");
+    assert.ok(visibleWidth(twoLine[0]) <= 110 - 4);
+    assert.ok(visibleWidth(twoLine[1]) <= 110 - 4);
 
     // A suffix rides the bottom row of a two-line layout.
     const twoLineStale = renderRow(state, { ...base, width: 130, active, refreshFailed: true });
@@ -275,8 +286,11 @@ let
     assert.ok(splitWithin[0].includes("█"));
     assert.ok(splitWithin[1].startsWith("    *claude 7d fable "));
     assert.ok(splitWithin[1].includes("█"));
-    assert.equal(visibleWidth(splitWithin[0]), 72 - 4);
-    assert.equal(visibleWidth(splitWithin[1]), 72 - 4);
+    assert.equal(cells(splitWithin[0]), 20, "top row is budget-packed, so bars stay at base");
+    assert.equal(cells(splitWithin[1]), 10, "bottom shares the top row's bar width");
+    assert.equal(barRuns(splitWithin[0])[0], barRuns(splitWithin[1])[0], "first bars align");
+    assert.ok(visibleWidth(splitWithin[0]) <= 72 - 4);
+    assert.ok(visibleWidth(splitWithin[1]) <= 72 - 4);
 
     // At the first wide breakpoint, bars must yield before core windows.
     // This reproduces the live failure where Claude 5h disappeared behind

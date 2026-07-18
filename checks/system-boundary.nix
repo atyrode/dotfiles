@@ -126,10 +126,13 @@ let
     && config.homebrew.global.brewfile
     && config.homebrew.onActivation.autoUpdate == false
     && config.homebrew.onActivation.upgrade == false
-    && config.homebrew.onActivation.cleanup == "check"
+    && config.homebrew.onActivation.cleanup == "none"
+    && config.homebrew.onActivation.extraEnv.HOMEBREW_ASK == "1"
+    && config.homebrew.onActivation.extraFlags == [ "--cleanup" ]
     && sort configuredCasks == sort darwinCasks
-    && lib.hasInfix "manaflow-ai/cmux" homebrewActivation
-    && lib.hasInfix "untap --force" homebrewActivation
+    && lib.hasInfix "HOMEBREW_ASK=1" homebrewActivation
+    && lib.hasInfix "--cleanup" homebrewActivation
+    && !(lib.hasInfix "manaflow-ai/cmux" homebrewActivation)
     && lib.hasInfix "/usr/bin/dscl" postActivation
     && lib.hasInfix "/run/current-system/sw/bin/zsh" postActivation
     && lib.hasInfix "refusing to create" postActivation;
@@ -178,13 +181,13 @@ assert lib.assertMsg (
     ]
 ) "Android device-access policy differs from the reviewed boundary";
 assert lib.assertMsg (
-  boundary.homebrew.cleanup == "check"
+  boundary.homebrew.cleanup == "prompt"
   &&
     boundary.homebrew.forbiddenAutomaticModes == [
       "uninstall"
       "zap"
     ]
-) "Homebrew cleanup must remain report-only and non-destructive";
+) "Homebrew cleanup must require explicit operator confirmation";
 assert lib.assertMsg (
   sort capabilityOwners == sort knownCapabilities
 ) "the evaluated inventory has missing or unknown capability owners";

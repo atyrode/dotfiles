@@ -252,7 +252,8 @@ package inventory, then run `atyrode apply`.
 ### Add macOS Homebrew Apps
 
 Edit `darwin/casks.nix`, then run `atyrode apply` on macOS. nix-darwin
-generates the matching Brewfile and checks for non-destructive Homebrew drift.
+generates the matching Brewfile; Homebrew Bundle shows any undeclared state and
+asks before removing it during activation.
 
 ### Modify Shell Functions
 
@@ -289,12 +290,12 @@ anything still used in `~/.config/zsh/local.zsh`, then move the old entrypoint
 out of the way. Home Manager refuses to guess whether unmanaged shell startup
 code is safe to replace.
 
-**macOS Homebrew activation fails:**
-```bash
-atyrode apply
-```
+**macOS Homebrew activation reports undeclared packages:**
 
-The macOS configuration installs Homebrew through nix-homebrew and then applies the declared casks through nix-darwin. The first activation may ask for administrator authentication.
+Run `atyrode apply` interactively. Homebrew Bundle lists the taps, formulae, or
+casks absent from the generated Brewfile and asks whether to remove them.
+Accepting reconciles that state and continues activation; declining preserves it
+and aborts. The first activation may also ask for administrator authentication.
 
 ---
 

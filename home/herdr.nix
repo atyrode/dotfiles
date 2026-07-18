@@ -25,10 +25,12 @@ in
   # file seeded below. OMP auth, sessions, and caches stay OMP-owned.
   home.packages = [ pkgs.herdr ];
 
-  # Usage publication belongs beside herdr itself, so the agent-tools profile
-  # that imports this module is the single capability gate. v0 is Linux-only:
-  # the daemon discovers every local named session and is not installed as a
-  # Darwin launchd agent.
+  # Usage publication belongs beside herdr itself; the agent-tools profile
+  # that imports this module is the single capability gate. Dormant during
+  # the sidebar-sections fork phase: the unit exists for manual starts
+  # (systemctl --user start) but is not wanted by any target, because the
+  # terse token rows it fed were retired in favor of the fork's styled
+  # section. Linux-only; no Darwin launchd agent.
   systemd.user.services.atyrode-herdr-usage-publisher = lib.mkIf pkgs.stdenv.isLinux {
     Unit = {
       Description = "Publish OMP vault usage to Herdr sidebars";
@@ -42,7 +44,6 @@ in
       ExecStart = lib.getExe herdrUsagePublisher;
       Restart = "on-failure";
     };
-    Install.WantedBy = [ "default.target" ];
   };
 
   # Schema verified against herdr v0.7.4 (src/config/model.rs). Partial TOML
@@ -89,44 +90,6 @@ in
     # The settings UI cannot persist changes through the read-only store
     # link, so make the operator's preferred agent ordering the startup default.
     agent_panel_sort = "priority"
-    # 28 columns guarantees the usage row's 21-cell worst case renders
-    # untruncated even behind the 5-cell indented-row prefix plus the
-    # workspace scrollbar column (26-col default leaves only 20). Runtime
-    # resizing stays free between sidebar_min_width and sidebar_max_width.
-    # Live sessions restore a manually-set width (source Persisted), which
-    # reload-config does not override — drag the sidebar's OUTER RIGHT EDGE
-    # (the vertical column against the panes; the Spaces/Agents separator
-    # only resizes section heights) to >=28, or double-click that exact
-    # edge column to re-adopt the config default. Sessions that never
-    # dragged the sidebar snap to 28 on reload automatically.
-    sidebar_width = 28
-
-    # Arrays replace herdr's defaults rather than extending them, so retain
-    # the v0.7.4 space rows explicitly before adding the permanent usage row.
-    # `server.reload_config` assigns both sidebar configs into live state, so
-    # `herdr server reload-config` applies this after activation without restart.
-    # $usage grammar (positional, glyph-fused): `<C|X><5h%> <7d%>[/<fable%>]`
-    # per provider, single-space joined, `-` for an unreported window, spark
-    # never shown. Worst case `C100 100/100 X100 100` is exactly 21 cells,
-    # guaranteed by sidebar_width = 28 above.
-    [ui.sidebar.spaces]
-    rows = [
-      ["state_icon", "workspace"],
-      ["branch", "git_status"],
-      ["$usage"],
-    ]
-
-    # Per-agent decoration (operator-enabled 2026-07-18): each OMP entry in
-    # the Agents section carries its own session vault's usage line, fed by
-    # the pane vault_broker token published by the vault-identity extension.
-    # Sessions started before that extension deployed advertise no vault and
-    # show no row until relaunched.
-    [ui.sidebar.agents.rows_by_agent]
-    omp = [
-      ["state_icon", "workspace", "tab"],
-      ["agent"],
-      ["$usage"],
-    ]
 
     [ui.toast]
     # In-TUI toasts render inside the server's TUI and therefore reach the

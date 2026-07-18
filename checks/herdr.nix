@@ -34,8 +34,8 @@ assert lib.assertMsg (
 ) "the herdr usage publisher must remain Linux-only";
 assert lib.assertMsg (
   usagePublisher.Service.Restart == "on-failure"
-  && builtins.elem "default.target" usagePublisher.Install.WantedBy
-) "the Linux herdr usage publisher must restart on failure and start with the user session";
+  && !(usagePublisher ? Install && usagePublisher.Install ? WantedBy)
+) "the Linux herdr usage publisher must stay dormant (manual start only) during the fork phase";
 assert lib.assertMsg (lib.hasSuffix "/bin/atyrode-herdr-usage-publisher" (
   toString usagePublisher.Service.ExecStart
 )) "the usage publisher unit must exec the wrapped repository script";
@@ -75,11 +75,10 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'remote.manage_ssh_config')" = true ]
     [ "$(taplo get -f ${renderedConfig} 'ui.agent_panel_sort')" = priority ]
     [ "$(taplo get -f ${renderedConfig} 'ui.toast.delivery')" = herdr ]
-    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar_width')" = 28 ]
-    taplo get -o json -f ${renderedConfig} 'ui.sidebar.spaces.rows' \
-      | jq -e '. == [["state_icon", "workspace"], ["branch", "git_status"], ["$usage"]]' >/dev/null
-    taplo get -o json -f ${renderedConfig} 'ui.sidebar.agents.rows_by_agent.omp' \
-      | jq -e '. == [["state_icon", "workspace", "tab"], ["agent"], ["$usage"]]' >/dev/null
+    if taplo get -f ${renderedConfig} 'ui.sidebar' >/dev/null 2>&1; then
+      echo "sidebar row overrides were retired with the terse usage rows" >&2
+      exit 1
+    fi
     # Formatter contract, deterministically: run the repository script (the
     # wrapped unit bakes store curl/herdr into PATH, so stubs target the
     # bare names the repo script calls) against stub brokers and a stub

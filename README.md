@@ -1,6 +1,6 @@
 # dotfiles
 
-Reproducible, agent-first personal operating environment for [Alex Tyrode](https://tyrode.dev), managed with Nix and Home Manager across macOS and Linux. nix-darwin owns macOS system activation, with nix-homebrew providing native cask apps.
+Reproducible, agent-first personal operating environment for [Alex Tyrode](https://tyrode.dev). Nix and Home Manager own macOS and Linux; a reviewed WinGet Configuration owns native Windows packages and settings. nix-darwin owns macOS system activation, with nix-homebrew providing native cask apps.
 
 ## Quick start
 
@@ -12,17 +12,27 @@ cd ~/nix-dotfiles
 ./install.sh apply --config alex-x86_64-linux
 ```
 
+**Native Windows, from a reviewed checkout:**
+
+```powershell
+.\windows\apply.ps1 plan
+.\windows\apply.ps1 apply
+```
+
 **Supported fresh-machine command:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
 ```
 
-The fetched `get.sh` only clones the repository and hands off to the cloned
-`install.sh`; cloning first and running `./install.sh apply --config <host>`
-yourself remains equivalent. Omit the host to pick interactively from the
-registered presets for this machine, each described with what it installs;
-`atyrode capabilities list` shows the same descriptions per capability later.
+The fetched `get.sh` is the Nix entry point: it only clones the repository and
+hands off to the cloned `install.sh`; cloning first and running
+`./install.sh apply --config <host>` yourself remains equivalent. Omit the host
+to pick interactively from the registered Nix presets for this machine, each
+described with what it installs; `atyrode capabilities list` shows the same
+descriptions per capability later. Native Windows instead uses the checked-in
+WinGet Configuration through `windows/apply.ps1`; its default `plan` action
+validates and displays the resources without applying them.
 
 Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
 will not guess between desktop, development, or Mac profiles. It uses
@@ -68,10 +78,15 @@ receipts. See [Bootstrap](docs/bootstrap.md).
   Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, and WhatsApp
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
   Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen
-  Browser, managed through nix-darwin
+  Twilight, managed through nix-darwin
 - **Manual/vendor-managed macOS apps** - ROLI Connect, ROLI Dashboard, ROLI
   Studio Player, and Vital stay outside the declarative setup until they have a
   stable public installer or package source.
+
+### Windows Apps
+- **WinGet Configuration** - Zen Twilight is the initial native Windows package
+- **Explicit boundary** - Windows application accounts and mutable state remain
+  application-owned; WSL uses the Linux/Nix path separately
 
 ---
 
@@ -85,6 +100,12 @@ atyrode apply --plan  # Inspect the exact host, source, and backend
 atyrode apply        # Activate the recorded host configuration
 atyrode doctor host   # Validate the managed machine identity
 atyrode doctor system # Audit system-owned operational prerequisites
+```
+
+### Native Windows
+```powershell
+.\windows\apply.ps1 plan  # Validate and display the desired resources
+.\windows\apply.ps1 apply # Apply the reviewed WinGet Configuration
 ```
 
 ### Agent Tools

@@ -8,6 +8,11 @@ only titles, purpose, demonstrated consumers, and state/security/delivery
 boundaries. It intentionally contains no ordinary installed package or cask
 arrays.
 
+That evaluated inventory covers the Nix-backed macOS and Linux systems. Native
+Windows has a separate, directly reviewed package declaration in
+`windows/configuration.winget`; it is applied by WinGet/DSC and does not pretend
+to be an evaluated Nix host or capability.
+
 Each manifest is schema version 1 and identifies the exact flake revision,
 system, and platform. Package and cask rows include deterministic name, version,
 description, homepage, delivery, and source fields. Missing pinned metadata uses
@@ -37,6 +42,9 @@ sessions, caches, device identities, or other mutable state.
   system-owned. The `security` capability contains network diagnostics; ClamAV
   is intentionally unowned because there is no signature-update and scanning
   workflow.
+- Native Windows packages and settings are declared by WinGet Configuration.
+  Application accounts, profiles, update services, and caches remain
+  application- or operating-system-owned; WSL is a separate Linux/Nix boundary.
 - Python/Pillow/uv, Node/Bun/Deno, Go, Rust, and GCC are project-owned. A Nix
   project commits a dev shell and `.envrc`; other projects commit `mise.toml`
   plus their native manifest. Nix and mise must not own the same project runtime.

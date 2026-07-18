@@ -692,6 +692,7 @@
           classify-ci-paths = import ./checks/classify-ci-paths.nix { inherit pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           treefmt = treefmtEval.${system}.config.build.check treefmtSources;
+          windows-configuration = import ./checks/windows-configuration.nix { inherit pkgs; };
         }
         // lib.optionalAttrs isLinux {
           portable-profiles = import ./checks/portable-profiles.nix {

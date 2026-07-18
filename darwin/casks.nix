@@ -10,5 +10,5 @@
   "plugdata"
   "sonos"
   "steam"
-  "zen"
+  "zen@twilight"
 ]

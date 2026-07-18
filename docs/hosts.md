@@ -1,12 +1,14 @@
 # Hosts and capabilities
 
-`hosts/default.nix` is the authoritative registry for supported dotfiles
-configurations. A host entry contains stable, non-secret facts: its canonical
-configuration ID, a one-line description, system, platform, user, home
-directory, optional hostname, and selected capabilities. Hosts are the offered
-presets: `inventory/hosts.tsv` is the
-committed flat projection the bootstrap picker reads before Nix exists, and
-the host-registry check keeps it identical to the registry.
+`hosts/default.nix` is the authoritative registry for supported Nix-backed
+dotfiles configurations. A host entry contains stable, non-secret facts: its
+canonical configuration ID, a one-line description, system, platform, user,
+home directory, optional hostname, and selected capabilities. Hosts are the
+offered Nix presets: `inventory/hosts.tsv` is the committed flat projection the
+bootstrap picker reads before Nix exists, and the host-registry check keeps it
+identical to the registry. Native Windows is intentionally not a synthetic Nix
+host; its WinGet/DSC boundary is documented in
+[Home Manager and system boundary](system-boundary.md#native-windows-boundary).
 
 Capabilities are declarative Home Manager modules, not imperative `nix
 profile` state. Home Manager generations remain activation history and rollback

@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://aka.ms/configuration-dsc-schema/0.2
+properties:
+  resources:
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: zenTwilight
+      directives:
+        description: Install Zen Browser Twilight
+      settings:
+        id: Zen-Team.Zen-Browser.Twilight
+        source: winget
+  configurationVersion: 0.2.0

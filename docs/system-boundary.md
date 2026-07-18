@@ -28,6 +28,23 @@ its Home Manager profiles. Dotfiles do not import infrastructure or acquire
 production identity, disks, services, or secrets. See [Portable Home Manager
 profiles](portable-profiles.md).
 
+## Native Windows boundary
+
+Native Windows is deliberately parallel to, rather than represented as, a Nix
+host. `windows/configuration.winget` declares native packages and settings with
+Microsoft WinGet and DSC resources; `windows/apply.ps1` validates and displays
+that configuration by default and applies it only after an explicit `apply`.
+The script and configuration do not install Nix, enter `hosts/default.nix`, or
+claim a Home Manager generation.
+
+WinGet and reviewed DSC resources own declared native package and settings
+state. Windows, application installers, and the operator retain service,
+credential, update, and application-runtime state. A WSL environment is a
+separate Linux consumer of the Nix/Home Manager path; it does not make Home
+Manager authoritative for the Windows host. Mozilla authentication and Zen
+profile data remain Zen-owned and are never read or copied by this repository.
+
+
 ## Installed is not operational
 
 Package presence proves only that a program can be invoked. Operational

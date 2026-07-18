@@ -1,58 +1,72 @@
+# Carry the atyrode/herdr fork during the sidebar-sections trial. If the trial
+# ends, resume pinning upstream release binaries instead of carrying this fork.
 {
-  fetchurl,
+  callPackage,
+  cctools ? null,
+  fetchFromGitHub,
+  git,
   lib,
+  pkg-config,
+  runCommand,
+  rustPlatform,
   stdenv,
+  xcbuild ? null,
+  zig_0_15,
+  zstd,
 }:
 
 let
   version = "0.7.4";
-  sources = {
-    "x86_64-linux" = {
-      asset = "herdr-linux-x86_64";
-      hash = "sha256-vA/ALUulAPnKwjU6Q+Z/4DZ4Xsym61U3jgUPrDwQMFk=";
-    };
-    "aarch64-linux" = {
-      asset = "herdr-linux-aarch64";
-      hash = "sha256-VE4AAt5CgG0atkzN7zp+dBTyRxewtrAivJ5X0u79JqI=";
-    };
-    "x86_64-darwin" = {
-      asset = "herdr-macos-x86_64";
-      hash = "sha256-3fQwEzNS4XEkE9XYZbNKSFVG9GWIk/yJmGJX1lp1hag=";
-    };
-    "aarch64-darwin" = {
-      asset = "herdr-macos-aarch64";
-      hash = "sha256-JJkuFiXb3LGDVKWeKZ5LJjwxJACzE5bNwHzUbtV/JKc=";
-    };
+  forkRev = "50aaa2ec046ee26ff407c20f49de496f522512a8";
+
+  src = fetchFromGitHub {
+    owner = "atyrode";
+    repo = "herdr";
+    rev = forkRev;
+    hash = "sha256-dBOQYLFitJ+E3XNz44Ag3CIrBxFj16CmVPp7qil0ssg=";
   };
-  source =
-    sources.${stdenv.hostPlatform.system}
-      or (throw "Unsupported herdr platform: ${stdenv.hostPlatform.system}");
+
+  zigDeps = callPackage "${src}/vendor/libghostty-vt/build.zig.zon.nix" {
+    name = "herdr-libghostty-vt-zig-cache";
+    inherit zstd;
+    linkFarm =
+      name: entries:
+      runCommand name { } ''
+        mkdir -p "$out"
+        ${lib.concatMapStringsSep "\n" (entry: ''
+          cp -rL ${entry.path} "$out/${entry.name}"
+        '') entries}
+      '';
+  };
 in
-stdenv.mkDerivation {
+rustPlatform.buildRustPackage {
   pname = "herdr";
-  inherit version;
+  inherit src version;
 
-  # Release assets are the bare executables (musl-static on Linux, so no ELF
-  # interpreter patching), published with per-asset sha256 digests. nixpkgs
-  # carries herdr, but upstream releases outpace it and the trial (#269)
-  # depends on v0.7.4 fixes (OMP lifecycle report retry, refreshed skill), so
-  # this stays repository-owned like the other agent binaries. The pinned
-  # binary lives under /nix/store, which herdr detects to hard-disable its
-  # self-updater; updates flow through scripts/update-pins.sh.
-  src = fetchurl {
-    url = "https://github.com/ogulcancelik/herdr/releases/download/v${version}/${source.asset}";
-    inherit (source) hash;
+  cargoHash = "sha256-XHzZy2tKLbMQy4POmXowUcGf77ZPunG/oQ3P2wOoVls=";
+
+  nativeBuildInputs = [
+    git
+    pkg-config
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isDarwin [
+    cctools
+    xcbuild
+  ];
+
+  env = {
+    LIBGHOSTTY_VT_OPTIMIZE = "ReleaseFast";
+    LIBGHOSTTY_VT_SIMD = "true";
+    LIBGHOSTTY_VT_ZIG_SYSTEM_DIR = zigDeps;
+    ZIG = lib.getExe zig_0_15;
   };
 
-  dontUnpack = true;
-  dontPatchELF = true;
-  dontStrip = true;
-
-  installPhase = ''
-    runHook preInstall
-    install -Dm755 "$src" "$out/bin/herdr"
-    runHook postInstall
+  preBuild = ''
+    export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache"
+    export ZIG_LOCAL_CACHE_DIR="$TMPDIR/zig-local-cache"
   '';
+
+  doCheck = false;
 
   postFixup = ''
     export HOME="$TMPDIR/home"
@@ -60,13 +74,19 @@ stdenv.mkDerivation {
     "$out/bin/herdr" completion zsh > "$out/share/zsh/site-functions/_herdr"
   '';
 
+  passthru.forkRev = forkRev;
+
   meta = {
     description = "Terminal workspace manager for AI coding agents";
     homepage = "https://github.com/ogulcancelik/herdr";
     changelog = "https://github.com/ogulcancelik/herdr/releases/tag/v${version}";
     license = lib.licenses.agpl3Plus;
     mainProgram = "herdr";
-    platforms = builtins.attrNames sources;
-    sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+      "x86_64-darwin"
+      "aarch64-darwin"
+    ];
   };
 }

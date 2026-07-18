@@ -1,5 +1,17 @@
 { lib, pkgs, ... }:
 
+let
+  herdrUsagePublisher = pkgs.writeShellApplication {
+    name = "atyrode-herdr-usage-publisher";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+      pkgs.herdr
+      pkgs.jq
+    ];
+    text = builtins.readFile ../scripts/herdr-usage-publisher.sh;
+  };
+in
 {
   # herdr trial (#269): the agent multiplexer whose server runs where the
   # agents run. On the Linux hosts `herdr` is the server the Mac attaches to
@@ -12,6 +24,26 @@
   # worktrees (~/.herdr/worktrees), and the version-stamped OMP integration
   # file seeded below. OMP auth, sessions, and caches stay OMP-owned.
   home.packages = [ pkgs.herdr ];
+
+  # Usage publication belongs beside herdr itself, so the agent-tools profile
+  # that imports this module is the single capability gate. v0 is Linux-only:
+  # the daemon discovers every local named session and is not installed as a
+  # Darwin launchd agent.
+  systemd.user.services.atyrode-herdr-usage-publisher = lib.mkIf pkgs.stdenv.isLinux {
+    Unit = {
+      Description = "Publish OMP vault usage to Herdr sidebars";
+      After = [
+        "network.target"
+        "atyrode-omp-auth-brokers.service"
+      ];
+    };
+    Service = {
+      Type = "simple";
+      ExecStart = lib.getExe herdrUsagePublisher;
+      Restart = "on-failure";
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
 
   # Schema verified against herdr v0.7.4 (src/config/model.rs). Partial TOML
   # is supported and unknown nested keys are ignored, but a parse error makes
@@ -57,6 +89,25 @@
     # The settings UI cannot persist changes through the read-only store
     # link, so make the operator's preferred agent ordering the startup default.
     agent_panel_sort = "priority"
+
+    # Arrays replace herdr's defaults rather than extending them, so retain
+    # the v0.7.4 space rows explicitly before adding the permanent usage row.
+    # `server.reload_config` assigns both sidebar configs into live state, so
+    # `herdr server reload-config` applies this after activation without restart.
+    [ui.sidebar.spaces]
+    rows = [
+      ["state_icon", "workspace"],
+      ["branch", "git_status"],
+      ["$usage"],
+    ]
+
+    # Opt-in per-agent decoration; uncomment to add the vault-bound OMP line.
+    # [ui.sidebar.agents.rows_by_agent]
+    # omp = [
+    #   ["state_icon", "workspace", "tab"],
+    #   ["agent"],
+    #   ["$usage"],
+    # ]
 
     [ui.toast]
     # In-TUI toasts render inside the server's TUI and therefore reach the

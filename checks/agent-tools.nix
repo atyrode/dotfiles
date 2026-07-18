@@ -162,14 +162,14 @@ in
         supervisor=${lib.escapeShellArg linuxBrokerSupervisor}
         test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
         test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
-        grep -Fq 'code-auth-vaults.json' "$supervisor"
+        grep -Fq '/code/auth-vaults.json' "$supervisor"
         grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
         grep -Fq 'auth-broker serve --bind="$bind"' "$supervisor"
         grep -Fq 'invalid OMP auth vault manifest; keeping current brokers' "$supervisor"
 
         rm -rf /tmp/check-agent-auth-vaults
-        mkdir -p /tmp/check-agent-auth-vaults/xdg-config/atyrode
-        cat > /tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json <<'JSON'
+        mkdir -p /tmp/check-agent-auth-vaults/xdg-config/code
+        cat > /tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json <<'JSON'
         [
           {
             "id": "primary",
@@ -193,7 +193,7 @@ in
           }
         ]
         JSON
-        chmod 0600 /tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json
+        chmod 0600 /tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json
 
         export BROKER_STUB_LOG="$TMPDIR/broker-starts"
         : > "$BROKER_STUB_LOG"
@@ -207,7 +207,7 @@ in
         done
         test "$(wc -l < "$BROKER_STUB_LOG")" = 2
 
-        manifest=/tmp/check-agent-auth-vaults/xdg-config/atyrode/code-auth-vaults.json
+        manifest=/tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json
         cp "$manifest" "$TMPDIR/valid-manifest.json"
         jq '.[0].brokerUrl = "http://not-loopback:1"' "$manifest" > "$TMPDIR/invalid.json"
         mv "$TMPDIR/invalid.json" "$manifest"
@@ -501,7 +501,7 @@ in
 
         test "$(
           find ${pkgs.omp-configured.platformRoot}/extensions -maxdepth 1 -name '*.ts' -printf '%f\n' | sort | paste -sd, -
-        )" = "managed-settings-guard.ts,vault-usage-footer.ts"
+        )" = "herdr-vault-identity.ts,managed-settings-guard.ts,vault-usage-footer.ts"
         grep -q 'isolated: true' ${parallelWriteRule}
 
         test "$(
@@ -509,6 +509,7 @@ in
         )" -eq 6
         test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 6
         test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
+        test -f ${pkgs.omp-configured.platformRoot}/extensions/herdr-vault-identity.ts
         test -f ${pkgs.omp-configured.platformRoot}/extensions/vault-usage-footer.ts
         test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md
         test -f ${pkgs.omp-configured.platformRoot}/rules/parallel-write-isolation.md

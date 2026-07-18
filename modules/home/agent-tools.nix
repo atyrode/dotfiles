@@ -35,7 +35,7 @@ let
   # Vault definitions are machine-local. The repository ships only a generic
   # supervisor that validates the local manifest and reconciles broker children
   # whenever an atomic manifest replacement changes its content.
-  vaultManifest = "${config.xdg.configHome}/atyrode/code-auth-vaults.json";
+  vaultManifest = "${config.xdg.configHome}/code/auth-vaults.json";
   rawOmpPackage = cfg.ompPackage.rawOmp or pkgs.omp;
   rawOmp = lib.getExe rawOmpPackage;
   brokerSupervisor = pkgs.writeShellScript "omp-auth-brokers" ''

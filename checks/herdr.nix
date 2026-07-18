@@ -17,6 +17,7 @@ let
   clientPackages = map lib.getName client.home.packages;
   vendoredSkill = builtins.readFile ../agents/skills/herdr/SKILL.md;
   renderedConfig = pkgs.writeText "herdr-config.toml" herdrConfig;
+  usagePublisher = server.systemd.user.services.atyrode-herdr-usage-publisher;
 in
 assert lib.assertMsg (builtins.elem "herdr" serverPackages)
   "the headless Linux baseline must carry the pinned herdr server (#269)";
@@ -28,6 +29,13 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   server.home.activation ? seedHerdrOmpIntegration
 ) "activation must seed the herdr OMP integration (home/herdr.nix)";
+assert lib.assertMsg (
+  !(client.systemd.user.services ? atyrode-herdr-usage-publisher)
+) "the herdr usage publisher must remain Linux-only";
+assert lib.assertMsg (
+  usagePublisher.Service.Restart == "on-failure"
+  && builtins.elem "default.target" usagePublisher.Install.WantedBy
+) "the Linux herdr usage publisher must restart on failure and start with the user session";
 assert lib.assertMsg
   (lib.hasInfix "HERDR_SKILL_UPSTREAM_VERSION=${pkgs.herdr.version}" vendoredSkill)
   "agents/skills/herdr/SKILL.md lags the pkgs/herdr pin ${pkgs.herdr.version}: review the upstream SKILL.md diff at the new tag, refresh the vendored copy, and update its HERDR_SKILL_UPSTREAM_VERSION marker";
@@ -35,12 +43,15 @@ pkgs.runCommand "check-herdr"
   {
     nativeBuildInputs = [
       pkgs.herdr
+      pkgs.jq
       pkgs.taplo
     ];
   }
   ''
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"
+    publisher=${lib.escapeShellArg usagePublisher.Service.ExecStart}
+    bash -n "$publisher"
 
     # The pinned asset must run on this platform and report the pinned
     # version — a wrong asset/hash pairing or a broken download dies here.
@@ -58,6 +69,12 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'remote.manage_ssh_config')" = true ]
     [ "$(taplo get -f ${renderedConfig} 'ui.agent_panel_sort')" = priority ]
     [ "$(taplo get -f ${renderedConfig} 'ui.toast.delivery')" = herdr ]
+    taplo get -o json -f ${renderedConfig} 'ui.sidebar.spaces.rows' \
+      | jq -e '. == [["state_icon", "workspace"], ["branch", "git_status"], ["$usage"]]' >/dev/null
+    if taplo get -f ${renderedConfig} 'ui.sidebar.agents.rows_by_agent.omp' >/dev/null 2>&1; then
+      echo "the OMP agent usage row must remain opt-in" >&2
+      exit 1
+    fi
 
     # The activation seed's real contract, under a scratch agent dir: the
     # installer must write the version-stamped extension exactly where OMP

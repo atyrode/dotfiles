@@ -10,6 +10,9 @@
     nix-darwin.url = "github:LnL7/nix-darwin";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
 
+    nixos-wsl.url = "github:nix-community/NixOS-WSL";
+    nixos-wsl.inputs.nixpkgs.follows = "nixpkgs";
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     nix-index-database.url = "github:nix-community/nix-index-database";
@@ -36,6 +39,7 @@
       home-manager,
       nix-darwin,
       nix-homebrew,
+      nixos-wsl,
       nix-index-database,
       treefmt-nix,
       homebrew-core,
@@ -74,6 +78,7 @@
         "whatsapp-for-mac"
       ];
       homebrewCasks = import ./darwin/casks.nix;
+      windowsPackageInventory = import ./windows/packages.nix;
 
       rawCapabilityModules = import ./home/profiles;
 
@@ -147,6 +152,7 @@
         name: host:
         let
           expectedPlatform = if lib.hasSuffix "-darwin" host.system then "darwin" else "linux";
+          activation = host.activation or null;
           capabilities = validateCapabilities {
             inherit name;
             inherit (host) system;
@@ -158,6 +164,23 @@
         assert lib.assertMsg (
           host.platform == expectedPlatform
         ) "host ${name} platform ${host.platform} does not match ${host.system}";
+        assert lib.assertMsg (builtins.elem activation [
+          "home-manager"
+          "nix-darwin"
+          "nixos-wsl"
+        ]) "host ${name} must declare a supported activation owner";
+        assert lib.assertMsg (
+          if host.platform == "darwin" then
+            activation == "nix-darwin"
+          else
+            builtins.elem activation [
+              "home-manager"
+              "nixos-wsl"
+            ]
+        ) "host ${name} activation owner ${toString activation} does not match platform ${host.platform}";
+        assert lib.assertMsg (
+          activation != "nixos-wsl" || builtins.isString (host.hostname or null)
+        ) "NixOS-WSL host ${name} must declare a stable hostname";
         assert lib.assertMsg (
           builtins.isString host.username && host.username != ""
         ) "host ${name} must declare a non-empty username";
@@ -170,6 +193,7 @@
         host
         // {
           inherit capabilities;
+          inherit activation;
           description = host.description or "";
           hostname = host.hostname or null;
         };
@@ -181,6 +205,7 @@
       publicHost = name: host: {
         id = name;
         inherit (host)
+          activation
           capabilities
           description
           homeDirectory
@@ -191,16 +216,18 @@
           ;
       };
       publicHosts = lib.mapAttrs publicHost hosts;
+      bootstrapHosts = lib.filterAttrs (_: host: host.activation != "nixos-wsl") publicHosts;
       hostRegistryJson = builtins.toJSON publicHosts;
-      # Flat projection consumed by get.sh before Nix exists on the machine;
-      # the host-registry check keeps the committed copy honest.
+      # Flat projection consumed by the macOS/Linux get.sh before Nix exists;
+      # NixOS-WSL has its own native get.ps1 boundary. The host-registry check
+      # keeps the committed bootstrap-eligible projection honest.
       hostsTsv = lib.concatMapStrings (
         name:
         let
-          host = publicHosts.${name};
+          host = bootstrapHosts.${name};
         in
         "${name}\t${host.system}\t${lib.concatStringsSep "," host.capabilities}\t${host.description}\n"
-      ) (builtins.attrNames publicHosts);
+      ) (builtins.attrNames bootstrapHosts);
 
       mkHostIdentityModule =
         {
@@ -275,6 +302,7 @@
               inherit homebrewCasks;
               hostRegistry = publicRegistry;
               revision = inventoryRevision;
+              windowsPackages = windowsPackageInventory;
             };
           })
           (
@@ -448,9 +476,30 @@
           ];
         };
 
+      mkNixosWslConfig =
+        name: host:
+        nixpkgs.lib.nixosSystem {
+          inherit (host) system;
+          specialArgs = {
+            inherit host;
+            hostId = name;
+            homeModules = modulesForHost name host;
+            hostRegistry = hosts;
+          };
+          modules = [
+            nixos-wsl.nixosModules.default
+            dotfilesHomeNixosModule
+            ./nixos/wsl.nix
+          ];
+        };
+
       canonicalHomeConfigs = lib.mapAttrs mkHomeConfig hosts;
-      darwinHosts = lib.filterAttrs (_name: host: host.platform == "darwin") hosts;
+      homeManagerHosts = lib.filterAttrs (_name: host: host.activation == "home-manager") hosts;
+      standaloneHomeConfigs = lib.mapAttrs mkHomeConfig homeManagerHosts;
+      darwinHosts = lib.filterAttrs (_name: host: host.activation == "nix-darwin") hosts;
       canonicalDarwinConfigs = lib.mapAttrs mkDarwinConfig darwinHosts;
+      nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
+      canonicalNixosWslConfigs = lib.mapAttrs mkNixosWslConfig nixosWslHosts;
       inventoryRevision = self.rev or self.dirtyRev or "dirty";
       inventoryBySystem = forAllSystems (
         system:
@@ -475,9 +524,10 @@
 
     in
     {
-      homeConfigurations = canonicalHomeConfigs;
+      homeConfigurations = standaloneHomeConfigs;
 
       darwinConfigurations = canonicalDarwinConfigs;
+      nixosConfigurations = canonicalNixosWslConfigs;
       inventory = inventoryBySystem;
       capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
 
@@ -492,6 +542,7 @@
         inherit capabilityDescriptions;
         hostRegistry = publicHosts;
         serverProfile = serverPolicy;
+        windowsPackages = windowsPackageInventory;
       };
 
       overlays.default = agentToolsOverlay;
@@ -563,6 +614,7 @@
             hostRegistry = publicHosts // {
               fixture-server = {
                 id = "fixture-server";
+                activation = "home-manager";
                 capabilities = [
                   "base"
                   "server"
@@ -576,6 +628,7 @@
               };
               fixture-security = {
                 id = "fixture-security";
+                activation = "home-manager";
                 capabilities = [
                   "base"
                   "security"
@@ -619,9 +672,10 @@
               }
               ''
                 jq -e '
-                  length >= 4
+                  length >= 5
                   and all(.[];
                     (.id | type == "string")
+                    and (.activation | IN("home-manager", "nix-darwin", "nixos-wsl"))
                     and (.system | type == "string")
                     and (.username | type == "string")
                     and (.homeDirectory | startswith("/"))
@@ -692,6 +746,11 @@
           classify-ci-paths = import ./checks/classify-ci-paths.nix { inherit pkgs; };
           production-facts = import ./checks/production-facts.nix { inherit pkgs; };
           treefmt = treefmtEval.${system}.config.build.check treefmtSources;
+          windows = import ./checks/windows.nix {
+            inherit lib pkgs;
+            nixosConfig = canonicalNixosWslConfigs.alex-x86_64-linux-wsl;
+            windowsPackages = windowsPackageInventory;
+          };
         }
         // lib.optionalAttrs isLinux {
           portable-profiles = import ./checks/portable-profiles.nix {

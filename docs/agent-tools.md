@@ -51,7 +51,10 @@ are assembled into a read-only OMP extension-package root in the Nix store and
 injected explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
-caches. The vault-usage footer renders one responsive row below the editor
+caches. Inside managed herdr panes the vault-usage footer stays fully inert —
+the usage display moved to herdr's sidebar (the publisher below) — while the
+footer remains the usage surface for bare-terminal and non-herdr sessions.
+There it renders one responsive row below the editor
 box (where `code` shows its own usage panel), tied to the box by a dim `─`
 rule spanning the row's inset width (rule and row both sit inset 4 columns
 on each edge, mirroring the border's corner-to-π indent), for the launch

@@ -93,9 +93,12 @@ in
     # untruncated even behind the 5-cell indented-row prefix plus the
     # workspace scrollbar column (26-col default leaves only 20). Runtime
     # resizing stays free between sidebar_min_width and sidebar_max_width.
-    # Live sessions restore their persisted width (source Persisted), which
-    # reload-config does not override — double-click the sidebar divider (or
-    # drag it) once after applying to adopt the new default.
+    # Live sessions restore a manually-set width (source Persisted), which
+    # reload-config does not override — drag the sidebar's OUTER RIGHT EDGE
+    # (the vertical column against the panes; the Spaces/Agents separator
+    # only resizes section heights) to >=28, or double-click that exact
+    # edge column to re-adopt the config default. Sessions that never
+    # dragged the sidebar snap to 28 on reload automatically.
     sidebar_width = 28
 
     # Arrays replace herdr's defaults rather than extending them, so retain

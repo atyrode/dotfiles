@@ -53,6 +53,11 @@
     # side only.
     manage_ssh_config = true
 
+    [ui]
+    # The settings UI cannot persist changes through the read-only store
+    # link, so make the operator's preferred agent ordering the startup default.
+    agent_panel_sort = "priority"
+
     [ui.toast]
     # In-TUI toasts render inside the server's TUI and therefore reach the
     # Mac thin client; "system" would fire on the headless VPS and the

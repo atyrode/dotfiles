@@ -73,21 +73,6 @@ in
     fi
   '';
 
-  # Retiring a declarative tap leaves native Homebrew state behind. Remove the
-  # reviewed cmux tap after nix-homebrew makes the tap tree writable and before
-  # nix-darwin's report-only bundle cleanup checks for drift.
-  system.activationScripts.setup-homebrew.text = lib.mkAfter ''
-    brew=/opt/homebrew/bin/brew
-    retired_tap=manaflow-ai/cmux
-    if [ -x "$brew" ] \
-      && /usr/bin/sudo --user=${lib.escapeShellArg username} --set-home "$brew" tap \
-        | /usr/bin/grep -Fxq "$retired_tap"; then
-      echo "nix-darwin: removing retired Homebrew tap $retired_tap" >&2
-      /usr/bin/sudo --user=${lib.escapeShellArg username} --set-home \
-        "$brew" untap --force "$retired_tap"
-    fi
-  '';
-
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
@@ -127,10 +112,14 @@ in
       brewfile = true;
     };
 
+    # Homebrew Bundle owns the reconciliation diff and confirmation prompt.
+    # Declining leaves undeclared packages in place and aborts activation.
     onActivation = {
       autoUpdate = false;
       upgrade = false;
-      cleanup = "check";
+      cleanup = "none";
+      extraEnv.HOMEBREW_ASK = "1";
+      extraFlags = [ "--cleanup" ];
     };
   };
 }

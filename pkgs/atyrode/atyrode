@@ -1624,7 +1624,7 @@ probe_homebrew_drift() {
   local expected_count expected_json actual_json
 
   expected_count="$(jq 'length' "$homebrew_cask_inventory")"
-  expected_json="$(jq -nc --argjson casks "$expected_count" '{cleanup:"check",expectedCasks:$casks}')"
+  expected_json="$(jq -nc --argjson casks "$expected_count" '{cleanup:"prompt",expectedCasks:$casks}')"
   if [[ "$platform" != darwin ]]; then
     actual_json='{"available":null,"drift":null}'
     system_check_add homebrew-drift nix-darwin false not-applicable platform-not-darwin \

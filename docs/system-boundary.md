@@ -103,9 +103,9 @@ Diagnostics do not start or restart services, change shells or groups, install
 udev rules, update antivirus data, start ADB, or remove Homebrew packages. In
 particular, the Android probe does not run `adb devices`, which could start a
 daemon and create authentication state. The Homebrew probe runs `brew bundle
-check` plus generated `brew bundle cleanup` in check mode, with standard input
-closed and without `--force` or `--zap`; missing and extra state must be
-reviewed and either declared or removed manually.
+check` plus generated `brew bundle cleanup` with standard input closed and
+without `--force` or `--zap`; it reports drift without offering the
+activation-only reconciliation prompt.
 
 ## Login-shell activation and recovery
 
@@ -140,8 +140,10 @@ does not pretend to own those settings; standalone Linux repairs belong to the
 system Nix installation, and NixOS repairs belong to the consuming
 infrastructure.
 
-On macOS, nix-darwin owns the immutable list of Homebrew taps and casks and
-uses `cleanup = "check"` with automatic update and upgrade disabled. This
-makes drift visible without automatically uninstalling operator-owned software.
-Homebrew's cellar and application state remain native mutable state rather than
-Nix store content.
+On macOS, nix-darwin owns the immutable list of Homebrew taps and casks.
+Activation delegates reconciliation to Homebrew Bundle with `--cleanup` and
+`HOMEBREW_ASK=1`: Homebrew shows the exact undeclared taps, formulae, and casks,
+then requires explicit operator confirmation before removing them. Declining
+aborts activation without removing the extra packages. Automatic update and
+upgrade remain disabled, and Homebrew's cellar and application state remain
+native mutable state rather than Nix store content.

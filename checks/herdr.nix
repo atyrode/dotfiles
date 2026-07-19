@@ -38,9 +38,12 @@ assert lib.assertMsg
     && !(usagePublisher ? Install && usagePublisher.Install ? WantedBy)
   )
   "the Linux herdr usage publisher stays dormant (manual start only); enabling it is an explicit operator decision";
-assert lib.assertMsg (lib.hasSuffix "/bin/code herdr-usage" (
-  toString usagePublisher.Service.ExecStart
-)) "the usage publisher unit must exec the pinned code binary's herdr-usage daemon";
+assert lib.assertMsg
+  (
+    lib.hasInfix "/bin/code herdr-usage " (toString usagePublisher.Service.ExecStart)
+    && lib.hasSuffix ''--refresh-hint "^a u"'' (toString usagePublisher.Service.ExecStart)
+  )
+  "the usage publisher unit must exec the pinned code binary's herdr-usage daemon and advertise the prefix+u refresh hint";
 assert lib.assertMsg
   (lib.hasInfix "HERDR_SKILL_UPSTREAM_VERSION=${pkgs.herdr.version}" vendoredSkill)
   "agents/skills/herdr/SKILL.md lags the pkgs/herdr pin ${pkgs.herdr.version}: review the upstream SKILL.md diff at the new tag, refresh the vendored copy, and update its HERDR_SKILL_UPSTREAM_VERSION marker";
@@ -61,6 +64,7 @@ pkgs.runCommand "check-herdr"
     # eval assertions above, without dragging the x86_64 closure here).
     code herdr-usage --help 2>&1 | grep -q -- '--once'
     code herdr-usage --help 2>&1 | grep -q -- '--interval'
+    code herdr-usage --help 2>&1 | grep -q -- '--refresh-hint'
 
     # The pinned asset must run on this platform and report the pinned
     # version — a wrong asset/hash pairing or a broken download dies here.
@@ -84,6 +88,8 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].highlight_token')" = vault_broker ]
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].max_rows')" = 18 ]
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].placement')" = below_agents ]
+    [ "$(taplo get -f ${renderedConfig} 'keys.command[0].key')" = prefix+u ]
+    taplo get -f ${renderedConfig} 'keys.command[0].command' | grep -q -- '--signal=SIGUSR1 atyrode-herdr-usage-publisher'
     if taplo get -f ${renderedConfig} 'ui.sidebar.spaces' >/dev/null 2>&1 ||
       taplo get -f ${renderedConfig} 'ui.sidebar.agents' >/dev/null 2>&1; then
       echo "spaces/agents row overrides were retired with the terse usage rows" >&2

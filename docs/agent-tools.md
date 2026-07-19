@@ -372,19 +372,20 @@ and `checks/herdr.nix` exercises the installer contract
 against a scratch agent directory on every platform.
 
 On Linux, Nix also carries the herdr usage publisher as dormant
-infrastructure for the sidebar-sections fork trial: the systemd user unit
-exists but is wanted by no target (start it manually with
-`systemctl --user start atyrode-herdr-usage-publisher` while developing).
-The terse `$usage` token rows it originally fed were retired — sidebar
-token rows cap out around 21 usable cells, which the operator judged
-unreadable — so the in-omp vault-usage footer remains the usage surface
-until the fork renders a properly styled section. The daemon's contracts
-are unchanged and check-pinned: per enabled vault it polls the broker's
-aggregate usage endpoint (bearer headers fed to `curl` via stdin, tokens
-never in process arguments), joins panes to vaults through the non-secret
-`vault_broker` pane token that managed OMP's vault-identity extension
-publishes, and emits only plain usage text and loopback URLs to herdr,
-with twelve-minute TTLs so anything it publishes self-evicts.
+infrastructure pending the sidebar-sections fork's visual trial: the systemd
+user unit is wanted by no target (start it manually with
+`systemctl --user start atyrode-herdr-usage-publisher`). It publishes the
+styled `usage` section to every local herdr session, with one bar per reported
+window and accounts deduplicated across enabled vaults by provider identity.
+Provider-tinted account/window titles, a cell-aligned percentage/reset grid,
+and reset-urgency emphasis make the rows scannable. Each row also matches the
+focused pane's `vault_broker` metadata token against its source broker URLs,
+so the active account is marked without changing the bar columns. Each cycle
+reads only brokers' snapshot identity metadata and aggregate usage; bearer
+headers reach `curl` through its stdin config, never process arguments, and
+only account/window labels, percentages, countdowns, colors, and loopback
+broker URL identifiers cross the herdr socket. Twelve-minute TTLs let stale
+sections self-evict.
 
 The integration extension is inert outside herdr panes (env-gated on
 `HERDR_ENV`/`HERDR_SOCKET_PATH`/`HERDR_PANE_ID`), and OMP discovers it from

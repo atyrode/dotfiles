@@ -74,92 +74,482 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'experimental.pane_history')" = false ]
     [ "$(taplo get -f ${renderedConfig} 'remote.manage_ssh_config')" = true ]
     [ "$(taplo get -f ${renderedConfig} 'ui.agent_panel_sort')" = priority ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar_sections_height')" = 18 ]
     [ "$(taplo get -f ${renderedConfig} 'ui.toast.delivery')" = herdr ]
-    if taplo get -f ${renderedConfig} 'ui.sidebar' >/dev/null 2>&1; then
-      echo "sidebar row overrides were retired with the terse usage rows" >&2
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].id')" = usage ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].title')" = usage ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].highlight_token')" = vault_broker ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].max_rows')" = 18 ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].placement')" = below_agents ]
+    if taplo get -f ${renderedConfig} 'ui.sidebar.spaces' >/dev/null 2>&1 ||
+      taplo get -f ${renderedConfig} 'ui.sidebar.agents' >/dev/null 2>&1; then
+      echo "spaces/agents row overrides were retired with the terse usage rows" >&2
       exit 1
     fi
-    # Formatter contract, deterministically: run the repository script (the
-    # wrapped unit bakes store curl/herdr into PATH, so stubs target the
-    # bare names the repo script calls) against stub brokers and a stub
-    # herdr CLI, and pin the glyph-fused positional grammar plus its
-    # 21-cell worst case — the width the managed 28-column sidebar
-    # guarantees behind the indented-row prefix and scrollbar column.
+
+    # End-to-end section contract: two enabled vault brokers share one Codex
+    # identity but carry distinct Claude identities. Stubs keep the live herdr
+    # session untouched while exercising socket discovery, per-URL broker
+    # reads, stdin-only section publication, account grouping, and styling.
     fixtures="$TMPDIR/fixtures"
     mkdir -p "$fixtures/bin" "$fixtures/xdg/herdr/sessions/smoke"
     touch "$fixtures/xdg/herdr/sessions/smoke/herdr.sock"
-    printf 'sekret-bearer-123\n' > "$fixtures/token"
-    printf '[{"id":"main","brokerUrl":"http://127.0.0.1:1","tokenFile":"%s"}]\n' \
-      "$fixtures/token" > "$fixtures/manifest.json"
+    printf 'sekret-bearer-alpha\n' > "$fixtures/token-alpha"
+    printf 'sekret-bearer-beta\n' > "$fixtures/token-beta"
+    chmod 0600 "$fixtures/token-alpha" "$fixtures/token-beta"
+
+    cat > "$fixtures/manifest.json" <<EOF
+    [
+      {
+        "id": "alpha",
+        "label": "alpha",
+        "brokerUrl": "http://127.0.0.1:41001",
+        "tokenFile": "$fixtures/token-alpha"
+      },
+      {
+        "id": "beta",
+        "label": "beta",
+        "brokerUrl": "http://127.0.0.1:41002",
+        "tokenFile": "$fixtures/token-beta"
+      }
+    ]
+    EOF
+    printf '%s\n' '{"selected":"alpha","disabled":[]}' > "$fixtures/vault-state.json"
+
+    cat > "$fixtures/alpha-snapshot.json" <<'EOF'
+    {"credentials":[
+      {
+        "provider":"anthropic",
+        "identityKey":"email:claude.alpha@example.test",
+        "credential":{"email":"claude.alpha@example.test","access":"snapshot-secret-alpha"}
+      },
+      {
+        "provider":"openai-codex",
+        "identityKey":"email:shared.codex@example.test",
+        "credential":{"email":"Shared.Codex@Example.Test","refresh":"snapshot-secret-codex"}
+      }
+    ]}
+    EOF
+    cat > "$fixtures/beta-snapshot.json" <<'EOF'
+    {"credentials":[
+      {
+        "provider":"anthropic",
+        "identityKey":"email:claude.beta@example.test",
+        "credential":{"email":"claude.beta@example.test","access":"snapshot-secret-beta"}
+      },
+      {
+        "provider":"openai-codex",
+        "identityKey":"email:shared.codex@example.test",
+        "credential":{"email":"Shared.Codex@Example.Test","refresh":"snapshot-secret-codex"}
+      }
+    ]}
+    EOF
+
+    # The fixed epoch (1700000000000 ms) is supplied by the date stub below.
+    # Input order is deliberately scrambled; output order is part of the
+    # contract. Alpha carries fable plus both Spark durations.
+    cat > "$fixtures/alpha-usage.json" <<'EOF'
+    {"reports":[
+      {
+        "provider":"openai-codex",
+        "metadata":{"email":"shared.codex@example.test"},
+        "limits":[
+          {
+            "label":"7 day",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.12},
+            "window":{"id":"7d","durationMs":604800000}
+          },
+          {
+            "label":"Spark 7 Day",
+            "scope":{"tier":"spark"},
+            "amount":{"usedFraction":0.67},
+            "window":{"durationMs":604800000,"resetsAt":1700273600000}
+          },
+          {
+            "label":"5 hour",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.23},
+            "window":{"durationMs":18000000,"resetsAt":1700001800000}
+          },
+          {
+            "label":"Spark",
+            "scope":{"tier":"spark","windowId":"5h"},
+            "amount":{"usedFraction":0.34},
+            "window":{"durationMs":18000000,"resetsAt":1700008220000}
+          }
+        ]
+      },
+      {
+        "provider":"anthropic",
+        "metadata":{"email":"claude.alpha@example.test"},
+        "limits":[
+          {
+            "label":"Fable",
+            "scope":{"tier":"fable"},
+            "amount":{"usedFraction":0.8},
+            "window":{"durationMs":604800000}
+          },
+          {
+            "label":"7 day",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.51},
+            "window":{"id":"7d","resetsAt":1700273600000}
+          },
+          {
+            "label":"5 hour",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.45},
+            "window":{"durationMs":18000000,"resetsAt":1700001800000}
+          }
+        ]
+      }
+    ]}
+    EOF
+    cat > "$fixtures/beta-usage.json" <<'EOF'
+    {"reports":[
+      {
+        "provider":"anthropic",
+        "metadata":{"email":"claude.beta@example.test"},
+        "limits":[
+          {
+            "label":"7-day",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.05},
+            "window":{"durationMs":604800000,"resetsAt":1700008220000}
+          }
+        ]
+      },
+      {
+        "provider":"openai-codex",
+        "metadata":{"email":"shared.codex@example.test"},
+        "limits":[
+          {
+            "label":"5 hour",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.23},
+            "window":{"durationMs":18000000,"resetsAt":1700001800000}
+          },
+          {
+            "label":"7 day",
+            "scope":{"tier":"-"},
+            "amount":{"usedFraction":0.12},
+            "window":{"durationMs":604800000}
+          },
+          {
+            "label":"Spark 5 Hour",
+            "scope":{"tier":"spark"},
+            "amount":{"usedFraction":0.34},
+            "window":{"durationMs":18000000,"resetsAt":1700008220000}
+          },
+          {
+            "label":"Spark 7 Day",
+            "scope":{"tier":"spark"},
+            "amount":{"usedFraction":0.67},
+            "window":{"durationMs":604800000,"resetsAt":1700273600000}
+          }
+        ]
+      }
+    ]}
+    EOF
 
     cat > "$fixtures/bin/curl" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "''${CURL_ARGS_LOG:?}"
-    cat > /dev/null  # consume the --config stdin without logging it
-    cat "''${CURL_FIXTURE:?}"
+    cat >/dev/null # consume --config stdin without exposing the bearer
+    if [ "''${CURL_FAIL:-0}" = 1 ]; then
+      exit 22
+    fi
+    url=
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --url ]; then
+        url=$2
+        break
+      fi
+      shift
+    done
+    case "$url" in
+      http://127.0.0.1:41001/v1/snapshot) cat "''${FIXTURE_ROOT:?}/alpha-snapshot.json" ;;
+      http://127.0.0.1:41001/v1/usage) cat "''${FIXTURE_ROOT:?}/alpha-usage.json" ;;
+      http://127.0.0.1:41002/v1/snapshot) cat "''${FIXTURE_ROOT:?}/beta-snapshot.json" ;;
+      http://127.0.0.1:41002/v1/usage) cat "''${FIXTURE_ROOT:?}/beta-usage.json" ;;
+      *)
+        printf 'unexpected URL: %s\n' "$url" >&2
+        exit 64
+        ;;
+    esac
     EOF
     cat > "$fixtures/bin/herdr" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "''${HERDR_ARGS_LOG:?}"
-    case "$1 $2" in
-      'pane list') printf '{"result":{"panes":[{"pane_id":"w1:p1","workspace_id":"w1","agent":"omp","tokens":{"vault_broker":"http://127.0.0.1:1"}}]}}\n' ;;
-      'workspace list') printf '{"result":{"workspaces":[{"workspace_id":"w1"}]}}\n' ;;
-      *) : ;;
-    esac
+    [ "''${HERDR_SOCKET_PATH:-}" = "''${EXPECTED_SOCKET:?}" ] || exit 65
+    if [ "$#" -eq 3 ] &&
+      [ "$1" = sidebar ] &&
+      [ "$2" = report-section ] &&
+      [ "$3" = --stdin ]; then
+      cat > "''${HERDR_STDIN_CAPTURE:?}"
+      exit 0
+    fi
+    exit 64
     EOF
-    chmod +x "$fixtures/bin/curl" "$fixtures/bin/herdr"
+    cat > "$fixtures/bin/date" <<'EOF'
+    #!${pkgs.runtimeShell}
+    [ "$#" -eq 1 ] && [ "$1" = '+%s%3N' ] || exit 64
+    printf '1700000000000\n'
+    EOF
+    chmod +x "$fixtures/bin/curl" "$fixtures/bin/herdr" "$fixtures/bin/date"
+
+    cat > "$fixtures/expected-rows.json" <<'EOF'
+    [
+      {
+        "bar": {
+          "fraction": 0.45,
+          "title": "alpha 5h",
+          "title_spans": [
+            {"text": "alpha ", "color": "#ff9f52", "dim": true},
+            {"text": "5h", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": " 45% ↻  30m",
+          "label_spans": [
+            {"text": " 45%", "color": "subtext0"},
+            {"text": " ↻  30m", "color": "#c8d0dc"}
+          ],
+          "match_values": ["http://127.0.0.1:41001"],
+          "fill": "#e1c846",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.51,
+          "title": "alpha 7d",
+          "title_spans": [
+            {"text": "alpha ", "color": "#ff9f52", "dim": true},
+            {"text": "7d", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": " 51% ↻ 3d4h",
+          "label_spans": [
+            {"text": " 51%", "color": "subtext0"},
+            {"text": " ↻ 3d4h", "color": "#78829b", "dim": true}
+          ],
+          "match_values": ["http://127.0.0.1:41001"],
+          "fill": "#ebc546",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.8,
+          "title": "alpha fable",
+          "title_spans": [
+            {"text": "alpha ", "color": "#ff9f52", "dim": true},
+            {"text": "fable", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": " 80%       ",
+          "label_spans": [
+            {"text": " 80%       ", "color": "subtext0"}
+          ],
+          "match_values": ["http://127.0.0.1:41001"],
+          "fill": "#eb6e46",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.05,
+          "title": "beta 7d",
+          "title_spans": [
+            {"text": "beta ", "color": "#ff9f52", "dim": true},
+            {"text": "7d", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": "  5% ↻ 2h17m",
+          "label_spans": [
+            {"text": "  5%", "color": "subtext0"},
+            {"text": " ↻ 2h17m", "color": "#c8d0dc", "bold": true}
+          ],
+          "match_values": ["http://127.0.0.1:41002"],
+          "fill": "#69c846",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.23,
+          "title": "shared.codex 5h",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "5h", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 23% ↻   30m",
+          "label_spans": [
+            {"text": " 23%", "color": "subtext0"},
+            {"text": " ↻   30m", "color": "#c8d0dc"}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
+          "fill": "#9fc846",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.12,
+          "title": "shared.codex 7d",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "7d", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 12%        ",
+          "label_spans": [
+            {"text": " 12%        ", "color": "subtext0"}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
+          "fill": "#7ec846",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.34,
+          "title": "shared.codex sp 5h",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "sp 5h", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 34% ↻ 2h17m",
+          "label_spans": [
+            {"text": " 34%", "color": "subtext0"},
+            {"text": " ↻ 2h17m", "color": "#78829b", "dim": true}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
+          "fill": "#c0c846",
+          "empty": "#78829b"
+        }
+      },
+      {
+        "bar": {
+          "fraction": 0.67,
+          "title": "shared.codex sp 7d",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "sp 7d", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 67% ↻  3d4h",
+          "label_spans": [
+            {"text": " 67%", "color": "subtext0"},
+            {"text": " ↻  3d4h", "color": "#78829b", "dim": true}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
+          "fill": "#eb9546",
+          "empty": "#78829b"
+        }
+      }
+    ]
+    EOF
 
     run_publisher() {
+      rm -f "$1"
+      : > "$2"
+      : > "$3"
       env PATH="$fixtures/bin:$PATH" \
         HERDR_USAGE_PUBLISHER_ONCE=1 \
         XDG_CONFIG_HOME="$fixtures/xdg" \
         CODE_AUTH_VAULTS_FILE="$fixtures/manifest.json" \
-        CODE_AUTH_STATE="$fixtures/absent-state.json" \
-        CURL_FIXTURE="$1" CURL_ARGS_LOG="$2" HERDR_ARGS_LOG="$3" \
+        CODE_AUTH_STATE="$fixtures/vault-state.json" \
+        FIXTURE_ROOT="$fixtures" \
+        CURL_ARGS_LOG="$2" \
+        HERDR_ARGS_LOG="$3" \
+        HERDR_STDIN_CAPTURE="$1" \
+        EXPECTED_SOCKET="$fixtures/xdg/herdr/sessions/smoke/herdr.sock" \
+        CURL_FAIL="$4" \
         bash ${../scripts/herdr-usage-publisher.sh}
     }
 
-    # Worst case: every window saturated. Exactly 21 cells, never truncated.
-    cat > "$fixtures/worst.json" <<'EOF'
-    {"reports":[
-      {"provider":"anthropic","limits":[
-        {"label":"5-hour","scope":{"tier":"-"},"amount":{"usedFraction":1},"window":{"durationMs":18000000}},
-        {"label":"7-day","scope":{"tier":"-"},"amount":{"usedFraction":1},"window":{"durationMs":604800000}},
-        {"label":"7-day fable","scope":{"tier":"fable"},"amount":{"usedFraction":1},"window":{"durationMs":604800000}}]},
-      {"provider":"openai-codex","limits":[
-        {"label":"5-hour","scope":{"tier":"-"},"amount":{"usedFraction":1},"window":{"durationMs":18000000}},
-        {"label":"7-day","scope":{"tier":"-"},"amount":{"usedFraction":1},"window":{"durationMs":604800000}}]}
-    ]}
-    EOF
-    run_publisher "$fixtures/worst.json" "$fixtures/curl-worst.log" "$fixtures/herdr-worst.log"
-    grep -Fq -- '--token usage=C100 100/100 X100 100' "$fixtures/herdr-worst.log" \
-      || { echo 'worst-case grammar drifted' >&2; cat "$fixtures/herdr-worst.log" >&2; exit 1; }
-    worst_line='C100 100/100 X100 100'
-    [ "''${#worst_line}" -le 21 ]
+    capture="$fixtures/section.json"
+    run_publisher "$capture" "$fixtures/curl.log" "$fixtures/herdr.log" 0
+    jq -e '
+      .section_id == "usage" and
+      .source == "atyrode:usage" and
+      .seq == 1700000000 and
+      .ttl_ms == 720000 and
+      (.rows | length) == 8
+    ' "$capture" >/dev/null
+    jq -e --slurpfile expected "$fixtures/expected-rows.json" \
+      '.rows == $expected[0]' "$capture" >/dev/null
+    jq -e '
+      [.rows[].bar.title] == [
+        "alpha 5h",
+        "alpha 7d",
+        "alpha fable",
+        "beta 7d",
+        "shared.codex 5h",
+        "shared.codex 7d",
+        "shared.codex sp 5h",
+        "shared.codex sp 7d"
+      ] and
+      ([.rows[].bar.title | select(startswith("shared.codex "))] | length) == 4
+    ' "$capture" >/dev/null
+    jq -e '
+      .rows[0].bar.fraction == 0.45 and
+      .rows[0].bar.fill == "#e1c846" and
+      .rows[0].bar.empty == "#78829b" and
+      all(.rows[]; .bar.empty == "#78829b")
+    ' "$capture" >/dev/null
+    jq -e '
+      [.rows[].bar.label] as $labels
+      | any($labels[]; test("↻ +[0-9]+m$")) and
+        any($labels[]; test("↻ +[0-9]+h[0-9]+m$")) and
+        any($labels[]; test("↻ +[0-9]+d[0-9]+h$")) and
+        all($labels[];
+          test("^ {0,2}[0-9]{1,3}%( ↻ +([0-9]+m|[0-9]+h[0-9]+m|[0-9]+d[0-9]+h))? *$")
+        )
+    ' "$capture" >/dev/null
 
-    # Typical case: idle Claude 5h, missing Codex 5h renders the positional
-    # placeholder, fable rides the 7d slot.
-    cat > "$fixtures/typical.json" <<'EOF'
-    {"reports":[
-      {"provider":"anthropic","limits":[
-        {"label":"5-hour","scope":{"tier":"-"},"amount":{"usedFraction":0},"window":{"durationMs":18000000}},
-        {"label":"7-day","scope":{"tier":"-"},"amount":{"usedFraction":0.45},"window":{"durationMs":604800000}},
-        {"label":"7-day fable","scope":{"tier":"fable"},"amount":{"usedFraction":0.8},"window":{"durationMs":604800000}}]},
-      {"provider":"openai-codex","limits":[
-        {"label":"7-day","scope":{"tier":"-"},"amount":{"usedFraction":0.27},"window":{"durationMs":604800000}},
-        {"label":"spark","scope":{"tier":"spark"},"amount":{"usedFraction":0.9},"window":{"durationMs":604800000}}]}
-    ]}
-    EOF
-    run_publisher "$fixtures/typical.json" "$fixtures/curl-typical.log" "$fixtures/herdr-typical.log"
-    grep -Fq -- '--token usage=C0 45/80 X- 27' "$fixtures/herdr-typical.log" \
-      || { echo 'typical grammar drifted (spark must stay hidden)' >&2; cat "$fixtures/herdr-typical.log" >&2; exit 1; }
-
-    # The bearer token must never reach any process argv.
-    if grep -rq 'sekret-bearer-123' "$fixtures"/curl-*.log "$fixtures"/herdr-*.log; then
+    [ "$(cat "$fixtures/herdr.log")" = 'sidebar report-section --stdin' ]
+    [ "$(grep -c -- '/v1/snapshot$' "$fixtures/curl.log")" -eq 2 ]
+    [ "$(grep -c -- '/v1/usage$' "$fixtures/curl.log")" -eq 2 ]
+    if grep -Fq 'sekret-bearer-' "$fixtures/curl.log" "$fixtures/herdr.log"; then
       echo 'bearer token leaked into stub argv' >&2
       exit 1
     fi
+    if grep -Eq 'snapshot-secret-|alpha 5h|#e1c846|"rows"' \
+      "$fixtures/curl.log" "$fixtures/herdr.log"; then
+      echo 'section rows or snapshot credential material escaped stdin publication' >&2
+      exit 1
+    fi
+    if grep -Fq 'snapshot-secret-' "$capture"; then
+      echo 'snapshot credential material crossed the herdr socket' >&2
+      exit 1
+    fi
 
+    # With every broker unavailable there are no rows and therefore no publish;
+    # the prior owner expires naturally through the section TTL.
+    run_publisher \
+      "$fixtures/down-section.json" \
+      "$fixtures/curl-down.log" \
+      "$fixtures/herdr-down.log" \
+      1 2>"$fixtures/down-stderr.log"
+    test ! -e "$fixtures/down-section.json"
+    test ! -s "$fixtures/herdr-down.log"
     # The activation seed's real contract, under a scratch agent dir: the
     # installer must write the version-stamped extension exactly where OMP
     # auto-discovers it, at or above the native session-restore minimum

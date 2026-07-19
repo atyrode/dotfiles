@@ -26,11 +26,11 @@ in
   home.packages = [ pkgs.herdr ];
 
   # Usage publication belongs beside herdr itself; the agent-tools profile
-  # that imports this module is the single capability gate. Dormant during
-  # the sidebar-sections fork phase: the unit exists for manual starts
-  # (systemctl --user start) but is not wanted by any target, because the
-  # terse token rows it fed were retired in favor of the fork's styled
-  # section. Linux-only; no Darwin launchd agent.
+  # that imports this module is the single capability gate. The styled
+  # section is wired for manual visual trials, but the Linux-only unit stays
+  # dormant: it is wanted by no target and must be started explicitly.
+  # No Darwin launchd agent.
+
   systemd.user.services.atyrode-herdr-usage-publisher = lib.mkIf pkgs.stdenv.isLinux {
     Unit = {
       Description = "Publish OMP vault usage to Herdr sidebars";
@@ -90,6 +90,16 @@ in
     # The settings UI cannot persist changes through the read-only store
     # link, so make the operator's preferred agent ordering the startup default.
     agent_panel_sort = "priority"
+    sidebar_sections_height = 18
+
+    # Dormant owner atyrode:usage feeds one bar per reported account window:
+    # the account/window title stays left and percent/reset info stays right.
+    [[ui.sidebar.sections]]
+    id = "usage"
+    title = "usage"
+    highlight_token = "vault_broker"
+    max_rows = 18
+    placement = "below_agents"
 
     [ui.toast]
     # In-TUI toasts render inside the server's TUI and therefore reach the

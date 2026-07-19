@@ -294,7 +294,7 @@ windows_render_plan() {
          then "\n    conflicts: \(.detectedConflicts | join(", "))\n    remediation: \(.remediation)"
          else "" end)),
     "windows changes: \(.changes)",
-    "transactional: no — \(.mutationBoundary)"
+    "transactional: no -- \(.mutationBoundary)"
   ' <<<"$1"
 }
 

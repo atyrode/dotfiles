@@ -12,6 +12,7 @@ readonly system_policy='@system_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
 readonly windows_package_inventory='@windows_packages@'
+readonly rio_windows_config='@rio_windows_config@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
@@ -187,6 +188,40 @@ windows_winget() {
   printf '%s\n' "$resolved"
 }
 
+windows_hook_command() {
+  local variable="$1" default="$2" candidate resolved
+  candidate="$default"
+  if [[ "$test_hooks" == 1 && -n "${!variable:-}" ]]; then
+    candidate="${!variable}"
+  fi
+  resolved="$(command -v "$candidate" 2>/dev/null)" ||
+    die "$EX_UNAVAILABLE" "$default is unavailable through WSL interop"
+  printf '%s\n' "$resolved"
+}
+
+windows_interop_path() {
+  local path="$1" wslpath
+  wslpath="$(windows_hook_command ATYRODE_WSLPATH wslpath)"
+  "$wslpath" -w "$path" 2>/dev/null ||
+    die "$EX_UNAVAILABLE" "wslpath could not convert a Windows-accessible installer path"
+}
+
+windows_localappdata() {
+  local powershell windows_path wslpath
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_LOCALAPPDATA:-}" ]]; then
+    printf '%s\n' "$ATYRODE_LOCALAPPDATA"
+    return
+  fi
+  powershell="$(windows_hook_command ATYRODE_POWERSHELL powershell.exe)"
+  windows_path="$("$powershell" -NoProfile -Command "[Environment]::GetFolderPath('LocalApplicationData')" 2>/dev/null | tr -d '\r' | awk 'NF { print; exit }')" ||
+    die "$EX_UNAVAILABLE" "powershell.exe could not resolve Windows LocalApplicationData"
+  [[ -n "$windows_path" ]] ||
+    die "$EX_UNAVAILABLE" "powershell.exe returned an empty Windows LocalApplicationData path"
+  wslpath="$(windows_hook_command ATYRODE_WSLPATH wslpath)"
+  "$wslpath" -u "$windows_path" 2>/dev/null ||
+    die "$EX_UNAVAILABLE" "wslpath could not convert Windows LocalApplicationData"
+}
+
 windows_package_present() {
   local winget="$1" id="$2" status
   if "$winget" list --id "$id" --exact --accept-source-agreements --disable-interactivity \
@@ -201,9 +236,29 @@ windows_package_present() {
   die "$EX_UNAVAILABLE" "winget.exe could not query installed package $id (exit $status); repair App Installer or its sources"
 }
 
+windows_rio_version() {
+  local winget="$1" output status version
+  if output="$("$winget" list --id raphamorim.rio --exact --accept-source-agreements --disable-interactivity 2>/dev/null)"; then
+    # winget's table is fixed-width: `Name Id Version [Available] Source`,
+    # and Source is empty for ARP-only (MSI) installs, so positional field
+    # counting is ambiguous. Slice the Version column at the header's
+    # character offset instead.
+    version="$(tr -d '\r' <<<"$output" | awk '
+      !pos && index($0, "Version") && index($0, "Id") { pos = index($0, "Version"); next }
+      pos && NF { value = substr($0, pos); sub(/^[[:space:]]+/, "", value); if (value ~ /^-|^$/) next; split(value, cells, /[[:space:]]+/); print cells[1]; exit }
+    ')"
+    printf '%s\n' "$version"
+    return
+  else
+    status=$?
+  fi
+  [[ "$status" == 20 ]] && return 1
+  die "$EX_UNAVAILABLE" "winget.exe could not query installed package raphamorim.rio (exit $status); repair App Installer or its sources"
+}
+
 windows_plan() {
-  local host="$1" data winget winget_version package id installed status remediation
-  local rows='[]' conflicts conflict_id
+  local host="$1" data winget winget_version package id name source installed status remediation
+  local rows='[]' conflicts conflict_id localappdata stamp config installed_version installed_version_source pinned_version config_matches winget_rio_version
   doctor_host "$host" 1 >/dev/null ||
     die "$EX_DATAERR" "host identity does not match the registered NixOS-WSL host $host"
   data="$(host_json "$host")"
@@ -212,101 +267,147 @@ windows_plan() {
   is_wsl ||
     die "$EX_UNAVAILABLE" "Windows reconciliation requires a live WSL session"
   jq -e '
-    .schemaVersion == 1
+    .schemaVersion == 2
     and (.packages | type == "array" and length > 0)
     and all(.packages[];
       (.id | type == "string" and length > 0)
       and (.name | type == "string" and length > 0)
-      and .source == "winget"
-      and (.conflicts | type == "array"))
+      and (.versionPolicy | type == "string" and length > 0)
+      and (.mutableStateOwner | type == "string" and length > 0)
+      and (if .source == "winget" then (.conflicts | type == "array")
+           elif .source == "github-release" then
+             (.version | type == "string" and length > 0)
+             and (.installer.name | type == "string" and length > 0)
+             and (.installer.url | type == "string" and length > 0)
+             and (.installer.sha256 | test("^[0-9a-f]{64}$"))
+             and (.config.destination == "%LOCALAPPDATA%\\rio\\config.toml")
+           else false end))
   ' "$windows_package_inventory" >/dev/null ||
     die "$EX_SOFTWARE" "embedded Windows package inventory is invalid"
-
   winget="$(windows_winget)"
   winget_version="$("$winget" --version 2>/dev/null | awk 'NR == 1 { gsub(/\r/, ""); print; exit }')" ||
     die "$EX_UNAVAILABLE" "winget.exe could not report its version through WSL interop"
   [[ -n "$winget_version" ]] ||
     die "$EX_UNAVAILABLE" "winget.exe returned an empty version through WSL interop"
-
+  localappdata="$(windows_localappdata)"
   while IFS= read -r package; do
     id="$(jq -r '.id' <<<"$package")"
     name="$(jq -r '.name' <<<"$package")"
-    installed=false
-    windows_package_present "$winget" "$id" && installed=true
-    conflicts='[]'
-    while IFS= read -r conflict_id; do
-      [[ -n "$conflict_id" ]] || continue
-      if windows_package_present "$winget" "$conflict_id"; then
-        conflicts="$(jq -nc --argjson current "$conflicts" --arg id "$conflict_id" '$current + [$id]')"
-      fi
-    done < <(jq -r '.conflicts[]?' <<<"$package")
-
-    remediation=""
-    if [[ "$(jq -r 'length' <<<"$conflicts")" -gt 0 ]]; then
-      status=blocked
-      remediation="fully close Zen, back up its profile, then explicitly uninstall the stable Zen package before applying Twilight"
-    elif [[ "$installed" == true ]]; then
-      status=installed
+    source="$(jq -r '.source' <<<"$package")"
+    if [[ "$source" == winget ]]; then
+      installed=false
+      windows_package_present "$winget" "$id" && installed=true
+      conflicts='[]'
+      while IFS= read -r conflict_id; do
+        [[ -n "$conflict_id" ]] || continue
+        if windows_package_present "$winget" "$conflict_id"; then
+          conflicts="$(jq -nc --argjson current "$conflicts" --arg id "$conflict_id" '$current + [$id]')"
+        fi
+      done < <(jq -r '.conflicts[]?' <<<"$package")
+      remediation=""
+      if [[ "$(jq -r 'length' <<<"$conflicts")" -gt 0 ]]; then
+        status=blocked
+        remediation="fully close Zen, back up its profile, then explicitly uninstall the stable Zen package before applying Twilight"
+      elif [[ "$installed" == true ]]; then status=installed; else status=missing; fi
+      rows="$(jq -nc --argjson rows "$rows" --argjson package "$package" --argjson installed "$installed" --argjson conflicts "$conflicts" --arg status "$status" --arg remediation "$remediation" '$rows + [$package + {installed:$installed,status:$status,detectedConflicts:$conflicts,remediation:$remediation}]')"
     else
-      status=missing
+      pinned_version="$(jq -r '.version' <<<"$package")"
+      stamp="$localappdata/rio/atyrode-install-version"
+      config="$localappdata/rio/config.toml"
+      installed_version=""
+      installed_version_source=absent
+      if winget_rio_version="$(windows_rio_version "$winget")"; then
+        if [[ -n "$winget_rio_version" ]]; then
+          installed_version="$winget_rio_version"
+          installed_version_source=winget
+        elif [[ -r "$stamp" ]]; then
+          installed_version="$(tr -d '\r\n' < "$stamp")"
+          installed_version_source=stamp
+        fi
+      fi
+      config_matches=false
+      [[ -f "$config" ]] && cmp -s "$rio_windows_config" "$config" && config_matches=true
+      remediation=""
+      if [[ -z "$installed_version" ]]; then
+        status=missing
+      elif [[ "$installed_version" != "$pinned_version" ]]; then
+        status=upgrade
+        remediation="Rio $installed_version is installed; apply installs the pinned $pinned_version MSI upgrade"
+      elif [[ "$config_matches" != true ]]; then
+        status="config-drift"
+        remediation="apply atomically redeploys the Nix-managed Rio config"
+      else status=installed; fi
+      rows="$(jq -nc --argjson rows "$rows" --argjson package "$package" --arg pinnedVersion "$pinned_version" --arg installedVersion "$installed_version" --arg installedVersionSource "$installed_version_source" --argjson configMatches "$config_matches" --arg status "$status" --arg remediation "$remediation" '$rows + [$package + {pinnedVersion:$pinnedVersion,installedVersion:(if $installedVersion == "" then null else $installedVersion end),installedVersionSource:$installedVersionSource,configMatches:$configMatches,status:$status,remediation:$remediation}]')"
     fi
-    rows="$(jq -nc \
-      --argjson rows "$rows" \
-      --argjson package "$package" \
-      --argjson installed "$installed" \
-      --argjson conflicts "$conflicts" \
-      --arg status "$status" \
-      --arg remediation "$remediation" \
-      '$rows + [$package + {
-        installed: $installed,
-        status: $status,
-        detectedConflicts: $conflicts,
-        remediation: $remediation
-      }]')"
   done < <(jq -c '.packages[]' "$windows_package_inventory")
-
-  jq -nc \
-    --arg host "$host" \
-    --arg backend "$winget" \
-    --arg wingetVersion "$winget_version" \
-    --argjson packages "$rows" \
-    '{
-      schemaVersion: 1,
-      command: "windows plan",
-      host: $host,
-      backend: $backend,
-      wingetVersion: $wingetVersion,
-      ready: all($packages[]; .status != "blocked"),
-      converged: all($packages[]; .status == "installed"),
-      changes: [$packages[] | select(.status == "missing")] | length,
-      packages: $packages,
-      transactional: false,
-      mutationBoundary: "WinGet owns native Windows package state; Nix generations and rollback do not cover it"
-    }'
+  jq -nc --arg host "$host" --arg backend "$winget" --arg wingetVersion "$winget_version" --argjson packages "$rows" '{
+    schemaVersion: 2, command: "windows plan", host: $host, backend: $backend,
+    wingetVersion: $wingetVersion, ready: all($packages[]; .status != "blocked"),
+    converged: all($packages[]; .status == "installed"),
+    changes: [$packages[] | select(.status != "installed")] | length, packages: $packages,
+    transactional: false,
+    mutationBoundary: "WinGet, Rio MSI, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
+  }'
 }
 
 windows_render_plan() {
   jq -r '
     "windows backend: \(.backend) (\(.wingetVersion))",
-    (.packages[] |
-      "  \(.status): \(.name) [\(.id)]"
-      + (if (.detectedConflicts | length) > 0
-         then "\n    conflicts: \(.detectedConflicts | join(", "))\n    remediation: \(.remediation)"
-         else "" end)),
-    "windows changes: \(.changes)",
-    "transactional: no -- \(.mutationBoundary)"
-  ' <<<"$1"
+    (.packages[] | "  \(.status): \(.name) [\(.id)]"
+      + (if .source == "github-release" then "\n    pinned: \(.pinnedVersion); installed: \(.installedVersion // "absent"); config matches: \(.configMatches)"
+         elif (.detectedConflicts | length) > 0 then "\n    conflicts: \(.detectedConflicts | join(", "))\n    remediation: \(.remediation)" else "" end)),
+    "windows changes: \(.changes)", "transactional: no -- \(.mutationBoundary)"' <<<"$1"
+}
+
+windows_deploy_rio_config() {
+  local localappdata="$1" temporary
+  local directory="$localappdata/rio" destination="$localappdata/rio/config.toml"
+  mkdir -p "$directory"
+  if [[ -f "$destination" ]] && cmp -s "$rio_windows_config" "$destination"; then return; fi
+  temporary="$(mktemp "$directory/.config.toml.XXXXXX")"
+  cp "$rio_windows_config" "$temporary"
+  mv -f "$temporary" "$destination"
+}
+
+windows_sha256() {
+  local sha256sum
+  sha256sum="$(windows_hook_command ATYRODE_SHA256SUM sha256sum)"
+  "$sha256sum" "$1" | awk '{print $1}'
+}
+
+windows_install_rio() {
+  local package="$1" localappdata="$2" fetch msiexec installer temporary windows_installer stamp stamp_temporary
+  fetch="$(windows_hook_command ATYRODE_FETCH curl)"
+  msiexec="$(windows_hook_command ATYRODE_MSIEXEC msiexec.exe)"
+  installer="$(jq -r '.installer' <<<"$package")"
+  temporary="$(mktemp)"
+  "$fetch" -fsSL "$(jq -r '.url' <<<"$installer")" -o "$temporary" ||
+    die "$EX_UNAVAILABLE" "could not download the pinned Rio installer"
+  if [[ "$(windows_sha256 "$temporary")" != "$(jq -r '.sha256' <<<"$installer")" ]]; then
+    rm -f "$temporary"
+    die "$EX_DATAERR" "refusing to install Rio: downloaded installer SHA256 does not match the lock"
+  fi
+  mkdir -p "$localappdata/rio"
+  windows_installer="$localappdata/rio/.atyrode-$(jq -r '.installer.name' <<<"$package")"
+  cp "$temporary" "$windows_installer"
+  rm -f "$temporary"
+  "$msiexec" /i "$(windows_interop_path "$windows_installer")" /qn /norestart </dev/null >&2 ||
+    die "$EX_SOFTWARE" "Rio MSI installation failed"
+  rm -f "$windows_installer"
+  stamp="$localappdata/rio/atyrode-install-version"
+  stamp_temporary="$(mktemp "$localappdata/rio/.atyrode-install-version.XXXXXX")"
+  printf '%s\n' "$(jq -r '.version' <<<"$package")" > "$stamp_temporary"
+  mv -f "$stamp_temporary" "$stamp"
 }
 
 windows_reconcile() {
-  local action="$1" host="$2" json="$3" plan winget package id source final
+  local action="$1" host="$2" json="$3" plan winget package id source status final localappdata
   plan="$(windows_plan "$host")"
   if [[ "$action" == plan ]]; then
     if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
     jq -e '.ready' <<<"$plan" >/dev/null || return "$EX_UNAVAILABLE"
     return 0
   fi
-
   if ! jq -e '.ready' <<<"$plan" >/dev/null; then
     if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
     return "$EX_UNAVAILABLE"
@@ -315,22 +416,24 @@ windows_reconcile() {
     if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
     return 0
   fi
-
   winget="$(windows_winget)"
-  printf 'atyrode: reconciling native Windows packages through WinGet (non-transactional)\n' >&2
+  localappdata="$(windows_localappdata)"
+  printf 'atyrode: reconciling native Windows packages through WSL interop (non-transactional)\n' >&2
   while IFS= read -r package; do
-    id="$(jq -r '.id' <<<"$package")"
     source="$(jq -r '.source' <<<"$package")"
-    printf 'atyrode: installing %s through %s\n' "$id" "$source" >&2
-    "$winget" install --id "$id" --exact --source "$source" \
-      --accept-package-agreements --accept-source-agreements --disable-interactivity \
-      </dev/null >&2 ||
-      return "$EX_SOFTWARE"
-  done < <(jq -c '.packages[] | select(.status == "missing")' <<<"$plan")
-
+    status="$(jq -r '.status' <<<"$package")"
+    if [[ "$source" == winget && "$status" == missing ]]; then
+      id="$(jq -r '.id' <<<"$package")"
+      printf 'atyrode: installing %s through WinGet\n' "$id" >&2
+      "$winget" install --id "$id" --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity </dev/null >&2 ||
+        return "$EX_SOFTWARE"
+    elif [[ "$source" == github-release ]]; then
+      if [[ "$status" == missing || "$status" == upgrade ]]; then windows_install_rio "$package" "$localappdata"; fi
+      if [[ "$status" != installed ]]; then windows_deploy_rio_config "$localappdata"; fi
+    fi
+  done < <(jq -c '.packages[] | select(.status != "installed")' <<<"$plan")
   final="$(windows_plan "$host")"
-  jq -e '.ready and .converged' <<<"$final" >/dev/null ||
-    return "$EX_SOFTWARE"
+  jq -e '.ready and .converged' <<<"$final" >/dev/null || return "$EX_SOFTWARE"
   if [[ "$json" == 1 ]]; then printf '%s\n' "$final"; else windows_render_plan "$final"; fi
 }
 
@@ -2706,7 +2809,7 @@ cmd_rollback() {
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE ATYRODE_WINGET; do
+  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done
@@ -2742,7 +2845,7 @@ main() {
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
     inventory) inventory "$@" ;;
-    windows) cmd_windows "$@" ;;
+    windows) [[ "${1:-}" != apply ]] || guard_production_mutation "windows apply"; cmd_windows "$@" ;;
     workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;
     *) die "$EX_USAGE" "unknown command: $subcommand" ;;

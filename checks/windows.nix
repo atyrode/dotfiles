@@ -50,12 +50,23 @@ pkgs.runCommand "check-windows-control-plane"
     ' ${markerFile} >/dev/null
 
     jq -e '
-      .schemaVersion == 1
-      and (.packages | length) == 1
-      and .packages[0].id == "Zen-Team.Zen-Browser.Twilight"
-      and .packages[0].source == "winget"
-      and .packages[0].conflicts == ["Zen-Team.Zen-Browser"]
-      and (.packages[0].mutableStateOwner | contains("Zen Browser owns"))
+      .schemaVersion == 2
+      and (.packages | length) == 2
+      and ([.packages[] | select(
+        .id == "Zen-Team.Zen-Browser.Twilight"
+        and .source == "winget"
+        and .conflicts == ["Zen-Team.Zen-Browser"]
+        and (.mutableStateOwner | contains("Zen Browser owns"))
+      )] | length == 1)
+      and ([.packages[] | select(
+        .id == "raphamorim.rio"
+        and .source == "github-release"
+        and .version == "0.4.7"
+        and (.installer.sha256 | test("^[0-9a-f]{64}$"))
+        and .config.destination == "%LOCALAPPDATA%\\rio\\config.toml"
+        and .versionPolicy == "pinned to the nixpkgs pin"
+        and .mutableStateOwner == "Rio owns its runtime state; Nix owns the config artifact"
+      )] | length == 1)
     ' ${packageFile} >/dev/null
 
     export BOOTSTRAP_PATH=${../get.ps1}

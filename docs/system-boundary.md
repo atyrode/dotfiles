@@ -32,7 +32,9 @@ The home Windows machine deliberately has two ownership domains:
   integrated Home Manager profile, and WSL interoperability settings.
 - Native Windows remains outside Nix. `windows/packages.nix` is a reviewed
   package declaration consumed by `atyrode windows plan/apply`; the controller
-  invokes the existing `winget.exe` as the interactive Windows user.
+  invokes the existing `winget.exe` as the interactive Windows user and
+  installs pinned `github-release` packages (Rio, #278) from
+  checksum-verified downloads.
 
 `get.ps1` is the one native bootstrap boundary. Its default action is a
 non-mutating plan. Apply verifies a pinned NixOS-WSL image, refuses to reuse an
@@ -45,8 +47,8 @@ The two apply phases are intentionally explicit rather than pretending to be
 one transaction. Nix generations can roll back the WSL guest; they cannot roll
 back WinGet. A failed Windows phase therefore reports the exact
 `atyrode windows plan` / `atyrode windows apply` recovery path. Reconciliation
-installs reviewed exact package IDs, but does not silently uninstall a
-conflicting Zen channel.
+installs reviewed exact package IDs or checksum-verified pinned releases, but
+does not silently uninstall a conflicting Zen channel.
 
 Windows application accounts, profiles, update services, caches, and other
 mutable state remain application-owned. In particular, Zen's Mozilla account,

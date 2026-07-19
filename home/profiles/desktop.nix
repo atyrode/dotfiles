@@ -8,6 +8,7 @@ in
   imports = [
     ../ghostty.nix
     ../linux-desktop.nix
+    ../rio.nix
   ];
 
   # Retention of desktop applications reflects operator use, not the agent

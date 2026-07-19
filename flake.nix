@@ -711,6 +711,10 @@
             inherit lib pkgs;
             hostConfigs = canonicalHomeConfigs;
           };
+          rio = import ./checks/rio.nix {
+            inherit lib pkgs;
+            hostConfigs = canonicalHomeConfigs;
+          };
           omp-seed = import ./checks/omp-seed.nix { inherit pkgs; };
           omp-secret-obfuscation = import ./checks/omp-secret-obfuscation.nix { inherit pkgs; };
           omp-isolated-writer = import ./checks/omp-isolated-writer.nix { inherit pkgs; };

@@ -1,0 +1,23 @@
+# Rio terminal — the one committed terminal config (#278).
+# Managed by Nix (home/rio.nix) into ~/.config/rio/config.toml on macOS and
+# Linux; deployed verbatim to %LOCALAPPDATA%\rio\config.toml on the Windows
+# workstation by `atyrode windows apply`. Plain TOML on purpose: the Windows
+# machine has no Home Manager, so this file must stay a portable literal
+# artifact (no Nix templating). checks/rio.nix parses this file and asserts
+# the policy keys below.
+#
+# Rio's TOML requires header-less keys to appear before any [section].
+
+# OMP does not auto-detect Rio yet, so force the Kitty graphics protocol for
+# inline images — scoped here (Rio-only) and NEVER in the shared zsh profile,
+# where it would force Kitty output under non-Kitty terminals. Drop once OMP
+# detects Rio natively (upstream: packages/tui/src/terminal-capabilities.ts).
+env-vars = ["PI_FORCE_IMAGE_PROTOCOL=kitty"]
+
+# One software per concern: herdr owns multiplexing (tabs, splits, panes,
+# sessions); Rio is a thin renderer. Plain mode turns the tab bindings off
+# outright.
+[navigation]
+mode = "Plain"
+use-split = false
+hide-if-single = true

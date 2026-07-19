@@ -6,7 +6,6 @@ let
 in
 {
   imports = [
-    ../ghostty.nix
     ../linux-desktop.nix
     ../rio.nix
   ];

@@ -30,7 +30,7 @@
     };
     Service = {
       Type = "simple";
-      ExecStart = ''${lib.getExe pkgs.code} herdr-usage --refresh-hint "^a u"'';
+      ExecStart = ''${lib.getExe pkgs.code} herdr-usage --refresh-hint "prefix+u"'';
       Restart = "on-failure";
     };
   };
@@ -81,8 +81,8 @@
     manage_ssh_config = true
 
     # prefix+u pulls the usage publisher's next broker fetch forward
-    # (SIGUSR1 into the daemon's event loop; the section's status row
-    # advertises the chord as "^a u"). The binding runs where keys are
+    # (SIGUSR1 into the daemon's event loop; the section's title row
+    # advertises the chord as "prefix+u"). The binding runs where keys are
     # parsed: natively in VPS-side sessions; Mac remote attaches must use
     # `--remote-keybindings server`, because default local mode strips
     # client custom-command bindings server-side.

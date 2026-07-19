@@ -41,7 +41,7 @@ assert lib.assertMsg
 assert lib.assertMsg
   (
     lib.hasInfix "/bin/code herdr-usage " (toString usagePublisher.Service.ExecStart)
-    && lib.hasSuffix ''--refresh-hint "^a u"'' (toString usagePublisher.Service.ExecStart)
+    && lib.hasSuffix ''--refresh-hint "prefix+u"'' (toString usagePublisher.Service.ExecStart)
   )
   "the usage publisher unit must exec the pinned code binary's herdr-usage daemon and advertise the prefix+u refresh hint";
 assert lib.assertMsg

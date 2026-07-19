@@ -13,7 +13,10 @@
   # (lock artifact: inventory/rio-windows.json, kept at version parity
   # with this nixpkgs pin by checks/rio.nix). Rio reads
   # ~/.config/rio/config.toml on both macOS and Linux.
-  home.packages = [ pkgs.rio ];
+  home.packages = [
+    pkgs.nerd-fonts.jetbrains-mono
+    pkgs.rio
+  ];
 
   xdg.configFile."rio/config.toml".source = ./rio/config.toml;
 }

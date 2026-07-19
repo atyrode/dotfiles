@@ -53,7 +53,7 @@
     "acceptedGroups": ["adbusers", "plugdev"]
   },
   "homebrew": {
-    "cleanup": "prompt",
+    "cleanup": "check",
     "forbiddenAutomaticModes": ["uninstall", "zap"]
   }
 }

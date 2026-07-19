@@ -112,10 +112,14 @@ in
       brewfile = true;
     };
 
+    # Homebrew Bundle owns the reconciliation diff and confirmation prompt.
+    # Declining leaves undeclared packages in place and aborts activation.
     onActivation = {
       autoUpdate = false;
       upgrade = false;
-      cleanup = "check";
+      cleanup = "none";
+      extraEnv.HOMEBREW_ASK = "1";
+      extraFlags = [ "--cleanup" ];
     };
   };
 }

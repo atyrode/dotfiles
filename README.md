@@ -1,6 +1,6 @@
 # dotfiles
 
-Reproducible, agent-first personal operating environment for [Alex Tyrode](https://tyrode.dev), managed with Nix and Home Manager across macOS and Linux. nix-darwin owns macOS system activation, with nix-homebrew providing native cask apps.
+Reproducible, agent-first personal operating environment for [Alex Tyrode](https://tyrode.dev). Nix and Home Manager own macOS, Linux, and the NixOS-WSL guest; nix-darwin owns macOS system activation, and native package managers retain macOS and Windows application state.
 
 ## Quick start
 
@@ -29,6 +29,24 @@ will not guess between desktop, development, or Mac profiles. It uses
 explicit preflight, plan, apply, verify, and rollback phases, verifies a pinned
 upstream Nix artifact when Nix is absent, and preserves recoverable transaction
 receipts. See [Bootstrap](docs/bootstrap.md).
+
+**Native Windows 11, from PowerShell:**
+
+```powershell
+irm https://raw.githubusercontent.com/atyrode/dotfiles/main/get.ps1 | iex
+```
+
+That command is plan-only. It resolves `main` to an exact commit and reports the
+native/WSL changes without applying them. After review, run the printed revision:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/atyrode/dotfiles/main/get.ps1))) -Ref <exact-revision> -Apply
+```
+
+The bootstrap verifies a pinned NixOS-WSL image, activates
+`alex-x86_64-linux-wsl`, and then reconciles reviewed native packages through
+WinGet. If it first enables or updates WSL, follow its reboot instruction and
+run the same apply command again.
 
 ---
 
@@ -67,11 +85,17 @@ receipts. See [Bootstrap](docs/bootstrap.md).
 - **Nix/Home Manager apps** - ChatGPT, Ghostty, Lichess, Obsidian, OrbStack,
   Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, and WhatsApp
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
-  Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen
-  Browser, managed through nix-darwin
+  Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen Browser
+  Twilight, managed through nix-darwin
 - **Manual/vendor-managed macOS apps** - ROLI Connect, ROLI Dashboard, ROLI
   Studio Player, and Vital stay outside the declarative setup until they have a
   stable public installer or package source.
+
+### Native Windows Apps
+- **WinGet packages** - Zen Browser Twilight is declared in
+  `windows/packages.nix` and reconciled from the managed NixOS-WSL host.
+- **Application state** - Mozilla sign-in, Zen profiles, cookies, sessions,
+  updates, and caches remain owned by Zen/Windows rather than Nix.
 
 ---
 
@@ -152,11 +176,15 @@ dotfiles/
 │   └── default.nix          # macOS system ownership and activation
 ├── docs/                    # Architecture and maintenance guides
 ├── flake.nix                # Main flake configuration
+├── get.ps1                 # Plan-first native Windows/NixOS-WSL bootstrap
+├── get.sh                  # Fresh macOS/Linux bootstrap entrypoint
 ├── install.sh               # Phased, transactional bootstrap
 ├── modules/                 # Reusable Home Manager modules
+├── nixos/                   # Repository-owned NixOS-WSL system module
 ├── omp/                     # Managed config, model catalog, agents, and rules
 ├── pkgs/                    # Pinned custom derivations and wrappers
 ├── scripts/                 # CI, update, and seeding utilities
+├── windows/                 # Native WinGet package declarations
 └── home/                    # Home Manager modules
     ├── default.nix          # Main configuration
     ├── linux-desktop.nix    # Optional Linux desktop packages
@@ -252,7 +280,8 @@ package inventory, then run `atyrode apply`.
 ### Add macOS Homebrew Apps
 
 Edit `darwin/casks.nix`, then run `atyrode apply` on macOS. nix-darwin
-generates the matching Brewfile and checks for non-destructive Homebrew drift.
+generates the matching Brewfile; Homebrew Bundle shows any undeclared state and
+asks before removing it during activation.
 
 ### Modify Shell Functions
 
@@ -289,12 +318,12 @@ anything still used in `~/.config/zsh/local.zsh`, then move the old entrypoint
 out of the way. Home Manager refuses to guess whether unmanaged shell startup
 code is safe to replace.
 
-**macOS Homebrew activation fails:**
-```bash
-atyrode apply
-```
+**macOS Homebrew activation reports undeclared packages:**
 
-The macOS configuration installs Homebrew through nix-homebrew and then applies the declared casks through nix-darwin. The first activation may ask for administrator authentication.
+Run `atyrode apply` interactively. Homebrew Bundle lists the taps, formulae, or
+casks absent from the generated Brewfile and asks whether to remove them.
+Accepting reconciles that state and continues activation; declining preserves it
+and aborts. The first activation may also ask for administrator authentication.
 
 ---
 

@@ -28,6 +28,7 @@
   runtimeShell,
   stdenvNoCC,
   tmux,
+  windowsPackages,
   zsh,
 }:
 
@@ -48,6 +49,9 @@ let
     + "\n"
   );
   registry = builtins.toFile "atyrode-host-registry.json" (builtins.toJSON hostRegistry);
+  windowsPackageInventory = builtins.toFile "atyrode-windows-packages.json" (
+    builtins.toJSON windowsPackages
+  );
   systemPolicy = ../../inventory/system-boundary.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
@@ -74,6 +78,7 @@ let
         launchModes = [
           "home"
           "darwin"
+          "os"
         ];
       }
       {
@@ -190,7 +195,8 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@revision@' '${revision}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
-      --replace-fail '@tools@' '${tools}'
+      --replace-fail '@tools@' '${tools}' \
+      --replace-fail '@windows_packages@' '${windowsPackageInventory}'
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
         lib.makeBinPath [

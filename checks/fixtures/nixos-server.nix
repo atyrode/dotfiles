@@ -20,6 +20,7 @@ let
       system
       username
       ;
+    activation = "home-manager";
     platform = "linux";
   };
   registry = {

@@ -1,10 +1,11 @@
 # Home Manager and system boundary
 
 Home Manager owns the portable user environment in this repository. It can
-install a client or shell and configure files below the user's home directory;
-it cannot make an account database, daemon, device rule, privileged group, or
-native package manager operational. Those prerequisites belong to the system
-layer and are checked separately.
+install a client or shell and configure files below the user's home directory,
+whether standalone or integrated into nix-darwin/NixOS. It cannot make a native
+account database, daemon, device rule, privileged group, or package manager
+operational. Those prerequisites belong to the corresponding system layer and
+are checked separately.
 
 ## Ownership matrix
 
@@ -23,10 +24,53 @@ layer and are checked separately.
 | Homebrew installation and declared casks | Not applicable | nix-homebrew and nix-darwin; Homebrew retains native mutable state | Not applicable |
 | Filesystems, networking, firewall, SSH, services, logging, updates, monitoring, backups and secrets | Operating system/operator | Operating system and nix-darwin where declared | The consuming infrastructure |
 
-The NixOS relationship is one-way: infrastructure pins this flake and imports
-its Home Manager profiles. Dotfiles do not import infrastructure or acquire
-production identity, disks, services, or secrets. See [Portable Home Manager
-profiles](portable-profiles.md).
+## Windows and NixOS-WSL
+
+The home Windows machine deliberately has two ownership domains:
+
+- NixOS-WSL owns the Linux guest, its system generation, the `alex` account,
+  integrated Home Manager profile, and WSL interoperability settings.
+- Native Windows remains outside Nix. `windows/packages.nix` is a reviewed
+  package declaration consumed by `atyrode windows plan/apply`; the controller
+  invokes the existing `winget.exe` as the interactive Windows user.
+
+`get.ps1` is the one native bootstrap boundary. Its default action is a
+non-mutating plan. Apply verifies a pinned NixOS-WSL image, refuses to reuse an
+unmarked distribution or non-empty install location, activates an exact Git
+revision, and only then starts native package reconciliation. The activation
+marker at `/etc/atyrode/wsl-host.json` distinguishes the managed distribution
+from an unrelated WSL instance.
+
+The two apply phases are intentionally explicit rather than pretending to be
+one transaction. Nix generations can roll back the WSL guest; they cannot roll
+back WinGet. A failed Windows phase therefore reports the exact
+`atyrode windows plan` / `atyrode windows apply` recovery path. Reconciliation
+installs reviewed exact package IDs, but does not silently uninstall a
+conflicting Zen channel.
+
+Windows application accounts, profiles, update services, caches, and other
+mutable state remain application-owned. In particular, Zen's Mozilla account,
+sync tokens, cookies, sessions, and browser profile never enter the Nix store
+or repository; Mozilla sign-in remains an interactive step on each device.
+
+For external production NixOS hosts, the relationship remains one-way:
+infrastructure pins this flake and imports its Home Manager profiles. Dotfiles
+do not acquire production identity, disks, services, or secrets. The
+repository-owned `alex-x86_64-linux-wsl` configuration is the deliberate
+workstation exception: it owns only the local WSL guest and imports the same
+portable profiles. See [Portable Home Manager profiles](portable-profiles.md).
+
+Starting the managed distribution while another WSL distribution is already
+running can leave the guest without a systemd user session (`wsl: Failed to
+start the systemd user session`, and `systemctl --user` cannot reach the user
+bus). This is an upstream WSL defect rather than managed state:
+[NixOS-WSL #888](https://github.com/nix-community/NixOS-WSL/issues/888) tracks
+it against
+[microsoft/WSL #13188](https://github.com/microsoft/WSL/issues/13188). Interop
+commands, `atyrode doctor`, and Windows reconciliation still work without the
+user session. Recovery is `wsl --shutdown` followed by starting
+`atyrode-nixos` first; keep other distributions free of logon autostart
+launchers so the managed guest boots alone.
 
 ## Installed is not operational
 
@@ -103,9 +147,9 @@ Diagnostics do not start or restart services, change shells or groups, install
 udev rules, update antivirus data, start ADB, or remove Homebrew packages. In
 particular, the Android probe does not run `adb devices`, which could start a
 daemon and create authentication state. The Homebrew probe runs `brew bundle
-check` plus generated `brew bundle cleanup` in check mode, with standard input
-closed and without `--force` or `--zap`; missing and extra state must be
-reviewed and either declared or removed manually.
+check` plus generated `brew bundle cleanup` with standard input closed and
+without `--force` or `--zap`; it reports drift without offering the
+activation-only reconciliation prompt.
 
 ## Login-shell activation and recovery
 
@@ -140,8 +184,10 @@ does not pretend to own those settings; standalone Linux repairs belong to the
 system Nix installation, and NixOS repairs belong to the consuming
 infrastructure.
 
-On macOS, nix-darwin owns the immutable list of Homebrew taps and casks and
-uses `cleanup = "check"` with automatic update and upgrade disabled. This
-makes drift visible without automatically uninstalling operator-owned software.
-Homebrew's cellar and application state remain native mutable state rather than
-Nix store content.
+On macOS, nix-darwin owns the immutable list of Homebrew taps and casks.
+Activation delegates reconciliation to Homebrew Bundle with `--cleanup` and
+`HOMEBREW_ASK=1`: Homebrew shows the exact undeclared taps, formulae, and casks,
+then requires explicit operator confirmation before removing them. Declining
+aborts activation without removing the extra packages. Automatic update and
+upgrade remain disabled, and Homebrew's cellar and application state remain
+native mutable state rather than Nix store content.

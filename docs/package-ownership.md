@@ -48,6 +48,22 @@ Desktop applications are retained as an operator-use decision, separate from
 the agent platform. Pi and Zed remain absent, coherent experiments owned by #29
 and #30; neither is pulled into the baseline for harness symmetry.
 
+### Native Windows package policy
+
+Native Windows has a separate, directly reviewed package declaration in
+[`windows/packages.nix`](../windows/packages.nix). It is exported as
+`lib.windowsPackages` and consumed by the WSL-side `atyrode windows` controller;
+it is intentionally not folded into Nix's evaluated package/cask inventory.
+WinGet owns installation and the application's normal update channel. Nix owns
+the NixOS-WSL control plane that invokes it, not the resulting Windows package
+or a fictional cross-platform generation.
+
+Reconciliation is install-only and exact-ID based. An installed stable Zen
+package blocks Twilight installation with an explicit profile-backup and
+manual-uninstall remediation instead of deleting operator state. Browser
+accounts, profiles, cookies, sessions, update services, and caches remain
+Zen/Windows-owned and are never copied into a derivation.
+
 ### macOS application-signing policy
 
 Vendor-signed macOS application bundles delivered by Nix and Home Manager must

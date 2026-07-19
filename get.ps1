@@ -24,6 +24,7 @@ $NixosWslUri = "https://github.com/nix-community/NixOS-WSL/releases/download/$Ni
 $NixosWslSha256 = 'e7180ad555fdcb8e1e057e2ef056de467603a5e502ff8531053738371be3f6b9'
 $ManagedMarker = '/etc/atyrode/wsl-host.json'
 $PendingMarker = '/etc/atyrode-bootstrap-pending'
+$NixosBootstrapPath = '/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin'
 
 function Invoke-Wsl {
     param(
@@ -207,6 +208,8 @@ else {
 
 Write-Host "Activating $flake inside NixOS-WSL..."
 Invoke-ManagedDistro -Arguments @(
+    '/run/current-system/sw/bin/env',
+    "PATH=$NixosBootstrapPath",
     '/run/current-system/sw/bin/nix',
     '--extra-experimental-features', 'nix-command flakes',
     'shell', $rebuildPackage,

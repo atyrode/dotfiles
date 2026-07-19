@@ -102,6 +102,7 @@ let
     let
       postActivation = config.system.activationScripts.postActivation.text;
       homebrewActivation = config.system.activationScripts.homebrew.text;
+      activationChecks = config.system.activationScripts.checks.text;
       shellPaths = map toString config.environment.shells;
       sudoPam = config.security.pam.services.${boundary.sudo.darwinService};
       configuredCasks = map (
@@ -126,12 +127,15 @@ let
     && config.homebrew.global.brewfile
     && config.homebrew.onActivation.autoUpdate == false
     && config.homebrew.onActivation.upgrade == false
-    && config.homebrew.onActivation.cleanup == "none"
-    && config.homebrew.onActivation.extraEnv.HOMEBREW_ASK == "1"
-    && config.homebrew.onActivation.extraFlags == [ "--cleanup" ]
+    && config.homebrew.onActivation.cleanup == "check"
+    && config.homebrew.onActivation.extraEnv == { }
+    && config.homebrew.onActivation.extraFlags == [ ]
     && sort configuredCasks == sort darwinCasks
-    && lib.hasInfix "HOMEBREW_ASK=1" homebrewActivation
-    && lib.hasInfix "--cleanup" homebrewActivation
+    && lib.hasInfix "homebrewCleanupResult=$(PATH=" activationChecks
+    && lib.hasInfix "cleanup 2>&1) || homebrewCleanupExitCode=$?" activationChecks
+    && !(lib.hasInfix "cleanup --force 2>&1" activationChecks)
+    && !(lib.hasInfix "cleanup --zap 2>&1" activationChecks)
+    && !(lib.hasInfix "HOMEBREW_ASK" homebrewActivation)
     && !(lib.hasInfix "manaflow-ai/cmux" homebrewActivation)
     && lib.hasInfix "/usr/bin/dscl" postActivation
     && lib.hasInfix "/run/current-system/sw/bin/zsh" postActivation
@@ -181,13 +185,13 @@ assert lib.assertMsg (
     ]
 ) "Android device-access policy differs from the reviewed boundary";
 assert lib.assertMsg (
-  boundary.homebrew.cleanup == "prompt"
+  boundary.homebrew.cleanup == "check"
   &&
     boundary.homebrew.forbiddenAutomaticModes == [
       "uninstall"
       "zap"
     ]
-) "Homebrew cleanup must require explicit operator confirmation";
+) "Homebrew cleanup must report drift without deleting operator state";
 assert lib.assertMsg (
   sort capabilityOwners == sort knownCapabilities
 ) "the evaluated inventory has missing or unknown capability owners";

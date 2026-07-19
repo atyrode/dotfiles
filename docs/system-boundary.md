@@ -185,9 +185,9 @@ system Nix installation, and NixOS repairs belong to the consuming
 infrastructure.
 
 On macOS, nix-darwin owns the immutable list of Homebrew taps and casks.
-Activation delegates reconciliation to Homebrew Bundle with `--cleanup` and
-`HOMEBREW_ASK=1`: Homebrew shows the exact undeclared taps, formulae, and casks,
-then requires explicit operator confirmation before removing them. Declining
-aborts activation without removing the extra packages. Automatic update and
-upgrade remain disabled, and Homebrew's cellar and application state remain
-native mutable state rather than Nix store content.
+Activation uses Homebrew Bundle's supported check mode: undeclared taps,
+formulae, and casks abort activation without being removed. The operator reviews
+that drift, explicitly uninstalls the entries intended for retirement, and
+retries activation. Automatic cleanup, update, and upgrade remain disabled, and
+Homebrew's cellar and application state remain native mutable state rather than
+Nix store content.

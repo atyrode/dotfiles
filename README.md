@@ -320,10 +320,10 @@ code is safe to replace.
 
 **macOS Homebrew activation reports undeclared packages:**
 
-Run `atyrode apply` interactively. Homebrew Bundle lists the taps, formulae, or
-casks absent from the generated Brewfile and asks whether to remove them.
-Accepting reconciles that state and continues activation; declining preserves it
-and aborts. The first activation may also ask for administrator authentication.
+Homebrew Bundle lists taps, formulae, or casks absent from the generated
+Brewfile and aborts without removing them. Review the reported drift, explicitly
+uninstall the entries you intend to retire, then rerun `atyrode apply`. The first
+activation may also ask for administrator authentication.
 
 ---
 

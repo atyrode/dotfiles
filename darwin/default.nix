@@ -112,14 +112,12 @@ in
       brewfile = true;
     };
 
-    # Homebrew Bundle owns the reconciliation diff and confirmation prompt.
-    # Declining leaves undeclared packages in place and aborts activation.
+    # Supported check mode reports undeclared packages and aborts without
+    # deleting them; the operator owns the explicit uninstall and retry.
     onActivation = {
       autoUpdate = false;
       upgrade = false;
-      cleanup = "none";
-      extraEnv.HOMEBREW_ASK = "1";
-      extraFlags = [ "--cleanup" ];
+      cleanup = "check";
     };
   };
 }

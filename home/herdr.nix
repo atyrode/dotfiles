@@ -1,17 +1,5 @@
 { lib, pkgs, ... }:
 
-let
-  herdrUsagePublisher = pkgs.writeShellApplication {
-    name = "atyrode-herdr-usage-publisher";
-    runtimeInputs = [
-      pkgs.coreutils
-      pkgs.curl
-      pkgs.herdr
-      pkgs.jq
-    ];
-    text = builtins.readFile ../scripts/herdr-usage-publisher.sh;
-  };
-in
 {
   # herdr trial (#269): the agent multiplexer whose server runs where the
   # agents run. On the Linux hosts `herdr` is the server the Mac attaches to
@@ -26,8 +14,9 @@ in
   home.packages = [ pkgs.herdr ];
 
   # Usage publication belongs beside herdr itself; the agent-tools profile
-  # that imports this module is the single capability gate. The styled
-  # section is wired for manual visual trials, but the Linux-only unit stays
+  # that imports this module is the single capability gate. The publisher is
+  # the pinned code binary's `code herdr-usage` daemon (atyrode/code; the
+  # repository bash script is retired), but the Linux-only unit stays
   # dormant: it is wanted by no target and must be started explicitly.
   # No Darwin launchd agent.
 
@@ -41,7 +30,7 @@ in
     };
     Service = {
       Type = "simple";
-      ExecStart = lib.getExe herdrUsagePublisher;
+      ExecStart = "${lib.getExe pkgs.code} herdr-usage";
       Restart = "on-failure";
     };
   };

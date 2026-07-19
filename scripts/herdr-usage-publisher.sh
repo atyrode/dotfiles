@@ -115,6 +115,20 @@ build_rows() {
 			  else
 				"\(($seconds / 60) | floor)m"
 			  end;
+		def pad_left($value; $width):
+			($value | tostring) as $text
+			| (" " * ([($width - ($text | length)), 0] | max)) + $text;
+		def reset_span($text; $duration_ms; $resets_at; $now_ms):
+			($resets_at - $now_ms) as $remaining
+			| if $duration_ms <= 0 then
+				{text: $text, color: "#78829b", dim: true}
+			  elif ($remaining * 10) < $duration_ms then
+				{text: $text, color: "#c8d0dc", bold: true}
+			  elif ($remaining * 4) < $duration_ms then
+				{text: $text, color: "#c8d0dc"}
+			  else
+				{text: $text, color: "#78829b", dim: true}
+			  end;
 		def nibble:
 			"0123456789abcdef"[.:.+1];
 		def hex2($value):
@@ -148,6 +162,7 @@ build_rows() {
 				),
 				vaultOrder: $vault.order,
 				vaultLabel: $vault.label,
+				brokerURL: $vault.brokerUrl,
 				credentialOrder: $entry.key,
 				providerIndex: (
 					[
@@ -173,6 +188,10 @@ build_rows() {
 				firstVaultOrder: $first.vaultOrder,
 				firstCredentialOrder: $first.credentialOrder,
 				providerIndex: $first.providerIndex,
+				brokerURLs: (
+					reduce $group[].brokerURL as $url
+						([]; if index($url) != null then . else . + [$url] end)
+				),
 				accountName: (
 					if $vault_count == 1 then $first.vaultLabel
 					elif $email != "" then ($email | split("@")[0] | ascii_downcase)
@@ -191,35 +210,84 @@ build_rows() {
 			| ($vaults | map(select(.order == $account.firstVaultOrder))[0]) as $vault
 			| account_report($account; $vault) as $report
 			| select($report != null)
-			| $report.limits
-			| to_entries[]
-			| . as $limit_entry
-			| ($limit_entry.value | used_fraction) as $raw_fraction
-			| select(($raw_fraction | type) == "number")
-			| ($limit_entry.value | window_class) as $class
-			| select($class != null)
-			| ([0, $raw_fraction] | max | [1, .] | min) as $fraction
-			| (($fraction * 100 + 0.5) | floor) as $pct
+			| [
+				$report.limits
+				| to_entries[]
+				| . as $limit_entry
+				| ($limit_entry.value | used_fraction) as $raw_fraction
+				| select(($raw_fraction | type) == "number")
+				| ($limit_entry.value | window_class) as $class
+				| select($class != null)
+				| ([0, $raw_fraction] | max | [1, .] | min) as $fraction
+				| (($fraction * 100 + 0.5) | floor) as $pct
+				| {
+					windowOrder: $class.rank,
+					limitOrder: $limit_entry.key,
+					windowName: $class.name,
+					fraction: $fraction,
+					pct: $pct,
+					countdown: (
+						if ($limit_entry.value.window.resetsAt | type) == "number"
+						then countdown($limit_entry.value.window.resetsAt; $now_ms)
+						else null
+						end
+					),
+					resetsAt: ($limit_entry.value.window.resetsAt // 0),
+					durationMs: ($limit_entry.value.window.durationMs // 0)
+				}
+			] as $windows
+			| select(($windows | length) > 0)
+			| ($windows | map((.countdown // "") | length) | max) as $max_countdown
+			| ($account.accountName + " ") as $account_title
+			| (
+				if $account.provider == "openai-codex" then "#62a7ff" else "#ff9f52" end
+			) as $provider_color
+			| $windows[]
+			| . as $window
+			| (pad_left($window.pct; 3) + "%") as $pct_text
+			| (
+				if $window.countdown != null then
+					" ↻ " + pad_left($window.countdown; $max_countdown)
+				elif $max_countdown > 0 then
+					" " * (3 + $max_countdown)
+				else
+					""
+				end
+			) as $reset_text
+			| ($pct_text + $reset_text) as $label
 			| {
 				accountOrder: (if $account.provider == "anthropic" then 0 else 1 end),
 				vaultOrder: $account.firstVaultOrder,
 				credentialOrder: $account.firstCredentialOrder,
-				windowOrder: $class.rank,
-				limitOrder: $limit_entry.key,
+				windowOrder: $window.windowOrder,
+				limitOrder: $window.limitOrder,
 				row: {
 					bar: {
-						fraction: $fraction,
-						title: ($account.accountName + " " + $class.name),
-						label: (
-							($pct | tostring) + "%" +
-							(
-								if ($limit_entry.value.window.resetsAt | type) == "number"
-								then " ↻" + countdown($limit_entry.value.window.resetsAt; $now_ms)
-								else ""
-								end
-							)
+						fraction: $window.fraction,
+						title: ($account_title + $window.windowName),
+						title_spans: [
+							{text: $account_title, color: $provider_color, dim: true},
+							{text: $window.windowName, color: $provider_color}
+						],
+						title_color: $provider_color,
+						label: $label,
+						label_spans: (
+							if $window.countdown != null then
+								[
+									{text: $pct_text, color: "subtext0"},
+									reset_span(
+										$reset_text;
+										$window.durationMs;
+										$window.resetsAt;
+										$now_ms
+									)
+								]
+							else
+								[{text: $label, color: "subtext0"}]
+							end
 						),
-						fill: fill_color($pct),
+						match_values: $account.brokerURLs,
+						fill: fill_color($window.pct),
 						empty: "#78829b"
 					}
 				}
@@ -375,9 +443,10 @@ publish_cycle() {
         --argjson order "$order" \
         --arg id "$id" \
         --arg label "$label" \
+        --arg broker_url "$broker_url" \
         --argjson snapshot "$snapshot" \
         --argjson usage "$usage" \
-        '{order: $order, id: $id, label: $label, snapshot: $snapshot, usage: $usage}'
+        '{order: $order, id: $id, label: $label, brokerUrl: $broker_url, snapshot: $snapshot, usage: $usage}'
     )" || continue
     vault_records+=("$record")
   done < <(

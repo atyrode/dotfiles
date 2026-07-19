@@ -74,9 +74,11 @@ pkgs.runCommand "check-herdr"
     [ "$(taplo get -f ${renderedConfig} 'experimental.pane_history')" = false ]
     [ "$(taplo get -f ${renderedConfig} 'remote.manage_ssh_config')" = true ]
     [ "$(taplo get -f ${renderedConfig} 'ui.agent_panel_sort')" = priority ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar_sections_height')" = 18 ]
     [ "$(taplo get -f ${renderedConfig} 'ui.toast.delivery')" = herdr ]
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].id')" = usage ]
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].title')" = usage ]
+    [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].highlight_token')" = vault_broker ]
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].max_rows')" = 18 ]
     [ "$(taplo get -f ${renderedConfig} 'ui.sidebar.sections[0].placement')" = below_agents ]
     if taplo get -f ${renderedConfig} 'ui.sidebar.spaces' >/dev/null 2>&1 ||
@@ -303,7 +305,17 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.45,
           "title": "alpha 5h",
-          "label": "45% ↻30m",
+          "title_spans": [
+            {"text": "alpha ", "color": "#ff9f52", "dim": true},
+            {"text": "5h", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": " 45% ↻  30m",
+          "label_spans": [
+            {"text": " 45%", "color": "subtext0"},
+            {"text": " ↻  30m", "color": "#c8d0dc"}
+          ],
+          "match_values": ["http://127.0.0.1:41001"],
           "fill": "#e1c846",
           "empty": "#78829b"
         }
@@ -312,7 +324,17 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.51,
           "title": "alpha 7d",
-          "label": "51% ↻3d4h",
+          "title_spans": [
+            {"text": "alpha ", "color": "#ff9f52", "dim": true},
+            {"text": "7d", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": " 51% ↻ 3d4h",
+          "label_spans": [
+            {"text": " 51%", "color": "subtext0"},
+            {"text": " ↻ 3d4h", "color": "#78829b", "dim": true}
+          ],
+          "match_values": ["http://127.0.0.1:41001"],
           "fill": "#ebc546",
           "empty": "#78829b"
         }
@@ -321,7 +343,16 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.8,
           "title": "alpha fable",
-          "label": "80%",
+          "title_spans": [
+            {"text": "alpha ", "color": "#ff9f52", "dim": true},
+            {"text": "fable", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": " 80%       ",
+          "label_spans": [
+            {"text": " 80%       ", "color": "subtext0"}
+          ],
+          "match_values": ["http://127.0.0.1:41001"],
           "fill": "#eb6e46",
           "empty": "#78829b"
         }
@@ -330,7 +361,17 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.05,
           "title": "beta 7d",
-          "label": "5% ↻2h17m",
+          "title_spans": [
+            {"text": "beta ", "color": "#ff9f52", "dim": true},
+            {"text": "7d", "color": "#ff9f52"}
+          ],
+          "title_color": "#ff9f52",
+          "label": "  5% ↻ 2h17m",
+          "label_spans": [
+            {"text": "  5%", "color": "subtext0"},
+            {"text": " ↻ 2h17m", "color": "#c8d0dc", "bold": true}
+          ],
+          "match_values": ["http://127.0.0.1:41002"],
           "fill": "#69c846",
           "empty": "#78829b"
         }
@@ -339,7 +380,20 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.23,
           "title": "shared.codex 5h",
-          "label": "23% ↻30m",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "5h", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 23% ↻   30m",
+          "label_spans": [
+            {"text": " 23%", "color": "subtext0"},
+            {"text": " ↻   30m", "color": "#c8d0dc"}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
           "fill": "#9fc846",
           "empty": "#78829b"
         }
@@ -348,7 +402,19 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.12,
           "title": "shared.codex 7d",
-          "label": "12%",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "7d", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 12%        ",
+          "label_spans": [
+            {"text": " 12%        ", "color": "subtext0"}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
           "fill": "#7ec846",
           "empty": "#78829b"
         }
@@ -357,7 +423,20 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.34,
           "title": "shared.codex sp 5h",
-          "label": "34% ↻2h17m",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "sp 5h", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 34% ↻ 2h17m",
+          "label_spans": [
+            {"text": " 34%", "color": "subtext0"},
+            {"text": " ↻ 2h17m", "color": "#78829b", "dim": true}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
           "fill": "#c0c846",
           "empty": "#78829b"
         }
@@ -366,7 +445,20 @@ pkgs.runCommand "check-herdr"
         "bar": {
           "fraction": 0.67,
           "title": "shared.codex sp 7d",
-          "label": "67% ↻3d4h",
+          "title_spans": [
+            {"text": "shared.codex ", "color": "#62a7ff", "dim": true},
+            {"text": "sp 7d", "color": "#62a7ff"}
+          ],
+          "title_color": "#62a7ff",
+          "label": " 67% ↻  3d4h",
+          "label_spans": [
+            {"text": " 67%", "color": "subtext0"},
+            {"text": " ↻  3d4h", "color": "#78829b", "dim": true}
+          ],
+          "match_values": [
+            "http://127.0.0.1:41001",
+            "http://127.0.0.1:41002"
+          ],
           "fill": "#eb9546",
           "empty": "#78829b"
         }
@@ -424,11 +516,11 @@ pkgs.runCommand "check-herdr"
     ' "$capture" >/dev/null
     jq -e '
       [.rows[].bar.label] as $labels
-      | any($labels[]; test("↻[0-9]+m$")) and
-        any($labels[]; test("↻[0-9]+h[0-9]+m$")) and
-        any($labels[]; test("↻[0-9]+d[0-9]+h$")) and
+      | any($labels[]; test("↻ +[0-9]+m$")) and
+        any($labels[]; test("↻ +[0-9]+h[0-9]+m$")) and
+        any($labels[]; test("↻ +[0-9]+d[0-9]+h$")) and
         all($labels[];
-          test("^[0-9]+%( ↻([0-9]+m|[0-9]+h[0-9]+m|[0-9]+d[0-9]+h))?$")
+          test("^ {0,2}[0-9]{1,3}%( ↻ +([0-9]+m|[0-9]+h[0-9]+m|[0-9]+d[0-9]+h))? *$")
         )
     ' "$capture" >/dev/null
 

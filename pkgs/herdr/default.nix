@@ -17,13 +17,13 @@
 
 let
   version = "0.7.4";
-  forkRev = "9b91942ac3955e2ecf442aae0a516ff2709efe4d";
+  forkRev = "5ab3d9f3009cfdb8fbdcaf967f585979852eead9";
 
   src = fetchFromGitHub {
     owner = "atyrode";
     repo = "herdr";
     rev = forkRev;
-    hash = "sha256-FfNrf+9i2UliVamCpbX7tw85Mt/+eGMCxkDkJD3xI2s=";
+    hash = "sha256-WEbNN0aqP+EqPcJ51d9PmTHLA6UAf/xzX3Ae6Euokqw=";
   };
 
   zigDeps = callPackage "${src}/vendor/libghostty-vt/build.zig.zon.nix" {

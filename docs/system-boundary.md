@@ -60,6 +60,18 @@ repository-owned `alex-x86_64-linux-wsl` configuration is the deliberate
 workstation exception: it owns only the local WSL guest and imports the same
 portable profiles. See [Portable Home Manager profiles](portable-profiles.md).
 
+Starting the managed distribution while another WSL distribution is already
+running can leave the guest without a systemd user session (`wsl: Failed to
+start the systemd user session`, and `systemctl --user` cannot reach the user
+bus). This is an upstream WSL defect rather than managed state:
+[NixOS-WSL #888](https://github.com/nix-community/NixOS-WSL/issues/888) tracks
+it against
+[microsoft/WSL #13188](https://github.com/microsoft/WSL/issues/13188). Interop
+commands, `atyrode doctor`, and Windows reconciliation still work without the
+user session. Recovery is `wsl --shutdown` followed by starting
+`atyrode-nixos` first; keep other distributions free of logon autostart
+launchers so the managed guest boots alone.
+
 ## Installed is not operational
 
 Package presence proves only that a program can be invoked. Operational

@@ -13,6 +13,14 @@ in
       mutableStateOwner = "Zen Browser owns its Mozilla account, profile, cookies, sessions, updates, and caches";
     }
     {
+      id = "DEVCOM.JetBrainsMonoNerdFont";
+      name = "JetBrainsMono Nerd Font";
+      source = "winget";
+      conflicts = [ ];
+      versionPolicy = "installed; WinGet owns normal font updates";
+      mutableStateOwner = "Windows owns the installed font files; Nix owns package presence";
+    }
+    {
       id = "raphamorim.rio";
       name = "Rio terminal";
       source = "github-release";

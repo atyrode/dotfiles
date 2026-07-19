@@ -14,6 +14,45 @@
 # detects Rio natively (upstream: packages/tui/src/terminal-capabilities.ts).
 env-vars = ["PI_FORCE_IMAGE_PROTOCOL=kitty"]
 
+# On macOS, reserve left Option for terminal Meta/Alt shortcuts while keeping
+# right Option available for native character entry. Other platforms ignore it.
+option-as-alt = "left"
+
+# Use one font family on every desktop. Nix installs and registers this face on
+# macOS/Linux; the Windows package inventory installs that same family through
+# WinGet. The Mono variant keeps every icon in a single cell.
+[fonts]
+family = "JetBrainsMono Nerd Font Mono"
+size = 14
+use-drawable-chars = true
+
+# Ghostty has no named "default" theme: these are its hard-coded default
+# background, foreground, and ANSI colors. Keeping them inline makes the exact
+# appearance portable without deploying a second platform-specific theme file.
+[colors]
+background = "#282C34"
+foreground = "#FFFFFF"
+black = "#1D1F21"
+red = "#CC6666"
+green = "#B5BD68"
+yellow = "#F0C674"
+blue = "#81A2BE"
+magenta = "#B294BB"
+cyan = "#8ABEB7"
+white = "#C5C8C6"
+light-black = "#666666"
+light-red = "#D54E53"
+light-green = "#B9CA4A"
+light-yellow = "#E7C547"
+light-blue = "#7AA6DA"
+light-magenta = "#C397D8"
+light-cyan = "#70C0B1"
+light-white = "#EAEAEA"
+cursor = "#FFFFFF"
+vi-cursor = "#70C0B1"
+selection-foreground = "#282C34"
+selection-background = "#FFFFFF"
+
 # One software per concern: herdr owns multiplexing (tabs, splits, panes,
 # sessions); Rio is a thin renderer. Plain mode turns the tab bindings off
 # outright.

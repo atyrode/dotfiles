@@ -498,6 +498,7 @@ pkgs.runCommand "check-atyrode-cli"
         case "$package_id" in
           Zen-Team.Zen-Browser.Twilight) [[ -f "$WINGET_STATE/twilight" ]] && exit 0 || exit 20 ;;
           Zen-Team.Zen-Browser) [[ -f "$WINGET_STATE/stable" ]] && exit 0 || exit 20 ;;
+          DEVCOM.JetBrainsMonoNerdFont) [[ -f "$WINGET_STATE/jetbrains-nerd-font" ]] && exit 0 || exit 20 ;;
           raphamorim.rio)
             [[ -f "$WINGET_STATE/rio-version" ]] || exit 20
             printf 'Name Id             Version Source\n-----------------------------------\nRio  raphamorim.rio %-7s winget\n' "$(cat "$WINGET_STATE/rio-version")"
@@ -506,8 +507,15 @@ pkgs.runCommand "check-atyrode-cli"
         esac
         ;;
       install)
-        [[ "$*" == *'--id Zen-Team.Zen-Browser.Twilight --exact --source winget'* ]] || exit 64
-        touch "$WINGET_STATE/twilight"
+        case "$*" in
+          *'--id Zen-Team.Zen-Browser.Twilight --exact --source winget'*)
+            touch "$WINGET_STATE/twilight"
+            ;;
+          *'--id DEVCOM.JetBrainsMonoNerdFont --exact --source winget'*)
+            touch "$WINGET_STATE/jetbrains-nerd-font"
+            ;;
+          *) exit 64 ;;
+        esac
         ;;
       *)
         exit 64
@@ -554,7 +562,7 @@ pkgs.runCommand "check-atyrode-cli"
     export MSI_LOG="$TMPDIR/msiexec.log"
     export RIO_FETCH_CONTENT=good
     mkdir -p "$ATYRODE_LOCALAPPDATA"
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/rio-version"
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/rio-version"
     export _ATYRODE_TEST_HOSTNAME=atyrode-wsl
     rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable"
     : > "$WINGET_LOG"
@@ -566,9 +574,15 @@ pkgs.runCommand "check-atyrode-cli"
       and .wingetVersion == "v1.11.510"
       and .ready
       and (.converged | not)
-      and .changes == 2
+      and .changes == 3
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
+        and .status == "missing"
+        and (.installed | not)
+        and .detectedConflicts == []
+      )] | length == 1)
+      and ([.packages[] | select(
+        .id == "DEVCOM.JetBrainsMonoNerdFont"
         and .status == "missing"
         and (.installed | not)
         and .detectedConflicts == []
@@ -587,13 +601,15 @@ pkgs.runCommand "check-atyrode-cli"
     ' <<<"$windows_plan" >/dev/null \
       || { echo "Windows plan contract is wrong: $windows_plan" >&2; exit 1; }
     test ! -e "$WINGET_STATE/twilight"
+    test ! -e "$WINGET_STATE/jetbrains-nerd-font"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio"
     grep -qF 'list --id Zen-Team.Zen-Browser.Twilight --exact --accept-source-agreements --disable-interactivity' \
       "$WINGET_LOG"
 
     # The downloader must not pass an unverified MSI to Windows or leave a Rio
-    # stamp/config behind. Mark Zen present so the checksum case isolates Rio.
+    # stamp/config behind. Mark the WinGet packages present so this isolates Rio.
     touch "$WINGET_STATE/twilight"
+    touch "$WINGET_STATE/jetbrains-nerd-font"
     RIO_FETCH_CONTENT=wrong
     set +e
     atyrode windows apply alex-x86_64-linux-wsl --json \
@@ -605,7 +621,7 @@ pkgs.runCommand "check-atyrode-cli"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     test ! -s "$MSI_LOG"
-    rm -f "$WINGET_STATE/twilight"
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/jetbrains-nerd-font"
     RIO_FETCH_CONTENT=good
 
     rm -f "$TMPDIR/nh-args"
@@ -627,7 +643,10 @@ pkgs.runCommand "check-atyrode-cli"
       "$TMPDIR/nh-args" >/dev/null
     grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \
       "$WINGET_LOG" >/dev/null
+    grep -F -- 'install --id DEVCOM.JetBrainsMonoNerdFont --exact --source winget' \
+      "$WINGET_LOG" >/dev/null
     test -f "$WINGET_STATE/twilight"
+    test -f "$WINGET_STATE/jetbrains-nerd-font"
     converged_windows="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
     jq -e '.ready and .converged and .changes == 0 and all(.packages[]; .status == "installed")' \
       <<<"$converged_windows" >/dev/null \

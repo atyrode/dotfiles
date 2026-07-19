@@ -51,12 +51,19 @@ pkgs.runCommand "check-windows-control-plane"
 
     jq -e '
       .schemaVersion == 2
-      and (.packages | length) == 2
+      and (.packages | length) == 3
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .source == "winget"
         and .conflicts == ["Zen-Team.Zen-Browser"]
         and (.mutableStateOwner | contains("Zen Browser owns"))
+      )] | length == 1)
+      and ([.packages[] | select(
+        .id == "DEVCOM.JetBrainsMonoNerdFont"
+        and .source == "winget"
+        and .conflicts == []
+        and .versionPolicy == "installed; WinGet owns normal font updates"
+        and (.mutableStateOwner | contains("Windows owns the installed font files"))
       )] | length == 1)
       and ([.packages[] | select(
         .id == "raphamorim.rio"

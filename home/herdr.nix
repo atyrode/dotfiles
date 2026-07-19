@@ -1,5 +1,17 @@
 { lib, pkgs, ... }:
 
+let
+  herdrUsagePublisher = pkgs.writeShellApplication {
+    name = "atyrode-herdr-usage-publisher";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+      pkgs.herdr
+      pkgs.jq
+    ];
+    text = builtins.readFile ../scripts/herdr-usage-publisher.sh;
+  };
+in
 {
   # herdr trial (#269): the agent multiplexer whose server runs where the
   # agents run. On the Linux hosts `herdr` is the server the Mac attaches to
@@ -12,6 +24,27 @@
   # worktrees (~/.herdr/worktrees), and the version-stamped OMP integration
   # file seeded below. OMP auth, sessions, and caches stay OMP-owned.
   home.packages = [ pkgs.herdr ];
+
+  # Usage publication belongs beside herdr itself; the agent-tools profile
+  # that imports this module is the single capability gate. Dormant during
+  # the sidebar-sections fork phase: the unit exists for manual starts
+  # (systemctl --user start) but is not wanted by any target, because the
+  # terse token rows it fed were retired in favor of the fork's styled
+  # section. Linux-only; no Darwin launchd agent.
+  systemd.user.services.atyrode-herdr-usage-publisher = lib.mkIf pkgs.stdenv.isLinux {
+    Unit = {
+      Description = "Publish OMP vault usage to Herdr sidebars";
+      After = [
+        "network.target"
+        "atyrode-omp-auth-brokers.service"
+      ];
+    };
+    Service = {
+      Type = "simple";
+      ExecStart = lib.getExe herdrUsagePublisher;
+      Restart = "on-failure";
+    };
+  };
 
   # Schema verified against herdr v0.7.4 (src/config/model.rs). Partial TOML
   # is supported and unknown nested keys are ignored, but a parse error makes

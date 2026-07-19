@@ -50,10 +50,11 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
 - Your bare `omp` configuration remains mutable. `code` keeps trusted client
   sessions/settings in profile `default` and changes only its auth-broker
   environment.
-- The wrapper reads machine-local vault metadata from
-  `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; `CODE_AUTH_VAULTS` can
-  provide a read-only override. Without either source it falls back to the local
-  OMP `default` profile, keeping the package neutral. The `code` vault manager
+- The wrapper reads machine-local vault metadata from code v0.3.0's default
+  `$XDG_CONFIG_HOME/code/auth-vaults.json`; `CODE_AUTH_VAULTS_FILE` can select
+  another machine-local file and `CODE_AUTH_VAULTS` can provide a read-only raw
+  override. Without any source it falls back to the local OMP `default` profile,
+  keeping the package neutral. The `code` vault manager
   can create entries and rename display labels only in the machine-local file.
   Home Manager's identity-agnostic broker supervisor validates that file and
   automatically reloads valid atomic changes while retaining current brokers

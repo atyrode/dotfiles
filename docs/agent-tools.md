@@ -11,10 +11,11 @@ Nix owns:
 - the pinned OMP binary and generated Zsh completion;
 - the managed OMP defaults, enforced policy, and model catalog;
 - the curated plain-omp seed and its drift-aware activation step;
-- the pinned bundled agents, global generic skills, managed-settings guard
-  extension, and vault-usage footer extension;
+- the pinned bundled agents, global generic skills, managed-settings guard,
+  vault-usage footer, and herdr vault-identity extensions;
 - the pinned herdr multiplexer, its managed `~/.config/herdr/config.toml`,
-  and the vendored, review-gated herdr pane-orchestration skill (#269);
+  Linux usage publisher, and vendored, review-gated pane-orchestration skill
+  (#269);
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
@@ -45,9 +46,9 @@ the exact managed OMP binary set — the `omp`, `omp-managed`, and `ompu`
 launchers plus the `code` generator — and verifies that an OMP clean-home
 startup does not create `.pi` state.
 
-Agents, rules, the settings guard, and the vault-usage footer are assembled
-into a read-only OMP extension-package root in the Nix store and injected
-explicitly by every managed session. They are not copied into OMP's mutable
+Agents, rules, the settings guard, vault-usage footer, and herdr vault identity
+are assembled into a read-only OMP extension-package root in the Nix store and
+injected explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
 caches. The vault-usage footer renders one responsive row below the editor
@@ -182,15 +183,16 @@ the explicit whole-manager refresh. Cached data stays visible while refreshing.
 When a retained Fable value is older than the latest response, its label reports
 relative age (for example, `cached 4m ago`) rather than a wall-clock timestamp.
 
-Vault definitions are machine-local, not repository data. Put a mode-0600 JSON
-array at `$XDG_CONFIG_HOME/atyrode/code-auth-vaults.json`; each entry supplies a
-display label, stable id and backing OMP profile, loopback broker URL, token
-file, and snapshot cache. In the manager, **`n`** creates an empty vault and
-**`e`** changes only the highlighted vault's display label. Enter commits the
-text prompt and Escape cancels it. Creation derives a collision-safe id/profile,
-unused loopback port, and XDG state/cache paths; it never creates or reads
-credentials. A `CODE_AUTH_VAULTS` raw JSON override is intentionally read-only
-because it has no safe machine-local persistence target.
+Vault definitions are machine-local, not repository data. `code` v0.3.0 uses a
+mode-0600 JSON array at `$XDG_CONFIG_HOME/code/auth-vaults.json` by default;
+`CODE_AUTH_VAULTS_FILE` can select another machine-local file. Each entry
+supplies a display label, stable id and backing OMP profile, loopback broker URL,
+token file, and snapshot cache. In the manager, **`n`** creates an empty vault
+and **`e`** changes only the highlighted vault's display label. Enter commits
+the text prompt and Escape cancels it. Creation derives a collision-safe
+id/profile, unused loopback port, and XDG state/cache paths; it never creates or
+reads credentials. A `CODE_AUTH_VAULTS` raw JSON override is intentionally
+read-only because it has no safe machine-local persistence target.
 
 The generic Home Manager supervisor validates the manifest and starts one
 broker process per entry. It watches atomic content changes and automatically
@@ -368,6 +370,21 @@ version-stamped OMP integration file that activation seeds via
 `herdr integration install omp` — the machine-local stance settled in #65,
 and `checks/herdr.nix` exercises the installer contract
 against a scratch agent directory on every platform.
+
+On Linux, Nix also carries the herdr usage publisher as dormant
+infrastructure for the sidebar-sections fork trial: the systemd user unit
+exists but is wanted by no target (start it manually with
+`systemctl --user start atyrode-herdr-usage-publisher` while developing).
+The terse `$usage` token rows it originally fed were retired — sidebar
+token rows cap out around 21 usable cells, which the operator judged
+unreadable — so the in-omp vault-usage footer remains the usage surface
+until the fork renders a properly styled section. The daemon's contracts
+are unchanged and check-pinned: per enabled vault it polls the broker's
+aggregate usage endpoint (bearer headers fed to `curl` via stdin, tokens
+never in process arguments), joins panes to vaults through the non-secret
+`vault_broker` pane token that managed OMP's vault-identity extension
+publishes, and emits only plain usage text and loopback URLs to herdr,
+with twelve-minute TTLs so anything it publishes self-evicts.
 
 The integration extension is inert outside herdr panes (env-gated on
 `HERDR_ENV`/`HERDR_SOCKET_PATH`/`HERDR_PANE_ID`), and OMP discovers it from

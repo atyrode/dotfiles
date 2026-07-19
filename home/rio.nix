@@ -1,12 +1,11 @@
 { pkgs, ... }:
 
 {
-  # Rio trial (#278): the single pinned cross-platform terminal layer.
+  # Rio (#278): the single pinned cross-platform terminal layer.
   # Terminal-as-thin-renderer under the existing stack — herdr owns
   # multiplexing, OMP owns the agent layer, Nix owns config and pins.
-  # Runs ALONGSIDE Ghostty until the trial gates in #278 pass; the clean
-  # cutover (retiring home/ghostty.nix and the zsh integration guard)
-  # happens only after live validation on the Mac and the Windows box.
+  # Adopted as THE terminal after the #278 trial (Ghostty retired in the
+  # cutover; operator-validated 2026-07-19).
   #
   # The config is a literal committed TOML (home/rio/config.toml), not a
   # Nix-templated one: the native Windows workstation has no Home Manager

@@ -66,10 +66,9 @@ run the same apply command again.
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
 - **herdr** - Pinned agent multiplexer under trial (#269): server-side panes
   for VPS OMP sessions, thin client from the Mac
-- **Rio** - Pinned cross-platform terminal layer under trial (#278): a thin
-  renderer under herdr/OMP with one committed `home/rio/config.toml` for
-  macOS, Linux desktop, and native Windows; Ghostty stays until the trial
-  gates pass
+- **Rio** - The pinned cross-platform terminal layer (#278): a thin renderer
+  under herdr/OMP with one committed `home/rio/config.toml` for macOS, Linux
+  desktop, and native Windows
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
   native compilers come from committed dev shells, `mise.toml`, or native
@@ -86,8 +85,8 @@ run the same apply command again.
   and nmap/socat (`security`)
 
 ### macOS Apps
-- **Nix/Home Manager apps** - ChatGPT, Ghostty, Lichess, Obsidian, OrbStack,
-  Postman, Prism Launcher, REAPER, Signal, Spotify, VLC, and WhatsApp
+- **Nix/Home Manager apps** - ChatGPT, Lichess, Obsidian, OrbStack,
+  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, VLC, and WhatsApp
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
   Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen Browser
   Twilight, managed through nix-darwin

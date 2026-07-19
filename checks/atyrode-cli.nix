@@ -649,6 +649,14 @@ pkgs.runCommand "check-atyrode-cli"
     rio_upgrade_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
     jq -e '[.packages[] | select(.id == "raphamorim.rio" and .status == "upgrade" and .installedVersion == "0.4.6" and .installedVersionSource == "winget" and .pinnedVersion == "0.4.7")] | length == 1' \
       <<<"$rio_upgrade_plan" >/dev/null
+    # An uninstall cannot be masked either: winget reporting no installed
+    # Rio (exit 20) is authoritative absence, and a leftover pinned stamp
+    # must never be consulted.
+    rm -f "$WINGET_STATE/rio-version"
+    rio_uninstalled_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
+    jq -e '[.packages[] | select(.id == "raphamorim.rio" and .status == "missing" and .installedVersion == null and .installedVersionSource == "absent")] | length == 1' \
+      <<<"$rio_uninstalled_plan" >/dev/null
+    printf '0.4.6\n' > "$WINGET_STATE/rio-version"
     : > "$MSI_LOG"
     atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
     grep -Fx -- '/i C:\mock\rio-installer-x86_64.msi /qn /norestart' "$MSI_LOG" >/dev/null

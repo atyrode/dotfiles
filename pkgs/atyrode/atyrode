@@ -11,6 +11,7 @@ readonly homebrew_cask_inventory='@homebrew_casks@'
 readonly system_policy='@system_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
+readonly windows_package_inventory='@windows_packages@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
@@ -40,6 +41,7 @@ Usage:
   atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
+  atyrode windows plan|apply [HOST] [--json]
 
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
@@ -60,9 +62,10 @@ supported GC/worktree-clear dry-runs when omp is available, and --json emits a s
 doctor git is a read-only audit of SSH authentication, SSH signing, forge
 remotes, Git credential helpers, and GitHub CLI credential storage. It reports
 classifications only and never prints keys, tokens, helper arguments, or remotes.
-generations lists the activation profile's generations (nix-darwin system on
-macOS, home-manager on Linux); rollback activates an earlier one (previous by
-default, or --to N) after confirming. clean reclaims disk from generations the
+generations lists the activation profile's generations (nix-darwin or NixOS
+system profile, otherwise standalone Home Manager); rollback activates an earlier
+one (previous by default, or --to N) after confirming.
+clean reclaims disk from generations the
 config no longer references, always keeping the current one and a rollback
 window (--keep / --keep-since); it previews the plan and asks before touching
 anything (--yes skips the prompt, --dry-run only previews), folds nh's verbose
@@ -71,6 +74,9 @@ and on macOS it also sweeps stale Home Manager Apps aliases. The auto GC roots t
 generations are owned by the Nix daemon; a non-root clean cannot unlink them and
 prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
 self-elevates). Commands reserved for later issues: workspace and agent.
+windows treats WinGet as the native Windows package owner. plan is read-only;
+apply reconciles exact package IDs through WSL interop after refusing channel
+conflicts. Windows mutations are not part of a Nix generation or rollback.
 EOF
 }
 
@@ -160,6 +166,191 @@ doctor_host() {
       "$host" "$system" "$user" "$hostname" "$([[ "$ok" == true ]] && echo ok || echo mismatch)"
   fi
   [[ "$ok" == true ]] || return "$EX_DATAERR"
+}
+
+is_wsl() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_WSL:-}" ]]; then
+    [[ "$_ATYRODE_TEST_WSL" == 1 ]]
+    return
+  fi
+  [[ -n "${WSL_INTEROP:-}" ]] ||
+    { [[ -r /proc/sys/kernel/osrelease ]] && grep -qi microsoft /proc/sys/kernel/osrelease; }
+}
+
+windows_winget() {
+  local candidate=winget.exe resolved
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_WINGET:-}" ]]; then
+    candidate="$ATYRODE_WINGET"
+  fi
+  resolved="$(command -v "$candidate" 2>/dev/null)" ||
+    die "$EX_UNAVAILABLE" "winget.exe is unavailable through WSL interop; repair Windows App Installer and WSL PATH interop"
+  printf '%s\n' "$resolved"
+}
+
+windows_package_present() {
+  local winget="$1" id="$2" status
+  if "$winget" list --id "$id" --exact --accept-source-agreements --disable-interactivity \
+    </dev/null >/dev/null 2>&1; then
+    return 0
+  else
+    status=$?
+  fi
+  # WinGet reports APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND as
+  # 0x8A150014. WSL exposes the low byte through the POSIX exit status.
+  [[ "$status" == 20 ]] && return 1
+  die "$EX_UNAVAILABLE" "winget.exe could not query installed package $id (exit $status); repair App Installer or its sources"
+}
+
+windows_plan() {
+  local host="$1" data winget winget_version package id installed status remediation
+  local rows='[]' conflicts conflict_id
+  doctor_host "$host" 1 >/dev/null ||
+    die "$EX_DATAERR" "host identity does not match the registered NixOS-WSL host $host"
+  data="$(host_json "$host")"
+  [[ "$(jq -r '.activation' <<<"$data")" == nixos-wsl ]] ||
+    die "$EX_USAGE" "Windows reconciliation is owned only by a registered nixos-wsl host"
+  is_wsl ||
+    die "$EX_UNAVAILABLE" "Windows reconciliation requires a live WSL session"
+  jq -e '
+    .schemaVersion == 1
+    and (.packages | type == "array" and length > 0)
+    and all(.packages[];
+      (.id | type == "string" and length > 0)
+      and (.name | type == "string" and length > 0)
+      and .source == "winget"
+      and (.conflicts | type == "array"))
+  ' "$windows_package_inventory" >/dev/null ||
+    die "$EX_SOFTWARE" "embedded Windows package inventory is invalid"
+
+  winget="$(windows_winget)"
+  winget_version="$("$winget" --version 2>/dev/null | awk 'NR == 1 { gsub(/\r/, ""); print; exit }')" ||
+    die "$EX_UNAVAILABLE" "winget.exe could not report its version through WSL interop"
+  [[ -n "$winget_version" ]] ||
+    die "$EX_UNAVAILABLE" "winget.exe returned an empty version through WSL interop"
+
+  while IFS= read -r package; do
+    id="$(jq -r '.id' <<<"$package")"
+    name="$(jq -r '.name' <<<"$package")"
+    installed=false
+    windows_package_present "$winget" "$id" && installed=true
+    conflicts='[]'
+    while IFS= read -r conflict_id; do
+      [[ -n "$conflict_id" ]] || continue
+      if windows_package_present "$winget" "$conflict_id"; then
+        conflicts="$(jq -nc --argjson current "$conflicts" --arg id "$conflict_id" '$current + [$id]')"
+      fi
+    done < <(jq -r '.conflicts[]?' <<<"$package")
+
+    remediation=""
+    if [[ "$(jq -r 'length' <<<"$conflicts")" -gt 0 ]]; then
+      status=blocked
+      remediation="fully close Zen, back up its profile, then explicitly uninstall the stable Zen package before applying Twilight"
+    elif [[ "$installed" == true ]]; then
+      status=installed
+    else
+      status=missing
+    fi
+    rows="$(jq -nc \
+      --argjson rows "$rows" \
+      --argjson package "$package" \
+      --argjson installed "$installed" \
+      --argjson conflicts "$conflicts" \
+      --arg status "$status" \
+      --arg remediation "$remediation" \
+      '$rows + [$package + {
+        installed: $installed,
+        status: $status,
+        detectedConflicts: $conflicts,
+        remediation: $remediation
+      }]')"
+  done < <(jq -c '.packages[]' "$windows_package_inventory")
+
+  jq -nc \
+    --arg host "$host" \
+    --arg backend "$winget" \
+    --arg wingetVersion "$winget_version" \
+    --argjson packages "$rows" \
+    '{
+      schemaVersion: 1,
+      command: "windows plan",
+      host: $host,
+      backend: $backend,
+      wingetVersion: $wingetVersion,
+      ready: all($packages[]; .status != "blocked"),
+      converged: all($packages[]; .status == "installed"),
+      changes: [$packages[] | select(.status == "missing")] | length,
+      packages: $packages,
+      transactional: false,
+      mutationBoundary: "WinGet owns native Windows package state; Nix generations and rollback do not cover it"
+    }'
+}
+
+windows_render_plan() {
+  jq -r '
+    "windows backend: \(.backend) (\(.wingetVersion))",
+    (.packages[] |
+      "  \(.status): \(.name) [\(.id)]"
+      + (if (.detectedConflicts | length) > 0
+         then "\n    conflicts: \(.detectedConflicts | join(", "))\n    remediation: \(.remediation)"
+         else "" end)),
+    "windows changes: \(.changes)",
+    "transactional: no -- \(.mutationBoundary)"
+  ' <<<"$1"
+}
+
+windows_reconcile() {
+  local action="$1" host="$2" json="$3" plan winget package id source final
+  plan="$(windows_plan "$host")"
+  if [[ "$action" == plan ]]; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
+    jq -e '.ready' <<<"$plan" >/dev/null || return "$EX_UNAVAILABLE"
+    return 0
+  fi
+
+  if ! jq -e '.ready' <<<"$plan" >/dev/null; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
+    return "$EX_UNAVAILABLE"
+  fi
+  if jq -e '.converged' <<<"$plan" >/dev/null; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
+    return 0
+  fi
+
+  winget="$(windows_winget)"
+  printf 'atyrode: reconciling native Windows packages through WinGet (non-transactional)\n' >&2
+  while IFS= read -r package; do
+    id="$(jq -r '.id' <<<"$package")"
+    source="$(jq -r '.source' <<<"$package")"
+    printf 'atyrode: installing %s through %s\n' "$id" "$source" >&2
+    "$winget" install --id "$id" --exact --source "$source" \
+      --accept-package-agreements --accept-source-agreements --disable-interactivity \
+      </dev/null >&2 ||
+      return "$EX_SOFTWARE"
+  done < <(jq -c '.packages[] | select(.status == "missing")' <<<"$plan")
+
+  final="$(windows_plan "$host")"
+  jq -e '.ready and .converged' <<<"$final" >/dev/null ||
+    return "$EX_SOFTWARE"
+  if [[ "$json" == 1 ]]; then printf '%s\n' "$final"; else windows_render_plan "$final"; fi
+}
+
+cmd_windows() {
+  local action="${1:-}" requested="" json=0 host
+  case "$action" in
+    plan | apply) shift ;;
+    *) die "$EX_USAGE" "windows expects plan or apply" ;;
+  esac
+  if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown windows option: $1" ;;
+    esac
+    shift
+  done
+  [[ "$action" != apply ]] || guard_production_mutation "windows apply"
+  host="$(resolve_host "$requested")"
+  windows_reconcile "$action" "$host" "$json"
 }
 
 capabilities() {
@@ -1743,7 +1934,8 @@ apply_config() {
   [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
   [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
 
-  local host data expected_system expected_user expected_hostname platform source repository flake_source revision resolved_revision dirty backend installable
+  local host data expected_system expected_user expected_hostname platform activation source repository flake_source revision resolved_revision dirty backend installable
+  local windows_preflight='null' mutation_boundary="activation only after preflight"
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -1754,6 +1946,7 @@ apply_config() {
   expected_user="$(jq -r '.username' <<<"$data")"
   expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
   platform="$(jq -r '.platform' <<<"$data")"
+  activation="$(jq -r '.activation' <<<"$data")"
   [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
   [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
   [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
@@ -1791,16 +1984,38 @@ apply_config() {
     flake_source="$flake_ref/$rev"
     installable="$flake_ref/$rev#$host"
   fi
-  backend="nh-home"; [[ "$platform" != darwin ]] || backend="nh-darwin"
+  case "$activation" in
+    home-manager) backend="nh-home" ;;
+    nix-darwin) backend="nh-darwin" ;;
+    nixos-wsl)
+      backend="nh-os"
+      mutation_boundary="NixOS activation followed by non-transactional native Windows reconciliation"
+      windows_preflight="$(windows_plan "$host")"
+      ;;
+    *) die "$EX_SOFTWARE" "host $host has unsupported activation owner $activation" ;;
+  esac
 
   local output
   output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
-    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg resolved_revision "$resolved_revision" --arg source "$source" \
-    --arg installable "$installable" --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
-    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,resolvedRevision:$resolved_revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
+    --arg user "$expected_user" --arg activation "$activation" --arg backend "$backend" \
+    --arg revision "$revision" --arg resolvedRevision "$resolved_revision" --arg source "$source" \
+    --arg installable "$installable" --arg mutationBoundary "$mutation_boundary" \
+    --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
+    --argjson windowsPlan "$windows_preflight" \
+    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,
+      capabilities:$capabilities,activation:$activation,backend:$backend,revision:$revision,
+      resolvedRevision:$resolvedRevision,dirty:$dirty,repository:$repository,
+      windowsPlan:$windowsPlan,mutationBoundary:$mutationBoundary}')"
   if [[ "$preview_json" == 0 ]]; then
-    if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
-    else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
+    if [[ "$json" == 1 ]]; then
+      printf '%s\n' "$output"
+    else
+      jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nactivation: \(.activation)\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"
+      [[ "$activation" != nixos-wsl ]] || windows_render_plan "$windows_preflight"
+    fi
+  fi
+  if [[ "$activation" == nixos-wsl ]] && ! jq -e '.ready' <<<"$windows_preflight" >/dev/null; then
+    return "$EX_UNAVAILABLE"
   fi
   [[ "$plan" == 0 ]] || return 0
 
@@ -1811,24 +2026,35 @@ apply_config() {
   fi
   # nh home passes a #fragment through to nix verbatim instead of treating
   # it as the configuration name, so the flake reference goes bare and
-  # --configuration carries the host; nh darwin resolves the fragment itself.
-  if [[ "$platform" == darwin ]]; then nh_args=("$nh_command" darwin switch "$installable" --diff always)
-  else nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always); fi
+  # --configuration carries the host. System owners resolve the fragment.
+  case "$activation" in
+    home-manager)
+      nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always)
+      ;;
+    nix-darwin) nh_args=("$nh_command" darwin switch "$installable" --diff always) ;;
+    nixos-wsl) nh_args=("$nh_command" os switch "$installable" --diff always) ;;
+  esac
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   if [[ "$preview_json" == 1 ]]; then
     [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
-    local preview_file
+    local preview_file preview_output
     preview_file="$(mktemp)"
     if ! "${nh_args[@]}" >"$preview_file" 2>&1; then
       cat "$preview_file" >&2
       rm -f "$preview_file"
       die "$EX_SOFTWARE" "$backend preview failed"
     fi
-    if ! "$atyrode_preview_parser" --host "$host" --system "$expected_system" --revision "$resolved_revision" <"$preview_file"; then
+    if ! preview_output="$("$atyrode_preview_parser" --host "$host" --system "$expected_system" --revision "$resolved_revision" <"$preview_file")"; then
       rm -f "$preview_file"
       die "$EX_SOFTWARE" "$backend preview output was not understood"
     fi
     rm -f "$preview_file"
+    if [[ "$activation" == nixos-wsl ]]; then
+      jq -c --argjson windowsPlan "$windows_preflight" \
+        '. + {windowsPlan:$windowsPlan,windowsTransactional:false}' <<<"$preview_output"
+    else
+      printf '%s\n' "$preview_output"
+    fi
     return 0
   fi
   "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
@@ -1840,6 +2066,13 @@ apply_config() {
     temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
     printf '%s\n' "$host" >"$temp"
     mv -f "$temp" "$state_file"
+    if [[ "$activation" == nixos-wsl ]]; then
+      local windows_result
+      if ! windows_result="$(windows_reconcile apply "$host" 1)"; then
+        die "$EX_SOFTWARE" "NixOS activation succeeded, but the non-transactional Windows phase failed; rerun 'atyrode windows apply'"
+      fi
+      [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
+    fi
     review_seed_drift "$json"
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
@@ -2312,22 +2545,28 @@ clean_summary_json() {
       note:"candidates are generations beyond the newest keep, excluding current; nh additionally keeps any newer than keepSince. closureSize values overlap — actual freed space is what the store GC reports."}'
 }
 
-# The activation profile whose generations `apply` switches: the nix-darwin
-# system profile on macOS, the home-manager profile on Linux — mirroring which
-# `nh <backend> switch` apply drives.
+# The activation profile whose generations `apply` switches. NixOS-WSL and
+# nix-darwin own system profiles; standalone Linux owns Home Manager's profile.
+gen_platform() {
+  if [[ "$(uname -s)" == Darwin ]]; then
+    printf 'nix-darwin'
+  elif is_wsl; then
+    printf 'nixos'
+  else
+    printf 'home-manager'
+  fi
+}
+
 gen_profile() {
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GEN_PROFILE:-}" ]]; then
     printf '%s' "$ATYRODE_GEN_PROFILE" # pin the profile path in tests (platform-agnostic)
     return
   fi
-  if [[ "$(uname -s)" == Darwin ]]; then
-    printf '/nix/var/nix/profiles/system'
-  else
-    printf '%s/nix/profiles/home-manager' "${XDG_STATE_HOME:-$HOME/.local/state}"
-  fi
+  case "$(gen_platform)" in
+    nix-darwin | nixos) printf '/nix/var/nix/profiles/system' ;;
+    home-manager) printf '%s/nix/profiles/home-manager' "${XDG_STATE_HOME:-$HOME/.local/state}" ;;
+  esac
 }
-
-gen_platform() { [[ "$(uname -s)" == Darwin ]] && printf 'nix-darwin' || printf 'home-manager'; }
 
 # nix_env runs nix-env, honouring an ATYRODE_NIX_ENV override under test hooks
 # (mirrors ATYRODE_NH / ATYRODE_NIX_STORE) so generation reads are stubbable.
@@ -2434,6 +2673,18 @@ cmd_rollback() {
     # darwin-rebuild owns its own privilege elevation (as nh does for apply);
     # atyrode never self-elevates. Run `sudo atyrode rollback` if a setup needs it.
     darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
+  elif [[ "$platform" == nixos ]]; then
+    [[ "$(effective_uid)" == 0 ]] ||
+      die "$EX_UNAVAILABLE" "NixOS rollback requires root; rerun this exact command with sudo"
+    local genpath
+    genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" ||
+      die "$EX_DATAERR" "cannot resolve generation $target"
+    [[ -x "$genpath/bin/switch-to-configuration" ]] ||
+      die "$EX_DATAERR" "generation $target has no NixOS switch-to-configuration program"
+    nix_env -p "$profile" --switch-generation "$target" ||
+      die "$EX_SOFTWARE" "could not select NixOS generation $target"
+    "$profile/bin/switch-to-configuration" switch ||
+      die "$EX_SOFTWARE" "NixOS rollback activation failed"
   else
     local genpath
     genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" || die "$EX_DATAERR" "cannot resolve generation $target"
@@ -2446,8 +2697,8 @@ cmd_rollback() {
 # guard_production_mutation refuses to run a store-mutating command when a
 # test-only tool-substitution override is present on a production binary. Those
 # vars (ATYRODE_NH, ATYRODE_NIX_STORE, ATYRODE_NIX_ENV, ATYRODE_GIT,
-# ATYRODE_GEN_PROFILE) are honoured only under enableTestHooks; a production build
-# silently ignores them, so a caller who sets them expecting stubs would instead
+# ATYRODE_GEN_PROFILE, ATYRODE_WINGET) are honoured only under enableTestHooks;
+# a production build silently ignores them, so a caller who sets them expecting stubs would instead
 # drive the REAL nh / nix-store / nix-env against the live store. Aborting turns
 # that silent, potentially destructive trap into a loud, safe stop. Scoped to the
 # mutating verbs so read-only commands keep ignoring the vars outright (a hostile
@@ -2455,7 +2706,7 @@ cmd_rollback() {
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE; do
+  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE ATYRODE_WINGET; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done
@@ -2491,6 +2742,7 @@ main() {
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
     inventory) inventory "$@" ;;
+    windows) cmd_windows "$@" ;;
     workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;
     *) die "$EX_USAGE" "unknown command: $subcommand" ;;

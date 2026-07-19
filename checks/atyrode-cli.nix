@@ -161,6 +161,15 @@ pkgs.runCommand "check-atyrode-cli"
       grep -qF 'ATYRODE_NIX_STORE is set' "$TMPDIR/prod-guard.err" \
         || { echo "production $prod_cmd refusal must name the offending override" >&2; exit 1; }
     done
+    set +e
+    env -u ATYRODE_NH -u ATYRODE_NIX_ENV -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
+      ATYRODE_WINGET=/bin/true ${productionAtyrode}/bin/atyrode \
+      windows apply alex-x86_64-linux-wsl \
+      > /dev/null 2> "$TMPDIR/prod-windows-guard.err"
+    prod_windows_guard_status="$?"
+    set -e
+    test "$prod_windows_guard_status" = 64
+    grep -qF 'ATYRODE_WINGET is set' "$TMPDIR/prod-windows-guard.err"
     # The guard is scoped to mutating verbs: a read-only command with the same
     # override present still runs (production simply ignores the var there).
     env ATYRODE_NIX_STORE=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
@@ -460,6 +469,152 @@ pkgs.runCommand "check-atyrode-cli"
       echo 'cross-system host selection unexpectedly succeeded' >&2
       exit 1
     fi
+
+    # NixOS-WSL is a two-phase control plane: Nix activates the guest, then the
+    # guest calls the native winget.exe as the interactive Windows user. Exercise
+    # plan purity, exact-ID installation, channel-conflict refusal, and the
+    # top-level orchestration without touching a real Windows machine.
+    mkdir -p "$TMPDIR/winget-state"
+    cat > "$TMPDIR/bin/winget.exe" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    printf '%s\n' "$*" >> "$WINGET_LOG"
+    case "''${1:-}" in
+      --version)
+        printf 'v1.11.510\n'
+        ;;
+      list)
+        [[ "''${WINGET_QUERY_ERROR:-0}" != 1 ]] || exit 45
+        package_id=""
+        while [[ "$#" -gt 0 ]]; do
+          if [[ "$1" == --id ]]; then
+            package_id="$2"
+            break
+          fi
+          shift
+        done
+        case "$package_id" in
+          Zen-Team.Zen-Browser.Twilight) [[ -f "$WINGET_STATE/twilight" ]] && exit 0 || exit 20 ;;
+          Zen-Team.Zen-Browser) [[ -f "$WINGET_STATE/stable" ]] && exit 0 || exit 20 ;;
+          *) exit 64 ;;
+        esac
+        ;;
+      install)
+        [[ "$*" == *'--id Zen-Team.Zen-Browser.Twilight --exact --source winget'* ]] || exit 64
+        touch "$WINGET_STATE/twilight"
+        ;;
+      *)
+        exit 64
+        ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/winget.exe"
+    export ATYRODE_WINGET="$TMPDIR/bin/winget.exe"
+    export WINGET_LOG="$TMPDIR/winget.log"
+    export WINGET_STATE="$TMPDIR/winget-state"
+    export _ATYRODE_TEST_WSL=1
+    export _ATYRODE_TEST_HOSTNAME=atyrode-wsl
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable"
+    : > "$WINGET_LOG"
+
+    windows_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
+    jq -e '
+      .schemaVersion == 1
+      and .host == "alex-x86_64-linux-wsl"
+      and .wingetVersion == "v1.11.510"
+      and .ready
+      and (.converged | not)
+      and .changes == 1
+      and ([.packages[] | select(
+        .id == "Zen-Team.Zen-Browser.Twilight"
+        and .status == "missing"
+        and (.installed | not)
+        and .detectedConflicts == []
+      )] | length == 1)
+      and (.transactional | not)
+      and .mutationBoundary == "WinGet owns native Windows package state; Nix generations and rollback do not cover it"
+    ' <<<"$windows_plan" >/dev/null \
+      || { echo "Windows plan contract is wrong: $windows_plan" >&2; exit 1; }
+    test ! -e "$WINGET_STATE/twilight"
+    grep -qF 'list --id Zen-Team.Zen-Browser.Twilight --exact --accept-source-agreements --disable-interactivity' \
+      "$WINGET_LOG"
+
+    rm -f "$TMPDIR/nh-args"
+    wsl_apply_plan="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --plan --json)"
+    jq -e '
+      .activation == "nixos-wsl"
+      and .backend == "nh-os"
+      and .windowsPlan.ready
+      and (.windowsPlan.converged | not)
+      and .mutationBoundary == "NixOS activation followed by non-transactional native Windows reconciliation"
+    ' <<<"$wsl_apply_plan" >/dev/null \
+      || { echo "WSL apply plan contract is wrong: $wsl_apply_plan" >&2; exit 1; }
+    test ! -e "$TMPDIR/nh-args"
+    test ! -e "$WINGET_STATE/twilight"
+
+    wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json)"
+    jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
+    grep -Fx -- "os switch $HOME/nix-dotfiles#alex-x86_64-linux-wsl --diff always" \
+      "$TMPDIR/nh-args" >/dev/null
+    grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \
+      "$WINGET_LOG" >/dev/null
+    test -f "$WINGET_STATE/twilight"
+    converged_windows="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
+    jq -e '.ready and .converged and .changes == 0 and all(.packages[]; .status == "installed")' \
+      <<<"$converged_windows" >/dev/null \
+      || { echo "Windows plan did not converge after apply: $converged_windows" >&2; exit 1; }
+
+    rm -f "$WINGET_STATE/twilight"
+    touch "$WINGET_STATE/stable"
+    : > "$WINGET_LOG"
+    set +e
+    blocked_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
+    windows_blocked_plan_status="$?"
+    set -e
+    test "$windows_blocked_plan_status" = 69
+    jq -e '
+      (.ready | not)
+      and ([.packages[] | select(
+        .id == "Zen-Team.Zen-Browser.Twilight"
+        and .status == "blocked"
+        and (.detectedConflicts | index("Zen-Team.Zen-Browser"))
+        and (.remediation | contains("explicitly uninstall the stable Zen package"))
+      )] | length == 1)
+    ' <<<"$blocked_plan" >/dev/null \
+      || { echo "stable/Twilight conflict was not reported: $blocked_plan" >&2; exit 1; }
+    set +e
+    atyrode windows apply alex-x86_64-linux-wsl --json \
+      > "$TMPDIR/windows-blocked.out" 2> "$TMPDIR/windows-blocked.err"
+    windows_blocked_status="$?"
+    set -e
+    test "$windows_blocked_status" = 69
+    ! grep -qF 'install --id' "$WINGET_LOG"
+    test ! -e "$WINGET_STATE/twilight"
+
+    set +e
+    ATYRODE_WINGET="$TMPDIR/bin/missing-winget.exe" \
+      atyrode windows plan alex-x86_64-linux-wsl --json \
+      > "$TMPDIR/windows-unavailable.out" 2> "$TMPDIR/windows-unavailable.err"
+    windows_unavailable_status="$?"
+    set -e
+    test "$windows_unavailable_status" = 69
+    test ! -s "$TMPDIR/windows-unavailable.out"
+    grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/windows-unavailable.err"
+
+    set +e
+    WINGET_QUERY_ERROR=1 atyrode windows plan alex-x86_64-linux-wsl --json \
+      > "$TMPDIR/windows-query-error.out" 2> "$TMPDIR/windows-query-error.err"
+    windows_query_error_status="$?"
+    set -e
+    test "$windows_query_error_status" = 69
+    test ! -s "$TMPDIR/windows-query-error.out"
+    grep -qF 'winget.exe could not query installed package Zen-Team.Zen-Browser.Twilight (exit 45)' \
+      "$TMPDIR/windows-query-error.err"
+    ! grep -qF 'install --id' "$WINGET_LOG"
+
+    unset ATYRODE_WINGET WINGET_LOG WINGET_STATE _ATYRODE_TEST_WSL
+    export _ATYRODE_TEST_HOSTNAME=fixture-linux
+    printf '%s\n' alex-x86_64-linux > "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
     # System diagnostics distinguish installed binaries from operational
     # readiness without touching the build host's account or services.

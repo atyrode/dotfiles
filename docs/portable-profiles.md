@@ -65,6 +65,7 @@ example intentionally leaves every production system option in the consumer:
       host = {
         system = "x86_64-linux";
         platform = "linux";
+        activation = "home-manager";
         username = "<server-user>";
         homeDirectory = "/home/<server-user>";
         capabilities = [ "base" "server" "agent-tools" ];

@@ -40,6 +40,16 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
  * width — the largest both rows fit.
  */
 
+/**
+ * Inside a managed herdr pane the usage display lives in herdr's sidebar
+ * (fed by the machine's usage publisher), so the per-pane footer stays
+ * fully inert there — moved, not duplicated. All three variables gate it,
+ * matching herdr's own integration extension: a real managed pane always
+ * carries the socket path and its pane id.
+ */
+export function inHerdrPane(env: Record<string, string | undefined>): boolean {
+	return env.HERDR_ENV === "1" && !!env.HERDR_SOCKET_PATH && !!env.HERDR_PANE_ID;
+}
 const WIDGET_KEY = "vault-usage";
 const REFRESH_KEY = "alt+u";
 const BAR_CELLS = 10;
@@ -1060,6 +1070,7 @@ export function detailLines(state: FooterState, now: number): string[] {
 }
 
 export default function vaultUsageFooter(pi: ExtensionAPI): void {
+	if (inHerdrPane(process.env)) return;
 	let latestContext: ExtensionContext | undefined;
 	let state: FooterState = { kind: "loading" };
 	let generation = 0;

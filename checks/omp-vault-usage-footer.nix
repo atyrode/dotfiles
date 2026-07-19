@@ -34,6 +34,7 @@ let
     import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
     import { visibleWidth } from "@oh-my-pi/pi-tui";
     import {
+      inHerdrPane,
       barFillColor,
       detailLines,
       displayProvider,
@@ -58,6 +59,16 @@ let
       type WindowView,
     } from "./vault-usage-footer.ts";
 
+    // Herdr suppression gate (usage moved to the herdr sidebar): only the
+    // full managed-pane triple suppresses; partial env never does, so bare
+    // terminals and non-herdr contexts keep the footer.
+    assert.equal(
+      inHerdrPane({ HERDR_ENV: "1", HERDR_SOCKET_PATH: "/s", HERDR_PANE_ID: "w1:p1" }),
+      true,
+    );
+    assert.equal(inHerdrPane({}), false);
+    assert.equal(inHerdrPane({ HERDR_ENV: "1" }), false);
+    assert.equal(inHerdrPane({ HERDR_SOCKET_PATH: "/s", HERDR_PANE_ID: "w1:p1" }), false);
     const now = 1_700_000_000_000;
     const HOUR = 3_600_000;
     const DAY = 86_400_000;

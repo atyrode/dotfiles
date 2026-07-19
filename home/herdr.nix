@@ -67,6 +67,11 @@
     # Keep pane scrollback off disk: terminal output routinely carries
     # secrets and this path has no obfuscation guard.
     pane_history = false
+    # Repaint pane-emitted Kitty graphics onto the host terminal — the
+    # herdr-side link OMP inline images depend on under the Rio trial
+    # (#278 trial gate 1). Experimental upstream; the flag flip is itself
+    # part of the trial.
+    kitty_graphics = true
 
     [remote]
     # Not an ~/.ssh/config edit: herdr generates a private config that

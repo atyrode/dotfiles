@@ -66,6 +66,10 @@ run the same apply command again.
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
 - **herdr** - Pinned agent multiplexer under trial (#269): server-side panes
   for VPS OMP sessions, thin client from the Mac
+- **Rio** - Pinned cross-platform terminal layer under trial (#278): a thin
+  renderer under herdr/OMP with one committed `home/rio/config.toml` for
+  macOS, Linux desktop, and native Windows; Ghostty stays until the trial
+  gates pass
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
   native compilers come from committed dev shells, `mise.toml`, or native
@@ -94,6 +98,10 @@ run the same apply command again.
 ### Native Windows Apps
 - **WinGet packages** - Zen Browser Twilight is declared in
   `windows/packages.nix` and reconciled from the managed NixOS-WSL host.
+- **Pinned releases** - the Rio terminal installs from the exact GitHub
+  release recorded in `inventory/rio-windows.json` (SHA256-verified,
+  version-locked to the nixpkgs pin), and the committed Rio `config.toml`
+  deploys beside it.
 - **Application state** - Mozilla sign-in, Zen profiles, cookies, sessions,
   updates, and caches remain owned by Zen/Windows rather than Nix.
 

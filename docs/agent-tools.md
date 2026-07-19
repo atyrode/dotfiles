@@ -372,8 +372,9 @@ from ever being installed.
 Nix owns the binary pin (`pkgs/herdr`, upstream release binaries with
 published digests), the managed `~/.config/herdr/config.toml`
 (`home/herdr.nix` documents every knob: onboarding and update polling off,
-native OMP resume on, pane history kept off disk, the private managed-SSH
-keepalive config on, in-TUI toasts), and the vendored skill
+native OMP resume on, pane history kept off disk, experimental Kitty-graphics
+repaint on for OMP inline images under the Rio trial (#278), the private
+managed-SSH keepalive config on, in-TUI toasts), and the vendored skill
 (`agents/skills/herdr/SKILL.md`). herdr owns its mutable state and the
 version-stamped OMP integration file that activation seeds via
 `herdr integration install omp` — the machine-local stance settled in #65,

@@ -54,15 +54,21 @@ Native Windows has a separate, directly reviewed package declaration in
 [`windows/packages.nix`](../windows/packages.nix). It is exported as
 `lib.windowsPackages` and consumed by the WSL-side `atyrode windows` controller;
 it is intentionally not folded into Nix's evaluated package/cask inventory.
-WinGet owns installation and the application's normal update channel. Nix owns
-the NixOS-WSL control plane that invokes it, not the resulting Windows package
-or a fictional cross-platform generation.
-
-Reconciliation is install-only and exact-ID based. An installed stable Zen
-package blocks Twilight installation with an explicit profile-backup and
-manual-uninstall remediation instead of deleting operator state. Browser
-accounts, profiles, cookies, sessions, update services, and caches remain
-Zen/Windows-owned and are never copied into a derivation.
+The inventory carries two source kinds. `winget` packages (Zen Browser
+Twilight) are install-only and exact-ID based: WinGet owns installation and
+the application's normal update channel, and an installed stable Zen package
+blocks Twilight installation with an explicit profile-backup and
+manual-uninstall remediation instead of deleting operator state.
+`github-release` packages (the Rio terminal, #278) are version-pinned: the
+controller downloads the exact installer recorded in
+[`inventory/rio-windows.json`](../inventory/rio-windows.json), refuses to
+install on a SHA256 mismatch, and deploys the committed `home/rio/config.toml`
+to `%LOCALAPPDATA%\rio\config.toml`; `checks/rio.nix` keeps the lock at
+version parity with the nixpkgs `rio` pin. Nix owns the NixOS-WSL control
+plane that invokes both paths, not the resulting Windows package or a
+fictional cross-platform generation. Browser accounts, profiles, cookies,
+sessions, update services, and caches remain Zen/Windows-owned and are never
+copied into a derivation.
 
 ### macOS application-signing policy
 

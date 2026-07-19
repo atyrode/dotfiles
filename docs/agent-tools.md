@@ -200,6 +200,15 @@ reconciles all children after a valid edit; an invalid replacement leaves the
 current brokers running. No Home Manager apply or manual service restart is
 needed.
 
+On a machine with no manifest yet — every fresh install — the supervisor does
+not run at all: the Linux unit carries `ConditionPathExists` on the manifest
+and skips cleanly, and the macOS agent's `KeepAlive.PathState` stops launchd
+from respawning it, so session health stays green instead of restart-looping
+into `start-limit-hit`. After creating the first manifest, start the brokers
+with `systemctl --user restart atyrode-omp-auth-brokers` (Linux; any later
+login also picks it up) — launchd on macOS launches them automatically when
+the manifest appears.
+
 Usage and identity normally remain broker-sourced. OMP v17's broker aggregate
 can omit the Anthropic Fable limit even when that same vault profile returns it.
 Only when Fable is absent, `code` performs a provider-scoped, read-only usage

@@ -69,7 +69,7 @@ let
     omp = untrustedStubOmp;
   };
   evalAgentTools =
-    platformPkgs:
+    platformPkgs: extraAgentTools:
     (lib.evalModules {
       specialArgs.pkgs = platformPkgs;
       modules = [
@@ -108,6 +108,10 @@ let
                 type = lib.types.attrsOf lib.types.anything;
                 default = { };
               };
+              systemd.user.timers = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
               launchd.agents = lib.mkOption {
                 type = lib.types.attrsOf lib.types.anything;
                 default = { };
@@ -123,7 +127,8 @@ let
                 seedPlainConfig = false;
                 ompPackage = configuredStub;
                 localClassifier.enable = false;
-              };
+              }
+              // extraAgentTools;
             };
           }
         )
@@ -138,7 +143,7 @@ let
         isDarwin = false;
       };
     }
-  );
+  ) { };
   darwinAgentTools = evalAgentTools (
     pkgs
     // {
@@ -147,10 +152,30 @@ let
         isDarwin = true;
       };
     }
-  );
+  ) { };
   linuxBrokerSupervisor =
     linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Service.ExecStart;
   darwinBrokerAgent = darwinAgentTools.launchd.agents.atyrode-omp-auth-brokers;
+  linuxBrokerCondition =
+    linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Unit.ConditionPathExists;
+  darwinBrokerKeepAlivePaths = builtins.attrNames darwinBrokerAgent.config.KeepAlive.PathState;
+  checkManifestPath = "/tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json";
+  linuxClassifierTools =
+    evalAgentTools
+      (
+        pkgs
+        // {
+          stdenv = pkgs.stdenv // {
+            isLinux = true;
+            isDarwin = false;
+          };
+        }
+      )
+      {
+        localClassifier.enable = true;
+      };
+  classifierService = linuxClassifierTools.systemd.user.services.ollama-pull-classifier;
+  classifierTimer = linuxClassifierTools.systemd.user.timers.ollama-pull-classifier;
 in
 {
   auth-vaults =
@@ -166,6 +191,13 @@ in
         grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
         grep -Fq 'auth-broker serve --bind="$bind"' "$supervisor"
         grep -Fq 'invalid OMP auth vault manifest; keeping current brokers' "$supervisor"
+        # Fresh machines have no manifest: both platforms must skip cleanly
+        # instead of restart-looping into start-limit-hit / launchd throttling.
+        test ${lib.escapeShellArg linuxBrokerCondition} = ${lib.escapeShellArg checkManifestPath}
+        test ${lib.escapeShellArg (lib.concatStringsSep " " darwinBrokerKeepAlivePaths)} = ${lib.escapeShellArg checkManifestPath}
+        test ${
+          lib.escapeShellArg (toString darwinBrokerAgent.config.KeepAlive.PathState.${checkManifestPath})
+        } = 1
 
         rm -rf /tmp/check-agent-auth-vaults
         mkdir -p /tmp/check-agent-auth-vaults/xdg-config/code
@@ -1166,4 +1198,23 @@ in
 
         mkdir "$out"
       '';
+
+  classifier-schedule = pkgs.runCommand "check-agent-classifier-schedule" { } ''
+    # The pull still runs and still targets the pinned daemon and model.
+    pull=${lib.escapeShellArg classifierService.Service.ExecStart}
+    grep -Fq 'ollama' "$pull"
+    grep -Fq 'qwen2.5:3b' "$pull"
+    test ${lib.escapeShellArg (lib.concatStringsSep " " classifierService.Unit.After)} = 'ollama.service'
+    test ${lib.escapeShellArg (lib.concatStringsSep " " classifierService.Unit.Wants)} = 'ollama.service'
+
+    # The service must stay out of the startup transaction: a first-boot
+    # multi-GB download inside it holds `is-system-running` at "starting".
+    test ${if classifierService ? Install then "1" else "0"} = 0
+
+    # The timer owns scheduling instead: outside readiness, after startup.
+    test ${lib.escapeShellArg (toString classifierTimer.Timer.OnActiveSec)} = '30s'
+    test ${lib.escapeShellArg (toString classifierTimer.Timer.AccuracySec)} = '1s'
+    test ${lib.escapeShellArg (lib.concatStringsSep " " classifierTimer.Install.WantedBy)} = 'timers.target'
+    mkdir "$out"
+  '';
 }

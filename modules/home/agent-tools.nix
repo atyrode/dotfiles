@@ -303,11 +303,20 @@ in
             Unit = {
               Description = "Machine-local OMP authentication brokers";
               After = [ "network.target" ];
+              # The vault manifest is machine-local and never shipped by the
+              # repository, so on a fresh machine its absence is an expected
+              # state, not a failure. Without this condition the supervisor
+              # exits 1 and Restart=on-failure thrashes into start-limit-hit,
+              # leaving every fresh session degraded. After provisioning the
+              # manifest, `systemctl --user restart atyrode-omp-auth-brokers`
+              # (or the next login) starts the brokers.
+              ConditionPathExists = vaultManifest;
             };
             Service = {
               Type = "simple";
               ExecStart = "${brokerSupervisor}";
               Restart = "on-failure";
+              RestartSec = 5;
             };
             Install.WantedBy = [ "default.target" ];
           };
@@ -319,7 +328,10 @@ in
             config = {
               ProgramArguments = [ "${brokerSupervisor}" ];
               RunAtLoad = true;
-              KeepAlive = true;
+              # Parity with the Linux ConditionPathExists: only respawn the
+              # supervisor while the machine-local manifest exists; launchd
+              # additionally launches it when the manifest first appears.
+              KeepAlive.PathState.${vaultManifest} = true;
               ProcessType = "Background";
             };
           };
@@ -337,6 +349,12 @@ in
         # services are Linux-only in Home Manager; on other platforms the daemon
         # still runs (via the launchd agent the ollama module defines) but the
         # model is pulled on first use / manually.
+        #
+        # The service deliberately has no Install: a first-boot multi-GB pull
+        # inside the startup transaction holds `systemctl --user
+        # is-system-running` at "starting" for its whole duration. The timer
+        # below triggers it shortly after startup instead, outside the
+        # readiness transaction.
         systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
           Unit = {
             Description = "Pull the code generator's local classifier model to disk (${lcfg.model})";
@@ -347,7 +365,18 @@ in
             Type = "oneshot";
             ExecStart = "${pullClassifierModel}";
           };
-          Install.WantedBy = [ "default.target" ];
+        };
+
+        systemd.user.timers.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
+          Unit.Description = "Trigger the classifier model pull after session startup";
+          Timer = {
+            # 30s keeps the trigger comfortably outside the startup job queue
+            # (racing into it would re-gate readiness); the default minute-level
+            # AccuracySec would smear that on purpose-built delay, so pin it.
+            OnActiveSec = "30s";
+            AccuracySec = "1s";
+          };
+          Install.WantedBy = [ "timers.target" ];
         };
       })
     ]

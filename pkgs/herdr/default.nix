@@ -26,7 +26,15 @@ let
     hash = "sha256-spobUVZrtNlTijADcJnY4f2juwZYLMrpKZ967sxLBG0=";
   };
 
-  zigDeps = callPackage "${src}/vendor/libghostty-vt/build.zig.zon.nix" {
+  # Vendored copy of "${src}/vendor/libghostty-vt/build.zig.zon.nix" (zon2nix
+  # output, reflowed by treefmt; semantically identical — herdr's drvPath is
+  # unchanged on all three flake systems: x86_64-linux, aarch64-linux,
+  # aarch64-darwin).
+  # Importing it from ${src} is IFD: evaluating any x86_64 host on an aarch64
+  # evaluator (CI matrix, `nix flake check`) then has to *build* the x86_64
+  # source fetch at eval time and dies with a platform mismatch. Refresh the
+  # copy from the fork checkout whenever forkRev changes.
+  zigDeps = callPackage ./libghostty-vt-deps.nix {
     name = "herdr-libghostty-vt-zig-cache";
     inherit zstd;
     linkFarm =

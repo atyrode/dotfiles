@@ -10,6 +10,7 @@
 
 let
   inherit (host) username;
+  temporaryBuilderStateDir = "/var/lib/atyrode/temporary-builder";
 in
 {
   assertions = [
@@ -47,6 +48,27 @@ in
   nix.settings.experimental-features = [
     "nix-command"
     "flakes"
+  ];
+
+  # Temporary bootstrap bridge: keep the hardened guest-side SSH policy
+  # reproducible without committing a key, source address, or fleet topology.
+  # The service starts only after the operator enrolls the machine-local key.
+  services.openssh = {
+    enable = true;
+    openFirewall = true;
+    authorizedKeysFiles = lib.mkForce [ "${temporaryBuilderStateDir}/authorized_keys/%u" ];
+    settings = {
+      AllowUsers = [ username ];
+      PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+      PermitRootLogin = "no";
+    };
+  };
+  systemd.services.sshd.unitConfig.ConditionPathExists =
+    "${temporaryBuilderStateDir}/authorized_keys/${username}";
+  systemd.tmpfiles.rules = [
+    "d ${temporaryBuilderStateDir} 0755 root root -"
+    "d ${temporaryBuilderStateDir}/authorized_keys 0755 root root -"
   ];
 
   programs.zsh.enable = true;

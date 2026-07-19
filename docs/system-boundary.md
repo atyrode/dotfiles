@@ -55,6 +55,32 @@ mutable state remain application-owned. In particular, Zen's Mozilla account,
 sync tokens, cookies, sessions, and browser profile never enter the Nix store
 or repository; Mozilla sign-in remains an interactive step on each device.
 
+The WSL guest carries a condition-gated, key-only SSH bootstrap service for
+temporarily offloading deterministic builds while the fleet control plane is
+being established. A normal activation declares the hardened service but does
+not start it: no key, source address, Windows forwarding rule, or network
+topology enters this public repository or the Nix store. Opt-in enrollment is
+machine-local:
+
+```sh
+sudo install -d -m 0755 -o root -g root \
+  /var/lib/atyrode/temporary-builder/authorized_keys
+printf '%s\n' \
+  'restrict,from="<trusted-proxy>" ssh-ed25519 <public-key> temporary-builder' \
+  | sudo tee /var/lib/atyrode/temporary-builder/authorized_keys/alex >/dev/null
+sudo chmod 0644 /var/lib/atyrode/temporary-builder/authorized_keys/alex
+sudo systemctl start sshd
+```
+
+The native Windows firewall and forwarding path remain operator-owned and must
+enforce the original trusted source before traffic reaches WSL, because a
+Windows port proxy rewrites the source address observed by `sshd`. The
+machine-local `/var/lib` enrollment survives ordinary dotfiles activations,
+preventing an unrelated package update from silently removing the temporary
+executor. Fleet enrollment supersedes this bridge: stop `sshd`, remove the
+machine-local enrollment, and let the fleet-owned interface, identity, and
+revocation policy replace it.
+
 For external production NixOS hosts, the relationship remains one-way:
 infrastructure pins this flake and imports its Home Manager profiles. Dotfiles
 do not acquire production identity, disks, services, or secrets. The

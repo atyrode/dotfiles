@@ -27,6 +27,30 @@ assert lib.assertMsg (
 assert lib.assertMsg config.users.users.alex.isNormalUser "the managed WSL user must exist";
 assert lib.assertMsg (builtins.hasAttr "alex" config.home-manager.users)
   "Home Manager must be integrated into NixOS-WSL";
+assert lib.assertMsg config.services.openssh.enable
+  "the managed WSL guest must retain the condition-gated SSH bootstrap service";
+assert lib.assertMsg config.services.openssh.openFirewall
+  "the opted-in WSL SSH bootstrap service must open the guest firewall";
+assert lib.assertMsg (
+  config.services.openssh.authorizedKeysFiles
+  == [ "/var/lib/atyrode/temporary-builder/authorized_keys/%u" ]
+) "WSL SSH keys must remain machine-local outside the repository and Nix store";
+assert lib.assertMsg (
+  config.services.openssh.settings.AllowUsers == [ "alex" ]
+  && !config.services.openssh.settings.PasswordAuthentication
+  && !config.services.openssh.settings.KbdInteractiveAuthentication
+  && config.services.openssh.settings.PermitRootLogin == "no"
+) "the WSL SSH bootstrap service must remain key-only and limited to alex";
+assert lib.assertMsg (
+  config.systemd.services.sshd.unitConfig.ConditionPathExists
+  == "/var/lib/atyrode/temporary-builder/authorized_keys/alex"
+) "the WSL SSH service must remain disabled until a machine-local key is enrolled";
+assert lib.assertMsg (
+  builtins.elem "d /var/lib/atyrode/temporary-builder 0755 root root -"
+    config.systemd.tmpfiles.rules
+  && builtins.elem "d /var/lib/atyrode/temporary-builder/authorized_keys 0755 root root -"
+    config.systemd.tmpfiles.rules
+) "the root-owned SSH enrollment path must remain traversable by sshd";
 assert lib.assertMsg (
   config.system.stateVersion == "26.05"
 ) "the WSL state version changed unexpectedly";

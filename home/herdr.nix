@@ -90,12 +90,14 @@ in
     # The settings UI cannot persist changes through the read-only store
     # link, so make the operator's preferred agent ordering the startup default.
     agent_panel_sort = "priority"
+    sidebar_sections_height = 18
 
     # Dormant owner atyrode:usage feeds one bar per reported account window:
     # the account/window title stays left and percent/reset info stays right.
     [[ui.sidebar.sections]]
     id = "usage"
     title = "usage"
+    highlight_token = "vault_broker"
     max_rows = 18
     placement = "below_agents"
 

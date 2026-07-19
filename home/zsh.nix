@@ -19,15 +19,6 @@
       source ${./shell/colorterm.zsh}
       source ${./shell/startup.zsh}
 
-      # Ghostty shell integration, guarded on the file actually existing:
-      # libghostty embedders set GHOSTTY_RESOURCES_DIR to their own app
-      # bundle, which does not ship Ghostty's integration at this path
-      # (#252). Real Ghostty auto-injects too; this covers nested
-      # interactive shells.
-      if [[ -n "$GHOSTTY_RESOURCES_DIR" && -r "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration" ]]; then
-        source "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration"
-      fi
-
       # fzf keybindings and completion, guarded on a real TTY: fzf's own
       # integration save/restores shell options via eval, and restoring the
       # zle option prints "can't change option: zle" in interactive shells

@@ -360,7 +360,7 @@ the thin client on the Mac:
 
 ```bash
 herdr                                        # on the VPS: launch or attach the server
-herdr --remote tyrode.dev --session agents   # from the Mac (Ghostty): attach
+herdr --remote tyrode.dev --session agents   # from the Mac (Rio): attach
 ```
 
 Remote attach reuses the server-side `~/.nix-profile/bin/herdr` (herdr

@@ -32,6 +32,7 @@
     "mise",
     "nerd-fonts-symbols-only",
     "omp-configured",
+    "nodejs",
     "orca-ide",
     "ripgrep",
     "tmux",
@@ -63,7 +64,6 @@
     "nixd",
     "nixfmt",
     "nmap",
-    "nodejs",
     "obsidian",
     "orbstack",
     "parsec",
@@ -100,12 +100,12 @@
     "aarch64-linux": {
       "maxNarBytes": 4294967296,
       "maxStorePaths": 800,
-      "maxTopLevelPackages": 45
+      "maxTopLevelPackages": 46
     },
     "x86_64-linux": {
       "maxNarBytes": 4294967296,
       "maxStorePaths": 750,
-      "maxTopLevelPackages": 45
+      "maxTopLevelPackages": 46
     }
   },
   "systemOwned": [

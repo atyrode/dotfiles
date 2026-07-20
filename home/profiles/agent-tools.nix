@@ -25,6 +25,8 @@
       codex
       jetbrains-mono
       nerd-fonts.symbols-only
+      # npx supports Orca's skill registry and powers its remote SSH relay.
+      nodejs_22
       tmux
     ])
     ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];

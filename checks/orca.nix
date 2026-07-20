@@ -11,8 +11,16 @@ let
     name: builtins.elem "agent-tools" hostConfigs.${name}.config.atyrode.capabilities.selected
   ) hostNames;
   linuxAgentToolHosts = lib.filter (name: hostConfigs.${name}.pkgs.stdenv.isLinux) agentToolHosts;
+  nativeAgentToolHosts = lib.filter (
+    name: hostConfigs.${name}.pkgs.stdenv.hostPlatform.system == pkgs.stdenv.hostPlatform.system
+  ) agentToolHosts;
+  nativeDesktopAgentToolHosts = lib.filter (
+    name: builtins.elem "desktop" hostConfigs.${name}.config.atyrode.capabilities.selected
+  ) nativeAgentToolHosts;
+  nativeNonDesktopAgentToolHosts = lib.subtractLists nativeDesktopAgentToolHosts nativeAgentToolHosts;
   packagesFor = name: map packageName hostConfigs.${name}.config.home.packages;
-  linuxLinksFor = name: hostConfigs.${name}.config.home.file;
+  homeFilesFor = name: hostConfigs.${name}.config.home.file;
+  skillsFor = name: (homeFilesFor name).".agents/skills".source;
   claudeHookEvents = [
     "UserPromptSubmit"
     "Stop"
@@ -38,16 +46,21 @@ assert lib.assertMsg (
 assert lib.assertMsg (lib.all (
   name: builtins.elem "orca-ide" (packagesFor name)
 ) agentToolHosts) "every agent-tools host must carry the pinned Orca package";
+assert lib.assertMsg (lib.all (
+  name: builtins.elem "nodejs" (packagesFor name)
+) agentToolHosts) "every agent-tools host must carry npx for Orca registry and relay workflows";
 assert lib.assertMsg (lib.all
   (
     name:
     let
-      settingsFile = hostConfigs.${name}.config.home.file.".claude/settings.json";
+      homeFiles = homeFilesFor name;
+      settingsFile = homeFiles.".local/share/atyrode/claude-settings.json";
       settings = builtins.fromJSON settingsFile.text;
       hookEntry = event: builtins.head settings.hooks.${event};
       hookCommand = event: (builtins.head (hookEntry event).hooks).command;
     in
-    settingsFile.force
+    !(homeFiles ? ".claude/settings.json")
+    && hostConfigs.${name}.config.home.activation ? installClaudeSettings
     && lib.all (event: builtins.hasAttr event settings.hooks) claudeHookEvents
     && lib.all (
       event: lib.hasInfix "/.orca/agent-hooks/claude-hook.sh" (hookCommand event)
@@ -55,20 +68,14 @@ assert lib.assertMsg (lib.all
     && lib.all (event: (hookEntry event).matcher == "*") matchedClaudeHookEvents
   )
   agentToolHosts
-) "agent-tools hosts must declare and forcibly restore Orca's Claude hooks in Nix-owned settings";
-assert lib.assertMsg
-  (lib.all (
-    name:
-    let
-      links = linuxLinksFor name;
-      package = hostConfigs.${name}.pkgs.orca-ide;
-    in
-    links ? ".local/bin/orca"
-    && links ? ".local/bin/orca-ide"
-    && links.".local/bin/orca".source == lib.getExe package
-    && links.".local/bin/orca-ide".source == "${package}/bin/orca-ide"
-  ) linuxAgentToolHosts)
-  "Linux agent-tools hosts must reserve Orca's mutable ~/.local/bin launchers with Home Manager links";
+) "agent-tools hosts must restore Orca's Claude hooks into a writable live settings file";
+assert lib.assertMsg (lib.all (
+  name:
+  let
+    links = homeFilesFor name;
+  in
+  !(links ? ".local/bin/orca") && !(links ? ".local/bin/orca-ide")
+) linuxAgentToolHosts) "Linux agent-tools hosts must leave mutable user launchers to Orca";
 assert lib.assertMsg (lib.all
   (
     name:
@@ -81,5 +88,18 @@ assert lib.assertMsg (lib.all
 ) "dotfiles must not auto-run an Orca server; production service policy belongs to infrastructure";
 pkgs.runCommand "check-orca-integration" { } ''
   test -x ${lib.getExe pkgs.orca-ide}
+  grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orca-cli/SKILL.md}
+  grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orchestration/SKILL.md}
+  grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/desktop-skills/computer-use/SKILL.md}
+  ${lib.concatMapStringsSep "\n" (name: ''
+    test -f ${skillsFor name}/orca-cli/SKILL.md
+    test -f ${skillsFor name}/orchestration/SKILL.md
+  '') nativeAgentToolHosts}
+  ${lib.concatMapStringsSep "\n" (name: ''
+    test -f ${skillsFor name}/computer-use/SKILL.md
+  '') nativeDesktopAgentToolHosts}
+  ${lib.concatMapStringsSep "\n" (name: ''
+    test ! -e ${skillsFor name}/computer-use
+  '') nativeNonDesktopAgentToolHosts}
   mkdir "$out"
 ''

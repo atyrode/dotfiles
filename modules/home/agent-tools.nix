@@ -8,6 +8,13 @@
 let
   cfg = config.atyrode.agentTools;
   lcfg = cfg.localClassifier;
+  managedSkills = pkgs.symlinkJoin {
+    name = "atyrode-agent-skills";
+    paths = [
+      ../../agents/skills
+    ]
+    ++ lib.optional (builtins.elem "desktop" config.atyrode.capabilities.selected) ../../agents/desktop-skills;
+  };
   ollamaBin = lib.getExe pkgs.ollama;
   # Pull the generator's classifier model to disk once the daemon is up (only if
   # missing — the pull is a no-op otherwise), so the first Load in the generator is a
@@ -239,11 +246,9 @@ in
           "omp/untrusted.yml".source = untrustedConfig;
         };
 
-        home.file = {
-          ".agents/skills" = {
-            source = ../../agents/skills;
-            recursive = true;
-          };
+        home.file.".agents/skills" = {
+          source = managedSkills;
+          recursive = true;
         };
 
         home.activation = lib.mkMerge [

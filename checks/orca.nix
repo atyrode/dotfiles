@@ -74,8 +74,10 @@ assert lib.assertMsg (lib.all (
   let
     links = homeFilesFor name;
   in
-  !(links ? ".local/bin/orca") && !(links ? ".local/bin/orca-ide")
-) linuxAgentToolHosts) "Linux agent-tools hosts must leave mutable user launchers to Orca";
+  !(links ? ".local/bin/orca")
+  && !(links ? ".local/bin/orca-ide")
+  && hostConfigs.${name}.config.home.activation ? removeOrcaManagedLaunchers
+) linuxAgentToolHosts) "Linux agent-tools hosts must reconcile only Orca-owned mutable launchers";
 assert lib.assertMsg (lib.all
   (
     name:

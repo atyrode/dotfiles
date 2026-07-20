@@ -8,8 +8,8 @@
 }:
 
 # Orca is repository-owned because nixpkgs' `orca` is the GNOME screen reader,
-# not stablyai/orca. Package the official release artifacts unchanged so every
-# agent-tools host receives the same Orca version and the `orca` CLI.
+# not stablyai/orca. Package the official release artifacts unchanged. Linux
+# exposes the AppImage CLI; macOS leaves CLI registration to the signed app.
 let
   pname = "orca-ide";
   version = "1.4.146";
@@ -43,7 +43,6 @@ let
     homepage = "https://github.com/stablyai/orca";
     changelog = "https://github.com/stablyai/orca/releases/tag/v${version}";
     license = lib.licenses.mit;
-    mainProgram = "orca";
     platforms = builtins.attrNames sources;
     sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
   };
@@ -75,7 +74,9 @@ if stdenv.hostPlatform.isLinux then
       cp -R ${contents}/usr/share/icons "$out/share/icons"
     '';
 
-    inherit meta;
+    meta = meta // {
+      mainProgram = "orca";
+    };
   }
 else
   stdenvNoCC.mkDerivation {
@@ -86,9 +87,8 @@ else
 
     installPhase = ''
       runHook preInstall
-      mkdir -p "$out/Applications" "$out/bin"
+      mkdir -p "$out/Applications"
       cp -R Orca.app "$out/Applications/Orca.app"
-      ln -s "$out/Applications/Orca.app/Contents/MacOS/Orca" "$out/bin/orca"
       runHook postInstall
     '';
 

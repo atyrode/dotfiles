@@ -361,6 +361,12 @@ Git remotes and Xvfb so a headless host can start the trial runtime directly:
 orca serve --port 6768 --pairing-address <reachable-private-address>
 ```
 
+On macOS, Nix owns the signed app bundle while Orca owns its supported
+`/usr/local/bin/orca` or `~/.local/bin/orca` launcher; exposing the bundle
+executable through the Nix profile makes Orca correctly treat it as a foreign
+CLI. Reviewed Orca skills remain dotfiles-owned and update with the package pin,
+not through Orca's mutable in-app skill updater.
+
 The desktop app can also act as a server without a separate daemon: use
 **Settings → Remote Orca Servers → Advertise this app as a server → New Link**.
 The generated access grant is revocable and secret-bearing. Keep it on a

@@ -271,6 +271,7 @@
         "codex"
         "atyrode-codex-seed"
         "herdr"
+        "orca-ide"
         "omp"
         "omp-agents"
         "omp-configured"
@@ -293,6 +294,7 @@
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-seed = final.callPackage ./pkgs/codex-seed { };
             herdr = final.callPackage ./pkgs/herdr { };
+            orca-ide = final.callPackage ./pkgs/orca-ide { };
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
@@ -570,6 +572,7 @@
             codex
             codex-seed
             herdr
+            orca-ide
             omp
             omp-agents
             omp-configured
@@ -708,6 +711,10 @@
           codex-seed = import ./checks/codex-seed.nix { inherit pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
           herdr = import ./checks/herdr.nix {
+            inherit lib pkgs;
+            hostConfigs = canonicalHomeConfigs;
+          };
+          orca = import ./checks/orca.nix {
             inherit lib pkgs;
             hostConfigs = canonicalHomeConfigs;
           };

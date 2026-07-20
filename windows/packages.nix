@@ -34,5 +34,13 @@ in
       versionPolicy = "pinned to the nixpkgs pin";
       mutableStateOwner = "Rio owns its runtime state; Nix owns the config artifact and requested graphics preference";
     }
+    {
+      id = "StablyAI.Orca";
+      name = "Orca";
+      source = "winget";
+      conflicts = [ ];
+      versionPolicy = "installed; Orca owns its normal update channel";
+      mutableStateOwner = "Orca owns its settings, projects, sessions, pairing grants, updates, and caches";
+    }
   ];
 }

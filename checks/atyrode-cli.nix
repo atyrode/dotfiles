@@ -499,6 +499,7 @@ pkgs.runCommand "check-atyrode-cli"
           Zen-Team.Zen-Browser.Twilight) [[ -f "$WINGET_STATE/twilight" ]] && exit 0 || exit 20 ;;
           Zen-Team.Zen-Browser) [[ -f "$WINGET_STATE/stable" ]] && exit 0 || exit 20 ;;
           DEVCOM.JetBrainsMonoNerdFont) [[ -f "$WINGET_STATE/jetbrains-nerd-font" ]] && exit 0 || exit 20 ;;
+          StablyAI.Orca) [[ -f "$WINGET_STATE/orca" ]] && exit 0 || exit 20 ;;
           raphamorim.rio)
             [[ -f "$WINGET_STATE/rio-version" ]] || exit 20
             printf 'Name Id             Version Source\n-----------------------------------\nRio  raphamorim.rio %-7s winget\n' "$(cat "$WINGET_STATE/rio-version")"
@@ -513,6 +514,9 @@ pkgs.runCommand "check-atyrode-cli"
             ;;
           *'--id DEVCOM.JetBrainsMonoNerdFont --exact --source winget'*)
             touch "$WINGET_STATE/jetbrains-nerd-font"
+            ;;
+          *'--id StablyAI.Orca --exact --source winget'*)
+            touch "$WINGET_STATE/orca"
             ;;
           *) exit 64 ;;
         esac
@@ -582,7 +586,7 @@ pkgs.runCommand "check-atyrode-cli"
     export POWERSHELL_LOG="$TMPDIR/powershell.log"
     export RIO_FETCH_CONTENT=good
     mkdir -p "$ATYRODE_LOCALAPPDATA"
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/rio-high-performance-gpu" "$WINGET_STATE/rio-version"
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/orca" "$WINGET_STATE/rio-high-performance-gpu" "$WINGET_STATE/rio-version"
     export _ATYRODE_TEST_HOSTNAME=atyrode-wsl
     rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable"
     : > "$WINGET_LOG"
@@ -594,7 +598,7 @@ pkgs.runCommand "check-atyrode-cli"
       and .wingetVersion == "v1.11.510"
       and .ready
       and (.converged | not)
-      and .changes == 3
+      and .changes == 4
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .status == "missing"
@@ -603,6 +607,12 @@ pkgs.runCommand "check-atyrode-cli"
       )] | length == 1)
       and ([.packages[] | select(
         .id == "DEVCOM.JetBrainsMonoNerdFont"
+        and .status == "missing"
+        and (.installed | not)
+        and .detectedConflicts == []
+      )] | length == 1)
+      and ([.packages[] | select(
+        .id == "StablyAI.Orca"
         and .status == "missing"
         and (.installed | not)
         and .detectedConflicts == []
@@ -623,6 +633,7 @@ pkgs.runCommand "check-atyrode-cli"
       || { echo "Windows plan contract is wrong: $windows_plan" >&2; exit 1; }
     test ! -e "$WINGET_STATE/twilight"
     test ! -e "$WINGET_STATE/jetbrains-nerd-font"
+    test ! -e "$WINGET_STATE/orca"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio"
     test ! -e "$WINGET_STATE/rio-high-performance-gpu"
     grep -qF 'list --id Zen-Team.Zen-Browser.Twilight --exact --accept-source-agreements --disable-interactivity' \
@@ -632,6 +643,7 @@ pkgs.runCommand "check-atyrode-cli"
     # stamp/config behind. Mark the WinGet packages present so this isolates Rio.
     touch "$WINGET_STATE/twilight"
     touch "$WINGET_STATE/jetbrains-nerd-font"
+    touch "$WINGET_STATE/orca"
     RIO_FETCH_CONTENT=wrong
     set +e
     atyrode windows apply alex-x86_64-linux-wsl --json \
@@ -644,7 +656,7 @@ pkgs.runCommand "check-atyrode-cli"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     test ! -s "$MSI_LOG"
     test ! -e "$WINGET_STATE/rio-high-performance-gpu"
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/jetbrains-nerd-font"
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/orca"
     RIO_FETCH_CONTENT=good
 
     rm -f "$TMPDIR/nh-args"
@@ -668,8 +680,11 @@ pkgs.runCommand "check-atyrode-cli"
       "$WINGET_LOG" >/dev/null
     grep -F -- 'install --id DEVCOM.JetBrainsMonoNerdFont --exact --source winget' \
       "$WINGET_LOG" >/dev/null
+    grep -F -- 'install --id StablyAI.Orca --exact --source winget' \
+      "$WINGET_LOG" >/dev/null
     test -f "$WINGET_STATE/twilight"
     test -f "$WINGET_STATE/jetbrains-nerd-font"
+    test -f "$WINGET_STATE/orca"
     test -f "$WINGET_STATE/rio-high-performance-gpu"
     converged_windows="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
     jq -e '.ready and .converged and .changes == 0 and all(.packages[]; .status == "installed")' \

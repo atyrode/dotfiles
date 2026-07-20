@@ -13,6 +13,24 @@ let
   linuxAgentToolHosts = lib.filter (name: hostConfigs.${name}.pkgs.stdenv.isLinux) agentToolHosts;
   packagesFor = name: map packageName hostConfigs.${name}.config.home.packages;
   linuxLinksFor = name: hostConfigs.${name}.config.home.file;
+  claudeHookEvents = [
+    "UserPromptSubmit"
+    "Stop"
+    "StopFailure"
+    "SubagentStart"
+    "SubagentStop"
+    "TeammateIdle"
+    "PreToolUse"
+    "PostToolUse"
+    "PostToolUseFailure"
+    "PermissionRequest"
+  ];
+  matchedClaudeHookEvents = [
+    "PreToolUse"
+    "PostToolUse"
+    "PostToolUseFailure"
+    "PermissionRequest"
+  ];
 in
 assert lib.assertMsg (
   agentToolHosts != [ ]
@@ -20,6 +38,24 @@ assert lib.assertMsg (
 assert lib.assertMsg (lib.all (
   name: builtins.elem "orca-ide" (packagesFor name)
 ) agentToolHosts) "every agent-tools host must carry the pinned Orca package";
+assert lib.assertMsg (lib.all
+  (
+    name:
+    let
+      settingsFile = hostConfigs.${name}.config.home.file.".claude/settings.json";
+      settings = builtins.fromJSON settingsFile.text;
+      hookEntry = event: builtins.head settings.hooks.${event};
+      hookCommand = event: (builtins.head (hookEntry event).hooks).command;
+    in
+    settingsFile.force
+    && lib.all (event: builtins.hasAttr event settings.hooks) claudeHookEvents
+    && lib.all (
+      event: lib.hasInfix "/.orca/agent-hooks/claude-hook.sh" (hookCommand event)
+    ) claudeHookEvents
+    && lib.all (event: (hookEntry event).matcher == "*") matchedClaudeHookEvents
+  )
+  agentToolHosts
+) "agent-tools hosts must declare and forcibly restore Orca's Claude hooks in Nix-owned settings";
 assert lib.assertMsg
   (lib.all (
     name:

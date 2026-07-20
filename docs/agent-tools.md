@@ -373,9 +373,10 @@ secrets. Dotfiles own the cross-platform binary, runtime dependencies, and
 agent skills. The pinned `orca-cli` and `orchestration` skills are deployed on
 every `agent-tools` host; `computer-use` is added only when the host has the
 `desktop` capability. On Linux, the Nix profile always provides `orca` and
-`orca-ide`; Orca may additionally maintain its own user-local launchers for
-managed terminals. Home Manager deliberately leaves those mutable paths alone
-instead of creating conflicting links.
+`orca-ide`; Orca may additionally create user-local launchers for managed
+terminals. Home Manager never creates those paths, but activation removes files
+carrying Orca's own launcher signatures so a package upgrade resolves through
+the new Nix profile. The next `orca serve` recreates matching mutable launchers.
 See the upstream [Remote Orca Servers documentation](https://www.onorca.dev/docs/remote-servers)
 for pairing and client setup.
 

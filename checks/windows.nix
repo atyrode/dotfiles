@@ -71,8 +71,13 @@ pkgs.runCommand "check-windows-control-plane"
         and .version == "0.4.7"
         and (.installer.sha256 | test("^[0-9a-f]{64}$"))
         and .config.destination == "%LOCALAPPDATA%\\rio\\config.toml"
+        and .graphicsPreference == {
+          executable: "%ProgramFiles%\\Rio\\rio.exe",
+          mode: "high-performance",
+          registryValue: "GpuPreference=2;"
+        }
         and .versionPolicy == "pinned to the nixpkgs pin"
-        and .mutableStateOwner == "Rio owns its runtime state; Nix owns the config artifact"
+        and .mutableStateOwner == "Rio owns its runtime state; Nix owns the config artifact and requested graphics preference"
       )] | length == 1)
     ' ${packageFile} >/dev/null
 

@@ -6,10 +6,13 @@
 }:
 {
   # Orca runs alongside Herdr during the trial. Every agent-tools host receives
-  # the same desktop/headless binary: local apps can advertise themselves as a
-  # server, while a headless machine can be started manually with `orca serve`.
-  # Persistent service lifecycle, pairing addresses, firewall policy, and
-  # secrets remain infrastructure concerns and are intentionally absent here.
+  # the same release version: desktop apps can advertise themselves as a server,
+  # while a headless Linux machine can be started manually with `orca serve`.
+  # Nix owns the signed macOS app bundle but leaves its supported CLI launcher to
+  # Orca; reviewed skills remain Home Manager-owned and update with the package
+  # pin rather than through Orca's mutable skill updater. Persistent services,
+  # pairing addresses, firewall policy, and secrets remain infrastructure
+  # concerns and are intentionally absent here.
   home.packages = [ pkgs.orca-ide ];
 
   # Orca's headless installer creates user-local launchers that point directly

@@ -6,6 +6,11 @@
 
 let
   packageName = package: package.pname or (lib.getName package);
+  orcaExecutable =
+    if pkgs.stdenv.isDarwin then
+      "${pkgs.orca-ide}/Applications/Orca.app/Contents/MacOS/Orca"
+    else
+      lib.getExe pkgs.orca-ide;
   hostNames = builtins.attrNames hostConfigs;
   agentToolHosts = lib.filter (
     name: builtins.elem "agent-tools" hostConfigs.${name}.config.atyrode.capabilities.selected
@@ -89,7 +94,10 @@ assert lib.assertMsg (lib.all
   linuxAgentToolHosts
 ) "dotfiles must not auto-run an Orca server; production service policy belongs to infrastructure";
 pkgs.runCommand "check-orca-integration" { } ''
-  test -x ${lib.getExe pkgs.orca-ide}
+  test -x ${orcaExecutable}
+  ${lib.optionalString pkgs.stdenv.isDarwin ''
+    test ! -e ${pkgs.orca-ide}/bin/orca
+  ''}
   grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orca-cli/SKILL.md}
   grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orchestration/SKILL.md}
   grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/desktop-skills/computer-use/SKILL.md}

@@ -90,7 +90,7 @@ run the same apply command again.
 
 ### macOS Apps
 - **Nix/Home Manager apps** - ChatGPT, Lichess, Obsidian, OrbStack,
-  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, VLC, and WhatsApp
+  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, and VLC
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
   Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen Browser
   Twilight, managed through nix-darwin

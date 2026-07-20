@@ -353,9 +353,9 @@ sources in this repository instead of editing the links.
 Orca is installed alongside herdr on every `agent-tools` host. The repository
 pins one official release for Apple Silicon macOS and x86_64/aarch64 Linux;
 the native Windows control plane installs `StablyAI.Orca` through WinGet and
-then lets Orca own its normal update channel. Node 22 supplies `npx` for Orca's
-skill-registry and SSH-relay workflows. The Linux package includes Xvfb so a
-headless host can start the trial runtime directly:
+then lets Orca own its normal update channel. Node 24 supplies `npx` for Orca's
+skill-registry and SSH-relay workflows. The Linux package includes OpenSSH for
+Git remotes and Xvfb so a headless host can start the trial runtime directly:
 
 ```bash
 orca serve --port 6768 --pairing-address <reachable-private-address>

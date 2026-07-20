@@ -353,8 +353,9 @@ sources in this repository instead of editing the links.
 Orca is installed alongside herdr on every `agent-tools` host. The repository
 pins one official release for Apple Silicon macOS and x86_64/aarch64 Linux;
 the native Windows control plane installs `StablyAI.Orca` through WinGet and
-then lets Orca own its normal update channel. The Linux package includes Xvfb
-so a headless host can start the trial runtime directly:
+then lets Orca own its normal update channel. Node 22 supplies `npx` for Orca's
+skill-registry and SSH-relay workflows. The Linux package includes Xvfb so a
+headless host can start the trial runtime directly:
 
 ```bash
 orca serve --port 6768 --pairing-address <reachable-private-address>
@@ -368,10 +369,13 @@ private network path such as Tailscale, a LAN, or an SSH tunnel.
 The trial deliberately has no systemd or launchd service. Start `orca serve`
 manually on the VPS; if Orca becomes permanent, the consuming infrastructure
 flake owns its service lifecycle, pairing address, firewall, monitoring, and
-secrets. Dotfiles own only the cross-platform binary and shell entry points.
-On Linux, Home Manager reserves both `~/.local/bin/orca` and
-`~/.local/bin/orca-ide` as immutable links to the pinned package, preventing
-headless Orca's built-in CLI installer from leaving mutable launchers behind.
+secrets. Dotfiles own the cross-platform binary, runtime dependencies, and
+agent skills. The pinned `orca-cli` and `orchestration` skills are deployed on
+every `agent-tools` host; `computer-use` is added only when the host has the
+`desktop` capability. On Linux, the Nix profile always provides `orca` and
+`orca-ide`; Orca may additionally maintain its own user-local launchers for
+managed terminals. Home Manager deliberately leaves those mutable paths alone
+instead of creating conflicting links.
 See the upstream [Remote Orca Servers documentation](https://www.onorca.dev/docs/remote-servers)
 for pairing and client setup.
 
@@ -384,6 +388,11 @@ configure Orca in the app and let it own this mutable state. Dotfiles can revisi
 declarative settings if upstream publishes a stable config or policy interface;
 the existing `ORCA_USER_DATA_PATH` variable selects a data directory but does
 not turn its contents into a supported configuration contract.
+
+Claude's required Orca hooks remain declarative, but activation installs
+`~/.claude/settings.json` as a writable regular file rather than a Nix-store
+symlink. This lets Orca create its backup and idempotently reconcile hooks
+without `EACCES`; the next activation restores the reviewed template.
 
 ## herdr
 
@@ -516,8 +525,10 @@ pty-backed automation.
 ## Skills
 
 Generic, cross-project skills belong in `agents/skills/` and Home Manager links
-them to `~/.agents/skills`. OMP discovers `.agent/skills` and `.agents/skills`
-from the home directory and while walking up a project tree.
+them to `~/.agents/skills`. Capability-specific skills live under
+`agents/desktop-skills/` and join that tree only on desktop profiles. OMP
+discovers `.agent/skills` and `.agents/skills` from the home directory and
+while walking up a project tree.
 
 Project-specific skills should be committed with the project:
 
@@ -542,16 +553,16 @@ removing machine-specific assumptions. The generic
 ## Updating
 
 The `update-pins` workflow refreshes the repository-owned binary pins (OMP,
-Codex, `code`, and herdr) every six hours: `scripts/update-pins.sh` bumps versions and
-hashes, a bot pull request runs the full dispatched CI, and a green run
-merges itself. A red run leaves the pull request open for curation — that is
-the expected outcome when upstream changes bundled content. A herdr bump in
-particular deliberately stays red until the vendored skill is re-reviewed:
-`checks/herdr.nix` fails while `agents/skills/herdr/SKILL.md` lags the pin,
-because upstream skill text becomes agent instructions and must never
-refresh without review (`scripts/update-pins.sh` prints the upstream diff
-pointer alongside the bump). The manual flow
-below remains valid for hand-driven updates:
+Codex, `code`, Orca, and herdr) every six hours: `scripts/update-pins.sh` bumps
+versions and hashes, a bot pull request runs the full dispatched CI, and a
+green run merges itself. A red run leaves the pull request open for curation —
+that is the expected outcome when upstream changes bundled content. Herdr and
+Orca bumps deliberately stay red until their vendored skills are re-reviewed:
+`checks/herdr.nix` and `checks/orca.nix` compare the instruction markers to the
+package pins, because public upstream skill text becomes trusted agent
+instructions and must never refresh without review. The pin script prints the
+upstream review pointers. The manual flow below remains valid for hand-driven
+updates:
 
 1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`
    (or run `scripts/update-pins.sh`).

@@ -67,14 +67,16 @@ run the same apply command again.
 - **herdr** - Pinned agent multiplexer under trial (#269): server-side panes
   for VPS OMP sessions, thin client from the Mac
 - **Orca** - Pinned alongside herdr for a cross-platform trial: graphical
-  worktree IDE locally, or an on-demand headless runtime via `orca serve`
+  worktree IDE locally, on-demand `orca serve` remotely, and capability-scoped
+  agent skills with Node/npx support
 - **Rio** - The pinned cross-platform terminal layer (#278): a thin renderer
   under herdr/OMP with one committed `home/rio/config.toml` for macOS, Linux
   desktop, and native Windows
 - **mise** - Declaratively installed runtime/version manager
-- **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
-  native compilers come from committed dev shells, `mise.toml`, or native
-  manifests instead of every host's global profile
+- **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
+  and native compilers come from committed dev shells, `mise.toml`, or native
+  manifests instead of every host's global profile; Node 24 is the deliberate
+  agent-tools exception for Orca's registry and relay workflows
 
 ### System & Containers
 - **btop** - Modern system monitor
@@ -88,7 +90,7 @@ run the same apply command again.
 
 ### macOS Apps
 - **Nix/Home Manager apps** - ChatGPT, Lichess, Obsidian, OrbStack,
-  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, VLC, and WhatsApp
+  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, and VLC
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
   Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen Browser
   Twilight, managed through nix-darwin

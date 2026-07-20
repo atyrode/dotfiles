@@ -8,27 +8,27 @@
 }:
 
 # Orca is repository-owned because nixpkgs' `orca` is the GNOME screen reader,
-# not stablyai/orca. Package the official release artifacts unchanged so every
-# agent-tools host receives the same Orca version and the `orca` CLI.
+# not stablyai/orca. Package the official release artifacts unchanged. Linux
+# exposes the AppImage CLI; macOS leaves CLI registration to the signed app.
 let
   pname = "orca-ide";
-  version = "1.4.146";
+  version = "1.4.147";
   sources = {
     "x86_64-linux" = {
       asset = "orca-linux.AppImage";
-      hash = "sha256-/DQnU0U4XyOAxYX7J81gCJP2OgaLxTARr4kUpvqdT8k=";
+      hash = "sha256-qkLVB2+zckUgcoVuwgSwXnR2qgEFD6iTNgUCCy0qvQg=";
     };
     "aarch64-linux" = {
       asset = "orca-linux-arm64.AppImage";
-      hash = "sha256-ZmnwdLtJU59Ck6l27oo1OSLOtUW5OX/hUkx5bCG35rc=";
+      hash = "sha256-B8LDU1VxsKAHf9lvo/HAeydVa7FlvKf1KFxigEqGyJ0=";
     };
     "x86_64-darwin" = {
       asset = "orca-macos-x64.dmg";
-      hash = "sha256-+1kaF5gkiHghIvCgxc/rp3zLt0PKqLSs3Xsjv56UIdU=";
+      hash = "sha256-APXTvSexOAtVIL7nUh9Pm8+nubgKH2MJ2QrmY8OSBJM=";
     };
     "aarch64-darwin" = {
       asset = "orca-macos-arm64.dmg";
-      hash = "sha256-svPrsSuRBVelfxOAfiftR6E0WlavRoQo4pjhg8N5YiM=";
+      hash = "sha256-htjmTFwj6200t7IRvfdXJi0dalFzDVgrvOlkjfWjjhY=";
     };
   };
   source =
@@ -43,7 +43,6 @@ let
     homepage = "https://github.com/stablyai/orca";
     changelog = "https://github.com/stablyai/orca/releases/tag/v${version}";
     license = lib.licenses.mit;
-    mainProgram = "orca";
     platforms = builtins.attrNames sources;
     sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
   };
@@ -57,10 +56,13 @@ if stdenv.hostPlatform.isLinux then
   appimageTools.wrapType2 {
     inherit pname src version;
 
-    # `orca serve` automatically starts Xvfb on headless Linux when DISPLAY is
-    # unset. Carry it in the FHS environment so a manually started VPS trial
-    # needs no host package or service configuration.
-    extraPkgs = pkgs: [ pkgs.xorg-server ];
+    # `orca serve` starts Xvfb when DISPLAY is unset, and Git inside Orca's FHS
+    # runtime shells out to OpenSSH for SSH remotes. Carry both dependencies so
+    # a manually started VPS trial needs no host package or service setup.
+    extraPkgs = pkgs: [
+      pkgs.openssh
+      pkgs.xorg-server
+    ];
 
     extraInstallCommands = ''
       ln -s "$out/bin/${pname}" "$out/bin/orca"
@@ -72,7 +74,9 @@ if stdenv.hostPlatform.isLinux then
       cp -R ${contents}/usr/share/icons "$out/share/icons"
     '';
 
-    inherit meta;
+    meta = meta // {
+      mainProgram = "orca";
+    };
   }
 else
   stdenvNoCC.mkDerivation {
@@ -83,9 +87,8 @@ else
 
     installPhase = ''
       runHook preInstall
-      mkdir -p "$out/Applications" "$out/bin"
+      mkdir -p "$out/Applications"
       cp -R Orca.app "$out/Applications/Orca.app"
-      ln -s "$out/Applications/Orca.app/Contents/MacOS/Orca" "$out/bin/orca"
       runHook postInstall
     '';
 

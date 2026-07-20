@@ -103,7 +103,7 @@ assert lib.assertMsg serverConfig.programs.nix-index-database.comma.enable
 assert lib.assertMsg serverConfig.atyrode.agentTools.enable
   "portable server must enable managed agent tools";
 assert lib.assertMsg (lib.hasInfix "Bash(gh pr merge:*)"
-  serverConfig.home.file.".claude/settings.json".text
+  serverConfig.home.file.".local/share/atyrode/claude-settings.json".text
 ) "portable server must carry the Claude Code standing merge authorization";
 assert lib.assertMsg (builtins.hasAttr ".claude/CLAUDE.md" serverConfig.home.file)
   "portable server must deploy the managed Claude Code operator policy";

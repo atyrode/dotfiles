@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Refresh the repository-owned binary pins (omp, code, codex) to the latest
-# upstream releases. Prints one line per bumped package; exits quietly when
-# everything is already current. Requires curl, jq, awk, and nix.
+# Refresh the repository-owned binary pins (OMP, code, Codex, Orca, and herdr)
+# to their latest upstream releases. Prints one line per bumped package; exits
+# quietly when everything is already current. Requires curl, jq, awk, and nix.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,6 +56,10 @@ bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
   'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
   codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
 
+bump orca "$repo_root/pkgs/orca-ide/default.nix" stablyai/orca v \
+  'https://github.com/stablyai/orca/releases/download/@tag@/@asset@' \
+  orca-linux.AppImage orca-linux-arm64.AppImage orca-macos-x64.dmg orca-macos-arm64.dmg
+
 bump herdr "$repo_root/pkgs/herdr/default.nix" ogulcancelik/herdr v \
   'https://github.com/ogulcancelik/herdr/releases/download/@tag@/@asset@' \
   herdr-linux-x86_64 herdr-linux-aarch64 herdr-macos-x86_64 herdr-macos-aarch64
@@ -71,4 +75,18 @@ herdr_skill="$(grep -oE 'HERDR_SKILL_UPSTREAM_VERSION=[0-9.]+' \
 if [[ "$herdr_pin" != "$herdr_skill" ]]; then
   printf 'herdr skill vendored at %s lags pin %s: review https://github.com/ogulcancelik/herdr/blob/v%s/SKILL.md, then update agents/skills/herdr/SKILL.md\n' \
     "$herdr_skill" "$herdr_pin" "$herdr_pin"
+fi
+
+# Orca's three reviewed skills are kept at the same release as its package.
+# checks/orca.nix deliberately blocks an automatic package bump until all three
+# instruction files have been reviewed and refreshed.
+orca_pin="$(current_version "$repo_root/pkgs/orca-ide/default.nix")"
+orca_skill="$(grep -hoE 'ORCA_SKILL_UPSTREAM_VERSION=[0-9.]+' \
+  "$repo_root/agents/skills/orca-cli/SKILL.md" \
+  "$repo_root/agents/skills/orchestration/SKILL.md" \
+  "$repo_root/agents/desktop-skills/computer-use/SKILL.md" |
+  grep -oE '[0-9.]+$' | sort -u)"
+if [[ "$orca_pin" != "$orca_skill" ]]; then
+  printf 'Orca skills vendored at %s lag pin %s: review https://github.com/stablyai/orca/tree/v%s/skills, then refresh orca-cli, orchestration, and computer-use\n' \
+    "$orca_skill" "$orca_pin" "$orca_pin"
 fi

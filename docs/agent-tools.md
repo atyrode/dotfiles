@@ -348,6 +348,43 @@ instead.
 The readable managed copies are linked under `~/.config/omp/`. Edit their
 sources in this repository instead of editing the links.
 
+## Orca trial
+
+Orca is installed alongside herdr on every `agent-tools` host. The repository
+pins one official release for Apple Silicon macOS and x86_64/aarch64 Linux;
+the native Windows control plane installs `StablyAI.Orca` through WinGet and
+then lets Orca own its normal update channel. The Linux package includes Xvfb
+so a headless host can start the trial runtime directly:
+
+```bash
+orca serve --port 6768 --pairing-address <reachable-private-address>
+```
+
+The desktop app can also act as a server without a separate daemon: use
+**Settings → Remote Orca Servers → Advertise this app as a server → New Link**.
+The generated access grant is revocable and secret-bearing. Keep it on a
+private network path such as Tailscale, a LAN, or an SSH tunnel.
+
+The trial deliberately has no systemd or launchd service. Start `orca serve`
+manually on the VPS; if Orca becomes permanent, the consuming infrastructure
+flake owns its service lifecycle, pairing address, firewall, monitoring, and
+secrets. Dotfiles own only the cross-platform binary and shell entry points.
+On Linux, Home Manager reserves both `~/.local/bin/orca` and
+`~/.local/bin/orca-ide` as immutable links to the pinned package, preventing
+headless Orca's built-in CLI installer from leaving mutable launchers behind.
+See the upstream [Remote Orca Servers documentation](https://www.onorca.dev/docs/remote-servers)
+for pairing and client setup.
+
+Orca does not currently expose a supported declarative settings file, settings
+CLI, or policy layer. Its UI writes `orca-data.json` inside Electron's user-data
+directory; that single mutable database mixes global settings with repositories,
+worktrees, layouts, terminal state, integrations, encrypted secrets, and pairing
+state. Nix must not replace or merge that private schema. During the trial,
+configure Orca in the app and let it own this mutable state. Dotfiles can revisit
+declarative settings if upstream publishes a stable config or policy interface;
+the existing `ORCA_USER_DATA_PATH` variable selects a data directory but does
+not turn its contents into a supported configuration contract.
+
 ## herdr
 
 herdr is the remote-first agent multiplexer under trial in

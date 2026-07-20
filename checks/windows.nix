@@ -51,7 +51,7 @@ pkgs.runCommand "check-windows-control-plane"
 
     jq -e '
       .schemaVersion == 2
-      and (.packages | length) == 3
+      and (.packages | length) == 4
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .source == "winget"
@@ -78,6 +78,13 @@ pkgs.runCommand "check-windows-control-plane"
         }
         and .versionPolicy == "pinned to the nixpkgs pin"
         and .mutableStateOwner == "Rio owns its runtime state; Nix owns the config artifact and requested graphics preference"
+      )] | length == 1)
+      and ([.packages[] | select(
+        .id == "StablyAI.Orca"
+        and .source == "winget"
+        and .conflicts == []
+        and .versionPolicy == "installed; Orca owns its normal update channel"
+        and (.mutableStateOwner | contains("Orca owns its settings"))
       )] | length == 1)
     ' ${packageFile} >/dev/null
 

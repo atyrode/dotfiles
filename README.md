@@ -66,6 +66,8 @@ run the same apply command again.
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
 - **herdr** - Pinned agent multiplexer under trial (#269): server-side panes
   for VPS OMP sessions, thin client from the Mac
+- **Orca** - Pinned alongside herdr for a cross-platform trial: graphical
+  worktree IDE locally, or an on-demand headless runtime via `orca serve`
 - **Rio** - The pinned cross-platform terminal layer (#278): a thin renderer
   under herdr/OMP with one committed `home/rio/config.toml` for macOS, Linux
   desktop, and native Windows

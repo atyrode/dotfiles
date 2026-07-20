@@ -5,6 +5,7 @@
     ../claude.nix
     ../codex.nix
     ../herdr.nix
+    ../orca.nix
   ];
 
   atyrode.agentTools.enable = true;

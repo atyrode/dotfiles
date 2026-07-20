@@ -32,6 +32,7 @@
     "mise",
     "nerd-fonts-symbols-only",
     "omp-configured",
+    "orca-ide",
     "ripgrep",
     "tmux",
     "tree",
@@ -97,13 +98,13 @@
   ],
   "closureBudgets": {
     "aarch64-linux": {
-      "maxNarBytes": 2684354560,
-      "maxStorePaths": 500,
+      "maxNarBytes": 4294967296,
+      "maxStorePaths": 800,
       "maxTopLevelPackages": 45
     },
     "x86_64-linux": {
-      "maxNarBytes": 2617245696,
-      "maxStorePaths": 450,
+      "maxNarBytes": 4294967296,
+      "maxStorePaths": 750,
       "maxTopLevelPackages": 45
     }
   },

@@ -57,10 +57,13 @@ if stdenv.hostPlatform.isLinux then
   appimageTools.wrapType2 {
     inherit pname src version;
 
-    # `orca serve` automatically starts Xvfb on headless Linux when DISPLAY is
-    # unset. Carry it in the FHS environment so a manually started VPS trial
-    # needs no host package or service configuration.
-    extraPkgs = pkgs: [ pkgs.xorg-server ];
+    # `orca serve` starts Xvfb when DISPLAY is unset, and Git inside Orca's FHS
+    # runtime shells out to OpenSSH for SSH remotes. Carry both dependencies so
+    # a manually started VPS trial needs no host package or service setup.
+    extraPkgs = pkgs: [
+      pkgs.openssh
+      pkgs.xorg-server
+    ];
 
     extraInstallCommands = ''
       ln -s "$out/bin/${pname}" "$out/bin/orca"

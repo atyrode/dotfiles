@@ -75,7 +75,7 @@ run the same apply command again.
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
   and native compilers come from committed dev shells, `mise.toml`, or native
-  manifests instead of every host's global profile; Node 22 is the deliberate
+  manifests instead of every host's global profile; Node 24 is the deliberate
   agent-tools exception for Orca's registry and relay workflows
 
 ### System & Containers

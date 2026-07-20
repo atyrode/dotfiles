@@ -523,6 +523,24 @@ pkgs.runCommand "check-atyrode-cli"
     esac
     EOF
     chmod +x "$TMPDIR/bin/winget.exe"
+    cat > "$TMPDIR/bin/powershell.exe" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    printf '%s\n' "$*" >> "$POWERSHELL_LOG"
+    case "$*" in
+      *Get-ItemProperty*)
+        if [[ -f "$WINGET_STATE/rio-high-performance-gpu" ]]; then
+          printf 'true\r\n'
+        else
+          printf 'false\r\n'
+        fi
+        ;;
+      *New-ItemProperty*)
+        touch "$WINGET_STATE/rio-high-performance-gpu"
+        ;;
+      *) exit 64 ;;
+    esac
+    EOF
     cat > "$TMPDIR/bin/fetch" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
@@ -549,7 +567,7 @@ pkgs.runCommand "check-atyrode-cli"
       *) printf '%064d  %s\n' 0 "$1" ;;
     esac
     EOF
-    chmod +x "$TMPDIR/bin/fetch" "$TMPDIR/bin/msiexec.exe" "$TMPDIR/bin/wslpath" "$TMPDIR/bin/sha256sum"
+    chmod +x "$TMPDIR/bin/fetch" "$TMPDIR/bin/msiexec.exe" "$TMPDIR/bin/powershell.exe" "$TMPDIR/bin/wslpath" "$TMPDIR/bin/sha256sum"
     export ATYRODE_WINGET="$TMPDIR/bin/winget.exe"
     export WINGET_LOG="$TMPDIR/winget.log"
     export WINGET_STATE="$TMPDIR/winget-state"
@@ -557,12 +575,14 @@ pkgs.runCommand "check-atyrode-cli"
     export ATYRODE_FETCH="$TMPDIR/bin/fetch"
     export ATYRODE_MSIEXEC="$TMPDIR/bin/msiexec.exe"
     export ATYRODE_WSLPATH="$TMPDIR/bin/wslpath"
+    export ATYRODE_POWERSHELL="$TMPDIR/bin/powershell.exe"
     export ATYRODE_LOCALAPPDATA="$TMPDIR/windows-localappdata"
     export ATYRODE_SHA256SUM="$TMPDIR/bin/sha256sum"
     export MSI_LOG="$TMPDIR/msiexec.log"
+    export POWERSHELL_LOG="$TMPDIR/powershell.log"
     export RIO_FETCH_CONTENT=good
     mkdir -p "$ATYRODE_LOCALAPPDATA"
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/rio-version"
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/rio-high-performance-gpu" "$WINGET_STATE/rio-version"
     export _ATYRODE_TEST_HOSTNAME=atyrode-wsl
     rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable"
     : > "$WINGET_LOG"
@@ -594,15 +614,17 @@ pkgs.runCommand "check-atyrode-cli"
         and .installedVersion == null
         and .installedVersionSource == "absent"
         and (.configMatches | not)
+        and (.graphicsPreferenceMatches | not)
         and .status == "missing"
       )] | length == 1)
       and (.transactional | not)
-      and .mutationBoundary == "WinGet, Rio MSI, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
+      and .mutationBoundary == "WinGet, Rio MSI, Windows graphics preferences, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
     ' <<<"$windows_plan" >/dev/null \
       || { echo "Windows plan contract is wrong: $windows_plan" >&2; exit 1; }
     test ! -e "$WINGET_STATE/twilight"
     test ! -e "$WINGET_STATE/jetbrains-nerd-font"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio"
+    test ! -e "$WINGET_STATE/rio-high-performance-gpu"
     grep -qF 'list --id Zen-Team.Zen-Browser.Twilight --exact --accept-source-agreements --disable-interactivity' \
       "$WINGET_LOG"
 
@@ -621,6 +643,7 @@ pkgs.runCommand "check-atyrode-cli"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version"
     test ! -e "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     test ! -s "$MSI_LOG"
+    test ! -e "$WINGET_STATE/rio-high-performance-gpu"
     rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/jetbrains-nerd-font"
     RIO_FETCH_CONTENT=good
 
@@ -647,6 +670,7 @@ pkgs.runCommand "check-atyrode-cli"
       "$WINGET_LOG" >/dev/null
     test -f "$WINGET_STATE/twilight"
     test -f "$WINGET_STATE/jetbrains-nerd-font"
+    test -f "$WINGET_STATE/rio-high-performance-gpu"
     converged_windows="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
     jq -e '.ready and .converged and .changes == 0 and all(.packages[]; .status == "installed")' \
       <<<"$converged_windows" >/dev/null \
@@ -654,11 +678,29 @@ pkgs.runCommand "check-atyrode-cli"
     grep -Fx -- '/i C:\mock\rio-installer-x86_64.msi /qn /norestart' "$MSI_LOG" >/dev/null
     cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.4.7
+    grep -qF 'New-ItemProperty' "$POWERSHELL_LOG"
     # Config-only drift is repaired atomically without downloading or invoking
     # the MSI again.
     printf 'bad config\n' > "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     : > "$MSI_LOG"
     atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
+    test ! -s "$MSI_LOG"
+    cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
+
+    # Graphics-preference drift is repaired without reinstalling Rio or changing
+    # its config. Windows remains the final arbiter when no discrete GPU exists.
+    rm -f "$WINGET_STATE/rio-high-performance-gpu"
+    graphics_drift_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
+    jq -e '[.packages[] | select(
+      .id == "raphamorim.rio"
+      and .status == "graphics-preference-drift"
+      and (.graphicsPreferenceMatches | not)
+      and .graphicsPreference.mode == "high-performance"
+      and .graphicsPreference.registryValue == "GpuPreference=2;"
+    )] | length == 1' <<<"$graphics_drift_plan" >/dev/null
+    : > "$MSI_LOG"
+    atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
+    test -f "$WINGET_STATE/rio-high-performance-gpu"
     test ! -s "$MSI_LOG"
     cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     # Winget/ARP is authoritative: a stale pinned stamp cannot mask an older

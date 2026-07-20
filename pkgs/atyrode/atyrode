@@ -222,6 +222,29 @@ windows_localappdata() {
     die "$EX_UNAVAILABLE" "wslpath could not convert Windows LocalApplicationData"
 }
 
+windows_rio_gpu_preference_matches() {
+  local powershell output
+  powershell="$(windows_hook_command ATYRODE_POWERSHELL powershell.exe)"
+  # PowerShell variables must remain literal for the Windows subprocess.
+  # shellcheck disable=SC2016
+  output="$("$powershell" -NoProfile -NonInteractive -Command \
+    '$registry = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"; $exe = Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Rio\rio.exe"; $item = Get-ItemProperty -Path $registry -Name $exe -ErrorAction SilentlyContinue; if ($null -ne $item -and $item.PSObject.Properties[$exe].Value -eq "GpuPreference=2;") { "true" } else { "false" }' \
+    2>/dev/null | tr -d '\r' | awk 'NF { print; exit }')" ||
+    die "$EX_UNAVAILABLE" "powershell.exe could not query Rio's Windows graphics preference"
+  [[ "$output" == true ]]
+}
+
+windows_set_rio_gpu_preference() {
+  local powershell
+  powershell="$(windows_hook_command ATYRODE_POWERSHELL powershell.exe)"
+  # PowerShell variables must remain literal for the Windows subprocess.
+  # shellcheck disable=SC2016
+  "$powershell" -NoProfile -NonInteractive -Command \
+    '$registry = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"; $exe = Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Rio\rio.exe"; $null = New-Item -Path $registry -Force; $null = New-ItemProperty -Path $registry -Name $exe -Value "GpuPreference=2;" -PropertyType String -Force' \
+    </dev/null >&2 ||
+    die "$EX_SOFTWARE" "could not set Rio's Windows graphics preference"
+}
+
 windows_package_present() {
   local winget="$1" id="$2" status
   if "$winget" list --id "$id" --exact --accept-source-agreements --disable-interactivity \
@@ -259,6 +282,7 @@ windows_rio_version() {
 windows_plan() {
   local host="$1" data winget winget_version package id name source installed status remediation
   local rows='[]' conflicts conflict_id localappdata stamp config installed_version installed_version_source pinned_version config_matches winget_rio_version
+  local graphics_preference_matches
   doctor_host "$host" 1 >/dev/null ||
     die "$EX_DATAERR" "host identity does not match the registered NixOS-WSL host $host"
   data="$(host_json "$host")"
@@ -281,6 +305,11 @@ windows_plan() {
              and (.installer.url | type == "string" and length > 0)
              and (.installer.sha256 | test("^[0-9a-f]{64}$"))
              and (.config.destination == "%LOCALAPPDATA%\\rio\\config.toml")
+             and (.graphicsPreference == {
+               executable: "%ProgramFiles%\\Rio\\rio.exe",
+               mode: "high-performance",
+               registryValue: "GpuPreference=2;"
+             })
            else false end))
   ' "$windows_package_inventory" >/dev/null ||
     die "$EX_SOFTWARE" "embedded Windows package inventory is invalid"
@@ -327,6 +356,8 @@ windows_plan() {
       fi
       config_matches=false
       [[ -f "$config" ]] && cmp -s "$rio_windows_config" "$config" && config_matches=true
+      graphics_preference_matches=false
+      windows_rio_gpu_preference_matches && graphics_preference_matches=true
       remediation=""
       if [[ -z "$installed_version" ]]; then
         status=missing
@@ -336,8 +367,11 @@ windows_plan() {
       elif [[ "$config_matches" != true ]]; then
         status="config-drift"
         remediation="apply atomically redeploys the Nix-managed Rio config"
+      elif [[ "$graphics_preference_matches" != true ]]; then
+        status="graphics-preference-drift"
+        remediation="apply requests the high-performance Windows GPU for Rio"
       else status=installed; fi
-      rows="$(jq -nc --argjson rows "$rows" --argjson package "$package" --arg pinnedVersion "$pinned_version" --arg installedVersion "$installed_version" --arg installedVersionSource "$installed_version_source" --argjson configMatches "$config_matches" --arg status "$status" --arg remediation "$remediation" '$rows + [$package + {pinnedVersion:$pinnedVersion,installedVersion:(if $installedVersion == "" then null else $installedVersion end),installedVersionSource:$installedVersionSource,configMatches:$configMatches,status:$status,remediation:$remediation}]')"
+      rows="$(jq -nc --argjson rows "$rows" --argjson package "$package" --arg pinnedVersion "$pinned_version" --arg installedVersion "$installed_version" --arg installedVersionSource "$installed_version_source" --argjson configMatches "$config_matches" --argjson graphicsPreferenceMatches "$graphics_preference_matches" --arg status "$status" --arg remediation "$remediation" '$rows + [$package + {pinnedVersion:$pinnedVersion,installedVersion:(if $installedVersion == "" then null else $installedVersion end),installedVersionSource:$installedVersionSource,configMatches:$configMatches,graphicsPreferenceMatches:$graphicsPreferenceMatches,status:$status,remediation:$remediation}]')"
     fi
   done < <(jq -c '.packages[]' "$windows_package_inventory")
   jq -nc --arg host "$host" --arg backend "$winget" --arg wingetVersion "$winget_version" --argjson packages "$rows" '{
@@ -346,7 +380,7 @@ windows_plan() {
     converged: all($packages[]; .status == "installed"),
     changes: [$packages[] | select(.status != "installed")] | length, packages: $packages,
     transactional: false,
-    mutationBoundary: "WinGet, Rio MSI, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
+    mutationBoundary: "WinGet, Rio MSI, Windows graphics preferences, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
   }'
 }
 
@@ -354,7 +388,7 @@ windows_render_plan() {
   jq -r '
     "windows backend: \(.backend) (\(.wingetVersion))",
     (.packages[] | "  \(.status): \(.name) [\(.id)]"
-      + (if .source == "github-release" then "\n    pinned: \(.pinnedVersion); installed: \(.installedVersion // "absent"); config matches: \(.configMatches)"
+      + (if .source == "github-release" then "\n    pinned: \(.pinnedVersion); installed: \(.installedVersion // "absent"); config matches: \(.configMatches); high-performance GPU requested: \(.graphicsPreferenceMatches)"
          elif (.detectedConflicts | length) > 0 then "\n    conflicts: \(.detectedConflicts | join(", "))\n    remediation: \(.remediation)" else "" end)),
     "windows changes: \(.changes)", "transactional: no -- \(.mutationBoundary)"' <<<"$1"
 }
@@ -430,6 +464,7 @@ windows_reconcile() {
     elif [[ "$source" == github-release ]]; then
       if [[ "$status" == missing || "$status" == upgrade ]]; then windows_install_rio "$package" "$localappdata"; fi
       if [[ "$status" != installed ]]; then windows_deploy_rio_config "$localappdata"; fi
+      if [[ "$(jq -r '.graphicsPreferenceMatches' <<<"$package")" != true ]]; then windows_set_rio_gpu_preference; fi
     fi
   done < <(jq -c '.packages[] | select(.status != "installed")' <<<"$plan")
   final="$(windows_plan "$host")"

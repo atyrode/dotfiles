@@ -26,8 +26,13 @@ in
       source = "github-release";
       inherit (rioLock) version;
       inherit (rioLock) installer config;
+      graphicsPreference = {
+        executable = "%ProgramFiles%\\Rio\\rio.exe";
+        mode = "high-performance";
+        registryValue = "GpuPreference=2;";
+      };
       versionPolicy = "pinned to the nixpkgs pin";
-      mutableStateOwner = "Rio owns its runtime state; Nix owns the config artifact";
+      mutableStateOwner = "Rio owns its runtime state; Nix owns the config artifact and requested graphics preference";
     }
   ];
 }

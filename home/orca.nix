@@ -5,8 +5,8 @@
   ...
 }:
 {
-  # Orca runs alongside Herdr during the trial. Every agent-tools host receives
-  # the same release version: desktop apps can advertise themselves as a server,
+  # Every agent-tools host receives the same Orca release version: desktop apps
+  # can advertise themselves as a server,
   # while a headless Linux machine can be started manually with `orca serve`.
   # Nix owns the signed macOS app bundle but leaves its supported CLI launcher to
   # Orca; reviewed skills remain Home Manager-owned and update with the package

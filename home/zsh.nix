@@ -16,7 +16,7 @@
     # Load custom shell functions (in order)
     initContent = ''
       # Load shell configuration modules
-      source ${./shell/colorterm.zsh}
+      source ${./shell/cwd.zsh}
       source ${./shell/startup.zsh}
 
       # fzf keybindings and completion, guarded on a real TTY: fzf's own

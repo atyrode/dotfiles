@@ -12,10 +12,7 @@ Nix owns:
 - the managed OMP defaults, enforced policy, and model catalog;
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, managed-settings guard,
-  vault-usage footer, and herdr vault-identity extensions;
-- the pinned herdr multiplexer, its managed `~/.config/herdr/config.toml`,
-  Linux usage publisher, and vendored, review-gated pane-orchestration skill
-  (#269);
+  and vault-usage footer;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator; and
 - Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
@@ -23,10 +20,7 @@ Nix owns:
 - mise itself, with no globally declared mise tools.
 
 OMP continues to own mutable runtime data such as authentication,
-sessions, caches, onboarding state, and machine-local UI state. herdr
-likewise owns its mutable state — `~/.local/state/herdr`,
-`~/.herdr/worktrees`, and the version-stamped OMP integration extension its
-installer seeds into `~/.omp/agent/extensions/`. Secrets never
+sessions, caches, onboarding state, and machine-local UI state. Secrets never
 belong in this repository or the Nix store.
 
 Activation does not rewrite or back up pre-existing mutable paths before Home
@@ -46,8 +40,8 @@ the exact managed OMP binary set — the `omp`, `omp-managed`, and `ompu`
 launchers plus the `code` generator — and verifies that an OMP clean-home
 startup does not create `.pi` state.
 
-Agents, rules, the settings guard, vault-usage footer, and herdr vault identity
-are assembled into a read-only OMP extension-package root in the Nix store and
+Agents, rules, the settings guard, and vault-usage footer are assembled into a
+read-only OMP extension-package root in the Nix store and
 injected explicitly by every managed session. They are not copied into OMP's mutable
 agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
 receive the same platform assets without sharing authentication, sessions, or
@@ -348,14 +342,14 @@ instead.
 The readable managed copies are linked under `~/.config/omp/`. Edit their
 sources in this repository instead of editing the links.
 
-## Orca trial
+## Orca
 
-Orca is installed alongside herdr on every `agent-tools` host. The repository
+Orca is installed on every `agent-tools` host. The repository
 pins one official release for Apple Silicon macOS and x86_64/aarch64 Linux;
 the native Windows control plane installs `StablyAI.Orca` through WinGet and
 then lets Orca own its normal update channel. Node 24 supplies `npx` for Orca's
 skill-registry and SSH-relay workflows. The Linux package includes OpenSSH for
-Git remotes and Xvfb so a headless host can start the trial runtime directly:
+Git remotes and Xvfb so a headless host can start the runtime directly:
 
 ```bash
 orca serve --port 6768 --pairing-address <reachable-private-address>
@@ -372,12 +366,12 @@ The desktop app can also act as a server without a separate daemon: use
 The generated access grant is revocable and secret-bearing. Keep it on a
 private network path such as Tailscale, a LAN, or an SSH tunnel.
 
-The trial deliberately has no systemd or launchd service. Start `orca serve`
-manually on the VPS; if Orca becomes permanent, the consuming infrastructure
-flake owns its service lifecycle, pairing address, firewall, monitoring, and
-secrets. Dotfiles own the cross-platform binary, runtime dependencies, and
-agent skills. The pinned `orca-cli` and `orchestration` skills are deployed on
-every `agent-tools` host; `computer-use` is added only when the host has the
+There is deliberately no systemd or launchd service. Start `orca serve`
+manually on the VPS; the consuming infrastructure owns its service lifecycle,
+pairing address, firewall, monitoring, and secrets.
+Dotfiles own the cross-platform binary, runtime dependencies, and agent skills.
+The pinned `orca-cli` and `orchestration` skills are deployed on every
+`agent-tools` host; `computer-use` is added only when the host has the
 `desktop` capability. On Linux, the Nix profile always provides `orca` and
 `orca-ide`; Orca may additionally create user-local launchers for managed
 terminals. Home Manager never creates those paths, but activation removes files
@@ -390,8 +384,8 @@ Orca does not currently expose a supported declarative settings file, settings
 CLI, or policy layer. Its UI writes `orca-data.json` inside Electron's user-data
 directory; that single mutable database mixes global settings with repositories,
 worktrees, layouts, terminal state, integrations, encrypted secrets, and pairing
-state. Nix must not replace or merge that private schema. During the trial,
-configure Orca in the app and let it own this mutable state. Dotfiles can revisit
+state. Nix must not replace or merge that private schema. Configure Orca in the
+app and let it own this mutable state. Dotfiles can revisit
 declarative settings if upstream publishes a stable config or policy interface;
 the existing `ORCA_USER_DATA_PATH` variable selects a data directory but does
 not turn its contents into a supported configuration contract.
@@ -400,88 +394,6 @@ Claude's required Orca hooks remain declarative, but activation installs
 `~/.claude/settings.json` as a writable regular file rather than a Nix-store
 symlink. This lets Orca create its backup and idempotently reconcile hooks
 without `EACCES`; the next activation restores the reviewed template.
-
-## herdr
-
-herdr is the remote-first agent multiplexer under trial in
-[#269](https://github.com/atyrode/dotfiles/issues/269): its server runs on
-the machine where the agents run, so OMP panes on the VPS keep their
-lifecycle integration, survive disconnects, and resume across server
-restarts — the topology the retired relay-based predecessor could not
-serve (#65). The same pinned binary is the server on the Linux hosts and
-the thin client on the Mac:
-
-```bash
-herdr                                        # on the VPS: launch or attach the server
-herdr --remote tyrode.dev --session agents   # from the Mac (Rio): attach
-```
-
-Remote attach reuses the server-side `~/.nix-profile/bin/herdr` (herdr
-probes the Nix profile paths before offering its own `~/.local/bin`
-installer) whenever client and server versions match — keeping both
-platforms on the one repository pin is what prevents a mutable remote copy
-from ever being installed.
-
-Nix owns the binary pin (`pkgs/herdr`, upstream release binaries with
-published digests), the managed `~/.config/herdr/config.toml`
-(`home/herdr.nix` documents every knob: onboarding and update polling off,
-native OMP resume on, pane history kept off disk, experimental Kitty-graphics
-repaint on for OMP inline images under the Rio trial (#278), the private
-managed-SSH keepalive config on, in-TUI toasts), and the vendored skill
-(`agents/skills/herdr/SKILL.md`). herdr owns its mutable state and the
-version-stamped OMP integration file that activation seeds via
-`herdr integration install omp` — the machine-local stance settled in #65,
-and `checks/herdr.nix` exercises the installer contract
-against a scratch agent directory on every platform.
-
-On Linux, Nix also carries the herdr usage publisher as dormant
-infrastructure: the systemd user unit is wanted by no target (start it
-manually with `systemctl --user start atyrode-herdr-usage-publisher`);
-enabling it is an explicit operator decision. Since the sidebar-sections
-fork landed, the unit execs the pinned `code` binary's `code herdr-usage`
-daemon (five-minute cadence with jitter, fresh broker dials every cycle)
-instead of the retired repository bash script. It publishes the styled
-`usage` section to every local herdr session, with one bar per reported
-window and accounts deduplicated across enabled vaults by provider identity.
-Provider-tinted account/window titles, a cell-aligned percentage/reset grid,
-and reset-urgency emphasis make the rows scannable. Each row also matches the
-focused pane's `vault_broker` metadata token against its source broker URLs,
-so the active account is marked without changing the bar columns. Each cycle
-reads only brokers' snapshot identity metadata and aggregate usage; bearer
-tokens stay inside the process (native HTTP, never argv), and only
-account/window labels, percentages, countdowns, colors, and loopback
-broker URL identifiers cross the herdr socket. Twelve-minute TTLs let stale
-sections self-evict; the publisher's behavioral contract is tested in
-atyrode/code's `herdr_usage_test.go`.
-
-The integration extension is inert outside herdr panes (env-gated on
-`HERDR_ENV`/`HERDR_SOCKET_PATH`/`HERDR_PANE_ID`), and OMP discovers it from
-the user extensions directory in every launch mode — plain `omp` included —
-with no settings changes. Inside a herdr pane it is the lifecycle authority
-(working/blocked/idle, with the real approval or ask prompt text) and
-reports the session file or ID, which is what lets
-`session.resume_agents_on_restore` relaunch panes as `omp --resume=<ref>`
-after a server restart. Headless OMP runs (print/RPC) intentionally report
-nothing. Verify after activation:
-
-```bash
-herdr integration status   # expect: omp: current (v5) (…/herdr-omp-agent-state.ts)
-```
-
-Known v17.0.3 edge, measured live: OMP's `session_shutdown` extension event
-carries no payload, so herdr's release-on-quit guard is inert and a quit
-`omp` pane keeps its stale lifecycle authority for ~5 s until herdr's
-process-exit scan clears it. Filed upstream as
-[can1357/oh-my-pi#5965](https://github.com/can1357/oh-my-pi/issues/5965)
-(expose the already-recorded disposal reason); harmless for the trial
-beyond the brief stale sidebar state.
-
-Orchestration from inside a pane goes through the vendored `herdr` skill
-(`herdr pane split/run/read`, `herdr wait agent-status`, `herdr agent`
-subcommands); it requires `HERDR_ENV=1` and is inert elsewhere. Within one
-OMP session, OMP's own subagents and hub remain the coordination layer —
-herdr adds the cross-session, cross-repo layer plus the human-facing
-sidebar.
 
 ## Seeded plain-omp defaults
 
@@ -560,14 +472,14 @@ removing machine-specific assumptions. The generic
 ## Updating
 
 The `update-pins` workflow refreshes the repository-owned binary pins (OMP,
-Codex, `code`, Orca, and herdr) every six hours: `scripts/update-pins.sh` bumps
+Codex, `code`, and Orca) every six hours: `scripts/update-pins.sh` bumps
 versions and hashes, a bot pull request runs the full dispatched CI, and a
 green run merges itself. A red run leaves the pull request open for curation —
-that is the expected outcome when upstream changes bundled content. Herdr and
-Orca bumps deliberately stay red until their vendored skills are re-reviewed:
-`checks/herdr.nix` and `checks/orca.nix` compare the instruction markers to the
-package pins, because public upstream skill text becomes trusted agent
-instructions and must never refresh without review. The pin script prints the
+that is the expected outcome when upstream changes bundled content. Orca bumps
+deliberately stay red until its vendored skills are re-reviewed:
+`checks/orca.nix` compares the instruction markers to the package pin because
+public upstream skill text becomes trusted agent instructions and must never
+refresh without review. The pin script prints the
 upstream review pointers. The manual flow below remains valid for hand-driven
 updates:
 

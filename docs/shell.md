@@ -10,11 +10,8 @@ single retained Oh My Zsh `git` plugin. Projects own language environments.
   Oh My Zsh `git` plugin.
 - `home/shell/startup.zsh` loads only the machine-local
   `~/.config/zsh/local.zsh` hook, and only in an interactive shell.
-- `home/shell/colorterm.zsh` sets `COLORTERM=truecolor` only when
-  `TERM=xterm-ghostty` arrives without `COLORTERM`: the ghostty-family
-  terminfo still reaches remote shells from libghostty-based hosts (herdr
-  panes), sshd's default `AcceptEnv` drops any forwarded value, and
-  terminals that deliver their own `COLORTERM` keep it.
+- `home/shell/cwd.zsh` emits OSC 7 working-directory metadata at each prompt
+  so Rio's file-path hints resolve relative paths from the authoritative shell.
 - `home/zsh.nix` sources `fzf --zsh` only with a TTY. Home Manager's generated
   hook remains disabled until its option restore no longer prints
   `can't change option: zle` in TTY-less interactive shells (#255).
@@ -26,4 +23,4 @@ single retained Oh My Zsh `git` plugin. Projects own language environments.
 `checks/shell-surface.nix` proves that non-interactive shells do not load the
 local hook, interactive shells do, shell startup does not execute `fastfetch`,
 completion remains enabled, fzf/zoxide/nix-direnv remain Home Manager-owned,
-and `COLORTERM` is derived only for the intended ghostty-family sessions.
+and OSC 7 metadata encodes paths safely.

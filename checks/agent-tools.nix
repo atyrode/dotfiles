@@ -32,6 +32,9 @@ let
         if [[ -n "$GOPLS_STUB_LOG" ]]; then
           command -v gopls > "$GOPLS_STUB_LOG"
         fi
+        if [[ -n "$TYPESCRIPT_LSP_STUB_LOG" ]]; then
+          command -v typescript-language-server > "$TYPESCRIPT_LSP_STUB_LOG"
+        fi
         printf '%s\n' "$@"
         EOF
             chmod +x "$out/bin/omp"
@@ -355,16 +358,21 @@ in
           HOME="$TMPDIR/python-home" \
           PATH=/nonexistent \
           ${pkgs.omp-configured}/bin/omp setup python --check >/dev/null
-        # OMP auto-detects its built-in Go server only when gopls is on PATH.
-        # Both LSP-capable launch paths must provide it without host tooling.
+        # OMP auto-detects its built-in Go and TypeScript servers only when
+        # their binaries are on PATH. Both LSP-capable launch paths must
+        # provide them without relying on host or project tooling.
         for command in omp omp-managed; do
           gopls_log="$TMPDIR/$command-gopls"
+          typescript_lsp_log="$TMPDIR/$command-typescript-language-server"
           ${pkgs.coreutils}/bin/env -i \
             HOME="$TMPDIR/python-home" \
             PATH=/nonexistent \
             GOPLS_STUB_LOG="$gopls_log" \
+            TYPESCRIPT_LSP_STUB_LOG="$typescript_lsp_log" \
             ${configuredStub}/bin/"$command" --version >/dev/null
           grep -Fxq ${lib.escapeShellArg (lib.getExe configuredStub.goplsCommand)} "$gopls_log"
+          grep -Fxq ${lib.escapeShellArg (lib.getExe pkgs.typescript-language-server)} \
+            "$typescript_lsp_log"
         done
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"

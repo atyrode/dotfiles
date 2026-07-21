@@ -20,8 +20,12 @@ let
       system
       username
       ;
-    activation = "home-manager";
+    activation = "nixos";
     platform = "linux";
+    nixTrustedUsers = [
+      "root"
+      username
+    ];
   };
   registry = {
     ${hostId} = host;

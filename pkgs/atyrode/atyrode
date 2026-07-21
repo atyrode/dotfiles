@@ -1604,12 +1604,21 @@ has_capability() {
   jq -e --arg capability "$capability" '.capabilities | index($capability)' <<<"$data" >/dev/null
 }
 
+is_nixos_owned() {
+  local data="$1"
+
+  if jq -e '.activation == "nixos" or .activation == "nixos-wsl"' <<<"$data" >/dev/null; then
+    return 0
+  fi
+  has_capability "$data" server
+}
+
 nix_system_owner() {
   local data="$1" platform="$2"
 
   if [[ "$platform" == darwin ]]; then
     printf 'nix-darwin\n'
-  elif has_capability "$data" server; then
+  elif is_nixos_owned "$data"; then
     printf 'nixos\n'
   else
     printf 'system\n'
@@ -1619,7 +1628,7 @@ nix_system_owner() {
 portable_system_owner() {
   local data="$1"
 
-  if has_capability "$data" server; then
+  if is_nixos_owned "$data"; then
     printf 'nixos\n'
   else
     printf 'system\n'
@@ -1642,7 +1651,7 @@ probe_login_shell() {
   if [[ "$platform" == darwin ]]; then
     owner=nix-darwin
     expected="$(jq -r '.loginShell.darwinPath' "$system_policy")"
-  elif has_capability "$data" server; then
+  elif is_nixos_owned "$data"; then
     owner=nixos
     expected="$(jq -r '.loginShell.nixosPath' "$system_policy")"
   else
@@ -1711,7 +1720,10 @@ probe_nix_policy() {
   local status code summary remediation expected_json actual_json expected_users
 
   owner="$(nix_system_owner "$data" "$platform")"
-  expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
+  expected_users="$(jq -c 'select(.nixTrustedUsers != null) | .nixTrustedUsers | sort' <<<"$data")"
+  if [[ -z "$expected_users" ]]; then
+    expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
+  fi
   if has_system_fixture; then
     trusted_exact="$(jq -r '.nix.trustedUsersExact // false' <<<"$system_fixture")"
     official_cache="$(jq -r '.nix.officialCacheOnly // false' <<<"$system_fixture")"

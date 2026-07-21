@@ -935,13 +935,14 @@ pkgs.runCommand "check-atyrode-cli"
     jq '.loginShell.path = "/run/current-system/sw/bin/zsh"' "$linux_ready" > "$server_ready"
     export _ATYRODE_TEST_USER=fixture
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$server_ready"
-    server_result="$(atyrode doctor system fixture-server --json)"
+    server_result="$(atyrode doctor system fixture-nixos --json)"
     jq -e '
       .ok
       and ([.checks[] | select(.id == "login-shell" or .id == "nix-daemon" or
           .id == "nix-policy" or .id == "container-engine" or
           .id == "antivirus-data" or .id == "device-permissions") | .owner]
         | all(. == "nixos"))
+      and (.checks[] | select(.id == "nix-policy") | .expected.trustedUsers) == ["fixture", "root"]
     ' <<< "$server_result" >/dev/null
 
     darwin_ready="$TMPDIR/darwin-ready.json"

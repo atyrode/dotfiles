@@ -125,6 +125,15 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   fixtureIdentity.username == "fixture"
 ) "NixOS consumer identity did not retain its fixture user";
+assert lib.assertMsg (
+  fixtureIdentity.activation == "nixos"
+) "NixOS consumer identity did not retain its infrastructure activation owner";
+assert lib.assertMsg (
+  fixtureIdentity.nixTrustedUsers == [
+    "root"
+    "fixture"
+  ]
+) "NixOS consumer identity did not retain its declared Nix trust boundary";
 assert lib.assertMsg externalConfig.config.programs.zsh.enable
   "NixOS consumer must own system Zsh enablement";
 assert lib.assertMsg (

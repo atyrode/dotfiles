@@ -152,6 +152,7 @@
         let
           expectedPlatform = if lib.hasSuffix "-darwin" host.system then "darwin" else "linux";
           activation = host.activation or null;
+          nixTrustedUsers = host.nixTrustedUsers or null;
           capabilities = validateCapabilities {
             inherit name;
             inherit (host) system;
@@ -166,6 +167,7 @@
         assert lib.assertMsg (builtins.elem activation [
           "home-manager"
           "nix-darwin"
+          "nixos"
           "nixos-wsl"
         ]) "host ${name} must declare a supported activation owner";
         assert lib.assertMsg (
@@ -174,12 +176,25 @@
           else
             builtins.elem activation [
               "home-manager"
+              "nixos"
               "nixos-wsl"
             ]
         ) "host ${name} activation owner ${toString activation} does not match platform ${host.platform}";
         assert lib.assertMsg (
           activation != "nixos-wsl" || builtins.isString (host.hostname or null)
         ) "NixOS-WSL host ${name} must declare a stable hostname";
+        assert lib.assertMsg (
+          nixTrustedUsers == null
+          || (
+            builtins.isList nixTrustedUsers
+            && nixTrustedUsers != [ ]
+            && lib.all (user: builtins.isString user && user != "") nixTrustedUsers
+            && builtins.length nixTrustedUsers == builtins.length (lib.unique nixTrustedUsers)
+          )
+        ) "host ${name} declares invalid or duplicate Nix trusted users";
+        assert lib.assertMsg (
+          activation != "nixos" || (nixTrustedUsers != null && builtins.elem "root" nixTrustedUsers)
+        ) "NixOS host ${name} must explicitly declare Nix trusted users including root";
         assert lib.assertMsg (
           builtins.isString host.username && host.username != ""
         ) "host ${name} must declare a non-empty username";
@@ -195,6 +210,7 @@
           inherit activation;
           description = host.description or "";
           hostname = host.hostname or null;
+          inherit nixTrustedUsers;
         };
 
       validateHostRegistry = registry: lib.mapAttrs validateHost registry;
@@ -211,15 +227,22 @@
           hostname
           platform
           system
+          nixTrustedUsers
           username
           ;
       };
       publicHosts = lib.mapAttrs publicHost hosts;
-      bootstrapHosts = lib.filterAttrs (_: host: host.activation != "nixos-wsl") publicHosts;
+      bootstrapHosts = lib.filterAttrs (
+        _: host:
+        !builtins.elem host.activation [
+          "nixos"
+          "nixos-wsl"
+        ]
+      ) publicHosts;
       hostRegistryJson = builtins.toJSON publicHosts;
-      # Flat projection consumed by the macOS/Linux get.sh before Nix exists;
-      # NixOS-WSL has its own native get.ps1 boundary. The host-registry check
-      # keeps the committed bootstrap-eligible projection honest.
+      # Flat projection consumed by the macOS/Linux get.sh before Nix exists.
+      # Infrastructure-owned NixOS and repository-owned NixOS-WSL hosts are
+      # excluded; the host-registry check keeps the remaining projection honest.
       hostsTsv = lib.concatMapStrings (
         name:
         let
@@ -611,16 +634,21 @@
             atyrode-tui = cockpitStub;
             atyrode-preview-parser = pkgs.atyrode-tui;
             hostRegistry = publicHosts // {
-              fixture-server = {
-                id = "fixture-server";
-                activation = "home-manager";
+              fixture-nixos = {
+                id = "fixture-nixos";
+                activation = "nixos";
                 capabilities = [
                   "base"
-                  "server"
+                  "development"
+                  "containers"
                 ];
                 dotfilesDirectory = "/home/fixture/nix-dotfiles";
                 homeDirectory = "/home/fixture";
                 hostname = null;
+                nixTrustedUsers = [
+                  "root"
+                  "fixture"
+                ];
                 platform = "linux";
                 system = "x86_64-linux";
                 username = "fixture";

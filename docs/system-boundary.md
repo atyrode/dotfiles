@@ -56,8 +56,10 @@ sync tokens, cookies, sessions, and browser profile never enter the Nix store
 or repository; Mozilla sign-in remains an interactive step on each device.
 
 For external production NixOS hosts, the relationship remains one-way:
-infrastructure pins this flake and imports its Home Manager profiles. Dotfiles
-do not acquire production identity, disks, services, or secrets. The
+infrastructure pins this flake and imports its Home Manager profiles. It passes
+the non-secret machine identity with `activation = "nixos"` and an exact
+`nixTrustedUsers` list, while retaining ownership of those daemon settings.
+Dotfiles do not acquire production identity, disks, services, or secrets. The
 repository-owned `alex-x86_64-linux-wsl` configuration is the deliberate
 workstation exception: it owns only the local WSL guest and imports the same
 portable profiles. See [Portable Home Manager profiles](portable-profiles.md).
@@ -121,7 +123,7 @@ The checks always appear in this order:
 |---|---|
 | `login-shell` | The real account database selects the expected executable Zsh path and that path is listed as an allowed shell. |
 | `nix-daemon` | The system-owned daemon store is reachable. |
-| `nix-policy` | Trusted users are exactly `root`, only the official signed cache and key are configured, signatures are required, and the nix-darwin optimiser is scheduled on macOS. |
+| `nix-policy` | Trusted users match the exact host contract (`root` for standalone hosts; the declared list for integrated NixOS), only the official signed cache and key are configured, signatures are required, and the nix-darwin optimiser is scheduled on macOS. |
 | `container-engine` | The selected container engine is reachable without Docker-group membership, or the capability is not selected. |
 | `antivirus-data` | Verifies ClamAV binaries are absent while no host owns signatures/scanning; an unmanaged binary is drift. |
 | `device-permissions` | Android access policy is ready, or the `mobile` capability is not selected. |
@@ -179,9 +181,10 @@ privilege. Successful verification removes the marker.
 ## Platform policy details
 
 The reviewed Nix policy is deliberately narrow: the daemon store is
-system-owned, trusted users are exactly `root`, the official Nix cache and its
-official signing key are the only configured binary cache, and signatures are
-required. nix-darwin also schedules store optimisation. Linux Home Manager
+system-owned, standalone hosts trust exactly `root`, integrated NixOS hosts
+trust exactly their declared non-secret `nixTrustedUsers`, the official Nix
+cache and its signing key are the only configured binary cache, and signatures
+are required. nix-darwin also schedules store optimisation. Linux Home Manager
 does not pretend to own those settings; standalone Linux repairs belong to the
 system Nix installation, and NixOS repairs belong to the consuming
 infrastructure.

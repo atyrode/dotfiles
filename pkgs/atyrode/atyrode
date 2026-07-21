@@ -2162,6 +2162,11 @@ apply_config() {
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_NH:-}" ]]; then
     nh_command="$ATYRODE_NH"
   fi
+  # SSH commonly forwards macOS's LC_CTYPE=UTF-8 spelling, which Linux does
+  # not recognize. nom then falls back to ASCII and cannot decode UTF-8
+  # derivation metadata. Keep the backend on a platform-native UTF-8 locale.
+  local nh_locale=C.UTF-8
+  [[ "$expected_system" != *-darwin ]] || nh_locale=en_US.UTF-8
   # nh home passes a #fragment through to nix verbatim instead of treating
   # it as the configuration name, so the flake reference goes bare and
   # --configuration carries the host. System owners resolve the fragment.
@@ -2177,7 +2182,7 @@ apply_config() {
     [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
     local preview_file preview_output
     preview_file="$(mktemp)"
-    if ! "${nh_args[@]}" >"$preview_file" 2>&1; then
+    if ! LC_ALL="$nh_locale" "${nh_args[@]}" >"$preview_file" 2>&1; then
       cat "$preview_file" >&2
       rm -f "$preview_file"
       die "$EX_SOFTWARE" "$backend preview failed"
@@ -2195,7 +2200,7 @@ apply_config() {
     fi
     return 0
   fi
-  "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
+  LC_ALL="$nh_locale" "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
   if [[ "$dry" == 0 ]]; then
     local state_dir state_file temp
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"

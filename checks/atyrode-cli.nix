@@ -48,6 +48,7 @@ pkgs.runCommand "check-atyrode-cli"
     cat > "$TMPDIR/bin/nh" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
+    printf '%s\n' "''${LC_ALL-}" > "$TMPDIR/nh-locale"
     if [[ "$*" == *"home switch"* && "$*" == *" --dry"* ]]; then
       printf '\033[?25l⠋ Building\r⏱ 0s\rFinished at 14:18:57 after 0s\n'
       printf '\033[1m<<<\033[0m /nix/store/old-home-manager-generation\n'
@@ -402,9 +403,10 @@ pkgs.runCommand "check-atyrode-cli"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
-    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null
+    LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
+    test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
 
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export ATYRODE_NH_FAIL=1

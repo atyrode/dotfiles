@@ -57,6 +57,16 @@ assert lib.assertMsg (lib.all (
 assert lib.assertMsg (lib.all
   (
     name:
+    lib.all (package: builtins.elem package (packagesFor name)) [
+      "procps"
+      "systemd"
+    ]
+  )
+  linuxAgentToolHosts
+) "Linux agent-tools hosts must expose process and user-service diagnostics inside Orca terminals";
+assert lib.assertMsg (lib.all
+  (
+    name:
     let
       homeFiles = homeFilesFor name;
       settingsFile = homeFiles.".local/share/atyrode/claude-settings.json";

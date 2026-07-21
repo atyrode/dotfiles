@@ -144,8 +144,8 @@ export interface RenderOptions {
 }
 
 /**
- * Summary priority per window: exhausted first, then greatest used fraction,
- * then nearest reset, then stable limit id. Windows are never aggregated.
+ * Summary priority per aggregate window: exhausted first, then greatest used
+ * fraction, then nearest reset, then stable limit id.
  */
 function summaryBefore(a: WindowView, b: WindowView): boolean {
 	if (a.exhausted !== b.exhausted) return a.exhausted;
@@ -199,44 +199,90 @@ export function labelGroups(windows: readonly WindowView[]): WindowView[] {
 }
 
 /**
- * Project aggregate reports into the secret-free view model. Drops `raw`,
- * `metadata`, notes, endpoint details, and every identity field immediately;
- * only provider names, window labels, fractions, resets, durations, and
- * non-secret scope descriptors survive.
+ * Project the session-scoped reports into the same provider/window aggregates
+ * as `code`: each account contributes one integer percentage and reset
+ * countdown to its matching provider+tier+duration+label group, then the group
+ * renders their rounded mean. Missing account reports are not treated as zero.
+ *
+ * The broker store has already applied the immutable launch allowlist, so only
+ * accounts eligible in this OMP process contribute. Raw payloads, metadata,
+ * notes, endpoint details, and identity fields are dropped immediately.
  */
 export function projectReports(reports: readonly UsageReport[]): {
 	providers: ProviderView[];
 	fetchedAt: number;
 } {
-	const byProvider = new Map<string, WindowView[]>();
+	interface Aggregate {
+		window: WindowView;
+		count: number;
+		percentSum: number;
+		resetSum: number;
+		resetCount: number;
+	}
+
+	const byProvider = new Map<string, Map<string, Aggregate>>();
 	let fetchedAt = 0;
 	for (const report of reports) {
 		if (typeof report.fetchedAt === "number" && report.fetchedAt > fetchedAt) {
 			fetchedAt = report.fetchedAt;
 		}
 		const provider = String(report.provider);
-		const windows = byProvider.get(provider) ?? [];
+		const groups = byProvider.get(provider) ?? new Map<string, Aggregate>();
 		for (const limit of report.limits) {
-			const scopeParts: string[] = [];
-			if (limit.scope.tier) scopeParts.push(limit.scope.tier);
-			if (limit.scope.modelId) scopeParts.push(limit.scope.modelId);
-			if (limit.scope.shared) scopeParts.push("shared");
-			windows.push({
-				limitId: limit.id,
-				windowLabel: limit.window?.id ?? limit.id,
-				fullLabel: limit.label,
-				usedFraction: resolveUsedFraction(limit),
-				resetsAt: limit.window?.resetsAt,
-				durationMs: limit.window?.durationMs,
-				exhausted: limit.status === "exhausted",
-				scopeNote: scopeParts.length > 0 ? scopeParts.join(" ") : undefined,
-			});
+			const windowLabel = limit.window?.id ?? limit.id;
+			const label = shortWindowLabel(limit.label, windowLabel);
+			const durationMs = limit.window?.durationMs;
+			const tier = limit.scope.tier ?? "";
+			const key = JSON.stringify([tier, durationMs ?? null, label]);
+			const percent = usedPercent(resolveUsedFraction(limit) ?? 0);
+			let aggregate = groups.get(key);
+			if (!aggregate) {
+				const scopeParts: string[] = [];
+				if (tier) scopeParts.push(tier);
+				if (limit.scope.modelId) scopeParts.push(limit.scope.modelId);
+				if (limit.scope.shared) scopeParts.push("shared");
+				aggregate = {
+					window: {
+						limitId: limit.id,
+						windowLabel,
+						fullLabel: limit.label,
+						usedFraction: 0,
+						durationMs,
+						exhausted: false,
+						scopeNote: scopeParts.length > 0 ? scopeParts.join(" ") : undefined,
+					},
+					count: 0,
+					percentSum: 0,
+					resetSum: 0,
+					resetCount: 0,
+				};
+				groups.set(key, aggregate);
+			}
+			aggregate.count += 1;
+			aggregate.percentSum += percent;
+			if (limit.window?.resetsAt !== undefined) {
+				aggregate.resetSum += limit.window.resetsAt;
+				aggregate.resetCount += 1;
+			}
 		}
-		byProvider.set(provider, windows);
+		byProvider.set(provider, groups);
 	}
+
 	const providers: ProviderView[] = [];
 	const sorted = [...byProvider.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-	for (const [provider, windows] of sorted) {
+	for (const [provider, groups] of sorted) {
+		const windows = [...groups.values()].map(aggregate => {
+			const percent = Math.floor((aggregate.percentSum + aggregate.count / 2) / aggregate.count);
+			return {
+				...aggregate.window,
+				usedFraction: percent / 100,
+				resetsAt:
+					aggregate.resetCount > 0
+						? Math.floor((aggregate.resetSum + aggregate.resetCount / 2) / aggregate.resetCount)
+						: undefined,
+				exhausted: percent >= 100,
+			};
+		});
 		if (windows.length === 0) continue;
 		providers.push({ provider, windows, summary: pickSummary(windows) });
 	}

@@ -13,9 +13,9 @@ description: >-
   embedded browser.
 ---
 <!--
-Vendored verbatim from stablyai/orca at tag v1.4.147.
+Vendored verbatim from stablyai/orca at tag v1.4.148.
 Upstream skill text becomes agent instructions, so refresh only after review.
-ORCA_SKILL_UPSTREAM_VERSION=1.4.147
+ORCA_SKILL_UPSTREAM_VERSION=1.4.148
 -->
 
 # Orca CLI

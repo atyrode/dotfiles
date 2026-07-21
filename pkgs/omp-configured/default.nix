@@ -1283,6 +1283,7 @@ let
       broker_state="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-auth-broker"
       export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
       export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
+      export CODE_USAGE_CACHE="''${CODE_USAGE_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/code/usage.json}"
       if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_state/token" ]]; then
         OMP_AUTH_BROKER_TOKEN="$(<"$broker_state/token")"
         export OMP_AUTH_BROKER_TOKEN

@@ -111,6 +111,7 @@ let
       runtimeInputs = [
         jq
         yq-go
+        python3
       ];
       text = ''
         raw_omp=${lib.escapeShellArg (lib.getExe omp)}
@@ -941,6 +942,7 @@ let
 
   ompDefault = writeShellApplication {
     name = "omp";
+    runtimeInputs = [ python3 ];
     text = ''
       if [[ "''${1:-}" == update ]]; then
         printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2

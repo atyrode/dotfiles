@@ -345,6 +345,13 @@ in
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
           test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
         done
+        # The eval tool advertises Python by default, so every configured OMP
+        # launcher must carry a vanilla interpreter even with an empty host PATH.
+        mkdir -p "$TMPDIR/python-home"
+        ${pkgs.coreutils}/bin/env -i \
+          HOME="$TMPDIR/python-home" \
+          PATH=/nonexistent \
+          ${pkgs.omp-configured}/bin/omp setup python --check >/dev/null
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"
         grep -q 'a cycles enabled' "$TMPDIR/code-help.txt"

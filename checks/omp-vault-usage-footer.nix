@@ -134,6 +134,42 @@ let
     assert.equal(projected.providers[0].summary.limitId, "anthropic-5h");
     assert.equal(projected.providers[1].summary.exhausted, true);
 
+    // Multi-account provider windows use the same rounded mean as code's Usage
+    // panel, rather than showing the busiest account as the provider total.
+    const aggregateReports = [
+      {
+        provider: "openai-codex",
+        fetchedAt: now - 30_000,
+        limits: [{
+          id: "first-5h",
+          label: "5 hours",
+          scope: { provider: "openai-codex" },
+          window: { id: "5h", label: "5 Hour", resetsAt: now + HOUR, durationMs: 5 * HOUR },
+          amount: { usedFraction: 0.214, unit: "percent" },
+          status: "ok",
+        }],
+      },
+      {
+        provider: "openai-codex",
+        fetchedAt: now - 10_000,
+        limits: [{
+          id: "second-5h",
+          label: "5 hours",
+          scope: { provider: "openai-codex" },
+          window: { id: "5h", label: "5 Hour", resetsAt: now + 3 * HOUR, durationMs: 5 * HOUR },
+          amount: { usedFraction: 0.825, unit: "percent" },
+          status: "ok",
+        }],
+      },
+    ] as unknown as UsageReport[];
+    const aggregate = projectReports(aggregateReports);
+    assert.equal(aggregate.providers.length, 1);
+    assert.equal(aggregate.providers[0].windows.length, 1);
+    assert.equal(aggregate.providers[0].windows[0].usedFraction, 0.52);
+    assert.equal(aggregate.providers[0].windows[0].resetsAt, now + 2 * HOUR);
+    assert.equal(aggregate.providers[0].windows[0].exhausted, false);
+    assert.equal(aggregate.fetchedAt, now - 10_000);
+
     // Label groups: every distinct short label, one winner each (the busier
     // Fable window represents "7d fable", not the whole 7d duration).
     const anthropicGroups = labelGroups(projected.providers[0].windows);

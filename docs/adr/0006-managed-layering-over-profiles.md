@@ -25,10 +25,10 @@ switchable profiles.
   launches it through the zero-preset `omp-managed` layer; the hand-curated
   preset launchers and profiles wiki were removed (#151). This concerns *model
   routing*. Complete native profiles initially remained as the authentication
-  boundary, but that also split sessions and settings. Issue #212 replaces
-  runtime profile switching with isolated OMP v17 auth-broker vaults: credentials
-  remain in their existing profile-local stores, while every trusted `code`
-  client runs on shared profile `default`.
+  boundary, but that split sessions, settings, and OAuth refresh state. Trusted
+  clients now use one OMP v17 broker and credential store in profile `default`;
+  `code` captures immutable per-launch account allowlists while presets remain
+  non-secret selection state.
 - **Codex**: runs vanilla against `~/.codex`; the curated defaults are a one-time
   seed into `config.toml` (then user-owned), and the multi-profile switcher was
   removed (#153).

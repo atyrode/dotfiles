@@ -1262,8 +1262,8 @@ let
     '';
   };
 
-  # The generator always shares the default client profile. Authentication
-  # vault selection is conveyed exclusively through broker environment values.
+  # The generator and central authentication broker share OMP's default profile.
+  # `code` constrains each trusted child with an immutable account allowlist.
   ompManagedDefault = writeShellApplication {
     name = "omp-managed-default";
     text = ''
@@ -1280,16 +1280,23 @@ let
       export CODE_OMP=${lib.getExe ompManagedDefault}
       export CODE_OMP_RAW="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
+      broker_state="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-auth-broker"
+      export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
+      export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
+      if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_state/token" ]]; then
+        OMP_AUTH_BROKER_TOKEN="$(<"$broker_state/token")"
+        export OMP_AUTH_BROKER_TOKEN
+      fi
       export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
-      export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-vault-state.json}"
+      export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"
       export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
       # The generator's prompt→profile classifier runs on the resident,
       # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
-      # daemon/model. The Bubble Tea usage widget owns the active authentication
-      # vault: `a` cycles enabled vaults, `v` opens the vault manager, and usage
-      # plus every trusted launch receives that vault's broker environment while
-      # remaining on the shared default client profile. Launch targets: ↵ always
+      # daemon/model. The account manager owns only non-secret selection state;
+      # every trusted launch receives the central broker plus an immutable
+      # per-process allowlist while remaining on the shared default client
+      # profile. Launch targets: ↵ always
       # runs the generated profile for the current facets through the managed
       # layering (CODE_OMP); `m` runs managed defaults with no overlay; `u` opens
       # the fixed untrusted sandbox (CODE_OMP_UNTRUSTED).
@@ -1304,8 +1311,8 @@ let
           '  code -U, --no-usage  open without fetching the usage panel' \
           '  code -h, --help      this help' \
           "" \
-          'In the generator: type a prompt or adjust the dials, a cycles enabled' \
-          'auth vaults, v opens the vault manager, and ? shows all keys. Enter' \
+          'In the generator: type a prompt or adjust the dials, v opens the' \
+          'account manager, and ? shows all keys. Enter' \
           'launches through the managed layering, m runs the managed defaults' \
           'with no overlay, and u opens an untrusted sandbox.'
       }

@@ -39,120 +39,36 @@ let
   policyConfig = ../../omp/policy.yml;
   untrustedConfig = ../../omp/untrusted.yml;
 
-  # Vault definitions are machine-local. The repository ships only a generic
-  # supervisor that validates the local manifest and reconciles broker children
-  # whenever an atomic manifest replacement changes its content.
-  vaultManifest = "${config.xdg.configHome}/code/auth-vaults.json";
+  # Trusted sessions share one credential pool in OMP's default profile. `code`
+  # applies immutable per-launch account allowlists; changing a preset never
+  # mutates or duplicates credentials.
+  brokerStateDir = "${config.xdg.stateHome}/atyrode/omp-auth-broker";
+  brokerTokenFile = "${brokerStateDir}/token";
+  brokerBind = "127.0.0.1:46171";
   rawOmpPackage = cfg.ompPackage.rawOmp or pkgs.omp;
   rawOmp = lib.getExe rawOmpPackage;
-  brokerSupervisor = pkgs.writeShellScript "omp-auth-brokers" ''
+  brokerSupervisor = pkgs.writeShellScript "omp-auth-broker" ''
     set -euo pipefail
     umask 077
 
-    manifest=${lib.escapeShellArg vaultManifest}
-    jq=${lib.getExe pkgs.jq}
-    sha256sum=${lib.getExe' pkgs.coreutils "sha256sum"}
-    dirname=${lib.getExe' pkgs.coreutils "dirname"}
+    state_dir=${lib.escapeShellArg brokerStateDir}
+    token_file=${lib.escapeShellArg brokerTokenFile}
     mkdir=${lib.getExe' pkgs.coreutils "mkdir"}
     mktemp=${lib.getExe' pkgs.coreutils "mktemp"}
     chmod=${lib.getExe' pkgs.coreutils "chmod"}
     mv=${lib.getExe' pkgs.coreutils "mv"}
 
-    validate_manifest() {
-      "$jq" -er '
-        if type != "array" or length == 0 then
-          error("vault manifest must be a non-empty array")
-        elif
-          length != ([.[].id] | unique | length) or
-          length != ([.[].profile] | unique | length) or
-          length != ([.[].brokerUrl] | unique | length) or
-          length != ([.[].tokenFile] | unique | length) or
-          length != ([.[].snapshotCache] | unique | length)
-        then
-          error("vault ids, profiles, broker URLs, and runtime paths must be unique")
-        elif all(.[];
-          (.id | type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$") and (endswith(".") | not)) and
-          (.label | type == "string" and length > 0) and
-          (.profile | type == "string" and test("^[A-Za-z0-9._-]+$")) and
-          (.brokerUrl | type == "string" and
-            test("^http://127[.]0[.]0[.]1:[0-9]+$") and
-            (split(":")[-1] | tonumber) >= 1 and
-            (split(":")[-1] | tonumber) <= 65535) and
-          (.tokenFile | type == "string" and startswith("/")) and
-          (.snapshotCache | type == "string" and startswith("/"))
-        ) then
-          .[] | [.id, .profile, .brokerUrl, .tokenFile] | @tsv
-        else
-          error("vault entries contain unsafe or missing runtime fields")
-        end
-      ' "$manifest"
-    }
-
-    if [[ ! -r "$manifest" ]]; then
-      echo "OMP auth vault manifest not found: $manifest" >&2
+    "$mkdir" -p -m 0700 "$state_dir"
+    token="$(${rawOmp} --profile default auth-broker token)"
+    if [[ -z "$token" ]]; then
+      echo "omp auth-broker returned an empty token" >&2
       exit 1
     fi
-    entries="$(validate_manifest)"
-    observed_hash="$("$sha256sum" "$manifest")"
-    running_hash="$observed_hash"
-
-    pids=()
-    cleanup() {
-      for pid in "''${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-      done
-      wait "''${pids[@]}" 2>/dev/null || true
-      pids=()
-    }
-    trap cleanup EXIT
-    trap 'exit 0' INT TERM
-
-    launch_entries() {
-      local next_entries="$1"
-      while IFS=$'\t' read -r id profile broker_url token_file; do
-        bind="''${broker_url#http://}"
-        state_dir="$("$dirname" "$token_file")"
-        "$mkdir" -p -m 0700 "$state_dir"
-        token="$(${rawOmp} --profile "$profile" auth-broker token)"
-        if [[ -z "$token" ]]; then
-          echo "omp auth-broker returned an empty token for vault $id" >&2
-          return 1
-        fi
-        token_tmp="$("$mktemp" "$state_dir/.token.XXXXXX")"
-        printf '%s\n' "$token" > "$token_tmp"
-        "$chmod" 0600 "$token_tmp"
-        "$mv" -f "$token_tmp" "$token_file"
-        ${rawOmp} --profile "$profile" auth-broker serve --bind="$bind" &
-        pids+=("$!")
-      done <<< "$next_entries"
-    }
-
-    launch_entries "$entries"
-    while true; do
-      sleep 2
-      if [[ -r "$manifest" ]]; then
-        next_hash="$("$sha256sum" "$manifest")"
-        if [[ "$next_hash" != "$observed_hash" ]]; then
-          observed_hash="$next_hash"
-          if next_entries="$(validate_manifest)"; then
-            if [[ "$next_hash" != "$running_hash" ]]; then
-              cleanup
-              entries="$next_entries"
-              launch_entries "$entries"
-              running_hash="$next_hash"
-            fi
-          else
-            echo "warning: invalid OMP auth vault manifest; keeping current brokers" >&2
-          fi
-        fi
-      fi
-      for pid in "''${pids[@]}"; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-          wait "$pid"
-          exit $?
-        fi
-      done
-    done
+    token_tmp="$("$mktemp" "$state_dir/.token.XXXXXX")"
+    printf '%s\n' "$token" > "$token_tmp"
+    "$chmod" 0600 "$token_tmp"
+    "$mv" -f "$token_tmp" "$token_file"
+    exec ${rawOmp} --profile default auth-broker serve --bind=${brokerBind}
   '';
 
 in
@@ -306,16 +222,8 @@ in
         systemd.user.services = lib.mkIf pkgs.stdenv.isLinux {
           atyrode-omp-auth-brokers = {
             Unit = {
-              Description = "Machine-local OMP authentication brokers";
+              Description = "Machine-local OMP authentication broker";
               After = [ "network.target" ];
-              # The vault manifest is machine-local and never shipped by the
-              # repository, so on a fresh machine its absence is an expected
-              # state, not a failure. Without this condition the supervisor
-              # exits 1 and Restart=on-failure thrashes into start-limit-hit,
-              # leaving every fresh session degraded. After provisioning the
-              # manifest, `systemctl --user restart atyrode-omp-auth-brokers`
-              # (or the next login) starts the brokers.
-              ConditionPathExists = vaultManifest;
             };
             Service = {
               Type = "simple";
@@ -333,10 +241,7 @@ in
             config = {
               ProgramArguments = [ "${brokerSupervisor}" ];
               RunAtLoad = true;
-              # Parity with the Linux ConditionPathExists: only respawn the
-              # supervisor while the machine-local manifest exists; launchd
-              # additionally launches it when the manifest first appears.
-              KeepAlive.PathState.${vaultManifest} = true;
+              KeepAlive = true;
               ProcessType = "Background";
             };
           };

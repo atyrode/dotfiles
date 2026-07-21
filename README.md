@@ -64,14 +64,10 @@ run the same apply command again.
 - **tmux** - Terminal multiplexer
 - **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
-- **herdr** - Pinned agent multiplexer under trial (#269): server-side panes
-  for VPS OMP sessions, thin client from the Mac
-- **Orca** - Pinned alongside herdr for a cross-platform trial: graphical
-  worktree IDE locally, on-demand `orca serve` remotely, and capability-scoped
-  agent skills with Node/npx support
-- **Rio** - The pinned cross-platform terminal layer (#278): a thin renderer
-  under herdr/OMP with one committed `home/rio/config.toml` for macOS, Linux
-  desktop, and native Windows
+- **Orca** - Pinned cross-platform graphical worktree IDE locally, with
+  on-demand `orca serve` remotely and capability-scoped agent skills
+- **Rio** - The pinned cross-platform terminal layer (#278), with one committed
+  `home/rio/config.toml` for macOS, Linux desktop, and native Windows
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
   and native compilers come from committed dev shells, `mise.toml`, or native
@@ -128,7 +124,6 @@ code          # Profile generator TUI: type a prompt or turn the facet dials
 omp           # Mutable user-owned OMP; profile-aware resume, blocked update
 omp-managed   # Managed-layering launch target: defaults + policy over --config
 ompu          # Restricted launcher for deliberately untrusted repositories
-herdr         # Agent multiplexer server; from the Mac: herdr --remote tyrode.dev
 ```
 
 `code` opens a TUI whose facet dials and generated profiles work without local
@@ -203,7 +198,7 @@ dotfiles/
     ├── zsh.nix              # Zsh configuration
     ├── git.nix              # Git configuration
     └── shell/               # Thin interactive shell surface
-        ├── colorterm.zsh    # Remote truecolor derivation
+        ├── cwd.zsh          # OSC 7 working-directory metadata
         └── startup.zsh      # Interactive-only local override hook
 ```
 

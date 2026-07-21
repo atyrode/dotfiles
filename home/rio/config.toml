@@ -53,10 +53,9 @@ vi-cursor = "#70C0B1"
 selection-foreground = "#282C34"
 selection-background = "#FFFFFF"
 
-# One software per concern: herdr owns multiplexing (tabs, splits, panes,
-# sessions); Rio is a thin renderer. Plain mode turns the tab bindings off
-# outright.
+# Rio owns terminal tabs and splits while Orca owns worktree and agent-terminal
+# orchestration. TopTab is portable across macOS, Linux, and Windows.
 [navigation]
-mode = "Plain"
-use-split = false
+mode = "TopTab"
+use-split = true
 hide-if-single = true

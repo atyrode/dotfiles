@@ -1,9 +1,9 @@
 { pkgs, ... }:
 
 {
-  # Rio (#278): the single pinned cross-platform terminal layer.
-  # Terminal-as-thin-renderer under the existing stack — herdr owns
-  # multiplexing, OMP owns the agent layer, Nix owns config and pins.
+  # Rio (#278): the single pinned cross-platform terminal layer. Rio owns
+  # terminal tabs and splits, OMP owns the agent layer, and Nix owns config and
+  # pins.
   # Adopted as THE terminal after the #278 trial (Ghostty retired in the
   # cutover; operator-validated 2026-07-19).
   #

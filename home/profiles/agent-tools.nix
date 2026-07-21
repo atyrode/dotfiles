@@ -4,7 +4,6 @@
     ../../modules/home/agent-tools.nix
     ../claude.nix
     ../codex.nix
-    ../herdr.nix
     ../orca.nix
   ];
 
@@ -37,4 +36,46 @@
       pkgs.procps
       pkgs.systemd
     ];
+
+  # Retire only the mutable OMP extension installed by the removed multiplexer
+  # integration. Preserve its state and worktree directories as user data.
+  home.activation.removeRetiredOmpIntegration =
+    lib.hm.dag.entryAfter
+      [
+        "installPackages"
+        "linkGeneration"
+      ]
+      ''
+        shopt -s nullglob
+        retiredIntegrations=(
+          "$HOME/.omp/agent/extensions/herdr-omp-agent-state.ts"
+          "$HOME"/.omp/profiles/*/agent/extensions/herdr-omp-agent-state.ts
+        )
+        if [[ -n "''${PI_CODING_AGENT_DIR:-}" ]]; then
+          retiredAgentDir="$PI_CODING_AGENT_DIR"
+          case "$retiredAgentDir" in
+            "~") retiredAgentDir="$HOME" ;;
+            "~/"*) retiredAgentDir="$HOME/''${retiredAgentDir#\~/}" ;;
+          esac
+          retiredIntegrations+=( "$retiredAgentDir/extensions/herdr-omp-agent-state.ts" )
+        fi
+        for retiredIntegration in "''${retiredIntegrations[@]}"; do
+          if [[ -e "$retiredIntegration" || -L "$retiredIntegration" ]]; then
+            if [[ -v DRY_RUN ]]; then
+              echo "Would remove retired OMP integration $retiredIntegration"
+            else
+              ${pkgs.coreutils}/bin/rm -f -- "$retiredIntegration"
+            fi
+          fi
+        done
+        shopt -u nullglob
+        ${lib.optionalString pkgs.stdenv.isLinux ''
+          if [[ -v DRY_RUN ]]; then
+            echo "Would stop the retired usage publisher user service"
+          else
+            ${pkgs.systemd}/bin/systemctl --user stop atyrode-herdr-usage-publisher.service \
+              >/dev/null 2>&1 || :
+          fi
+        ''}
+      '';
 }

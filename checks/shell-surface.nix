@@ -39,17 +39,11 @@ pkgs.runCommand "check-shell-surface"
     zsh -dfi -c 'source ${../home/shell/startup.zsh}; [[ -e "$HOME/local-loaded" ]]' </dev/null
     test ! -e "$HOME/fastfetch-ran"
 
-    COLORTERM= TERM=xterm-ghostty zsh -dfc \
-      'source ${../home/shell/colorterm.zsh}; [[ "$COLORTERM" == truecolor ]]'
-    COLORTERM=16color TERM=xterm-ghostty zsh -dfc \
-      'source ${../home/shell/colorterm.zsh}; [[ "$COLORTERM" == 16color ]]'
-    COLORTERM= TERM=vt100 zsh -dfc \
-      'source ${../home/shell/colorterm.zsh}; [[ -z "$COLORTERM" ]]'
 
     osc_dir="$TMPDIR/osc 7#?"
     mkdir "$osc_dir"
     OSC_DIR="$osc_dir" zsh -dfc \
-      'source ${../home/shell/colorterm.zsh}; cd -- "$OSC_DIR"; HOST=rio-test; _atyrode_report_cwd' \
+      'source ${../home/shell/cwd.zsh}; cd -- "$OSC_DIR"; HOST=rio-test; _atyrode_report_cwd' \
       > "$TMPDIR/osc-actual"
     printf '\033]7;file://rio-test%s\033\\' \
       "''${osc_dir//%/%25}" | sed 's/ /%20/g; s/#/%23/g; s/?/%3F/g' \

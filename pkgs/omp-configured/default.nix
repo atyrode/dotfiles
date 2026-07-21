@@ -30,7 +30,6 @@ let
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
     cp ${../../omp/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
-    cp ${../../omp/extensions/herdr-vault-identity.ts} "$out/extensions/herdr-vault-identity.ts"
     cp ${../../omp/extensions/vault-usage-footer.ts} "$out/extensions/vault-usage-footer.ts"
     cp ${../../omp/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
     cp ${../../omp/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
@@ -42,7 +41,6 @@ let
       "type": "module",
       "omp": {
         "extensions": [
-          "./extensions/herdr-vault-identity.ts",
           "./extensions/managed-settings-guard.ts",
           "./extensions/vault-usage-footer.ts"
         ]

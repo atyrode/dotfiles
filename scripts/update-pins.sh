@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh the repository-owned binary pins (OMP, code, Codex, Orca, and herdr)
+# Refresh the repository-owned binary pins (OMP, code, Codex, and Orca)
 # to their latest upstream releases. Prints one line per bumped package; exits
 # quietly when everything is already current. Requires curl, jq, awk, and nix.
 set -euo pipefail
@@ -59,23 +59,6 @@ bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
 bump orca "$repo_root/pkgs/orca-ide/default.nix" stablyai/orca v \
   'https://github.com/stablyai/orca/releases/download/@tag@/@asset@' \
   orca-linux.AppImage orca-linux-arm64.AppImage orca-macos-x64.dmg orca-macos-arm64.dmg
-
-bump herdr "$repo_root/pkgs/herdr/default.nix" ogulcancelik/herdr v \
-  'https://github.com/ogulcancelik/herdr/releases/download/@tag@/@asset@' \
-  herdr-linux-x86_64 herdr-linux-aarch64 herdr-macos-x86_64 herdr-macos-aarch64
-
-# The vendored herdr skill (agents/skills/herdr/SKILL.md) is reviewed agent
-# instructions sourced from a public repository; it is never overwritten
-# automatically. Point at the upstream diff whenever it lags the pin —
-# checks/herdr.nix fails CI on the same mismatch, so a herdr bump PR cannot
-# land without the reviewed skill refresh.
-herdr_pin="$(current_version "$repo_root/pkgs/herdr/default.nix")"
-herdr_skill="$(grep -oE 'HERDR_SKILL_UPSTREAM_VERSION=[0-9.]+' \
-  "$repo_root/agents/skills/herdr/SKILL.md" | grep -oE '[0-9.]+$')"
-if [[ "$herdr_pin" != "$herdr_skill" ]]; then
-  printf 'herdr skill vendored at %s lags pin %s: review https://github.com/ogulcancelik/herdr/blob/v%s/SKILL.md, then update agents/skills/herdr/SKILL.md\n' \
-    "$herdr_skill" "$herdr_pin" "$herdr_pin"
-fi
 
 # Orca's three reviewed skills are kept at the same release as its package.
 # checks/orca.nix deliberately blocks an automatic package bump until all three

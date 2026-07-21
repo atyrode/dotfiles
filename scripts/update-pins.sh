@@ -12,7 +12,7 @@ latest_tag() {
 }
 
 current_version() {
-  grep -oE 'version = "[0-9.]+"' "$1" | head -n 1 | grep -oE '[0-9.]+'
+  sed -nE 's/^[[:space:]]*version = "([^"]+)";$/\1/p' "$1" | head -n 1
 }
 
 replace_hash() { # file asset new_hash
@@ -44,8 +44,8 @@ bump() { # name file repo tag_prefix url_template assets...
   printf '%s %s -> %s\n' "$name" "$current" "$version"
 }
 
-bump omp "$repo_root/pkgs/omp/default.nix" can1357/oh-my-pi v \
-  'https://github.com/can1357/oh-my-pi/releases/download/@tag@/@asset@' \
+bump omp "$repo_root/pkgs/omp/default.nix" atyrode/omp v \
+  'https://github.com/atyrode/omp/releases/download/@tag@/@asset@' \
   omp-linux-x64 omp-linux-arm64 omp-darwin-x64 omp-darwin-arm64
 
 bump code "$repo_root/pkgs/code/default.nix" atyrode/code v \

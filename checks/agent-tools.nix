@@ -11,6 +11,7 @@ let
   settingsGuardExtension = ../omp/extensions/managed-settings-guard.ts;
   parallelWriteRule = ../omp/rules/parallel-write-isolation.md;
   plainSeedConfig = ../omp/plain-seed.yml;
+  ompRuntimeVersion = builtins.head (lib.splitString "-" (lib.getVersion pkgs.omp));
 
   stubOmp =
     pkgs.runCommand "omp-stub"
@@ -162,10 +163,6 @@ let
   linuxBrokerSupervisor =
     linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Service.ExecStart;
   darwinBrokerAgent = darwinAgentTools.launchd.agents.atyrode-omp-auth-brokers;
-  linuxBrokerCondition =
-    linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Unit.ConditionPathExists;
-  darwinBrokerKeepAlivePaths = builtins.attrNames darwinBrokerAgent.config.KeepAlive.PathState;
-  checkManifestPath = "/tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json";
   linuxClassifierTools =
     evalAgentTools
       (
@@ -184,115 +181,43 @@ let
   classifierTimer = linuxClassifierTools.systemd.user.timers.ollama-pull-classifier;
 in
 {
-  auth-vaults =
-    pkgs.runCommand "check-agent-auth-vaults"
-      {
-        nativeBuildInputs = [ pkgs.jq ];
-      }
-      ''
-        supervisor=${lib.escapeShellArg linuxBrokerSupervisor}
-        test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
-        test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
-        grep -Fq '/code/auth-vaults.json' "$supervisor"
-        grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
-        grep -Fq 'auth-broker serve --bind="$bind"' "$supervisor"
-        grep -Fq 'invalid OMP auth vault manifest; keeping current brokers' "$supervisor"
-        # Fresh machines have no manifest: both platforms must skip cleanly
-        # instead of restart-looping into start-limit-hit / launchd throttling.
-        test ${lib.escapeShellArg linuxBrokerCondition} = ${lib.escapeShellArg checkManifestPath}
-        test ${lib.escapeShellArg (lib.concatStringsSep " " darwinBrokerKeepAlivePaths)} = ${lib.escapeShellArg checkManifestPath}
-        test ${
-          lib.escapeShellArg (toString darwinBrokerAgent.config.KeepAlive.PathState.${checkManifestPath})
-        } = 1
+  auth-vaults = pkgs.runCommand "check-agent-auth-broker" { } ''
+    supervisor=${lib.escapeShellArg linuxBrokerSupervisor}
+    test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
+    test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
+    test ${lib.escapeShellArg (toString darwinBrokerAgent.config.KeepAlive)} = 1
+    grep -Fq '/atyrode/omp-auth-broker/token' "$supervisor"
+    grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
+    grep -Fq -- '--profile default auth-broker token' "$supervisor"
+    grep -Fq -- '--profile default auth-broker serve --bind=127.0.0.1:46171' "$supervisor"
+    ! grep -Fq 'auth-vaults.json' "$supervisor"
 
-        rm -rf /tmp/check-agent-auth-vaults
-        mkdir -p /tmp/check-agent-auth-vaults/xdg-config/code
-        cat > /tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json <<'JSON'
-        [
-          {
-            "id": "primary",
-            "label": "primary",
-            "profile": "default",
-            "claude": "Operator",
-            "codex": "Operator",
-            "brokerUrl": "http://127.0.0.1:47101",
-            "tokenFile": "/tmp/check-agent-auth-vaults/state/primary/token",
-            "snapshotCache": "/tmp/check-agent-auth-vaults/cache/primary.json"
-          },
-          {
-            "id": "secondary",
-            "label": "secondary",
-            "profile": "team",
-            "claude": "Collaborator",
-            "codex": "Operator",
-            "brokerUrl": "http://127.0.0.1:47102",
-            "tokenFile": "/tmp/check-agent-auth-vaults/state/secondary/token",
-            "snapshotCache": "/tmp/check-agent-auth-vaults/cache/secondary.json"
-          }
-        ]
-        JSON
-        chmod 0600 /tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json
+    rm -rf /tmp/check-agent-auth-vaults
+    export BROKER_STUB_LOG="$TMPDIR/broker-starts"
+    : > "$BROKER_STUB_LOG"
+    "$supervisor" > "$TMPDIR/broker-serve.out" 2> "$TMPDIR/broker-serve.err" &
+    supervisor_pid=$!
+    trap 'kill "$supervisor_pid" 2>/dev/null || true' EXIT
 
-        export BROKER_STUB_LOG="$TMPDIR/broker-starts"
-        : > "$BROKER_STUB_LOG"
-        "$supervisor" > "$TMPDIR/broker-serve.out" 2> "$TMPDIR/broker-serve.err" &
-        supervisor_pid=$!
-        trap 'kill "$supervisor_pid" 2>/dev/null || true' EXIT
+    for _ in $(seq 1 50); do
+      test "$(wc -l < "$BROKER_STUB_LOG")" -ge 1 && break
+      sleep 0.1
+    done
+    test "$(wc -l < "$BROKER_STUB_LOG")" = 1
+    grep -Fxq default "$BROKER_STUB_LOG"
 
-        for _ in $(seq 1 50); do
-          test "$(wc -l < "$BROKER_STUB_LOG")" -ge 2 && break
-          sleep 0.1
-        done
-        test "$(wc -l < "$BROKER_STUB_LOG")" = 2
+    token=/tmp/check-agent-auth-vaults/xdg-state/atyrode/omp-auth-broker/token
+    test "$(stat -c %a "$token")" = 600
+    grep -Fxq -- '--profile' "$token"
+    grep -Fxq default "$token"
+    grep -Fxq auth-broker "$token"
+    grep -Fxq token "$token"
 
-        manifest=/tmp/check-agent-auth-vaults/xdg-config/code/auth-vaults.json
-        cp "$manifest" "$TMPDIR/valid-manifest.json"
-        jq '.[0].brokerUrl = "http://not-loopback:1"' "$manifest" > "$TMPDIR/invalid.json"
-        mv "$TMPDIR/invalid.json" "$manifest"
-        sleep 3
-        kill -0 "$supervisor_pid"
-        test "$(wc -l < "$BROKER_STUB_LOG")" = 2
-        grep -Fq 'keeping current brokers' "$TMPDIR/broker-serve.err"
-
-        cp "$TMPDIR/valid-manifest.json" "$TMPDIR/reverted.json"
-        mv "$TMPDIR/reverted.json" "$manifest"
-        sleep 3
-        kill -0 "$supervisor_pid"
-        test "$(wc -l < "$BROKER_STUB_LOG")" = 2
-
-        jq '.[0].label = "renamed" | . + [{
-          id: "third",
-          label: "third",
-          profile: "third",
-          brokerUrl: "http://127.0.0.1:47103",
-          tokenFile: "/tmp/check-agent-auth-vaults/state/third/token",
-          snapshotCache: "/tmp/check-agent-auth-vaults/cache/third.json"
-        }]' "$TMPDIR/valid-manifest.json" > "$TMPDIR/reloaded.json"
-        mv "$TMPDIR/reloaded.json" "$manifest"
-        for _ in $(seq 1 70); do
-          test "$(wc -l < "$BROKER_STUB_LOG")" -ge 5 && break
-          sleep 0.1
-        done
-        test "$(wc -l < "$BROKER_STUB_LOG")" = 5
-
-        kill "$supervisor_pid"
-        wait "$supervisor_pid"
-        trap - EXIT
-
-        primary=/tmp/check-agent-auth-vaults/state/primary/token
-        secondary=/tmp/check-agent-auth-vaults/state/secondary/token
-        third=/tmp/check-agent-auth-vaults/state/third/token
-        test "$(stat -c %a "$primary")" = 600
-        test "$(stat -c %a "$secondary")" = 600
-        test "$(stat -c %a "$third")" = 600
-        grep -Fxq default "$primary"
-        grep -Fxq team "$secondary"
-        grep -Fxq third "$third"
-        grep -Fq 'auth-broker' "$primary"
-        grep -Fq 'token' "$secondary"
-
-        touch "$out"
-      '';
+    kill "$supervisor_pid"
+    wait "$supervisor_pid"
+    trap - EXIT
+    touch "$out"
+  '';
   omp-stack =
     pkgs.runCommand "check-omp-stack"
       {
@@ -309,7 +234,7 @@ in
 
         raw_omp=${lib.escapeShellArg (lib.getExe pkgs.omp)}
         raw_version="$("$raw_omp" --version)"
-        test "''${raw_version##*/}" = "${lib.getVersion pkgs.omp}"
+        test "''${raw_version##*/}" = "${ompRuntimeVersion}"
 
         for config in \
           ${defaultsConfig} \
@@ -349,7 +274,7 @@ in
         # generator TUI and only answers --help non-interactively.
         for command in omp omp-managed ompu; do
           command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
-          test "''${command_version##*/}" = "${lib.getVersion pkgs.omp}"
+          test "''${command_version##*/}" = "${ompRuntimeVersion}"
         done
         # The eval tool advertises Python by default, so every configured OMP
         # launcher must carry a vanilla interpreter even with an empty host PATH.
@@ -376,17 +301,21 @@ in
         done
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"
-        grep -q 'a cycles enabled' "$TMPDIR/code-help.txt"
-        grep -q 'v opens the vault manager' "$TMPDIR/code-help.txt"
+        grep -q 'v opens the' "$TMPDIR/code-help.txt"
+        grep -q 'account manager' "$TMPDIR/code-help.txt"
         ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
-        # The generator owns mutable vault/selection state while broker
-        # credentials stay outside the package and its generated manifest.
-        grep -Fq 'export CODE_AUTH_STATE="''${CODE_AUTH_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-vault-state.json}"' \
+        # The generator owns only non-secret account/selection state; every
+        # trusted child inherits the central broker and its launch allowlist.
+        grep -Fq 'export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"' \
           ${pkgs.omp-configured}/bin/code
         grep -Fq 'export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"' \
           ${pkgs.omp-configured}/bin/code
         grep -Fq 'export CODE_OMP_RAW="$omp_bin"' ${pkgs.omp-configured}/bin/code
         grep -Fq -- '--profile default usage --json' ${pkgs.omp-configured}/bin/code
+        grep -Fq 'OMP_AUTH_BROKER_URL' ${pkgs.omp-configured}/bin/code
+        grep -Fq '/atyrode/omp-auth-broker"' ${pkgs.omp-configured}/bin/code
+        grep -Fq '"$broker_state/token"' ${pkgs.omp-configured}/bin/code
+        grep -Fq '/atyrode/omp-auth-broker/snapshot.json' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'CODE_AUTH_VAULTS=' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'CODE_AUTH_PROFILES' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'code-auth-profiles.json' ${pkgs.omp-configured}/bin/code
@@ -416,7 +345,7 @@ in
             timeout 20 ${pkgs.omp-configured}/bin/omp acp > "$TMPDIR/acp-init.jsonl"
         jq -e \
           '.id == 1 and .result.protocolVersion == 1 and .result.agentInfo.version == $version' \
-          --arg version "${lib.getVersion pkgs.omp}" \
+          --arg version "${ompRuntimeVersion}" \
           "$TMPDIR/acp-init.jsonl" >/dev/null
         test ! -e "$acp_home/.pi"
 

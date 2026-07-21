@@ -154,93 +154,54 @@ model routing — model names coloured by provider (blue/orange) and brightness
 scaled by thinking level — above the `omp usage` panel (per-window `N% used`
 with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
 
-The usage widget names the active authentication vault. Press **`a`** to cycle
-enabled vaults. Press **`v`** for the full-screen vault manager. Its compact
-vault rows never duplicate quota data: the highlighted row drives the same full
-Usage panel shown by the generator, including provider-only headings,
-broker-reported account lists, and Codex-before-Claude ordering. Arrow keys
-retarget that detail without selecting the vault. The generator's **`s`** Usage
-visibility state transfers into the manager, where **`s`** toggles it too.
-If restoring Usage would make the current composition too small, **`s`** opens
-Usage full-screen immediately; closing it restores the exact prior Generator
-and Routing composition rather than exposing a different panel.
-Configured aliases are never presented as authenticated accounts. **Space**
-enables or disables the highlighted vault, **Enter** selects it, and **`r`**
-refreshes all summaries. The first manifest entry is the non-disableable
-fallback. Selection and disabled state persist under the XDG state directory.
+The Usage widget groups broker-reported identities by provider and shows a
+separate bar for every reported quota window. Press **`v`** for the full-screen
+account manager. Provider and account rows use one shared bar width, so usage
+geometry stays aligned across labels, reset credits, and status suffixes.
+Press **`i`** to reveal full account addresses when compact labels are
+ambiguous.
 
-At startup, `code` fills a per-vault usage cache in the background. Cycling or
-selecting a vault restores its own snapshot, refresh deadline, stale warning,
-and in-flight indicator immediately instead of issuing another request. The
-active vault refreshes when its five-minute deadline expires; **`r`** remains
-the explicit whole-manager refresh. Cached data stays visible while refreshing.
-When a retained Fable value is older than the latest response, its label reports
-relative age (for example, `cached 4m ago`) rather than a wall-clock timestamp.
+The manager edits named account-selection presets, not authentication.
+**Space** toggles the highlighted identity, arrow keys move through accounts,
+**`n`** creates a preset, **`x`** deletes one after confirmation, and the
+left/right keys change the active preset. **`s`** toggles Usage and **`r`**
+refreshes the broker snapshot and usage. A provider with every account disabled
+is valid and is shown explicitly as disabled.
 
-Vault definitions are machine-local, not repository data. `code` v0.3.0 uses a
-mode-0600 JSON array at `$XDG_CONFIG_HOME/code/auth-vaults.json` by default;
-`CODE_AUTH_VAULTS_FILE` can select another machine-local file. Each entry
-supplies a display label, stable id and backing OMP profile, loopback broker URL,
-token file, and snapshot cache. In the manager, **`n`** creates an empty vault
-and **`e`** changes only the highlighted vault's display label. Enter commits
-the text prompt and Escape cancels it. Creation derives a collision-safe
-id/profile, unused loopback port, and XDG state/cache paths; it never creates or
-reads credentials. A `CODE_AUTH_VAULTS` raw JSON override is intentionally
-read-only because it has no safe machine-local persistence target.
+Trusted authentication uses one OMP v17 broker backed by the `default` profile.
+The Home Manager service listens on `127.0.0.1:46171`, writes its bearer token
+to `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` with mode `0600`, and keeps
+the client snapshot cache under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
+The earlier `code/auth-vaults.json` profile/port manifest is retired; changing
+an account selection no longer starts a different broker or credential store.
 
-The generic Home Manager supervisor validates the manifest and starts one
-broker process per entry. It watches atomic content changes and automatically
-reconciles all children after a valid edit; an invalid replacement leaves the
-current brokers running. No Home Manager apply or manual service restart is
-needed.
+The central store may contain several authenticated identities for each
+provider. `code` reads the broker's redacted snapshot and presents those
+identities in its account manager (**`v`**). Presets and per-account enabled
+flags are non-secret state in
+`$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. Newly discovered
+identities default to enabled.
 
-On a machine with no manifest yet — every fresh install — the supervisor does
-not run at all: the Linux unit carries `ConditionPathExists` on the manifest
-and skips cleanly, and the macOS agent's `KeepAlive.PathState` stops launchd
-from respawning it, so session health stays green instead of restart-looping
-into `start-limit-hit`. After creating the first manifest, start the brokers
-with `systemctl --user restart atyrode-omp-auth-brokers` (Linux; any later
-login also picks it up) — launchd on macOS launches them automatically when
-the manifest appears.
+Before each trusted launch, `code` writes a mode-`0600` temporary allowlist
+keyed by provider and OMP's stable credential `identityKey`. The child receives
+that path through `OMP_AUTH_ACCOUNT_ALLOWLIST_FILE`; OMP loads it once and
+filters credential selection, refresh, health checks, usage fan-out, direct-id
+lookups, snapshot export, and broker updates before considering an identity.
+An explicitly empty provider list disables that provider for the process.
+Excluded credentials stay stored and authenticated: no logout, refresh,
+disable, block, or database mutation occurs. A running session keeps its
+captured allowlist even if a later `code` process edits the preset.
 
-Usage and identity normally remain broker-sourced. OMP v17's broker aggregate
-can omit the Anthropic Fable limit even when that same vault profile returns it.
-Only when Fable is absent, `code` performs a provider-scoped, read-only usage
-query against that vault's backing profile with ambient broker routing removed,
-then appends only the missing Fable limit. Broker identities, Codex usage, and
-all other limits remain authoritative.
+Usage remains broker-sourced and is displayed per account. Missing provider
+coverage is reported as unavailable rather than zero. A successful partial
+refresh retains the last observed rows for omitted identities and marks them
+cached with their age; aggregate values include only enabled accounts with
+actual reports. Reset credits are listed under the account that owns them.
 
-Fable is different from the shared 5-hour and 7-day windows: OMP learns that
-model-family limit from rate-limit headers observed during Claude requests.
-With trusted launches consolidated onto shared client profile `default`, a
-broker vault's backing profile can retain the correct credential identity while
-no longer receiving new header observations. In that state live OMP and broker
-reports for that backing profile legitimately contain only 5-hour/7-day data;
-`code` must show Fable unavailable rather than invent a current value. Historical
-records remain evidence that the account previously exposed the window, not a
-safe source for a live quota.
-
-Each backing OMP profile isolates provider credentials. Every trusted `code`
-launch still forces shared client profile `default`; sessions, resume history,
-settings, generated configuration, memory, and ordinary caches therefore do
-not split when the vault changes. The selected vault supplies only
-`OMP_AUTH_BROKER_*`. The `u` sandbox remains on its fixed,
-credential-sanitized `untrusted` profile.
-
-Broker bearer tokens stay in mutable mode-0600 files outside the Nix store.
-The manager reads the broker's redacted snapshot to show which accounts are
-actually authenticated; it never reads or mutates OMP's credential database.
-Press **`c`** or **`o`** to authenticate the highlighted vault with Claude or
-Codex. The footer names the provider and immutable backing profile before the
-browser handoff starts. Cancelling a handoff is non-fatal, and a
-second handoff cannot be queued while one is active.
-
-Managed vault usage comes directly from the broker's read-only aggregate usage
-endpoint, so an unrelated provider record cannot invalidate the display.
-Anthropic's Fable row is always reserved in the loading skeleton. If a refresh
-omits Fable, the last real value remains visible with its cache timestamp; when
-no value has ever been observed, the row shows `unavailable` in the same status
-column as `idle`, `tight`, and `maxed`.
+Authenticate or remove central accounts explicitly with OMP's
+`auth-broker login` and `auth-broker logout` commands. The `code` account
+manager never reads OAuth material and never mutates OMP's credential database.
+The `u` sandbox remains on its fixed, credential-sanitized `untrusted` profile.
 
 There are three ways to leave the TUI — every trusted launch goes through
 `omp-managed`; plain `omp` is reached by typing `omp` directly, never via

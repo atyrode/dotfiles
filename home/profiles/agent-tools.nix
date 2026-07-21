@@ -29,5 +29,12 @@
       nodejs_24
       tmux
     ])
-    ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
+    ++ lib.optionals pkgs.stdenv.isLinux [
+      pkgs.bubblewrap
+      # Orca terminals run inside an AppImage FHS root that masks the host
+      # /usr. Carry the user-service and process clients agents need to inspect
+      # the host through its mounted D-Bus socket and /proc.
+      pkgs.procps
+      pkgs.systemd
+    ];
 }

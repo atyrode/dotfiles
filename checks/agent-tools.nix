@@ -29,6 +29,9 @@ let
           trap 'exit 0' INT TERM
           while true; do sleep 1; done
         fi
+        if [[ -n "$GOPLS_STUB_LOG" ]]; then
+          command -v gopls > "$GOPLS_STUB_LOG"
+        fi
         printf '%s\n' "$@"
         EOF
             chmod +x "$out/bin/omp"
@@ -352,6 +355,17 @@ in
           HOME="$TMPDIR/python-home" \
           PATH=/nonexistent \
           ${pkgs.omp-configured}/bin/omp setup python --check >/dev/null
+        # OMP auto-detects its built-in Go server only when gopls is on PATH.
+        # Both LSP-capable launch paths must provide it without host tooling.
+        for command in omp omp-managed; do
+          gopls_log="$TMPDIR/$command-gopls"
+          ${pkgs.coreutils}/bin/env -i \
+            HOME="$TMPDIR/python-home" \
+            PATH=/nonexistent \
+            GOPLS_STUB_LOG="$gopls_log" \
+            ${configuredStub}/bin/"$command" --version >/dev/null
+          grep -Fxq ${lib.escapeShellArg (lib.getExe configuredStub.goplsCommand)} "$gopls_log"
+        done
         ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
         grep -q 'build an OMP profile from a prompt' "$TMPDIR/code-help.txt"
         grep -q 'a cycles enabled' "$TMPDIR/code-help.txt"

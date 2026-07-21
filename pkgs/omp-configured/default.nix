@@ -6,6 +6,8 @@
   findutils,
   gitMinimal,
   gnugrep,
+  go,
+  gopls,
   jq,
   lib,
   omp,
@@ -26,6 +28,16 @@ let
   neutralRoot = runCommand "omp-untrusted-neutral-root" { } ''
     mkdir "$out"
   '';
+  # gopls shells out to the Go command while loading a workspace. Keep that
+  # implementation dependency scoped to the language server instead of making
+  # the compiler ambiently available to every OMP tool invocation.
+  goplsCommand = writeShellApplication {
+    name = "gopls";
+    runtimeInputs = [ go ];
+    text = ''
+      exec ${lib.getExe gopls} "$@"
+    '';
+  };
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
@@ -107,6 +119,7 @@ let
     writeShellApplication {
       inherit name;
       runtimeInputs = [
+        goplsCommand
         jq
         yq-go
         python3
@@ -940,7 +953,10 @@ let
 
   ompDefault = writeShellApplication {
     name = "omp";
-    runtimeInputs = [ python3 ];
+    runtimeInputs = [
+      goplsCommand
+      python3
+    ];
     text = ''
       if [[ "''${1:-}" == update ]]; then
         printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
@@ -1314,6 +1330,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     passthru = {
       rawOmp = omp;
       inherit
+        goplsCommand
         defaultsConfig
         neutralRoot
         platformRoot

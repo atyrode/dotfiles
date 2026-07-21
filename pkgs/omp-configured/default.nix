@@ -15,6 +15,7 @@
   patch,
   python3,
   runCommand,
+  typescript-language-server,
   writeShellApplication,
   yq-go,
 }:
@@ -123,6 +124,7 @@ let
         jq
         yq-go
         python3
+        typescript-language-server
       ];
       text = ''
         raw_omp=${lib.escapeShellArg (lib.getExe omp)}
@@ -956,6 +958,7 @@ let
     runtimeInputs = [
       goplsCommand
       python3
+      typescript-language-server
     ];
     text = ''
       if [[ "''${1:-}" == update ]]; then

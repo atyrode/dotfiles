@@ -14,9 +14,9 @@ description: >-
   Orca app UI, or desktop UI outside Orca's embedded browser.
 ---
 <!--
-Vendored verbatim from stablyai/orca at tag v1.4.148.
+Vendored verbatim from stablyai/orca at tag v1.4.150.
 Upstream skill text becomes agent instructions, so refresh only after review.
-ORCA_SKILL_UPSTREAM_VERSION=1.4.148
+ORCA_SKILL_UPSTREAM_VERSION=1.4.150
 -->
 
 # Orca Inter-Agent Orchestration

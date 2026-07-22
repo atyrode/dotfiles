@@ -112,11 +112,12 @@ pkgs.runCommand "check-orca-integration" { } ''
     test ! -e ${pkgs.orca-ide}/bin/orca
   ''}
   grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orca-cli/SKILL.md}
-  grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orchestration/SKILL.md}
   grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/desktop-skills/computer-use/SKILL.md}
   ${lib.concatMapStringsSep "\n" (name: ''
     test -f ${skillsFor name}/orca-cli/SKILL.md
-    test -f ${skillsFor name}/orchestration/SKILL.md
+  '') nativeAgentToolHosts}
+  ${lib.concatMapStringsSep "\n" (name: ''
+    test ! -e ${skillsFor name}/orchestration
   '') nativeAgentToolHosts}
   ${lib.concatMapStringsSep "\n" (name: ''
     test -f ${skillsFor name}/computer-use/SKILL.md

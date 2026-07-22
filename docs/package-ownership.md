@@ -25,12 +25,13 @@ sessions, caches, device identities, or other mutable state.
 
 - `base` is the small operator/agent shell contract: Git/GitHub, search, JSON,
   direnv with nix-direnv, mise, diagnostics, `nh`, nix-index, and comma.
-- `development` contains cross-repository Nix and shell quality tools. It does
-  not provide application language versions.
-- `agent-tools` owns Claude Code, Codex, OMP, their launch adapters,
-  tmux, the Linux isolation backend, and the TUI-verification render stack
-  (charm-freeze plus the JetBrains Mono and Nerd Font symbols render fonts,
-  exposed through user fontconfig). Authentication, sessions, trust, and
+- `development` contains cross-repository Nix, shell, and workflow quality
+  tools. It does not provide application language versions.
+- `agent-tools` owns Claude Code, Codex, OMP, their launch adapters, Node and
+  Bun runtime support for agent workflows, tmux, the Linux isolation backend,
+  and the TUI-verification render stack (charm-freeze plus the JetBrains Mono
+  and Nerd Font symbols render fonts, exposed through user fontconfig).
+  Authentication, sessions, trust, and
   caches remain mutable and harness-owned outside derivations.
 - `desktop`, `mobile`, `media`, `containers`, and `security` are explicit host
   capabilities. Container daemons and Homebrew application state remain

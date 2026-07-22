@@ -60,15 +60,14 @@ bump orca "$repo_root/pkgs/orca-ide/default.nix" stablyai/orca v \
   'https://github.com/stablyai/orca/releases/download/@tag@/@asset@' \
   orca-linux.AppImage orca-linux-arm64.AppImage orca-macos-x64.dmg orca-macos-arm64.dmg
 
-# Orca's two reviewed skills are kept at the same release as its package.
-# checks/orca.nix deliberately blocks an automatic package bump until both
-# instruction files have been reviewed and refreshed.
+# Orca's reviewed desktop skill is kept at the same release as its package.
+# checks/orca.nix deliberately blocks an automatic package bump until the
+# instruction file has been reviewed and refreshed.
 orca_pin="$(current_version "$repo_root/pkgs/orca-ide/default.nix")"
-orca_skill="$(grep -hoE 'ORCA_SKILL_UPSTREAM_VERSION=[0-9.]+' \
-  "$repo_root/agents/skills/orca-cli/SKILL.md" \
+orca_skill="$(grep -oE 'ORCA_SKILL_UPSTREAM_VERSION=[0-9.]+' \
   "$repo_root/agents/desktop-skills/computer-use/SKILL.md" |
-  grep -oE '[0-9.]+$' | sort -u)"
+  grep -oE '[0-9.]+$')"
 if [[ "$orca_pin" != "$orca_skill" ]]; then
-  printf 'Orca skills vendored at %s lag pin %s: review https://github.com/stablyai/orca/tree/v%s/skills, then refresh orca-cli and computer-use\n' \
+  printf 'Orca computer-use skill vendored at %s lags pin %s: review https://github.com/stablyai/orca/tree/v%s/skills, then refresh computer-use\n' \
     "$orca_skill" "$orca_pin" "$orca_pin"
 fi

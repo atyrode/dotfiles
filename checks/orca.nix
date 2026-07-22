@@ -111,10 +111,9 @@ pkgs.runCommand "check-orca-integration" { } ''
   ${lib.optionalString pkgs.stdenv.isDarwin ''
     test ! -e ${pkgs.orca-ide}/bin/orca
   ''}
-  grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/skills/orca-cli/SKILL.md}
   grep -qF 'ORCA_SKILL_UPSTREAM_VERSION=${pkgs.orca-ide.version}' ${../agents/desktop-skills/computer-use/SKILL.md}
   ${lib.concatMapStringsSep "\n" (name: ''
-    test -f ${skillsFor name}/orca-cli/SKILL.md
+    test ! -e ${skillsFor name}/orca-cli
   '') nativeAgentToolHosts}
   ${lib.concatMapStringsSep "\n" (name: ''
     test ! -e ${skillsFor name}/orchestration

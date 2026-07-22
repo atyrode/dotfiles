@@ -10,6 +10,7 @@
       "base"
       "development"
       "agent-tools"
+      "security"
       "desktop"
       "mobile"
       "media"
@@ -28,6 +29,7 @@
       "base"
       "development"
       "agent-tools"
+      "security"
     ];
   };
 
@@ -42,6 +44,7 @@
       "base"
       "development"
       "agent-tools"
+      "security"
       "containers"
     ];
   };
@@ -57,6 +60,7 @@
       "base"
       "development"
       "agent-tools"
+      "security"
       "desktop"
       "mobile"
       "media"
@@ -76,6 +80,7 @@
       "base"
       "development"
       "agent-tools"
+      "security"
     ];
   };
 }

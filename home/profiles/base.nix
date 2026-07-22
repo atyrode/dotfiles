@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 {
   imports = [
     ../git.nix
@@ -13,18 +13,48 @@
 
   programs.home-manager.enable = true;
 
-  home.packages = with pkgs; [
-    atyrode
-    bat
-    btop
-    dua
-    fd
-    fastfetch
-    jq
-    ripgrep
-    tree
-    unzip
-  ];
+  home.packages =
+    (with pkgs; [
+      atyrode
+      bat
+      btop
+      curl
+      dua
+      fd
+      fastfetch
+      file
+      gnutar
+      gzip
+      jq
+      less
+      lsof
+      ncdu
+      ncurses
+      ripgrep
+      rsync
+      tree
+      unzip
+      wget
+      which
+      xz
+      zip
+    ])
+    ++ lib.optionals pkgs.stdenv.isDarwin [
+      pkgs.watch
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [
+      (pkgs.buildEnv {
+        name = "bind-tools";
+        paths = [
+          pkgs.bind.dnsutils
+          pkgs.bind.host
+        ];
+      })
+      pkgs.iproute2
+      pkgs.netcat-openbsd
+      pkgs.psmisc
+      pkgs.strace
+    ];
 
   programs.direnv = {
     enable = true;

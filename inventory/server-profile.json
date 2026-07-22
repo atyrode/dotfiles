@@ -1,20 +1,21 @@
 {
   "schemaVersion": 1,
   "profile": "server",
-  "capabilities": ["base", "server", "agent-tools"],
+  "capabilities": ["base", "server", "agent-tools", "security"],
   "supportedSystems": ["aarch64-linux", "x86_64-linux"],
   "excludedCapabilities": [
     "development",
     "desktop",
     "containers",
     "media",
-    "mobile",
-    "security"
+    "mobile"
   ],
   "requiredTopLevelPackages": [
     "atyrode",
     "bat",
+    "bind-tools",
     "btop",
+    "curl",
     "bubblewrap",
     "bun",
     "charm-freeze",
@@ -23,23 +24,41 @@
     "direnv",
     "dua",
     "fastfetch",
+    "file",
+    "gnutar",
+    "gzip",
     "fd",
     "fzf",
     "gh",
     "git",
     "jetbrains-mono",
     "jq",
+    "iproute2",
+    "less",
+    "lsof",
     "mise",
     "nerd-fonts-symbols-only",
     "omp-configured",
+    "ncdu",
+    "ncurses",
+    "netcat-openbsd",
+    "nmap",
     "nodejs",
     "orca-ide",
     "procps",
+    "psmisc",
     "ripgrep",
     "systemd",
+    "rsync",
+    "socat",
+    "strace",
     "tmux",
     "tree",
     "unzip",
+    "wget",
+    "which",
+    "xz",
+    "zip",
     "zoxide"
   ],
   "forbiddenTopLevelPackages": [
@@ -64,7 +83,6 @@
     "lichess",
     "nixd",
     "nixfmt",
-    "nmap",
     "obsidian",
     "orbstack",
     "parsec",
@@ -84,7 +102,6 @@
     "ShellCheck",
     "shfmt",
     "signal-desktop",
-    "socat",
     "sonos",
     "spotify",
     "steam",
@@ -98,14 +115,14 @@
   ],
   "closureBudgets": {
     "aarch64-linux": {
-      "maxNarBytes": 4294967296,
-      "maxStorePaths": 800,
-      "maxTopLevelPackages": 46
+      "maxNarBytes": 5368709120,
+      "maxStorePaths": 850,
+      "maxTopLevelPackages": 72
     },
     "x86_64-linux": {
-      "maxNarBytes": 4294967296,
-      "maxStorePaths": 750,
-      "maxTopLevelPackages": 46
+      "maxNarBytes": 5368709120,
+      "maxStorePaths": 850,
+      "maxTopLevelPackages": 72
     }
   },
   "systemOwned": [

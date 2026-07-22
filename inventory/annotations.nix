@@ -40,7 +40,7 @@
     };
     development = {
       title = "Development";
-      purpose = "Cross-repository Nix and shell quality tools, not project language runtimes";
+      purpose = "Cross-repository Nix, shell, and workflow quality tools, not project language runtimes";
       consumer = "Cross-repository agent linting, Nix editing, and operator deployment CLIs";
       group = "development";
       deliveryBoundary = "Home Manager; project runtimes remain project-owned";

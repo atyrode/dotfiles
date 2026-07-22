@@ -18,8 +18,8 @@ points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-stat
 
 - `base`: shell, Git/GitHub, search, direnv/nix-direnv, mise, on-demand lookup,
   diagnostics, and Home Manager itself.
-- `development`: cross-repository Nix and shell quality tools, not project
-  language runtimes.
+- `development`: cross-repository Nix, shell, and workflow quality tools, not
+  project language runtimes.
 - `agent-tools`: Codex, OMP, Orca, managed agents, and their configuration.
 - `desktop`: operator-selected graphical applications.
 - `mobile`: Android device tooling.

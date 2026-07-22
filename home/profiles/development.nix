@@ -5,6 +5,7 @@
   # CLIs. Project language versions and compilers belong to dev shells or mise
   # manifests.
   home.packages = with pkgs; [
+    actionlint
     nixd
     nixfmt
     shellcheck

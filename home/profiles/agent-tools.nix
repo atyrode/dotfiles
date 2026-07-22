@@ -19,6 +19,9 @@
 
   home.packages =
     (with pkgs; [
+      # Bun runs agent-generated local review proxies without falling back to
+      # an unpinned, network-fetched runtime through `npx -y bun`.
+      bun
       charm-freeze
       claude-code
       codex

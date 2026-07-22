@@ -62,7 +62,7 @@ run the same apply command again.
 ### Development Tools
 - **Git** - Pre-configured with useful aliases
 - **tmux** - Terminal multiplexer
-- **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
+- **Nix/shell/workflow quality tooling** - nixd, nixfmt, ShellCheck, shfmt, and actionlint
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
 - **Orca** - Pinned cross-platform graphical worktree IDE locally, with
   on-demand `orca serve` remotely and capability-scoped agent skills
@@ -71,8 +71,8 @@ run the same apply command again.
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
   and native compilers come from committed dev shells, `mise.toml`, or native
-  manifests instead of every host's global profile; Node 24 is the deliberate
-  agent-tools exception for Orca's registry and relay workflows
+  manifests instead of every host's global profile; Node 24 and Bun are the
+  deliberate agent-tools exceptions for Orca workflows and local review proxies
 
 ### System & Containers
 - **btop** - Modern system monitor

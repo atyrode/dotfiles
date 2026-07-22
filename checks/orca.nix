@@ -54,6 +54,9 @@ assert lib.assertMsg (lib.all (
 assert lib.assertMsg (lib.all (
   name: builtins.elem "nodejs" (packagesFor name)
 ) agentToolHosts) "every agent-tools host must carry npx for Orca registry and relay workflows";
+assert lib.assertMsg (lib.all (
+  name: builtins.elem "bun" (packagesFor name)
+) agentToolHosts) "every agent-tools host must carry Bun for agent-generated local review proxies";
 assert lib.assertMsg (lib.all
   (
     name:

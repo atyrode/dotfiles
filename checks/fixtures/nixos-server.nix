@@ -12,6 +12,7 @@ let
     "base"
     "server"
     "agent-tools"
+    "security"
   ];
   host = {
     inherit
@@ -67,6 +68,7 @@ in
               profiles.base
               profiles.server
               profiles.agent-tools
+              profiles.security
               (dotfiles.lib.mkHostIdentityModule {
                 inherit host;
                 name = hostId;

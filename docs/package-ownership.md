@@ -161,13 +161,12 @@ Use the same commands for each canonical host before accepting a large package
 or capability. The shared Nix store deduplicates identical dependencies across
 hosts and workspaces; a binary cache can be added without changing ownership.
 
-At the pinned 2026-07-08 nixpkgs revision, the portable x86_64-linux server
-profile delivers 41 top-level packages and measures 2,430,232,848 NAR bytes
-across 409 store paths. Its enforced ceilings are 45 packages, 2,617,245,696
-bytes, and 450 paths. The profile deliberately excludes development, containers, security,
-media, mobile, and desktop capabilities; it therefore contains neither
-workstation language stacks, container clients, nor antivirus software. The
-aarch64 ceilings are 45
-packages, 2.5 GiB, and 500 paths and are enforced by the native CI runner. See
+At the current pinned nixpkgs revision, the portable x86_64-linux server
+profile delivers 66 top-level packages and measures 4,221,748,400 NAR bytes
+across 774 store paths. Its enforced ceilings are 72 packages, 5 GiB, and 850
+paths. The profile deliberately excludes development, containers, media,
+mobile, and desktop capabilities; it includes the shared security diagnostics
+but no antivirus software. The aarch64 ceilings are likewise 72 packages,
+5 GiB, and 850 paths and are enforced by the native CI runner. See
 [Portable Home Manager profiles](portable-profiles.md) for the manifest schema
 and pin/update workflow.

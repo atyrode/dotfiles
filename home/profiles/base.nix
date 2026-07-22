@@ -28,12 +28,14 @@
       jq
       less
       lsof
+      nano
       ncdu
       ncurses
       ripgrep
       rsync
       tree
       unzip
+      vim
       wget
       which
       xz

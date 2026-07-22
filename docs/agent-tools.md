@@ -319,8 +319,8 @@ orca serve --port 6768 --pairing-address <reachable-private-address>
 On macOS, Nix owns the signed app bundle while Orca owns its supported
 `/usr/local/bin/orca` or `~/.local/bin/orca` launcher; exposing the bundle
 executable through the Nix profile makes Orca correctly treat it as a foreign
-CLI. Reviewed Orca skills remain dotfiles-owned and update with the package pin,
-not through Orca's mutable in-app skill updater.
+CLI. The reviewed `computer-use` skill remains dotfiles-owned and updates with
+the package pin, not through Orca's mutable in-app skill updater.
 
 The desktop app can also act as a server without a separate daemon: use
 **Settings → Remote Orca Servers → Advertise this app as a server → New Link**.
@@ -330,11 +330,12 @@ private network path such as Tailscale, a LAN, or an SSH tunnel.
 There is deliberately no systemd or launchd service. Start `orca serve`
 manually on the VPS; the consuming infrastructure owns its service lifecycle,
 pairing address, firewall, monitoring, and secrets.
-Dotfiles own the cross-platform binary, runtime dependencies, and reviewed agent
-skills. The pinned `orca-cli` skill is deployed on every `agent-tools` host;
-`computer-use` is added only when the host has the `desktop` capability. Orca's
-`orchestration` skill is deliberately not deployed because it collides with
-OMP's built-in orchestration system. On Linux, the Nix profile always provides
+Dotfiles own the cross-platform binary, runtime dependencies, and the reviewed
+`computer-use` skill, which is deployed only when the host has the `desktop`
+capability. The `orca-cli` skill is not deployed; OMP already exposes Orca CLI
+operations directly. Orca's `orchestration` skill is also deliberately not
+deployed because it collides with OMP's built-in orchestration system. On
+Linux, the Nix profile always provides
 `orca` and `orca-ide`; Orca may additionally create user-local launchers for
 managed terminals. Home Manager never creates those paths, but activation
 removes files
@@ -439,12 +440,11 @@ Codex, `code`, and Orca) every six hours: `scripts/update-pins.sh` bumps
 versions and hashes, a bot pull request runs the full dispatched CI, and a
 green run merges itself. A red run leaves the pull request open for curation —
 that is the expected outcome when upstream changes bundled content. Orca bumps
-deliberately stay red until its vendored skills are re-reviewed:
-`checks/orca.nix` compares the instruction markers to the package pin because
+deliberately stay red until its vendored `computer-use` skill is re-reviewed:
+`checks/orca.nix` compares the instruction marker to the package pin because
 public upstream skill text becomes trusted agent instructions and must never
-refresh without review. The pin script prints the
-upstream review pointers. The manual flow below remains valid for hand-driven
-updates:
+refresh without review. The pin script prints the upstream review pointer. The
+manual flow below remains valid for hand-driven updates:
 
 1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`
    (or run `scripts/update-pins.sh`).

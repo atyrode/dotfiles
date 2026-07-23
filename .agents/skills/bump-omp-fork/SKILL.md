@@ -67,12 +67,30 @@ git log --reverse --format='%h %s' "$old_base..$old_tip"
 git switch atyrode-release
 git rebase --onto "$release_commit" "$old_base"
 new_count="$(git rev-list --count "$release_commit..atyrode-release")"
-test "$new_count" -eq "$old_count"
+if ((new_count > old_count)); then
+  printf 'rebased fork range unexpectedly grew: %s -> %s\n' "$old_count" "$new_count" >&2
+  exit 1
+fi
 git range-diff "$old_base..$old_tip" "$release_commit..atyrode-release"
 git diff --stat "$release_commit"...atyrode-release
 ```
 
-You MUST inspect every `range-diff` change. Conflict resolutions MAY adapt patches to new upstream APIs, but MUST preserve their observable contracts. An upstream release that absorbed a fork patch may reduce the commit count only after explicit operator review; NEVER let rebase silently drop it.
+You MUST inspect every `range-diff` change. Equal count? Every fork patch MUST remain and conflict resolutions MAY only adapt patches to new upstream APIs while preserving observable contracts. Lower count? Complete the reconciliation workflow below before proceeding.
+
+### Reconciling an accepted upstream contribution
+
+An upstream release may absorb a patch previously carried by `atyrode-release`. Rebase may then omit that patch as already applied or empty. NEVER accept the lower count by itself as proof.
+
+For every old commit absent from the rebased range:
+
+1. Identify the upstream pull request or commit that supersedes it.
+2. Compare the old patch with the released upstream tree and implementation.
+3. Exercise the old patch's observable contract against the rebased result.
+4. Record `dropped fork commit → superseding upstream PR/commit` in a reconciliation ledger.
+
+Equivalent behavior proven? The reduced count is expected and the fork MUST stop carrying the redundant patch. Equivalence missing or uncertain? Restore the patch from the safety branch and resolve it against the new release instead of dropping it.
+
+This is the reconciliation path for contributions prepared with `contribute-omp-upstream`. Reuse this rebase; NEVER create a parallel merge or snapshot workflow.
 
 ## 4. Verify and publish the fork release
 
@@ -150,10 +168,11 @@ Failures MUST be fixed before merge; NEVER suppress a changed upstream contract.
 1. Check for an existing `bot/update-pins` pull request after publishing the release.
 2. Reuse a correct bot PR; NEVER open a duplicate.
 3. Otherwise create a focused branch and commit the OMP pin/config changes.
-4. Open a PR against `atyrode/dotfiles:main`.
-5. Wait for required CI.
-6. Squash-merge and delete the branch after CI passes.
-7. Run `atyrode apply` only when the task includes updating the current machine.
+4. Reconciliation occurred? Include its `dropped fork commit → superseding upstream PR/commit` ledger in the dotfiles PR body and final report.
+5. Open a PR against `atyrode/dotfiles:main`.
+6. Wait for required CI.
+7. Squash-merge and delete the branch after CI passes.
+8. Run `atyrode apply` only when the task includes updating the current machine.
 
 ## Critical failures to avoid
 

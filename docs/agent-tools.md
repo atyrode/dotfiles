@@ -431,9 +431,10 @@ inside that project. The same ownership rule applies to project-specific
 Project-specific auto-learned skills under `~/.omp/agent/managed-skills`
 remain OMP-owned mutable state. Move each one into its owning repository after
 removing machine-specific assumptions. The repository-specific
-`.agents/skills/bump-omp-fork` skill owns the fork-sync, fork-release, and pin
-workflow. Generic skills such as `ts-react-dead-code-sweep` remain under
-`agents/skills/`.
+`.agents/skills/contribute-omp-upstream` skill owns research, preparation, and
+operator-authorized upstream OMP pull requests; it hands fork release, pin, and
+accepted-patch reconciliation to `.agents/skills/bump-omp-fork`. Generic skills
+such as `ts-react-dead-code-sweep` remain under `agents/skills/`.
 
 ## Updating
 

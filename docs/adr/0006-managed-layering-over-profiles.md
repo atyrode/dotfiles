@@ -27,7 +27,7 @@ switchable profiles.
   routing*. Complete native profiles initially remained as the authentication
   boundary, but that split sessions, settings, and OAuth refresh state. Trusted
   clients now use one OMP v17 broker and credential store in profile `default`;
-  `code` captures immutable per-launch account allowlists while presets remain
+  `code` captures immutable per-launch account pools while presets remain
   non-secret selection state.
 - **Codex**: runs vanilla against `~/.codex`; the curated defaults are a one-time
   seed into `config.toml` (then user-owned), and the multi-profile switcher was

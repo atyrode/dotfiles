@@ -305,7 +305,7 @@ in
         grep -q 'account manager' "$TMPDIR/code-help.txt"
         ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
         # The generator owns only non-secret account/selection state; every
-        # trusted child inherits the central broker and its launch allowlist.
+        # trusted child inherits the central broker and its launch account pool.
         grep -Fq 'export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"' \
           ${pkgs.omp-configured}/bin/code
         grep -Fq 'export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"' \

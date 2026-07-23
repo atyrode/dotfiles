@@ -430,28 +430,30 @@ inside that project. The same ownership rule applies to project-specific
 
 Project-specific auto-learned skills under `~/.omp/agent/managed-skills`
 remain OMP-owned mutable state. Move each one into its owning repository after
-removing machine-specific assumptions. The generic
-`ts-react-dead-code-sweep` skill is repository-managed under `agents/skills/`.
+removing machine-specific assumptions. The repository-specific
+`.agents/skills/bump-omp-fork` skill owns the fork-sync, fork-release, and pin
+workflow. Generic skills such as `ts-react-dead-code-sweep` remain under
+`agents/skills/`.
 
 ## Updating
 
 The `update-pins` workflow refreshes the repository-owned binary pins (OMP,
 Codex, `code`, and Orca) every six hours: `scripts/update-pins.sh` bumps
 versions and hashes, a bot pull request runs the full dispatched CI, and a
-green run merges itself. A red run leaves the pull request open for curation —
-that is the expected outcome when upstream changes bundled content. Orca bumps
-deliberately stay red until its vendored `computer-use` skill is re-reviewed:
-`checks/orca.nix` compares the instruction marker to the package pin because
-public upstream skill text becomes trusted agent instructions and must never
-refresh without review. The pin script prints the upstream review pointer. The
-manual flow below remains valid for hand-driven updates:
+green run merges itself. Pass package names to narrow a manual refresh; for
+example, `scripts/update-pins.sh omp` changes only OMP. No arguments retain the
+scheduled all-package behavior.
 
-1. Update OMP's version, asset names, and hashes in `pkgs/omp/default.nix`
-   (or run `scripts/update-pins.sh`).
-2. Review model identifiers and routing in `omp/defaults.yml`,
-   `omp/models.yml`, and `omp/plain-seed.yml`.
-3. Run `nix flake check --show-trace`.
-4. Apply the profile with `atyrode apply`.
+A red run leaves the pull request open for curation — that is the expected
+outcome when upstream changes bundled content. Orca bumps deliberately stay red
+until its vendored `computer-use` skill is re-reviewed: `checks/orca.nix`
+compares the instruction marker to the package pin because public upstream
+skill text becomes trusted agent instructions and must never refresh without
+review. The pin script prints the upstream review pointer.
+
+Manual OMP updates MUST follow `.agents/skills/bump-omp-fork/SKILL.md`. The
+original release is not consumable until `atyrode/omp` has rebased its fork
+changes and published all four platform assets.
 
 `omp-agents` regenerates the upstream bundled agents from the pinned OMP
 binary, and the `omp-agent-references` check asserts that every agent name

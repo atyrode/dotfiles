@@ -43,7 +43,6 @@ Derive the current maintainer-friendly shape from those live examples: title sty
 - Reuse upstream patterns and preserve compatibility unless the accepted scope explicitly changes it.
 - The operator MUST personally review every changed file and understand the resulting behavior.
 - The operator MUST personally exercise the changed path.
-- The operator MUST supply at least one plain-language sentence explaining what changed and why; NEVER fabricate that human statement.
 - The agent prepares the contribution but NEVER publishes it autonomously.
 
 After implementation and verification, present the complete diff, behavioral evidence, prior-art ledger, and proposed body to the operator. Publication requires fresh, explicit authorization after that review; an initial request to work on the change is not publication approval.

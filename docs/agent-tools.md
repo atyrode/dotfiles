@@ -182,15 +182,16 @@ flags are non-secret state in
 `$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. Newly discovered
 identities default to enabled.
 
-Before each trusted launch, `code` writes a mode-`0600` temporary allowlist
-keyed by provider and OMP's stable credential `identityKey`. The child receives
-that path through `OMP_AUTH_ACCOUNT_ALLOWLIST_FILE`; OMP loads it once and
-filters credential selection, refresh, health checks, usage fan-out, direct-id
-lookups, snapshot export, and broker updates before considering an identity.
+Before each trusted launch, `code` writes a mode-`0600` temporary account-pool
+file keyed by provider and OMP's stable credential `identityKey`. The child
+receives that path through `OMP_AUTH_BROKER_ACCOUNT_POOL_FILE`; OMP loads it
+once and filters credential selection, refresh, health checks, usage fan-out,
+direct-id lookups, snapshot export, and broker updates before considering an
+identity.
 An explicitly empty provider list disables that provider for the process.
 Excluded credentials stay stored and authenticated: no logout, refresh,
 disable, block, or database mutation occurs. A running session keeps its
-captured allowlist even if a later `code` process edits the preset.
+captured account pool even if a later `code` process edits the preset.
 
 Usage remains broker-sourced and is displayed per account. Missing provider
 coverage is reported as unavailable rather than zero. A successful partial

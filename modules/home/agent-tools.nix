@@ -40,8 +40,8 @@ let
   untrustedConfig = ../../omp/untrusted.yml;
 
   # Trusted sessions share one credential pool in OMP's default profile. `code`
-  # applies immutable per-launch account allowlists; changing a preset never
-  # mutates or duplicates credentials.
+  # applies immutable per-launch account pools; changing a preset never mutates
+  # or duplicates credentials.
   brokerStateDir = "${config.xdg.stateHome}/atyrode/omp-auth-broker";
   brokerTokenFile = "${brokerStateDir}/token";
   brokerBind = "127.0.0.1:46171";

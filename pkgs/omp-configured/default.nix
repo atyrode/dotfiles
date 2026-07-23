@@ -1263,7 +1263,7 @@ let
   };
 
   # The generator and central authentication broker share OMP's default profile.
-  # `code` constrains each trusted child with an immutable account allowlist.
+  # `code` constrains each trusted child with an immutable account pool.
   ompManagedDefault = writeShellApplication {
     name = "omp-managed-default";
     text = ''
@@ -1296,7 +1296,7 @@ let
       # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
       # daemon/model. The account manager owns only non-secret selection state;
       # every trusted launch receives the central broker plus an immutable
-      # per-process allowlist while remaining on the shared default client
+      # per-process account pool while remaining on the shared default client
       # profile. Launch targets: ↵ always
       # runs the generated profile for the current facets through the managed
       # layering (CODE_OMP); `m` runs managed defaults with no overlay; `u` opens

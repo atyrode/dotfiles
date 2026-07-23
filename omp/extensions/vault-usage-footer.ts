@@ -204,7 +204,7 @@ export function labelGroups(windows: readonly WindowView[]): WindowView[] {
  * countdown to its matching provider+tier+duration+label group, then the group
  * renders their rounded mean. Missing account reports are not treated as zero.
  *
- * The broker store has already applied the immutable launch allowlist, so only
+ * The broker store has already applied the immutable launch account pool, so
  * accounts eligible in this OMP process contribute. Raw payloads, metadata,
  * notes, endpoint details, and identity fields are dropped immediately.
  */

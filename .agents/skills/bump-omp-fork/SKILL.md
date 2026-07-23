@@ -1,6 +1,6 @@
 ---
 name: bump-omp-fork
-description: Syncs atyrode/omp with a new can1357/oh-my-pi release, preserves fork-only auth and release changes, publishes an immutable atyrode release, and updates the dotfiles OMP pin. MUST use when asked to bump, update, upgrade, release, or pin OMP or oh-my-pi in this repository.
+description: Syncs atyrode/omp with a new can1357/oh-my-pi release, preserves the complete fork-only commit series, publishes an immutable atyrode release, and updates the dotfiles OMP pin. MUST use when asked to bump, update, upgrade, release, or pin OMP or oh-my-pi in this repository.
 ---
 
 # Bump the OMP fork and dotfiles pin
@@ -12,23 +12,13 @@ Use this workflow for every OMP bump. The dotfiles MUST consume release binaries
 - `atyrode/omp` remote `origin` is the fork.
 - `can1357/oh-my-pi` remote `upstream` is the original.
 - `main` MUST exactly mirror `upstream/main` and track `origin/main`.
-- `atyrode-release` MUST contain fork changes atop an upstream release tag.
+- `atyrode-release` MUST contain the complete fork-only commit series atop an upstream release tag.
+- Every pre-bump fork-only commit MUST survive unless the operator explicitly removes it.
+- `.github/workflows/fork-release.yml` MUST publish matching `v*-atyrode.*` tags.
 - `vX.Y.Z-atyrode.N` tags MUST be immutable.
 - Fork changes MUST NEVER land on `main`.
 
-The current fork delta is exactly these paths:
-
-```text
-.github/workflows/fork-release.yml
-packages/ai/src/auth-broker/discover.ts
-packages/ai/src/auth-broker/remote-store.ts
-packages/ai/src/auth-storage.ts
-packages/ai/test/auth-broker-config-discovery.test.ts
-packages/ai/test/auth-broker-remote-store.test.ts
-packages/ai/test/auth-storage-account-identity.test.ts
-```
-
-Unexpected paths indicate drift. Stop and investigate; intentional additions MUST update this contract in the same change.
+File paths and commit counts are intentionally not fixed. Fork customization may grow; the preserved commit range is the source of truth.
 
 ## 1. Establish release state
 
@@ -62,45 +52,52 @@ A published `vX.Y.Z-atyrode.N` matching `upstream_tag` already exists? Skip to s
 
 ## 3. Rebase fork changes onto the release
 
-Resolve the upstream tag to a commit and require it on `upstream/main`:
+Resolve the upstream tag, record the complete old fork range, and create a local safety branch before rebasing:
 
 ```console
 release_commit="$(git rev-parse "${upstream_tag}^{commit}")"
 git merge-base --is-ancestor "$release_commit" upstream/main
-old_base="$(git merge-base atyrode-release upstream/main)"
-test "$(git rev-parse atyrode-release)" = "$(git rev-parse origin/atyrode-release)"
+old_tip="$(git rev-parse origin/atyrode-release)"
+test "$(git rev-parse atyrode-release)" = "$old_tip"
+old_base="$(git merge-base "$old_tip" upstream/main)"
+old_count="$(git rev-list --count "$old_base..$old_tip")"
+backup_branch="backup/atyrode-release-before-${upstream_tag#v}-$(date -u +%Y%m%dT%H%M%SZ)"
+git branch "$backup_branch" "$old_tip"
+git log --reverse --format='%h %s' "$old_base..$old_tip"
 git switch atyrode-release
 git rebase --onto "$release_commit" "$old_base"
+new_count="$(git rev-list --count "$release_commit..atyrode-release")"
+test "$new_count" -eq "$old_count"
+git range-diff "$old_base..$old_tip" "$release_commit..atyrode-release"
+git diff --stat "$release_commit"...atyrode-release
 ```
 
-Resolve conflicts by preserving the fork contracts, not by accepting one side wholesale. The rebased branch SHOULD remain four commits ahead of the release until the documented fork delta changes.
-
-Verify the changed-path set exactly matches the branch contract:
-
-```console
-git diff --name-only "$release_commit"...HEAD
-```
+You MUST inspect every `range-diff` change. Conflict resolutions MAY adapt patches to new upstream APIs, but MUST preserve their observable contracts. An upstream release that absorbed a fork patch may reduce the commit count only after explicit operator review; NEVER let rebase silently drop it.
 
 ## 4. Verify and publish the fork release
 
-Run from the OMP checkout:
+You MUST run tests covering every commit in the preserved range. The current auth customization requires:
 
 ```console
 bun test packages/ai/test/auth-broker-config-discovery.test.ts \
   packages/ai/test/auth-broker-remote-store.test.ts \
   packages/ai/test/auth-storage-account-identity.test.ts
 (cd packages/ai && bun run check:types)
-bunx biome check \
-  packages/ai/src/auth-broker/discover.ts \
-  packages/ai/src/auth-broker/remote-store.ts \
-  packages/ai/src/auth-storage.ts \
-  packages/ai/test/auth-broker-config-discovery.test.ts \
-  packages/ai/test/auth-broker-remote-store.test.ts \
-  packages/ai/test/auth-storage-account-identity.test.ts \
-  .github/workflows/fork-release.yml
 ```
 
-All checks MUST pass before publishing. Then:
+You MUST also format-check every supported file changed by the fork range:
+
+```console
+mapfile -d '' changed_files < <(
+  git diff --name-only -z "$release_commit"...HEAD -- \
+    '*.ts' '*.tsx' '*.js' '*.json' '*.yml' '*.yaml' '*.css'
+)
+if ((${#changed_files[@]} > 0)); then
+  bunx biome check "${changed_files[@]}"
+fi
+```
+
+Additional fork customizations MUST supply and run their own focused tests. All checks MUST pass before publishing. Then:
 
 1. Push `atyrode-release` with `--force-with-lease` because rebasing rewrites it.
 2. Choose `vX.Y.Z-atyrode.1` for the first fork build of an upstream release.

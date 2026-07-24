@@ -129,7 +129,7 @@ pkgs.runCommand "check-omp-secret-obfuscation"
         | .text
       ]) as $texts
       | (($texts | length) == 1)
-        and ($texts[0] | test("^marker:#[A-Z0-9]{4}#$"))
+        and ($texts[0] | test("^marker:#[A-Z0-9]{12}(:[ULCM])?#$"))
         and (all($texts[]; contains($marker) | not))
     ' "$ISSUE17_SECRET_CAPTURE" >/dev/null
     ! grep -Fq "$ISSUE17_SECRET_MARKER" "$ISSUE17_SECRET_CAPTURE"

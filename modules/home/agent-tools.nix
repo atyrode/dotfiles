@@ -8,6 +8,7 @@
 let
   cfg = config.atyrode.agentTools;
   lcfg = cfg.localClassifier;
+  rgcfg = cfg.resourceGuard;
   managedSkills = pkgs.symlinkJoin {
     name = "atyrode-agent-skills";
     paths = [
@@ -69,6 +70,21 @@ let
     "$chmod" 0600 "$token_tmp"
     "$mv" -f "$token_tmp" "$token_file"
     exec ${rawOmp} --profile default auth-broker serve --bind=${brokerBind}
+  '';
+
+  # Second layer behind the app.slice cap: when the host as a whole runs out of
+  # memory *and* swap, earlyoom kills the fattest agent process before the
+  # kernel starts thrashing. Runs unprivileged, which suffices because the whole
+  # agent stack belongs to this user. Deliberately no Nice=/OOMScoreAdjust= on
+  # the unit: upstream recommends both, but they need privileges a user service
+  # does not have and would make it fail to start.
+  earlyoomSupervisor = pkgs.writeShellScript "atyrode-earlyoom" ''
+    exec ${pkgs.earlyoom}/bin/earlyoom \
+      -m ${toString rgcfg.earlyoom.memoryPercent} \
+      -s ${toString rgcfg.earlyoom.swapPercent} \
+      -r 0 \
+      --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*)$' \
+      --prefer '^(bun|node|chrome|omp|orca-ide)$'
   '';
 
 in
@@ -144,6 +160,75 @@ in
           its own per call (pinned while loaded, evict-after while not), so this
           does not affect it. "-1" would pin every model forever.
         '';
+      };
+    };
+
+    resourceGuard = {
+      # The agent stack (OMP sessions, their language servers, Chrome, and bun
+      # workers) runs under the user manager's app.slice, which systemd already
+      # delegates the memory controller to. Capping that slice stops a runaway
+      # session from exhausting RAM and swap host-wide: SSH logins land in
+      # session scopes *outside* app.slice, so the machine stays reachable while
+      # the pressure is absorbed where it is generated.
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Cap the memory the agent stack may consume and run an unprivileged
+          earlyoom as a backstop. Linux-only: both mechanisms are systemd and
+          cgroup features with no macOS equivalent.
+        '';
+      };
+
+      memoryHigh = lib.mkOption {
+        type = lib.types.str;
+        default = "60%";
+        example = "8G";
+        description = ''
+          MemoryHigh for app.slice: the throttle. Past this the kernel reclaims
+          the slice aggressively rather than killing anything. Percentages are
+          relative to installed RAM, so one value stays correct across a 16 GB
+          server and a larger workstation.
+        '';
+      };
+
+      memoryMax = lib.mkOption {
+        type = lib.types.str;
+        default = "75%";
+        example = "12G";
+        description = ''
+          MemoryMax for app.slice: the hard ceiling. Allocations past it are
+          OOM-killed inside the slice, bounding the blast radius to the agent
+          stack instead of taking the host down with it.
+        '';
+      };
+
+      earlyoom = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Run earlyoom as a user service. It can only kill this user's
+            processes, which covers the entire agent stack.
+          '';
+        };
+
+        memoryPercent = lib.mkOption {
+          type = lib.types.ints.between 1 100;
+          default = 10;
+          description = ''
+            Available-memory floor, in percent. earlyoom acts only once this
+            and the swap floor are breached together, so it stays dormant on a
+            healthy machine and fires on the swap-exhaustion pattern that
+            wedges a host into thrashing.
+          '';
+        };
+
+        swapPercent = lib.mkOption {
+          type = lib.types.ints.between 1 100;
+          default = 10;
+          description = "Free-swap floor, in percent. See memoryPercent.";
+        };
       };
     };
   };
@@ -287,6 +372,36 @@ in
             AccuracySec = "1s";
           };
           Install.WantedBy = [ "timers.target" ];
+        };
+      })
+
+      (lib.mkIf (rgcfg.enable && pkgs.stdenv.isLinux) {
+        # A drop-in rather than a systemd.user.slices unit: Home Manager would
+        # write a full app.slice into ~/.config/systemd/user, which takes
+        # precedence over and therefore replaces systemd's own definition. The
+        # drop-in only adds the limits and leaves upstream's unit intact.
+        xdg.configFile."systemd/user/app.slice.d/50-atyrode-memory.conf".text = ''
+          [Slice]
+          MemoryAccounting=yes
+          MemoryHigh=${rgcfg.memoryHigh}
+          MemoryMax=${rgcfg.memoryMax}
+        '';
+      })
+
+      (lib.mkIf (rgcfg.enable && rgcfg.earlyoom.enable && pkgs.stdenv.isLinux) {
+        home.packages = [ pkgs.earlyoom ];
+
+        systemd.user.services.atyrode-earlyoom = {
+          Unit = {
+            Description = "Userspace OOM killer guarding the agent stack";
+          };
+          Service = {
+            Type = "simple";
+            ExecStart = "${earlyoomSupervisor}";
+            Restart = "on-failure";
+            RestartSec = 5;
+          };
+          Install.WantedBy = [ "default.target" ];
         };
       })
     ]

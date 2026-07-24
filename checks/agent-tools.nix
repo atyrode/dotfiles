@@ -179,6 +179,12 @@ let
       };
   classifierService = linuxClassifierTools.systemd.user.services.ollama-pull-classifier;
   classifierTimer = linuxClassifierTools.systemd.user.timers.ollama-pull-classifier;
+  linuxSliceDropIn =
+    linuxAgentTools.xdg.configFile."systemd/user/app.slice.d/50-atyrode-memory.conf".text;
+  linuxEarlyoomService = linuxAgentTools.systemd.user.services.atyrode-earlyoom;
+  darwinHasSliceDropIn =
+    darwinAgentTools.xdg.configFile ? "systemd/user/app.slice.d/50-atyrode-memory.conf";
+  darwinHasEarlyoomService = darwinAgentTools.systemd.user.services ? atyrode-earlyoom;
 in
 {
   auth-vaults = pkgs.runCommand "check-agent-auth-broker" { } ''
@@ -1172,6 +1178,36 @@ in
     test ${lib.escapeShellArg (toString classifierTimer.Timer.OnActiveSec)} = '30s'
     test ${lib.escapeShellArg (toString classifierTimer.Timer.AccuracySec)} = '1s'
     test ${lib.escapeShellArg (lib.concatStringsSep " " classifierTimer.Install.WantedBy)} = 'timers.target'
+    mkdir "$out"
+  '';
+}
+// lib.optionalAttrs pkgs.stdenv.isLinux {
+  # Linux-only leg: asserting on ExecStart pulls the earlyoom store path into
+  # this derivation, and earlyoom is a Linux-only package.
+  resource-guard = pkgs.runCommand "check-agent-resource-guard" { } ''
+    # The cap has to land on app.slice, because that is where OMP sessions,
+    # their language servers, Chrome, and bun workers actually run. Percentages
+    # keep one value correct on a 16 GB server and a large workstation alike.
+    dropIn=${lib.escapeShellArg linuxSliceDropIn}
+    grep -Fqx '[Slice]' <<<"$dropIn"
+    grep -Fqx 'MemoryAccounting=yes' <<<"$dropIn"
+    grep -Fqx 'MemoryHigh=60%' <<<"$dropIn"
+    grep -Fqx 'MemoryMax=75%' <<<"$dropIn"
+
+    # earlyoom backstops host-wide exhaustion and must stay unprivileged:
+    # Nice=/OOMScoreAdjust= are what upstream recommends for its *root* unit,
+    # but a user service can set neither and would fail to start.
+    guard=${lib.escapeShellArg linuxEarlyoomService.Service.ExecStart}
+    grep -Fq 'earlyoom' "$guard"
+    grep -Fq -- '--prefer' "$guard"
+    grep -Fq -- '--avoid' "$guard"
+    test ${if linuxEarlyoomService.Service ? Nice then "1" else "0"} = 0
+    test ${if linuxEarlyoomService.Service ? OOMScoreAdjust then "1" else "0"} = 0
+    test ${lib.escapeShellArg (lib.concatStringsSep " " linuxEarlyoomService.Install.WantedBy)} = 'default.target'
+
+    # Both mechanisms are cgroup/systemd features with no macOS analogue.
+    test ${if darwinHasSliceDropIn then "1" else "0"} = 0
+    test ${if darwinHasEarlyoomService then "1" else "0"} = 0
     mkdir "$out"
   '';
 }

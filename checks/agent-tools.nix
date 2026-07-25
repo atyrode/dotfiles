@@ -310,6 +310,14 @@ in
         grep -q 'v opens the' "$TMPDIR/code-help.txt"
         grep -q 'account manager' "$TMPDIR/code-help.txt"
         ! grep -q 'pick an OMP launcher' "$TMPDIR/code-help.txt"
+        grep -q 'code ls' "$TMPDIR/code-help.txt"
+        # `code ls` must survive the wrapper's tty guard. It exists for scripts
+        # and for triaging a machine over a bare `ssh host 'code ls'`, which is
+        # precisely when no terminal is attached — and a nix build sandbox has
+        # none either, so this check reproduces that condition exactly.
+        CODE_SESSION_STATE="$TMPDIR/code-sessions" \
+          ${pkgs.omp-configured}/bin/code ls > "$TMPDIR/code-ls.txt"
+        grep -Fq 'no live sessions' "$TMPDIR/code-ls.txt"
         # The generator owns only non-secret account/selection state; every
         # trusted child inherits the central broker and its launch account pool.
         grep -Fq 'export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"' \

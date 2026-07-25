@@ -1312,6 +1312,11 @@ let
           '  code -U, --no-usage  open without fetching the usage panel' \
           '  code -h, --help      this help' \
           "" \
+          'subcommands (no terminal required):' \
+          '  code ls              list live sessions' \
+          '  code session reap    retire sessions (dry run unless --yes)' \
+          '  code generate        re-render the profile catalog' \
+          "" \
           'In the generator: type a prompt or adjust the dials, v opens the' \
           'account manager, and ? shows all keys. Enter' \
           'launches through the managed layering, m runs the managed defaults' \
@@ -1321,6 +1326,14 @@ let
       case "''${1:-}" in
         -h | --help) usage; exit 0 ;;
         -U | --no-usage) export CODE_USAGE=""; shift ;;
+      esac
+
+      # Subcommands that never open the TUI must not require a terminal. They
+      # exist for scripts and for triaging a machine over a bare `ssh host
+      # 'code ls'`, which is exactly when no tty is attached; only the
+      # generator below needs one.
+      case "''${1:-}" in
+        generate | session | sessions | ls) exec ${lib.getExe code} "$@" ;;
       esac
 
       if [[ ! -t 0 || ! -t 1 ]]; then

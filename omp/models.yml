@@ -17,7 +17,7 @@
 #           leads (spark drains an idle bucket; fable is a scarce elite lead).
 #   bucket: the quota window a model draws (a separate rate bucket per provider).
 #
-# Consumed by generate-profiles.py to render the facet grid the `code` generator
+# Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
 refreshed: '2026-07-13'
 models:

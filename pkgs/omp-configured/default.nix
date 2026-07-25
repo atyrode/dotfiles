@@ -1050,18 +1050,20 @@ let
   # layering.
   ompManaged = mkOmpCommand "omp-managed";
 
-  # First-principles facet grid: the generator (a models.yml + routing rules,
-  # see generate-profiles.py) emits a rendered routing block for every valid
-  # (lane, model-tier, thinking, spark, fable, fable-as-main) combination, baked
-  # at build time so the generator view stays immutable and reviewable.
-  generatedProfiles =
-    runCommand "omp-generated-profiles"
-      { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }
-      ''
-        mkdir -p "$out/share/omp"
-        MODELS_YML=${../../omp/models.yml} \
-          python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
-      '';
+  # First-principles facet grid: `code generate` renders a routing block for
+  # every valid (lane, model-tier, thinking, spark, fable, fable-as-main)
+  # combination from the model catalog, baked at build time so the generator
+  # view stays immutable and reviewable. The binary that browses the grid also
+  # renders it — the second implementation this replaced had drifted from it.
+  # The pinned release predates the scout/vision roles and the quota-bucket
+  # column, so today's output is unchanged and the new rows arrive with the
+  # next version bump.
+  generatedProfiles = runCommand "omp-generated-profiles" { } ''
+    mkdir -p "$out/share/omp"
+    ${lib.getExe code} generate \
+      --models-file ${../../omp/models.yml} \
+      --out "$out/share/omp/generated.plain"
+  '';
   trustedUntrustedPath = lib.makeBinPath [
     bash
     coreutils

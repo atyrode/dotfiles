@@ -54,8 +54,8 @@ selection-foreground = "#282C34"
 selection-background = "#FFFFFF"
 
 # Rio owns terminal tabs and splits while Orca owns worktree and agent-terminal
-# orchestration. TopTab is portable across macOS, Linux, and Windows.
+# orchestration. Tab is portable across macOS, Linux, and Windows.
 [navigation]
-mode = "TopTab"
+mode = "Tab"
 use-split = true
 hide-if-single = true

@@ -78,13 +78,29 @@ let
   # agent stack belongs to this user. Deliberately no Nice=/OOMScoreAdjust= on
   # the unit: upstream recommends both, but they need privileges a user service
   # does not have and would make it fail to start.
+  #
+  # Victim policy targets the work, not the things that own it. An `omp` session
+  # holds conversation state and in-flight edits that nothing can reconstruct,
+  # and Orca is the container those sessions live in - killing it discards every
+  # pane and worktree at once, and its `Xvfb` child owns the global `:99` lock
+  # that a hard kill strands (see pkgs/orca-ide). What a session *spawns* is the
+  # opposite: language servers, watchers, bundlers and headless Chrome are the
+  # unbounded half, they are what actually grows, and every one of them is
+  # recreated on demand. So the harness is avoided and its children preferred.
+  # `MainThread` is in that list because Node renames the main thread of the
+  # TypeScript servers, which are routinely the single largest processes here.
+  #
+  # This is a scoring preference, not immunity: earlyoom divides a process'
+  # badness rather than exempting it, and it has no say at all when the kernel
+  # or the app.slice MemoryMax cgroup OOM-kills. Real immunity would need a
+  # negative OOMScoreAdjust, which is privileged.
   earlyoomSupervisor = pkgs.writeShellScript "atyrode-earlyoom" ''
     exec ${pkgs.earlyoom}/bin/earlyoom \
       -m ${toString rgcfg.earlyoom.memoryPercent} \
       -s ${toString rgcfg.earlyoom.swapPercent} \
       -r 0 \
-      --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*)$' \
-      --prefer '^(bun|node|chrome|omp|orca-ide)$'
+      --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*|orca-ide|Xvfb|omp)$' \
+      --prefer '^(bun|node|chrome|MainThread)$'
   '';
 
 in
@@ -181,14 +197,30 @@ in
       };
 
       memoryHigh = lib.mkOption {
-        type = lib.types.str;
-        default = "60%";
+        type = lib.types.nullOr lib.types.str;
+        default = null;
         example = "8G";
         description = ''
-          MemoryHigh for app.slice: the throttle. Past this the kernel reclaims
-          the slice aggressively rather than killing anything. Percentages are
-          relative to installed RAM, so one value stays correct across a 16 GB
-          server and a larger workstation.
+          MemoryHigh for app.slice, or null to leave it unset. This is a
+          throttle, not a limit: past it the kernel forces reclaim onto the
+          allocating task itself, so the thread is put to sleep rather than
+          anything being killed.
+
+          Off by default because that behaviour is wrong for this workload. An
+          agent stack sits at a high, spiky steady state, so a percentage cap
+          parks it permanently just above the watermark and every allocation
+          pays synchronous reclaim into swap and refaults straight back out.
+          Measured on a 16 GB host at 60%: 2.7 million throttle events and 46
+          minutes of accumulated full stall, against zero OOM kills - the
+          throttle never once protected anything, it only wedged sessions, and
+          a wedged agent session is unrecoverable in a way a killed one is not.
+
+          Removing it removes that proven harm; it does not buy a graceful
+          fallback. MemoryMax still bounds the host, and when it fires the
+          in-slice OOM kill can land on an `omp` process and take its state
+          with it. earlyoom triggers on host-wide floors, independently of the
+          cgroup cap, so it is not guaranteed to shed first. Set this only for
+          a workload whose allocation is smooth enough that reclaim keeps up.
         '';
       };
 
@@ -383,7 +415,11 @@ in
         xdg.configFile."systemd/user/app.slice.d/50-atyrode-memory.conf".text = ''
           [Slice]
           MemoryAccounting=yes
+        ''
+        + lib.optionalString (rgcfg.memoryHigh != null) ''
           MemoryHigh=${rgcfg.memoryHigh}
+        ''
+        + ''
           MemoryMax=${rgcfg.memoryMax}
         '';
       })

@@ -225,6 +225,23 @@ help. The full facet grid of profiles is enumerated at package build time by
 `generate-profiles.py` from the model catalog in `omp/models.yml`, so the TUI's
 preview always matches what a launch would route.
 
+`code` also carries subcommands that never open the TUI and therefore do not
+require a terminal — they deliberately bypass the launcher's tty guard, so
+`ssh host 'code ls'` works:
+
+- **`code ls`** (`code session list`) lists live sessions with their age, the
+  directory they were started in, and whether their launcher has since been
+  superseded by a newer build.
+- **`code session reap`** retires them, filtered by `--older-than` or
+  `--superseded`. It prints and kills nothing unless `--yes` is passed, and
+  takes each session's whole process tree so the language servers, browsers,
+  and workers it spawned go with it rather than being orphaned onto init.
+- **`code generate`** re-renders the profile catalog.
+
+Sessions are recorded under `$XDG_STATE_HOME/code/sessions` while they run; a
+session holds a lock on its record, so a crashed session is detected and pruned
+rather than lingering as a stale entry.
+
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the generator derives every profile from it and the `omp/models.yml` catalog,
 adjusting the table by facet (lane, model tier, thinking, spark, fable, and

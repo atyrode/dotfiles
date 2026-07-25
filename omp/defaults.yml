@@ -29,8 +29,15 @@ retry:
   # so a single-model outage never leaves its bucket; then the matched pair on
   # the other provider. Chains never route below the lead's tier. Spark (drain)
   # and Fable (elite) draw separate quota and never appear as a net — plan leads
-  # on Fable deliberately and falls back to main-plan Opus. Trivial roles carry
+  # on Fable deliberately and falls back to main-plan Opus. Trivial leads carry
   # no chain: a blip on commit/tiny/sonic is harmless.
+  # Keys are omp role ids or provider/model selectors — never agent names.
+  # `reviewer`/`librarian` were agent names: both matched nothing and never
+  # fired, silently, since unknown role names raise no warning. Those agents
+  # take their model from task.agentModelOverrides and inherit `default`.
+  # `designer`/`task` work only because each is both an agent and a role.
+  # Check omp's current role list before adding a key; it grows (`vision` is
+  # recent). Deliberately not duplicated here — a copy would go stale.
   fallbackChains:
     default:
       - openai-codex/gpt-5.6-terra:medium
@@ -52,14 +59,6 @@ retry:
       - anthropic/claude-opus-5:medium
       - openai-codex/gpt-5.6-terra:medium
       - openai-codex/gpt-5.6-sol:medium
-    reviewer:
-      - anthropic/claude-opus-5:high
-      - openai-codex/gpt-5.6-terra:high
-      - openai-codex/gpt-5.6-sol:high
-    librarian:
-      - openai-codex/gpt-5.6-sol:medium
-      - anthropic/claude-sonnet-5:medium
-      - anthropic/claude-opus-5:medium
 
 personality: pragmatic
 

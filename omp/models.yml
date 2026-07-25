@@ -104,7 +104,7 @@ models:
       The value pick — near-Opus quality at a fraction of the cost. Leads the
       regular Claude tier and the mixed judgment roles.
   opus:
-    id: claude-opus-4-8
+    id: claude-opus-5
     pool: A
     tier: 3
     bucket: claude-main

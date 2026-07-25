@@ -31,32 +31,32 @@ retry:
   fallbackChains:
     default:
       - openai-codex/gpt-5.6-terra:medium
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
       - anthropic/claude-sonnet-5:medium
     task:
       - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
     plan:
-      - anthropic/claude-opus-4-8:high
+      - anthropic/claude-opus-5:high
       - openai-codex/gpt-5.6-sol:high
       - openai-codex/gpt-5.6-terra:high
     slow:
       - openai-codex/gpt-5.6-terra:xhigh
-      - anthropic/claude-opus-4-8:xhigh
+      - anthropic/claude-opus-5:xhigh
       - anthropic/claude-sonnet-5:xhigh
     designer:
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
       - openai-codex/gpt-5.6-terra:medium
       - openai-codex/gpt-5.6-sol:medium
     reviewer:
-      - anthropic/claude-opus-4-8:high
+      - anthropic/claude-opus-5:high
       - openai-codex/gpt-5.6-terra:high
       - openai-codex/gpt-5.6-sol:high
     librarian:
       - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
 
 personality: pragmatic
 

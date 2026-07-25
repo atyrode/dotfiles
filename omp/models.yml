@@ -20,6 +20,13 @@
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
 refreshed: '2026-07-13'
+# probed: `code generate` refuses a catalog that is not marked verified, because
+# omp lists models an account cannot actually call and nothing in their metadata
+# says so. This file is a curated committed cache rather than a live scaffold, so
+# the mark is an operator attestation: every id below is one that these accounts
+# call. It describes the ids as written — change or add an `id` and re-confirm it
+# (`code generate init --refresh` probes for you) rather than leaving this true.
+probed: true
 models:
   luna:
     id: gpt-5.6-luna

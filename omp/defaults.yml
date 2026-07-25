@@ -17,6 +17,9 @@ modelRoles:
   slow: openai-codex/gpt-5.6-sol:xhigh
   tiny: openai-codex/gpt-5.6-luna:low
   commit: openai-codex/gpt-5.6-luna:low
+  # omp routes image description here when the active model is text-only
+  # (today only the codex spark variants). Unset, it lands on `default`.
+  vision: openai-codex/gpt-5.6-luna:low
 
 retry:
   enabled: true
@@ -117,6 +120,7 @@ task:
     designer: anthropic/claude-sonnet-5:medium
     librarian: openai-codex/gpt-5.6-terra:medium
     reviewer: anthropic/claude-sonnet-5:high
+    scout: openai-codex/gpt-5.6-luna:medium
     sonic: openai-codex/gpt-5.6-luna:minimal
     task: openai-codex/gpt-5.6-terra:medium
   disabledAgents: []

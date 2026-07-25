@@ -1199,8 +1199,14 @@ in
     dropIn=${lib.escapeShellArg linuxSliceDropIn}
     grep -Fqx '[Slice]' <<<"$dropIn"
     grep -Fqx 'MemoryAccounting=yes' <<<"$dropIn"
-    grep -Fqx 'MemoryHigh=60%' <<<"$dropIn"
     grep -Fqx 'MemoryMax=75%' <<<"$dropIn"
+
+    # MemoryHigh must stay out of the default drop-in. It throttles instead of
+    # limiting: the kernel charges reclaim to the allocating thread, which on
+    # this workload parked the whole slice in swap thrash - millions of throttle
+    # events and tens of minutes of full stall - while never once preventing an
+    # OOM. It wedged agent sessions unrecoverably and protected nothing.
+    ! grep -Fq 'MemoryHigh' <<<"$dropIn"
 
     # earlyoom backstops host-wide exhaustion and must stay unprivileged:
     # Nice=/OOMScoreAdjust= are what upstream recommends for its *root* unit,
@@ -1209,6 +1215,22 @@ in
     grep -Fq 'earlyoom' "$guard"
     grep -Fq -- '--prefer' "$guard"
     grep -Fq -- '--avoid' "$guard"
+
+    # Victim policy is the point of the flags, so assert the membership rather
+    # than their presence. Orca and an `omp` session own state that cannot be
+    # reconstructed - panes, worktrees, conversation history - and Orca's Xvfb
+    # additionally strands the :99 lock when hard-killed, so all three belong on
+    # the avoid side and must never drift back into --prefer. What a session
+    # spawns is the unbounded, individually recreatable half and stays preferred.
+    preferList=$(grep -o -- "--prefer '[^']*'" "$guard")
+    avoidList=$(grep -o -- "--avoid '[^']*'" "$guard")
+    for expendable in bun node chrome MainThread; do
+      grep -Fq "$expendable" <<<"$preferList"
+    done
+    for protected in orca-ide Xvfb omp; do
+      grep -Fq "$protected" <<<"$avoidList"
+      ! grep -Fq "$protected" <<<"$preferList"
+    done
     test ${if linuxEarlyoomService.Service ? Nice then "1" else "0"} = 0
     test ${if linuxEarlyoomService.Service ? OOMScoreAdjust then "1" else "0"} = 0
     test ${lib.escapeShellArg (lib.concatStringsSep " " linuxEarlyoomService.Install.WantedBy)} = 'default.target'

@@ -44,15 +44,18 @@ judging color.
 ## 1. Character-exact verification with tmux (authoritative)
 
 You MUST run the TUI in a detached tmux session, drive it with `send-keys`, and
-read back the exact rendered character grid:
+read back the exact rendered character grid. Name the session per run and
+address it through that variable everywhere, so cleanup can never reach a
+session you did not create:
 
 ```console
-$ tmux new-session -d -s tui -x 150 -y 44 \
+$ SESSION="tui-$$"
+$ tmux new-session -d -s "$SESSION" -x 150 -y 44 \
     "env -u NO_COLOR -u CI CLICOLOR_FORCE=1 COLORTERM=truecolor TERM=xterm-256color \
      CODE_GENERATED=… <app>; sleep 300"
-$ tmux send-keys -t tui Down Down Right          # navigate and change a dial
-$ tmux capture-pane -t tui -p  > /tmp/frame.txt  # plain text grid
-$ tmux capture-pane -t tui -pe > /tmp/frame.ansi # with SGR color sequences
+$ tmux send-keys -t "$SESSION" Down Down Right          # navigate, change a dial
+$ tmux capture-pane -t "$SESSION" -p  > /tmp/frame.txt  # plain text grid
+$ tmux capture-pane -t "$SESSION" -pe > /tmp/frame.ansi # with SGR color codes
 ```
 
 This is deterministic and assertable:
@@ -151,14 +154,55 @@ Known limitations:
   `Type`/`Down`/`Sleep`/`Screenshot`/`Set FontFamily`. Best on an operator
   machine; it drives ttyd + headless Chromium underneath, so it shares that
   stack's flakiness in constrained sandboxes.
-- **ttyd** (`nixpkgs#ttyd`) — serve `tmux attach -t tui` over loopback HTTP and
-  view or screenshot from a browser: the only option for *watching* a session
-  live. Flaky under headless browsers (stalled loads, blank canvas, scrollback
-  cropping after resizes). If used, you MUST keep it loopback-bound, attach the
-  browser client *before* drawing, reload after every resize, and pass
-  `-t 'fontFamily=Symbols Nerd Font Mono,monospace'` for glyphs.
+- **ttyd** (`nixpkgs#ttyd`) — serve `tmux attach -t "$SESSION"` over loopback
+  HTTP and view or screenshot from a browser: the only option for *watching* a
+  session live. Flaky under headless browsers (stalled loads, blank canvas,
+  scrollback cropping after resizes). If used, you MUST keep it loopback-bound,
+  attach the browser client *before* drawing, reload after every resize, and
+  pass `-t 'fontFamily=Symbols Nerd Font Mono,monospace'` for glyphs. Allocate
+  the port and PID file per run too - a fixed `7681` races any concurrent agent
+  on the same host. `-p 0` lets ttyd take an ephemeral port from the kernel and
+  log the one it got, which is race-free in a way that probing for a free port
+  first is not:
+
+  ```bash
+  TTYD_PIDFILE="$(mktemp -t ttyd-pid.XXXXXX)"
+  TTYD_LOG="$(mktemp -t ttyd-log.XXXXXX)"
+  ttyd -i 127.0.0.1 -p 0 -t 'fontFamily=Symbols Nerd Font Mono,monospace' \
+    tmux attach -t "$SESSION" >"$TTYD_LOG" 2>&1 & echo $! > "$TTYD_PIDFILE"
+  # ttyd prints "Listening on port: <n>"; read the port back from $TTYD_LOG
+  ```
 
 ## 5. Cleanup
 
-You MUST kill the session and every server when done: `tmux kill-server`,
-`kill $(cat /tmp/ttyd.pid)`.
+Clean up exactly what this run created, addressed by the names you allocated,
+and nothing else:
+
+```bash
+tmux kill-session -t "$SESSION"        # the session you created, never the server
+
+if [ -s "${TTYD_PIDFILE:-}" ]; then    # only if you actually started ttyd
+  ttyd_pid="$(cat "$TTYD_PIDFILE")"
+  case "$(ps -o comm= -p "$ttyd_pid" 2>/dev/null)" in
+    ttyd) kill "$ttyd_pid" ;;          # confirm identity before signalling
+  esac
+  rm -f "$TTYD_PIDFILE" "${TTYD_LOG:-}"
+fi
+```
+
+You MUST NEVER run `tmux kill-server`. It destroys every session belonging to
+the user, not just yours. Development hosts run long-lived work inside tmux -
+Orca hosts its panes there, so `orca serve` and its Xvfb child are pane
+children - and killing the server takes all of it down, losing scrollback and
+shell state that nothing can restore. Worse, a hard-killed `orca serve` strands
+its Xvfb on display :99 and wedges every later start. Having already killed your
+own session by name, `kill-server` adds no cleanup and unbounded blast radius.
+
+Fixed paths are the same mistake in smaller form: a shared `/tmp/ttyd.pid` will
+collide with a concurrent run, or with an unrelated ttyd, and you will kill
+someone else's process. Allocate every name per run, before creating the
+resource it refers to, and never signal a PID whose identity you have not
+confirmed.
+
+If a step fails midway, clean up only the names you allocated and leave every
+other session and process untouched.

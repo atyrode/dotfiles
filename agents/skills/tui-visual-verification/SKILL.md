@@ -183,8 +183,8 @@ tmux kill-session -t "$SESSION"        # the session you created, never the serv
 
 if [ -s "${TTYD_PIDFILE:-}" ]; then    # only if you actually started ttyd
   ttyd_pid="$(cat "$TTYD_PIDFILE")"
-  case "$(ps -o comm= -p "$ttyd_pid" 2>/dev/null)" in
-    ttyd) kill "$ttyd_pid" ;;          # confirm identity before signalling
+  case "$(ps -o args= -p "$ttyd_pid" 2>/dev/null)" in
+    *ttyd*"$SESSION"*) kill "$ttyd_pid" ;;   # confirm it is *this run's* ttyd
   esac
   rm -f "$TTYD_PIDFILE" "${TTYD_LOG:-}"
 fi
@@ -203,6 +203,14 @@ collide with a concurrent run, or with an unrelated ttyd, and you will kill
 someone else's process. Allocate every name per run, before creating the
 resource it refers to, and never signal a PID whose identity you have not
 confirmed.
+
+The identity check reads `args=`, not `comm=`, so it can require `$SESSION` as
+well as the program name. `comm=ttyd` alone is not run-unique: a private pidfile
+stops two runs sharing a *file*, but it cannot stop a PID being recycled, and
+the likeliest process to inherit it is a concurrent run of this very skill —
+also named `ttyd`. Because ttyd serves `tmux attach -t "$SESSION"`, the run's
+own name is already in its argv, which makes the test exact for free. Keep it
+there: a command rewritten to hide `$SESSION` becomes unverifiable.
 
 If a step fails midway, clean up only the names you allocated and leave every
 other session and process untouched.

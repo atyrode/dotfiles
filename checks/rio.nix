@@ -57,7 +57,7 @@ pkgs.runCommand "check-rio"
   ''
     # The committed config must parse and carry the operator policy: portable
     # Rio tabs/splits plus the Rio-scoped OMP image protocol override.
-    [ "$(taplo get -f ${committedConfig} 'navigation.mode')" = TopTab ]
+    [ "$(taplo get -f ${committedConfig} 'navigation.mode')" = Tab ]
     [ "$(taplo get -f ${committedConfig} 'navigation.use-split')" = true ]
     [ "$(taplo get -f ${committedConfig} 'navigation.hide-if-single')" = true ]
     [ "$(taplo get -f ${committedConfig} 'env-vars[0]')" = PI_FORCE_IMAGE_PROTOCOL=kitty ]

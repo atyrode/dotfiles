@@ -11,12 +11,12 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
   "main" sub-dial that hands Fable the default-agent role; that escalation is manual
   only, never suggested); a local prompt→profile classifier
   (running on the resident ollama daemon) suggests settings. The usage widget
-  names the active authentication vault; **`a`** cycles enabled vaults and
-  **`v`** opens the vault manager for all-vault usage, selection, enable/disable,
-  refresh, and provider login. **Enter** launches the generated routing profile,
-  layered over the managed defaults and policy. Every trusted launch and usage
-  fetch stays in the shared OMP client profile `default` while the selected
-  auth-broker vault supplies credentials.
+  groups the identities the central broker reports by provider; **`v`** opens
+  the account manager for per-account usage, selection presets, and refresh.
+  **Enter** launches the generated routing profile, layered over the managed
+  defaults and policy. Every trusted launch and usage fetch stays in the shared
+  OMP client profile `default`; the broker supplies the credentials and each
+  trusted child is pinned to an immutable account pool.
 
   Press **`m`** to launch the managed defaults without a generated overlay,
   **`u`** to open the fixed untrusted sandbox for the current directory, or `?`
@@ -50,18 +50,16 @@ That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-conta
 - Your bare `omp` configuration remains mutable. `code` keeps trusted client
   sessions/settings in profile `default` and changes only its auth-broker
   environment.
-- The wrapper reads machine-local vault metadata from code v0.3.0's default
-  `$XDG_CONFIG_HOME/code/auth-vaults.json`; `CODE_AUTH_VAULTS_FILE` can select
-  another machine-local file and `CODE_AUTH_VAULTS` can provide a read-only raw
-  override. Without any source it falls back to the local OMP `default` profile,
-  keeping the package neutral. The `code` vault manager
-  can create entries and rename display labels only in the machine-local file.
-  Home Manager's identity-agnostic broker supervisor validates that file and
-  automatically reloads valid atomic changes while retaining current brokers
-  after an invalid edit; it never generates vault identities.
+- Trusted authentication runs through one central OMP auth broker: the wrapper
+  passes its URL, snapshot cache, and bearer token, and `code` presents the
+  identities that broker reports. Only non-secret selection state (presets and
+  per-account enabled flags) is machine-local; the package generates no
+  identities. Home Manager supervises the broker on managed machines, but the
+  standalone install works against any broker the environment already names.
 - Broker bearer tokens remain mutable mode-0600 files outside the Nix store and
-  are read fresh for each usage fetch or launch. The selected vault therefore
-  cannot diverge between the displayed quota and subsequent session.
+  are read fresh for each usage fetch or launch. Each trusted launch is then
+  pinned to a temporary account-pool file, so the displayed quota and the
+  session that follows can never draw on different accounts.
 
 ## How the managed layering stays reliable
 

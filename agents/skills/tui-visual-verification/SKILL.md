@@ -68,8 +68,8 @@ This is deterministic and assertable:
   around suspect regions (for example, text wrapping that loses its dim style).
 
 For `code`, you MUST build with `nix build .#code`, generate the grid with
-`MODELS_YML=omp/models.yml python3 pkgs/omp-configured/generate-profiles.py`,
-and point `CODE_GENERATED` at the output. No further wrapper env is required.
+`./result/bin/code generate --models-file omp/models.yml --out /tmp/grid.plain`,
+and point `CODE_GENERATED` at it. No further wrapper env is required.
 
 ## 2. Content-dependent responsive layouts
 

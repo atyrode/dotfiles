@@ -222,7 +222,7 @@ There are three ways to leave the TUI — every trusted launch goes through
 
 `code --no-usage` (`-U`) skips the usage fetch, and `code --help` (`-h`) prints
 help. The full facet grid of profiles is enumerated at package build time by
-`generate-profiles.py` from the model catalog in `omp/models.yml`, so the TUI's
+`code generate` from the model catalog in `omp/models.yml`, so the TUI's
 preview always matches what a launch would route.
 
 `code` also carries subcommands that never open the TUI and therefore do not

@@ -14,9 +14,12 @@ modelRoles:
   designer: anthropic/claude-sonnet-5:medium
   reviewer: anthropic/claude-sonnet-5:high
   plan: anthropic/claude-fable-5:high
-  slow: openai-codex/gpt-5.6-sol:xhigh
+  slow: anthropic/claude-opus-5:xhigh
   tiny: openai-codex/gpt-5.6-luna:low
   commit: openai-codex/gpt-5.6-luna:low
+  # omp routes image description here when the active model is text-only
+  # (today only the codex spark variants). Unset, it lands on `default`.
+  vision: openai-codex/gpt-5.6-luna:low
 
 retry:
   enabled: true
@@ -31,32 +34,32 @@ retry:
   fallbackChains:
     default:
       - openai-codex/gpt-5.6-terra:medium
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
       - anthropic/claude-sonnet-5:medium
     task:
       - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
     plan:
-      - anthropic/claude-opus-4-8:high
+      - anthropic/claude-opus-5:high
       - openai-codex/gpt-5.6-sol:high
       - openai-codex/gpt-5.6-terra:high
     slow:
-      - openai-codex/gpt-5.6-terra:xhigh
-      - anthropic/claude-opus-4-8:xhigh
       - anthropic/claude-sonnet-5:xhigh
+      - openai-codex/gpt-5.6-sol:xhigh
+      - openai-codex/gpt-5.6-terra:xhigh
     designer:
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
       - openai-codex/gpt-5.6-terra:medium
       - openai-codex/gpt-5.6-sol:medium
     reviewer:
-      - anthropic/claude-opus-4-8:high
+      - anthropic/claude-opus-5:high
       - openai-codex/gpt-5.6-terra:high
       - openai-codex/gpt-5.6-sol:high
     librarian:
       - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
-      - anthropic/claude-opus-4-8:medium
+      - anthropic/claude-opus-5:medium
 
 personality: pragmatic
 
@@ -117,6 +120,7 @@ task:
     designer: anthropic/claude-sonnet-5:medium
     librarian: openai-codex/gpt-5.6-terra:medium
     reviewer: anthropic/claude-sonnet-5:high
+    scout: openai-codex/gpt-5.6-luna:medium
     sonic: openai-codex/gpt-5.6-luna:minimal
     task: openai-codex/gpt-5.6-terra:medium
   disabledAgents: []

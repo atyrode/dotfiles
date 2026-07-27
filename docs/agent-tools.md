@@ -454,6 +454,58 @@ operator-authorized upstream OMP pull requests; it hands fork release, pin, and
 accepted-patch reconciliation to `.agents/skills/bump-omp-fork`. Generic skills
 such as `ts-react-dead-code-sweep` remain under `agents/skills/`.
 
+### Installed skills
+
+`docs-links` resolves every path below, so a renamed or deleted skill fails CI
+instead of leaving a stale list here.
+
+| Skill | Tree | Origin |
+|---|---|---|
+| [`i-have-adhd`](../agents/skills/i-have-adhd/SKILL.md) | generic | vendored, [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) |
+| [`stop-slop`](../agents/skills/stop-slop/SKILL.md) | generic | vendored, [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop) |
+| [`ts-react-dead-code-sweep`](../agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
+| [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
+| [`computer-use`](../agents/desktop-skills/computer-use/SKILL.md) | desktop only | vendored, [stablyai/orca](https://github.com/stablyai/orca) |
+| [`bump-omp-fork`](../.agents/skills/bump-omp-fork/SKILL.md) | this repository | repository-authored |
+| [`contribute-omp-upstream`](../.agents/skills/contribute-omp-upstream/SKILL.md) | this repository | repository-authored |
+
+### Vendoring a third-party skill
+
+Public skill text becomes trusted agent instructions the moment it lands in
+`~/.agents/skills`, so a vendored skill carries a provenance marker directly
+below its frontmatter naming the upstream repository, the exact commit, the
+license, and every local change. Refreshing one means reviewing the upstream
+diff, never copying blind. `computer-use` is the stricter case: it is pinned to
+the Orca package version and `checks/orca.nix` fails the build when the two
+disagree. The two output-shaping skills have no package to track, so their
+markers pin a commit and refresh is a deliberate operator action.
+
+Two local changes recur and both must be disclosed in the marker. Reference
+links are rewritten to `skill://<name>/<path>`, because relative Markdown links
+inside a `SKILL.md` resolve against the session working directory rather than
+the skill directory. Invocation strings are rewritten to `/skill:<name>`, since
+that is the only command OMP registers; upstream text often names the bare
+`/<name>` command that a Claude Code plugin install would create instead.
+
+### Turning a skill off
+
+OMP already owns this and the dotfiles add nothing: `skills.ignoredSkills`
+takes glob patterns and is the per-skill mute, `skills.includeSkills` inverts
+it into an allowlist, `skills.enabled` is the global kill switch, and, for a
+single launch, `--skills=<comma-separated globs>` narrows discovery to the
+matching skills while bare `--no-skills` turns it off entirely. The restricted
+`ompu` launcher refuses `--skills`, so an untrusted session cannot widen its
+own skill set. Set the durable machine value
+through `omp/plain-seed.yml`, which keeps it reviewable drift rather than an
+unattributed local edit; a managed-session value belongs in `omp/defaults.yml`,
+which layers above the machine configuration.
+
+Muting is rarely the right tool. A skill that should never fire unprompted
+should say so in its own frontmatter with `disable-model-invocation: true`,
+which leaves `/skill:<name>` as the only entry point and keeps the decision
+with the skill instead of a machine-wide deny list. `i-have-adhd` ships that
+way.
+
 ## Updating
 
 The `update-pins` workflow refreshes the repository-owned binary pins (OMP,

@@ -13,6 +13,7 @@ pkgs.runCommand "check-docs-links"
     nativeBuildInputs = [ pkgs.python3 ];
   }
   ''
+    python3 ${./docs-links-test.py} ${./docs-links.py}
     python3 ${./docs-links.py} ${src}
     mkdir "$out"
   ''

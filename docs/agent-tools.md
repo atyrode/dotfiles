@@ -461,8 +461,6 @@ instead of leaving a stale list here.
 
 | Skill | Tree | Origin |
 |---|---|---|
-| [`i-have-adhd`](../agents/skills/i-have-adhd/SKILL.md) | generic | vendored, [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) |
-| [`stop-slop`](../agents/skills/stop-slop/SKILL.md) | generic | vendored, [hardikpandya/stop-slop](https://github.com/hardikpandya/stop-slop) |
 | [`ts-react-dead-code-sweep`](../agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
 | [`computer-use`](../agents/desktop-skills/computer-use/SKILL.md) | desktop only | vendored, [stablyai/orca](https://github.com/stablyai/orca) |
@@ -475,10 +473,10 @@ Public skill text becomes trusted agent instructions the moment it lands in
 `~/.agents/skills`, so a vendored skill carries a provenance marker directly
 below its frontmatter naming the upstream repository, the exact commit, the
 license, and every local change. Refreshing one means reviewing the upstream
-diff, never copying blind. `computer-use` is the stricter case: it is pinned to
-the Orca package version and `checks/orca.nix` fails the build when the two
-disagree. The two output-shaping skills have no package to track, so their
-markers pin a commit and refresh is a deliberate operator action.
+diff, never copying blind. `computer-use` is pinned to the Orca package version
+and `checks/orca.nix` fails the build when the two disagree; a skill with no
+package to track pins a commit instead, and refresh is a deliberate operator
+action.
 
 Two local changes recur and both must be disclosed in the marker. Reference
 links are rewritten to `skill://<name>/<path>`, because relative Markdown links
@@ -503,8 +501,7 @@ which layers above the machine configuration.
 Muting is rarely the right tool. A skill that should never fire unprompted
 should say so in its own frontmatter with `disable-model-invocation: true`,
 which leaves `/skill:<name>` as the only entry point and keeps the decision
-with the skill instead of a machine-wide deny list. `i-have-adhd` ships that
-way.
+with the skill instead of a machine-wide deny list.
 
 ## Updating
 

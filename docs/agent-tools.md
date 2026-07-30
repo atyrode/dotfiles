@@ -478,13 +478,6 @@ and `checks/orca.nix` fails the build when the two disagree; a skill with no
 package to track pins a commit instead, and refresh is a deliberate operator
 action.
 
-Two local changes recur and both must be disclosed in the marker. Reference
-links are rewritten to `skill://<name>/<path>`, because relative Markdown links
-inside a `SKILL.md` resolve against the session working directory rather than
-the skill directory. Invocation strings are rewritten to `/skill:<name>`, since
-that is the only command OMP registers; upstream text often names the bare
-`/<name>` command that a Claude Code plugin install would create instead.
-
 ### Turning a skill off
 
 OMP already owns this and the dotfiles add nothing: `skills.ignoredSkills`

@@ -11,9 +11,9 @@ description: >-
   state".
 ---
 <!--
-Vendored verbatim from stablyai/orca at tag v1.4.156, apart from this provenance marker.
+Vendored verbatim from stablyai/orca at tag v1.4.171, apart from this provenance marker.
 Upstream skill text becomes agent instructions, so refresh only after review.
-ORCA_SKILL_UPSTREAM_VERSION=1.4.156
+ORCA_SKILL_UPSTREAM_VERSION=1.4.171
 -->
 
 # Computer Use

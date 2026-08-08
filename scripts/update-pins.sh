@@ -65,8 +65,8 @@ bump() { # name file repo tag_prefix url_template assets...
 }
 
 if wants omp; then
-  bump omp "$repo_root/pkgs/omp/default.nix" atyrode/omp v \
-    'https://github.com/atyrode/omp/releases/download/@tag@/@asset@' \
+  bump omp "$repo_root/pkgs/omp/default.nix" can1357/oh-my-pi v \
+    'https://github.com/can1357/oh-my-pi/releases/download/@tag@/@asset@' \
     omp-linux-x64 omp-linux-arm64 omp-darwin-x64 omp-darwin-arm64
 fi
 

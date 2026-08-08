@@ -97,4 +97,8 @@ After operator-authorized publication:
 
 Throughout the upstream pull-request lifecycle, NEVER modify the fork customization/release branch, release tags, or the dotfiles OMP pin.
 
-The operator explicitly needs the change in a personal release before upstream ships it, or an accepted contribution later needs reconciliation? Start a separate task using `bump-omp-fork`. Public pull-request branches never enter the personal pin automatically.
+The operator explicitly needs the change in a personal release before upstream
+ships it, or a carried emergency patch later needs reconciliation? Start a
+separate task using `bump-omp-fork`'s emergency fork-release path. Public
+pull-request branches never enter the personal pin automatically; routine pin
+bumps consume upstream releases directly.

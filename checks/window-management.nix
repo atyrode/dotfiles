@@ -196,9 +196,18 @@ let
   rulesWithMisplacedParameters = lib.filter (rule: rule ? parameters) karabinerRules;
 in
 assert lib.assertMsg cfg.services.yabai.enable "the Darwin workstation must enable yabai";
+# The scripting addition is a deliberate operator decision (2026-08-08),
+# reversing the Phase 1 default. It requires partially disabled SIP; nix-darwin
+# pins a sha256 sudoers rule so only the exact declared binary may load it.
+assert lib.assertMsg cfg.services.yabai.enableScriptingAddition
+  "yabai's scripting addition must stay enabled: window animations and the Space create/destroy path depend on it, and the operator accepted the SIP tradeoff explicitly";
 assert lib.assertMsg (
-  !cfg.services.yabai.enableScriptingAddition
-) "yabai's scripting addition must remain disabled while full SIP is retained";
+  (cfg.services.yabai.config.window_animation_duration or 0.0) > 0.0
+) "window animations must be configured; they are the reason the scripting addition is enabled";
+assert lib.assertMsg (cfg.environment.etc ? "sudoers.d/yabai") (
+  "enabling the scripting addition must come with the hash-pinned sudoers rule"
+  + " nix-darwin generates; a missing rule means --load-sa cannot run unattended"
+);
 assert lib.assertMsg (
   cfg.services.yabai.config.layout == "bsp"
   && cfg.services.yabai.config.split_ratio == 0.50

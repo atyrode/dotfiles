@@ -7,7 +7,17 @@ in
   services.yabai = {
     enable = true;
     package = pkgs.yabai;
-    enableScriptingAddition = false;
+
+    # Deliberate operator decision (2026-08-08), reversing the Phase 1 default.
+    # The scripting addition needs SIP partially disabled (Recovery:
+    # `csrutil enable --without fs --without debug --without nvram`, then
+    # `sudo nvram boot-args=-arm64e_preview_abi`, two reboots). nix-darwin
+    # wires a hash-pinned sudoers entry -- only this exact yabai binary may run
+    # `--load-sa` as root -- and a root daemon that loads it at boot.
+    # Unlocks window animations, Space create/destroy, opacity, sticky.
+    # Until the SIP change is performed the load daemon fails and yabai runs
+    # exactly as before; every non-SA feature is unaffected.
+    enableScriptingAddition = true;
 
     config = {
       layout = "bsp";
@@ -23,6 +33,14 @@ in
       left_padding = 8;
       right_padding = 8;
       window_gap = 8;
+
+      # Animates yabai-initiated frame changes (warp, balance, zoom, moves).
+      # Requires the scripting addition and a Screen Recording grant for yabai;
+      # macOS prompts on first animated change. NOTE: the grant is keyed to the
+      # Nix store path, so a yabai version bump requires re-approval. Does NOT
+      # animate neighbours during a live mouse drag -- that capability does not
+      # exist in yabai; frames apply when the drag ends.
+      window_animation_duration = 0.25;
     };
 
     # Start with utility windows whose floating behavior is predictable. Add

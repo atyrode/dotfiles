@@ -1,4 +1,6 @@
 {
+  atyrode-tui,
+  atyrode-preview-parser ? atyrode-tui,
   bubblewrap,
   capabilities,
   claude-code,
@@ -9,6 +11,7 @@
   # Published flake activated by `atyrode apply` without --repo. Must stay a
   # github: ref; the CLI derives the ls-remote URL from it.
   flakeRef ? "github:atyrode/dotfiles",
+  revision ? "unknown",
   gawk,
   gitMinimal,
   gnugrep,
@@ -20,15 +23,18 @@
   makeWrapper,
   nh,
   nix,
+  openssh,
   omp-configured,
   runtimeShell,
   stdenvNoCC,
   tmux,
+  windowsPackages,
   zsh,
 }:
 
 let
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
+  gitAllowedSigners = ../../home/git-allowed-signers;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
   );
@@ -43,6 +49,10 @@ let
     + "\n"
   );
   registry = builtins.toFile "atyrode-host-registry.json" (builtins.toJSON hostRegistry);
+  windowsPackageInventory = builtins.toFile "atyrode-windows-packages.json" (
+    builtins.toJSON windowsPackages
+  );
+  rioWindowsConfig = ../../home/rio/config.toml;
   systemPolicy = ../../inventory/system-boundary.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
@@ -69,6 +79,7 @@ let
         launchModes = [
           "home"
           "darwin"
+          "os"
         ];
       }
       {
@@ -89,7 +100,7 @@ let
         capability = "agent-tools";
         version = lib.getVersion codex;
         versionOwner = "repository package derivation";
-        mutableState = "~/.codex and ~/.codex-profiles";
+        mutableState = "~/.codex";
         launchModes = [
           "interactive"
           "exec"
@@ -104,7 +115,7 @@ let
         mutableState = "profile-scoped auth, sessions, MCP state, and caches";
         launchModes = [
           "normal"
-          "preset"
+          "generated"
           "untrusted"
           "acp"
         ];
@@ -173,15 +184,21 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     install -D -m755 "$src" "$out/bin/atyrode"
     substituteInPlace "$out/bin/atyrode" \
+      --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
+      --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrode-preview-parser "atyrode-preview-parser"}' \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
+      --replace-fail '@git_allowed_signers@' '${gitAllowedSigners}' \
       --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \
       --replace-fail '@homebrew_casks@' '${homebrewCaskInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
+      --replace-fail '@revision@' '${revision}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
-      --replace-fail '@tools@' '${tools}'
+      --replace-fail '@tools@' '${tools}' \
+      --replace-fail '@windows_packages@' '${windowsPackageInventory}' \
+      --replace-fail '@rio_windows_config@' '${rioWindowsConfig}'
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
         lib.makeBinPath [
@@ -194,6 +211,7 @@ stdenvNoCC.mkDerivation {
           jq
           nh
           nix
+          openssh
         ]
       }
   '';

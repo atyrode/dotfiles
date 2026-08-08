@@ -27,7 +27,7 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$agents_dir"
     cp bundled/*.md "$agents_dir/"
 
-    test "$(find "$agents_dir" -maxdepth 1 -name '*.md' | wc -l)" -eq 6
+    test "$(find "$agents_dir" -maxdepth 1 -name '*.md' | wc -l)" -eq 7
 
     runHook postInstall
   '';

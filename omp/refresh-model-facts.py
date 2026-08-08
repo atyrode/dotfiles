@@ -55,18 +55,6 @@ def omp_bench(selectors, runs, max_tokens):
     return bench_from(json.loads(out)["models"])
 
 
-def omp_stats():
-    """Per-model historical aggregate (what `/model` shows) — the fallback for a
-    model `omp bench` can't reach live (e.g. a maxed quota). Keyed by provider/id.
-    Note: stats are thinking-blended real usage, not a clean benchmark."""
-    out = subprocess.run(["omp", "stats", "--json"], capture_output=True, text=True, check=True).stdout
-    out = out[out.index("{"):]  # skip the "Syncing…" preamble
-    res = {}
-    for m in json.loads(out).get("byModel", []):
-        tps, ttft = m.get("avgTokensPerSecond"), m.get("avgTtft")
-        if tps and ttft:
-            res[f"{m['provider']}/{m['model']}"] = {"tokensPerSecond": tps, "ttftMs": ttft}
-    return res
 
 
 def main():
@@ -104,15 +92,14 @@ def main():
         else:
             selectors = [f"{POOL_PROVIDER[m['pool']]}/{m['id']}" for m in models.values()]
             bench = omp_bench(selectors, args.runs, args.max_tokens)
-        stats = omp_stats()  # fallback for models bench couldn't reach
         for key, m in models.items():
             sel = f"{POOL_PROVIDER[m['pool']]}/{m['id']}"
             avg = bench.get(sel)
-            if not avg and sel in stats:
-                avg = stats[sel]
-                print(f"note: {key} benched from `omp stats` history (bench unavailable)", file=sys.stderr)
             if not avg:
-                print(f"warn: no bench or stats for {key} ({sel}); keeping existing speed/ttft", file=sys.stderr)
+                print(
+                    f"warn: no successful benchmark for {key} ({sel}); keeping existing speed/ttft",
+                    file=sys.stderr,
+                )
                 continue
             m["speed"] = round(avg["tokensPerSecond"], 1)
             ttft = round(avg["ttftMs"] / 1000.0, 2)

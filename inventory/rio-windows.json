@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "comment": "Windows lock artifact for the pinned Rio terminal (#278). The version MUST equal pkgs.rio.version from the nixpkgs pin (checks/rio.nix enforces parity); the installer is downloaded and SHA256-verified by `atyrode windows apply` before install. Bumps flow through the same review as the nixpkgs pin: one change updates both.",
+  "version": "0.4.7",
+  "installer": {
+    "name": "rio-installer-x86_64.msi",
+    "url": "https://github.com/raphamorim/rio/releases/download/v0.4.7/rio-installer-x86_64.msi",
+    "sha256": "4b635ec754fadc24a8c58f47af04e07047f448e43e24fc3131d5de28dad0d55d",
+    "sizeBytes": 7499776
+  },
+  "config": {
+    "source": "home/rio/config.toml",
+    "destination": "%LOCALAPPDATA%\\rio\\config.toml"
+  }
+}

@@ -3,13 +3,19 @@
 set -euo pipefail
 
 readonly registry='@registry@'
+readonly atyrode_tui='@atyrode_tui@'
+readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
 readonly homebrew_cask_inventory='@homebrew_casks@'
 readonly system_policy='@system_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
+readonly windows_package_inventory='@windows_packages@'
+readonly rio_windows_config='@rio_windows_config@'
+readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly flake_ref='@flakeRef@'
+readonly embedded_revision='@revision@'
 readonly flake_remote_url="https://github.com/${flake_ref#github:}"
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
@@ -23,25 +29,55 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run] [--json] [--restart-shell]
+  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
+  atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
+  atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
+  atyrode doctor git [--json]
   atyrode doctor tools [--json]
   atyrode host [HOST] [--json]
-  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes]
+  atyrode generations [--json] [--sizes]
+  atyrode rollback [--to N] [--dry-run] [--yes]
+  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
+  atyrode windows plan|apply [HOST] [--json]
 
 The host registry is the authority for identity, platform, and capabilities.
 apply activates the published flake by default, resolving REF (default main)
 to an exact commit first; --repo switches to a local checkout for development.
+apply preview modes are non-activating: --plan resolves and validates the target
+then prints preflight metadata without invoking nh; --dry-run invokes the normal
+nh switch backend with --dry; --preview-json runs that dry backend and emits its
+normalized package/action preview as JSON.
 apply validates everything before invoking nh, and afterwards reports plain-omp
 settings that drifted from the seeded defaults, offering an interactive
 keep-or-reset review on a terminal.
-clean reclaims disk from generations the config no longer references, always
-keeping the current one and a rollback window (--keep / --keep-since); on macOS
-it also sweeps stale Home Manager Apps aliases. Commands reserved for later
-issues: workspace, agent, generations, and rollback.
+inventory evaluates the versioned manifest at this CLI's exact revision by
+default; --ref selects another published revision and --repo evaluates a local
+checkout. It is read-only and currently requires --json.
+lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
+cache/state paths under the configured home. It is read-only, includes OMP's
+supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
+doctor git is a read-only audit of SSH authentication, SSH signing, forge
+remotes, Git credential helpers, and GitHub CLI credential storage. It reports
+classifications only and never prints keys, tokens, helper arguments, or remotes.
+generations lists the activation profile's generations (nix-darwin or NixOS
+system profile, otherwise standalone Home Manager); rollback activates an earlier
+one (previous by default, or --to N) after confirming.
+clean reclaims disk from generations the
+config no longer references, always keeping the current one and a rollback
+window (--keep / --keep-since); it previews the plan and asks before touching
+anything (--yes skips the prompt, --dry-run only previews), folds nh's verbose
+evaluation plan into its own summary (--verbose passes nh's full output through),
+and on macOS it also sweeps stale Home Manager Apps aliases. The auto GC roots that pin old
+generations are owned by the Nix daemon; a non-root clean cannot unlink them and
+prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
+self-elevates). Commands reserved for later issues: workspace and agent.
+windows treats WinGet as the native Windows package owner. plan is read-only;
+apply reconciles exact package IDs through WSL interop after refusing channel
+conflicts. Windows mutations are not part of a Nix generation or rollback.
 EOF
 }
 
@@ -85,8 +121,8 @@ resolve_host() {
   fi
   if [[ -n "$requested" ]]; then
     jq -er --arg requested "$requested" '
-      to_entries[] | select(.key == $requested or (.value.aliases | index($requested))) | .key
-    ' "$registry" || die "$EX_DATAERR" "unknown host or alias: $requested"
+      if has($requested) then $requested else empty end
+    ' "$registry" || die "$EX_DATAERR" "unknown host: $requested"
     return
   fi
 
@@ -133,6 +169,328 @@ doctor_host() {
   [[ "$ok" == true ]] || return "$EX_DATAERR"
 }
 
+is_wsl() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_WSL:-}" ]]; then
+    [[ "$_ATYRODE_TEST_WSL" == 1 ]]
+    return
+  fi
+  [[ -n "${WSL_INTEROP:-}" ]] ||
+    { [[ -r /proc/sys/kernel/osrelease ]] && grep -qi microsoft /proc/sys/kernel/osrelease; }
+}
+
+windows_winget() {
+  local candidate=winget.exe resolved
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_WINGET:-}" ]]; then
+    candidate="$ATYRODE_WINGET"
+  fi
+  resolved="$(command -v "$candidate" 2>/dev/null)" ||
+    die "$EX_UNAVAILABLE" "winget.exe is unavailable through WSL interop; repair Windows App Installer and WSL PATH interop"
+  printf '%s\n' "$resolved"
+}
+
+windows_hook_command() {
+  local variable="$1" default="$2" candidate resolved
+  candidate="$default"
+  if [[ "$test_hooks" == 1 && -n "${!variable:-}" ]]; then
+    candidate="${!variable}"
+  fi
+  resolved="$(command -v "$candidate" 2>/dev/null)" ||
+    die "$EX_UNAVAILABLE" "$default is unavailable through WSL interop"
+  printf '%s\n' "$resolved"
+}
+
+windows_interop_path() {
+  local path="$1" wslpath
+  wslpath="$(windows_hook_command ATYRODE_WSLPATH wslpath)"
+  "$wslpath" -w "$path" 2>/dev/null ||
+    die "$EX_UNAVAILABLE" "wslpath could not convert a Windows-accessible installer path"
+}
+
+windows_localappdata() {
+  local powershell windows_path wslpath
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_LOCALAPPDATA:-}" ]]; then
+    printf '%s\n' "$ATYRODE_LOCALAPPDATA"
+    return
+  fi
+  powershell="$(windows_hook_command ATYRODE_POWERSHELL powershell.exe)"
+  windows_path="$("$powershell" -NoProfile -Command "[Environment]::GetFolderPath('LocalApplicationData')" 2>/dev/null | tr -d '\r' | awk 'NF { print; exit }')" ||
+    die "$EX_UNAVAILABLE" "powershell.exe could not resolve Windows LocalApplicationData"
+  [[ -n "$windows_path" ]] ||
+    die "$EX_UNAVAILABLE" "powershell.exe returned an empty Windows LocalApplicationData path"
+  wslpath="$(windows_hook_command ATYRODE_WSLPATH wslpath)"
+  "$wslpath" -u "$windows_path" 2>/dev/null ||
+    die "$EX_UNAVAILABLE" "wslpath could not convert Windows LocalApplicationData"
+}
+
+windows_rio_gpu_preference_matches() {
+  local powershell output
+  powershell="$(windows_hook_command ATYRODE_POWERSHELL powershell.exe)"
+  # PowerShell variables must remain literal for the Windows subprocess.
+  # shellcheck disable=SC2016
+  output="$("$powershell" -NoProfile -NonInteractive -Command \
+    '$registry = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"; $exe = Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Rio\rio.exe"; $item = Get-ItemProperty -Path $registry -Name $exe -ErrorAction SilentlyContinue; if ($null -ne $item -and $item.PSObject.Properties[$exe].Value -eq "GpuPreference=2;") { "true" } else { "false" }' \
+    2>/dev/null | tr -d '\r' | awk 'NF { print; exit }')" ||
+    die "$EX_UNAVAILABLE" "powershell.exe could not query Rio's Windows graphics preference"
+  [[ "$output" == true ]]
+}
+
+windows_set_rio_gpu_preference() {
+  local powershell
+  powershell="$(windows_hook_command ATYRODE_POWERSHELL powershell.exe)"
+  # PowerShell variables must remain literal for the Windows subprocess.
+  # shellcheck disable=SC2016
+  "$powershell" -NoProfile -NonInteractive -Command \
+    '$registry = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"; $exe = Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Rio\rio.exe"; $null = New-Item -Path $registry -Force; $null = New-ItemProperty -Path $registry -Name $exe -Value "GpuPreference=2;" -PropertyType String -Force' \
+    </dev/null >&2 ||
+    die "$EX_SOFTWARE" "could not set Rio's Windows graphics preference"
+}
+
+windows_package_present() {
+  local winget="$1" id="$2" status
+  if "$winget" list --id "$id" --exact --accept-source-agreements --disable-interactivity \
+    </dev/null >/dev/null 2>&1; then
+    return 0
+  else
+    status=$?
+  fi
+  # WinGet reports APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND as
+  # 0x8A150014. WSL exposes the low byte through the POSIX exit status.
+  [[ "$status" == 20 ]] && return 1
+  die "$EX_UNAVAILABLE" "winget.exe could not query installed package $id (exit $status); repair App Installer or its sources"
+}
+
+windows_rio_version() {
+  local winget="$1" output status version
+  if output="$("$winget" list --id raphamorim.rio --exact --accept-source-agreements --disable-interactivity 2>/dev/null)"; then
+    # winget's table is fixed-width: `Name Id Version [Available] Source`,
+    # and Source is empty for ARP-only (MSI) installs, so positional field
+    # counting is ambiguous. Slice the Version column at the header's
+    # character offset instead.
+    version="$(tr -d '\r' <<<"$output" | awk '
+      !pos && index($0, "Version") && index($0, "Id") { pos = index($0, "Version"); next }
+      pos && NF { value = substr($0, pos); sub(/^[[:space:]]+/, "", value); if (value ~ /^-|^$/) next; split(value, cells, /[[:space:]]+/); print cells[1]; exit }
+    ')"
+    printf '%s\n' "$version"
+    return
+  else
+    status=$?
+  fi
+  [[ "$status" == 20 ]] && return 1
+  die "$EX_UNAVAILABLE" "winget.exe could not query installed package raphamorim.rio (exit $status); repair App Installer or its sources"
+}
+
+windows_plan() {
+  local host="$1" data winget winget_version package id name source installed status remediation
+  local rows='[]' conflicts conflict_id localappdata stamp config installed_version installed_version_source pinned_version config_matches winget_rio_version
+  local graphics_preference_matches
+  doctor_host "$host" 1 >/dev/null ||
+    die "$EX_DATAERR" "host identity does not match the registered NixOS-WSL host $host"
+  data="$(host_json "$host")"
+  [[ "$(jq -r '.activation' <<<"$data")" == nixos-wsl ]] ||
+    die "$EX_USAGE" "Windows reconciliation is owned only by a registered nixos-wsl host"
+  is_wsl ||
+    die "$EX_UNAVAILABLE" "Windows reconciliation requires a live WSL session"
+  jq -e '
+    .schemaVersion == 2
+    and (.packages | type == "array" and length > 0)
+    and all(.packages[];
+      (.id | type == "string" and length > 0)
+      and (.name | type == "string" and length > 0)
+      and (.versionPolicy | type == "string" and length > 0)
+      and (.mutableStateOwner | type == "string" and length > 0)
+      and (if .source == "winget" then (.conflicts | type == "array")
+           elif .source == "github-release" then
+             (.version | type == "string" and length > 0)
+             and (.installer.name | type == "string" and length > 0)
+             and (.installer.url | type == "string" and length > 0)
+             and (.installer.sha256 | test("^[0-9a-f]{64}$"))
+             and (.config.destination == "%LOCALAPPDATA%\\rio\\config.toml")
+             and (.graphicsPreference == {
+               executable: "%ProgramFiles%\\Rio\\rio.exe",
+               mode: "high-performance",
+               registryValue: "GpuPreference=2;"
+             })
+           else false end))
+  ' "$windows_package_inventory" >/dev/null ||
+    die "$EX_SOFTWARE" "embedded Windows package inventory is invalid"
+  winget="$(windows_winget)"
+  winget_version="$("$winget" --version 2>/dev/null | awk 'NR == 1 { gsub(/\r/, ""); print; exit }')" ||
+    die "$EX_UNAVAILABLE" "winget.exe could not report its version through WSL interop"
+  [[ -n "$winget_version" ]] ||
+    die "$EX_UNAVAILABLE" "winget.exe returned an empty version through WSL interop"
+  localappdata="$(windows_localappdata)"
+  while IFS= read -r package; do
+    id="$(jq -r '.id' <<<"$package")"
+    name="$(jq -r '.name' <<<"$package")"
+    source="$(jq -r '.source' <<<"$package")"
+    if [[ "$source" == winget ]]; then
+      installed=false
+      windows_package_present "$winget" "$id" && installed=true
+      conflicts='[]'
+      while IFS= read -r conflict_id; do
+        [[ -n "$conflict_id" ]] || continue
+        if windows_package_present "$winget" "$conflict_id"; then
+          conflicts="$(jq -nc --argjson current "$conflicts" --arg id "$conflict_id" '$current + [$id]')"
+        fi
+      done < <(jq -r '.conflicts[]?' <<<"$package")
+      remediation=""
+      if [[ "$(jq -r 'length' <<<"$conflicts")" -gt 0 ]]; then
+        status=blocked
+        remediation="fully close Zen, back up its profile, then explicitly uninstall the stable Zen package before applying Twilight"
+      elif [[ "$installed" == true ]]; then status=installed; else status=missing; fi
+      rows="$(jq -nc --argjson rows "$rows" --argjson package "$package" --argjson installed "$installed" --argjson conflicts "$conflicts" --arg status "$status" --arg remediation "$remediation" '$rows + [$package + {installed:$installed,status:$status,detectedConflicts:$conflicts,remediation:$remediation}]')"
+    else
+      pinned_version="$(jq -r '.version' <<<"$package")"
+      stamp="$localappdata/rio/atyrode-install-version"
+      config="$localappdata/rio/config.toml"
+      installed_version=""
+      installed_version_source=absent
+      if winget_rio_version="$(windows_rio_version "$winget")"; then
+        if [[ -n "$winget_rio_version" ]]; then
+          installed_version="$winget_rio_version"
+          installed_version_source=winget
+        elif [[ -r "$stamp" ]]; then
+          installed_version="$(tr -d '\r\n' < "$stamp")"
+          installed_version_source=stamp
+        fi
+      fi
+      config_matches=false
+      [[ -f "$config" ]] && cmp -s "$rio_windows_config" "$config" && config_matches=true
+      graphics_preference_matches=false
+      windows_rio_gpu_preference_matches && graphics_preference_matches=true
+      remediation=""
+      if [[ -z "$installed_version" ]]; then
+        status=missing
+      elif [[ "$installed_version" != "$pinned_version" ]]; then
+        status=upgrade
+        remediation="Rio $installed_version is installed; apply installs the pinned $pinned_version MSI upgrade"
+      elif [[ "$config_matches" != true ]]; then
+        status="config-drift"
+        remediation="apply atomically redeploys the Nix-managed Rio config"
+      elif [[ "$graphics_preference_matches" != true ]]; then
+        status="graphics-preference-drift"
+        remediation="apply requests the high-performance Windows GPU for Rio"
+      else status=installed; fi
+      rows="$(jq -nc --argjson rows "$rows" --argjson package "$package" --arg pinnedVersion "$pinned_version" --arg installedVersion "$installed_version" --arg installedVersionSource "$installed_version_source" --argjson configMatches "$config_matches" --argjson graphicsPreferenceMatches "$graphics_preference_matches" --arg status "$status" --arg remediation "$remediation" '$rows + [$package + {pinnedVersion:$pinnedVersion,installedVersion:(if $installedVersion == "" then null else $installedVersion end),installedVersionSource:$installedVersionSource,configMatches:$configMatches,graphicsPreferenceMatches:$graphicsPreferenceMatches,status:$status,remediation:$remediation}]')"
+    fi
+  done < <(jq -c '.packages[]' "$windows_package_inventory")
+  jq -nc --arg host "$host" --arg backend "$winget" --arg wingetVersion "$winget_version" --argjson packages "$rows" '{
+    schemaVersion: 2, command: "windows plan", host: $host, backend: $backend,
+    wingetVersion: $wingetVersion, ready: all($packages[]; .status != "blocked"),
+    converged: all($packages[]; .status == "installed"),
+    changes: [$packages[] | select(.status != "installed")] | length, packages: $packages,
+    transactional: false,
+    mutationBoundary: "WinGet, Rio MSI, Windows graphics preferences, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
+  }'
+}
+
+windows_render_plan() {
+  jq -r '
+    "windows backend: \(.backend) (\(.wingetVersion))",
+    (.packages[] | "  \(.status): \(.name) [\(.id)]"
+      + (if .source == "github-release" then "\n    pinned: \(.pinnedVersion); installed: \(.installedVersion // "absent"); config matches: \(.configMatches); high-performance GPU requested: \(.graphicsPreferenceMatches)"
+         elif (.detectedConflicts | length) > 0 then "\n    conflicts: \(.detectedConflicts | join(", "))\n    remediation: \(.remediation)" else "" end)),
+    "windows changes: \(.changes)", "transactional: no -- \(.mutationBoundary)"' <<<"$1"
+}
+
+windows_deploy_rio_config() {
+  local localappdata="$1" temporary
+  local directory="$localappdata/rio" destination="$localappdata/rio/config.toml"
+  mkdir -p "$directory"
+  if [[ -f "$destination" ]] && cmp -s "$rio_windows_config" "$destination"; then return; fi
+  temporary="$(mktemp "$directory/.config.toml.XXXXXX")"
+  cp "$rio_windows_config" "$temporary"
+  mv -f "$temporary" "$destination"
+}
+
+windows_sha256() {
+  local sha256sum
+  sha256sum="$(windows_hook_command ATYRODE_SHA256SUM sha256sum)"
+  "$sha256sum" "$1" | awk '{print $1}'
+}
+
+windows_install_rio() {
+  local package="$1" localappdata="$2" fetch msiexec installer temporary windows_installer stamp stamp_temporary
+  fetch="$(windows_hook_command ATYRODE_FETCH curl)"
+  msiexec="$(windows_hook_command ATYRODE_MSIEXEC msiexec.exe)"
+  installer="$(jq -r '.installer' <<<"$package")"
+  temporary="$(mktemp)"
+  "$fetch" -fsSL "$(jq -r '.url' <<<"$installer")" -o "$temporary" ||
+    die "$EX_UNAVAILABLE" "could not download the pinned Rio installer"
+  if [[ "$(windows_sha256 "$temporary")" != "$(jq -r '.sha256' <<<"$installer")" ]]; then
+    rm -f "$temporary"
+    die "$EX_DATAERR" "refusing to install Rio: downloaded installer SHA256 does not match the lock"
+  fi
+  mkdir -p "$localappdata/rio"
+  windows_installer="$localappdata/rio/.atyrode-$(jq -r '.installer.name' <<<"$package")"
+  cp "$temporary" "$windows_installer"
+  rm -f "$temporary"
+  "$msiexec" /i "$(windows_interop_path "$windows_installer")" /qn /norestart </dev/null >&2 ||
+    die "$EX_SOFTWARE" "Rio MSI installation failed"
+  rm -f "$windows_installer"
+  stamp="$localappdata/rio/atyrode-install-version"
+  stamp_temporary="$(mktemp "$localappdata/rio/.atyrode-install-version.XXXXXX")"
+  printf '%s\n' "$(jq -r '.version' <<<"$package")" > "$stamp_temporary"
+  mv -f "$stamp_temporary" "$stamp"
+}
+
+windows_reconcile() {
+  local action="$1" host="$2" json="$3" plan winget package id source status final localappdata
+  plan="$(windows_plan "$host")"
+  if [[ "$action" == plan ]]; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
+    jq -e '.ready' <<<"$plan" >/dev/null || return "$EX_UNAVAILABLE"
+    return 0
+  fi
+  if ! jq -e '.ready' <<<"$plan" >/dev/null; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
+    return "$EX_UNAVAILABLE"
+  fi
+  if jq -e '.converged' <<<"$plan" >/dev/null; then
+    if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
+    return 0
+  fi
+  winget="$(windows_winget)"
+  localappdata="$(windows_localappdata)"
+  printf 'atyrode: reconciling native Windows packages through WSL interop (non-transactional)\n' >&2
+  while IFS= read -r package; do
+    source="$(jq -r '.source' <<<"$package")"
+    status="$(jq -r '.status' <<<"$package")"
+    if [[ "$source" == winget && "$status" == missing ]]; then
+      id="$(jq -r '.id' <<<"$package")"
+      printf 'atyrode: installing %s through WinGet\n' "$id" >&2
+      "$winget" install --id "$id" --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity </dev/null >&2 ||
+        return "$EX_SOFTWARE"
+    elif [[ "$source" == github-release ]]; then
+      if [[ "$status" == missing || "$status" == upgrade ]]; then windows_install_rio "$package" "$localappdata"; fi
+      if [[ "$status" != installed ]]; then windows_deploy_rio_config "$localappdata"; fi
+      if [[ "$(jq -r '.graphicsPreferenceMatches' <<<"$package")" != true ]]; then windows_set_rio_gpu_preference; fi
+    fi
+  done < <(jq -c '.packages[] | select(.status != "installed")' <<<"$plan")
+  final="$(windows_plan "$host")"
+  jq -e '.ready and .converged' <<<"$final" >/dev/null || return "$EX_SOFTWARE"
+  if [[ "$json" == 1 ]]; then printf '%s\n' "$final"; else windows_render_plan "$final"; fi
+}
+
+cmd_windows() {
+  local action="${1:-}" requested="" json=0 host
+  case "$action" in
+    plan | apply) shift ;;
+    *) die "$EX_USAGE" "windows expects plan or apply" ;;
+  esac
+  if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown windows option: $1" ;;
+    esac
+    shift
+  done
+  [[ "$action" != apply ]] || guard_production_mutation "windows apply"
+  host="$(resolve_host "$requested")"
+  windows_reconcile "$action" "$host" "$json"
+}
+
 capabilities() {
   local action="${1:-list}" requested="" json=0
   shift || true
@@ -177,6 +535,997 @@ capabilities() {
   esac
 }
 
+inventory() {
+  local host="" ref="" repo="" json=0 system target manifest resolved_ref
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--host expects a host name"
+        host="$1"
+        ;;
+      --ref)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--ref expects a Git revision"
+        ref="$1"
+        ;;
+      --repo)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--repo expects a flake path"
+        repo="$1"
+        ;;
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown inventory option: $1" ;;
+    esac
+    shift
+  done
+  [[ "$json" == 1 ]] || die "$EX_USAGE" "inventory currently requires --json"
+  [[ -z "$ref" || -z "$repo" ]] || die "$EX_USAGE" "--ref and --repo are mutually exclusive"
+
+  system="$(actual_system)"
+  if [[ -n "$repo" ]]; then
+    target="$repo#inventory.$system"
+  elif [[ -n "$ref" ]]; then
+    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+      resolved_ref="$ref"
+    else
+      resolved_ref="$(git ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref" |
+        head -n 1 | cut -f 1)" || true
+      [[ -n "$resolved_ref" ]] ||
+        die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
+    fi
+    target="$flake_ref/$resolved_ref#inventory.$system"
+  else
+    [[ "$embedded_revision" =~ ^[0-9a-f]{40}$ ]] ||
+      die "$EX_UNAVAILABLE" "this development build has no immutable inventory revision; pass --ref or --repo"
+    target="$flake_ref/$embedded_revision#inventory.$system"
+  fi
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_INVENTORY:-}" ]]; then
+    [[ -f "$_ATYRODE_TEST_INVENTORY" && ! -L "$_ATYRODE_TEST_INVENTORY" ]] ||
+      die "$EX_DATAERR" "inventory fixture must be a regular file"
+    manifest="$(jq -ec 'select(type == "object")' "$_ATYRODE_TEST_INVENTORY")" ||
+      die "$EX_DATAERR" "inventory fixture is not a JSON object"
+  else
+    manifest="$(nix eval "$target" --json --no-write-lock-file)" ||
+      die "$EX_UNAVAILABLE" "could not evaluate inventory from $target"
+  fi
+  if [[ -z "$host" ]]; then
+    jq -cS . <<<"$manifest"
+  else
+    jq -ceS --arg requested "$host" '
+      .hosts[$requested] as $match
+      | if $match == null then error("unknown host: " + $requested)
+        else {
+          schemaVersion,
+          identity,
+          authority,
+          host: $match
+        }
+        end
+    ' <<<"$manifest" || die "$EX_DATAERR" "unknown host in evaluated inventory: $host"
+  fi
+}
+
+# lifecycle reports a deliberately small, named set of operator-owned lifecycle
+# artifacts. It never searches HOME: Home Manager's profile, the configured
+# dotfiles checkout, OMP's default state/session/worktree roots, and the named
+# OMP/atyrode cache/state paths are the entire probe surface. A report is
+# advisory only; classifications are conservative and no branch mutates state.
+lifecycle_append() {
+  local rows="$1" category="$2" path="$3" bytes="$4" evidence="$5" owner="$6" classification="$7" state="$8"
+  jq -c --argjson rows "$rows" --arg category "$category" --arg path "$path" \
+    --arg evidence "$evidence" --arg owner "$owner" --arg classification "$classification" --arg state "$state" \
+    --argjson bytes "$bytes" \
+    '$rows + [{category:$category,path:$path,bytes:$bytes,evidence:$evidence,owner:$owner,classification:$classification,state:$state}]' \
+    <<<'null'
+}
+
+lifecycle_diagnostic() {
+  local diagnostics="$1" scope="$2" path="$3" code="$4" message="$5"
+  jq -c --argjson diagnostics "$diagnostics" --arg scope "$scope" --arg path "$path" \
+    --arg code "$code" --arg message "$message" \
+    '$diagnostics + [{scope:$scope,path:$path,code:$code,message:$message}]' <<<'null'
+}
+
+lifecycle_bytes() {
+  local path="$1" size
+  [[ -e "$path" || -L "$path" ]] || { printf 'null'; return; }
+  size="$(du -sb "$path" 2>/dev/null | awk 'NR == 1 { print $1 }')" || true
+  [[ "$size" =~ ^[0-9]+$ ]] && printf '%s' "$size" || printf 'null'
+}
+
+# Home Manager profile links point into the Nix store. The link's own filesystem
+# bytes are not the generation's footprint, so ask Nix for its numeric closure
+# size instead. A missing/non-store link or a failed store query is explicitly
+# unknown rather than an invented or dereferenced directory size.
+lifecycle_generation_bytes() {
+  local link="$1" target size
+  target="$(readlink -f "$link" 2>/dev/null)" || { printf 'null'; return; }
+  [[ -n "$target" && -e "$target" ]] || { printf 'null'; return; }
+  size="$(nix path-info --json --closure-size "$target" 2>/dev/null \
+    | jq -er 'to_entries[0].value.closureSize | select(type == "number")' 2>/dev/null)" || true
+  [[ "$size" =~ ^[0-9]+$ ]] && printf '%s' "$size" || printf 'null'
+}
+
+lifecycle_git_available() {
+  local cmd=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || cmd="$ATYRODE_GIT"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+lifecycle_git() {
+  local cmd=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || cmd="$ATYRODE_GIT"
+  "$cmd" "$@"
+}
+
+lifecycle_worktree() {
+  local rows="$1" diagnostics="$2" category="$3" path="$4" owner="$5" active="$6"
+  local bytes classification=protected state=clean status
+  bytes="$(lifecycle_bytes "$path")"
+  if ! lifecycle_git_available; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$path" tool-unavailable "git is unavailable; worktree state is unknown")"
+    rows="$(lifecycle_append "$rows" "$category" "$path" "$bytes" "git worktree" "$owner" unknown unknown)"
+  elif ! status="$(lifecycle_git -C "$path" status --porcelain 2>/dev/null)"; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$path" malformed "cannot read Git worktree state")"
+    rows="$(lifecycle_append "$rows" "$category" "$path" "$bytes" "git worktree" "$owner" unknown malformed)"
+  else
+    [[ -z "$status" ]] || { classification=dirty; state=dirty; }
+    [[ "$active" == 1 && "$classification" == protected ]] && { classification=active; state=active; }
+    rows="$(lifecycle_append "$rows" "$category" "$path" "$bytes" "git status --porcelain" "$owner" "$classification" "$state")"
+  fi
+  printf '%s\n%s\n' "$rows" "$diagnostics"
+}
+
+lifecycle_nix_env_available() {
+  local cmd=nix-env
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX_ENV:-}" ]] || cmd="$ATYRODE_NIX_ENV"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+lifecycle_omp_command() {
+  local cmd=omp
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_OMP:-}" ]] || cmd="$ATYRODE_OMP"
+  printf '%s\n' "$cmd"
+}
+
+lifecycle_omp_available() {
+  local cmd
+  cmd="$(lifecycle_omp_command)"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+lifecycle_omp() {
+  local cmd
+  cmd="$(lifecycle_omp_command)"
+  "$cmd" "$@"
+}
+
+lifecycle_omp_signal() {
+  local signals="$1" kind="$2" value="${3:-}"
+  jq -c --argjson signals "$signals" --arg kind "$kind" --arg value "$value" \
+    '$signals + [({kind:$kind} + (if $value == "" then {} else {value:$value} end))]' <<<'null'
+}
+
+# OMP worktrees are reclaim candidates only when every conservative liveness
+# probe is quiet. A dirty Git tree, a branch checked out in the worktree, or an
+# explicit activity/lock marker protects the directory. Git probe failures are
+# also protected as unknown; this report never turns uncertainty into deletion.
+lifecycle_omp_worktree_report() {
+  local path="$1" bytes inside="" status="" branch="" git_dir=""
+  local classification=reclaimable state=clean git_state=not-a-worktree protected=false
+  local signals='[]' marker marker_path
+  bytes="$(lifecycle_bytes "$path")"
+
+  if lifecycle_git_available; then
+    if inside="$(lifecycle_git -C "$path" rev-parse --is-inside-work-tree 2>/dev/null)" &&
+      [[ "$inside" == true ]]; then
+      git_state=clean
+      if status="$(lifecycle_git -C "$path" status --porcelain 2>/dev/null)"; then
+        if [[ -n "$status" ]]; then
+          signals="$(lifecycle_omp_signal "$signals" dirty-git-tree)"
+          state=dirty
+        fi
+      else
+        git_state=unreadable
+        classification=unknown
+        state=unknown
+        protected=true
+      fi
+      if branch="$(lifecycle_git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null)" &&
+        [[ -n "$branch" ]]; then
+        signals="$(lifecycle_omp_signal "$signals" checked-out-branch "$branch")"
+      else
+        branch=""
+      fi
+      if git_dir="$(lifecycle_git -C "$path" rev-parse --absolute-git-dir 2>/dev/null)" &&
+        [[ -n "$git_dir" ]]; then
+        for marker in locked index.lock; do
+          marker_path="$git_dir/$marker"
+          [[ -e "$marker_path" || -L "$marker_path" ]] || continue
+          signals="$(lifecycle_omp_signal "$signals" git-lock-marker "$marker_path")"
+        done
+      fi
+    fi
+  else
+    git_state=tool-unavailable
+    classification=unknown
+    state=unknown
+    protected=true
+  fi
+
+  for marker in .omp-active .active active .activity activity .lock lock; do
+    marker_path="$path/$marker"
+    [[ -e "$marker_path" || -L "$marker_path" ]] || continue
+    case "$marker" in
+      .lock | lock) signals="$(lifecycle_omp_signal "$signals" lock-marker "$marker_path")" ;;
+      *) signals="$(lifecycle_omp_signal "$signals" activity-marker "$marker_path")" ;;
+    esac
+  done
+
+  if jq -e 'length > 0' <<<"$signals" >/dev/null; then
+    classification=live
+    protected=true
+    [[ "$state" == dirty ]] || state=active
+  fi
+
+  jq -cn --arg path "$path" --argjson bytes "$bytes" --arg classification "$classification" \
+    --arg state "$state" --arg gitState "$git_state" --arg branch "$branch" \
+    --argjson protected "$protected" --argjson signals "$signals" \
+    '{path:$path,bytes:$bytes,classification:$classification,protected:$protected,state:$state,
+      gitState:$gitState,branch:(if $branch == "" then null else $branch end),signals:$signals}'
+}
+
+lifecycle_omp_worktrees() {
+  local root="$1" worktrees='[]' top report
+  [[ -d "$root" ]] || { printf '[]\n'; return; }
+  for top in "$root"/*; do
+    [[ -d "$top" ]] || continue
+    report="$(lifecycle_omp_worktree_report "$top")"
+    worktrees="$(jq -c --argjson worktrees "$worktrees" --argjson report "$report" \
+      '$worktrees + [$report]' <<<'null')"
+  done
+  jq -c 'sort_by(.path)' <<<"$worktrees"
+}
+
+lifecycle_omp_session_count() {
+  local path="$1" count
+  [[ -d "$path" ]] || { printf '0\n'; return; }
+  count="$(find "$path" -type f \( -name '*.jsonl' -o -name '*.jsonl.gz' \) -printf '\n' 2>/dev/null |
+    awk 'END { print NR + 0 }')" || count=0
+  [[ "$count" =~ ^[0-9]+$ ]] && printf '%s\n' "$count" || printf '0\n'
+}
+
+# `omp gc` is dry-run by default. `omp worktree clear` is only safe with its
+# explicit flag, so keep the argv literal here and expose it in JSON for audit.
+# Probe failures are data in the report, never a reason for lifecycle to fail.
+lifecycle_omp_dry_runs() {
+  local available=false binary="" gc_output="" clear_output=""
+  local gc_status=unavailable clear_status=unavailable gc_exit=null clear_exit=null
+  if lifecycle_omp_available; then
+    available=true
+    binary="$(command -v "$(lifecycle_omp_command)")"
+    if gc_output="$(lifecycle_omp gc 2>&1)"; then
+      gc_status=ok
+      gc_exit=0
+    else
+      gc_exit=$?
+      gc_status=error
+    fi
+    if clear_output="$(lifecycle_omp worktree clear --dry-run 2>&1)"; then
+      clear_status=ok
+      clear_exit=0
+    else
+      clear_exit=$?
+      clear_status=error
+    fi
+  fi
+  jq -cn --argjson available "$available" --arg binary "$binary" \
+    --arg gcStatus "$gc_status" --argjson gcExit "$gc_exit" --arg gcOutput "$gc_output" \
+    --arg clearStatus "$clear_status" --argjson clearExit "$clear_exit" --arg clearOutput "$clear_output" \
+    '{available:$available,binary:(if $available then $binary else null end),
+      gc:{command:["omp","gc"],dryRun:true,status:$gcStatus,exitCode:$gcExit,
+        output:(if $available then $gcOutput else null end)},
+      worktreeClear:{command:["omp","worktree","clear","--dry-run"],dryRun:true,status:$clearStatus,
+        exitCode:$clearExit,output:(if $available then $clearOutput else null end)}}'
+}
+
+lifecycle_omp_report() {
+  local state_root="$1" sessions="$2" worktree_root="$3" cache="$4"
+  local state_state=absent sessions_state=absent worktree_state=absent cache_state=absent
+  local state_bytes session_bytes worktree_bytes cache_bytes session_count worktrees dry_runs
+  local worktree_count live_count reclaimable_count unknown_count
+  [[ -e "$state_root" || -L "$state_root" ]] && state_state=present
+  [[ -d "$sessions" ]] && sessions_state=present
+  [[ -d "$worktree_root" ]] && worktree_state=present
+  [[ -e "$cache" || -L "$cache" ]] && cache_state=present
+  state_bytes="$(lifecycle_bytes "$state_root")"
+  session_bytes="$(lifecycle_bytes "$sessions")"
+  worktree_bytes="$(lifecycle_bytes "$worktree_root")"
+  cache_bytes="$(lifecycle_bytes "$cache")"
+  session_count="$(lifecycle_omp_session_count "$sessions")"
+  worktrees="$(lifecycle_omp_worktrees "$worktree_root")"
+  worktree_count="$(jq 'length' <<<"$worktrees")"
+  live_count="$(jq '[.[] | select(.classification == "live")] | length' <<<"$worktrees")"
+  reclaimable_count="$(jq '[.[] | select(.classification == "reclaimable")] | length' <<<"$worktrees")"
+  unknown_count="$(jq '[.[] | select(.classification == "unknown")] | length' <<<"$worktrees")"
+  dry_runs="$(lifecycle_omp_dry_runs)"
+
+  jq -cn --arg stateRoot "$state_root" --arg stateState "$state_state" --argjson stateBytes "$state_bytes" \
+    --arg sessions "$sessions" --arg sessionsState "$sessions_state" --argjson sessionBytes "$session_bytes" \
+    --argjson sessionCount "$session_count" --arg worktreeRoot "$worktree_root" \
+    --arg worktreeState "$worktree_state" --argjson worktreeBytes "$worktree_bytes" \
+    --argjson worktreeCount "$worktree_count" --argjson liveCount "$live_count" \
+    --argjson reclaimableCount "$reclaimable_count" --argjson unknownCount "$unknown_count" \
+    --arg cache "$cache" --arg cacheState "$cache_state" --argjson cacheBytes "$cache_bytes" \
+    --argjson worktrees "$worktrees" --argjson dryRuns "$dry_runs" \
+    '{stateRoot:{path:$stateRoot,bytes:$stateBytes,state:$stateState},
+      sessions:{path:$sessions,bytes:$sessionBytes,count:$sessionCount,state:$sessionsState},
+      worktreeRoot:{path:$worktreeRoot,bytes:$worktreeBytes,count:$worktreeCount,state:$worktreeState,
+        classifications:{live:$liveCount,reclaimable:$reclaimableCount,unknown:$unknownCount}},
+      worktrees:$worktrees,caches:[{path:$cache,bytes:$cacheBytes,state:$cacheState}],
+      dryRuns:$dryRuns,mutationBoundary:"read-only; omp gc default dry-run; omp worktree clear --dry-run"}'
+}
+
+lifecycle_print_omp() {
+  local report="$1" output
+  jq -r '
+    "omp-state-root: \(.stateRoot.state) \(.stateRoot.path) [bytes: \(if .stateRoot.bytes == null then "unknown" else (.stateRoot.bytes|tostring) end)]",
+    "omp-sessions: \(.sessions.state) \(.sessions.path) [count: \(.sessions.count); bytes: \(if .sessions.bytes == null then "unknown" else (.sessions.bytes|tostring) end)]",
+    "omp-worktree-root: \(.worktreeRoot.state) \(.worktreeRoot.path) [count: \(.worktreeRoot.count); live: \(.worktreeRoot.classifications.live); reclaimable: \(.worktreeRoot.classifications.reclaimable); unknown: \(.worktreeRoot.classifications.unknown); bytes: \(if .worktreeRoot.bytes == null then "unknown" else (.worktreeRoot.bytes|tostring) end)]",
+    (.worktrees[] | "omp-worktree: \(.classification) \(.path) [protected: \(.protected); state: \(.state); bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end); signals: \([.signals[].kind] | join(","))]"),
+    (.caches[] | "omp-cache: \(.state) \(.path) [bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end)]")
+  ' <<<"$report"
+  if jq -e '.dryRuns.available' <<<"$report" >/dev/null; then
+    printf 'omp gc (default dry-run): %s\n' "$(jq -r '.dryRuns.gc.status' <<<"$report")"
+    output="$(jq -r '.dryRuns.gc.output // empty' <<<"$report")"
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+    printf 'omp worktree clear --dry-run: %s\n' "$(jq -r '.dryRuns.worktreeClear.status' <<<"$report")"
+    output="$(jq -r '.dryRuns.worktreeClear.output // empty' <<<"$report")"
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+  else
+    printf 'omp dry-runs: unavailable (filesystem-only report)\n'
+  fi
+}
+
+
+cmd_lifecycle() {
+  local json=0 rows='[]' diagnostics='[]' profile line gen current bytes output omp_report
+  local repo="$HOME/nix-dotfiles" omp_state="$HOME/.omp" omp_sessions="$HOME/.omp/agent/sessions"
+  local omp_worktrees="$HOME/.omp/wt" cache="$HOME/.cache/oh-my-pi"
+  local untrusted_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-untrusted"
+  local seed_state="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-plain-seed"
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_LIFECYCLE_REPO:-}" ]] || repo="$ATYRODE_LIFECYCLE_REPO"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+
+      *) die "$EX_USAGE" "unknown lifecycle option: $1" ;;
+    esac
+    shift
+  done
+
+  profile="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/home-manager"
+  if [[ ! -e "$profile" && ! -L "$profile" ]]; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" absent "Home Manager generations profile is absent")"
+    rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" null "nix-env --list-generations" home-manager unknown absent)"
+  elif ! lifecycle_nix_env_available; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" tool-unavailable "nix-env is unavailable; generations are unknown")"
+    rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" "$(lifecycle_generation_bytes "$profile")" "nix-env --list-generations" home-manager unknown unknown)"
+  elif ! output="$(nix_env -p "$profile" --list-generations 2>/dev/null)"; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" unreadable "cannot list Home Manager generations")"
+    rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" "$(lifecycle_generation_bytes "$profile")" "nix-env --list-generations" home-manager unknown unknown)"
+  else
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      if [[ "$line" =~ ^[[:space:]]*([0-9]+)[[:space:]] ]]; then
+        gen="${BASH_REMATCH[1]}"; current=protected
+        [[ "$line" == *"(current)"* ]] && current="protected-current"
+        rows="$(lifecycle_append "$rows" home-manager-generation "$profile-$gen-link" "$(lifecycle_generation_bytes "$profile-$gen-link")" "nix-env --list-generations" home-manager "$current" present)"
+      else
+        diagnostics="$(lifecycle_diagnostic "$diagnostics" generations "$profile" malformed "unparseable nix-env generation row")"
+        rows="$(lifecycle_append "$rows" home-manager-generation-profile "$profile" "$(lifecycle_generation_bytes "$profile")" "nix-env --list-generations" home-manager unknown malformed)"
+      fi
+    done <<<"$output"
+  fi
+
+  if [[ ! -d "$repo" ]]; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$repo" absent "configured native Git checkout is absent")"
+    rows="$(lifecycle_append "$rows" git-worktree "$repo" null "git worktree list --porcelain" dotfiles unknown absent)"
+  elif ! lifecycle_git_available; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$repo" tool-unavailable "git is unavailable; native worktrees are unknown")"
+    rows="$(lifecycle_append "$rows" git-worktree "$repo" "$(lifecycle_bytes "$repo")" "git worktree list --porcelain" dotfiles unknown unknown)"
+  elif ! output="$(lifecycle_git -C "$repo" worktree list --porcelain 2>/dev/null)"; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$repo" malformed "cannot enumerate native Git worktrees")"
+    rows="$(lifecycle_append "$rows" git-worktree "$repo" "$(lifecycle_bytes "$repo")" "git worktree list --porcelain" dotfiles unknown malformed)"
+  else
+    local worktree="" first=1
+    while IFS= read -r line; do
+      [[ "$line" == worktree\ * ]] || continue
+      worktree="${line#worktree }"
+      readarray -t pair < <(lifecycle_worktree "$rows" "$diagnostics" git-worktree "$worktree" dotfiles "$first")
+      rows="${pair[0]}"; diagnostics="${pair[1]}"; first=0
+    done <<<"$output"
+  fi
+
+  if [[ ! -d "$omp_worktrees" ]]; then
+    diagnostics="$(lifecycle_diagnostic "$diagnostics" worktree "$omp_worktrees" absent "OMP worktree root is absent")"
+    rows="$(lifecycle_append "$rows" omp-worktree-root "$omp_worktrees" null "OMP v17 worktree root" omp unknown absent)"
+  else
+    local path
+    for path in "$omp_worktrees"/*; do
+      [[ -d "$path" ]] || continue
+      readarray -t pair < <(lifecycle_worktree "$rows" "$diagnostics" omp-worktree "$path" omp 0)
+      rows="${pair[0]}"; diagnostics="${pair[1]}"
+    done
+  fi
+
+  for path in "$cache" "$untrusted_state" "$seed_state"; do
+    if [[ -e "$path" || -L "$path" ]]; then
+      if [[ "$path" == "$cache" ]]; then
+        rows="$(lifecycle_append "$rows" omp-cache "$path" "$(lifecycle_bytes "$path")" "explicit OMP cache path" omp disposable cache)"
+      else
+        rows="$(lifecycle_append "$rows" atyrode-state "$path" "$(lifecycle_bytes "$path")" "explicit atyrode state path" atyrode protected state)"
+      fi
+    else
+      rows="$(lifecycle_append "$rows" "$([[ "$path" == "$cache" ]] && echo omp-cache || echo atyrode-state)" "$path" null "explicit managed path" "$([[ "$path" == "$cache" ]] && echo omp || echo atyrode)" unknown absent)"
+    fi
+  done
+
+  omp_report="$(lifecycle_omp_report "$omp_state" "$omp_sessions" "$omp_worktrees" "$cache")"
+
+  if [[ "$json" == 1 ]]; then
+    jq -cn --argjson entries "$rows" --argjson diagnostics "$diagnostics" --argjson omp "$omp_report" \
+      '{schemaVersion:1,entries:($entries | sort_by(.category, .path)),
+        diagnostics:($diagnostics | sort_by(.scope, .path, .code)),omp:$omp}'
+  else
+    printf 'atyrode: lifecycle inventory (read-only)\n'
+    jq -r '.[] | select(.category != "omp-worktree" and .category != "omp-worktree-root" and .category != "omp-cache")
+      | "\(.category): \(.classification) \(.path) [bytes: \(if .bytes == null then "unknown" else (.bytes|tostring) end); \(.evidence)]"' <<<"$rows"
+    lifecycle_print_omp "$omp_report"
+    jq -r '.[] | "diagnostic: \(.scope) \(.code) \(.path): \(.message)"' <<<"$diagnostics" >&2
+  fi
+}
+
+git_checks='[]'
+
+git_check_add() {
+  local id="$1" owner="$2" required="$3" status="$4" code="$5"
+  local summary="$6" remediation="$7" expected="$8" actual="$9"
+
+  git_checks="$(jq -c \
+    --arg id "$id" \
+    --arg owner "$owner" \
+    --argjson required "$required" \
+    --arg status "$status" \
+    --arg code "$code" \
+    --arg summary "$summary" \
+    --arg remediation "$remediation" \
+    --argjson expected "$expected" \
+    --argjson actual "$actual" \
+    '. + [{
+      id: $id,
+      owner: $owner,
+      required: $required,
+      status: $status,
+      code: (if $code == "" then null else $code end),
+      summary: $summary,
+      remediation: (if $remediation == "" then null else $remediation end),
+      expected: $expected,
+      actual: $actual
+    }]' <<<"$git_checks")"
+}
+
+expand_home_path() {
+  local path="$1"
+  if [[ "$path" == \~/* ]]; then
+    printf '%s/%s\n' "$HOME" "${path:2}"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+git_helper_is_store() {
+  local helper="$1"
+  [[ "$helper" =~ ^store([[:space:]]|$) ||
+    "$helper" =~ (^|[[:space:]/])git-credential-store([[:space:]]|$) ]]
+}
+
+git_helper_is_gh() {
+  local helper="$1"
+  [[ "$helper" =~ (^|[[:space:]/])gh[[:space:]]+auth[[:space:]]+git-credential([[:space:]]|$) ]]
+}
+
+git_helper_is_secure() {
+  local helper="$1"
+  if git_helper_is_gh "$helper"; then
+    return 0
+  fi
+  [[ "$helper" =~ ^(osxkeychain|libsecret|manager|manager-core)([[:space:]]|$) ||
+    "$helper" =~ (^|[[:space:]/])git-credential-(osxkeychain|libsecret|manager|manager-core)([[:space:]]|$) ]]
+}
+
+git_forge_url_kind() {
+  local url="$1" rest authority host scheme
+  case "$url" in
+    git@github.com:* | ssh://git@github.com/* | ssh://github.com/*)
+      printf 'github-ssh\n'
+      return
+      ;;
+    git@gitlab.com:* | ssh://git@gitlab.com/* | ssh://gitlab.com/*)
+      printf 'gitlab-ssh\n'
+      return
+      ;;
+    git://github.com/*)
+      printf 'github-insecure\n'
+      return
+      ;;
+    git://gitlab.com/*)
+      printf 'gitlab-insecure\n'
+      return
+      ;;
+    https://* | http://*)
+      scheme="${url%%://*}"
+      rest="${url#*://}"
+      authority="${rest%%/*}"
+      host="${authority##*@}"
+      host="${host%%:*}"
+      case "$host:$scheme" in
+        github.com:https) printf 'github-https\n' ;;
+        gitlab.com:https) printf 'gitlab-https\n' ;;
+        github.com:http) printf 'github-insecure\n' ;;
+        gitlab.com:http) printf 'gitlab-insecure\n' ;;
+        *) printf 'other\n' ;;
+      esac
+      return
+      ;;
+  esac
+  printf 'other\n'
+}
+
+doctor_git() {
+  local json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) die "$EX_USAGE" "unknown doctor git option: $1" ;;
+    esac
+    shift
+  done
+
+  git_checks='[]'
+  local config_readable=true helper_rows="" helper_status=0
+  local store_helpers=0 global_secure=false github_secure=false gitlab_secure=false
+  local github_helper=false line name value
+
+  if ! git config --list --show-origin >/dev/null 2>&1; then
+    config_readable=false
+  fi
+  helper_rows="$(git config --show-origin --get-regexp '^credential(\..*)?\.helper$' 2>/dev/null)" ||
+    helper_status=$?
+  if ((helper_status > 1)); then
+    config_readable=false
+    helper_rows=""
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    IFS=$'\t ' read -r _ name value <<<"$line"
+    if git_helper_is_store "$value"; then
+      store_helpers=$((store_helpers + 1))
+    fi
+    case "$name" in
+      credential.helper)
+        if [[ -z "$value" ]]; then
+          global_secure=false
+        elif git_helper_is_secure "$value"; then
+          global_secure=true
+        fi
+        ;;
+      credential.https://github.com.helper | credential.https://gist.github.com.helper)
+        if [[ -z "$value" ]]; then
+          github_secure=false
+        elif git_helper_is_secure "$value"; then
+          github_secure=true
+        fi
+        git_helper_is_gh "$value" && github_helper=true
+        ;;
+      credential.https://gitlab.com.helper)
+        if [[ -z "$value" ]]; then
+          gitlab_secure=false
+        elif git_helper_is_secure "$value"; then
+          gitlab_secure=true
+        fi
+        ;;
+    esac
+  done <<<"$helper_rows"
+  [[ "$global_secure" == false ]] || {
+    github_secure=true
+    gitlab_secure=true
+  }
+
+  local expected actual status code summary remediation
+  expected='{"readable":true}'
+  actual="$(jq -nc --argjson readable "$config_readable" '{readable:$readable}')"
+  if [[ "$config_readable" == true ]]; then
+    status=ok
+    code=""
+    summary="Git configuration is readable"
+    remediation=""
+  else
+    status=failed
+    code=configuration-unreadable
+    summary="Git configuration could not be read safely"
+    remediation="repair the Git configuration before relying on authentication or signing"
+  fi
+  git_check_add git-configuration home-manager true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local agent_socket=false agent_available=false agent_key_count=0 agent_status=0 agent_output=""
+  [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] && agent_socket=true
+  if command -v ssh-add >/dev/null 2>&1 && [[ "$agent_socket" == true ]]; then
+    agent_output="$(ssh-add -l 2>/dev/null)" || agent_status=$?
+    case "$agent_status" in
+      0)
+        agent_available=true
+        agent_key_count="$(jq -Rsc 'split("\n") | map(select(length > 0)) | length' <<<"$agent_output")"
+        ;;
+      1) agent_available=true ;;
+    esac
+  else
+    agent_status=2
+  fi
+  expected='{"available":true}'
+  actual="$(jq -nc --argjson socketPresent "$agent_socket" --argjson available "$agent_available" \
+    '{socketPresent:$socketPresent,available:$available}')"
+  if [[ "$agent_available" == true ]]; then
+    status=ok
+    code=""
+    summary="SSH agent is reachable"
+    remediation=""
+  else
+    status=failed
+    code=agent-unavailable
+    summary="SSH agent is unavailable"
+    remediation="start the platform SSH agent and export its socket; do not fall back to a plaintext HTTPS helper"
+  fi
+  git_check_add ssh-agent operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  expected='{"minimumKeyCount":1}'
+  actual="$(jq -nc --argjson keyCount "$agent_key_count" '{keyCount:$keyCount}')"
+  if [[ "$agent_available" == true && "$agent_key_count" -gt 0 ]]; then
+    status=ok
+    code=""
+    summary="SSH agent has at least one key loaded"
+    remediation=""
+  else
+    status=failed
+    code=no-agent-keys
+    summary="SSH agent has no usable keys"
+    remediation="load this machine's distinct authentication and signing keys into the agent"
+  fi
+  git_check_add ssh-agent-keys operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local signing_config="" signing_path="" signing_mode="" signing_readable=false
+  local signing_permissions=false signing_public=false signing_valid=false key_type="" key_blob=""
+  signing_config="$(git config --global --get user.signingKey 2>/dev/null || true)"
+  if [[ -n "$signing_config" ]]; then
+    signing_path="$(expand_home_path "$signing_config")"
+  fi
+  if [[ -n "$signing_path" && -f "$signing_path" && -r "$signing_path" ]]; then
+    signing_readable=true
+    signing_mode="$(stat -c '%a' -- "$signing_path" 2>/dev/null || true)"
+    if [[ "$signing_mode" =~ ^[0-7]{3,4}$ ]] &&
+      (((8#$signing_mode & 8#022) == 0)); then
+      signing_permissions=true
+    fi
+    IFS=' ' read -r key_type key_blob _ <"$signing_path" || true
+    case "$key_type" in
+      ssh-* | ecdsa-* | sk-*) signing_public=true ;;
+    esac
+    if [[ "$signing_public" == true ]] && ssh-keygen -lf "$signing_path" >/dev/null 2>&1; then
+      signing_valid=true
+    fi
+  fi
+  expected='{"configured":true,"readable":true,"publicKey":true,"valid":true,"permissionsSafe":true}'
+  actual="$(jq -nc \
+    --argjson configured "$([[ -n "$signing_config" ]] && echo true || echo false)" \
+    --argjson readable "$signing_readable" \
+    --argjson publicKey "$signing_public" \
+    --argjson valid "$signing_valid" \
+    --argjson permissionsSafe "$signing_permissions" \
+    --arg mode "$signing_mode" \
+    '{configured:$configured,readable:$readable,publicKey:$publicKey,valid:$valid,
+      permissionsSafe:$permissionsSafe,mode:(if $mode == "" then null else $mode end)}')"
+  if [[ "$signing_readable" == true && "$signing_public" == true &&
+    "$signing_valid" == true && "$signing_permissions" == true ]]; then
+    status=ok
+    code=""
+    summary="Configured SSH signing public key is readable, valid, and not writable by group or others"
+    remediation=""
+  else
+    status=failed
+    code=signing-key-invalid
+    summary="Configured SSH signing public key is missing, unreadable, invalid, or writable by group or others"
+    remediation="provision this machine's public signing key at user.signingKey with mode 0644 or stricter"
+  fi
+  git_check_add signing-key operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local signers_config="" signers_path="" signers_readable=false signers_match=false
+  local signers_authorize=false
+  signers_config="$(git config --global --get gpg.ssh.allowedSignersFile 2>/dev/null || true)"
+  if [[ -n "$signers_config" ]]; then
+    signers_path="$(expand_home_path "$signers_config")"
+  fi
+  if [[ -n "$signers_path" && -f "$signers_path" && -r "$signers_path" ]]; then
+    signers_readable=true
+    cmp -s -- "$signers_path" "$managed_git_allowed_signers" && signers_match=true
+    if [[ "$signing_valid" == true ]] &&
+      awk -v type="$key_type" -v blob="$key_blob" \
+        '$2 == type && $3 == blob { found = 1 } END { exit !found }' "$signers_path"; then
+      signers_authorize=true
+    fi
+  fi
+  expected='{"configured":true,"readable":true,"managedContent":true,"signingKeyAuthorized":true}'
+  actual="$(jq -nc \
+    --argjson configured "$([[ -n "$signers_config" ]] && echo true || echo false)" \
+    --argjson readable "$signers_readable" \
+    --argjson managedContent "$signers_match" \
+    --argjson signingKeyAuthorized "$signers_authorize" \
+    '{configured:$configured,readable:$readable,managedContent:$managedContent,
+      signingKeyAuthorized:$signingKeyAuthorized}')"
+  if [[ "$signers_readable" == true && "$signers_match" == true && "$signers_authorize" == true ]]; then
+    status=ok
+    code=""
+    summary="allowed_signers matches managed content and authorizes the configured signing key"
+    remediation=""
+  else
+    status=failed
+    code=allowed-signers-drift
+    summary="allowed_signers is missing, unreadable, drifting from managed content, or does not authorize the signing key"
+    remediation="apply the current Home Manager configuration; do not edit allowed_signers manually"
+  fi
+  git_check_add allowed-signers home-manager true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local inside_work_tree=false forge_remotes=0 ssh_fetch=0 https_fetch=0
+  local ssh_push=0 https_push=0 insecure_urls=0 unsafe_https_push=0
+  local remote remote_is_forge kind url
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    inside_work_tree=true
+    while IFS= read -r remote; do
+      [[ -n "$remote" ]] || continue
+      remote_is_forge=false
+      while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        kind="$(git_forge_url_kind "$url")"
+        case "$kind" in
+          github-ssh | gitlab-ssh)
+            ssh_fetch=$((ssh_fetch + 1))
+            remote_is_forge=true
+            ;;
+          github-https | gitlab-https)
+            https_fetch=$((https_fetch + 1))
+            remote_is_forge=true
+            ;;
+          github-insecure | gitlab-insecure)
+            insecure_urls=$((insecure_urls + 1))
+            remote_is_forge=true
+            ;;
+        esac
+      done < <(git remote get-url --all "$remote" 2>/dev/null || true)
+      while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        kind="$(git_forge_url_kind "$url")"
+        case "$kind" in
+          github-ssh | gitlab-ssh)
+            ssh_push=$((ssh_push + 1))
+            remote_is_forge=true
+            ;;
+          github-https)
+            https_push=$((https_push + 1))
+            remote_is_forge=true
+            [[ "$github_secure" == true ]] || unsafe_https_push=$((unsafe_https_push + 1))
+            ;;
+          gitlab-https)
+            https_push=$((https_push + 1))
+            remote_is_forge=true
+            [[ "$gitlab_secure" == true ]] || unsafe_https_push=$((unsafe_https_push + 1))
+            ;;
+          github-insecure | gitlab-insecure)
+            insecure_urls=$((insecure_urls + 1))
+            remote_is_forge=true
+            ;;
+        esac
+      done < <(git remote get-url --push --all "$remote" 2>/dev/null || true)
+      [[ "$remote_is_forge" == false ]] || forge_remotes=$((forge_remotes + 1))
+    done < <(git remote 2>/dev/null || true)
+  fi
+  expected='{"sshForAuthentication":true,"plaintextHelperRequired":false}'
+  actual="$(jq -nc \
+    --argjson insideWorkTree "$inside_work_tree" \
+    --argjson forgeRemotes "$forge_remotes" \
+    --argjson sshFetchUrls "$ssh_fetch" \
+    --argjson httpsFetchUrls "$https_fetch" \
+    --argjson sshPushUrls "$ssh_push" \
+    --argjson httpsPushUrls "$https_push" \
+    --argjson insecureUrls "$insecure_urls" \
+    --argjson httpsPushWithoutSecureHelper "$unsafe_https_push" \
+    '{insideWorkTree:$insideWorkTree,forgeRemotes:$forgeRemotes,sshFetchUrls:$sshFetchUrls,
+      httpsFetchUrls:$httpsFetchUrls,sshPushUrls:$sshPushUrls,httpsPushUrls:$httpsPushUrls,
+      insecureUrls:$insecureUrls,httpsPushWithoutSecureHelper:$httpsPushWithoutSecureHelper}')"
+  if [[ "$inside_work_tree" == false || "$forge_remotes" -eq 0 ]]; then
+    status=not-applicable
+    code=no-forge-remote
+    summary="Current directory has no GitHub or GitLab remote to classify"
+    remediation=""
+  elif [[ "$unsafe_https_push" -gt 0 || "$insecure_urls" -gt 0 ]]; then
+    status=warning
+    code=https-without-secure-helper
+    summary="A forge remote can authenticate without SSH or a recognized non-plaintext helper"
+    remediation="use an SSH remote, apply the managed pushInsteadOf rules, or configure an explicitly secure helper"
+  else
+    status=ok
+    code=""
+    summary="Current forge remotes use SSH for pushes or a recognized non-plaintext helper"
+    remediation=""
+  fi
+  git_check_add remote-protocol git true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  expected='{"storeHelperCount":0}'
+  actual="$(jq -nc --argjson storeHelperCount "$store_helpers" '{storeHelperCount:$storeHelperCount}')"
+  if [[ "$store_helpers" -eq 0 ]]; then
+    status=ok
+    code=""
+    summary="No git-credential-store helper is configured"
+    remediation=""
+  else
+    status=failed
+    code=plaintext-helper
+    summary="Git configuration contains a plaintext credential store helper"
+    remediation="remove every credential.helper=store entry and use SSH or a verified secure helper"
+  fi
+  git_check_add credential-helper-plaintext git true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local credential_files=0
+  [[ ! -e "$HOME/.git-credentials" && ! -L "$HOME/.git-credentials" ]] ||
+    credential_files=$((credential_files + 1))
+  local xdg_git_credentials="${XDG_CONFIG_HOME:-$HOME/.config}/git/credentials"
+  [[ ! -e "$xdg_git_credentials" && ! -L "$xdg_git_credentials" ]] ||
+    credential_files=$((credential_files + 1))
+  expected='{"plaintextCredentialFileCount":0}'
+  actual="$(jq -nc --argjson plaintextCredentialFileCount "$credential_files" \
+    '{plaintextCredentialFileCount:$plaintextCredentialFileCount}')"
+  if [[ "$credential_files" -eq 0 ]]; then
+    status=ok
+    code=""
+    summary="No default git-credential-store file is present"
+    remediation=""
+  else
+    status=failed
+    code=plaintext-credential-file
+    summary="A default plaintext Git credential file is present"
+    remediation="confirm required credentials exist in SSH or a secure backend, then delete the plaintext file"
+  fi
+  git_check_add credential-file-plaintext operator true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local gh_available=false
+  command -v gh >/dev/null 2>&1 && gh_available=true
+  expected='{"declaredGhHelper":true,"ghAvailable":true}'
+  actual="$(jq -nc --argjson declaredGhHelper "$github_helper" --argjson ghAvailable "$gh_available" \
+    '{declaredGhHelper:$declaredGhHelper,ghAvailable:$ghAvailable}')"
+  if [[ "$github_helper" == true && "$gh_available" == true ]]; then
+    status=ok
+    code=""
+    summary="GitHub HTTPS exceptions delegate to the declared gh credential helper"
+    remediation=""
+  else
+    status=failed
+    code=gh-helper-unavailable
+    summary="The declared GitHub CLI credential helper is missing or gh is unavailable"
+    remediation="apply programs.gh.gitCredentialHelper.enable and repair the managed gh installation"
+  fi
+  git_check_add gh-credential-helper home-manager true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local gh_config_dir="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+  local gh_hosts_file="$gh_config_dir/hosts.yml" gh_hosts_present=false gh_hosts_readable=false
+  local gh_plaintext=false env_token=false auth_json="" account_count=0 keyring_count=0
+  local env_count=0 plaintext_source_count=0 unknown_source_count=0 auth_classified=false
+  [[ ! -e "$gh_hosts_file" && ! -L "$gh_hosts_file" ]] || gh_hosts_present=true
+  if [[ "$gh_hosts_present" == true && -r "$gh_hosts_file" ]]; then
+    gh_hosts_readable=true
+    grep -Eq '^[[:space:]]*oauth_token[[:space:]]*:' "$gh_hosts_file" && gh_plaintext=true
+  fi
+  [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GH_ENTERPRISE_TOKEN:-}${GITHUB_ENTERPRISE_TOKEN:-}" ]] ||
+    env_token=true
+
+  if [[ "$gh_available" == true && "$gh_plaintext" == false &&
+    "$gh_hosts_present" == true && "$gh_hosts_readable" == true ]]; then
+    if auth_json="$(timeout 10s gh auth status --json hosts 2>/dev/null)" &&
+      jq -e '.hosts | type == "object"' >/dev/null 2>&1 <<<"$auth_json"; then
+      auth_classified=true
+      account_count="$(jq '[.hosts[][]?] | length' <<<"$auth_json")"
+      keyring_count="$(jq '[.hosts[][]? | select(.tokenSource == "keyring")] | length' <<<"$auth_json")"
+      env_count="$(jq '[.hosts[][]? | select(.tokenSource | endswith("_TOKEN"))] | length' <<<"$auth_json")"
+      plaintext_source_count="$(jq \
+        '[.hosts[][]? | select(.tokenSource != "" and .tokenSource != "keyring"
+          and ((.tokenSource | endswith("_TOKEN")) | not))] | length' <<<"$auth_json")"
+      unknown_source_count="$(jq '[.hosts[][]? | select(.tokenSource == "")] | length' <<<"$auth_json")"
+    fi
+  fi
+
+  expected='{"plaintextTokenFile":false,"durableTokenSource":"keyring"}'
+  actual="$(jq -nc \
+    --argjson hostsPresent "$gh_hosts_present" \
+    --argjson hostsReadable "$gh_hosts_readable" \
+    --argjson plaintextTokenFile "$gh_plaintext" \
+    --argjson environmentToken "$env_token" \
+    --argjson accountCount "$account_count" \
+    --argjson keyringAccountCount "$keyring_count" \
+    --argjson environmentAccountCount "$env_count" \
+    --argjson plaintextSourceCount "$plaintext_source_count" \
+    --argjson unknownSourceCount "$unknown_source_count" \
+    '{hostsPresent:$hostsPresent,hostsReadable:$hostsReadable,plaintextTokenFile:$plaintextTokenFile,
+      environmentToken:$environmentToken,accountCount:$accountCount,
+      keyringAccountCount:$keyringAccountCount,environmentAccountCount:$environmentAccountCount,
+      plaintextSourceCount:$plaintextSourceCount,unknownSourceCount:$unknownSourceCount}')"
+  if [[ "$gh_plaintext" == true || "$plaintext_source_count" -gt 0 ]]; then
+    status=failed
+    code=gh-plaintext-token
+    summary="GitHub CLI authentication is stored in a plaintext configuration file"
+    remediation="log out, repair a platform keyring, log in again, and verify gh reports tokenSource=keyring"
+  elif [[ "$gh_hosts_present" == true && "$gh_hosts_readable" == false ]]; then
+    status=failed
+    code=gh-storage-unreadable
+    summary="GitHub CLI credential storage exists but cannot be classified"
+    remediation="repair permissions, then verify the token source before using gh authentication"
+  elif [[ "$gh_hosts_present" == false && "$env_token" == false ]]; then
+    status=not-applicable
+    code=gh-not-authenticated
+    summary="GitHub CLI has no persisted account to classify"
+    remediation=""
+  elif [[ "$env_token" == true || "$env_count" -gt 0 ]]; then
+    status=warning
+    code=gh-environment-token
+    summary="GitHub CLI is using a process token whose external storage cannot be verified"
+    remediation="inject it only from an approved secret manager and never persist it in shell or gh configuration"
+  elif [[ "$auth_classified" == true && "$account_count" -eq "$keyring_count" &&
+    "$unknown_source_count" -eq 0 ]]; then
+    status=ok
+    code=""
+    summary="GitHub CLI durable authentication is stored in the platform keyring"
+    remediation=""
+  else
+    status=failed
+    code=gh-storage-unverified
+    summary="GitHub CLI credential storage could not be verified as non-plaintext"
+    remediation="repair the platform keyring and require gh auth status to report tokenSource=keyring"
+  fi
+  git_check_add gh-auth-storage gh true "$status" "$code" "$summary" "$remediation" \
+    "$expected" "$actual"
+
+  local ok=false result
+  jq -e 'all(.[]; .status != "failed")' <<<"$git_checks" >/dev/null && ok=true
+  result="$(jq -nc --argjson ok "$ok" --argjson insideWorkTree "$inside_work_tree" \
+    --argjson checks "$git_checks" \
+    '{schemaVersion:1,command:"doctor git",ok:$ok,
+      repository:{insideWorkTree:$insideWorkTree},checks:$checks,
+      mutationBoundary:"read-only probes"}')"
+  if [[ "$json" == 1 ]]; then
+    printf '%s\n' "$result"
+  else
+    jq -r '.checks[] | "\(.id): \(.status) — \(.summary)"' <<<"$result"
+    jq -r '"status: \(if .ok then "ready" else "problems found" end)"' <<<"$result"
+  fi
+  [[ "$ok" == true ]] || return "$EX_UNAVAILABLE"
+}
 doctor_tools() {
   local json=0 rows='[]' status path entry command capability platform host data expected remediation
   [[ "${1:-}" != --json ]] || json=1
@@ -255,12 +1604,21 @@ has_capability() {
   jq -e --arg capability "$capability" '.capabilities | index($capability)' <<<"$data" >/dev/null
 }
 
+is_nixos_owned() {
+  local data="$1"
+
+  if jq -e '.activation == "nixos" or .activation == "nixos-wsl"' <<<"$data" >/dev/null; then
+    return 0
+  fi
+  has_capability "$data" server
+}
+
 nix_system_owner() {
   local data="$1" platform="$2"
 
   if [[ "$platform" == darwin ]]; then
     printf 'nix-darwin\n'
-  elif has_capability "$data" server; then
+  elif is_nixos_owned "$data"; then
     printf 'nixos\n'
   else
     printf 'system\n'
@@ -270,7 +1628,7 @@ nix_system_owner() {
 portable_system_owner() {
   local data="$1"
 
-  if has_capability "$data" server; then
+  if is_nixos_owned "$data"; then
     printf 'nixos\n'
   else
     printf 'system\n'
@@ -293,7 +1651,7 @@ probe_login_shell() {
   if [[ "$platform" == darwin ]]; then
     owner=nix-darwin
     expected="$(jq -r '.loginShell.darwinPath' "$system_policy")"
-  elif has_capability "$data" server; then
+  elif is_nixos_owned "$data"; then
     owner=nixos
     expected="$(jq -r '.loginShell.nixosPath' "$system_policy")"
   else
@@ -362,7 +1720,10 @@ probe_nix_policy() {
   local status code summary remediation expected_json actual_json expected_users
 
   owner="$(nix_system_owner "$data" "$platform")"
-  expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
+  expected_users="$(jq -c 'select(.nixTrustedUsers != null) | .nixTrustedUsers | sort' <<<"$data")"
+  if [[ -z "$expected_users" ]]; then
+    expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
+  fi
   if has_system_fixture; then
     trusted_exact="$(jq -r '.nix.trustedUsersExact // false' <<<"$system_fixture")"
     official_cache="$(jq -r '.nix.officialCacheOnly // false' <<<"$system_fixture")"
@@ -604,7 +1965,7 @@ probe_homebrew_drift() {
   local expected_count expected_json actual_json
 
   expected_count="$(jq 'length' "$homebrew_cask_inventory")"
-  expected_json="$(jq -nc --argjson casks "$expected_count" '{cleanup:"check",expectedCasks:$casks}')"
+  expected_json="$(jq -nc --argjson casks "$expected_count" '{cleanup:"prompt",expectedCasks:$casks}')"
   if [[ "$platform" != darwin ]]; then
     actual_json='{"available":null,"drift":null}'
     system_check_add homebrew-drift nix-darwin false not-applicable platform-not-darwin \
@@ -704,7 +2065,7 @@ doctor_system() {
 }
 
 apply_config() {
-  local requested="" repo="" ref="" plan=0 dry=0 json=0 restart=0
+  local requested="" repo="" ref="" plan=0 dry=0 json=0 preview_json=0 restart=0
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -712,6 +2073,7 @@ apply_config() {
       --ref) [[ $# -ge 2 ]] || die "$EX_USAGE" "--ref requires a branch, tag, or full commit"; ref="$2"; shift 2 ;;
       --plan) plan=1; shift ;;
       --dry-run) dry=1; shift ;;
+      --preview-json) preview_json=1; dry=1; shift ;;
       --json) json=1; shift ;;
       --restart-shell) restart=1; shift ;;
       -h|--help) usage; return ;;
@@ -719,8 +2081,11 @@ apply_config() {
     esac
   done
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
+  [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
+  [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
 
-  local host data expected_system expected_user expected_hostname platform source repository flake_source revision dirty backend installable
+  local host data expected_system expected_user expected_hostname platform activation source repository flake_source revision resolved_revision dirty backend installable
+  local windows_preflight='null' mutation_boundary="activation only after preflight"
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -731,6 +2096,7 @@ apply_config() {
   expected_user="$(jq -r '.username' <<<"$data")"
   expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
   platform="$(jq -r '.platform' <<<"$data")"
+  activation="$(jq -r '.activation' <<<"$data")"
   [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
   [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
   [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
@@ -743,6 +2109,7 @@ apply_config() {
     [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
     "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
     revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
+    resolved_revision="$("$git_command" -C "$repo" rev-parse HEAD)"
     dirty=false; "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
     repository="$repo"
     flake_source="$repo"
@@ -761,20 +2128,45 @@ apply_config() {
       [[ -n "$rev" ]] || die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
     fi
     revision="${rev:0:12}"
+    resolved_revision="$rev"
     dirty=false
     repository="$flake_ref"
     flake_source="$flake_ref/$rev"
     installable="$flake_ref/$rev#$host"
   fi
-  backend="nh-home"; [[ "$platform" != darwin ]] || backend="nh-darwin"
+  case "$activation" in
+    home-manager) backend="nh-home" ;;
+    nix-darwin) backend="nh-darwin" ;;
+    nixos-wsl)
+      backend="nh-os"
+      mutation_boundary="NixOS activation followed by non-transactional native Windows reconciliation"
+      windows_preflight="$(windows_plan "$host")"
+      ;;
+    *) die "$EX_SOFTWARE" "host $host has unsupported activation owner $activation" ;;
+  esac
 
   local output
   output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
-    --arg user "$expected_user" --arg backend "$backend" --arg revision "$revision" --arg source "$source" \
-    --arg installable "$installable" --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
-    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,capabilities:$capabilities,backend:$backend,revision:$revision,dirty:$dirty,repository:$repository,mutationBoundary:"activation only after preflight"}')"
-  if [[ "$json" == 1 ]]; then printf '%s\n' "$output"
-  else jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"; fi
+    --arg user "$expected_user" --arg activation "$activation" --arg backend "$backend" \
+    --arg revision "$revision" --arg resolvedRevision "$resolved_revision" --arg source "$source" \
+    --arg installable "$installable" --arg mutationBoundary "$mutation_boundary" \
+    --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
+    --argjson windowsPlan "$windows_preflight" \
+    '{host:$host,installable:$installable,source:$source,system:$system,user:$user,
+      capabilities:$capabilities,activation:$activation,backend:$backend,revision:$revision,
+      resolvedRevision:$resolvedRevision,dirty:$dirty,repository:$repository,
+      windowsPlan:$windowsPlan,mutationBoundary:$mutationBoundary}')"
+  if [[ "$preview_json" == 0 ]]; then
+    if [[ "$json" == 1 ]]; then
+      printf '%s\n' "$output"
+    else
+      jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nactivation: \(.activation)\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"
+      [[ "$activation" != nixos-wsl ]] || windows_render_plan "$windows_preflight"
+    fi
+  fi
+  if [[ "$activation" == nixos-wsl ]] && ! jq -e '.ready' <<<"$windows_preflight" >/dev/null; then
+    return "$EX_UNAVAILABLE"
+  fi
   [[ "$plan" == 0 ]] || return 0
 
   local -a nh_args
@@ -782,13 +2174,45 @@ apply_config() {
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_NH:-}" ]]; then
     nh_command="$ATYRODE_NH"
   fi
+  # SSH commonly forwards macOS's LC_CTYPE=UTF-8 spelling, which Linux does
+  # not recognize. nom then falls back to ASCII and cannot decode UTF-8
+  # derivation metadata. Keep the backend on a platform-native UTF-8 locale.
+  local nh_locale=C.UTF-8
+  [[ "$expected_system" != *-darwin ]] || nh_locale=en_US.UTF-8
   # nh home passes a #fragment through to nix verbatim instead of treating
   # it as the configuration name, so the flake reference goes bare and
-  # --configuration carries the host; nh darwin resolves the fragment itself.
-  if [[ "$platform" == darwin ]]; then nh_args=("$nh_command" darwin switch "$installable" --diff always)
-  else nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always); fi
+  # --configuration carries the host. System owners resolve the fragment.
+  case "$activation" in
+    home-manager)
+      nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always)
+      ;;
+    nix-darwin) nh_args=("$nh_command" darwin switch "$installable" --diff always) ;;
+    nixos-wsl) nh_args=("$nh_command" os switch "$installable" --diff always) ;;
+  esac
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
-  "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
+  if [[ "$preview_json" == 1 ]]; then
+    [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
+    local preview_file preview_output
+    preview_file="$(mktemp)"
+    if ! LC_ALL="$nh_locale" "${nh_args[@]}" >"$preview_file" 2>&1; then
+      cat "$preview_file" >&2
+      rm -f "$preview_file"
+      die "$EX_SOFTWARE" "$backend preview failed"
+    fi
+    if ! preview_output="$("$atyrode_preview_parser" --host "$host" --system "$expected_system" --revision "$resolved_revision" <"$preview_file")"; then
+      rm -f "$preview_file"
+      die "$EX_SOFTWARE" "$backend preview output was not understood"
+    fi
+    rm -f "$preview_file"
+    if [[ "$activation" == nixos-wsl ]]; then
+      jq -c --argjson windowsPlan "$windows_preflight" \
+        '. + {windowsPlan:$windowsPlan,windowsTransactional:false}' <<<"$preview_output"
+    else
+      printf '%s\n' "$preview_output"
+    fi
+    return 0
+  fi
+  LC_ALL="$nh_locale" "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
   if [[ "$dry" == 0 ]]; then
     local state_dir state_file temp
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
@@ -797,6 +2221,13 @@ apply_config() {
     temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
     printf '%s\n' "$host" >"$temp"
     mv -f "$temp" "$state_file"
+    if [[ "$activation" == nixos-wsl ]]; then
+      local windows_result
+      if ! windows_result="$(windows_reconcile apply "$host" 1)"; then
+        die "$EX_SOFTWARE" "NixOS activation succeeded, but the non-transactional Windows phase failed; rerun 'atyrode windows apply'"
+      fi
+      [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
+    fi
     review_seed_drift "$json"
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
@@ -829,11 +2260,46 @@ review_seed_drift() {
   fi
 }
 
+# interactive reports whether we can hold a yes/no dialogue with a human (both
+# ends of the pipe are a terminal). A test override forces it on so the confirm
+# gates are exercisable from the non-tty check harness.
+interactive() {
+  [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_TTY:-}" ]] && return 0
+  [[ -t 0 && -t 1 ]]
+}
+
+# stderr_is_tty reports whether the progress channel (stderr) is a live terminal,
+# so the collector can choose between the animated progress line and streaming its
+# raw output. Same test override as interactive() drives the live path in checks.
+stderr_is_tty() {
+  [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_TTY:-}" ]] && return 0
+  [[ -t 2 ]]
+}
+
+# _use_color decides whether to emit ANSI colour: only when stderr (where all the
+# human-facing chatter goes) is a terminal and the environment permits it —
+# NO_COLOR honoured, TERM=dumb excluded — so pipes, redirects, and the --json
+# stream stay plain. A test override forces the decision either way.
+_use_color() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_COLOR:-}" ]]; then
+    [[ "$_ATYRODE_TEST_COLOR" == 1 ]]
+    return
+  fi
+  [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]
+}
+
+# paint wraps text in an SGR code when colour is on, else prints it bare, so every
+# colourised message degrades cleanly to plain text (e.g. paint '1;36' "text").
+paint() {
+  local code="$1"; shift
+  if _use_color; then printf '\033[%sm%s\033[0m' "$code" "$*"; else printf '%s' "$*"; fi
+}
+
 # Ask a yes/no question; default no, and no on a non-interactive stream.
 confirm() {
   local reply
-  [[ -t 0 && -t 1 ]] || return 1
-  printf 'atyrode: %s [y/N] ' "$1" >&2
+  interactive || return 1
+  printf 'atyrode: %s %s ' "$(paint 1 "$1")" "$(paint 2 '[y/N]')" >&2
   read -r reply || return 1
   [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]]
 }
@@ -871,11 +2337,267 @@ clean_macos_residue() {
   printf '  app-owned, not Nix-managed, so a dropped app leaves it behind; remove by hand.\n' >&2
 }
 
+# collect_garbage runs the store GC that `nh clean --no-gc` deliberately skips.
+# nh runs it silently, so the last step of a clean looks frozen for however long
+# the daemon takes (often minutes). Here we own that phase: a spinner on a
+# terminal shows it is alive, and non-interactively the collector's native output
+# streams through. In test builds it is a no-op unless ATYRODE_NIX_STORE provides
+# a stand-in, so the suite never touches the real store.
+collect_garbage() {
+  local -a gc=(nix-store --gc)
+  if [[ "$test_hooks" == 1 ]]; then
+    [[ -n "${ATYRODE_NIX_STORE:-}" ]] || return 0
+    gc=("$ATYRODE_NIX_STORE" --gc)
+  fi
+
+  if ! stderr_is_tty; then # non-interactive: stream the collector's own output
+    printf 'atyrode: collecting garbage…\n' >&2
+    "${gc[@]}" >&2 || printf 'atyrode: garbage collection reported an error\n' >&2
+    return 0
+  fi
+
+  local out pid rc=0 i=0 deleted=0 frame=""
+  local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+  out="$(mktemp)"
+  "${gc[@]}" >"$out" 2>&1 &
+  pid=$!
+  # nix-store --gc first scans the whole store for unreachable paths (the deleted
+  # count sits at 0 for a while) and only then removes them. Reflect both phases on
+  # a single \r-rewritten line so the long opaque middle shows real motion. The
+  # line is kept short and carries no store path on purpose: a line that wraps past
+  # the terminal width defeats the carriage-return redraw and stacks up stale
+  # copies instead of updating in place (and "0 paths freed" mid-scan reads as
+  # stuck, so that phase says "scanning" instead).
+  while kill -0 "$pid" 2>/dev/null; do
+    # grep -c already prints "0" on no match (and exits 1); `|| true` keeps that
+    # single "0" instead of appending a second one — a "0\n0" value embeds a
+    # newline that splits the progress line and breaks the \r redraw.
+    deleted="$(grep -c "^deleting '" "$out" 2>/dev/null || true)"
+    # Advance the spinner in the parent shell: doing i++ inside the $(paint …)
+    # command substitution would increment a throwaway subshell copy, freezing the
+    # frame (SC2030/SC2031).
+    frame="${frames[$((i++ % ${#frames[@]}))]}"
+    if [[ "${deleted:-0}" -eq 0 ]]; then
+      printf '\r\033[K  %s %s' "$(paint 36 "$frame")" \
+        "$(paint 2 'collecting garbage — scanning the store…')" >&2
+    else
+      printf '\r\033[K  %s collecting garbage — %s paths freed' \
+        "$(paint 36 "$frame")" "$(paint '1' "$deleted")" >&2
+    fi
+    sleep 0.12
+  done
+  wait "$pid" || rc=$?
+  printf '\r\033[K' >&2
+  if [[ "$rc" == 0 ]]; then
+    # Expose the reclaimed size (e.g. "210.5 MiB") to the clean footer; empty if
+    # the collector reported no figure. _gc_freed is a global by design.
+    _gc_freed="$(grep -oiE '[0-9.]+ [kmgtp]?i?b freed' "$out" | tail -n1 || true)"
+    _gc_freed="${_gc_freed% freed}"
+    printf 'atyrode: %s %s\n' "$(paint '1;32' '✓')" \
+      "$(grep -iE 'freed|deleted' "$out" | tail -n1 || echo 'store collected')" >&2
+  else
+    cat "$out" >&2
+    printf 'atyrode: %s\n' "$(paint '1;31' 'garbage collection failed')" >&2
+  fi
+  rm -f "$out"
+}
+
+# fold_nh_clean_noise tames `nh clean`'s output down to what matters. nh 4.4.1
+# prints a full evaluation plan on every run — a legend plus one "- OK/RE/DEL"
+# line per GC root (well over 100 lines) — and one "> Removing …/gcroots/auto/…"
+# plus paired "! Failed … PermissionDenied" per daemon-owned root a user-scope
+# clean cannot unlink. atyrode already reports the outcome in its own footer, so
+# by default we drop the plan and the auto-gcroot chatter, keeping only genuine
+# (non-permission) errors and anything unexpected. Two tallies are written to the
+# file named by the first argument: skipped (permission failures) and reaped
+# (auto-root removals that succeeded = removals − failures; counted by totals, as
+# nh emits the removals and failures in separate batches, not adjacent pairs). The
+# second argument, when 1 (--verbose), passes nh's full output through untouched
+# while still counting. ANSI colour is stripped only for matching; kept lines
+# print with their original colouring.
+fold_nh_clean_noise() {
+  local count_file="${1:-/dev/null}" verbose="${2:-0}"
+  awk -v countfile="$count_file" -v verbose="$verbose" '
+    { s = $0; gsub(/\033\[[0-9;]*m/, "", s) }
+    s ~ /^> Removing .*\/gcroots\/auto\// { removing++; if (!verbose) next }
+    s ~ /Failed to remove path.*\/gcroots\/auto\/.*PermissionDenied/ { failed++; if (!verbose) next }
+    !verbose && s ~ /^(Welcome to nh clean|Keeping |legend:|RE:|OK:|DEL:)/ { next }
+    !verbose && s ~ /^(orphaned gcroots|gcroots)$/ { next }
+    !verbose && s ~ /^- (OK|RE|DEL)/ { next }
+    !verbose && s ~ /\/nix\/profiles\/[A-Za-z0-9._-]+$/ { next }
+    !verbose && s ~ /Profiles directory not found/ { next }
+    !verbose && s ~ /^[[:space:]]*$/ { next }
+    { print }
+    END {
+      reaped = removing - failed; if (reaped < 0) reaped = 0
+      printf "%d %d\n", failed + 0, reaped + 0 > countfile
+    }
+  '
+}
+
+# effective_uid reports the caller's EUID so clean can tell whether it is able to
+# reap the daemon-owned auto GC roots: only root can unlink them, and atyrode
+# never self-elevates (see the elevation note in cmd_rollback) — a non-root clean
+# instead points at `sudo atyrode clean`. A test override exercises the privileged
+# branch without actually running as root.
+effective_uid() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_EUID:-}" ]]; then
+    printf '%s' "$_ATYRODE_TEST_EUID"
+    return
+  fi
+  printf '%s' "${EUID:-$(id -u)}"
+}
+
+# warn_stray_result_roots flags `result*` symlinks left by `nix build` without
+# --no-link: each is an indirect GC root pinning a whole closure, so they quietly
+# defeat a clean. We look only in the current directory and the enclosing git
+# worktree (cheap, and where they accumulate during development) and never touch
+# them — removing a build result is the developer's call, not clean's.
+warn_stray_result_roots() {
+  local git_command=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || git_command="$ATYRODE_GIT"
+  local -a scan=("$PWD") roots=()
+  local base top f
+  top="$("$git_command" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$top" && "$top" != "$PWD" ]] && scan+=("$top")
+  for base in "${scan[@]}"; do
+    while IFS= read -r f; do
+      [[ "$(readlink "$f" 2>/dev/null)" == /nix/store/* ]] && roots+=("$f")
+    done < <(find "$base" -maxdepth 1 -type l \( -name result -o -name 'result-*' \) 2>/dev/null)
+  done
+  [[ "${#roots[@]}" -gt 0 ]] || return 0
+  printf 'atyrode: %s %s stray result symlink(s) still pin closures (nix build without --no-link):\n' \
+    "$(paint 33 '⚠')" "${#roots[@]}" >&2
+  for f in "${roots[@]}"; do printf '  %s %s %s\n' "$(paint 1 "$f")" "$(paint 2 '->')" "$(paint 2 "$(readlink "$f")")" >&2; done
+  printf '  %s\n' "$(paint 2 'remove them (rm result*) so the store can reclaim those closures.')" >&2
+}
+
+# nix_store_path resolves nix-store to an absolute path so the reap hint names a
+# command that survives elevation. On a non-NixOS host root's sudoers secure_path
+# excludes every Nix profile directory, so a bare `nix-store` (like `atyrode` or
+# `nh`) is not found under elevation — but an absolute path is executed directly,
+# bypassing the PATH search entirely. Honours the test override.
+nix_store_path() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_NIX_STORE:-}" ]]; then
+    printf '%s' "$ATYRODE_NIX_STORE"
+    return
+  fi
+  command -v nix-store 2>/dev/null || printf 'nix-store'
+}
+
+# count_generations reports how many generations the tracked profile has (0 when
+# it cannot be read) so the clean footer can show kept/removed counts.
+count_generations() {
+  local profile; profile="$(gen_profile)"
+  [[ -e "$profile" ]] || { printf 0; return; }
+  nix_env -p "$profile" --list-generations 2>/dev/null | grep -c . || true
+}
+
+# clean_footer resolves the wall of nh/gc output into one human-readable result
+# line: what was reclaimed, kept, and removed, plus the fate of the daemon-owned
+# auto GC roots — reaped when the clean ran with enough privilege, otherwise
+# skipped with the exact command to reap them (atyrode never self-elevates, so a
+# non-root clean cannot unlink root-owned roots; see #148).
+clean_footer() {
+  local dry="$1" before="$2" after="$3" skipped="$4" freed="$5" reaped="${6:-0}" euid="${7:-1000}"
+  local removed=0
+  [[ "$before" -gt "$after" ]] && removed=$(( before - after ))
+  # Colour by meaning so the outcome scans at a glance: reclaimed/reaped green,
+  # skipped amber with the reap command in cyan, everything neutral. Each segment
+  # is painted whole (never mid-phrase), so with colour off the plain text is
+  # byte-for-byte what a pipe or the check harness reads.
+  local -a parts=()
+  if [[ "$dry" == 1 ]]; then
+    parts+=("$(paint 33 'dry-run — no changes made')" "$before generation(s) present")
+  else
+    [[ -z "$freed" ]] || parts+=("$(paint '1;32' "reclaimed $freed")")
+    parts+=("kept $after generation(s)" "removed $removed generation(s)")
+  fi
+  [[ "${reaped:-0}" -gt 0 ]] && parts+=("$(paint 32 "reaped $reaped root-owned GC root(s)")")
+  if [[ "${skipped:-0}" -gt 0 ]]; then
+    if [[ "$euid" == 0 ]]; then
+      parts+=("$(paint 33 "skipped $skipped root-owned GC root(s) (unremovable)")")
+    else
+      # Name an absolute nix-store path: under elevation a bare command is not on
+      # root's secure_path (see nix_store_path). `nix-store --gc` prunes these
+      # daemon-owned roots once this clean has dropped the generations they pin.
+      parts+=("$(paint 33 "skipped $skipped root-owned GC root(s)"); reap them via \`$(paint '1;36' "sudo $(nix_store_path) --gc")\`")
+    fi
+  fi
+  local out="" p sep
+  sep="$(paint 2 '·')"
+  for p in "${parts[@]}"; do
+    [[ -z "$out" ]] && out="$p" || out="$out $sep $p"
+  done
+  printf 'atyrode: %s\n' "$out" >&2
+}
+
+# keepsince_cutoff resolves --keep-since (nh's compact form: 30d, 1h, 4w, 45m, …)
+# to an epoch-second cutoff; anything newer is always kept. Prints nothing when the
+# duration can't be parsed, so callers fall back to a keep-only estimate.
+keepsince_cutoff() {
+  local dur="$1" num
+  [[ "$dur" =~ ^([0-9]+)[[:space:]]*([A-Za-z]+)$ ]] || return 0
+  num="${BASH_REMATCH[1]}"
+  local unit
+  case "${BASH_REMATCH[2]}" in
+    s | sec | secs | second | seconds) unit=seconds ;;
+    m | min | mins | minute | minutes) unit=minutes ;;
+    h | hr | hrs | hour | hours) unit=hours ;;
+    d | day | days) unit=days ;;
+    w | week | weeks) unit=weeks ;;
+    *) return 0 ;;
+  esac
+  date -d "$num $unit ago" +%s 2>/dev/null || true
+}
+
+# clean_preview describes what a clean is about to do — its keep window, exactly
+# how many generations fall outside it (honouring BOTH --keep and --keep-since, so
+# it never over-promises a removal that keep-since will spare), and that the
+# current generation and rollback window are never touched — so an accidental
+# `atyrode clean` can be read and declined before anything is removed. Store
+# reclaim is not estimated: closure sizes overlap heavily, so the honest figure is
+# the one the GC reports afterwards.
+clean_preview() {
+  local scope="$1" keep="$2" keep_since="$3"
+  local profile; profile="$(gen_profile)"
+  local -a gens=() dates=()
+  local line gen d t rest current="" total=0 removable=0 i rank
+  if [[ -e "$profile" ]]; then
+    while IFS= read -r line; do
+      read -r gen d t rest <<<"$line"
+      gens+=("$gen"); dates+=("$d $t")
+      [[ "$line" == *"(current)"* ]] && current="$gen"
+    done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
+  fi
+  total=${#gens[@]}
+  local cutoff; cutoff="$(keepsince_cutoff "$keep_since")"
+  for (( i = 0; i < total; i++ )); do
+    rank=$(( total - 1 - i ))
+    [[ "$rank" -ge "$keep" && "${gens[$i]}" != "$current" ]] || continue
+    if [[ -n "$cutoff" ]]; then
+      # Removable only if also older than the keep-since window.
+      local ge; ge="$(date -d "${dates[$i]}" +%s 2>/dev/null || echo 0)"
+      [[ "$ge" -gt 0 && "$ge" -lt "$cutoff" ]] && removable=$(( removable + 1 ))
+    else
+      removable=$(( removable + 1 )) # duration unparseable → keep-only upper bound
+    fi
+  done
+  local bullet; bullet="$(paint 36 '•')"
+  printf 'atyrode: %s\n' "$(paint 1 "clean ($scope) is about to:")" >&2
+  printf '  %s keep the newest %s generation(s), anything newer than %s, and the current one\n' \
+    "$bullet" "$(paint 1 "$keep")" "$(paint 1 "$keep_since")" >&2
+  printf '  %s remove %s of %s generation(s) that fall outside that window\n' \
+    "$bullet" "$(paint 33 "$removable")" "$(paint 1 "$total")" >&2
+  printf '  %s garbage-collect unreferenced store paths %s\n' \
+    "$bullet" "$(paint 2 '(reclaimed space reported after)')" >&2
+}
+
 # clean — reclaim disk from generations the config no longer references, always
 # keeping the current generation and a rollback window (never an auto-wipe of the
 # safety net). Also sweeps stale macOS app aliases (see clean_macos_residue).
 cmd_clean() {
-  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0
+  local dry=0 keep=5 keep_since=30d scope=user assume_yes=0 json=0 verbose=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -n | --dry-run) dry=1 ;;
@@ -883,6 +2605,8 @@ cmd_clean() {
       --keep-since) shift; keep_since="${1:-}" ;;
       --all) scope=all ;; # also the system profile (nix-darwin); needs elevation
       -y | --yes) assume_yes=1 ;;
+      -v | --verbose) verbose=1 ;; # pass nh clean's full evaluation plan through
+      --json) json=1 ;; # machine-readable reclaim summary on stdout (cockpit)
       *) die "$EX_USAGE" "unknown clean option: $1" ;;
     esac
     shift || true
@@ -892,33 +2616,289 @@ cmd_clean() {
   local nh_command=nh
   [[ "$test_hooks" != 1 || -z "${ATYRODE_NH:-}" ]] || nh_command="$ATYRODE_NH"
 
-  printf 'atyrode: reclaiming the Nix store (keeping %s generation(s) + everything newer than %s)\n' "$keep" "$keep_since" >&2
-  local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since")
+  # Guard an accidental interactive run: show the plan and require confirmation.
+  # --dry-run previews without touching anything, --yes/--json are the explicit
+  # non-interactive paths (scripts, cockpit), so none of them prompt.
+  if [[ "$dry" == 0 && "$assume_yes" == 0 && "$json" == 0 ]] && interactive; then
+    clean_preview "$scope" "$keep" "$keep_since"
+    confirm "proceed and reclaim now?" ||
+      { printf 'atyrode: %s\n' "$(paint 33 'clean declined — nothing changed.')" >&2; return 0; }
+  fi
+
+  printf 'atyrode: %s (keeping %s generation(s) + everything newer than %s)\n' \
+    "$(paint 1 'reclaiming the Nix store')" "$(paint 36 "$keep")" "$(paint 36 "$keep_since")" >&2
+  # Let nh remove the stale generations and gcroots, but skip its garbage
+  # collection (--no-gc) — nh runs it silently. We collect below instead, with a
+  # progress indicator, so the slow final step isn't an unexplained freeze. nh's
+  # own chatter (its plan and the folded gcroots summary) goes to stderr so that
+  # under --json stdout carries only the machine-readable summary; pipefail
+  # propagates nh's exit status through the filter. --verbose passes nh's full
+  # evaluation plan through instead of folding it.
+  local gens_before; gens_before="$(count_generations)"
+  local nh_args=("$nh_command" clean "$scope" --keep "$keep" --keep-since "$keep_since" --no-gc)
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
-  "${nh_args[@]}" || die "$EX_SOFTWARE" "nh clean failed"
+  local skipped_file; skipped_file="$(mktemp)"
+  "${nh_args[@]}" 2>&1 | fold_nh_clean_noise "$skipped_file" "$verbose" >&2 || die "$EX_SOFTWARE" "nh clean failed"
+  # fold_nh_clean_noise writes "<skipped> <reaped>"; default both to 0 if unread.
+  local skipped=0 reaped=0
+  read -r skipped reaped < "$skipped_file" 2>/dev/null || true
+  skipped="${skipped:-0}"; reaped="${reaped:-0}"
+  rm -f "$skipped_file"
+
+  _gc_freed=""
+  [[ "$dry" == 1 ]] || collect_garbage
 
   if [[ "$(uname -s)" == Darwin ]]; then
     clean_macos_residue "$dry" "$assume_yes"
   fi
+
+  local gens_after; gens_after="$(count_generations)"
+  clean_footer "$dry" "$gens_before" "$gens_after" "$skipped" "$_gc_freed" "$reaped" "$(effective_uid)"
+  warn_stray_result_roots || true
+
+  [[ "$json" == 0 ]] || clean_summary_json "$scope" "$keep" "$keep_since" "$dry"
+}
+
+# clean_summary_json prints a machine-readable reclaim summary for the cockpit:
+# the parameters and the generations that are reclaim CANDIDATES — every
+# generation beyond the newest <keep>, excluding the current one (nh additionally
+# keeps any newer than --keep-since, so this is an upper bound on what it prunes).
+# closureSize per candidate is the generation's own closure; those overlap
+# heavily, so the real freed space is what the store GC reports, not their sum —
+# hence the note. A store read, so sizes only when nix-env resolves them.
+clean_summary_json() {
+  local scope="$1" keep="$2" keep_since="$3" dry="$4"
+  local profile; profile="$(gen_profile)"
+  local gens=() line gen rest current="" total=0
+  if [[ -e "$profile" ]]; then
+    while IFS= read -r line; do
+      read -r gen rest <<<"$line"
+      gens+=("$gen")
+      [[ "$line" == *"(current)"* ]] && current="$gen"
+    done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
+  fi
+  total=${#gens[@]}
+  # Candidates: those whose rank from the newest is >= keep and not current.
+  local candidates='[]' i rank g size date
+  for (( i = 0; i < total; i++ )); do
+    g="${gens[$i]}"
+    rank=$(( total - 1 - i ))
+    [[ "$rank" -ge "$keep" && "$g" != "$current" ]] || continue
+    date="$(nix_env -p "$profile" --list-generations 2>/dev/null | awk -v n="$g" '$1==n{print $2" "$3}')"
+    size="$(gen_size "$profile" "$g")"
+    candidates="$(jq -c --argjson c "$candidates" --argjson gen "$g" --arg date "$date" --arg size "$size" \
+      '$c + [({generation:$gen,date:$date} + (if $size=="" then {} else {closureSize:$size} end))]' <<<'null')"
+  done
+  jq -nc \
+    --arg scope "$scope" --argjson keep "$keep" --arg keepSince "$keep_since" \
+    --argjson dry "$( [[ "$dry" == 1 ]] && echo true || echo false )" \
+    --arg platform "$(gen_platform)" --arg profile "$profile" \
+    --argjson total "$total" --argjson candidates "$candidates" \
+    '{scope:$scope,platform:$platform,profile:$profile,keep:$keep,keepSince:$keepSince,dryRun:$dry,
+      generations:{total:$total,candidates:($candidates|length)},
+      reclaimCandidates:$candidates,
+      note:"candidates are generations beyond the newest keep, excluding current; nh additionally keeps any newer than keepSince. closureSize values overlap — actual freed space is what the store GC reports."}'
+}
+
+# The activation profile whose generations `apply` switches. NixOS-WSL and
+# nix-darwin own system profiles; standalone Linux owns Home Manager's profile.
+gen_platform() {
+  if [[ "$(uname -s)" == Darwin ]]; then
+    printf 'nix-darwin'
+  elif is_wsl; then
+    printf 'nixos'
+  else
+    printf 'home-manager'
+  fi
+}
+
+gen_profile() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_GEN_PROFILE:-}" ]]; then
+    printf '%s' "$ATYRODE_GEN_PROFILE" # pin the profile path in tests (platform-agnostic)
+    return
+  fi
+  case "$(gen_platform)" in
+    nix-darwin | nixos) printf '/nix/var/nix/profiles/system' ;;
+    home-manager) printf '%s/nix/profiles/home-manager' "${XDG_STATE_HOME:-$HOME/.local/state}" ;;
+  esac
+}
+
+# nix_env runs nix-env, honouring an ATYRODE_NIX_ENV override under test hooks
+# (mirrors ATYRODE_NH / ATYRODE_NIX_STORE) so generation reads are stubbable.
+nix_env() {
+  local cmd=nix-env
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX_ENV:-}" ]] || cmd="$ATYRODE_NIX_ENV"
+  "$cmd" "$@"
+}
+
+# Human closure size of a profile generation's store path, or empty when it
+# can't be resolved. A store query, so it stays behind --sizes (not the default).
+gen_size() {
+  local p
+  [[ -e "$1-$2-link" ]] || return 0 # no such generation link → no size (not an error)
+  p="$(readlink -f "$1-$2-link" 2>/dev/null)" || return 0
+  [[ -n "$p" ]] || return 0
+  # Best-effort: a failed store query yields an empty size, never an abort (the
+  # caller runs under `set -e`).
+  nix path-info -Sh "$p" 2>/dev/null | awk -F'\t' 'NR==1 { s = $2; gsub(/^ +| +$/, "", s); print s }' || return 0
+}
+
+# generations — list the activation profile's generations (read-only). nh only
+# exposes this for NixOS, so we read the profile natively (a tested gap per #21).
+cmd_generations() {
+  local json=0 sizes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1 ;;
+      --sizes) sizes=1 ;; # closure size per generation (a store query, slower)
+      *) die "$EX_USAGE" "unknown generations option: $1" ;;
+    esac
+    shift
+  done
+  command -v nix-env >/dev/null || die "$EX_UNAVAILABLE" "nix-env is unavailable"
+  local profile; profile="$(gen_profile)"
+  [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $(gen_platform) generations profile at $profile"
+
+  local line gen d t rest cur size
+  if [[ "$json" == 1 ]]; then
+    local first=1
+    printf '['
+    while IFS= read -r line; do
+      read -r gen d t rest <<<"$line"
+      cur=false; [[ "$line" == *"(current)"* ]] && cur=true
+      [[ "$first" == 1 ]] || printf ','
+      first=0
+      printf '{"generation":%d,"date":"%s %s","current":%s' "$gen" "$d" "$t" "$cur"
+      if [[ "$sizes" == 1 ]]; then size="$(gen_size "$profile" "$gen")"; [[ -n "$size" ]] && printf ',"closureSize":"%s"' "$size"; fi
+      printf '}'
+    done < <(nix-env -p "$profile" --list-generations 2>/dev/null)
+    printf ']\n'
+  else
+    printf 'atyrode: %s generations (%s)\n' "$(gen_platform)" "$profile" >&2
+    while IFS= read -r line; do
+      if [[ "$sizes" == 1 ]]; then
+        read -r gen _ <<<"$line"
+        size="$(gen_size "$profile" "$gen")"
+        printf '%s%s\n' "$line" "${size:+   [${size}]}"
+      else
+        printf '%s\n' "$line"
+      fi
+    done < <(nix-env -p "$profile" --list-generations 2>/dev/null)
+  fi
+}
+
+# rollback — activate an earlier generation (previous by default, or --to N).
+# A mutation, so it confirms first and --dry-run only previews; roll-forward is
+# always possible, and it refuses to "roll back" to the current generation.
+cmd_rollback() {
+  local to="" dry=0 assume_yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --to) shift; to="${1:-}" ;;
+      -n | --dry-run) dry=1 ;;
+      -y | --yes) assume_yes=1 ;;
+      *) die "$EX_USAGE" "unknown rollback option: $1" ;;
+    esac
+    shift || true
+  done
+  command -v nix-env >/dev/null || die "$EX_UNAVAILABLE" "nix-env is unavailable"
+  local profile platform; profile="$(gen_profile)"; platform="$(gen_platform)"
+  [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $platform generations profile at $profile"
+
+  local listing current target
+  listing="$(nix-env -p "$profile" --list-generations 2>/dev/null)"
+  current="$(awk '/\(current\)/{print $1}' <<<"$listing")"
+  [[ -n "$current" ]] || die "$EX_SOFTWARE" "cannot determine the current generation"
+  if [[ -n "$to" ]]; then
+    [[ "$to" =~ ^[0-9]+$ ]] || die "$EX_USAGE" "--to expects a generation number"
+    target="$to"
+    awk '{print $1}' <<<"$listing" | grep -qx "$target" || die "$EX_DATAERR" "generation $target does not exist"
+  else
+    target="$(awk -v c="$current" '$1+0 < c+0 {g=$1} END{print g}' <<<"$listing")"
+    [[ -n "$target" ]] || die "$EX_UNAVAILABLE" "no earlier generation to roll back to"
+  fi
+  [[ "$target" != "$current" ]] || die "$EX_USAGE" "generation $target is already current"
+
+  printf 'atyrode: roll %s back from generation %s to %s\n' "$platform" "$current" "$target" >&2
+  if [[ "$dry" == 1 ]]; then printf '  dry run — nothing activated\n' >&2; return 0; fi
+  [[ "$assume_yes" == 1 ]] || confirm "activate generation $target now?" || return 0
+
+  if [[ "$platform" == nix-darwin ]]; then
+    command -v darwin-rebuild >/dev/null || die "$EX_UNAVAILABLE" "darwin-rebuild is unavailable"
+    # darwin-rebuild owns its own privilege elevation (as nh does for apply);
+    # atyrode never self-elevates. Run `sudo atyrode rollback` if a setup needs it.
+    darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
+  elif [[ "$platform" == nixos ]]; then
+    [[ "$(effective_uid)" == 0 ]] ||
+      die "$EX_UNAVAILABLE" "NixOS rollback requires root; rerun this exact command with sudo"
+    local genpath
+    genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" ||
+      die "$EX_DATAERR" "cannot resolve generation $target"
+    [[ -x "$genpath/bin/switch-to-configuration" ]] ||
+      die "$EX_DATAERR" "generation $target has no NixOS switch-to-configuration program"
+    nix_env -p "$profile" --switch-generation "$target" ||
+      die "$EX_SOFTWARE" "could not select NixOS generation $target"
+    "$profile/bin/switch-to-configuration" switch ||
+      die "$EX_SOFTWARE" "NixOS rollback activation failed"
+  else
+    local genpath
+    genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" || die "$EX_DATAERR" "cannot resolve generation $target"
+    [[ -x "$genpath/activate" ]] || die "$EX_DATAERR" "generation $target has no activate script"
+    "$genpath/activate" || die "$EX_SOFTWARE" "rollback activation failed"
+  fi
+  printf 'atyrode: now on generation %s\n' "$target" >&2
+}
+
+# guard_production_mutation refuses to run a store-mutating command when a
+# test-only tool-substitution override is present on a production binary. Those
+# vars (ATYRODE_NH, ATYRODE_NIX_STORE, ATYRODE_NIX_ENV, ATYRODE_GIT,
+# ATYRODE_GEN_PROFILE, ATYRODE_WINGET) are honoured only under enableTestHooks;
+# a production build silently ignores them, so a caller who sets them expecting stubs would instead
+# drive the REAL nh / nix-store / nix-env against the live store. Aborting turns
+# that silent, potentially destructive trap into a loud, safe stop. Scoped to the
+# mutating verbs so read-only commands keep ignoring the vars outright (a hostile
+# project environment can neither spoof nor block a plain `doctor`/`capabilities`).
+guard_production_mutation() {
+  [[ "$test_hooks" == 1 ]] && return 0
+  local v
+  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM; do
+    [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
+      "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
+  done
 }
 
 main() {
+  if [[ $# == 0 ]] && interactive; then
+    export ATYRODE_CLI="$0"
+    exec "$atyrode_tui"
+  fi
   local subcommand="${1:-help}"
   shift || true
+  # A production binary must never mutate the store while a caller believes its
+  # tool overrides are in effect (they are not) — refuse before dispatching.
+  case "$subcommand" in
+    apply | clean | rollback) guard_production_mutation "$subcommand" ;;
+  esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
     clean) cmd_clean "$@" ;;
+    generations) cmd_generations "$@" ;;
+    lifecycle) cmd_lifecycle "$@" ;;
+    rollback) cmd_rollback "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in
         host) shift; local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
         system) shift; doctor_system "$@" ;;
+        git) shift; doctor_git "$@" ;;
         tools) shift; doctor_tools "$@" ;;
-        *) die "$EX_USAGE" "doctor expects host, system, or tools" ;;
+        *) die "$EX_USAGE" "doctor expects host, system, git, or tools" ;;
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
-    workspace|agent|generations|rollback) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
+    inventory) inventory "$@" ;;
+    windows) [[ "${1:-}" != apply ]] || guard_production_mutation "windows apply"; cmd_windows "$@" ;;
+    workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;
     *) die "$EX_USAGE" "unknown command: $subcommand" ;;
   esac

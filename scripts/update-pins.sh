@@ -1,10 +1,30 @@
 #!/usr/bin/env bash
-# Refresh the repository-owned binary pins (omp, codex) to the latest
-# upstream releases. Prints one line per bumped package; exits quietly when
-# everything is already current. Requires curl, jq, awk, and nix.
+# Refresh selected repository-owned binary pins to their latest releases.
+# With no package names, refresh OMP, code, Codex, and Orca. Prints one line
+# per bump; exits quietly when current. Requires curl, jq, awk, and nix.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+targets=("$@")
+for target in "${targets[@]}"; do
+  case "$target" in
+    omp | code | codex | orca) ;;
+    *)
+      printf 'usage: %s [omp|code|codex|orca]...\n' "${0##*/}" >&2
+      exit 2
+      ;;
+  esac
+done
+
+wants() {
+  [[ "${#targets[@]}" -eq 0 ]] && return 0
+  local target
+  for target in "${targets[@]}"; do
+    [[ "$target" == "$1" ]] && return 0
+  done
+  return 1
+}
 
 latest_tag() {
   curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
@@ -12,7 +32,7 @@ latest_tag() {
 }
 
 current_version() {
-  grep -oE 'version = "[0-9.]+"' "$1" | head -n 1 | grep -oE '[0-9.]+'
+  sed -nE 's/^[[:space:]]*version = "([^"]+)";$/\1/p' "$1" | head -n 1
 }
 
 replace_hash() { # file asset new_hash
@@ -20,7 +40,7 @@ replace_hash() { # file asset new_hash
     index($0, "\"" asset "\"") { pending = 1 }
     pending && $1 == "hash" { sub(/sha256-[A-Za-z0-9+\/=]+/, hash); pending = 0 }
     { print }
-  ' "$1" > "$1.bump" && mv "$1.bump" "$1"
+  ' "$1" >"$1.bump" && mv "$1.bump" "$1"
 }
 
 bump() { # name file repo tag_prefix url_template assets...
@@ -44,10 +64,39 @@ bump() { # name file repo tag_prefix url_template assets...
   printf '%s %s -> %s\n' "$name" "$current" "$version"
 }
 
-bump omp "$repo_root/pkgs/omp/default.nix" can1357/oh-my-pi v \
-  'https://github.com/can1357/oh-my-pi/releases/download/@tag@/@asset@' \
-  omp-linux-x64 omp-linux-arm64 omp-darwin-x64 omp-darwin-arm64
+if wants omp; then
+  bump omp "$repo_root/pkgs/omp/default.nix" atyrode/omp v \
+    'https://github.com/atyrode/omp/releases/download/@tag@/@asset@' \
+    omp-linux-x64 omp-linux-arm64 omp-darwin-x64 omp-darwin-arm64
+fi
 
-bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
-  'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
-  codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
+if wants code; then
+  bump code "$repo_root/pkgs/code/default.nix" atyrode/code v \
+    'https://github.com/atyrode/code/releases/download/@tag@/@asset@.tar.gz' \
+    code-linux-amd64 code-linux-arm64 code-darwin-amd64 code-darwin-arm64
+fi
+
+if wants codex; then
+  bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
+    'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
+    codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
+fi
+
+if wants orca; then
+  bump orca "$repo_root/pkgs/orca-ide/default.nix" stablyai/orca v \
+    'https://github.com/stablyai/orca/releases/download/@tag@/@asset@' \
+    orca-linux.AppImage orca-linux-arm64.AppImage orca-macos-x64.dmg orca-macos-arm64.dmg
+fi
+
+if wants orca; then
+  # Orca's reviewed desktop skill is kept at the same release as its package.
+  # checks/orca.nix blocks automatic bumps until that skill is re-reviewed.
+  orca_pin="$(current_version "$repo_root/pkgs/orca-ide/default.nix")"
+  orca_skill="$(grep -oE 'ORCA_SKILL_UPSTREAM_VERSION=[0-9.]+' \
+    "$repo_root/agents/desktop-skills/computer-use/SKILL.md" |
+    grep -oE '[0-9.]+$')"
+  if [[ "$orca_pin" != "$orca_skill" ]]; then
+    printf 'Orca computer-use skill vendored at %s lags pin %s: review https://github.com/stablyai/orca/tree/v%s/skills, then refresh computer-use\n' \
+      "$orca_skill" "$orca_pin" "$orca_pin"
+  fi
+fi

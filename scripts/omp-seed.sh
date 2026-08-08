@@ -23,7 +23,11 @@ snapshot_file="$state_root/last-applied.yml"
 report_file="$state_root/drift.json"
 dry_run="${AGENT_TOOLS_DRY_RUN:-0}"
 
-agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}"
+# Always the default state root: the seed's target and its global drift state
+# are a pair. Honoring a caller's PI_CODING_AGENT_DIR (e.g. `atyrode apply` run
+# from inside a profile-scoped agent session) would audit — and seed — the
+# wrong profile's config against state recorded for the default root.
+agent_dir="$HOME/.omp/agent"
 
 transient_files=()
 cleanup() {
@@ -39,10 +43,8 @@ fail() {
   exit 1
 }
 
-# Prefer config.yml, accept OMP's legacy config.yaml fallback. If the
-# preferred name later starts to exist alongside the legacy one, omp reads
-# the .yml and every previously seeded key in the .yaml reports as drift —
-# a safe failure mode that surfaces the dual-file state without writes.
+# Prefer config.yml, but follow pinned OMP's config.yaml selection when the
+# canonical filename does not exist so the seeder never writes a shadow file.
 resolve_config_path() {
   if [[ -f "$agent_dir/config.yml" ]]; then
     printf '%s\n' "$agent_dir/config.yml"
@@ -136,8 +138,8 @@ classify() {
 # caller passes the digest captured at load time).
 write_yaml_atomically() {
   local json="$1" target="$2" expected_digest="$3" mode temp real
-  jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1 \
-    || fail "refusing to write a non-mapping document to $target"
+  jq -e 'type == "object"' <<<"$json" >/dev/null 2>&1 ||
+    fail "refusing to write a non-mapping document to $target"
   real="$(realpath -m -- "$target")"
   mode=600
   if [[ -f "$real" ]]; then
@@ -224,8 +226,8 @@ cmd_apply() {
   classification="$(classify "$live_json" "$seed_json" "$snap_json")"
 
   if [[ "$(jq -r '.set | length' <<<"$classification")" != 0 ]]; then
-    merged="$(apply_sets "$classification")" \
-      || fail "could not merge seed values into $config_path"
+    merged="$(apply_sets "$classification")" ||
+      fail "could not merge seed values into $config_path"
     write_yaml_atomically "$merged" "$config_path" "$live_digest"
   fi
   install -m 600 "$seed_file" "$snapshot_file"
@@ -285,7 +287,7 @@ cmd_resolve() {
       printf '\n'
     fi
     case "$answer" in
-      r|R)
+      r | R)
         # Resetting may need to displace a local non-mapping that blocks the
         # path; the operator explicitly chose the default here.
         updated="$(jq --arg key "$key" --argjson result "$classification" '
@@ -297,12 +299,12 @@ cmd_resolve() {
               else delpaths([$d.path[:$i]])
               end
             )
-          | setpath($d.path; $d.seed)' <<<"$updated")" \
-          || fail "could not reset $key"
+          | setpath($d.path; $d.seed)' <<<"$updated")" ||
+          fail "could not reset $key"
         printf '  reset %s\n' "$key"
         ;;
-      a|A) keep_all=1 ;;
-      q|Q) break ;;
+      a | A) keep_all=1 ;;
+      q | Q) break ;;
       *) printf '  kept %s\n' "$key" ;;
     esac
   done 3< <(jq -r '.drift[] | [.key, (.live | tojson), (.seed | tojson)] | @tsv' <<<"$classification")
@@ -331,9 +333,21 @@ EOF
 }
 
 case "${1:-}" in
-  apply) shift; cmd_apply "$@" ;;
-  status) shift; cmd_status "$@" ;;
-  resolve) shift; cmd_resolve "$@" ;;
-  -h|--help|help|'') usage ;;
-  *) usage >&2; exit 64 ;;
+  apply)
+    shift
+    cmd_apply "$@"
+    ;;
+  status)
+    shift
+    cmd_status "$@"
+    ;;
+  resolve)
+    shift
+    cmd_resolve "$@"
+    ;;
+  -h | --help | help | '') usage ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
 esac

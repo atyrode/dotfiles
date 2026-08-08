@@ -2,6 +2,7 @@
   darwinConfigs ? { },
   externalFixture ? null,
   homeConfigs,
+  inventory,
   lib,
   pkgs,
   serverConfig ? null,
@@ -10,13 +11,12 @@
 
 let
   boundary = builtins.fromJSON (builtins.readFile ../inventory/system-boundary.json);
-  packageInventory = builtins.fromJSON (builtins.readFile ../inventory/packages.json);
   darwinCasks = import ../darwin/casks.nix;
   knownCapabilities = builtins.attrNames (import ../home/profiles);
 
   sort = lib.sort builtins.lessThan;
-  normaliseHome = value: if value ? config then value.config else value;
-  normaliseDarwin = value: if value ? config then value.config else value;
+  normaliseHome = value: value.config or value;
+  normaliseDarwin = value: value.config or value;
 
   configuredHomes = map normaliseHome (builtins.attrValues homeConfigs);
   serverHomes = lib.optional (serverConfig != null) (normaliseHome serverConfig);
@@ -38,33 +38,23 @@ let
   noManagedShell = config: !((config.home.sessionVariables or { }) ? SHELL);
   noClamAV = config: !(builtins.elem "clamav" (packageNames config));
 
-  capabilityOwners = [
-    "agent-tools"
-    "base"
-    "containers"
-    "desktop"
-    "development"
-    "media"
-    "mobile"
-    "security"
-  ];
-  specialOwners = [
-    "experimental"
-    "project"
-    "system"
-  ];
-  inventoryOwners = map (record: record.owner) packageInventory;
-  inventoryPackages = lib.concatMap (record: record.packages) packageInventory;
-  recordFor =
+  capabilityOwners = builtins.attrNames inventory.capabilities;
+  inventoryPackages = lib.concatMap (
+    capability:
+    map (item: item.name) (
+      lib.filter (item: item.kind == "package") inventory.capabilities.${capability}.deliverables
+    )
+  ) capabilityOwners;
+  inventoryCasks = map (item: item.name) (
+    lib.filter (item: item.kind == "application") inventory.capabilities.desktop.deliverables
+  );
+  packagesFor =
     owner:
-    lib.findFirst (
-      record: record.owner == owner
-    ) (throw "missing package owner ${owner}") packageInventory;
-  packagesFor = owner: sort (recordFor owner).packages;
-  selectorsAreKnown =
-    record:
-    lib.all (selector: builtins.elem selector (knownCapabilities ++ [ "darwin" ])) record.selectedBy;
-  capabilityOwnershipIsDirect = owner: (recordFor owner).selectedBy == [ owner ];
+    sort (
+      map (item: item.name) (
+        lib.filter (item: item.kind == "package") inventory.capabilities.${owner}.deliverables
+      )
+    );
 
   expectedContainerPackages =
     if lib.hasSuffix "-darwin" system then
@@ -110,7 +100,9 @@ let
   darwinPolicyMatches =
     config:
     let
-      activation = config.system.activationScripts.postActivation.text;
+      postActivation = config.system.activationScripts.postActivation.text;
+      homebrewActivation = config.system.activationScripts.homebrew.text;
+      activationChecks = config.system.activationScripts.checks.text;
       shellPaths = map toString config.environment.shells;
       sudoPam = config.security.pam.services.${boundary.sudo.darwinService};
       configuredCasks = map (
@@ -136,10 +128,18 @@ let
     && config.homebrew.onActivation.autoUpdate == false
     && config.homebrew.onActivation.upgrade == false
     && config.homebrew.onActivation.cleanup == "check"
+    && config.homebrew.onActivation.extraEnv == { }
+    && config.homebrew.onActivation.extraFlags == [ ]
     && sort configuredCasks == sort darwinCasks
-    && lib.hasInfix "/usr/bin/dscl" activation
-    && lib.hasInfix "/run/current-system/sw/bin/zsh" activation
-    && lib.hasInfix "refusing to create" activation;
+    && lib.hasInfix "homebrewCleanupResult=$(PATH=" activationChecks
+    && lib.hasInfix "cleanup 2>&1) || homebrewCleanupExitCode=$?" activationChecks
+    && !(lib.hasInfix "cleanup --force 2>&1" activationChecks)
+    && !(lib.hasInfix "cleanup --zap 2>&1" activationChecks)
+    && !(lib.hasInfix "HOMEBREW_ASK" homebrewActivation)
+    && !(lib.hasInfix "manaflow-ai/cmux" homebrewActivation)
+    && lib.hasInfix "/usr/bin/dscl" postActivation
+    && lib.hasInfix "/run/current-system/sw/bin/zsh" postActivation
+    && lib.hasInfix "refusing to create" postActivation;
 in
 assert lib.assertMsg (boundary.schemaVersion == 1) "unknown system-boundary policy schema";
 assert lib.assertMsg (
@@ -191,24 +191,15 @@ assert lib.assertMsg (
       "uninstall"
       "zap"
     ]
-) "Homebrew cleanup must remain report-only and non-destructive";
+) "Homebrew cleanup must report drift without deleting operator state";
 assert lib.assertMsg (
-  sort inventoryOwners == sort (capabilityOwners ++ specialOwners)
-) "the package inventory has missing, duplicate, or unknown owners";
+  sort capabilityOwners == sort knownCapabilities
+) "the evaluated inventory has missing or unknown capability owners";
 assert lib.assertMsg (
   builtins.length inventoryPackages == builtins.length (lib.unique inventoryPackages)
-) "a package is assigned to more than one owner";
-assert lib.assertMsg (lib.all selectorsAreKnown packageInventory)
-  "the package inventory contains an unknown capability selector";
-assert lib.assertMsg (lib.all capabilityOwnershipIsDirect capabilityOwners)
-  "capability-owned packages must be selected directly by their owning capability";
+) "an evaluated package is assigned to more than one capability";
 assert lib.assertMsg (
-  packagesFor "containers" == [
-    "dive"
-    "docker"
-    "docker-compose"
-    "orbstack"
-  ]
+  packagesFor "containers" == sort expectedContainerPackages
 ) "container clients are not assigned coherently";
 assert lib.assertMsg (
   packagesFor "security" == [
@@ -219,9 +210,9 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   !(builtins.elem "clamav" inventoryPackages)
 ) "ClamAV must remain absent until signature updates and scanning have a system owner";
-assert lib.assertMsg (lib.all (
-  cask: builtins.elem cask inventoryPackages
-) darwinCasks) "a nix-darwin Homebrew cask is missing from the package ownership inventory";
+assert lib.assertMsg (
+  !lib.hasSuffix "-darwin" system || sort inventoryCasks == sort darwinCasks
+) "evaluated nix-darwin Homebrew casks differ from the reviewed module";
 assert lib.assertMsg (
   lib.intersectLists darwinCasks darwinHomePackages == [ ]
 ) "a Homebrew-owned Darwin cask is also installed by Home Manager";

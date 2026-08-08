@@ -13,7 +13,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const MANAGED_PATHS = [
 	"providers.webSearch",
-	"providers.anthropic.serverSideFallback",
 	"symbolPreset",
 	"colorBlindMode",
 	"modelRoles",
@@ -31,6 +30,8 @@ export const MANAGED_PATHS = [
 	"autolearn.autoContinue",
 	"github.enabled",
 	"checkpoint.enabled",
+	"astGrep.enabled",
+	"edit.enforceSeenLines",
 	"statusLine.preset",
 	"statusLine.compactThinkingLevel",
 	"statusLine.transparent",
@@ -55,7 +56,6 @@ export const MANAGED_PATHS = [
 	"tools.approval.browser",
 	"tools.approval.task",
 	"tools.approval.github",
-	"tools.approval.ssh",
 	"tools.approval.debug",
 	"secrets.enabled",
 	"task.isolation.mode",

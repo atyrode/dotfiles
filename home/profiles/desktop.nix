@@ -6,8 +6,8 @@ let
 in
 {
   imports = [
-    ../ghostty.nix
     ../linux-desktop.nix
+    ../rio.nix
   ];
 
   # Retention of desktop applications reflects operator use, not the agent
@@ -22,7 +22,6 @@ in
       signal-desktop
       spotify
       vlc-bin
-      whatsapp-for-mac
     ])
     ++ [ lichess ]
   );

@@ -71,6 +71,28 @@ assert lib.assertMsg serverConfig.programs.home-manager.enable
   "portable server must enable Home Manager";
 assert lib.assertMsg serverConfig.programs.zsh.enable "portable server must enable Zsh";
 assert lib.assertMsg serverConfig.programs.git.enable "portable server must enable Git";
+assert lib.assertMsg serverConfig.programs.gh.enable "portable server must enable GitHub CLI";
+assert lib.assertMsg (
+  serverConfig.programs.gh.settings.git_protocol == "ssh"
+) "portable server must make gh clones use SSH";
+assert lib.assertMsg serverConfig.programs.gh.gitCredentialHelper.enable
+  "portable server must declare the gh Git credential helper";
+assert lib.assertMsg (builtins.any (lib.hasSuffix "/bin/gh auth git-credential")
+  serverConfig.programs.git.settings.credential."https://github.com".helper
+) "portable server must render the gh helper into Git configuration";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.url."git@github.com:".pushInsteadOf == "https://github.com/"
+) "portable server must rewrite GitHub pushes, not anonymous fetches, to SSH";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.url."git@gitlab.com:".pushInsteadOf == "https://gitlab.com/"
+) "portable server must rewrite GitLab pushes, not anonymous fetches, to SSH";
+assert lib.assertMsg (
+  serverConfig.xdg.configFile."git/allowed_signers".source == ../home/git-allowed-signers
+) "portable server must deploy the reviewed allowed_signers source";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.gpg.ssh.allowedSignersFile
+  == "${serverConfig.xdg.configHome}/git/allowed_signers"
+) "Git must use the Home Manager-owned allowed_signers path";
 assert lib.assertMsg serverConfig.programs.fzf.enable "portable server must enable fzf";
 assert lib.assertMsg serverConfig.programs.zoxide.enable "portable server must enable zoxide";
 assert lib.assertMsg serverConfig.programs.direnv.nix-direnv.enable
@@ -81,7 +103,7 @@ assert lib.assertMsg serverConfig.programs.nix-index-database.comma.enable
 assert lib.assertMsg serverConfig.atyrode.agentTools.enable
   "portable server must enable managed agent tools";
 assert lib.assertMsg (lib.hasInfix "Bash(gh pr merge:*)"
-  serverConfig.home.file.".claude/settings.json".text
+  serverConfig.home.file.".local/share/atyrode/claude-settings.json".text
 ) "portable server must carry the Claude Code standing merge authorization";
 assert lib.assertMsg (builtins.hasAttr ".claude/CLAUDE.md" serverConfig.home.file)
   "portable server must deploy the managed Claude Code operator policy";
@@ -103,6 +125,15 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   fixtureIdentity.username == "fixture"
 ) "NixOS consumer identity did not retain its fixture user";
+assert lib.assertMsg (
+  fixtureIdentity.activation == "nixos"
+) "NixOS consumer identity did not retain its infrastructure activation owner";
+assert lib.assertMsg (
+  fixtureIdentity.nixTrustedUsers == [
+    "root"
+    "fixture"
+  ]
+) "NixOS consumer identity did not retain its declared Nix trust boundary";
 assert lib.assertMsg externalConfig.config.programs.zsh.enable
   "NixOS consumer must own system Zsh enablement";
 assert lib.assertMsg (
@@ -151,7 +182,7 @@ builtins.deepSeq evaluationPaths (
     ''
       atyrode capabilities show ${externalFixture.hostId} --json | jq -e '
         .host == "${externalFixture.hostId}"
-        and (.capabilities | map(.name)) == ["agent-tools", "base", "server"]
+        and (.capabilities | map(.name)) == ["agent-tools", "base", "security", "server"]
         and all(.capabilities[]; .description | length > 0)
       ' >/dev/null
 

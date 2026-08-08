@@ -2,27 +2,28 @@
   fetchurl,
   lib,
   makeWrapper,
+  patchelf,
   stdenv,
 }:
 
 let
-  version = "16.4.8";
+  version = "17.2.9-atyrode.1";
   sources = {
     "x86_64-linux" = {
       asset = "omp-linux-x64";
-      hash = "sha256-zfB3XgW4jWP52mBt5ULMP8C+7fCoZLSsQvd3lh+GhEw=";
+      hash = "sha256-EwDPeLV4KrerX/Z1d4pH6guWAfcEmhrSayc+qrgaHQ8=";
     };
     "aarch64-linux" = {
       asset = "omp-linux-arm64";
-      hash = "sha256-nOVX1ojLTTW6uiImJOt/RgFi4e8BDk5M8C8UIxLGacU=";
+      hash = "sha256-sQ3UhkveHGP7pzq68gZaMLxJ+01h5+2/7nOT+pJGiD8=";
     };
     "x86_64-darwin" = {
       asset = "omp-darwin-x64";
-      hash = "sha256-PocAgPRDgfbkhRA/+KgGds9GNUW0AN/HCdenS3q9yhs=";
+      hash = "sha256-o37/OPEp2rCVonVX+CA+QST7fPNChY0s6D6UDcbhoU8=";
     };
     "aarch64-darwin" = {
       asset = "omp-darwin-arm64";
-      hash = "sha256-PaPT3RU6auZVyViRzQZtwAJE6cN+fJ8Yihl5FwRddEc=";
+      hash = "sha256-ItHkFeQVLTdpyY00xYYmjICfyZ2FyszPAKrQtJVQhoc=";
     };
   };
   source =
@@ -34,7 +35,7 @@ stdenv.mkDerivation {
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/can1357/oh-my-pi/releases/download/v${version}/${source.asset}";
+    url = "https://github.com/atyrode/omp/releases/download/v${version}/${source.asset}";
     inherit (source) hash;
   };
 
@@ -42,7 +43,10 @@ stdenv.mkDerivation {
   dontPatchELF = true;
   dontStrip = true;
 
-  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ];
+  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+    makeWrapper
+    patchelf
+  ];
 
   installPhase = ''
     runHook preInstall
@@ -50,9 +54,25 @@ stdenv.mkDerivation {
     ${
       if stdenv.hostPlatform.isLinux then
         ''
+          # omp is a Bun single-file executable. It re-execs itself
+          # (process.execPath) to spawn its subprocess workers
+          # (__omp_worker_stt & co), so it must run as the binary itself,
+          # not via an `ld.so <binary>` wrapper: that makes process.execPath
+          # the loader and every worker dies with `error while loading
+          # shared libraries: __omp_worker_*` (exit 127). Patch PT_INTERP in
+          # place instead -- --set-interpreter rewrites one page and leaves
+          # the appended Bun payload intact (--set-rpath relocates sections
+          # and segfaults it).
           install -Dm755 "$src" "$out/libexec/omp"
-          makeWrapper ${stdenv.cc.bintools.dynamicLinker} "$out/bin/omp" \
-            --add-flags "$out/libexec/omp"
+          patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} "$out/libexec/omp"
+
+          # The speech workers dlopen a downloaded manylinux prebuilt
+          # (sherpa-onnx.node) that needs libstdc++/libgcc_s; under the pinned
+          # loader those are not on the default search path. Expose them via
+          # the wrapper -- the re-exec'd workers inherit the env, and execPath
+          # stays correct because the wrapper execs the patched binary itself.
+          makeWrapper "$out/libexec/omp" "$out/bin/omp" \
+            --suffix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}
         ''
       else
         ''
@@ -71,7 +91,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "AI coding agent for the terminal";
-    homepage = "https://github.com/can1357/oh-my-pi";
+    homepage = "https://github.com/atyrode/omp";
     license = lib.licenses.mit;
     mainProgram = "omp";
     platforms = builtins.attrNames sources;

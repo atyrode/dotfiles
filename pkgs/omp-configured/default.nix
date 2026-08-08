@@ -1,11 +1,13 @@
 {
   bash,
   cacert,
-  code-tui,
+  code,
   coreutils,
   findutils,
   gitMinimal,
   gnugrep,
+  go,
+  gopls,
   jq,
   lib,
   omp,
@@ -13,8 +15,8 @@
   patch,
   python3,
   runCommand,
+  typescript-language-server,
   writeShellApplication,
-  writeText,
   yq-go,
 }:
 
@@ -27,12 +29,23 @@ let
   neutralRoot = runCommand "omp-untrusted-neutral-root" { } ''
     mkdir "$out"
   '';
+  # gopls shells out to the Go command while loading a workspace. Keep that
+  # implementation dependency scoped to the language server instead of making
+  # the compiler ambiently available to every OMP tool invocation.
+  goplsCommand = writeShellApplication {
+    name = "gopls";
+    runtimeInputs = [ go ];
+    text = ''
+      exec ${lib.getExe gopls} "$@"
+    '';
+  };
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
     cp ${../../omp/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
-    cp ${../../omp/extensions/task-isolation-guard.ts} "$out/extensions/task-isolation-guard.ts"
+    cp ${../../omp/extensions/vault-usage-footer.ts} "$out/extensions/vault-usage-footer.ts"
     cp ${../../omp/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
+    cp ${../../omp/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
     cp ${../../omp/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
     cat > "$out/package.json" <<'EOF'
     {
@@ -42,28 +55,12 @@ let
       "omp": {
         "extensions": [
           "./extensions/managed-settings-guard.ts",
-          "./extensions/task-isolation-guard.ts"
+          "./extensions/vault-usage-footer.ts"
         ]
       }
     }
     EOF
   '';
-  presets = {
-    budget = ../../omp/presets/budget.yml;
-    fable = ../../omp/presets/fable-primary.yml;
-    gpt = ../../omp/presets/gpt56.yml;
-    sonnet = ../../omp/presets/sonnet-value.yml;
-    claude = ../../omp/presets/claude-hard.yml;
-    context = ../../omp/presets/context-1m.yml;
-    fast = ../../omp/presets/fast-mixed.yml;
-    gptSpeed = ../../omp/presets/gpt-speed.yml;
-    claudeSpeed = ../../omp/presets/claude-speed.yml;
-    mixedRegular = ../../omp/presets/mixed-regular.yml;
-    mixedSmart = ../../omp/presets/mixed-smart.yml;
-    gptOnly = ../../omp/presets/gpt-only.yml;
-    claudeOnly = ../../omp/presets/claude-only.yml;
-  };
-
   managedDefaultPaths = [
     "providers.webSearch"
     "symbolPreset"
@@ -83,6 +80,8 @@ let
     "autolearn.autoContinue"
     "github.enabled"
     "checkpoint.enabled"
+    "astGrep.enabled"
+    "edit.enforceSeenLines"
     "statusLine.preset"
     "statusLine.compactThinkingLevel"
     "statusLine.transparent"
@@ -102,9 +101,6 @@ let
     "proseOnlyThinking"
     "defaultThinkingLevel"
   ];
-  managedPresetPaths = [
-    "providers.anthropic.serverSideFallback"
-  ];
   enforcedPolicyPaths = [
     "tools.approvalMode"
     "tools.approval.bash"
@@ -117,16 +113,18 @@ let
     "task.isolation.merge"
     "task.isolation.commits"
   ];
-  managedOwnedPaths = managedDefaultPaths ++ managedPresetPaths;
-  allManagedPaths = managedOwnedPaths ++ enforcedPolicyPaths;
+  allManagedPaths = managedDefaultPaths ++ enforcedPolicyPaths;
 
   mkOmpCommand =
-    name: presetConfigs:
+    name:
     writeShellApplication {
       inherit name;
       runtimeInputs = [
+        goplsCommand
         jq
         yq-go
+        python3
+        typescript-language-server
       ];
       text = ''
         raw_omp=${lib.escapeShellArg (lib.getExe omp)}
@@ -137,15 +135,11 @@ let
         platform_root='${platformRoot}'
         local_config="''${XDG_CONFIG_HOME:-$HOME/.config}/omp/local.yml"
 
-        preset_configs=( ${lib.concatMapStringsSep " " (path: "'${path}'") presetConfigs} )
         managed_default_paths=( ${lib.escapeShellArgs managedDefaultPaths} )
-        managed_preset_paths=( ${lib.escapeShellArgs managedPresetPaths} )
         enforced_policy_paths=( ${lib.escapeShellArgs enforcedPolicyPaths} )
         managed_default_paths_json=${lib.escapeShellArg (builtins.toJSON managedDefaultPaths)}
-        managed_preset_paths_json=${lib.escapeShellArg (builtins.toJSON managedPresetPaths)}
         enforced_policy_paths_json=${lib.escapeShellArg (builtins.toJSON enforcedPolicyPaths)}
         all_managed_paths_json=${lib.escapeShellArg (builtins.toJSON allManagedPaths)}
-        preset_paths_json=${lib.escapeShellArg (builtins.toJSON (map toString presetConfigs))}
 
         takes_required_value() {
           case "$1" in
@@ -515,6 +509,10 @@ let
           done
         }
 
+        # Apply the same legacy-key migrations pinned OMP performs at load
+        # (verified against 17.0.3: string theme, boolean autoRedeem,
+        # memories.enabled, task.isolation.enabled, and renamed isolation
+        # modes), so the diagnostic reports what the binary actually resolves.
         normalize_layer_json() {
           local file="$1"
           yq eval -o=json -I=0 '.' "$file" | jq -c '
@@ -559,7 +557,6 @@ let
           local project_settings_present=false
           local project_config_present=false
           local -a layer_files=()
-          local preset
 
           if [[ -e "$machine_config" ]]; then
             machine_present=true
@@ -579,9 +576,6 @@ let
             local_present=true
             layer_files+=( "$local_config" )
           fi
-          for preset in "''${preset_configs[@]}"; do
-            layer_files+=( "$preset" )
-          done
           extract_one_shot_configs "''${original_args[@]}"
           local one_shot
           local -a resolved_one_shot_configs=()
@@ -607,7 +601,7 @@ let
             merged_json="$(printf '%s\n%s\n' "$merged_json" "$layer_json" | jq -cs '.[0] * .[1]')"
           done
           effective_managed="$(
-            # shellcheck disable=SC2016
+            # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
             jq -c --argjson paths "$all_managed_paths_json" '
               . as $source
               | reduce $paths[] as $key ({};
@@ -669,7 +663,7 @@ let
           one_shots_json="$(json_array "''${resolved_one_shot_configs[@]}")"
 
           diagnostic_json="$(
-            # shellcheck disable=SC2016
+            # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
             jq -n \
               --arg launcher "$launcher" \
               --arg profile "$active_profile" \
@@ -687,10 +681,8 @@ let
               --arg policy "$policy_config" \
               --arg yolo "$yolo_config" \
               --argjson runtimeYolo "$runtime_yolo" \
-              --argjson presets "$preset_paths_json" \
               --argjson oneShots "$one_shots_json" \
               --argjson defaultKeys "$managed_default_paths_json" \
-              --argjson presetKeys "$managed_preset_paths_json" \
               --argjson policyKeys "$enforced_policy_paths_json" \
               --argjson effectiveManaged "$effective_managed" \
               --argjson enforcedPolicy "$policy_json" \
@@ -708,7 +700,6 @@ let
                       { kind: "native-project", format: "config.yml", managed: false, path: $project, present: $projectConfigPresent },
                       { kind: "machine-local", managed: false, path: $local, present: $localPresent }
                     ]
-                    + ($presets | map({ kind: "preset", managed: true, path: . }))
                     + ($oneShots | map({ kind: "one-shot-config", managed: false, invocationSpecific: true, path: . }))
                     + [
                       { kind: "managed-policy", managed: true, enforced: true, path: $policy }
@@ -722,7 +713,6 @@ let
                   ),
                   ownership: {
                     defaults: $defaultKeys,
-                    presets: $presetKeys,
                     policy: $policyKeys
                   },
                   effectiveManaged: $effectiveManaged,
@@ -801,17 +791,12 @@ let
           if [[ "$action" == set || "$action" == reset ]]; then
             if contains_managed_path "$key" "''${enforced_policy_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run zconf; machine, project, preset, and --config values are intentionally shadowed." >&2
+                "OMP setting '$key' is enforced by Nix policy. Edit the dotfiles policy and run 'atyrode apply'; machine, project, and --config values are intentionally shadowed." >&2
               exit 2
             fi
             if contains_managed_path "$key" "''${managed_default_paths[@]}"; then
               printf '%s\n' \
-                "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run zconf." >&2
-              exit 2
-            fi
-            if contains_managed_path "$key" "''${managed_preset_paths[@]}"; then
-              printf '%s\n' \
-                "OMP setting '$key' is owned by a Nix-managed preset. Edit the preset or choose a launcher that does not select it, then run zconf." >&2
+                "OMP setting '$key' is a Nix-managed default. Edit the dotfiles defaults, or override it in $local_config, then run 'atyrode apply'." >&2
               exit 2
             fi
           fi
@@ -821,11 +806,6 @@ let
               contains_managed_path "$key" "''${managed_default_paths[@]}"; }; then
             printf '%s\n' \
               "OMP setting '$key' has Nix-managed layers. 'omp config get' only reads writable machine state; use 'omp config managed --json' for the effective value." >&2
-            exit 2
-          fi
-          if [[ "$action" == get ]] && contains_managed_path "$key" "''${managed_preset_paths[@]}"; then
-            printf '%s\n' \
-              "OMP setting '$key' is owned by a Nix-managed preset. 'omp config get' only reads writable machine state; use 'omp config managed --json' for the effective value." >&2
             exit 2
           fi
 
@@ -907,7 +887,7 @@ let
             exec "$raw_omp" "''${original_args[@]}"
             ;;
           update)
-            printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+            printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
             exit 2
             ;;
           config)
@@ -956,9 +936,6 @@ let
         if [[ -f "$local_config" ]]; then
           managed_args+=( --config "$local_config" )
         fi
-        for preset in "''${preset_configs[@]}"; do
-          managed_args+=( --config "$preset" )
-        done
         for one_shot in "''${one_shot_configs[@]}"; do
           managed_args+=( --config "$one_shot" )
         done
@@ -978,221 +955,115 @@ let
 
   ompDefault = writeShellApplication {
     name = "omp";
+    runtimeInputs = [
+      goplsCommand
+      python3
+      typescript-language-server
+    ];
     text = ''
       if [[ "''${1:-}" == update ]]; then
-        printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+        printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
         exit 2
       fi
-      exec ${lib.getExe omp} "$@"
-    '';
-  };
-  ompBudget = mkOmpCommand "ompb" [ presets.budget ];
-  ompSonnet = mkOmpCommand "omps" [ presets.sonnet ];
-  ompFable = mkOmpCommand "ompf" [ presets.fable ];
-  ompGpt = mkOmpCommand "ompg" [ presets.gpt ];
-  ompClaude = mkOmpCommand "ompc" [ presets.claude ];
-  ompContext = mkOmpCommand "ompx" [ presets.context ];
-  ompFast = mkOmpCommand "ompz" [ presets.fast ];
-  ompGptSpeed = mkOmpCommand "ompl" [ presets.gptSpeed ];
-  ompClaudeSpeed = mkOmpCommand "ompk" [ presets.claudeSpeed ];
-  ompMixedRegular = mkOmpCommand "ompn" [ presets.mixedRegular ];
-  ompMixedSmart = mkOmpCommand "ompm" [ presets.mixedSmart ];
-  ompGptOnly = mkOmpCommand "ompo" [ presets.gptOnly ];
-  ompClaudeOnly = mkOmpCommand "ompe" [ presets.claudeOnly ];
-  # Zero-preset managed launcher: applies the platform extensions + managed
-  # defaults + policy to an arbitrary one-shot `--config`, with no preset
-  # overlay. The code picker's generator points CODE_OMP here so a synthesised
-  # profile launches through the same managed layering as a preset.
-  ompManaged = mkOmpCommand "omp-managed" [ ];
 
-  # Single source of truth for the launcher palette, ordered into soft groups
-  # (mixed, then gpt-led, then claude-led, then specialists) and faster -> smarter
-  # within each. The `code` picker lists every entry and labels the groups; `omph`
-  # renders the routing for the preset-backed ones (those carrying a `preset`).
-  # `omp`/`ompu` are special builders (no preset), shown in the picker only.
-  paletteProfiles = [
-    {
-      cmd = "omp";
-      exe = lib.getExe ompDefault;
-      lead = "yours";
-      group = "";
-      blurb = "Your unmanaged ~/.omp config";
-      detail = "Runs upstream OMP with whatever your writable ~/.omp config selects. No managed defaults, preset, or policy overlay beyond the blocked update.";
-    }
-    {
-      cmd = "ompz";
-      exe = lib.getExe ompFast;
-      lead = "mixed";
-      group = "mix";
-      blurb = "Luna + Haiku, low thinking";
-      detail = "The fastest competent tiers across both providers at low thinking — Luna and Spark on the GPT side, Sonnet and Haiku on the Claude side — with light single-hop crosses. For snappy interactive work; nothing reaches for Sol/Fable/Opus.";
-      preset = presets.fast;
-    }
-    {
-      cmd = "ompn";
-      exe = lib.getExe ompMixedRegular;
-      lead = "mixed";
-      group = "mix";
-      blurb = "Claude judges, GPT executes";
-      detail = "Both pools at medium thinking: Claude leads judgment (default/design/review/plan), GPT leads execution (task/librarian/slow), Spark drains in the background. Full same-bucket-then-cross redundancy on every substantive role.";
-      preset = presets.mixedRegular;
-    }
-    {
-      cmd = "ompm";
-      exe = lib.getExe ompMixedSmart;
-      lead = "mixed";
-      group = "mix";
-      blurb = "Best model per task";
-      detail = "The best model per task at high thinking: Sol drives GPT-strength roles, Fable/Opus the Claude-strength ones (design, planning, review). Full redundancy; Fable never an automatic net. When only the best will do, from either provider.";
-      preset = presets.mixedSmart;
-    }
-    {
-      cmd = "ompl";
-      exe = lib.getExe ompGptSpeed;
-      lead = "openai";
-      group = "gpt";
-      blurb = "Luna; task drains Spark";
-      detail = "Luna leads at low thinking, task drains the free Spark bucket, and fallbacks are single fast hops to Haiku. Latency-first Codex; nothing reaches for Sol or high thinking. ompz's pure-GPT sibling.";
-      preset = presets.gptSpeed;
-    }
-    {
-      cmd = "ompb";
-      exe = lib.getExe ompBudget;
-      lead = "openai";
-      group = "gpt";
-      blurb = "Terra, off the premium tiers";
-      detail = "Terra leads routine Codex work, kept off the premium tiers — failovers stay on Luna/Terra + Haiku/Sonnet, never Sol/Opus. Background drains Spark. The cost-conscious middle of the GPT lane.";
-      preset = presets.budget;
-    }
-    {
-      cmd = "ompg";
-      exe = lib.getExe ompGpt;
-      lead = "openai";
-      group = "gpt";
-      blurb = "Sol drives, Claude is the net";
-      detail = "Sol leads the deliberative roles; a GPT sibling absorbs a capacity blip, then every substantive chain crosses to Opus/Sonnet. task/background drain Spark. All-OpenAI lead pool.";
-      preset = presets.gpt;
-    }
-    {
-      cmd = "ompo";
-      exe = lib.getExe ompGptOnly;
-      lead = "openai";
-      group = "gpt";
-      blurb = "Codex only, never crosses";
-      detail = "Pure Codex: Sol drives, redundancy stays inside the bucket (Sol → Terra → Luna), background drains Spark. Keeps every token on OpenAI — for draining Codex, or when the Claude plan is down or off-limits.";
-      preset = presets.gptOnly;
-    }
-    {
-      cmd = "ompk";
-      exe = lib.getExe ompClaudeSpeed;
-      lead = "claude";
-      group = "claude";
-      blurb = "Haiku, fast and cheap";
-      detail = "Haiku leads at low thinking, background drains the free Spark bucket, and fallbacks are single fast hops to Luna. Latency-first Claude — Haiku's home.";
-      preset = presets.claudeSpeed;
-    }
-    {
-      cmd = "omps";
-      exe = lib.getExe ompSonnet;
-      lead = "claude";
-      group = "claude";
-      blurb = "Sonnet value, Opus for depth";
-      detail = "Sonnet 5 (intro pricing) leads all but plan/slow, where Opus earns its leverage. Every substantive chain is sibling-first, then crosses to Terra/Sol. Background drains Spark, then Haiku. All-Anthropic lead pool.";
-      preset = presets.sonnet;
-    }
-    {
-      cmd = "ompc";
-      exe = lib.getExe ompClaude;
-      lead = "claude";
-      group = "claude";
-      blurb = "Fable drives, Opus reviews";
-      detail = "ompg's mirror. Fable drives, Opus is the sibling (and leads review), Sonnet/Haiku carry workers, every chain reaches back to Sol/Terra. Load this when OpenAI is dark or the Codex meter is empty and the work is hard.";
-      preset = presets.claude;
-    }
-    {
-      cmd = "ompe";
-      exe = lib.getExe ompClaudeOnly;
-      lead = "claude";
-      group = "claude";
-      blurb = "Claude only, never crosses";
-      detail = "Pure Anthropic: Opus drives, redundancy stays inside the Claude plan (Opus → Sonnet → Haiku), never touching the separate Spark/Fable buckets. Keeps every token on Anthropic — for draining the plan, or when Codex is down.";
-      preset = presets.claudeOnly;
-    }
-    {
-      cmd = "ompf";
-      exe = lib.getExe ompFable;
-      lead = "claude";
-      group = "special";
-      blurb = "Fable, deterministic (no net)";
-      detail = "Fable for the primary and deliberative roles with retry and server-side fallback OFF. The contract is: give me Fable, predictably, never silently swap. Background on cheap OpenAI rungs.";
-      preset = presets.fable;
-    }
-    {
-      cmd = "ompx";
-      exe = lib.getExe ompContext;
-      lead = "claude";
-      group = "special";
-      blurb = "Beyond 372K — Anthropic 1M";
-      detail = "For work beyond the 372K ceiling. Anthropic's 1M line (Fable/Opus/Sonnet) leads and is the only redundancy — no OpenAI model runs 1M on a ChatGPT account, so there is no cross-net. Background trivia drains Spark, then Luna, then Haiku.";
-      preset = presets.context;
-    }
-    {
-      cmd = "ompu";
-      exe = lib.getExe ompUntrusted;
-      lead = "untrusted";
-      group = "special";
-      blurb = "Sandboxed, restricted tools";
-      detail = "Dedicated sanitized state, stripped credentials, restricted tools and approvals for deliberately untrusted repositories. Inherits the managed defaults routing.";
-    }
-  ];
-  presetProfiles = builtins.filter (p: p ? preset) paletteProfiles;
-  ompuProfile = lib.findFirst (p: p.cmd == "ompu") (throw "ompu missing from palette") paletteProfiles;
-  # ompu loads defaultsConfig then untrusted.yml, and untrusted.yml overrides only
-  # tools/approvals — never modelRoles/retry/thinking — so its routing is exactly the
-  # managed defaults. Render it like any preset so the picker preview and omph show a
-  # real model list (GUI parity) instead of a blank. (The bare `omp` genuinely has no
-  # managed routing — upstream's built-in modelRoles is empty — so it stays off this list.)
-  routeSpecs =
-    (map (p: "${p.cmd}|${p.blurb}|${p.preset}") presetProfiles)
-    ++ [ "ompu|${ompuProfile.blurb}|${untrustedConfig}" ];
-  routesHelp =
-    runCommand "omp-routes-help-${lib.getVersion omp}"
-      {
-        nativeBuildInputs = [
-          jq
-          yq-go
-        ];
-      }
-      ''
-        mkdir -p "$out/share/omp"
-        OMP_ROUTES_COLOR=1 bash ${./render-omp-routes.sh} '${lib.getVersion omp}' \
-          ${omp-agents}/share/omp/agents ${defaultsConfig} \
-          ${lib.escapeShellArgs routeSpecs} > "$out/share/omp/routes.ansi"
-        OMP_ROUTES_COLOR=0 bash ${./render-omp-routes.sh} '${lib.getVersion omp}' \
-          ${omp-agents}/share/omp/agents ${defaultsConfig} \
-          ${lib.escapeShellArgs routeSpecs} > "$out/share/omp/routes.plain"
-      '';
-  # First-principles facet grid: the generator (a models.yml + routing rules,
-  # see generate-profiles.py) emits a rendered routing block for every valid
-  # (lane, model-tier, thinking, spark, fable) combination, baked at build time
-  # so the generator view stays immutable and reviewable like the presets.
-  generatedProfiles =
-    runCommand "omp-generated-profiles"
-      { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }
-      ''
-        mkdir -p "$out/share/omp"
-        MODELS_YML=${../../omp/models.yml} \
-          python3 ${./generate-profiles.py} > "$out/share/omp/generated.plain"
-      '';
-  ompHelp = writeShellApplication {
-    name = "omph";
-    text = ''
-      if [[ -t 1 && -z ''${NO_COLOR:-} ]]; then
-        exec cat ${routesHelp}/share/omp/routes.ansi
+      # Upstream's end-of-session hint omits the active profile, so make a bare
+      # UUID resume target profile-aware without changing explicit state choices.
+      args=( "$@" )
+      resume_target=""
+      explicit_state=false
+      for (( i = 0; i < ''${#args[@]}; i++ )); do
+        arg="''${args[$i]}"
+        case "$arg" in
+          --profile|--session-dir)
+            explicit_state=true
+            (( i += 1 ))
+            ;;
+          --profile=*|--session-dir=*)
+            explicit_state=true
+            ;;
+          --resume|-r)
+            if (( i + 1 < ''${#args[@]} )) && [[ "''${args[$((i + 1))]}" != -* ]]; then
+              resume_target="''${args[$((i + 1))]}"
+            fi
+            ;;
+          --resume=*)
+            resume_target="''${arg#--resume=}"
+            ;;
+          -r?*)
+            resume_target="''${arg#-r}"
+            ;;
+          --)
+            break
+            ;;
+        esac
+      done
+
+      if [[ -z "''${OMP_PROFILE:-}" && -z "''${PI_CODING_AGENT_DIR:-}" &&
+        -z "''${PI_CONFIG_DIR:-}" && "$explicit_state" == false &&
+        "$resume_target" =~ ^[0-9a-fA-F-]{8,36}$ ]]; then
+        config_root="$HOME/.omp"
+        matched_default=false
+        matched_profiles=()
+        shopt -s nullglob globstar
+
+        for session in "$config_root/agent/sessions"/**/*.jsonl; do
+          session_id="''${session##*_}"
+          session_id="''${session_id%.jsonl}"
+          if [[ "$session_id" == "$resume_target"* ]]; then
+            matched_default=true
+            break
+          fi
+        done
+
+        for profile_root in "$config_root/profiles/"*/agent/sessions; do
+          profile="''${profile_root#"$config_root/profiles/"}"
+          profile="''${profile%%/*}"
+          for session in "$profile_root"/**/*.jsonl; do
+            session_id="''${session##*_}"
+            session_id="''${session_id%.jsonl}"
+            if [[ "$session_id" == "$resume_target"* ]]; then
+              matched_profiles+=( "$profile" )
+              break
+            fi
+          done
+        done
+
+        match_count=''${#matched_profiles[@]}
+        if [[ "$matched_default" == true ]]; then
+          (( match_count += 1 ))
+        fi
+        if (( match_count == 1 )) && [[ "$matched_default" == false ]]; then
+          args=( --profile "''${matched_profiles[0]}" "''${args[@]}" )
+        elif (( match_count > 1 )); then
+          printf 'Error: Resume target "%s" matches sessions in multiple OMP state roots; pass --profile explicitly.\n' \
+            "$resume_target" >&2
+          exit 2
+        fi
       fi
-      exec cat ${routesHelp}/share/omp/routes.plain
+
+      exec ${lib.getExe omp} "''${args[@]}"
     '';
   };
+  # The managed launcher: applies the platform extensions + managed defaults +
+  # policy to an arbitrary one-shot `--config`. The code generator points
+  # CODE_OMP here so a synthesised profile launches through the full managed
+  # layering.
+  ompManaged = mkOmpCommand "omp-managed";
+
+  # First-principles facet grid: `code generate` renders a routing block for
+  # every valid (lane, model-tier, thinking, spark, fable, fable-as-main)
+  # combination from the model catalog, baked at build time so the generator
+  # view stays immutable and reviewable. The binary that browses the grid also
+  # renders it — the second implementation this replaced had drifted from it.
+  # The pinned release predates the scout/vision roles and the quota-bucket
+  # column, so today's output is unchanged and the new rows arrive with the
+  # next version bump.
+  generatedProfiles = runCommand "omp-generated-profiles" { } ''
+    mkdir -p "$out/share/omp"
+    ${lib.getExe code} generate \
+      --models-file ${../../omp/models.yml} \
+      --out "$out/share/omp/generated.plain"
+  '';
   trustedUntrustedPath = lib.makeBinPath [
     bash
     coreutils
@@ -1333,7 +1204,7 @@ let
           run_isolated "$raw_omp" --profile untrusted "''${forwarded_args[@]}"
           ;;
         update)
-          printf '%s\n' 'OMP is managed by Nix. Update the pinned derivation, then run zconf.' >&2
+          printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
           exit 2
           ;;
       esac
@@ -1384,7 +1255,7 @@ let
         --append-system-prompt ${lib.escapeShellArg untrustedPrompt}
         --no-lsp
         --no-pty
-        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,inspect_image,checkpoint,rewind,task,job,todo,write'
+        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,inspect_image,checkpoint,rewind,task,hub,todo,write'
         --cwd "$target_cwd"
       )
 
@@ -1393,208 +1264,89 @@ let
     '';
   };
 
-  # `code` — the umbrella picker. Lists the launcher palette, resolves a
-  # selector (number, name, alias, or single suffix letter) and execs the
-  # matching launcher, forwarding every remaining argument. If the first
-  # argument is not a known profile it opens the picker and then forwards all
-  # arguments to the choice, so `code --resume` picks first, then resumes.
-  # code-tui manifest: accent colour (by lane/provider) and glyph (by intended
-  # use), mirrored from the retired fzf picker. nfGlyph decodes a Nerd Font
-  # codepoint via JSON so no raw private-use bytes live in this file.
-  nfGlyph = cp: builtins.fromJSON ''"\u${cp}"'';
-  profileColor =
-    cmd:
-    if builtins.elem cmd [ "ompz" "ompn" "ompm" ] then
-      "#aa96e1" # mixed — purple
-    else if builtins.elem cmd [ "ompl" "ompb" "ompg" "ompo" ] then
-      "#62a7ff" # gpt-led — blue
-    else if builtins.elem cmd [ "ompk" "omps" "ompc" "ompe" ] then
-      "#ff9f52" # claude-led — orange
-    else if builtins.elem cmd [ "ompf" "ompx" ] then
-      "#46bec8" # specialist — teal
-    else if cmd == "ompu" then
-      "#d05c60" # untrusted — red
-    else
-      "#78c8aa"; # yours — green
-  profileGlyph =
-    cmd:
-    if builtins.elem cmd [ "ompz" "ompl" "ompk" ] then
-      nfGlyph "f0e7" # bolt — speed
-    else if builtins.elem cmd [ "ompn" "ompb" "omps" ] then
-      nfGlyph "f085" # cogs — routine
-    else if builtins.elem cmd [ "ompm" "ompg" "ompc" ] then
-      nfGlyph "f0eb" # lightbulb — smart
-    else if builtins.elem cmd [ "ompo" "ompe" ] then
-      nfGlyph "f127" # broken link — pure pool
-    else if cmd == "ompf" then
-      nfGlyph "f08d" # thumbtack — deterministic
-    else if cmd == "ompx" then
-      nfGlyph "f02d" # book — huge context
-    else if cmd == "ompu" then
-      nfGlyph "f023" # lock — untrusted
-    else if cmd == "omp" then
-      nfGlyph "f007" # user — yours
-    else
-      nfGlyph "f074"; # shuffle
-  groupLabel =
-    g:
-    {
-      mix = "mixed";
-      gpt = "gpt-led";
-      claude = "claude-led";
-      special = "special";
-    }
-    .${g} or g;
-  codeProfilesTsv = writeText "code-profiles.tsv" (
-    lib.concatMapStringsSep "\n" (
-      p:
-      lib.concatStringsSep "\t" [
-        p.cmd
-        p.blurb
-        p.detail
-        (groupLabel p.group)
-        p.exe
-        (profileColor p.cmd)
-        (profileGlyph p.cmd)
-      ]
-    ) paletteProfiles
-  );
-
-  # The browsable profiles wiki (issue #79): a self-contained routes.html
-  # rendered from models.yml (catalog + cost) + routes.plain + PROFILES.md.
-  # Built here so it can't drift; opened via `code --wiki`.
-  profilesWiki =
-    runCommand "omp-profiles-wiki"
-      { nativeBuildInputs = [ (python3.withPackages (ps: [ ps.pyyaml ])) ]; }
-      ''
-        mkdir -p "$out/share/omp"
-        MODELS_YML=${../../omp/models.yml} \
-        ROUTES=${routesHelp}/share/omp/routes.plain \
-        PROFILES_MD=${../../omp/PROFILES.md} \
-        CODE_PROFILES=${codeProfilesTsv} \
-          python3 ${./generate-wiki.py} > "$out/share/omp/routes.html"
-      '';
+  # The generator and central authentication broker share OMP's default profile.
+  # `code` constrains each trusted child with an immutable account pool.
+  ompManagedDefault = writeShellApplication {
+    name = "omp-managed-default";
+    text = ''
+      exec ${lib.getExe ompManaged} --profile default "$@"
+    '';
+  };
 
   codeLauncher = writeShellApplication {
     name = "code";
     runtimeInputs = [ coreutils ];
     text = ''
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
-      export CODE_PROFILES=${codeProfilesTsv}
-      export CODE_ROUTES=${routesHelp}/share/omp/routes.plain
       export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
-      export CODE_OMP=${lib.getExe ompManaged}
-      export CODE_USAGE="$omp_bin usage --json"
-
-      names=( ${lib.escapeShellArgs (map (p: p.cmd) paletteProfiles)} )
-      exes=( ${lib.escapeShellArgs (map (p: p.exe) paletteProfiles)} )
-      blurbs=( ${lib.escapeShellArgs (map (p: p.blurb) paletteProfiles)} )
-      groups=( ${lib.escapeShellArgs (map (p: groupLabel p.group) paletteProfiles)} )
-      count=''${#names[@]}
-
-      # Map a selector (bare|name|1-based number|single letter) to a 0-based index.
-      resolve() {
-        local sel="$1" i n
-        case "$sel" in
-          plain | bare) sel=omp ;;
-        esac
-        if [[ "$sel" =~ ^[0-9]+$ ]]; then
-          if (( sel >= 1 && sel <= count )); then
-            printf '%d' "$(( sel - 1 ))"
-            return 0
-          fi
-          return 1
-        fi
-        for (( i = 0; i < count; i++ )); do
-          if [[ "$sel" == "''${names[$i]}" ]]; then
-            printf '%d' "$i"
-            return 0
-          fi
-        done
-        if [[ "$sel" =~ ^[a-z]$ ]]; then
-          for (( i = 0; i < count; i++ )); do
-            n="''${names[$i]}"
-            if [[ "$n" == omp? && "''${n: -1}" == "$sel" ]]; then
-              printf '%d' "$i"
-              return 0
-            fi
-          done
-        fi
-        return 1
-      }
-
-      print_list() {
-        local i last=""
-        for (( i = 0; i < count; i++ )); do
-          if [[ "''${groups[$i]}" != "$last" ]]; then
-            last="''${groups[$i]}"
-            [[ -n "$last" ]] && printf '  %s\n' "$last"
-          fi
-          printf '  %-6s %s\n' "''${names[$i]}" "''${blurbs[$i]}"
-        done
-      }
+      export CODE_OMP=${lib.getExe ompManagedDefault}
+      # CODE_OMP_RAW and the CODE_USAGE below are legacy: current `code` reads
+      # neither (usage is broker-sourced), but older pins still rely on them.
+      export CODE_OMP_RAW="$omp_bin"
+      export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
+      broker_state="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-auth-broker"
+      export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
+      export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
+      export CODE_USAGE_CACHE="''${CODE_USAGE_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/code/usage.json}"
+      if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_state/token" ]]; then
+        OMP_AUTH_BROKER_TOKEN="$(<"$broker_state/token")"
+        export OMP_AUTH_BROKER_TOKEN
+      fi
+      export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
+      export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"
+      export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
+      # The generator's prompt→profile classifier runs on the resident,
+      # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
+      # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
+      # daemon/model. The account manager owns only non-secret selection state;
+      # every trusted launch receives the central broker plus an immutable
+      # per-process account pool while remaining on the shared default client
+      # profile. Launch targets: ↵ always
+      # runs the generated profile for the current facets through the managed
+      # layering (CODE_OMP); `m` runs managed defaults with no overlay; `u` opens
+      # the fixed untrusted sandbox (CODE_OMP_UNTRUSTED).
 
       usage() {
         printf '%s\n' \
-          'code - pick an OMP launcher (or build one) and run it' \
+          'code - build an OMP profile from a prompt and run it' \
           "" \
           'usage:' \
-          '  code                    open the picker / profile generator' \
-          '  code <profile>          run that launcher (name, number, or letter)' \
-          '  code <profile> [args]   run it, forwarding all extra args' \
-          '  code -l, --list         print the launcher palette and exit' \
-          '  code -w, --wiki         serve the profiles wiki on localhost' \
-          '  code -U, --no-usage     open without fetching the usage panel' \
-          '  code -h, --help         this help' \
+          '  code                 open the profile generator' \
+          '  code [args]          open it, forwarding extra args to the launch' \
+          '  code -U, --no-usage  open without fetching the usage panel' \
+          '  code -h, --help      this help' \
           "" \
-          'In the picker: Tab switches profiles <-> generator, arrows move,' \
-          '? shows all keys, Enter launches. A first argument that is not a' \
-          'profile opens the picker and forwards all args to your choice.'
-      }
-
-      # Serve the wiki over HTTP on localhost rather than handing back a file
-      # path — so it also works on a headless VPS (forward the port over SSH).
-      # Bound to 127.0.0.1 only; set CODE_WIKI_PORT to change the port.
-      open_wiki() {
-        local wiki=${profilesWiki}/share/omp/routes.html
-        local port="''${CODE_WIKI_PORT:-8765}"
-        local dir
-        dir="$(mktemp -d)"
-        cp "$wiki" "$dir/index.html"
-        trap 'rm -rf "$dir"' EXIT
-        local url="http://127.0.0.1:$port/"
-        printf 'code: serving the profiles wiki at %s\n' "$url"
-        printf 'code: from another machine, forward it:  ssh -L %s:127.0.0.1:%s <this-host>\n' "$port" "$port"
-        printf 'code: Ctrl-C to stop.\n'
-        if command -v xdg-open >/dev/null 2>&1; then
-          xdg-open "$url" >/dev/null 2>&1 &
-        elif command -v open >/dev/null 2>&1; then
-          open "$url" >/dev/null 2>&1 &
-        fi
-        ${python3}/bin/python3 -m http.server "$port" --bind 127.0.0.1 --directory "$dir" || true
+          'subcommands (no terminal required):' \
+          '  code ls              list live sessions' \
+          '  code session reap    retire sessions (dry run unless --yes)' \
+          '  code generate        re-render the profile catalog' \
+          "" \
+          'In the generator: type a prompt or adjust the dials, v opens the' \
+          'account manager, and ? shows all keys. Enter' \
+          'launches through the managed layering, m runs the managed defaults' \
+          'with no overlay, and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in
         -h | --help) usage; exit 0 ;;
-        -l | --list) print_list; exit 0 ;;
-        -w | --wiki) open_wiki; exit 0 ;;
         -U | --no-usage) export CODE_USAGE=""; shift ;;
       esac
 
-      # A resolvable first arg launches that profile directly (forwarding the
-      # rest); anything else opens the picker with the args passed through.
-      if (( $# > 0 )) && idx="$(resolve "$1")"; then
-        shift
-        exec "''${exes[$idx]}" "$@"
-      fi
+      # Subcommands that never open the TUI must not require a terminal. They
+      # exist for scripts and for triaging a machine over a bare `ssh host
+      # 'code ls'`, which is exactly when no tty is attached; only the
+      # generator below needs one.
+      case "''${1:-}" in
+        generate | session | sessions | ls) exec ${lib.getExe code} "$@" ;;
+      esac
 
       if [[ ! -t 0 || ! -t 1 ]]; then
-        printf 'code: no profile given and no interactive terminal.\n\n' >&2
-        print_list >&2
+        printf 'code: no interactive terminal.\n' >&2
+        usage >&2
         exit 2
       fi
 
-      exec ${lib.getExe code-tui} "$@"
+      exec ${lib.getExe code} "$@"
     '';
   };
 in
@@ -1604,46 +1356,27 @@ runCommand "omp-configured-${lib.getVersion omp}"
     version = lib.getVersion omp;
 
     passthru = {
+      rawOmp = omp;
       inherit
-        allManagedPaths
+        goplsCommand
         defaultsConfig
-        enforcedPolicyPaths
-        managedDefaultPaths
-        managedOwnedPaths
-        managedPresetPaths
-        omp
         neutralRoot
         platformRoot
         policyConfig
-        presets
         untrustedConfig
         yoloConfig
         ;
     };
 
     meta = omp.meta // {
-      description = "Declaratively configured OMP with atyrode model presets";
+      description = "Declaratively configured OMP with the atyrode profile generator";
       mainProgram = "omp";
     };
   }
   ''
-    mkdir -p "$out/bin" "$out/share/zsh/site-functions" "$out/share/omp"
-    ln -s ${profilesWiki}/share/omp/routes.html "$out/share/omp/routes.html"
+    mkdir -p "$out/bin" "$out/share/zsh/site-functions"
     ln -s ${lib.getExe ompDefault} "$out/bin/omp"
-    ln -s ${lib.getExe ompBudget} "$out/bin/ompb"
-    ln -s ${lib.getExe ompSonnet} "$out/bin/omps"
-    ln -s ${lib.getExe ompGpt} "$out/bin/ompg"
-    ln -s ${lib.getExe ompClaude} "$out/bin/ompc"
-    ln -s ${lib.getExe ompFable} "$out/bin/ompf"
-    ln -s ${lib.getExe ompContext} "$out/bin/ompx"
-    ln -s ${lib.getExe ompFast} "$out/bin/ompz"
-    ln -s ${lib.getExe ompGptSpeed} "$out/bin/ompl"
-    ln -s ${lib.getExe ompClaudeSpeed} "$out/bin/ompk"
-    ln -s ${lib.getExe ompMixedRegular} "$out/bin/ompn"
-    ln -s ${lib.getExe ompMixedSmart} "$out/bin/ompm"
-    ln -s ${lib.getExe ompGptOnly} "$out/bin/ompo"
-    ln -s ${lib.getExe ompClaudeOnly} "$out/bin/ompe"
-    ln -s ${lib.getExe ompHelp} "$out/bin/omph"
+    ln -s ${lib.getExe ompManaged} "$out/bin/omp-managed"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
     ln -s ${lib.getExe codeLauncher} "$out/bin/code"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"

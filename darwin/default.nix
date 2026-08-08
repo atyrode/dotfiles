@@ -21,6 +21,10 @@ in
 
   environment.shells = [ pkgs.zsh ];
 
+  # Native macOS applications use CoreText rather than Home Manager's
+  # fontconfig cache, so register Rio's shared Nerd Font system-wide.
+  fonts.packages = [ pkgs.nerd-fonts.jetbrains-mono ];
+
   programs.zsh.enable = true;
 
   security.pam.services.sudo_local = {
@@ -112,6 +116,8 @@ in
       brewfile = true;
     };
 
+    # Supported check mode reports undeclared packages and aborts without
+    # deleting them; the operator owns the explicit uninstall and retry.
     onActivation = {
       autoUpdate = false;
       upgrade = false;

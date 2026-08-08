@@ -9,28 +9,70 @@ on:
 
 permissions:
   contents: read
-  # cache-nix-action purges superseded platform caches after saving.
-  actions: write
+  # The classify job lists pull-request files.
+  pull-requests: read
 
 concurrency:
   group: nix-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Documentation paths are guarded before the full matrix is skipped. For
+  # code changes, only an explicit Linux-only allowlist can skip native Darwin;
+  # shared, Darwin-specific, workflow, and unknown paths fail safe to Darwin.
+  changes:
+    name: classify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      darwin: ${{ steps.classify.outputs.darwin }}
+      matrix: ${{ steps.classify.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Pushes to main and manual runs retain the complete native matrix.
+          code=true
+          darwin=true
+          if [ -n "$PR_NUMBER" ]; then
+            if files="$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" \
+              --paginate --jq '.[].filename')" && [ -n "$files" ]; then
+              classification="$(printf '%s\n' "$files" | ./scripts/classify-ci-paths.sh)"
+              code="$(printf '%s\n' "$classification" | sed -n 's/^code=//p')"
+              darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"
+            fi
+          fi
+          if "$darwin"; then
+            matrix='{"include":[{"system":"x86_64-linux","runner":"ubuntu-24.04"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"},{"system":"aarch64-darwin","runner":"macos-15"}]}'
+          else
+            matrix='{"include":[{"system":"x86_64-linux","runner":"ubuntu-24.04"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"}]}'
+          fi
+          printf 'code=%s\ndarwin=%s\nmatrix=%s\n' "$code" "$darwin" "$matrix" >> "$GITHUB_OUTPUT"
+          echo "classified: code=$code darwin=$darwin"
+
   check:
     name: ${{ matrix.system }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      # cache-nix-action purges superseded platform caches after saving.
+      actions: write
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-24.04
-          - system: aarch64-linux
-            runner: ubuntu-24.04-arm
-          - system: aarch64-darwin
-            runner: macos-15
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
       - name: Check out repository
@@ -64,3 +106,62 @@ jobs:
 
       - name: Check flake
         run: nix flake check --show-trace
+
+  # Docs-only fast path: Markdown is not fully inert — links are linted and
+  # docs can leak production facts — so build the two intentional whole-tree
+  # lints when the matrix is skipped, then guard the fast-path invariant
+  # itself: instantiate every check on every platform at base and head
+  # (evaluation-only, no builds) and fail if the docs change altered any
+  # other derivation. No store cache: the lints only need python3 from the
+  # binary cache, and the guard never builds.
+  docs-links:
+    name: docs-links
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check documentation links and production facts
+        run: nix build .#checks.x86_64-linux.docs-links .#checks.x86_64-linux.production-facts --show-trace
+
+      - name: Guard the fast-path dependency invariant
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --quiet --depth=1 origin "$BASE_SHA"
+          ./scripts/docs-drift-guard.sh "$BASE_SHA" "$(git rev-parse HEAD)"
+
+  # Sole required status check (#169): the protect-main ruleset requires the
+  # `ci-gate` context (flipped from the three platform names on 2026-07-15).
+  # Always reports, so a path-skipped matrix can never leave a pull request
+  # stuck on a missing check. Passes only when classification succeeded,
+  # nothing failed or was cancelled, and at least one real verification
+  # (matrix or docs-links) ran.
+  ci-gate:
+    name: ci-gate
+    needs: [changes, check, docs-links]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify required jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          jq -e '
+            (.changes.result == "success")
+            and ([.[] | .result] | all(. == "success" or . == "skipped"))
+            and ((.check.result == "success") or (.["docs-links"].result == "success"))
+          ' <<<"$NEEDS" >/dev/null

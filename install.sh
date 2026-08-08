@@ -69,11 +69,26 @@ parse_options() {
         FLAKE_CONFIG="$2"
         shift 2
         ;;
-      --update) UPDATE_SOURCE=1; shift ;;
-      --allow-dirty) ALLOW_DIRTY=1; shift ;;
-      --allow-non-main) ALLOW_NON_MAIN=1; shift ;;
-      --yes) ASSUME_YES=1; shift ;;
-      -h|--help) usage; exit 0 ;;
+      --update)
+        UPDATE_SOURCE=1
+        shift
+        ;;
+      --allow-dirty)
+        ALLOW_DIRTY=1
+        shift
+        ;;
+      --allow-non-main)
+        ALLOW_NON_MAIN=1
+        shift
+        ;;
+      --yes)
+        ASSUME_YES=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
       *) die "unknown option: $1" ;;
     esac
   done
@@ -82,7 +97,7 @@ parse_options() {
 detect_system() {
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64) printf 'aarch64-darwin\n' ;;
-    Linux:arm64|Linux:aarch64) printf 'aarch64-linux\n' ;;
+    Linux:arm64 | Linux:aarch64) printf 'aarch64-linux\n' ;;
     Linux:x86_64) printf 'x86_64-linux\n' ;;
     *) die "unsupported system: $(uname -s) $(uname -m)" ;;
   esac
@@ -116,7 +131,7 @@ source_nix() {
   fi
   if [[ -n "$profile" && -f "$profile" ]]; then
     set +u
-    # shellcheck disable=SC1090
+    # shellcheck disable=SC1090 # The selected Nix profile script is runtime-dependent.
     . "$profile"
     set -u
   fi
@@ -136,14 +151,14 @@ verify_origin() {
 
   origin="$(git -C "$DOTFILES_DIR" config --get remote.origin.url 2>/dev/null || true)"
   case "$origin" in
-    "$REPO_HTTPS_URL"|"${REPO_HTTPS_URL%.git}"|"$REPO_SSH_URL"|ssh://git@github.com/atyrode/dotfiles.git)
+    "$REPO_HTTPS_URL" | "${REPO_HTTPS_URL%.git}" | "$REPO_SSH_URL" | ssh://git@github.com/atyrode/dotfiles.git)
       ;;
     '') die "checkout has no origin remote; expected $REPO_HTTPS_URL" ;;
     *) die "checkout origin is not atyrode/dotfiles; refusing to fetch or activate it" ;;
   esac
   resolved="$(git -C "$DOTFILES_DIR" remote get-url origin 2>/dev/null || true)"
   case "$resolved" in
-    "$REPO_HTTPS_URL"|"${REPO_HTTPS_URL%.git}"|"$REPO_SSH_URL"|ssh://git@github.com/atyrode/dotfiles.git)
+    "$REPO_HTTPS_URL" | "${REPO_HTTPS_URL%.git}" | "$REPO_SSH_URL" | ssh://git@github.com/atyrode/dotfiles.git)
       ;;
     *) die "origin resolves through Git configuration to an untrusted URL; remove url.*.insteadOf rewrites" ;;
   esac
@@ -153,12 +168,9 @@ verify_checkout() {
   local root branch status counts local_ahead remote_ahead
 
   [[ -f "$DOTFILES_DIR/flake.nix" ]] || die "not a dotfiles flake checkout: $DOTFILES_DIR"
-  [[ -x "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" ]] ||
-    die "bootstrap migration script is missing or not executable"
   git -C "$DOTFILES_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
     die "repository is not a Git checkout: $DOTFILES_DIR"
-  git -C "$DOTFILES_DIR" ls-files --error-unmatch -- \
-    flake.nix install.sh scripts/bootstrap-migrate.sh >/dev/null 2>&1 ||
+  git -C "$DOTFILES_DIR" ls-files --error-unmatch -- flake.nix install.sh >/dev/null 2>&1 ||
     die "bootstrap entrypoints must be tracked by the verified repository"
   root="$(git -C "$DOTFILES_DIR" rev-parse --show-toplevel)"
   root="$(CDPATH='' cd -- "$root" && pwd -P)"
@@ -189,7 +201,7 @@ verify_checkout() {
       counts="$(git -C "$DOTFILES_DIR" rev-list --left-right --count HEAD...origin/main)"
       local_ahead="${counts%%[[:space:]]*}"
       remote_ahead="${counts##*[[:space:]]}"
-      if [[ ( "$local_ahead" != 0 || "$remote_ahead" != 0 ) && "$ALLOW_NON_MAIN" -ne 1 && "$UPDATE_SOURCE" -ne 1 ]]; then
+      if [[ ("$local_ahead" != 0 || "$remote_ahead" != 0) && "$ALLOW_NON_MAIN" -ne 1 && "$UPDATE_SOURCE" -ne 1 ]]; then
         die "main differs from cached origin/main; use --update or --allow-non-main for a reviewed revision"
       fi
     elif [[ "$UPDATE_SOURCE" -ne 1 && "$ALLOW_NON_MAIN" -ne 1 ]]; then
@@ -217,7 +229,7 @@ preflight() {
     die "--config HOST (or FLAKE_CONFIG) is required; bootstrap never guesses a machine profile"
   fi
   case "$FLAKE_CONFIG" in
-    *[!A-Za-z0-9@._-]*|'') die "configuration contains unsupported characters" ;;
+    *[!A-Za-z0-9@._-]* | '') die "configuration contains unsupported characters" ;;
   esac
 
   source_nix
@@ -257,12 +269,9 @@ print_plan() {
   step=$((step + 1))
   printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$step"
   step=$((step + 1))
-  printf '  %s. Prepare versioned shell-entrypoint migration backups:\n' "$step"
-  "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" plan | sed 's/^/     - /'
-  step=$((step + 1))
   printf '  %s. Activate %s through atyrode/nh.\n' "$step" "$FLAKE_CONFIG"
   step=$((step + 1))
-  printf '  %s. Verify host state and complete the migration and bootstrap receipts.\n' "$step"
+  printf '  %s. Verify host state and complete the bootstrap receipt.\n' "$step"
   step=$((step + 1))
   if [[ "$SYSTEM" == *-darwin ]]; then
     printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$step"
@@ -283,7 +292,7 @@ confirm_action() {
   printf '%s [y/N] ' "$prompt" >&2
   IFS= read -r answer
   case "$answer" in
-    y|Y|yes|YES) ;;
+    y | Y | yes | YES) ;;
     *) die "cancelled" ;;
   esac
 }
@@ -327,7 +336,7 @@ ensure_safe_login_shell_marker() {
 
 append_transaction() {
   [[ $# -eq 2 ]] || die "internal receipt error"
-  printf '%s\t%s\n' "$1" "$2" >> "$TRANSACTION/receipt.tsv"
+  printf '%s\t%s\n' "$1" "$2" >>"$TRANSACTION/receipt.tsv"
 }
 
 archive_abandoned_transactions() {
@@ -349,7 +358,7 @@ archive_abandoned_transactions() {
 }
 
 begin_transaction() {
-  local root pending creating state_file state_status revision migration_sha installer_sha
+  local root pending creating state_file state_status revision installer_sha
 
   root="$(bootstrap_state_root)"
   state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/dotfiles-config"
@@ -375,10 +384,8 @@ begin_transaction() {
   chmod 700 "$TRANSACTION"
   mkdir "$TRANSACTION/backup" "$TRANSACTION/recovery"
   chmod 700 "$TRANSACTION/backup" "$TRANSACTION/recovery"
-  cp "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" "$TRANSACTION/recovery/bootstrap-migrate.sh"
   cp "${BASH_SOURCE[0]}" "$TRANSACTION/recovery/install.sh"
-  chmod 700 "$TRANSACTION/recovery/bootstrap-migrate.sh" "$TRANSACTION/recovery/install.sh"
-  migration_sha="$(sha256_file "$TRANSACTION/recovery/bootstrap-migrate.sh")"
+  chmod 700 "$TRANSACTION/recovery/install.sh"
   installer_sha="$(sha256_file "$TRANSACTION/recovery/install.sh")"
   revision="$(git -C "$DOTFILES_DIR" rev-parse HEAD)"
   {
@@ -388,10 +395,9 @@ begin_transaction() {
     printf 'revision\t%s\n' "$revision"
     printf 'nix-version\t%s\n' "$NIX_VERSION"
     printf 'nix-sha256\t%s\n' "$NIX_SHA256"
-    printf 'migration-sha256\t%s\n' "$migration_sha"
     printf 'installer-sha256\t%s\n' "$installer_sha"
     printf 'phase\tstarted\n'
-  } > "$TRANSACTION/receipt.tsv"
+  } >"$TRANSACTION/receipt.tsv"
   chmod 600 "$TRANSACTION/receipt.tsv"
 
   if [[ "$state_status" == present ]]; then
@@ -418,7 +424,7 @@ transaction_value() {
       [[ -z "${extra:-}" && -z "$found" ]] || die "unsafe bootstrap receipt: duplicate or extra fields"
       found="$value"
     fi
-  done < "$TRANSACTION/receipt.tsv"
+  done <"$TRANSACTION/receipt.tsv"
   [[ -n "$found" ]] || die "unsafe bootstrap receipt: missing $key"
   printf '%s\n' "$found"
 }
@@ -482,10 +488,6 @@ finish_transaction() {
   printf 'Bootstrap receipt: %s\n' "${target#"$root/"}"
 }
 
-migration_owned_by_transaction() {
-  [[ -f "$TRANSACTION/migration-owned" && ! -L "$TRANSACTION/migration-owned" ]]
-}
-
 verify_recovery_script() {
   local name="$1"
   local key="$2"
@@ -498,22 +500,7 @@ verify_recovery_script() {
   [[ "$actual" == "$expected" ]] || die "transaction recovery copy $name failed verification"
 }
 
-migration_command() {
-  verify_recovery_script bootstrap-migrate.sh migration-sha256
-  bash "$TRANSACTION/recovery/bootstrap-migrate.sh" "$@"
-}
-
 rollback_current_transaction() {
-  local migration_status
-
-  if migration_owned_by_transaction; then
-    migration_status="$(migration_command status)"
-    case "$migration_status" in
-      pending|complete) migration_command rollback ;;
-      applicable) ;;
-      *) die "migration recovery returned an unknown state" ;;
-    esac
-  fi
   restore_previous_state
 }
 
@@ -659,7 +646,7 @@ activate_configuration() {
 }
 
 verify_installation() {
-  local state_file migration_status
+  local state_file
 
   source_nix
   command_exists nix || die "Nix is not available"
@@ -668,12 +655,6 @@ verify_installation() {
   [[ "$(cat "$state_file")" == "$FLAKE_CONFIG" ]] ||
     die "active host receipt does not match $FLAKE_CONFIG"
   run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null
-  if [[ -n "$TRANSACTION" ]]; then
-    migration_status="$(migration_command status)"
-  else
-    migration_status="$(bash "$DOTFILES_DIR/scripts/bootstrap-migrate.sh" status)"
-  fi
-  [[ "$migration_status" == complete ]] || die "bootstrap migration is not complete"
   printf 'Verification passed for %s on %s\n' "$FLAKE_CONFIG" "$SYSTEM"
 }
 
@@ -729,10 +710,10 @@ configure_linux_login_shell() {
     run_privileged sh -c \
       'grep -Fqx -- "$1" "$2" || printf "%s\n" "$1" >> "$2"' \
       sh "$target" "$shells_file" || {
-        printf 'bootstrap: system prerequisite incomplete: could not register managed Zsh in %s\n' \
-          "$shells_file" >&2
-        return 1
-      }
+      printf 'bootstrap: system prerequisite incomplete: could not register managed Zsh in %s\n' \
+        "$shells_file" >&2
+      return 1
+    }
   fi
   current="$(account_login_shell "$user" || true)"
   if [[ "$current" != "$target" ]]; then
@@ -764,7 +745,7 @@ mark_login_shell_incomplete() {
     printf 'version\t1\n'
     printf 'status\tincomplete\n'
     printf 'owner\tsystem-prerequisite\n'
-  } > "$temporary"
+  } >"$temporary"
   chmod 600 "$temporary"
   mv "$temporary" "$marker"
 }
@@ -790,7 +771,6 @@ verify_system_login_shell() {
 }
 
 apply_configuration() {
-  local migration_status
 
   preflight
   print_plan
@@ -817,30 +797,14 @@ apply_configuration() {
   append_transaction phase managed-preflight
   managed_activation_plan
 
-  ACTIVE_PHASE="migration state validation"
-  migration_status="$(migration_command status)"
-  if [[ "$migration_status" == complete ]]; then
-    append_transaction migration preexisting-complete
-  else
-    : > "$TRANSACTION/migration-owned"
-    chmod 600 "$TRANSACTION/migration-owned"
-    append_transaction migration owned
-  fi
-  ACTIVE_PHASE="migration preparation"
-  append_transaction phase preparing-migration
-  migration_command prepare
-
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == after-migration-prepare ]]; then
-    printf 'bootstrap: interrupted at test failpoint after-migration-prepare\n' >&2
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-activation ]]; then
+    printf 'bootstrap: interrupted at test failpoint before-activation\n' >&2
     exit 75
   fi
 
   ACTIVE_PHASE="configuration activation"
   append_transaction phase activating
   activate_configuration
-  ACTIVE_PHASE="migration completion"
-  append_transaction phase committing-migration
-  migration_command commit
   ACTIVE_PHASE="verification"
   append_transaction phase verifying
   verify_installation
@@ -892,7 +856,7 @@ rollback_interrupted() {
   rollback_current_transaction
   outcome="${BOOTSTRAP_RECOVERY_OUTCOME:-rolled-back}"
   case "$outcome" in
-    failed|rolled-back) ;;
+    failed | rolled-back) ;;
     *) die "invalid recovery outcome" ;;
   esac
   reason="${BOOTSTRAP_FAILURE_REASON:-operator-requested recovery}"
@@ -905,7 +869,10 @@ parse_options "$@"
 
 case "$COMMAND" in
   preflight) preflight ;;
-  plan) preflight; print_plan ;;
+  plan)
+    preflight
+    print_plan
+    ;;
   apply) apply_configuration ;;
   verify)
     preflight
@@ -915,7 +882,13 @@ case "$COMMAND" in
     clear_login_shell_incomplete
     ;;
   rollback) rollback_interrupted ;;
-  -h|--help|help) usage ;;
-  '') usage >&2; exit 64 ;;
-  *) usage >&2; die "unknown phase: $COMMAND" ;;
+  -h | --help | help) usage ;;
+  '')
+    usage >&2
+    exit 64
+    ;;
+  *)
+    usage >&2
+    die "unknown phase: $COMMAND"
+    ;;
 esac

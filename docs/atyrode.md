@@ -5,12 +5,49 @@ dotfiles. It reads the declarative registry described in [Hosts and
 capabilities](hosts.md); it does not infer a profile from the current directory
 or maintain a second mutable profile database.
 
+## Interactive cockpit
+
+Running bare `atyrode` with both stdin and stdout attached to a terminal opens
+the interactive cockpit. A bare non-TTY invocation continues to print CLI help,
+and every explicit subcommand (`atyrode apply`, `atyrode doctor …`, JSON calls,
+and the other command surfaces) continues through the Bash CLI even on a TTY.
+Existing scripts therefore do not enter the cockpit.
+
+The apply panel first resolves the requested branch to an exact commit, then
+loads both `atyrode apply --ref <commit> --preview-json` and `atyrode inventory
+--ref <commit> --json` asynchronously. Its default activation preview
+summarizes package, store-path, and closure-size changes without showing raw
+generation paths; `d` toggles normalized technical details, where the previous
+and new generation paths remain available with labels.
+
+Press `c` to open or focus the active capability inventory. `[`/`]` (or
+left/right arrows) cycle in the apply plan's declared order, and `j`/`k` or
+arrows scroll the focused pane. Wide terminals keep a 42-cell capability panel
+beside the preview and use `Tab` to change focus; medium terminals use a
+full-width capability view; narrow terminals stack the selection summary above
+the scrollable details. `c` or `esc` returns to the preview without losing
+selection or either scroll position.
+
+Capability details are read only from the exact-revision CLI manifest. The
+cockpit validates schema version, full revision, system/platform identity, and
+the planned host's canonical ID before showing purpose, active state,
+resolved deliverables, and ownership/security/mutable-state boundaries.
+Loading and inventory failures remain textual and never block confirmation or
+fall back to stale data.
+
+Startup and refresh perform no activation. The operator must open the
+confirmation step and accept it; the real apply uses that same exact commit, so
+the activated configuration cannot drift from the preview if the branch
+advances while the cockpit is open. The `ctrl+o` Ask overlay remains read-only
+and preserves the full cockpit state.
+
 ## Applying a configuration
 
 ```sh
 atyrode apply            # activate the latest published main; no checkout needed
 atyrode apply --plan
 atyrode apply --dry-run
+atyrode apply --preview-json # stable schema for the read-only dry-run preview
 ```
 
 The default host comes from `ATYRODE_HOST`, then the managed host identity file,
@@ -52,20 +89,53 @@ selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.
 Activation shows a generation package diff.
 
-`--restart-shell` only prints the explicit restart action after success. It
-never replaces an embedded terminal. The historical `zconf` command is now a
-thin wrapper around `atyrode apply`; it refreshes only Home Manager's realized
-session variables and leaves full startup to `exec zsh -l` or a new terminal.
 
 ## Inspection and diagnostics
 
 ```sh
 atyrode capabilities list --json
-atyrode capabilities show alex-linux --json
+atyrode capabilities show alex-x86_64-linux --json
+atyrode inventory --json
+atyrode inventory --host alex-x86_64-linux --json
+atyrode inventory --ref <branch-tag-or-commit> --json
+atyrode inventory --repo /absolute/path/to/checkout --json
+atyrode lifecycle
+atyrode lifecycle --json
 atyrode doctor host --json
 atyrode doctor system --json
+atyrode doctor git --json
 atyrode doctor tools --json
 ```
+
+`inventory` is a thin, read-only consumer of the flake's schema-versioned
+evaluated manifest. By default it evaluates the exact immutable revision baked
+into the installed CLI, so an older binary cannot accidentally describe its own
+packages while targeting a newer revision. `--ref` selects a published target
+revision and `--repo` selects a local checkout; they are mutually exclusive.
+`--host` resolves a canonical host name inside that evaluated revision.
+The command currently requires `--json`, returns compact key-sorted JSON, and
+does not inspect closures, credentials, sessions, or other mutable state.
+
+`lifecycle` is a local, read-only report rather than a cleanup command. It
+inspects only the Home Manager profile, native worktrees of the configured
+dotfiles checkout, OMP's default `~/.omp` state root (including session
+count/size), OMP's documented `~/.omp/wt` worktree root, and the named
+OMP/atyrode cache and state paths; it never recursively searches HOME. JSON rows
+carry a category, path, observed byte size (or `null`), evidence, owner, state,
+and conservative classification. The additive top-level `omp` object contains
+`stateRoot`, `sessions`, `worktreeRoot`, per-worktree reports, `caches`, and
+`dryRuns`. OMP worktrees with a dirty Git tree, checked-out branch, or
+lock/activity marker are `live` and `protected`; a worktree is `reclaimable`
+only when all of those liveness probes are quiet. Unreadable Git state remains
+protected as `unknown`.
+
+When `omp` is available, the same `atyrode lifecycle` report captures the
+supported `omp gc` default dry-run and `omp worktree clear --dry-run` output.
+When it is absent, the command still exits successfully with the filesystem
+report and marks both dry-run probes `unavailable`. It never passes `--apply`,
+runs worktree clearing without `--dry-run`, deletes, prunes, installs timers, or
+modifies state. Applying OMP GC remains a deliberate manual operator action:
+review the report, then run `omp gc --apply` directly.
 
 Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.
@@ -74,5 +144,16 @@ alone cannot satisfy: the real login shell, Nix daemon and trust policy,
 container engine, antivirus ownership, Android device policy, and Homebrew
 drift. Its stable check IDs, row schema, statuses, exits, and read-only probe
 contract are documented in [Home Manager and system boundary](system-boundary.md).
-The `workspace`, `agent`, `generations`, `rollback`, and `clean` namespaces are
-reserved for their owning follow-up issues and currently fail clearly.
+`doctor git [--json]` is the matching user-side, read-only audit. Its ordered
+checks cover Git configuration readability, SSH-agent availability and loaded
+keys, the configured signing public key and permissions, exact managed
+`allowed_signers` content, the current repository's effective fetch/push
+protocols, plaintext Git helpers/files, the declarative `gh` helper, and `gh`
+token-storage classification. `failed` checks return 69; `warning` rows (for
+example, an HTTPS forge push with no recognized secure helper) remain visible
+without making the report fail. JSON uses schema version 1 and never includes
+keys, tokens, helper arguments, or remote URLs. Bootstrap, headless policy,
+rotation, revocation, recovery, and platform verification are documented in
+[Git SSH authentication and signing](git-keys.md).
+The `workspace` and `agent` namespaces are reserved for their owning follow-up
+issues and currently fail clearly.

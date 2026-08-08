@@ -8,7 +8,7 @@ __pycache__/
 .Python
 
 # Go — `go build` in a package dir drops a binary named after the dir
-/pkgs/code-tui/code-tui
+/pkgs/atyrode-tui/atyrode-tui
 
 # Nix
 result

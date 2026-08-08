@@ -6,14 +6,18 @@ repository trustworthy, and it is not an operating-system sandbox.
 
 ## Normal sessions
 
-Managed preset launchers (`ompb`, `omps`, `ompg`, `ompc`, `ompf`, `ompx`) use
-the trusted-machine unattended approval policy: workspace edits, shell/eval,
-browser, task spawning, and GitHub operations do not prompt. Secret filtering
-remains enabled, and task isolation uses OMP's automatic backend selection and
-patch merging. A managed extension fails closed when a `task` call that can
-write omits `isolated: true`, including any item in a task batch.
+Managed sessions launched through `omp-managed` — including every profile the
+`code` generator produces — use the trusted-machine unattended approval policy:
+workspace edits, shell/eval, browser, task spawning, and GitHub operations do
+not prompt. Secret filtering remains enabled, and when a spawn requests
+isolation, OMP's automatic backend selection and patch merging apply (both
+policy-fixed). Isolation itself is upstream's per-spawn opt-in — the model or
+operator requests `isolated: true` per task; a managed rule advises it for
+concurrent writing subagents. There is no repository-side isolation mandate
+(#175): a hard guard converted upstream isolation failures into a total
+delegation outage, and stock OMP has no such concept.
 
-The policy overlay is applied after writable machine, project, preset, and
+The policy overlay is applied after writable machine, project, and
 one-shot configuration. Repositories can still choose non-security settings,
 but cannot change managed approvals, secret filtering, or task isolation.
 Explicit yolo flags remain accepted for compatibility, but do not grant these
@@ -26,7 +30,7 @@ and integrations are whatever that mutable configuration says. The seeded
 defaults start that configuration with secret obfuscation and automatic task
 isolation enabled, but unlike the managed policy the operator can change or
 remove them on the fly — the next apply only reports the drift. Every
-launcher in this table is appropriate only for repositories the operator has
+managed session is appropriate only for repositories the operator has
 reviewed; use `ompu` for untrusted repositories.
 
 ## Untrusted projects
@@ -44,8 +48,10 @@ GitHub credentials, SSH agents, caller Git configuration, credential helpers,
 and hook configuration are not forwarded. Git prompting and SSH transport are
 disabled. Browser, GitHub, eval, debug, LSP, project MCP configuration,
 auto-learning, memory, project command discovery, and skill commands are
-disabled. Shell and task use remain approval-gated, and every writing task must
-request OMP isolation.
+disabled. Shell and task use remain approval-gated — the operator sees and
+approves each command and each spawn, and can require isolation case by case.
+That human gate and the untrusted system prompt are the controls; isolation
+itself is not separately enforced.
 
 Project instructions, rules, agents, skills, source files, and tool output are
 still loaded because they are the material the agent must analyze. The managed
@@ -71,6 +77,7 @@ untrusted profile are part of that profile's risk. Inspect generated patches
 before merging them and use a real VM/container sandbox when hostile code may
 need to execute.
 
-This is the OMP security slice of issue #17. Workspace trust, the Pi experiment,
-Zed/ACP integration, and SSH completion remain tracked by #22, #29, and #30;
-issue #17 stays open until those wider acceptance criteria are complete.
+This is the OMP security slice resolved under issue #17. Workspace
+trust/revocation and residual Codex and local/SSH workspace diagnostics are now
+owned by #22. The Pi experiment (#29) closed to operator notes on 2026-07-17 and
+ships no launcher; the Zed evaluation (#30) is closed and Zed remains absent.

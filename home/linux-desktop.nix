@@ -3,7 +3,7 @@
 let
   lichess = import ./pkgs/lichess.nix {
     inherit pkgs;
-    lib = pkgs.lib;
+    inherit (pkgs) lib;
   };
 in
 lib.mkIf pkgs.stdenv.isLinux {

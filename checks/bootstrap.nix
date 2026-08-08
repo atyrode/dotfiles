@@ -27,7 +27,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     set -euo pipefail
 
     bootstrap=${../install.sh}
-    migration=${../scripts/bootstrap-migrate.sh}
     real_git=${pkgs.git}/bin/git
     base_path="$PATH"
     host="alex-${system}"
@@ -38,23 +37,15 @@ pkgs.runCommand "check-bootstrap-${system}"
     fake_installer_template="$tool_root/fake-installer"
 
     bash -n "$bootstrap"
-    bash -n "$migration"
-    shellcheck -x "$bootstrap" "$migration"
+    shellcheck -x "$bootstrap"
     if grep -Eq 'mapfile|declare -A|local -n|\[\[ -v |\$\{[^}]+,,\}|flock|stat -c' \
-      "$bootstrap" "$migration"; then
+      "$bootstrap"; then
       echo 'bootstrap uses a construct unavailable before Nix or on Bash 3.2' >&2
       exit 1
     fi
 
     mkdir -p "$fresh_tools" "$managed_tools"
     grep -Fqx 'readonly BOOTSTRAP_TEST_HOOKS=0' "$bootstrap"
-    grep -Fqx 'readonly BOOTSTRAP_MIGRATION_TEST_HOOKS=0' "$migration"
-    production_migration="$migration"
-    cp "$migration" "$tool_root/bootstrap-migrate-test"
-    substituteInPlace "$tool_root/bootstrap-migrate-test" \
-      --replace-fail 'readonly BOOTSTRAP_MIGRATION_TEST_HOOKS=0' \
-      'readonly BOOTSTRAP_MIGRATION_TEST_HOOKS=1'
-    migration="$tool_root/bootstrap-migrate-test"
 
     cat > "$tool_root/git" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -283,22 +274,21 @@ pkgs.runCommand "check-bootstrap-${system}"
         FAKE_INSTALLER_FAIL_AFTER_START \
         FAKE_SUDO_FAIL \
         FAKE_VERIFY_FAIL
-      mkdir -p "$HOME" "$repo/scripts"
+      mkdir -p "$HOME" "$repo"
       printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
       printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_SHELLS_FILE"
       cp "$bootstrap" "$repo/install.sh"
-      cp "$migration" "$repo/scripts/bootstrap-migrate.sh"
       substituteInPlace "$repo/install.sh" \
         --replace-fail 'readonly BOOTSTRAP_TEST_HOOKS=0' \
         'readonly BOOTSTRAP_TEST_HOOKS=1'
-      chmod +x "$repo/install.sh" "$repo/scripts/bootstrap-migrate.sh"
-      patchShebangs "$repo/install.sh" "$repo/scripts/bootstrap-migrate.sh"
+      chmod +x "$repo/install.sh"
+      patchShebangs "$repo/install.sh"
       printf '{ outputs = _: {}; }\n' > "$repo/flake.nix"
       "$real_git" -C "$repo" init -q -b main
       "$real_git" -C "$repo" config user.name fixture
       "$real_git" -C "$repo" config user.email fixture@example.invalid
       "$real_git" -C "$repo" remote add origin https://github.com/atyrode/dotfiles.git
-      "$real_git" -C "$repo" add flake.nix install.sh scripts/bootstrap-migrate.sh
+      "$real_git" -C "$repo" add flake.nix install.sh
       "$real_git" -C "$repo" commit -q -m fixture
       "$real_git" -C "$repo" update-ref refs/remotes/origin/main HEAD
     }
@@ -310,12 +300,6 @@ pkgs.runCommand "check-bootstrap-${system}"
       fi
     }
 
-    make_unmanaged_entrypoints() {
-      printf 'zshrc fixture\n' > "$TMPDIR/$fixture_name-zshrc"
-      printf 'zshenv fixture\n' > "$TMPDIR/$fixture_name-zshenv"
-      ln -s "$TMPDIR/$fixture_name-zshrc" "$HOME/.zshrc"
-      ln -s "$TMPDIR/$fixture_name-zshenv" "$HOME/.zshenv"
-    }
 
     # A clean plan is read-only and never invokes Nix, downloads, or creates receipts.
     new_fixture plan
@@ -419,30 +403,22 @@ pkgs.runCommand "check-bootstrap-${system}"
     test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
     find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.failed' | grep -q .
 
-    # Fresh installation verifies the artifact, migrates shell links, activates,
-    # verifies, and remains idempotent on a repeated upgrade-style invocation.
+    # Fresh installation verifies the artifact, activates, verifies, and remains
+    # idempotent on a repeated upgrade-style invocation.
     new_fixture fresh-success
     export PATH="$fresh_tools:$base_path"
-    make_unmanaged_entrypoints
     if [[ "$FAKE_SYSTEM" == *-linux ]]; then
       printf '/bin/bash\n' > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
       : > "$BOOTSTRAP_SHELLS_FILE"
       export SHELL="$FAKE_EXPECTED_LOGIN_SHELL"
     fi
-    old_zshrc="$(readlink "$HOME/.zshrc")"
-    old_zshenv="$(readlink "$HOME/.zshenv")"
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fresh.out"
     test -e "$FAKE_INSTALL_EXECUTED"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
     test "$(readlink "$HOME/.zshrc")" = /nix/store/fixture-home-manager-files/.zshrc
     test "$(readlink "$HOME/.zshenv")" = /nix/store/fixture-home-manager-files/.zshenv
-    complete_migration="$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.complete"
-    test -d "$complete_migration"
-    test "$(readlink "$complete_migration/backup/zshrc")" = "$old_zshrc"
-    test "$(readlink "$complete_migration/backup/zshenv")" = "$old_zshenv"
     "$repo/install.sh" verify --repo "$repo" --config "$host" >/dev/null
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-    test "$(readlink "$complete_migration/backup/zshrc")" = "$old_zshrc"
     find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.complete' | grep -q .
     test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = "$FAKE_EXPECTED_LOGIN_SHELL"
     test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
@@ -538,35 +514,24 @@ pkgs.runCommand "check-bootstrap-${system}"
       test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
     fi
 
-    # Failed activation restores exact pre-activation links and prior host state.
+    # Failed activation restores the prior host state.
     new_fixture activation-failure
     export PATH="$managed_tools:$base_path"
-    make_unmanaged_entrypoints
     mkdir -p "$XDG_STATE_HOME/atyrode"
     printf 'sentinel\n' > "$XDG_STATE_HOME/atyrode/dotfiles-config"
-    old_zshrc="$(readlink "$HOME/.zshrc")"
-    old_zshenv="$(readlink "$HOME/.zshenv")"
     export FAKE_ACTIVATION_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
-    test "$(readlink "$HOME/.zshrc")" = "$old_zshrc"
-    test "$(readlink "$HOME/.zshenv")" = "$old_zshenv"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
     test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.pending"
 
-    # A post-activation verification failure also restores migration-owned paths
-    # and the previous active-host receipt instead of being mistaken for success.
+    # A post-activation verification failure also restores the previous
+    # active-host receipt instead of being mistaken for success.
     new_fixture verification-failure
     export PATH="$managed_tools:$base_path"
-    make_unmanaged_entrypoints
     mkdir -p "$XDG_STATE_HOME/atyrode"
     printf 'sentinel\n' > "$XDG_STATE_HOME/atyrode/dotfiles-config"
-    old_zshrc="$(readlink "$HOME/.zshrc")"
-    old_zshenv="$(readlink "$HOME/.zshenv")"
     export FAKE_VERIFY_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
-    test "$(readlink "$HOME/.zshrc")" = "$old_zshrc"
-    test "$(readlink "$HOME/.zshenv")" = "$old_zshenv"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
     test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
 
@@ -612,166 +577,39 @@ pkgs.runCommand "check-bootstrap-${system}"
     ln -s "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
     expect_failure "$repo/install.sh" rollback --yes --repo "$repo"
 
-    # An abrupt interruption is recoverable through the explicit rollback phase.
+    # An abrupt interruption after transaction publication is recoverable
+    # through the explicit rollback phase.
     new_fixture interrupted
     export PATH="$managed_tools:$base_path"
-    make_unmanaged_entrypoints
-    old_zshrc="$(readlink "$HOME/.zshrc")"
-    old_zshenv="$(readlink "$HOME/.zshenv")"
-    if BOOTSTRAP_FAILPOINT=after-migration-prepare \
+    mkdir -p "$XDG_STATE_HOME/atyrode"
+    printf 'sentinel\n' > "$XDG_STATE_HOME/atyrode/dotfiles-config"
+    if BOOTSTRAP_FAILPOINT=before-activation \
       "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null 2>&1; then
       echo 'interruption failpoint unexpectedly succeeded' >&2
       exit 1
     fi
     test -d "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    test ! -e "$HOME/.zshrc"
-    test ! -e "$HOME/.zshenv"
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
     "$repo/install.sh" rollback --yes --repo "$repo" >/dev/null
-    test "$(readlink "$HOME/.zshrc")" = "$old_zshrc"
-    test "$(readlink "$HOME/.zshenv")" = "$old_zshenv"
     test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
     "$repo/install.sh" rollback --yes --repo "$repo" >/dev/null
 
-    # Recovery uses the transaction-owned, checksummed script and refuses a
-    # corrupt migration receipt without archiving the pending transaction.
-    new_fixture corrupt-recovery
-    export PATH="$managed_tools:$base_path"
-    make_unmanaged_entrypoints
-    if BOOTSTRAP_FAILPOINT=after-migration-prepare \
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null 2>&1; then
-      echo 'corrupt-recovery setup unexpectedly succeeded' >&2
-      exit 1
-    fi
-    printf 'move\t../escape\tsymlink\n' >> \
-      "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.pending/receipt.tsv"
-    expect_failure "$repo/install.sh" rollback --yes --repo "$repo"
-    test -d "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    test -d "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.pending"
 
+    # Recovery refuses a tampered transaction-owned installer and preserves the
+    # pending transaction for manual inspection.
     new_fixture tampered-recovery
     export PATH="$managed_tools:$base_path"
-    make_unmanaged_entrypoints
-    if BOOTSTRAP_FAILPOINT=after-migration-prepare \
+    if BOOTSTRAP_FAILPOINT=before-activation \
       "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null 2>&1; then
       echo 'tampered-recovery setup unexpectedly succeeded' >&2
       exit 1
     fi
     printf '\n# tampered\n' >> \
-      "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending/recovery/bootstrap-migrate.sh"
+      "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending/recovery/install.sh"
     expect_failure "$repo/install.sh" rollback --yes --repo "$repo"
     test -d "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    test -d "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.pending"
 
-    # Production migration ignores ambient failpoints; only the build-time
-    # test copy can simulate interruption.
-    export HOME="$TMPDIR/production-migration/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    mkdir -p "$HOME"
-    fixture_name=production-migration
-    make_unmanaged_entrypoints
-    old_zshrc="$(readlink "$HOME/.zshrc")"
-    old_zshenv="$(readlink "$HOME/.zshenv")"
-    BOOTSTRAP_MIGRATION_FAILPOINT=after-zshrc \
-      bash "$production_migration" prepare >/dev/null
-    test ! -e "$HOME/.zshrc"
-    test ! -e "$HOME/.zshenv"
-    bash "$production_migration" rollback >/dev/null
-    test "$(readlink "$HOME/.zshrc")" = "$old_zshrc"
-    test "$(readlink "$HOME/.zshenv")" = "$old_zshenv"
-
-    # Migration preparation resumes after an interruption. Rollback validates all
-    # destinations first, so a collision cannot cause a partial restore.
-    export HOME="$TMPDIR/migration/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    mkdir -p "$HOME"
-    fixture_name=migration
-    make_unmanaged_entrypoints
-    old_zshrc="$(readlink "$HOME/.zshrc")"
-    old_zshenv="$(readlink "$HOME/.zshenv")"
-    if BOOTSTRAP_MIGRATION_FAILPOINT=after-zshrc bash "$migration" prepare >/dev/null 2>&1; then
-      echo 'migration interruption failpoint unexpectedly succeeded' >&2
-      exit 1
-    fi
-    test ! -e "$HOME/.zshrc"
-    test -L "$HOME/.zshenv"
-    bash "$migration" prepare >/dev/null
-    ln -s /nix/store/fixture-home-manager-files/.zshrc "$HOME/.zshrc"
-    ln -s /nix/store/fixture-home-manager-files/.zshenv "$HOME/.zshenv"
-    bash "$migration" commit >/dev/null
-    rm "$HOME/.zshrc"
-    printf 'replacement\n' > "$HOME/.zshrc"
-    expect_failure bash "$migration" rollback
-    test -L "$HOME/.zshenv"
-    test -L "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.complete/backup/zshenv"
-    rm "$HOME/.zshrc"
-    bash "$migration" rollback >/dev/null
-    test "$(readlink "$HOME/.zshrc")" = "$old_zshrc"
-    test "$(readlink "$HOME/.zshenv")" = "$old_zshenv"
-
-    export HOME="$TMPDIR/dual-migration/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    mkdir -p "$HOME"
-    printf 'dual\n' > "$TMPDIR/dual-target"
-    ln -s "$TMPDIR/dual-target" "$HOME/.zshrc"
-    bash "$migration" prepare >/dev/null
-    ln -s /nix/store/fixture-home-manager-files/.zshrc "$HOME/.zshrc"
-    bash "$migration" commit >/dev/null
-    migration_root="$XDG_STATE_HOME/atyrode/bootstrap/migrations"
-    cp -R "$migration_root/migration-v1-shell-entrypoints.complete" \
-      "$migration_root/migration-v1-shell-entrypoints.pending"
-    expect_failure bash "$migration" status
-
-    export HOME="$TMPDIR/missing-backup/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    mkdir -p "$HOME"
-    printf 'missing\n' > "$TMPDIR/missing-target"
-    ln -s "$TMPDIR/missing-target" "$HOME/.zshrc"
-    bash "$migration" prepare >/dev/null
-    ln -s /nix/store/fixture-home-manager-files/.zshrc "$HOME/.zshrc"
-    bash "$migration" commit >/dev/null
-    rm "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.complete/backup/zshrc"
-    expect_failure bash "$migration" status
-
-    export HOME="$TMPDIR/missing-pending-backup/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    mkdir -p "$HOME"
-    printf 'pending missing\n' > "$TMPDIR/pending-missing-target"
-    ln -s "$TMPDIR/pending-missing-target" "$HOME/.zshrc"
-    bash "$migration" prepare >/dev/null
-    ln -s /nix/store/fixture-home-manager-files/.zshrc "$HOME/.zshrc"
-    pending_migration="$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.pending"
-    rm "$pending_migration/backup/zshrc"
-    expect_failure bash "$migration" rollback
-    test -d "$pending_migration"
-    test "$(readlink "$HOME/.zshrc")" = /nix/store/fixture-home-manager-files/.zshrc
-
-    export HOME="$TMPDIR/terminal-link/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    terminal_root="$XDG_STATE_HOME/atyrode/bootstrap/migrations"
-    mkdir -p "$terminal_root"
-    ln -s "$HOME/missing" "$terminal_root/migration-v1-shell-entrypoints.pending"
-    expect_failure bash "$migration" status
-
-    export HOME="$TMPDIR/terminal-file/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    terminal_root="$XDG_STATE_HOME/atyrode/bootstrap/migrations"
-    mkdir -p "$terminal_root"
-    printf 'invalid\n' > "$terminal_root/migration-v1-shell-entrypoints.complete"
-    expect_failure bash "$migration" rollback
-
-    export HOME="$TMPDIR/regular-entrypoint/home"
-    export XDG_STATE_HOME="$HOME/.local/state"
-    mkdir -p "$HOME"
-    printf 'regular shell entrypoint\n' > "$HOME/.zshrc"
-    bash "$migration" prepare >/dev/null
-    test ! -e "$HOME/.zshrc"
-    test "$(cat "$XDG_STATE_HOME/atyrode/bootstrap/migrations/migration-v1-shell-entrypoints.pending/backup/zshrc")" = \
-      'regular shell entrypoint'
-    ln -s /nix/store/fixture-home-manager-files/.zshrc "$HOME/.zshrc"
-    bash "$migration" commit >/dev/null
-    bash "$migration" rollback >/dev/null
-    test -f "$HOME/.zshrc"
-    test "$(cat "$HOME/.zshrc")" = 'regular shell entrypoint'
 
     mkdir "$out"
   ''

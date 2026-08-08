@@ -1,8 +1,8 @@
 # dotfiles
 
-Personal dotfiles managed with Nix and Home Manager for shell and developer tooling on macOS and Linux. macOS system activation uses nix-darwin, with Homebrew installed through nix-homebrew for native cask apps.
+Reproducible, agent-first personal operating environment for [Alex Tyrode](https://tyrode.dev). Nix and Home Manager own macOS, Linux, and the NixOS-WSL guest; nix-darwin owns macOS system activation, and native package managers retain macOS and Windows application state.
 
-## 🚀 Quick Start
+## Quick start
 
 **From a reviewed checkout:**
 
@@ -27,12 +27,30 @@ registered presets for this machine, each described with what it installs;
 Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
 will not guess between desktop, development, or Mac profiles. It uses
 explicit preflight, plan, apply, verify, and rollback phases, verifies a pinned
-upstream Nix artifact when Nix is absent, and preserves recoverable migration
-receipts. See [Bootstrap and migrations](docs/bootstrap.md).
+upstream Nix artifact when Nix is absent, and preserves recoverable transaction
+receipts. See [Bootstrap](docs/bootstrap.md).
+
+**Native Windows 11, from PowerShell:**
+
+```powershell
+irm https://raw.githubusercontent.com/atyrode/dotfiles/main/get.ps1 | iex
+```
+
+That command is plan-only. It resolves `main` to an exact commit and reports the
+native/WSL changes without applying them. After review, run the printed revision:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/atyrode/dotfiles/main/get.ps1))) -Ref <exact-revision> -Apply
+```
+
+The bootstrap verifies a pinned NixOS-WSL image, activates
+`alex-x86_64-linux-wsl`, and then reconciles reviewed native packages through
+WinGet. If it first enables or updates WSL, follow its reboot instruction and
+run the same apply command again.
 
 ---
 
-## 📦 What's Included
+## What's included
 
 ### Shell & Navigation
 - **Zsh** with oh-my-zsh, syntax highlighting, autosuggestions
@@ -44,12 +62,17 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
 ### Development Tools
 - **Git** - Pre-configured with useful aliases
 - **tmux** - Terminal multiplexer
-- **Nix/shell quality tooling** - nixd, nixfmt, ShellCheck, and shfmt
-- **OMP** - Pinned coding agent, model presets, agents, and skills
+- **Nix/shell/workflow quality tooling** - nixd, nixfmt, ShellCheck, shfmt, and actionlint
+- **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
+- **Orca** - Pinned cross-platform graphical worktree IDE locally, with
+  on-demand `orca serve` remotely and capability-scoped agent skills
+- **Rio** - The pinned cross-platform terminal layer (#278), with one committed
+  `home/rio/config.toml` for macOS, Linux desktop, and native Windows
 - **mise** - Declaratively installed runtime/version manager
-- **Project-owned runtimes** - Python/uv, JavaScript runtimes, Go, Rust, and
-  native compilers come from committed dev shells, `mise.toml`, or native
-  manifests instead of every host's global profile
+- **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
+  and native compilers come from committed dev shells, `mise.toml`, or native
+  manifests instead of every host's global profile; Node 24 and Bun are the
+  deliberate agent-tools exceptions for Orca workflows and local review proxies
 
 ### System & Containers
 - **btop** - Modern system monitor
@@ -62,57 +85,59 @@ receipts. See [Bootstrap and migrations](docs/bootstrap.md).
   and nmap/socat (`security`)
 
 ### macOS Apps
-- **Nix app bundles** - ChatGPT, Godot, Lichess, Obsidian, OrbStack, Postman,
-  Prism Launcher, REAPER, Signal, Spotify, VLC, and WhatsApp
-- **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop, Discord, Display
-  Pilot, Parsec, PlugData, Sonos, Steam, and Zen Browser, managed through
-  nix-darwin
+- **Nix/Home Manager apps** - ChatGPT, Lichess, Obsidian, OrbStack,
+  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, and VLC
+- **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
+  Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen Browser
+  Twilight, managed through nix-darwin
 - **Manual/vendor-managed macOS apps** - ROLI Connect, ROLI Dashboard, ROLI
   Studio Player, and Vital stay outside the declarative setup until they have a
   stable public installer or package source.
 
+### Native Windows Apps
+- **WinGet packages** - Zen Browser Twilight is declared in
+  `windows/packages.nix` and reconciled from the managed NixOS-WSL host.
+- **Pinned releases** - the Rio terminal installs from the exact GitHub
+  release recorded in `inventory/rio-windows.json` (SHA256-verified,
+  version-locked to the nixpkgs pin), and the committed Rio `config.toml`
+  deploys beside it.
+- **Application state** - Mozilla sign-in, Zen profiles, cookies, sessions,
+  updates, and caches remain owned by Zen/Windows rather than Nix.
+
 ---
 
-## 🛠️ Custom Functions
+## Daily commands
 
 Use the packaged `atyrode` interface, or check these highlights:
 
 ### Nix/Home Manager
 ```bash
 atyrode apply --plan  # Inspect the exact host, source, and backend
-zconf                 # Compatibility wrapper for `atyrode apply`
+atyrode apply        # Activate the recorded host configuration
 atyrode doctor host   # Validate the managed machine identity
 atyrode doctor system # Audit system-owned operational prerequisites
 ```
 
 ### Agent Tools
 ```bash
-code          # fzf picker: arrow-key select over the grouped launcher palette
-omp           # Mutable user-owned OMP; unmanaged except the blocked update
-ompz          # Mixed · speed — fastest tiers both providers, low thinking
-ompn          # Mixed · regular — balanced daily driver, both pools
-ompm          # Mixed · smart — hardest work, best model per task
-ompl          # GPT · speed — fast Codex (Luna; task drains Spark)
-ompb          # GPT · regular — routine Codex work (Terra, off premium tiers)
-ompg          # GPT · smart — difficult work, GPT-led (Sol drives, Claude net)
-ompo          # GPT-only — never crosses to Anthropic (drain Codex)
-ompk          # Claude · speed — fast Claude (Haiku)
-omps          # Claude · regular — everyday value (Sonnet leads)
-ompc          # Claude · smart — difficult work, Claude-led (Fable drives)
-ompe          # Claude-only — never crosses to OpenAI (drain the Claude plan)
-ompf          # Fable-first profile with fallback disabled
-ompx          # Huge-context (1M) work; Anthropic's 1M line, no cross-net
-omph          # Show the managed routing: roles, models, fallbacks per profile
+code          # Profile generator TUI: type a prompt or turn the facet dials
+omp           # Mutable user-owned OMP; profile-aware resume, blocked update
+omp-managed   # Managed-layering launch target: defaults + policy over --config
 ompu          # Restricted launcher for deliberately untrusted repositories
 ```
 
-See [`omp/PROFILES.md`](omp/PROFILES.md) for the model catalog and the
-reasoning behind each profile.
+`code` opens a TUI whose facet dials and generated profiles work without local
+model services; Ctrl+O optionally classifies the current prompt through the
+local Ollama daemon. Enter launches the generated profile for the current
+facets through `omp-managed` — the untouched default combo is a profile like
+any other. The `m` key runs `omp-managed` on the managed defaults with no
+overlay, the `u` key opens the `ompu` sandbox, and plain `omp` is reached by
+typing `omp` directly. The model catalog lives in
+[`omp/models.yml`](omp/models.yml).
 
-OMP, shared skills, and mise are installed by `zconf`
-with the rest of the Home Manager profile. See
-[Agent tools](docs/agent-tools.md) for ownership, model routing, project skill
-layout, migration behavior, and updates.
+OMP, shared skills, and mise are installed by `atyrode apply` with the rest of
+the Home Manager profile. See [Agent tools](docs/agent-tools.md) for ownership,
+model routing, project skill layout, state ownership, and updates.
 
 ### Git Aliases
 ```bash
@@ -124,58 +149,62 @@ git ci        # git commit
 
 ---
 
-## 🔄 Updating
+## Updating
 
 **Update dotfiles:**
 ```bash
 cd ~/nix-dotfiles
 git pull
-zconf
+atyrode apply
 ```
 
 **Update Nix packages:**
 ```bash
 cd ~/nix-dotfiles
 nix flake update
-zconf
+atyrode apply
 ```
 
-Pinned OMP updates have additional hash and compatibility
-checks documented in [Agent tools](docs/agent-tools.md#updating).
+Pinned OMP updates have additional hash and integration checks documented in
+[Agent tools](docs/agent-tools.md#updating).
 
 ---
 
-## 📁 Structure
+## Repository structure
 
 ```
 dotfiles/
 ├── .github/workflows/       # Native Linux/macOS flake checks
 ├── agents/                  # Generic cross-project skills
-├── checks/                  # Nix package and migration checks
-├── darwin/                # nix-darwin and Homebrew configuration
-│   ├── casks.nix          # Shared declarative Homebrew cask list
-│   └── default.nix        # macOS system ownership and activation
+├── checks/                  # Nix package and integration checks
+├── darwin/                  # nix-darwin and Homebrew configuration
+│   ├── casks.nix            # Shared declarative Homebrew cask list
+│   └── default.nix          # macOS system ownership and activation
 ├── docs/                    # Architecture and maintenance guides
-├── flake.nix              # Main flake configuration
-├── install.sh             # Phased, transactional bootstrap
+├── flake.nix                # Main flake configuration
+├── get.ps1                 # Plan-first native Windows/NixOS-WSL bootstrap
+├── get.sh                  # Fresh macOS/Linux bootstrap entrypoint
+├── install.sh               # Phased, transactional bootstrap
 ├── modules/                 # Reusable Home Manager modules
-├── omp/                     # Managed config, presets, agents, and rules
+├── nixos/                   # Repository-owned NixOS-WSL system module
+├── omp/                     # Managed config, model catalog, agents, and rules
 ├── pkgs/                    # Pinned custom derivations and wrappers
-├── scripts/                 # Activation-time migration and seeding logic
-└── home/                  # Home Manager modules
-    ├── default.nix        # Main configuration
-    ├── linux-desktop.nix  # Optional Linux desktop packages
-    ├── profiles/          # Composable host capability modules
-    ├── zsh.nix            # Zsh configuration
-    ├── git.nix            # Git configuration
-    └── shell/             # Thin interactive shell surface
-        ├── nix.zsh        # Temporary zconf compatibility entry point
-        └── startup.zsh    # Interactive-only local override hook
+├── scripts/                 # CI, update, and seeding utilities
+├── windows/                 # Native WinGet package declarations
+└── home/                    # Home Manager modules
+    ├── default.nix          # Main configuration
+    ├── linux-desktop.nix    # Optional Linux desktop packages
+    ├── profiles/            # Composable host capability modules
+    ├── zsh.nix              # Zsh configuration
+    ├── git.nix              # Git configuration
+    └── shell/               # Thin interactive shell surface
+        ├── cwd.zsh          # OSC 7 working-directory metadata
+        └── startup.zsh      # Interactive-only local override hook
 ```
 
 ---
 
-## ⚙️ Customization
+## Customization
 
 ### System Configurations
 
@@ -191,18 +220,16 @@ alex-x86_64-linux-desktop
 These outputs are generated from the authoritative host registry and
 composable capability modules. Production NixOS servers consume the exported
 `base + server + agent-tools` profile from their infrastructure flake instead
-of appearing in this personal host registry. Compatibility aliases such as
-`alex`, `alex-linux`, `alex-darwin`, and `alex-linux-desktop` remain available. See
-[Hosts and capabilities](docs/hosts.md) for the identity contract and the
-add/rename/retire workflow.
+of appearing in this personal host registry. Host IDs are canonical and have no
+compatibility aliases. See [Hosts and capabilities](docs/hosts.md) for the
+identity contract and the add/rename/retire workflow.
 
 [Portable Home Manager profiles](docs/portable-profiles.md) documents the
 external NixOS interface, one-way infrastructure dependency, server manifest,
 closure budget, and pin/update workflow.
 
 [The `atyrode` CLI](docs/atyrode.md) documents deterministic application,
-machine-readable capability discovery, diagnostics, and the `zconf`
-compatibility boundary.
+machine-readable capability discovery, and diagnostics.
 
 [Package ownership](docs/package-ownership.md) records the checked agent
 baseline, optional capabilities, project-owned runtimes, harness boundaries,
@@ -212,11 +239,11 @@ and closure review workflow.
 layer owns login shells, the Nix daemon, containers, device access, antivirus,
 and Homebrew, plus the read-only operational readiness checks.
 
-[Shell surface](docs/shell.md) records every retained and removed function,
-alias, startup side effect, and Oh My Zsh plugin.
+[Shell surface](docs/shell.md) documents the current interactive startup
+surface, ownership, and verification.
 
-[Codex state](docs/codex-state.md) documents convergent portable configuration,
-transactional authentication profiles, recovery, and secret/mutable ownership.
+[Codex state](docs/codex-state.md) documents the one-time defaults seed, the
+managed guidance files, and secret/mutable ownership.
 
 For this Mac, the manual switch command is:
 
@@ -224,8 +251,8 @@ For this Mac, the manual switch command is:
 sudo -H nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
 ```
 
-After the first macOS switch, `zconf` uses nix-darwin on macOS and will ask
-for sudo when system activation is required.
+`atyrode apply` uses nix-darwin on macOS and asks for sudo when system
+activation is required.
 
 On Linux, the matching configuration still uses Home Manager directly:
 
@@ -240,9 +267,9 @@ HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x
 ```
 
 You can also set `ATYRODE_HOST=alex-x86_64-linux-desktop` before running
-`zconf` on a Linux desktop. Successful `zconf` and `install.sh apply` runs
-record the active configuration so helper commands such as `atyrode` only show
-what applies to the current setup.
+`atyrode apply` on a Linux desktop. Successful `atyrode apply` and
+`install.sh apply` runs record the active configuration so helper commands only
+show what applies to the current setup.
 
 ### Change Username
 
@@ -258,8 +285,9 @@ package inventory, then run `atyrode apply`.
 
 ### Add macOS Homebrew Apps
 
-Edit `darwin/casks.nix`, then run `zconf` on macOS. nix-darwin generates the
-matching Brewfile and checks for non-destructive Homebrew drift.
+Edit `darwin/casks.nix`, then run `atyrode apply` on macOS. nix-darwin
+generates the matching Brewfile; Homebrew Bundle shows any undeclared state and
+asks before removing it during activation.
 
 ### Modify Shell Functions
 
@@ -267,16 +295,16 @@ Edit files in `home/shell/` - they're organized by category for easy maintenance
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 **"Path is not tracked by Git" error:**
 ```bash
 cd ~/nix-dotfiles
 git add <file>
-zconf
+atyrode apply
 ```
 
-**Note:** Nix flakes require referenced files to be tracked by Git. After adding new files, run `git add <file>` before `zconf`.
+**Note:** Nix flakes require referenced files to be tracked by Git. After adding new files, run `git add <file>` before `atyrode apply`.
 
 **Nix not found after install:**
 ```bash
@@ -288,29 +316,24 @@ zconf
 ```bash
 # Check if all files are tracked
 git status
-zconf
+atyrode apply
 ```
 
-If the error says an existing path such as `~/.zshrc` would be clobbered, run
-the bootstrap plan and apply phases for the registered host. The versioned
-migration backs up file and symlink entrypoints before activation and restores
-them automatically if activation fails.
+If an existing path such as `~/.zshrc` would be clobbered, inspect it, preserve
+anything still used in `~/.config/zsh/local.zsh`, then move the old entrypoint
+out of the way. Home Manager refuses to guess whether unmanaged shell startup
+code is safe to replace.
 
-```sh
-./install.sh plan --config <host>
-./install.sh apply --config <host>
-```
+**macOS Homebrew activation reports undeclared packages:**
 
-**macOS Homebrew activation fails:**
-```bash
-zconf
-```
-
-The macOS configuration installs Homebrew through nix-homebrew and then applies the declared casks through nix-darwin. The first activation may ask for administrator authentication.
+Homebrew Bundle lists taps, formulae, or casks absent from the generated
+Brewfile and aborts without removing them. Review the reported drift, explicitly
+uninstall the entries you intend to retire, then rerun `atyrode apply`. The first
+activation may also ask for administrator authentication.
 
 ---
 
-## 📝 Requirements
+## Requirements
 
 - macOS or Linux with Nix support
 - Git, Bash, `curl`, `tar`, and either `sha256sum` or `shasum` for a fresh machine
@@ -320,7 +343,7 @@ Nix will be installed automatically if not present.
 
 ---
 
-## 🔗 Links
+## Links
 
 - [Nix](https://nixos.org/)
 - [Home Manager](https://github.com/nix-community/home-manager)

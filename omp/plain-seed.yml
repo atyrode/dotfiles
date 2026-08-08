@@ -17,6 +17,11 @@ task:
     mode: auto
     merge: patch
   showResolvedModelBadge: true
+  # All bundled agents stay spawnable in plain omp. An unattributed machine
+  # edit once disabled all six (issue #173); seeding the empty list makes any
+  # future non-empty value surface as reviewable drift instead of silently
+  # killing subagent spawns.
+  disabledAgents: []
 
 # Sol for interactive work; cheap Luna/Terra routes for recurring background
 # roles so commit messages, titles, and subtasks never bill at the main tier.
@@ -79,6 +84,13 @@ checkpoint:
   enabled: true
 github:
   enabled: true
+
+# Match the managed profile: keep structural search available and retain the
+# seen-line guard even when it requires an extra targeted read before editing.
+astGrep:
+  enabled: true
+edit:
+  enforceSeenLines: true
 
 # Local-first memory: mnemopi SQLite banks, one global bank so recall works
 # across projects (provenance stays in each memory's metadata). Extraction

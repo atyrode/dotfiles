@@ -67,6 +67,11 @@ let
     "space"
     "escape"
     "return"
+    # Arrows carry no character, so no layout can move or remove them.
+    "left"
+    "down"
+    "up"
+    "right"
   ];
   isHexKeycode = token: builtins.match "^0x[0-9A-Fa-f]+$" token != null;
   digitLiteralKeys = lib.filter (token: builtins.match "^[0-9]$" token != null) keyTokens;
@@ -83,6 +88,39 @@ let
     "ctrl + alt + cmd - r ; resize"
     "resize < escape ; default"
   ]
+  # Every vim direction has an arrow alias bound to the identical action, so a
+  # hand arriving from Windows is never told a key "does nothing". Pinning both
+  # halves keeps them from drifting apart into two different models.
+  ++
+    lib.concatMap
+      (direction: [
+        "ctrl + alt + cmd - ${direction.arrow} : yabai -m window --focus ${direction.edge}"
+        "ctrl + alt + cmd - ${direction.vim} : yabai -m window --focus ${direction.edge}"
+        "ctrl + alt + cmd + shift - ${direction.arrow} : yabai -m window --warp ${direction.edge}"
+        "ctrl + alt + cmd + shift - ${direction.vim} : yabai -m window --warp ${direction.edge}"
+      ])
+      [
+        {
+          vim = "h";
+          arrow = "left";
+          edge = "west";
+        }
+        {
+          vim = "j";
+          arrow = "down";
+          edge = "south";
+        }
+        {
+          vim = "k";
+          arrow = "up";
+          edge = "north";
+        }
+        {
+          vim = "l";
+          arrow = "right";
+          edge = "east";
+        }
+      ]
   ++ lib.concatMap (index: [
     "ctrl + alt + cmd - ${spaceKeycodes.${index}} : yabai -m space --focus ${index}"
     "ctrl + alt + cmd + shift - ${spaceKeycodes.${index}} : yabai -m window --space ${index} && yabai -m space --focus ${index}"

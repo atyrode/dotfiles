@@ -12,18 +12,81 @@ let
   caskNames = map caskName cfg.homebrew.casks;
   skhdConfig = cfg.environment.etc.skhdrc.text;
   skhdArguments = cfg.launchd.user.agents.skhd.serviceConfig.ProgramArguments;
+
+  # skhd.zig resolves a character key literal through
+  # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
+  # literal only parses when the active layout emits that character unshifted.
+  # This workstation runs French AZERTY, whose unshifted number row is
+  # & é " ' ( § è ! ç à -- "cmd - 1" therefore aborts the entire config with
+  # `Unknown key '1'` and skhd exits 1 in a launchd crash loop. Number-row keys
+  # must be addressed by layout-independent virtual keycode instead.
+  #
+  # Carbon kVK_ANSI_<n>, verified against Carbon.framework on an arm64 Mac.
+  spaceKeycodes = {
+    "1" = "0x12";
+    "2" = "0x13";
+    "3" = "0x14";
+    "4" = "0x15";
+    "5" = "0x17";
+    "6" = "0x16";
+    "7" = "0x1A";
+    "8" = "0x1C";
+    "9" = "0x19";
+  };
+
+  # Every hotkey line is "<chord> - <key> : <cmd>" or "<chord> - <key> ; <mode>".
+  # The key is the last token left of the first ":" or ";".
+  configLines = lib.splitString "\n" skhdConfig;
+  isBindingLine =
+    line:
+    line != ""
+    && !(lib.hasPrefix "#" line)
+    && !(lib.hasPrefix "::" line)
+    && builtins.match "^[^:;]*[:;].*$" line != null;
+  tokensOf = text: lib.filter (token: token != "") (lib.splitString " " text);
+  keyTokenOf =
+    line:
+    let
+      tokens = tokensOf (lib.head (builtins.match "^([^:;]*)[:;].*$" line));
+    in
+    if tokens == [ ] then null else lib.last tokens;
+  keyTokens = lib.filter (token: token != null) (
+    map keyTokenOf (lib.filter isBindingLine configLines)
+  );
+
+  # Named keys skhd.zig resolves identically across the layouts in use here.
+  # Anything else must be a hex keycode.
+  layoutSafeNamedKeys = [
+    "h"
+    "j"
+    "k"
+    "l"
+    "f"
+    "b"
+    "r"
+    "space"
+    "escape"
+    "return"
+  ];
+  isHexKeycode = token: builtins.match "^0x[0-9A-Fa-f]+$" token != null;
+  digitLiteralKeys = lib.filter (token: builtins.match "^[0-9]$" token != null) keyTokens;
+  unsupportedKeys = lib.filter (
+    token: !(lib.elem token layoutSafeNamedKeys) && !(isHexKeycode token)
+  ) keyTokens;
+
   requiredBindings = [
     "ctrl + alt + cmd - h : yabai -m window --focus west"
     "ctrl + alt + cmd + shift - l : yabai -m window --warp east"
-    "ctrl + alt + cmd - 1 : yabai -m space --focus 1"
-    "ctrl + alt + cmd - 9 : yabai -m space --focus 9"
-    "ctrl + alt + cmd + shift - 1 : yabai -m window --space 1"
-    "ctrl + alt + cmd + shift - 9 : yabai -m window --space 9"
     "ctrl + alt + cmd - space : yabai -m window --toggle float"
     "ctrl + alt + cmd - f : yabai -m window --toggle zoom-fullscreen"
+    "ctrl + alt + cmd - b : yabai -m space --balance"
     "ctrl + alt + cmd - r ; resize"
     "resize < escape ; default"
-  ];
+  ]
+  ++ lib.concatMap (index: [
+    "ctrl + alt + cmd - ${spaceKeycodes.${index}} : yabai -m space --focus ${index}"
+    "ctrl + alt + cmd + shift - ${spaceKeycodes.${index}} : yabai -m window --space ${index} && yabai -m space --focus ${index}"
+  ]) (builtins.attrNames spaceKeycodes);
   missingBindings = lib.filter (binding: !(lib.hasInfix binding skhdConfig)) requiredBindings;
 in
 assert lib.assertMsg cfg.services.yabai.enable "the Darwin workstation must enable yabai";
@@ -54,6 +117,18 @@ assert lib.assertMsg (
 assert lib.assertMsg (missingBindings == [ ]) (
   "skhd is missing required window-management bindings: " + lib.concatStringsSep ", " missingBindings
 );
+assert lib.assertMsg (digitLiteralKeys == [ ]) (
+  "skhd binds the layout-dependent number-row characters "
+  + lib.concatStringsSep ", " digitLiteralKeys
+  + ". skhd.zig resolves character literals through the active keyboard layout, and the "
+  + "French AZERTY layout on this workstation emits no unshifted digit, so the daemon aborts "
+  + "the whole config with `Unknown key`. Use the kVK_ANSI keycodes instead."
+);
+assert lib.assertMsg (unsupportedKeys == [ ]) (
+  "skhd binds keys that are neither layout-safe named keys nor hex keycodes: "
+  + lib.concatStringsSep ", " unsupportedKeys
+);
+assert lib.assertMsg (keyTokens != [ ]) "the skhd binding parser contract matched no hotkey lines";
 assert lib.assertMsg (
   !cfg.system.defaults.dock.mru-spaces
   && !cfg.system.defaults.spaces.spans-displays

@@ -115,6 +115,15 @@ let
   ) karabinerProfiles;
   untypedProfiles = lib.filter (keyboardType: keyboardType == "") keyboardTypes;
 
+  # The karabiner-elements cask is `auto_updates`, so the application updates
+  # itself outside Homebrew and outside this flake. An unattended bump can carry
+  # a new DriverKit extension version, which macOS makes the operator re-approve
+  # before Karabiner is back in the event path. That presents as Caps Lock
+  # silently no longer producing the leader, which is indistinguishable from an
+  # skhd or yabai fault. Pin the declared cask version by disabling the
+  # application's own updater.
+  karabinerChecksForUpdates = karabiner.global.check_for_updates_on_startup or true;
+
   # skhd's chord, expressed as the Karabiner key_codes that must reach it.
   leaderModifiers = [
     "left_command"
@@ -225,6 +234,12 @@ assert lib.assertMsg (untypedProfiles == [ ]) (
   + " so it reruns the Keyboard Setup Assistant. Karabiner persists the answer by"
   + " rewriting karabiner.json, which the next activation reverts, making the"
   + " assistant reappear on a loop."
+);
+assert lib.assertMsg (!karabinerChecksForUpdates) (
+  "Karabiner must not check for updates on startup. The cask is `auto_updates`, so the"
+  + " application would update itself outside this flake, and a new DriverKit extension"
+  + " version needs operator re-approval before Karabiner is back in the event path."
+  + " That presents as Caps Lock silently no longer producing the leader."
 );
 assert lib.assertMsg (rulesWithMisplacedParameters == [ ]) (
   "Karabiner parses `parameters` on a manipulator or profile-wide and silently ignores a rule-level one, so these rules have a tap timeout that never takes effect: "

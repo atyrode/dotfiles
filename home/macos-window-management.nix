@@ -15,9 +15,25 @@ in
     pkgs.yabai
   ];
 
+  # JankyBorders only renders focus; it owns no windows and no hotkeys. Colors
+  # come from the palette the repository already owns: the active accent is
+  # Rio's vi-cursor teal, the inactive frame is the muted gray one step above
+  # Rio's #282C34 background. Width 5 sits inside the 8px yabai gaps without
+  # touching the neighbouring window.
+  services.jankyborders = lib.mkIf pkgs.stdenv.isDarwin {
+    enable = true;
+    settings = {
+      style = "round";
+      width = 5.0;
+      hidpi = "on";
+      active_color = "0xff70c0b1";
+      inactive_color = "0xff3e4451";
+    };
+  };
+
   # Karabiner owns input transformation only: Caps Lock held becomes the
-  # control+option+command leader that skhd already binds, and Caps Lock tapped
-  # stays Escape. skhd owns hotkey dispatch, yabai owns windows.
+  # control+option+command leader that skhd already binds; tapping it does
+  # nothing by design. skhd owns hotkey dispatch, yabai owns windows.
   #
   # The live file is a regular writable 0600 file rather than a store symlink,
   # for two upstream reasons. Karabiner reloads by watching the enclosing

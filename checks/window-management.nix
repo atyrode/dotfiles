@@ -33,10 +33,12 @@ let
 
   # The solo-window suppression only works if every visibility-changing event
   # re-runs the script; a missing signal leaves a stale border state behind.
+  # window_focused must NOT be in the set: focus cannot change the visible
+  # count, and re-pushing settings on every focus switch fights JankyBorders'
+  # internal recolor, which renders as border flicker on focus change.
   bordersSoloEvents = [
     "window_created"
     "window_destroyed"
-    "window_focused"
     "window_minimized"
     "window_deminimized"
     "space_changed"
@@ -46,6 +48,7 @@ let
   missingSoloSignals = lib.filter (
     event: !(lib.hasInfix "label=borders-solo-${event} event=${event}" yabaiExtraConfig)
   ) bordersSoloEvents;
+  soloRunsOnFocus = lib.hasInfix "label=borders-solo-window_focused" yabaiExtraConfig;
 
   # skhd.zig resolves a character key literal through
   # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
@@ -343,6 +346,11 @@ assert lib.assertMsg (missingSoloSignals == [ ]) (
   "yabai must register a borders-solo signal for every visibility-changing event, or a"
   + " lone window keeps a stale border; missing: "
   + lib.concatStringsSep ", " missingSoloSignals
+);
+assert lib.assertMsg (!soloRunsOnFocus) (
+  "the borders-solo script must not run on window_focused: focus cannot change the"
+  + " visible-window count, and re-pushing settings on every focus switch fights"
+  + " JankyBorders' internal recolor, which renders as border flicker"
 );
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"

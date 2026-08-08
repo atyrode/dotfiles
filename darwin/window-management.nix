@@ -9,6 +9,13 @@ let
   # signals drive the running instance. Restoring re-executes the Home
   # Manager-generated bordersrc, which keeps the width and palette in exactly
   # one place instead of duplicating them here.
+  #
+  # Two flicker guards. window_focused is deliberately NOT in the event set:
+  # focus cannot change the visible-window count, and pushing settings into the
+  # running instance on every focus switch fights JankyBorders' own internal
+  # recolor, which renders as flicker. The script is also idempotent via a
+  # state file, so hopping between two multi-window Spaces does not re-push
+  # identical settings on every space_changed.
   bordersSolo = pkgs.writeShellApplication {
     name = "borders-solo";
     runtimeInputs = [
@@ -17,18 +24,28 @@ let
       pkgs.jankyborders
     ];
     text = ''
+      state_file="''${XDG_CACHE_HOME:-$HOME/.cache}/borders-solo-state"
       visible=$(yabai -m query --windows --space | jq '[.[] | select(."is-visible")] | length')
       if [ "$visible" -le 1 ]; then
+        desired=solo
+      else
+        desired=multi
+      fi
+      if [ "$desired" = "$(cat "$state_file" 2>/dev/null || true)" ]; then
+        exit 0
+      fi
+      if [ "$desired" = solo ]; then
         borders width=0.0
       else
         "$HOME/.config/borders/bordersrc"
       fi
+      mkdir -p "$(dirname "$state_file")"
+      printf '%s' "$desired" > "$state_file"
     '';
   };
   bordersSoloEvents = [
     "window_created"
     "window_destroyed"
-    "window_focused"
     "window_minimized"
     "window_deminimized"
     "space_changed"
@@ -66,6 +83,9 @@ in
       ${yabai} -m rule --add label=system-settings app='^System Settings$' manage=off
       ${yabai} -m rule --add label=calculator app='^Calculator$' manage=off
       ${bordersSoloSignals}
+      # yabai restart cannot trust the cached solo state: the borders agent may
+      # have restarted to bordersrc defaults independently. Reset, then compute.
+      rm -f "''${XDG_CACHE_HOME:-$HOME/.cache}/borders-solo-state"
       ${lib.getExe bordersSolo}
     '';
   };

@@ -13,6 +13,40 @@ let
   skhdConfig = cfg.environment.etc.skhdrc.text;
   skhdArguments = cfg.launchd.user.agents.skhd.serviceConfig.ProgramArguments;
 
+  # JankyBorders only renders focus. Its one cross-component contract is the
+  # shared palette: the active border accent must be the same teal Rio already
+  # uses for its vi cursor, otherwise "settled shared colors" silently drifts
+  # into two ad-hoc palettes. Rio's config is a literal TOML artifact, so the
+  # accent is read from it rather than duplicated here.
+  borders = homeConfig.config.services.jankyborders;
+  bordersWidth = borders.settings.width or 0;
+  bordersActive = lib.toLower (borders.settings.active_color or "");
+  bordersInactive = lib.toLower (borders.settings.inactive_color or "");
+  isArgbColor = color: builtins.match "^0x[0-9a-f]{8}$" color != null;
+  rioViCursor =
+    let
+      matches = builtins.match ".*vi-cursor = \"#([0-9A-Fa-f]{6})\".*" (
+        builtins.readFile ../home/rio/config.toml
+      );
+    in
+    if matches == null then null else lib.toLower (lib.head matches);
+
+  # The solo-window suppression only works if every visibility-changing event
+  # re-runs the script; a missing signal leaves a stale border state behind.
+  bordersSoloEvents = [
+    "window_created"
+    "window_destroyed"
+    "window_focused"
+    "window_minimized"
+    "window_deminimized"
+    "space_changed"
+    "display_changed"
+  ];
+  yabaiExtraConfig = cfg.services.yabai.extraConfig;
+  missingSoloSignals = lib.filter (
+    event: !(lib.hasInfix "label=borders-solo-${event} event=${event}" yabaiExtraConfig)
+  ) bordersSoloEvents;
+
   # skhd.zig resolves a character key literal through
   # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
   # literal only parses when the active layout emits that character unshifted.
@@ -284,6 +318,31 @@ assert lib.assertMsg (rulesWithMisplacedParameters == [ ]) (
   + lib.concatStringsSep ", " (
     map (rule: rule.description or "<undescribed>") rulesWithMisplacedParameters
   )
+);
+assert lib.assertMsg borders.enable
+  "the desktop capability must enable JankyBorders to render focus";
+assert lib.assertMsg (bordersWidth > 0) "JankyBorders must declare a positive border width";
+assert lib.assertMsg (isArgbColor bordersActive && isArgbColor bordersInactive) (
+  "JankyBorders colors must be 0xaarrggbb literals; got active="
+  + bordersActive
+  + " inactive="
+  + bordersInactive
+);
+assert lib.assertMsg (
+  bordersActive != bordersInactive
+) "JankyBorders active and inactive colors must differ, or the border cannot communicate focus";
+assert lib.assertMsg (rioViCursor != null)
+  "could not read the vi-cursor accent from home/rio/config.toml; the shared-palette contract needs it";
+assert lib.assertMsg (bordersActive == "0xff${rioViCursor}") (
+  "the active border accent must reuse Rio's vi-cursor #"
+  + rioViCursor
+  + " so the stack keeps one palette; got "
+  + bordersActive
+);
+assert lib.assertMsg (missingSoloSignals == [ ]) (
+  "yabai must register a borders-solo signal for every visibility-changing event, or a"
+  + " lone window keeps a stale border; missing: "
+  + lib.concatStringsSep ", " missingSoloSignals
 );
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"

@@ -104,6 +104,17 @@ let
   ) karabinerManipulators;
   capsManipulator = lib.head capsManipulators;
 
+  # Karabiner presents a virtual keyboard to macOS. When its type is unset,
+  # macOS cannot identify it and reruns the Keyboard Setup Assistant. Karabiner
+  # then persists the answer by rewriting karabiner.json, so leaving this out of
+  # the managed file means every activation reverts it and the assistant returns.
+  # This workstation's built-in keyboard is ISO: kVK_ISO_Section resolves to a
+  # real character, which has no equivalent on ANSI.
+  keyboardTypes = map (
+    profile: profile.virtual_hid_keyboard.keyboard_type_v2 or ""
+  ) karabinerProfiles;
+  untypedProfiles = lib.filter (keyboardType: keyboardType == "") keyboardTypes;
+
   # skhd's chord, expressed as the Karabiner key_codes that must reach it.
   leaderModifiers = [
     "left_command"
@@ -207,6 +218,13 @@ assert lib.assertMsg (capsTapEmits == [ ]) (
   + ". A tap action fires on every leader press that turns out not to be a chord, which"
   + " dismisses dialogs and TUI prompts. Reintroduce `to_if_alone` only alongside a"
   + " deliberate basic.to_if_alone_timeout_milliseconds."
+);
+assert lib.assertMsg (untypedProfiles == [ ]) (
+  "every Karabiner profile must pin virtual_hid_keyboard.keyboard_type_v2."
+  + " An unset type leaves macOS unable to identify Karabiner's virtual keyboard,"
+  + " so it reruns the Keyboard Setup Assistant. Karabiner persists the answer by"
+  + " rewriting karabiner.json, which the next activation reverts, making the"
+  + " assistant reappear on a loop."
 );
 assert lib.assertMsg (rulesWithMisplacedParameters == [ ]) (
   "Karabiner parses `parameters` on a manipulator or profile-wide and silently ignores a rule-level one, so these rules have a tap timeout that never takes effect: "

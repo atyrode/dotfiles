@@ -450,8 +450,8 @@ Project-specific auto-learned skills under `~/.omp/agent/managed-skills`
 remain OMP-owned mutable state. Move each one into its owning repository after
 removing machine-specific assumptions. The repository-specific
 `.agents/skills/contribute-omp-upstream` skill owns research, preparation, and
-operator-authorized upstream OMP pull requests; it hands fork release, pin, and
-accepted-patch reconciliation to `.agents/skills/bump-omp-fork`. Generic skills
+operator-authorized upstream OMP pull requests; it hands pin updates and any
+temporary emergency fork release to `.agents/skills/bump-omp-fork`. Generic skills
 such as `ts-react-dead-code-sweep` remain under `agents/skills/`.
 
 ### Installed skills
@@ -512,9 +512,10 @@ compares the instruction marker to the package pin because public upstream
 skill text becomes trusted agent instructions and must never refresh without
 review. The pin script prints the upstream review pointer.
 
-Manual OMP updates MUST follow `.agents/skills/bump-omp-fork/SKILL.md`. The
-original release is not consumable until `atyrode/omp` has rebased its fork
-changes and published all four platform assets.
+Manual OMP updates MUST follow `.agents/skills/bump-omp-fork/SKILL.md`. The pin
+consumes upstream `can1357/oh-my-pi` release binaries directly (operator
+decision 2026-08-08); the `atyrode/omp` fork stays dormant as the contribution
+vehicle and emergency-patch release pipeline.
 
 `omp-agents` regenerates the upstream bundled agents from the pinned OMP
 binary, and the `omp-agent-references` check asserts that every agent name

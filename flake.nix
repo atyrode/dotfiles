@@ -30,6 +30,11 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
+
+    skhd-zig-tap = {
+      url = "github:jackielii/homebrew-tap";
+      flake = false;
+    };
   };
 
   outputs =
@@ -44,6 +49,7 @@
       treefmt-nix,
       homebrew-core,
       homebrew-cask,
+      skhd-zig-tap,
       ...
     }:
     let
@@ -479,6 +485,7 @@
             inherit
               homebrew-cask
               homebrew-core
+              skhd-zig-tap
               ;
             inherit (host) homeDirectory;
             homeModules = modulesForHost name host;
@@ -763,6 +770,11 @@
             serverConfig = if isLinux then serverHomeConfig.config else null;
             externalFixture = if isLinux then externalServerFixture else null;
             darwinConfigs = systemDarwinConfigs;
+          };
+          window-management = import ./checks/window-management.nix {
+            inherit lib pkgs;
+            darwinConfig = canonicalDarwinConfigs.alex-aarch64-darwin;
+            homeConfig = canonicalHomeConfigs.alex-aarch64-darwin;
           };
         }
         // lib.optionalAttrs (system == "x86_64-linux") {

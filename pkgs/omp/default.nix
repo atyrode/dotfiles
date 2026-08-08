@@ -7,23 +7,23 @@
 }:
 
 let
-  version = "17.2.9-atyrode.1";
+  version = "17.2.11";
   sources = {
     "x86_64-linux" = {
       asset = "omp-linux-x64";
-      hash = "sha256-EwDPeLV4KrerX/Z1d4pH6guWAfcEmhrSayc+qrgaHQ8=";
+      hash = "sha256-uGTV7FkTN2G5Wzh60oN3pU2lRZtaqn5aNOgrBZU1C6M=";
     };
     "aarch64-linux" = {
       asset = "omp-linux-arm64";
-      hash = "sha256-sQ3UhkveHGP7pzq68gZaMLxJ+01h5+2/7nOT+pJGiD8=";
+      hash = "sha256-OlNJvWz+ixxfQo6hCv7vlHMMeSOi5K5LljdivZQVG24=";
     };
     "x86_64-darwin" = {
       asset = "omp-darwin-x64";
-      hash = "sha256-o37/OPEp2rCVonVX+CA+QST7fPNChY0s6D6UDcbhoU8=";
+      hash = "sha256-rq1XnGcpK4epN0VCZNVGYhiKq+rh/7kKJrO/qaPewc0=";
     };
     "aarch64-darwin" = {
       asset = "omp-darwin-arm64";
-      hash = "sha256-ItHkFeQVLTdpyY00xYYmjICfyZ2FyszPAKrQtJVQhoc=";
+      hash = "sha256-ME61Cpl0+bHdTXDNr67be/5evhaq2Rmm/XWpXmvTHuI=";
     };
   };
   source =
@@ -35,7 +35,7 @@ stdenv.mkDerivation {
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/atyrode/omp/releases/download/v${version}/${source.asset}";
+    url = "https://github.com/can1357/oh-my-pi/releases/download/v${version}/${source.asset}";
     inherit (source) hash;
   };
 
@@ -91,7 +91,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "AI coding agent for the terminal";
-    homepage = "https://github.com/atyrode/omp";
+    homepage = "https://github.com/can1357/oh-my-pi";
     license = lib.licenses.mit;
     mainProgram = "omp";
     platforms = builtins.attrNames sources;

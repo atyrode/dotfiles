@@ -3,6 +3,7 @@
   imports = [
     ../git.nix
     ../mise.nix
+    ../ssh.nix
     ../zsh.nix
   ];
 

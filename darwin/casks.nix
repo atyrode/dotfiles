@@ -6,6 +6,7 @@
   "display-pilot"
   "discord"
   "godot"
+  "jackielii/tap/skhd-zig"
   "parsec"
   "plugdata"
   "sonos"

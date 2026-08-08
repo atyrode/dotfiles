@@ -8,7 +8,10 @@
 let
   cfg = darwinConfig.config;
   packageNames = map lib.getName homeConfig.config.home.packages;
-  skhdConfig = cfg.services.skhd.skhdConfig;
+  caskName = cask: if builtins.isString cask then cask else cask.name;
+  caskNames = map caskName cfg.homebrew.casks;
+  skhdConfig = cfg.environment.etc.skhdrc.text;
+  skhdArguments = cfg.launchd.user.agents.skhd.serviceConfig.ProgramArguments;
   requiredBindings = [
     "ctrl + alt + cmd - h : yabai -m window --focus west"
     "ctrl + alt + cmd + shift - l : yabai -m window --warp east"
@@ -39,7 +42,15 @@ assert lib.assertMsg (
   && cfg.services.yabai.config.right_padding == 8
   && cfg.services.yabai.config.window_gap == 8
 ) "yabai must retain equal initial gaps and padding";
-assert lib.assertMsg cfg.services.skhd.enable "the Darwin workstation must enable skhd";
+assert lib.assertMsg (
+  !cfg.services.skhd.enable
+  &&
+    skhdArguments == [
+      "/Applications/skhd.app/Contents/MacOS/skhd"
+      "-c"
+      "/etc/skhdrc"
+    ]
+) "the Darwin workstation must launch the stable skhd app bundle";
 assert lib.assertMsg (missingBindings == [ ]) (
   "skhd is missing required window-management bindings: " + lib.concatStringsSep ", " missingBindings
 );
@@ -52,8 +63,12 @@ assert lib.assertMsg (
   && !cfg.system.defaults.WindowManager.HideDesktop
 ) "macOS defaults must preserve stable, separate Spaces without Stage Manager";
 assert lib.assertMsg (
-  builtins.elem "skhd" packageNames && builtins.elem "yabai" packageNames
-) "the desktop capability must expose the skhd and yabai CLIs through Home Manager";
+  builtins.hasAttr "jackielii/homebrew-tap" cfg.nix-homebrew.taps
+  && builtins.elem "jackielii/tap/skhd-zig" caskNames
+) "nix-homebrew must pin and install the Tahoe-compatible skhd.zig app bundle";
+assert lib.assertMsg (
+  !(builtins.elem "skhd" packageNames) && builtins.elem "yabai" packageNames
+) "the desktop capability must expose yabai without the obsolete classic skhd package";
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"
 ''

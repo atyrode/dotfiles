@@ -33,10 +33,25 @@ in
     '';
   };
 
-  services.skhd = {
-    enable = true;
-    package = pkgs.skhd;
-    skhdConfig = builtins.readFile ./window-management/skhdrc;
+  # Tahoe keys Accessibility grants to a stable app identity. The classic
+  # nixpkgs skhd binary lives at a generation-specific store path, so launch
+  # the pinned skhd.zig app bundle while retaining nix-darwin lifecycle.
+  environment.etc."skhdrc".text = builtins.readFile ./window-management/skhdrc;
+
+  launchd.user.agents.skhd = {
+    serviceConfig = {
+      ProgramArguments = [
+        "/Applications/skhd.app/Contents/MacOS/skhd"
+        "-c"
+        "/etc/skhdrc"
+      ];
+      EnvironmentVariables.PATH = "${pkgs.yabai}/bin:/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+      KeepAlive = true;
+      ProcessType = "Interactive";
+      RunAtLoad = true;
+    };
+
+    managedBy = "darwin/window-management.nix";
   };
 
   system.defaults = {

@@ -190,7 +190,24 @@
         "nix-index-database": "nix-index-database",
         "nixos-wsl": "nixos-wsl",
         "nixpkgs": "nixpkgs",
+        "skhd-zig-tap": "skhd-zig-tap",
         "treefmt-nix": "treefmt-nix"
+      }
+    },
+    "skhd-zig-tap": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784537903,
+        "narHash": "sha256-vC1tDxOSzxx1u+tbo3gyoZTm7u+GsyymuNL5k0ERd2Y=",
+        "owner": "jackielii",
+        "repo": "homebrew-tap",
+        "rev": "634cd3c1a495f59f832813410f07ddf2c4a1c50c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jackielii",
+        "repo": "homebrew-tap",
+        "type": "github"
       }
     },
     "treefmt-nix": {

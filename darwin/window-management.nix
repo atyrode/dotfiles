@@ -28,27 +28,29 @@ let
       pkgs.sketchybar
       pkgs.yabai
       pkgs.jq
-      pkgs.gawk
     ];
     text = ''
-      spaces=$(yabai -m query --spaces | jq -r '.[] | "\(.index) \(.windows | length) \(."has-focus")"')
+      # One yabai query, one sketchybar invocation. Nine separate --set calls
+      # cost ~125ms per event and read as visible lag on a space switch;
+      # batching everything into a single IPC message is near-instant.
+      declare -A count focus
+      while read -r index windows focused; do
+        count[$index]=$windows
+        focus[$index]=$focused
+      done < <(yabai -m query --spaces | jq -r '.[] | "\(.index) \(.windows | length) \(."has-focus")"')
+      args=()
       for index in 1 2 3 4 5 6 7 8 9; do
-        # awk always exits 0, so an absent index stays errexit-safe.
-        row=$(printf '%s\n' "$spaces" | awk -v idx="$index" '$1 == idx { print $2, $3 }')
-        if [ -z "$row" ]; then
-          sketchybar --set "space.$index" drawing=off
-          continue
-        fi
-        count=''${row% *}
-        focused=''${row#* }
-        if [ "$focused" = "true" ]; then
-          sketchybar --set "space.$index" drawing=on background.drawing=on label.color=${colorBar}
-        elif [ "$count" -gt 0 ]; then
-          sketchybar --set "space.$index" drawing=on background.drawing=off label.color=${colorLabel}
+        if [ -z "''${count[$index]:-}" ]; then
+          args+=(--set "space.$index" drawing=off)
+        elif [ "''${focus[$index]}" = "true" ]; then
+          args+=(--set "space.$index" drawing=on background.drawing=on label.color=${colorBar})
+        elif [ "''${count[$index]}" -gt 0 ]; then
+          args+=(--set "space.$index" drawing=on background.drawing=off label.color=${colorLabel})
         else
-          sketchybar --set "space.$index" drawing=on background.drawing=off label.color=${colorDim}
+          args+=(--set "space.$index" drawing=on background.drawing=off label.color=${colorDim})
         fi
       done
+      sketchybar "''${args[@]}"
     '';
   };
 

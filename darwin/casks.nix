@@ -7,6 +7,7 @@
   "discord"
   "godot"
   "jackielii/tap/skhd-zig"
+  "karabiner-elements"
   "parsec"
   "plugdata"
   "sonos"

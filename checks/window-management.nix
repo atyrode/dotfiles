@@ -88,6 +88,45 @@ let
     "ctrl + alt + cmd + shift - ${spaceKeycodes.${index}} : yabai -m window --space ${index} && yabai -m space --focus ${index}"
   ]) (builtins.attrNames spaceKeycodes);
   missingBindings = lib.filter (binding: !(lib.hasInfix binding skhdConfig)) requiredBindings;
+
+  # Karabiner owns input transformation only. Its whole job in this stack is to
+  # synthesise the exact chord skhd binds, so assert that correspondence rather
+  # than the literal JSON: if either side is retuned independently, every
+  # leader binding silently stops firing.
+  karabiner = builtins.fromJSON (builtins.readFile ../home/macos-window-management/karabiner.json);
+  karabinerProfiles = karabiner.profiles;
+  karabinerRules = lib.concatMap (
+    profile: profile.complex_modifications.rules or [ ]
+  ) karabinerProfiles;
+  karabinerManipulators = lib.concatMap (rule: rule.manipulators) karabinerRules;
+  capsManipulators = lib.filter (
+    manipulator: (manipulator.from.key_code or null) == "caps_lock"
+  ) karabinerManipulators;
+  capsManipulator = lib.head capsManipulators;
+
+  # skhd's chord, expressed as the Karabiner key_codes that must reach it.
+  leaderModifiers = [
+    "left_command"
+    "left_control"
+    "left_option"
+  ];
+  capsEmits =
+    let
+      inherit (capsManipulator) to;
+      event = lib.head to;
+    in
+    lib.sort (a: b: a < b) ([ event.key_code ] ++ (event.modifiers or [ ]));
+
+  # Caps Lock is deliberately leader-only. Tap-to-Escape is the conventional
+  # pairing, but it is only worth its cost under modal editing, which this
+  # workstation does not use, and a stray Escape dismisses dialogs and TUI
+  # prompts. Adding `to_if_alone` back is a one-key change if that ever shifts.
+  capsTapEmits = map (event: event.key_code) (capsManipulator.to_if_alone or [ ]);
+
+  # Upstream parses `parameters` on a manipulator or profile-wide, and silently
+  # ignores a rule-level one as an unknown key, so a tap timeout placed on the
+  # rule never takes effect.
+  rulesWithMisplacedParameters = lib.filter (rule: rule ? parameters) karabinerRules;
 in
 assert lib.assertMsg cfg.services.yabai.enable "the Darwin workstation must enable yabai";
 assert lib.assertMsg (
@@ -144,6 +183,37 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   !(builtins.elem "skhd" packageNames) && builtins.elem "yabai" packageNames
 ) "the desktop capability must expose yabai without the obsolete classic skhd package";
+assert lib.assertMsg (builtins.elem "karabiner-elements" caskNames)
+  "nix-homebrew must install Karabiner-Elements, which owns the Caps Lock leader";
+assert lib.assertMsg
+  (builtins.length karabinerProfiles == 1 && (lib.head karabinerProfiles).selected)
+  "Karabiner must ship exactly one selected profile: switching profiles rewrites karabiner.json and would clobber the managed configuration";
+assert lib.assertMsg (
+  builtins.length capsManipulators == 1
+) "Karabiner must define exactly one caps_lock manipulator";
+assert lib.assertMsg ((capsManipulator.type or null) == "basic")
+  "the caps_lock manipulator must declare \"type\": \"basic\"; Karabiner refuses to load a manipulator without an explicit type";
+assert lib.assertMsg (builtins.elem "any" (capsManipulator.from.modifiers.optional or [ ]))
+  "the caps_lock manipulator must allow any optional modifier, otherwise the leader stops matching as soon as Shift is held and every send-to-Space binding dies";
+assert lib.assertMsg (capsEmits == leaderModifiers) (
+  "Karabiner's held Caps Lock must emit exactly the chord skhd binds ("
+  + lib.concatStringsSep " + " leaderModifiers
+  + ") but it emits "
+  + lib.concatStringsSep " + " capsEmits
+);
+assert lib.assertMsg (capsTapEmits == [ ]) (
+  "Caps Lock is leader-only on this workstation, but tapping it emits "
+  + lib.concatStringsSep ", " capsTapEmits
+  + ". A tap action fires on every leader press that turns out not to be a chord, which"
+  + " dismisses dialogs and TUI prompts. Reintroduce `to_if_alone` only alongside a"
+  + " deliberate basic.to_if_alone_timeout_milliseconds."
+);
+assert lib.assertMsg (rulesWithMisplacedParameters == [ ]) (
+  "Karabiner parses `parameters` on a manipulator or profile-wide and silently ignores a rule-level one, so these rules have a tap timeout that never takes effect: "
+  + lib.concatStringsSep ", " (
+    map (rule: rule.description or "<undescribed>") rulesWithMisplacedParameters
+  )
+);
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"
 ''

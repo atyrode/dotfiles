@@ -1,0 +1,37 @@
+{
+  "profiles": [
+    {
+      "name": "Default profile",
+      "selected": true,
+      "complex_modifications": {
+        "rules": [
+          {
+            "description": "Caps Lock held -> control+option+command leader",
+            "manipulators": [
+              {
+                "type": "basic",
+                "from": {
+                  "key_code": "caps_lock",
+                  "modifiers": {
+                    "optional": [
+                      "any"
+                    ]
+                  }
+                },
+                "to": [
+                  {
+                    "key_code": "left_command",
+                    "modifiers": [
+                      "left_control",
+                      "left_option"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -14,6 +14,8 @@ let
   casks = import ./casks.nix;
 in
 {
+  imports = [ ./window-management.nix ];
+
   system = {
     primaryUser = username;
     stateVersion = 7;

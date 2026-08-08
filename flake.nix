@@ -764,6 +764,11 @@
             externalFixture = if isLinux then externalServerFixture else null;
             darwinConfigs = systemDarwinConfigs;
           };
+          window-management = import ./checks/window-management.nix {
+            inherit lib pkgs;
+            darwinConfig = canonicalDarwinConfigs.alex-aarch64-darwin;
+            homeConfig = canonicalHomeConfigs.alex-aarch64-darwin;
+          };
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
           # Platform-independent lints: their output is a pure function of the

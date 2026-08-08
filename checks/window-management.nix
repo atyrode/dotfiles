@@ -22,6 +22,37 @@ let
   yabaiExtraConfig = cfg.services.yabai.extraConfig;
   strayBordersSignals = lib.hasInfix "borders-solo" yabaiExtraConfig;
 
+  # SketchyBar visualizes yabai/OS state without owning it. Three contracts:
+  # the bar height must equal the space yabai reserves (a mismatch either hides
+  # the bar behind tiles or wastes screen), items must stay on sanctioned
+  # event subscriptions (wifi_change is broken since Sonoma, media_change is
+  # deprecated on macOS 26), and the selected-Space accent must come from the
+  # shared Rio palette like the rest of the stack.
+  sketchybarConfig = cfg.services.sketchybar.config;
+  sketchybarEnabled = cfg.services.sketchybar.enable;
+  barHeightMatch = builtins.match ".*--bar[^\n]* height=([0-9]+).*" sketchybarConfig;
+  barHeight = if barHeightMatch == null then null else lib.head barHeightMatch;
+  externalBar = cfg.services.yabai.config.external_bar or "";
+  requiredBarEvents = [
+    "space_change"
+    "space_windows_change"
+    "front_app_switched"
+    "power_source_change"
+    "system_woke"
+  ];
+  missingBarEvents = lib.filter (event: !(lib.hasInfix event sketchybarConfig)) requiredBarEvents;
+  forbiddenBarEvents = lib.filter (event: lib.hasInfix event sketchybarConfig) [
+    "wifi_change"
+    "media_change"
+  ];
+  rioViCursor =
+    let
+      matches = builtins.match ".*vi-cursor = \"#([0-9A-Fa-f]{6})\".*" (
+        builtins.readFile ../home/rio/config.toml
+      );
+    in
+    if matches == null then null else lib.toLower (lib.head matches);
+
   # skhd.zig resolves a character key literal through
   # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
   # literal only parses when the active layout emits that character unshifted.
@@ -299,6 +330,34 @@ assert lib.assertMsg (!bordersEnabled)
 assert lib.assertMsg (
   !strayBordersSignals
 ) "yabai still registers borders-solo signals although JankyBorders was removed";
+assert lib.assertMsg sketchybarEnabled "the Darwin workstation must enable SketchyBar (phase 4)";
+assert lib.assertMsg (
+  barHeight != null
+) "could not parse the bar height out of the SketchyBar config";
+assert lib.assertMsg (externalBar == "all:0:${barHeight}") (
+  "yabai must reserve exactly the SketchyBar height at the bottom edge:"
+  + " expected external_bar all:0:"
+  + barHeight
+  + " but found '"
+  + externalBar
+  + "'. A mismatch either hides the bar behind tiles or wastes screen"
+);
+assert lib.assertMsg (missingBarEvents == [ ]) (
+  "SketchyBar items must stay event-driven; missing subscriptions: "
+  + lib.concatStringsSep ", " missingBarEvents
+);
+assert lib.assertMsg (forbiddenBarEvents == [ ]) (
+  "SketchyBar subscribes to events that are broken or deprecated on this macOS: "
+  + lib.concatStringsSep ", " forbiddenBarEvents
+  + ". wifi_change has been broken since Sonoma and media_change is deprecated on macOS 26"
+);
+assert lib.assertMsg (rioViCursor != null)
+  "could not read the vi-cursor accent from home/rio/config.toml; the shared-palette contract needs it";
+assert lib.assertMsg (lib.hasInfix "0xff${rioViCursor}" (lib.toLower sketchybarConfig)) (
+  "the SketchyBar selected-Space accent must reuse Rio's vi-cursor #"
+  + rioViCursor
+  + " so the stack keeps one palette"
+);
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"
 ''

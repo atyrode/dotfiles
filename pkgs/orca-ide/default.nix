@@ -15,23 +15,23 @@
 # exposes the AppImage CLI; macOS leaves CLI registration to the signed app.
 let
   pname = "orca-ide";
-  version = "1.4.171";
+  version = "1.4.176";
   sources = {
     "x86_64-linux" = {
       asset = "orca-linux.AppImage";
-      hash = "sha256-iTtwFrupvUvPp2PSfrjNafStodbuLcBzhZN7iy0HBak=";
+      hash = "sha256-rWI1HdKpyfrvNdSaIfhDzqxEIKfCE+UV5AVrjncCUBI=";
     };
     "aarch64-linux" = {
       asset = "orca-linux-arm64.AppImage";
-      hash = "sha256-g3rn5gTUIlRljzTgO6qVe8IFSd3AczQD9xbbaognPLw=";
+      hash = "sha256-9MGb51sm487Wb+594Z/X/7ZBkZP0tS6weSgMZT2tcZc=";
     };
     "x86_64-darwin" = {
       asset = "orca-macos-x64.dmg";
-      hash = "sha256-pHFcdCsqy8X/IJh16E1EeL4Gi6rVvynMdCUXKN4tlXM=";
+      hash = "sha256-d9lNHEqkO5pdvszIqDEl0J8VMqYqpSpKndjlQuzAV+E=";
     };
     "aarch64-darwin" = {
       asset = "orca-macos-arm64.dmg";
-      hash = "sha256-0sTGdj+SgqlieaUn+o3rHOEjhGcB2PpgVGzc9hCS/To=";
+      hash = "sha256-GO1xI7ZCQ2/fMwDEXd9vUoI1lAS8J5vN2CMXIYlenps=";
     };
   };
   source =

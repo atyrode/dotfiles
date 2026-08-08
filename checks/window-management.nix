@@ -31,6 +31,22 @@ let
     in
     if matches == null then null else lib.toLower (lib.head matches);
 
+  # The solo-window suppression only works if every visibility-changing event
+  # re-runs the script; a missing signal leaves a stale border state behind.
+  bordersSoloEvents = [
+    "window_created"
+    "window_destroyed"
+    "window_focused"
+    "window_minimized"
+    "window_deminimized"
+    "space_changed"
+    "display_changed"
+  ];
+  yabaiExtraConfig = cfg.services.yabai.extraConfig;
+  missingSoloSignals = lib.filter (
+    event: !(lib.hasInfix "label=borders-solo-${event} event=${event}" yabaiExtraConfig)
+  ) bordersSoloEvents;
+
   # skhd.zig resolves a character key literal through
   # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
   # literal only parses when the active layout emits that character unshifted.
@@ -322,6 +338,11 @@ assert lib.assertMsg (bordersActive == "0xff${rioViCursor}") (
   + rioViCursor
   + " so the stack keeps one palette; got "
   + bordersActive
+);
+assert lib.assertMsg (missingSoloSignals == [ ]) (
+  "yabai must register a borders-solo signal for every visibility-changing event, or a"
+  + " lone window keeps a stale border; missing: "
+  + lib.concatStringsSep ", " missingSoloSignals
 );
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"

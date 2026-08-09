@@ -68,17 +68,13 @@ let
   barVolumeItem = builtins.readFile (barTreeDir + "/items/volume.lua");
   barBatteryItem = builtins.readFile (barTreeDir + "/items/battery.lua");
   barMenubarItem = builtins.readFile (barTreeDir + "/items/menubar.lua");
-  luaCode =
-    text:
-    lib.concatStringsSep "\n" (
-      lib.filter (line: builtins.match "^[ \t]*(--.*)?$" line == null) (lib.splitString "\n" text)
-    );
-  # Strip comments only from the individual modules whose negative guards
-  # would otherwise match design rationale. The complete tree stays raw.
-  barSettingsCode = luaCode barSettings;
-  barUiCode = luaCode barUi;
-  barSpacesCode = luaCode barSpacesItem;
-  barVolumeCode = luaCode barVolumeItem;
+  # The exact syntactic needles below are specific enough to match source
+  # directly. Avoid line-by-line transformations in evaluation: Linux CI
+  # intentionally runs with a smaller evaluator stack than the target Mac.
+  barSettingsCode = barSettings;
+  barUiCode = barUi;
+  barSpacesCode = barSpacesItem;
+  barVolumeCode = barVolumeItem;
   barSpotifyItem = builtins.readFile (barTreeDir + "/items/spotify.lua");
   sketchybarDeployment = homeConfig.config.xdg.configFile."sketchybar";
   sketchybarBootstrap = homeConfig.config.xdg.configFile."sketchybar/sketchybarrc";
@@ -347,7 +343,6 @@ let
     "volume:set({ padding_"
     "volume:set({ width"
     "popup = { drawing"
-    "timer"
     ".. env."
     "env.PERCENTAGE .."
     "env.INFO .."

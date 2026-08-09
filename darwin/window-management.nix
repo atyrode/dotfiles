@@ -160,6 +160,28 @@ let
     '';
   };
 
+  volumePlugin = pkgs.writeShellApplication {
+    name = "sketchybar-volume";
+    runtimeInputs = [ pkgs.sketchybar ];
+    text = ''
+      # $INFO carries the volume percentage on volume_change, a native
+      # SketchyBar event. SF Symbols speaker glyphs from the reference setup.
+      volume=''${INFO:-0}
+      if [ "$volume" -ge 60 ]; then
+        icon=$(printf '\xf4\x80\x8a\xa9')
+      elif [ "$volume" -ge 30 ]; then
+        icon=$(printf '\xf4\x80\x8a\xa7')
+      elif [ "$volume" -ge 10 ]; then
+        icon=$(printf '\xf4\x80\x8a\xa5')
+      elif [ "$volume" -gt 0 ]; then
+        icon=$(printf '\xf4\x80\x8a\xa1')
+      else
+        icon=$(printf '\xf4\x80\x8a\xa3')
+      fi
+      sketchybar --set "$NAME" icon="$icon" label="$volume%"
+    '';
+  };
+
   # Space items are passive click targets; spacesPlugin is their only writer.
   # Numbers sit in the icon slot, per-Space app icons in the label slot. The
   # accent lives here statically as highlight_color.
@@ -237,7 +259,20 @@ in
           icon.color=${colorAccent} icon.padding_left=10 icon.padding_right=10 \
           background.drawing=on background.color=${colorGray1} \
           background.border_width=1 background.border_color=${colorEdge} \
-          click_script='open -a "Mission Control"'
+          popup.background.color=${colorBarBg} popup.background.corner_radius=9 \
+          popup.background.border_width=2 popup.background.border_color=${colorGray2} \
+          popup.blur_radius=30 popup.height=30 \
+          click_script='sketchybar --set apple_logo popup.drawing=toggle'
+
+      sketchybar --add item apple.settings popup.apple_logo \
+        --set apple.settings label="Settings" \
+          click_script='open -a "System Settings"; sketchybar --set apple_logo popup.drawing=off'
+      sketchybar --add item apple.activity popup.apple_logo \
+        --set apple.activity label="Activity" \
+          click_script='open -a "Activity Monitor"; sketchybar --set apple_logo popup.drawing=off'
+      sketchybar --add item apple.lock popup.apple_logo \
+        --set apple.lock label="Lock Screen" \
+          click_script='pmset displaysleepnow; sketchybar --set apple_logo popup.drawing=off'
 
       ${spaceItems}
       sketchybar --add item spaces_chevron left \
@@ -267,6 +302,14 @@ in
           script='${lib.getExe batteryPlugin}' \
         --subscribe battery power_source_change system_woke
 
+      sketchybar --add item volume right \
+        --set volume icon.font="SF Pro:Regular:15.0" icon.padding_left=8 \
+          label.padding_right=8 \
+          background.drawing=on background.color=${colorGray1} \
+          background.border_width=1 background.border_color=${colorEdge} \
+          script='${lib.getExe volumePlugin}' \
+        --subscribe volume volume_change
+
       sketchybar --add item spaces_driver left \
         --set spaces_driver drawing=off script='${lib.getExe spacesPlugin}' \
         --subscribe spaces_driver space_change space_windows_change display_change
@@ -281,6 +324,7 @@ in
       ${lib.getExe spacesPlugin}
       NAME=battery ${lib.getExe batteryPlugin}
       NAME=clock ${lib.getExe clockPlugin}
+      NAME=volume INFO="$(/usr/bin/osascript -e 'output volume of (get volume settings)')" ${lib.getExe volumePlugin}
 
       sketchybar --update
     '';

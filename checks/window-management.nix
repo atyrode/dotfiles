@@ -98,17 +98,23 @@ let
     ''measure = "JetBrainsMono Nerd Font",''
     ''word = "DM Sans",''
   ];
-  barItemsText = lib.concatMapStrings (
-    file: builtins.readFile (barTreeDir + "/items/${file}")
-  ) barItemFiles;
-  barTreeText = barInit + barSettings + barColors + barUi + barItemsText;
-  barNonSpacesText =
+  barItemTexts = map (file: builtins.readFile (barTreeDir + "/items/${file}")) barItemFiles;
+  barTreeTexts = [
     barInit
-    + barSettings
-    + barUi
-    + lib.concatMapStrings (file: builtins.readFile (barTreeDir + "/items/${file}")) (
-      lib.filter (file: file != "spaces.lua") barItemFiles
-    );
+    barSettings
+    barColors
+    barUi
+  ]
+  ++ barItemTexts;
+  barNonSpacesTexts = [
+    barInit
+    barSettings
+    barUi
+  ]
+  ++ map (file: builtins.readFile (barTreeDir + "/items/${file}")) (
+    lib.filter (file: file != "spaces.lua") barItemFiles
+  );
+  hasInTexts = texts: needle: lib.any (text: lib.hasInfix needle text) texts;
   expectedInitItemBlock = lib.concatStringsSep "\n" (
     map (file: ''require("items.${lib.removeSuffix ".lua" file}")'') barItemFiles
   );
@@ -237,14 +243,14 @@ let
 
   # Broken/deprecated native event names must not survive even in comments:
   # stale prose is too easily copied back into a subscription.
-  forbiddenBarEvents = lib.filter (event: lib.hasInfix event barTreeText) [
+  forbiddenBarEvents = lib.filter (event: hasInTexts barTreeTexts event) [
     "wifi_change"
     "media_change"
     "menubar_hover_on"
     "menubar_hover_off"
   ];
 
-  lowerBarTreeText = lib.toLower barTreeText;
+  lowerBarTreeTexts = map lib.toLower barTreeTexts;
   legacyRecessNeedles = map (digit: "colors.n${toString digit}") (lib.range 0 9) ++ [
     "colors.shadow_tray"
     "settings.tray_"
@@ -252,23 +258,23 @@ let
 
   # DATUM has no permanent item surfaces or deferred/opacity tricks. The
   # volume slider is a transient popup; the fixed top-row datum never grows.
-  forbiddenBarMechanisms = lib.filter (needle: lib.hasInfix needle lowerBarTreeText) [
+  forbiddenBarMechanisms = lib.filter (needle: hasInTexts lowerBarTreeTexts needle) [
     ".tray"
     "sbar.delay"
     ".color.alpha"
   ];
   forbiddenLegacyRecessTokens = lib.filter (
-    needle: lib.hasInfix needle lowerBarTreeText
+    needle: hasInTexts lowerBarTreeTexts needle
   ) legacyRecessNeedles;
 
   # Pure white and emoji-presentation escapes violate the measured monochrome
   # type system. The accent token and literal are reserved to spaces.lua.
-  forbiddenDesignTokens = lib.filter (needle: lib.hasInfix needle lowerBarTreeText) [
+  forbiddenDesignTokens = lib.filter (needle: hasInTexts lowerBarTreeTexts needle) [
     "\\u{1f"
     "\\u{fe0f}"
     "0xffffffff"
   ];
-  accentOutsideSpaces = lib.filter (needle: lib.hasInfix needle barNonSpacesText) [
+  accentOutsideSpaces = lib.filter (needle: hasInTexts barNonSpacesTexts needle) [
     "colors.accent"
     "0xff70c0b1"
   ];
@@ -289,13 +295,13 @@ let
     ''sbar.add("event", "spotify_change", "com.spotify.client.PlaybackStateChanged")''
   ];
   missingBarEventWiring = lib.filter (
-    needle: !(lib.hasInfix needle barTreeText)
+    needle: !(hasInTexts barTreeTexts needle)
   ) requiredBarEventWiring;
 
   # A fixed-width mark slot includes its padding. Keep the measured cell
   # model live at every caller so a future glyph swap cannot silently crop
   # the mark or put numeric reserve slack back inside the pair.
-  datumOpticsIntact = lib.all (needle: lib.hasInfix needle barTreeText) [
+  datumOpticsIntact = lib.all (needle: hasInTexts barTreeTexts needle) [
     "icon_scale = 0.625"
     "y_offset = -12"
     "percent = 31"

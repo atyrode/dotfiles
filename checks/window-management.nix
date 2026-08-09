@@ -73,6 +73,8 @@ let
     lib.concatStringsSep "\n" (
       lib.filter (line: builtins.match "^[ \t]*(--.*)?$" line == null) (lib.splitString "\n" text)
     );
+  # Strip comments only from the individual modules whose negative guards
+  # would otherwise match design rationale. The complete tree stays raw.
   barSettingsCode = luaCode barSettings;
   barUiCode = luaCode barUi;
   barSpacesCode = luaCode barSpacesItem;
@@ -201,14 +203,13 @@ let
       	active_app:set({ background = { image = { drawing = false } } })
       	active_app:set({ background = { image = { string = app_image(name) } } })'' barSpacesCode
     && !(lib.hasInfix "active_app:set({ background = { image = { drawing = true } } })" barSpacesCode);
-  spacesKeepAdaptiveWidth = lib.hasInfix ''
-    	if count >= 7 then
-    		return 1, false, settings.gap.field
-    	end
-    	if count >= 5 then
-    		return 1, true, settings.gap.group
-    	end
-    	return SLOTS, true, settings.gap.group'' barSpacesCode;
+  spacesKeepAdaptiveWidth = lib.all (needle: lib.hasInfix needle barSpacesCode) [
+    "if count >= 7 then"
+    "return 1, false, settings.gap.field"
+    "if count >= 5 then"
+    "return 1, true, settings.gap.group"
+    "return SLOTS, true, settings.gap.group"
+  ];
   hoverableContract =
     lib.all (needle: lib.hasInfix needle barUiCode) [
       "local releases = {}"
@@ -292,7 +293,7 @@ let
     ''sbar.add("event", "spotify_change", "com.spotify.client.PlaybackStateChanged")''
   ];
   missingBarEventWiring = lib.filter (
-    needle: !(lib.hasInfix needle (luaCode barTreeText))
+    needle: !(lib.hasInfix needle barTreeText)
   ) requiredBarEventWiring;
 
   # A fixed-width mark slot includes its padding. Keep the measured cell

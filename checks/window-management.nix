@@ -77,7 +77,6 @@ let
   barUiCode = luaCode barUi;
   barSpacesCode = luaCode barSpacesItem;
   barVolumeCode = luaCode barVolumeItem;
-  compactVolumeCode = builtins.replaceStrings [ " " "\t" "\n" "\r" ] [ "" "" "" "" ] barVolumeCode;
   barSpotifyItem = builtins.readFile (barTreeDir + "/items/spotify.lua");
   sketchybarDeployment = homeConfig.config.xdg.configFile."sketchybar";
   sketchybarBootstrap = homeConfig.config.xdg.configFile."sketchybar/sketchybarrc";
@@ -329,7 +328,7 @@ let
     ];
   mediaGlyphIntact =
     lib.hasInfix ''\u{F03E4}'' barSpotifyItem && !(lib.hasInfix ''\u{F0504}'' barSpotifyItem);
-  volumeForbiddenInteraction = lib.filter (needle: lib.hasInfix needle compactVolumeCode) [
+  volumeForbiddenInteraction = lib.filter (needle: lib.hasInfix needle barVolumeCode) [
     ''"volume.gap"''
     ''"volume.control"''
     ''"volume.level"''
@@ -341,54 +340,60 @@ let
     "os.clock"
     "os.time"
     "timestamp"
-    "width=expandedand"
-    "width=hoveredand"
-    "drawing=expanded"
-    "slider:set({slider={width="
-    "volume:set({padding_"
-    "volume:set({width="
-    "popup={drawing="
+    "width = expanded and"
+    "width = hovered and"
+    "drawing = expanded"
+    "volume:set({ padding_"
+    "volume:set({ width"
+    "popup = { drawing"
     "timer"
-    "..env."
-    "env.PERCENTAGE.."
-    "env.INFO.."
-    "env.SCROLL_DELTA.."
-    ":format(env."
-    ''"volume.popup."..''
+    ".. env."
+    "env.PERCENTAGE .."
+    "env.INFO .."
+    "env.SCROLL_DELTA .."
+    "string.format(env."
+    ''"volume.popup." ..''
   ];
   volumePanelIntact =
     lib.all (needle: lib.hasInfix needle barVolumeCode) [
       ''local ui = require("ui")''
-      ''local volume = sbar.add("item", "volume", {''
       ''local POPUP_ID = "volume"''
-      "padding_right = settings.gap.group,"
-      ''popup = ui.popup_config("right"),''
       "local TRACK = 5 * settings.gap.group"
       "local SET_LEVEL = {}"
       "for pct = 0, 100 do"
       ''SET_LEVEL[pct] = "osascript -e 'set volume output volume "''
       ''local STEP_UP = "osascript -e 'set v to (output volume of (get volume settings)) + 5'"''
       ''local STEP_DOWN = "osascript -e 'set v to (output volume of (get volume settings)) - 5'"''
+      ''local volume = sbar.add("item", "volume", {''
+      "padding_right = settings.gap.group,"
+      ''popup = ui.popup_config("right"),''
+      ''local slider = sbar.add("slider", "volume.popup.level", TRACK, {''
+      ''position = "popup.volume",''
+      "width = TRACK,"
+      "local function action_row(name, word)"
+      ''local mute_row = action_row("volume.popup.mute", "Toggle Mute")''
+      ''local settings_row = action_row("volume.popup.settings", "Sound Settings")''
+      ''volume:subscribe("mouse.clicked", function(env)''
+      ''if env.BUTTON == "right" then''
+      "ui.close_popup(POPUP_ID)"
+      "sbar.exec(SOUND_SETTINGS)"
+      "if ui.toggle_popup(POPUP_ID, volume, paint) then"
+      ''volume:subscribe("mouse.scrolled", function(env)''
+      "sbar.exec(delta > 0 and STEP_UP or STEP_DOWN, apply)"
+      ''slider:subscribe("mouse.clicked", function(env)''
+      ''if env.BUTTON ~= "left" then''
+      "local pct = tonumber(env.PERCENTAGE)"
+      "sbar.exec(SET_LEVEL[clamp(pct)], apply)"
+      ''mute_row:subscribe("mouse.clicked", function()''
+      "sbar.exec(TOGGLE_MUTE, apply)"
+      ''settings_row:subscribe("mouse.clicked", function()''
+      "ui.hoverable(volume, function()"
+      "for _, row in ipairs({ mute_row, settings_row }) do"
+      ''mute_row:set({ icon = { string = muted and "Unmute" or "Mute" } })''
+      "sbar.exec(READ, apply)"
     ]
-    && lib.all (needle: lib.hasInfix needle compactVolumeCode) [
-      ''localslider=sbar.add("slider","volume.popup.level",TRACK,{position="popup.volume",''
-      ''localfunctionaction_row(name,word)returnsbar.add("item",name,{position="popup.volume",''
-      ''localmute_row=action_row("volume.popup.mute","ToggleMute")''
-      ''localsettings_row=action_row("volume.popup.settings","SoundSettings")''
-      "width=TRACK,"
-      ''volume:subscribe("mouse.clicked",function(env)ifenv.BUTTON=="right"thenui.close_popup(POPUP_ID)sbar.exec(SOUND_SETTINGS)returnendifui.toggle_popup(POPUP_ID,volume,paint)thensbar.exec(READ,apply)endend)''
-      ''slider:subscribe("mouse.clicked",function(env)ifenv.BUTTON~="left"thenpaint()returnendlocalpct=tonumber(env.PERCENTAGE)ifnotpctthenpaint()returnendsbar.exec(SET_LEVEL[clamp(pct)],apply)end)''
-      ''mute_row:subscribe("mouse.clicked",function()sbar.exec(TOGGLE_MUTE,apply)end)''
-      ''settings_row:subscribe("mouse.clicked",function()ui.close_popup(POPUP_ID)sbar.exec(SOUND_SETTINGS)end)''
-      ''volume:subscribe("mouse.scrolled",function(env)localdelta=tonumber(env.SCROLL_DELTA)ifnotdeltaordelta==0thenreturnendsbar.exec(delta>0andSTEP_UPorSTEP_DOWN,apply)end)''
-      "ui.hoverable(volume,function()hovered=truepaint()end,function()hovered=falsepaint()end)"
-    ]
-    && lib.any (needle: lib.hasInfix needle compactVolumeCode) [
-      ''ifenv.BUTTON=="right"thensbar.exec(SOUND_SETTINGS)''
-      ''ifenv.BUTTON=="right"thenui.close_popup(POPUP_ID)sbar.exec(SOUND_SETTINGS)''
-    ]
-    && builtins.length (lib.splitString "env.PERCENTAGE" compactVolumeCode) == 2
-    && lib.hasSuffix "sbar.exec(READ,apply)" compactVolumeCode
+    && builtins.length (lib.splitString ''position = "popup.volume"'' barVolumeCode) == 3
+    && builtins.length (lib.splitString "env.PERCENTAGE" barVolumeCode) == 2
     && volumeForbiddenInteraction == [ ];
 
   # Hammerspoon owns menu-bar policy. Ordered target events make concurrent

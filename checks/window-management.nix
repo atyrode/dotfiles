@@ -22,31 +22,77 @@ let
   yabaiExtraConfig = cfg.services.yabai.extraConfig;
   strayBordersSignals = lib.hasInfix "borders-solo" yabaiExtraConfig;
 
-  # SketchyBar runs the Lua redesign (SbarLua runtime, neutonfoo chip
-  # language, Rio palette) committed as the sketchybar-lua tree;
-  # services.sketchybar.config stays empty so the daemon boots the deployed
-  # tree's own sketchybarrc. The contracts therefore read the tree itself.
+  # SketchyBar runs the DATUM Lua tree on the resident SbarLua runtime.
+  # Home Manager owns the recursive tree and generated Lua 5.5 bootstrap;
+  # services.sketchybar.config stays empty so no inline configuration can
+  # shadow that single deployment path.
   sketchybarEnabled = cfg.services.sketchybar.enable;
   sketchybarInlineConfig = cfg.services.sketchybar.config;
   barTreeDir = ../darwin/window-management/sketchybar-lua;
+  barRootEntries = lib.sort builtins.lessThan (builtins.attrNames (builtins.readDir barTreeDir));
+  barItemEntries = lib.sort builtins.lessThan (
+    builtins.attrNames (builtins.readDir (barTreeDir + "/items"))
+  );
+  expectedBarRootEntries = [
+    "colors.lua"
+    "init.lua"
+    "items"
+    "settings.lua"
+    "ui.lua"
+  ];
+  barItemFiles = [
+    "spaces.lua"
+    "weather.lua"
+    "spotify.lua"
+    "clock.lua"
+    "battery.lua"
+    "volume.lua"
+    "network.lua"
+    "menubar.lua"
+  ];
+  expectedBarItemEntries = lib.sort builtins.lessThan barItemFiles;
   barInit = builtins.readFile (barTreeDir + "/init.lua");
   barSettings = builtins.readFile (barTreeDir + "/settings.lua");
   barColors = builtins.readFile (barTreeDir + "/colors.lua");
+  barUi = builtins.readFile (barTreeDir + "/ui.lua");
   barSpacesItem = builtins.readFile (barTreeDir + "/items/spaces.lua");
-  barTreeText =
+  barVolumeItem = builtins.readFile (barTreeDir + "/items/volume.lua");
+  barBatteryItem = builtins.readFile (barTreeDir + "/items/battery.lua");
+  barMenubarItem = builtins.readFile (barTreeDir + "/items/menubar.lua");
+  barSpotifyItem = builtins.readFile (barTreeDir + "/items/spotify.lua");
+  sketchybarDeployment = homeConfig.config.xdg.configFile."sketchybar";
+  sketchybarBootstrap = homeConfig.config.xdg.configFile."sketchybar/sketchybarrc";
+  sketchybarBootstrapText = builtins.unsafeDiscardStringContext sketchybarBootstrap.text;
+  bootstrapNeedles = [
+    ''export LUA_CPATH="/nix/store/''
+    "-lua5.5-sbarLua-"
+    ''/lib/lua/5.5/?.so;;"''
+    "exec /nix/store/"
+    "-lua-5.5."
+    ''/bin/lua "$HOME/.config/sketchybar/init.lua"''
+  ];
+  hammerspoonDeployment = homeConfig.config.home.file.".hammerspoon/init.lua";
+  hammerspoonText = builtins.readFile ../home/macos-window-management/hammerspoon-init.lua;
+  hammerspoonAgent = cfg.launchd.user.agents.hammerspoon;
+  sketchybarRuntimePackageNames = map lib.getName cfg.services.sketchybar.extraPackages;
+  installedFontNames = map lib.getName cfg.fonts.packages;
+  barItemsText = lib.concatMapStrings (
+    file: builtins.readFile (barTreeDir + "/items/${file}")
+  ) barItemFiles;
+  barTreeText = barInit + barSettings + barColors + barUi + barItemsText;
+  barNonSpacesText =
     barInit
     + barSettings
-    + lib.concatMapStrings (file: builtins.readFile (barTreeDir + "/items/${file}")) [
-      "spaces.lua"
-      "weather.lua"
-      "spotify.lua"
-      "clock.lua"
-      "battery.lua"
-      "volume.lua"
-    ];
+    + barUi
+    + lib.concatMapStrings (file: builtins.readFile (barTreeDir + "/items/${file}")) (
+      lib.filter (file: file != "spaces.lua") barItemFiles
+    );
+  expectedInitItemBlock = lib.concatStringsSep "\n" (
+    map (file: ''require("items.${lib.removeSuffix ".lua" file}")'') barItemFiles
+  );
 
-  # The bar is a transparent full-width strip with no y offset, so yabai must
-  # reserve exactly the bar height declared in settings.lua.
+  # DATUM is a measured 40pt full-width face, so yabai must reserve exactly
+  # the bar height declared in settings.lua.
   barHeightMatch = builtins.match ".*bar_height = ([0-9]+),.*" barSettings;
   barFootprint = if barHeightMatch == null then null else lib.head barHeightMatch;
   externalBar = cfg.services.yabai.config.external_bar or "";
@@ -61,42 +107,170 @@ let
     !(lib.hasInfix "--focus ${index} && sketchybar --trigger space_eager TARGET=${index}" skhdConfig)
   ) (map toString (lib.range 1 9));
   treeHandlesEager =
-    lib.hasInfix ''sbar.add("event", "space_eager")'' barSpacesItem
-    && lib.hasInfix ''subscribe("space_eager"'' barSpacesItem;
+    lib.hasInfix ''sbar.add("event", "space_eager")'' barUi
+    && lib.hasInfix ''subscribe("space_eager"'' barSpacesItem
+    && !(lib.hasInfix "set_focus(target)\n\tsettle()" barSpacesItem);
 
-  # Space chips must never hide their app-icon content: the operator rejected
-  # the reference collapse twice. The chip styler may only touch colors, and
-  # nothing in the tree may zero a label width or animate one away.
-  spacesCollapseRegression = lib.filter (needle: lib.hasInfix needle barSpacesItem) [
-    "width = 0"
-    "width=0"
-    "--animate"
-    "label.drawing"
+  # Space groups must retain their app context and minimum datum-tick width.
+  # Focus styling may animate only the numeral and its tick; nothing may zero
+  # a group width or drive raw CLI animations.
+  spacesCollapseRegression =
+    lib.filter (line: builtins.match "^[ \t]*width[ \t]*=[ \t]*0[ \t]*,?[ \t]*(--.*)?$" line != null) (
+      lib.splitString "\n" barSpacesItem
+    )
+    ++ lib.optional (lib.hasInfix "--animate" barSpacesItem) "--animate";
+  spacesKeepAppIcons = lib.all (needle: lib.hasInfix needle barSpacesItem) [
+    ''"app."''
+    ''Orca = "com.stablyai.orca"''
+    "app_image(name)"
+    "drawing = false"
+    "drawing = true"
+  ];
+  spacesKeepAdaptiveWidth = lib.all (needle: lib.hasInfix needle barSpacesItem) [
+    "settings.width.numeral"
+    "settings.gap.field"
+    "settings.gap.group"
   ];
 
-  # Exclusions that must hold: the deprecated media_change event class (dead
-  # on macOS 26; Spotify rides its own distributed notification instead) and
-  # wifi_change (broken since Sonoma) stay out of the tree.
+  # Broken/deprecated native event names must not survive even in comments:
+  # stale prose is too easily copied back into a subscription.
   forbiddenBarEvents = lib.filter (event: lib.hasInfix event barTreeText) [
     "wifi_change"
     "media_change"
+    "menubar_hover_on"
+    "menubar_hover_off"
+  ];
+
+  lowerBarTreeText = lib.toLower barTreeText;
+  legacyRecessNeedles = map (digit: "colors.n${toString digit}") (lib.range 0 9) ++ [
+    "colors.shadow_tray"
+    "settings.tray_"
+  ];
+
+  # DATUM has no permanent item surfaces or deferred/opacity tricks. The
+  # volume slider is a transient popup; the fixed top-row datum never grows.
+  forbiddenBarMechanisms = lib.filter (needle: lib.hasInfix needle lowerBarTreeText) [
+    ".tray"
+    "sbar.delay"
+    ".color.alpha"
+  ];
+  forbiddenLegacyRecessTokens = lib.filter (
+    needle: lib.hasInfix needle lowerBarTreeText
+  ) legacyRecessNeedles;
+
+  # Pure white and emoji-presentation escapes violate the measured monochrome
+  # type system. The accent token and literal are reserved to spaces.lua.
+  forbiddenDesignTokens = lib.filter (needle: lib.hasInfix needle lowerBarTreeText) [
+    "\\u{1f"
+    "\\u{fe0f}"
+    "0xffffffff"
+  ];
+  accentOutsideSpaces = lib.filter (needle: lib.hasInfix needle barNonSpacesText) [
+    "colors.accent"
+    "0xff70c0b1"
   ];
   requiredBarEvents = [
+    "front_app_switched"
+    "display_change"
+    "network_change"
+    "battery_change"
     "power_source_change"
     "system_woke"
     "volume_change"
     "window_focus"
     "windows_on_spaces"
+    "menubar_duck"
     "com.spotify.client.PlaybackStateChanged"
   ];
   missingBarEvents = lib.filter (event: !(lib.hasInfix event barTreeText)) requiredBarEvents;
 
-  # Palette pin: chips carry the Rio theme -- the teal accent from
-  # home/rio/config.toml and the terminal background as text-on-accent.
-  portPaletteIntact =
-    lib.hasInfix "accent = 0xff70c0b1" barColors && lib.hasInfix "on_accent = 0xff282c34" barColors;
+  # A fixed-width mark slot includes its padding. Keep the measured cell
+  # model live at every caller so a future glyph swap cannot silently crop
+  # the mark or put numeric reserve slack back inside the pair.
+  datumOpticsIntact = lib.all (needle: lib.hasInfix needle barTreeText) [
+    "icon_scale = 0.625"
+    "y_offset = -12"
+    "percent = 31"
+    "temp = 31"
+    "clock_time = 47"
+    "settings.glyph.weather + settings.gap.glyph"
+    "settings.glyph.media + settings.gap.glyph"
+    "settings.glyph.network + INSET"
+    "settings.glyph.volume + settings.gap.glyph"
+    "settings.glyph.battery + settings.gap.glyph"
+    "settings.width.clock_date + settings.gap.glyph"
+  ];
+  statusGlyphsIntact =
+    lib.all (needle: lib.hasInfix needle barVolumeItem) [
+      ''\u{F057E}''
+      ''\u{F0581}''
+    ]
+    && lib.all (needle: lib.hasInfix needle barBatteryItem) [
+      ''\u{F0079}''
+      ''\u{F0080}''
+      ''\u{F007E}''
+      ''\u{F007C}''
+      ''\u{F007A}''
+      ''\u{F0083}''
+      ''\u{F0084}''
+      ''\u{F0091}''
+    ];
+  mediaGlyphIntact =
+    lib.hasInfix ''\u{F03E4}'' barSpotifyItem && !(lib.hasInfix ''\u{F0504}'' barSpotifyItem);
+  volumeDragIntact = lib.all (needle: lib.hasInfix needle barVolumeItem) [
+    ''sbar.add("slider", "volume.level"''
+    ''position = "right"''
+    "slider:set({"
+    ''slider:subscribe("mouse.clicked"''
+    ''volume:subscribe("mouse.entered"''
+    ''slider:subscribe("mouse.entered"''
+    ''slider:subscribe("mouse.exited.global"''
+  ];
 
-  # yabai must feed the two custom events the ported tree consumes.
+  # Hammerspoon owns menu-bar policy. Ordered target events make concurrent
+  # task delivery harmless; SbarLua owns only the two measured strokes.
+  menubarHandoffIntact =
+    lib.all (needle: lib.hasInfix needle hammerspoonText) [
+      "local LEAD_DWELL = 0.02"
+      "local RETURN_HOLD = 0.14"
+      "hs.timer.delayed.new(LEAD_DWELL"
+      "hs.timer.delayed.new(RETURN_HOLD"
+      "hs.timer.absoluteTime()"
+      "hs.eventtap.event.types.leftMouseDragged"
+      "hs.eventtap.event.types.rightMouseDragged"
+      "hs.eventtap.event.types.otherMouseDragged"
+      "emit(reasons.menu or reasons.hover, true)"
+      "emit(reasons.menu or reasons.hover or emitted, true)"
+      "com.apple.HIToolbox.beginMenuTrackingNotification"
+      "com.apple.HIToolbox.endMenuTrackingNotification"
+      ''"SEQ=" .. seq''
+    ]
+    && lib.all (needle: lib.hasInfix needle barMenubarItem) [
+      ''sbar.add("event", "menubar_duck")''
+      "tonumber(env.SEQ)"
+      "settings.motion.duck.out"
+      "settings.motion.duck.back"
+      "down and -settings.bar_height or 0"
+    ]
+    && lib.all (needle: !(lib.hasInfix needle (hammerspoonText + barMenubarItem))) [
+      "DWELL_SECONDS = 0.35"
+      "menubar_hover_on"
+      "menubar_hover_off"
+    ];
+
+  # DATUM's semantic palette is deliberately closed and shared by the bar and
+  # popup face. Transparent is a null value rather than visual chrome.
+  datumPaletteIntact = lib.all (token: lib.hasInfix token barColors) [
+    "deck = 0xff1b1e24"
+    "track = 0xff2e3340"
+    "ink = 0xffe4e7ec"
+    "ink_dim = 0xff8d94a3"
+    "accent = 0xff70c0b1"
+    "signal = 0xfff0c674"
+    "transparent = 0x00000000"
+  ];
+
+  # yabai remains the source for the current window and Space custom events.
   missingBarSignals = lib.filter (trigger: !(lib.hasInfix trigger cfg.services.yabai.extraConfig)) [
     "--trigger window_focus"
     "--trigger windows_on_spaces"
@@ -374,6 +548,57 @@ assert lib.assertMsg (rulesWithMisplacedParameters == [ ]) (
     map (rule: rule.description or "<undescribed>") rulesWithMisplacedParameters
   )
 );
+assert lib.assertMsg (
+  sketchybarDeployment.recursive
+  && sketchybarDeployment.source == ../darwin/window-management/sketchybar-lua
+) "Home Manager must recursively deploy the complete DATUM SketchyBar tree";
+assert lib.assertMsg (barRootEntries == expectedBarRootEntries) (
+  "the DATUM SketchyBar root module list drifted: expected "
+  + lib.concatStringsSep ", " expectedBarRootEntries
+  + " but found "
+  + lib.concatStringsSep ", " barRootEntries
+);
+assert lib.assertMsg (barItemEntries == expectedBarItemEntries) (
+  "the DATUM SketchyBar item module list drifted: expected "
+  + lib.concatStringsSep ", " expectedBarItemEntries
+  + " but found "
+  + lib.concatStringsSep ", " barItemEntries
+);
+assert lib.assertMsg (lib.hasInfix expectedInitItemBlock barInit)
+  "init.lua must load the complete DATUM item list in spaces/weather/spotify/clock/battery/volume/network/menubar order";
+assert lib.assertMsg (
+  sketchybarBootstrap.executable
+  && lib.all (needle: lib.hasInfix needle sketchybarBootstrapText) bootstrapNeedles
+) "Home Manager must generate an executable SbarLua bootstrap pinned to Lua 5.5";
+assert lib.assertMsg
+  (
+    lib.all (name: builtins.elem name sketchybarRuntimePackageNames) [
+      "yabai"
+      "lua"
+      "curl"
+    ]
+    && lib.all (name: !(builtins.elem name sketchybarRuntimePackageNames)) [
+      "gh"
+      "git"
+      "jq"
+    ]
+  )
+  "SketchyBar runtime ownership must retain yabai, Lua 5.5, and curl without unused gh/git/jq widget dependencies";
+assert lib.assertMsg (
+  builtins.elem "nerd-fonts-jetbrains-mono" installedFontNames
+  && builtins.elem "dm-sans" installedFontNames
+) "DATUM must reproducibly install JetBrains Mono Nerd Font for measures and DM Sans for words";
+assert lib.assertMsg (
+  hammerspoonDeployment.source == ../home/macos-window-management/hammerspoon-init.lua
+  &&
+    hammerspoonAgent.serviceConfig.ProgramArguments
+    == [ "/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" ]
+  && hammerspoonAgent.serviceConfig.KeepAlive
+  && hammerspoonAgent.serviceConfig.RunAtLoad
+  && hammerspoonAgent.managedBy == "darwin/window-management.nix"
+) "the managed Hammerspoon bridge config and nix-darwin launch agent must remain paired";
+assert lib.assertMsg menubarHandoffIntact
+  "the native/custom menu-bar handoff must keep its measured lead/hold timers, ordered event delivery, and bar-only y-offset strokes";
 assert lib.assertMsg (!bordersEnabled)
   "JankyBorders was removed by operator decision (2026-08-08): reactive solo-window hiding cannot be flash-free and an always-on border was judged visually heavy. Reintroduce it as a deliberate phase, not leftover config";
 assert lib.assertMsg (
@@ -401,12 +626,16 @@ assert lib.assertMsg (bindingsMissingEagerTrigger == [ ]) (
   + lib.concatStringsSep ", " bindingsMissingEagerTrigger
 );
 assert lib.assertMsg treeHandlesEager
-  "spaces.lua must register the space_eager event and subscribe to it; without it the keyboard bindings' announcements go nowhere";
+  "space_eager must be registered before subscription and must not re-query yabai early enough to bounce the eager focus back";
 assert lib.assertMsg (spacesCollapseRegression == [ ]) (
-  "Space chips must keep their app-icon content visible at all times -- the operator rejected"
-  + " collapse/animation styling twice; offending constructs in spaces.lua: "
+  "Space groups must keep their app context and datum ticks live; offending"
+  + " collapse/CLI animation constructs in spaces.lua: "
   + lib.concatStringsSep ", " spacesCollapseRegression
 );
+assert lib.assertMsg spacesKeepAppIcons
+  "spaces.lua must keep live app images, use Orca's stable bundle identifier, and toggle image drawing around updates";
+assert lib.assertMsg spacesKeepAdaptiveWidth
+  "spaces.lua must preserve a nonzero numeral-width tick and switch between normal/compact gaps as the main-display Space count changes";
 assert lib.assertMsg (missingBarEvents == [ ]) (
   "the Lua tree lost required event subscriptions: " + lib.concatStringsSep ", " missingBarEvents
 );
@@ -414,10 +643,34 @@ assert lib.assertMsg (forbiddenBarEvents == [ ]) (
   "the Lua tree subscribes to events broken or deprecated on this macOS: "
   + lib.concatStringsSep ", " forbiddenBarEvents
 );
-assert lib.assertMsg portPaletteIntact
-  "colors.lua must carry the Rio theme: accent 0xff70c0b1 (vi-cursor teal) with 0xff282c34 text-on-accent; the bar and the terminal share one palette";
+assert lib.assertMsg datumOpticsIntact
+  "DATUM mark slots must preserve the measured inside-padding geometry and fixed numeric reserves";
+assert lib.assertMsg mediaGlyphIntact
+  "Spotify must use the verified md-pause codepoint, never md-temperature-celsius";
+assert lib.assertMsg statusGlyphsIntact
+  "volume and battery must retain the width-stable Material Design glyph sets sized by the audited cells";
+assert lib.assertMsg volumeDragIntact
+  "volume must reveal its draggable in-bar slider on hover without changing the resting datum";
+assert lib.assertMsg (forbiddenBarMechanisms == [ ]) (
+  "the Lua tree reintroduced static tray names, deferred callbacks, or per-item alpha mutation: "
+  + lib.concatStringsSep ", " forbiddenBarMechanisms
+);
+assert lib.assertMsg (forbiddenLegacyRecessTokens == [ ]) (
+  "the Lua tree reintroduced legacy nXX/tray recess tokens: "
+  + lib.concatStringsSep ", " forbiddenLegacyRecessTokens
+);
+assert lib.assertMsg datumPaletteIntact
+  "colors.lua must define DATUM deck/track/ink/ink_dim/accent/signal and transparent at their audited values";
+assert lib.assertMsg (forbiddenDesignTokens == [ ]) (
+  "the Lua tree violates the DATUM design pins (no colour emoji or pure white): "
+  + lib.concatStringsSep ", " forbiddenDesignTokens
+);
+assert lib.assertMsg (accentOutsideSpaces == [ ]) (
+  "DATUM accent is exclusive to the focused Space tick; uses outside spaces.lua: "
+  + lib.concatStringsSep ", " accentOutsideSpaces
+);
 assert lib.assertMsg (missingBarSignals == [ ]) (
-  "yabai must feed the ported tree's custom events; missing signal actions: "
+  "yabai must feed the Lua tree's current custom events; missing signal actions: "
   + lib.concatStringsSep ", " missingBarSignals
 );
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''

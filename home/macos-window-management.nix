@@ -15,14 +15,12 @@ in
     pkgs.yabai
   ];
 
-  # The SketchyBar configuration is Lua on the SbarLua runtime, deployed as
-  # the darwin/window-management/sketchybar-lua tree. SketchyBar never
-  # rewrites its config, so store symlinks are safe here (unlike Karabiner).
-  # The sketchybarrc bootstrap is generated because it must name store paths:
-  # the SbarLua C module (LUA_CPATH) and the Lua 5.5 interpreter the module
-  # is compiled against. Space chips render real app icons via
-  # background.image, so no glyph-font mapping is loaded at all.
-  xdg.configFile = lib.mkIf pkgs.stdenv.isDarwin {
+  # Home Manager recursively owns the complete DATUM Lua tree. SketchyBar
+  # never rewrites its configuration, so store symlinks are safe here (unlike
+  # Karabiner). The generated executable bootstrap pins both the SbarLua C
+  # module ABI and its Lua 5.5 interpreter; the tree remains the sole runtime
+  # entry point.
+  xdg.configFile = lib.optionalAttrs pkgs.stdenv.isDarwin {
     "sketchybar" = {
       source = ../darwin/window-management/sketchybar-lua;
       recursive = true;
@@ -39,12 +37,13 @@ in
     };
   };
 
-  # Hammerspoon owns event-driven automation; its first resident is the
-  # menu-bar hover watcher that ducks SketchyBar the moment the auto-hidden
-  # native bar starts revealing. Hammerspoon never rewrites init.lua, so a
-  # store symlink is safe.
-  home.file.".hammerspoon/init.lua" = lib.mkIf pkgs.stdenv.isDarwin {
-    source = ./macos-window-management/hammerspoon-init.lua;
+  # Hammerspoon owns the native top-edge, Wi-Fi, and battery bridges that emit
+  # SketchyBar events. Its managed config is paired with the nix-darwin agent;
+  # Hammerspoon never rewrites init.lua, so a store symlink is safe.
+  home.file = lib.optionalAttrs pkgs.stdenv.isDarwin {
+    ".hammerspoon/init.lua" = {
+      source = ./macos-window-management/hammerspoon-init.lua;
+    };
   };
 
   # Karabiner owns input transformation only: Caps Lock held becomes the

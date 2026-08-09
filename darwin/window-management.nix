@@ -25,16 +25,16 @@ in
       right_padding = 8;
       window_gap = 8;
 
-      # The bar is a transparent full-width strip at the top edge (neutonfoo
-      # language: chips float on the wallpaper, no slab); the native menu bar
-      # auto-hides (reachable by mousing to the top). Reserve exactly the bar
-      # height from settings.lua; the check derives this sum from that file.
-      external_bar = "all:38:0";
+      # DATUM is a full-width 40pt instrument face whose first datum band sits
+      # below the physical notch. The native menu bar auto-hides (reachable by
+      # mousing to the top); reserve exactly the measured face height from
+      # settings.lua so tiled windows never overlap it.
+      external_bar = "all:40:0";
     };
 
-    # Utility float rules, plus the two yabai->SketchyBar bridges the ported
-    # reference config expects: window_focus drives the yabai state item and
-    # windows_on_spaces rebuilds the per-Space app-icon strips.
+    # Utility float rules, plus the yabai->SketchyBar bridges DATUM consumes:
+    # window_focus enriches the active-app title and windows_on_spaces rebuilds
+    # the filtered per-Space app-icon groups.
     extraConfig = ''
       ${yabai} -m rule --add label=system-settings app='^System Settings$' manage=off
       ${yabai} -m rule --add label=calculator app='^Calculator$' manage=off
@@ -48,21 +48,17 @@ in
   };
 
   # SketchyBar renders yabai/OS state; it owns no windows and no hotkeys.
-  # The configuration is Lua on SbarLua (resident process, direct mach IPC --
-  # no fork-per-event), visual language from neutonfoo/dotfiles (transparent
-  # bar, floating chips, notch-aware layout) on the Rio palette, with plugin
-  # logic descended from the validated FelixKratz e6288b3 port. Deployed to
-  # ~/.config/sketchybar by Home Manager; `config` stays unset so the daemon
-  # boots the tree's own sketchybarrc, which execs the Lua runtime.
+  # The DATUM configuration is Lua on the resident SbarLua runtime: a solid,
+  # notch-aware instrument face with semantic deck/track/ink tokens and
+  # measured geometry. Home Manager recursively deploys the Lua tree and its
+  # generated Lua 5.5 bootstrap; `config` stays unset so that bootstrap remains
+  # the sole runtime entry point.
   services.sketchybar = {
     enable = true;
     extraPackages = [
       pkgs.yabai
-      pkgs.jq
-      pkgs.gh
       pkgs.lua5_5
       pkgs.curl
-      pkgs.git
     ];
   };
 
@@ -98,9 +94,9 @@ in
     managedBy = "darwin/window-management.nix";
   };
 
-  # Hammerspoon owns event-driven automation (menu-bar hover watcher for the
-  # SketchyBar duck). Same Tahoe pattern as skhd: launch the app bundle for a
-  # stable Accessibility identity, nix-darwin owns the lifecycle.
+  # Hammerspoon owns native top-edge, Wi-Fi, and battery event bridges for
+  # SketchyBar. Same Tahoe pattern as skhd: launch the app bundle for a stable
+  # Accessibility identity while nix-darwin owns the lifecycle.
   launchd.user.agents.hammerspoon = {
     serviceConfig = {
       ProgramArguments = [ "/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" ];
@@ -113,12 +109,11 @@ in
   };
 
   # SketchyBar owns the top edge, so the native menu bar auto-hides; it stays
-  # reachable by mousing to the top of the screen.
-  # JetBrainsMono Nerd Font carries every widget glyph as a codepoint
-  # (neutonfoo's one-family approach); Space chips use real app icons, so no
-  # ligature font exists in the stack.
+  # reachable by mousing to the top of the screen. DATUM uses JetBrains Mono
+  # Nerd Font for measured values and glyphs, and DM Sans for named state.
   fonts.packages = [
     pkgs.nerd-fonts.jetbrains-mono
+    pkgs.dm-sans
   ];
 
   system.defaults = {

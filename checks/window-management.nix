@@ -12,6 +12,15 @@ let
   caskNames = map caskName cfg.homebrew.casks;
   skhdConfig = cfg.environment.etc.skhdrc.text;
   skhdArguments = cfg.launchd.user.agents.skhd.serviceConfig.ProgramArguments;
+  managedRestart = homeConfig.config.home.activation.restartManagedLuaConsumers;
+  managedRestartText = builtins.unsafeDiscardStringContext managedRestart.data;
+  managedRestartNeedles = [
+    "if [[ -v DRY_RUN ]]; then"
+    ''user_domain="gui/$(''
+    ''/bin/id -u)"''
+    ''/bin/launchctl kickstart -k "$user_domain/org.nixos.sketchybar" >/dev/null 2>&1 || true''
+    ''/bin/launchctl kickstart -k "$user_domain/org.nixos.hammerspoon" >/dev/null 2>&1 || true''
+  ];
 
   # JankyBorders was evaluated as Phase 3 and removed by operator decision
   # (2026-08-08): reactive solo-window hiding cannot be flash-free because
@@ -59,6 +68,16 @@ let
   barVolumeItem = builtins.readFile (barTreeDir + "/items/volume.lua");
   barBatteryItem = builtins.readFile (barTreeDir + "/items/battery.lua");
   barMenubarItem = builtins.readFile (barTreeDir + "/items/menubar.lua");
+  luaCode =
+    text:
+    lib.concatStringsSep "\n" (
+      lib.filter (line: builtins.match "^[ \t]*(--.*)?$" line == null) (lib.splitString "\n" text)
+    );
+  barSettingsCode = luaCode barSettings;
+  barUiCode = luaCode barUi;
+  barSpacesCode = luaCode barSpacesItem;
+  barVolumeCode = luaCode barVolumeItem;
+  compactVolumeCode = builtins.replaceStrings [ " " "\t" "\n" "\r" ] [ "" "" "" "" ] barVolumeCode;
   barSpotifyItem = builtins.readFile (barTreeDir + "/items/spotify.lua");
   sketchybarDeployment = homeConfig.config.xdg.configFile."sketchybar";
   sketchybarBootstrap = homeConfig.config.xdg.configFile."sketchybar/sketchybarrc";
@@ -74,8 +93,14 @@ let
   hammerspoonDeployment = homeConfig.config.home.file.".hammerspoon/init.lua";
   hammerspoonText = builtins.readFile ../home/macos-window-management/hammerspoon-init.lua;
   hammerspoonAgent = cfg.launchd.user.agents.hammerspoon;
+  sketchybarAgent = cfg.launchd.user.agents.sketchybar;
   sketchybarRuntimePackageNames = map lib.getName cfg.services.sketchybar.extraPackages;
-  installedFontNames = map lib.getName cfg.fonts.packages;
+  dmSansPackage = pkgs.google-fonts.override { fonts = [ "DM Sans" ]; };
+  installedFontPackageNames = map lib.getName cfg.fonts.packages;
+  requestedFontFamilies = lib.all (needle: lib.hasInfix needle barSettingsCode) [
+    ''measure = "JetBrainsMono Nerd Font",''
+    ''word = "DM Sans",''
+  ];
   barItemsText = lib.concatMapStrings (
     file: builtins.readFile (barTreeDir + "/items/${file}")
   ) barItemFiles;
@@ -107,9 +132,56 @@ let
     !(lib.hasInfix "--focus ${index} && sketchybar --trigger space_eager TARGET=${index}" skhdConfig)
   ) (map toString (lib.range 1 9));
   treeHandlesEager =
-    lib.hasInfix ''sbar.add("event", "space_eager")'' barUi
-    && lib.hasInfix ''subscribe("space_eager"'' barSpacesItem
-    && !(lib.hasInfix "set_focus(target)\n\tsettle()" barSpacesItem);
+    lib.hasInfix ''sbar.add("event", "space_eager")'' barUiCode
+    && lib.hasInfix ''driver:subscribe("space_eager", function(env)'' barSpacesCode
+    && lib.hasInfix ''
+      	generation = generation + 1
+      	dirty = false
+      	set_focus(target)'' barSpacesCode;
+
+  # The source literals below are the complete width proof, not merely labels
+  # for it. In the crowded regime each of ten groups is 16 + 4 + 20pt and
+  # nine inter-group gaps are 12pt. The Q lane is 96 + 108pt, while the
+  # pre-notch span is ((1710 - 186) / 2) - 20pt.
+  spaceRailMaximum = 10 * (16 + 4 + 20) + 9 * 12;
+  spaceQLaneMaximum = (20 + 68 + 8) + (84 + 24);
+  spaceUsableSpan = (1710 - 186) / 2 - 20;
+  spaceGeometryIntact =
+    spaceRailMaximum == 508
+    && spaceQLaneMaximum == 204
+    && spaceUsableSpan == 742
+    && spaceRailMaximum + spaceQLaneMaximum <= spaceUsableSpan
+    && spaceUsableSpan - spaceRailMaximum - spaceQLaneMaximum >= 24
+    && lib.all (needle: lib.hasInfix needle barSettingsCode) [
+      "atom = 4,"
+      "glyph = 8,"
+      "field = 12,"
+      "group = 24,"
+      "padding_left = 20,"
+      "notch_width = 186,"
+      "icon_box = 20,"
+      "numeral = 16,"
+      "app_name = 60,"
+      "window_title = 84,"
+    ]
+    && lib.all (needle: lib.hasInfix needle barSpacesCode) [
+      "local POOL = 10"
+      "local SLOTS = 3"
+      ''icon = { string = "", width = settings.icon_box },''
+      "width = settings.width.numeral,"
+      "lead[sid]:set({ drawing = not first, icon = { width = gap } })"
+      "width = settings.width.window_title,"
+      "width = settings.width.app_name + settings.gap.glyph,"
+      "window_title:set({ drawing = true, label = { string = text } })"
+      "active_app:set({ padding_right = settings.gap.glyph })"
+      "padding_right = settings.notch_gap,"
+      "if count >= 7 then"
+      "return 1, false, settings.gap.field"
+      "if count >= 5 then"
+      "return 1, true, settings.gap.group"
+      "return SLOTS, true, settings.gap.group"
+      "padding_right = (shown > 0 or overflow > 0) and atom or 0,"
+    ];
 
   # Space groups must retain their app context and minimum datum-tick width.
   # Focus styling may animate only the numeral and its tick; nothing may zero
@@ -119,18 +191,53 @@ let
       lib.splitString "\n" barSpacesItem
     )
     ++ lib.optional (lib.hasInfix "--animate" barSpacesItem) "--animate";
-  spacesKeepAppIcons = lib.all (needle: lib.hasInfix needle barSpacesItem) [
-    ''"app."''
-    ''Orca = "com.stablyai.orca"''
-    "app_image(name)"
-    "drawing = false"
-    "drawing = true"
-  ];
-  spacesKeepAdaptiveWidth = lib.all (needle: lib.hasInfix needle barSpacesItem) [
-    "settings.width.numeral"
-    "settings.gap.field"
-    "settings.gap.group"
-  ];
+  spacesKeepAppIcons =
+    lib.all (needle: lib.hasInfix needle barSpacesCode) [
+      ''"app."''
+      ''Orca = "com.stablyai.orca"''
+      "app_image(name)"
+      "drawing = false"
+    ]
+    && lib.hasInfix ''
+      	active_app:set({ background = { image = { drawing = false } } })
+      	active_app:set({ background = { image = { string = app_image(name) } } })'' barSpacesCode
+    && !(lib.hasInfix "active_app:set({ background = { image = { drawing = true } } })" barSpacesCode);
+  spacesKeepAdaptiveWidth = lib.hasInfix ''
+    	if count >= 7 then
+    		return 1, false, settings.gap.field
+    	end
+    	if count >= 5 then
+    		return 1, true, settings.gap.group
+    	end
+    	return SLOTS, true, settings.gap.group'' barSpacesCode;
+  hoverableContract =
+    lib.all (needle: lib.hasInfix needle barUiCode) [
+      "local releases = {}"
+      "function M.hoverable(item, on_enter, on_leave)"
+      "local entry = { leave = on_leave, lit = false }"
+      "releases[#releases + 1] = entry"
+      ''item:subscribe("mouse.entered", function(env)''
+      ''item:subscribe("mouse.exited", function(env)''
+      "entry.lit = true"
+      "on_enter(env)"
+      "on_leave(env)"
+      "local function release_hovers()"
+      "for _, entry in ipairs(releases) do"
+      "if entry.lit then"
+      "entry.lit = false"
+      "entry.leave()"
+      ''
+        driver:subscribe("mouse.exited.global", function()
+        	release_hovers()
+        	M.close_all()
+        end)''
+      ''
+        driver:subscribe({ "display_change", "space_eager", "system_woke" }, function()
+        	M.close_all()
+        end)''
+    ]
+    && !(lib.hasInfix ''item:subscribe("mouse.exited.global"'' barUiCode)
+    && !(lib.hasInfix ''item:subscribe({ "mouse.exited", "mouse.exited.global" }'' barUiCode);
 
   # Broken/deprecated native event names must not survive even in comments:
   # stale prose is too easily copied back into a subscription.
@@ -169,20 +276,25 @@ let
     "colors.accent"
     "0xff70c0b1"
   ];
-  requiredBarEvents = [
-    "front_app_switched"
-    "display_change"
-    "network_change"
-    "battery_change"
-    "power_source_change"
-    "system_woke"
-    "volume_change"
-    "window_focus"
-    "windows_on_spaces"
-    "menubar_duck"
-    "com.spotify.client.PlaybackStateChanged"
+  requiredBarEventWiring = [
+    ''active_app:subscribe("front_app_switched", function(env)''
+    ''driver:subscribe({ "display_change", "system_woke" }, function()''
+    ''sbar.add("event", "network_change")''
+    ''network:subscribe("network_change", function(env)''
+    ''sbar.add("event", "battery_change")''
+    ''battery:subscribe("battery_change", function(env)''
+    ''battery:subscribe({ "routine", "power_source_change", "system_woke", "forced" }, refresh)''
+    ''volume:subscribe("volume_change", function(env)''
+    ''sbar.add("event", "window_focus")''
+    ''sbar.add("event", "windows_on_spaces")''
+    ''driver:subscribe({ "windows_on_spaces", "window_focus", "forced" }, function()''
+    ''sbar.add("event", "menubar_duck")''
+    ''driver:subscribe("menubar_duck", function(env)''
+    ''sbar.add("event", "spotify_change", "com.spotify.client.PlaybackStateChanged")''
   ];
-  missingBarEvents = lib.filter (event: !(lib.hasInfix event barTreeText)) requiredBarEvents;
+  missingBarEventWiring = lib.filter (
+    needle: !(lib.hasInfix needle (luaCode barTreeText))
+  ) requiredBarEventWiring;
 
   # A fixed-width mark slot includes its padding. Keep the measured cell
   # model live at every caller so a future glyph swap cannot silently crop
@@ -217,15 +329,67 @@ let
     ];
   mediaGlyphIntact =
     lib.hasInfix ''\u{F03E4}'' barSpotifyItem && !(lib.hasInfix ''\u{F0504}'' barSpotifyItem);
-  volumeDragIntact = lib.all (needle: lib.hasInfix needle barVolumeItem) [
-    ''sbar.add("slider", "volume.level"''
-    ''position = "right"''
-    "slider:set({"
-    ''slider:subscribe("mouse.clicked"''
-    ''volume:subscribe("mouse.entered"''
-    ''slider:subscribe("mouse.entered"''
-    ''slider:subscribe("mouse.exited.global"''
+  volumeForbiddenInteraction = lib.filter (needle: lib.hasInfix needle compactVolumeCode) [
+    ''"volume.gap"''
+    ''"volume.control"''
+    ''"volume.level"''
+    "set_expanded"
+    ''sbar.add("bracket"''
+    "hover_owner"
+    "suppress_datum_click"
+    "sbar.delay"
+    "os.clock"
+    "os.time"
+    "timestamp"
+    "width=expandedand"
+    "width=hoveredand"
+    "drawing=expanded"
+    "slider:set({slider={width="
+    "volume:set({padding_"
+    "volume:set({width="
+    "popup={drawing="
+    "timer"
+    "..env."
+    "env.PERCENTAGE.."
+    "env.INFO.."
+    "env.SCROLL_DELTA.."
+    ":format(env."
+    ''"volume.popup."..''
   ];
+  volumePanelIntact =
+    lib.all (needle: lib.hasInfix needle barVolumeCode) [
+      ''local ui = require("ui")''
+      ''local volume = sbar.add("item", "volume", {''
+      ''local POPUP_ID = "volume"''
+      "padding_right = settings.gap.group,"
+      ''popup = ui.popup_config("right"),''
+      "local TRACK = 5 * settings.gap.group"
+      "local SET_LEVEL = {}"
+      "for pct = 0, 100 do"
+      ''SET_LEVEL[pct] = "osascript -e 'set volume output volume "''
+      ''local STEP_UP = "osascript -e 'set v to (output volume of (get volume settings)) + 5'"''
+      ''local STEP_DOWN = "osascript -e 'set v to (output volume of (get volume settings)) - 5'"''
+    ]
+    && lib.all (needle: lib.hasInfix needle compactVolumeCode) [
+      ''localslider=sbar.add("slider","volume.popup.level",TRACK,{position="popup.volume",''
+      ''localfunctionaction_row(name,word)returnsbar.add("item",name,{position="popup.volume",''
+      ''localmute_row=action_row("volume.popup.mute","ToggleMute")''
+      ''localsettings_row=action_row("volume.popup.settings","SoundSettings")''
+      "width=TRACK,"
+      ''volume:subscribe("mouse.clicked",function(env)ifenv.BUTTON=="right"thenui.close_popup(POPUP_ID)sbar.exec(SOUND_SETTINGS)returnendifui.toggle_popup(POPUP_ID,volume,paint)thensbar.exec(READ,apply)endend)''
+      ''slider:subscribe("mouse.clicked",function(env)ifenv.BUTTON~="left"thenpaint()returnendlocalpct=tonumber(env.PERCENTAGE)ifnotpctthenpaint()returnendsbar.exec(SET_LEVEL[clamp(pct)],apply)end)''
+      ''mute_row:subscribe("mouse.clicked",function()sbar.exec(TOGGLE_MUTE,apply)end)''
+      ''settings_row:subscribe("mouse.clicked",function()ui.close_popup(POPUP_ID)sbar.exec(SOUND_SETTINGS)end)''
+      ''volume:subscribe("mouse.scrolled",function(env)localdelta=tonumber(env.SCROLL_DELTA)ifnotdeltaordelta==0thenreturnendsbar.exec(delta>0andSTEP_UPorSTEP_DOWN,apply)end)''
+      "ui.hoverable(volume,function()hovered=truepaint()end,function()hovered=falsepaint()end)"
+    ]
+    && lib.any (needle: lib.hasInfix needle compactVolumeCode) [
+      ''ifenv.BUTTON=="right"thensbar.exec(SOUND_SETTINGS)''
+      ''ifenv.BUTTON=="right"thenui.close_popup(POPUP_ID)sbar.exec(SOUND_SETTINGS)''
+    ]
+    && builtins.length (lib.splitString "env.PERCENTAGE" compactVolumeCode) == 2
+    && lib.hasSuffix "sbar.exec(READ,apply)" compactVolumeCode
+    && volumeForbiddenInteraction == [ ];
 
   # Hammerspoon owns menu-bar policy. Ordered target events make concurrent
   # task delivery harmless; SbarLua owns only the two measured strokes.
@@ -270,11 +434,59 @@ let
     "transparent = 0x00000000"
   ];
 
-  # yabai remains the source for the current window and Space custom events.
-  missingBarSignals = lib.filter (trigger: !(lib.hasInfix trigger cfg.services.yabai.extraConfig)) [
-    "--trigger window_focus"
-    "--trigger windows_on_spaces"
+  # yabai remains the source for current window and Space lifecycle events.
+  # Match executable signal registrations, including their unique labels and
+  # actions, rather than accepting an event name that appears only in prose.
+  yabaiConfigLines = lib.splitString "\n" yabaiExtraConfig;
+  requiredBarSignals = [
+    {
+      label = "bar-window-focus";
+      event = "window_focused";
+      trigger = "window_focus";
+    }
+    {
+      label = "bar-windows-created";
+      event = "window_created";
+      trigger = "windows_on_spaces";
+    }
+    {
+      label = "bar-windows-destroyed";
+      event = "window_destroyed";
+      trigger = "windows_on_spaces";
+    }
+    {
+      label = "bar-windows-moved";
+      event = "window_moved";
+      trigger = "windows_on_spaces";
+    }
+    {
+      label = "bar-space-changed";
+      event = "space_changed";
+      trigger = "windows_on_spaces";
+    }
+    {
+      label = "bar-space-created";
+      event = "space_created";
+      trigger = "windows_on_spaces";
+    }
+    {
+      label = "bar-space-destroyed";
+      event = "space_destroyed";
+      trigger = "windows_on_spaces";
+    }
   ];
+  malformedBarSignals = lib.filter (
+    signal:
+    let
+      labelLines = lib.filter (line: lib.hasInfix "label=${signal.label} " line) yabaiConfigLines;
+      exactRegistration =
+        builtins.length labelLines == 1
+        && lib.hasInfix "label=${signal.label} event=${signal.event} action='" (lib.head labelLines)
+        && lib.hasInfix "-sketchybar-" (lib.head labelLines)
+        && lib.hasSuffix "/bin/sketchybar --trigger ${signal.trigger}'" (lib.head labelLines);
+    in
+    !exactRegistration
+  ) requiredBarSignals;
 
   # skhd.zig resolves a character key literal through
   # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
@@ -572,6 +784,16 @@ assert lib.assertMsg (
 ) "Home Manager must generate an executable SbarLua bootstrap pinned to Lua 5.5";
 assert lib.assertMsg
   (
+    builtins.elem "linkGeneration" managedRestart.after
+    && sketchybarAgent.serviceConfig.Label == "org.nixos.sketchybar"
+    && hammerspoonAgent.serviceConfig.Label == "org.nixos.hammerspoon"
+    && lib.all (
+      needle: lib.hasInfix (builtins.unsafeDiscardStringContext needle) managedRestartText
+    ) managedRestartNeedles
+  )
+  "Home Manager must best-effort kickstart the managed SketchyBar and Hammerspoon labels after linkGeneration while remaining DRY_RUN-safe";
+assert lib.assertMsg
+  (
     lib.all (name: builtins.elem name sketchybarRuntimePackageNames) [
       "yabai"
       "lua"
@@ -584,10 +806,15 @@ assert lib.assertMsg
     ]
   )
   "SketchyBar runtime ownership must retain yabai, Lua 5.5, and curl without unused gh/git/jq widget dependencies";
-assert lib.assertMsg (
-  builtins.elem "nerd-fonts-jetbrains-mono" installedFontNames
-  && builtins.elem "dm-sans" installedFontNames
-) "DATUM must reproducibly install JetBrains Mono Nerd Font for measures and DM Sans for words";
+assert lib.assertMsg
+  (
+    requestedFontFamilies
+    && builtins.elem "nerd-fonts-jetbrains-mono" installedFontPackageNames
+    && builtins.elem "google-fonts" installedFontPackageNames
+    && dmSansPackage.fonts == [ "DMSans" ]
+    && !(builtins.elem "dm-sans" installedFontPackageNames)
+  )
+  "DATUM settings and installed outputs must pair JetBrainsMono Nerd Font with Google Fonts' genuine DM Sans family";
 assert lib.assertMsg (
   hammerspoonDeployment.source == ../home/macos-window-management/hammerspoon-init.lua
   &&
@@ -626,18 +853,23 @@ assert lib.assertMsg (bindingsMissingEagerTrigger == [ ]) (
   + lib.concatStringsSep ", " bindingsMissingEagerTrigger
 );
 assert lib.assertMsg treeHandlesEager
-  "space_eager must be registered before subscription and must not re-query yabai early enough to bounce the eager focus back";
+  "space_eager must be registered and subscribed, then invalidate in-flight queries immediately before painting its target";
+assert lib.assertMsg spaceGeometryIntact
+  "Space geometry must derive 508pt + 204pt <= 742pt with at least a 24pt residual gap";
 assert lib.assertMsg (spacesCollapseRegression == [ ]) (
   "Space groups must keep their app context and datum ticks live; offending"
   + " collapse/CLI animation constructs in spaces.lua: "
   + lib.concatStringsSep ", " spacesCollapseRegression
 );
 assert lib.assertMsg spacesKeepAppIcons
-  "spaces.lua must keep live app images, use Orca's stable bundle identifier, and toggle image drawing around updates";
+  "spaces.lua must disable the stale app image before assigning its replacement without explicitly re-enabling it";
 assert lib.assertMsg spacesKeepAdaptiveWidth
-  "spaces.lua must preserve a nonzero numeral-width tick and switch between normal/compact gaps as the main-display Space count changes";
-assert lib.assertMsg (missingBarEvents == [ ]) (
-  "the Lua tree lost required event subscriptions: " + lib.concatStringsSep ", " missingBarEvents
+  "spaces.lua must retain the exact 7-Space compact-gap and 5-Space one-icon adaptive regime";
+assert lib.assertMsg hoverableContract
+  "ui.hoverable hosts must subscribe only to enter/local exit and register their release for panels.driver's sole global-exit callback";
+assert lib.assertMsg (missingBarEventWiring == [ ]) (
+  "the Lua tree lost required event registrations or subscriptions: "
+  + lib.concatStringsSep ", " missingBarEventWiring
 );
 assert lib.assertMsg (forbiddenBarEvents == [ ]) (
   "the Lua tree subscribes to events broken or deprecated on this macOS: "
@@ -649,8 +881,8 @@ assert lib.assertMsg mediaGlyphIntact
   "Spotify must use the verified md-pause codepoint, never md-temperature-celsius";
 assert lib.assertMsg statusGlyphsIntact
   "volume and battery must retain the width-stable Material Design glyph sets sized by the audited cells";
-assert lib.assertMsg volumeDragIntact
-  "volume must reveal its draggable in-bar slider on hover without changing the resting datum";
+assert lib.assertMsg volumePanelIntact
+  "volume must remain a fixed bar datum and expose an explicit arbitrated level/mute/settings popup with static rows, color-only hover, clamped finite slider commands, and stable click/scroll actions";
 assert lib.assertMsg (forbiddenBarMechanisms == [ ]) (
   "the Lua tree reintroduced static tray names, deferred callbacks, or per-item alpha mutation: "
   + lib.concatStringsSep ", " forbiddenBarMechanisms
@@ -669,9 +901,9 @@ assert lib.assertMsg (accentOutsideSpaces == [ ]) (
   "DATUM accent is exclusive to the focused Space tick; uses outside spaces.lua: "
   + lib.concatStringsSep ", " accentOutsideSpaces
 );
-assert lib.assertMsg (missingBarSignals == [ ]) (
-  "yabai must feed the Lua tree's current custom events; missing signal actions: "
-  + lib.concatStringsSep ", " missingBarSignals
+assert lib.assertMsg (malformedBarSignals == [ ]) (
+  "yabai signal registrations are missing, duplicated, or miswired: "
+  + lib.concatStringsSep ", " (map (signal: signal.label) malformedBarSignals)
 );
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"

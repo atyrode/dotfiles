@@ -6,9 +6,9 @@
 --
 -- The bar shows one glyph. Everything else -- the name, the address, the
 -- way out to System Settings -- lives in a panel that only exists while it
--- is being read. There is no polling and no timer: association changes,
--- wake, and the startup `forced` shot are the complete set of reasons this
--- widget has to do any work.
+-- is being read. There is no polling and no timer: the probe at the foot
+-- of this file, association changes, and wake are the complete set of
+-- reasons this widget has to do any work.
 local colors = require("colors")
 local settings = require("settings")
 local ui = require("ui")
@@ -42,8 +42,14 @@ local NAME_MAX_CHARS = 20
 -- the shell -- it is quoted at every use and never re-evaluated -- so the
 -- only strings this Lua file ever builds into a command are the two
 -- absolute paths below.
+--
+-- The address is optional output. A default route whose interface has no
+-- `ipconfig` address -- a utun tunnel, an interface still taking a lease
+-- -- is a route all the same, so the interface is printed either way and
+-- the second field is left empty rather than the probe exiting silent and
+-- reporting the link as absent.
 local PROBE =
-	[[iface=$(/sbin/route -n get -inet default 2>/dev/null | /usr/bin/awk '/interface:/ { print $2; exit }'); [ -n "$iface" ] || exit 0; ip=$(/usr/sbin/ipconfig getifaddr "$iface" 2>/dev/null); [ -n "$ip" ] || exit 0; printf '%s %s' "$iface" "$ip"]]
+	[[iface=$(/sbin/route -n get -inet default 2>/dev/null | /usr/bin/awk '/interface:/ { print $2; exit }'); [ -n "$iface" ] || exit 0; ip=$(/usr/sbin/ipconfig getifaddr "$iface" 2>/dev/null); printf '%s %s' "$iface" "$ip"]]
 
 local SETTINGS_PANE = '/usr/bin/open "x-apple.systempreferences:com.apple.wifi-settings-extension"'
 
@@ -137,7 +143,11 @@ local state = {
 }
 
 local function render()
-	local linked = state.iface ~= nil and state.ip ~= nil
+	-- The route is the link; the address is a separate fact that may lag
+	-- it or never arrive. Losing the address is worth saying plainly, but
+	-- it is not the same news as losing the network, and the glyph on the
+	-- bar only ever answers the first question.
+	local linked = state.iface ~= nil
 
 	network:set({ icon = { string = linked and GLYPH_LINKED or GLYPH_CUT } })
 
@@ -153,8 +163,8 @@ local function render()
 
 	row_name:set({ icon = { string = "Network" }, label = { string = title } })
 	row_link:set({
-		icon = { string = linked and state.iface or "" },
-		label = { string = linked and state.ip or "No route" },
+		icon = { string = state.iface or "" },
+		label = { string = state.ip or (linked and "No address" or "No route") },
 	})
 end
 
@@ -173,9 +183,12 @@ local function probe()
 		in_flight = false
 		local iface, ip
 		if type(out) == "string" then
-			-- Anchored and shaped: only an interface name and a dotted
-			-- quad are ever accepted as displayable state.
-			iface, ip = out:match("^(%w+) (%d+%.%d+%.%d+%.%d+)")
+			-- Anchored and shaped: the interface carries the link, and
+			-- the address is accepted only as a dotted quad in the
+			-- second field. An empty second field is linked without an
+			-- address, which is not the same state as no first field.
+			iface = out:match("^(%w+)")
+			ip = iface and out:match("^%w+ (%d+%.%d+%.%d+%.%d+)")
 		end
 		state.iface = iface
 		state.ip = ip
@@ -247,4 +260,19 @@ row_action:subscribe("mouse.clicked", function()
 	ui.close_popup(POPUP_ID)
 end)
 
+-- The two data rows have nothing to open, so they dismiss. Every row in
+-- every panel on this bar answers a click; an inert row inside a live
+-- plate reads as a failure rather than as a label.
+for _, data_row in ipairs({ row_name, row_link }) do
+	data_row:subscribe("mouse.clicked", function()
+		ui.close_popup(POPUP_ID)
+	end)
+end
+
+-- SketchyBar can come up with no Hammerspoon beside it and nothing else
+-- to announce the link, so the widget resolves its own state once at
+-- construction rather than waiting for a reason. Anything that arrives
+-- while this is still out -- `forced`, a bridge event -- collapses into
+-- the single-flight guard instead of racing it.
 render()
+probe()

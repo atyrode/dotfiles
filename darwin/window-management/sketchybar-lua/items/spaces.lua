@@ -26,8 +26,10 @@ local colors = require("colors")
 local settings = require("settings")
 
 -- One numeral, three slots and an overflow cell exist for every Space the
--- rail can ever draw. Ten saturates the 509pt rail budget exactly at the
--- compact 12pt gap, and covers one Space past skhd's 1-9 bindings.
+-- rail can ever draw. Ten saturates the 508pt rail budget exactly at the
+-- compact 12pt gap -- ten cells of 16pt numeral, 4pt atom and 20pt icon
+-- box, separated by nine 12pt leads -- and covers one Space past skhd's
+-- 1-9 bindings.
 local POOL = 10
 local SLOTS = 3
 
@@ -165,6 +167,30 @@ end
 -- Active app, Q lane
 --------------------------------------------------------------------------
 
+-- The lane and the Space rail share the pre-notch region and neither can
+-- see the other, so both are budgeted rather than measured.
+--
+-- Usable pre-notch room is 742pt: the notch's padded left edge at 762
+-- (1710 bar less the 186pt notch, halved) minus the bar's own 20pt
+-- padding_left. The rail's worst case is the 508pt budgeted above, ten
+-- Spaces at the compact 12pt gap. The lane reaches its own worst case only
+-- with a title drawn, and that worst case is 204pt:
+--
+--   space.app      20 image + 8 gap + 60 name + 8 gap  =  96
+--   space.window              84 title + 24 notch gap  = 108
+--
+-- 508 + 204 = 712, so 742 - 712 = 30pt is left over. That clears the 24pt
+-- group gap, the widest gap the composition may place between two groups,
+-- which makes the two worst cases not merely non-overlapping but still
+-- legally separated.
+--
+-- Both word fields hold that budget two ways. A fixed label width pins the
+-- lane's extent so it never follows the text, and a max_chars clips the ink
+-- to roughly the width it was given: 9 characters keeps every sampled
+-- app-name prefix inside 60pt (widest "Google Ch" at 58) and 12 keeps every
+-- sampled window-title prefix inside 84pt (widest 81), measured on DM Sans
+-- Regular 12 with the same CTLine glyph-path bounds SketchyBar uses.
+--
 -- Position q lays out right-to-left from the notch, so the item created
 -- first sits closest to it: title, then the app identity to its left.
 local window_title = sbar.add("item", "space.window", {
@@ -177,7 +203,10 @@ local window_title = sbar.add("item", "space.window", {
 	label = {
 		font = settings.font.word,
 		color = colors.ink_dim,
-		max_chars = 24,
+		-- Fixed, so a long title cannot push the lane into the rail, and
+		-- clipped to what 84pt of this face actually holds.
+		width = settings.width.window_title,
+		max_chars = 12,
 	},
 	-- Drawn, this is the item under the notch, so it owns the notch gap.
 	-- The gap back to the app identity is active_app's, because active_app
@@ -199,7 +228,11 @@ local active_app = sbar.add("item", "space.app", {
 	label = {
 		font = settings.font.word,
 		color = colors.ink,
-		max_chars = 20,
+		-- As on the clock, the 8pt gap qualifying the name is spent inside
+		-- this width rather than added outside it, so the name itself keeps
+		-- the full 60pt cell the budget granted it.
+		width = settings.width.app_name + settings.gap.glyph,
+		max_chars = 9,
 		padding_left = settings.gap.glyph,
 	},
 	background = {
@@ -250,10 +283,12 @@ local function set_app(name)
 	app_name = name
 	active_app:set({ drawing = true, label = { string = name } })
 	-- An invalid app name leaves the previous image in place, so the old one
-	-- is torn down before the new name is assigned.
+	-- is torn down before the new name is assigned. Nothing switches the new
+	-- one back on: an image that resolves enables itself, and one that does
+	-- not must leave the reserved 20pt cell blank rather than go on showing
+	-- the app we just switched away from.
 	active_app:set({ background = { image = { drawing = false } } })
 	active_app:set({ background = { image = { string = app_image(name) } } })
-	active_app:set({ background = { image = { drawing = true } } })
 	-- The old window's title does not belong to the new app; the next yabai
 	-- settle re-enriches, and until then the app name stands alone.
 	set_title(nil)
@@ -355,12 +390,15 @@ local function draw_group(sid, first, gap, names, cap, show_more)
 				padding_right = (k < shown or overflow > 0) and atom or 0,
 			})
 			-- An unchanged image is never rewritten: reassigning it would
-			-- reload the icon and flicker the cell on every settle.
+			-- reload the icon and flicker the cell on every settle. The old
+			-- image is torn down first and nothing turns the new one on --
+			-- a resolved image enables itself, and a name Launch Services
+			-- cannot answer leaves an empty cell instead of the app that
+			-- used to occupy it.
 			if slot_app[sid][k] ~= name then
 				slot_app[sid][k] = name
 				slot[sid][k]:set({ background = { image = { drawing = false } } })
 				slot[sid][k]:set({ background = { image = { string = app_image(name) } } })
-				slot[sid][k]:set({ background = { image = { drawing = true } } })
 			end
 		elseif slot_app[sid][k] ~= nil then
 			slot_app[sid][k] = nil
@@ -687,11 +725,32 @@ end)
 -- skhd and the rail itself announce the destination Space before macOS
 -- finishes sliding to it. Paint immediately; the space_changed signal
 -- settles app context only after yabai's focus state has actually committed.
+--
+-- A chain issued before the switch answers with pre-switch focus, and its
+-- set_focus would drag the accent back onto the Space just left. Bumping the
+-- generation abandons it, exactly as a display change does -- but unlike a
+-- display change this queues no re-settle, because querying yabai now would
+-- read the focus state the eager paint exists to get ahead of.
+--
+-- Abandonment alone is not enough. An abandoned callback still runs `finish`,
+-- and `finish` honours `dirty` by starting a replacement chain immediately --
+-- one issued after the eager paint but still early enough to read pre-switch
+-- focus, which would re-settle the accent onto the Space just left. Clearing
+-- `dirty` here drops that queued follow-up, so the invalidation covers both
+-- the chain in flight and the one it would have spawned.
+--
+-- Nothing is lost by dropping it: the switch that triggered this paint
+-- guarantees a later space_changed, and any window movement guarantees a
+-- later windows_on_spaces or window_focus. Whichever arrives first performs
+-- the authoritative settle against committed yabai state, so the request
+-- being discarded here is only ever a duplicate of one still to come.
 driver:subscribe("space_eager", function(env)
 	local target = tonumber(env.TARGET)
 	if not target or not live[target] then
 		return
 	end
+	generation = generation + 1
+	dirty = false
 	set_focus(target)
 end)
 

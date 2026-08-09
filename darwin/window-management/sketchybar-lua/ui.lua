@@ -1,7 +1,10 @@
--- The popup arbiter. DATUM has no permanent containers, so a popup is the
--- only surface that ever appears on top of the face -- which means at most
--- one may exist at a time, and its lifecycle has to be owned in one place
--- rather than negotiated between widgets.
+-- Shared interaction primitives: the popup arbiter, and the hover contract
+-- every widget releases through.
+--
+-- DATUM has no permanent containers, so a popup is the only surface that
+-- ever appears on top of the face -- which means at most one may exist at a
+-- time, and its lifecycle has to be owned in one place rather than
+-- negotiated between widgets.
 --
 -- This module is that place: it holds the single piece of current-popup
 -- state, and it is the only writer of it. Widgets call `toggle_popup` and
@@ -36,6 +39,57 @@ function M.popup_config(align, row_height, horizontal)
 			shadow = { drawing = false },
 		},
 	}
+end
+
+-- Hover is the one effect on this bar with no state of its own to fall back
+-- on: nothing repaints it, so a missed release is permanent. `mouse.exited`
+-- alone is not enough to guarantee one. A cursor that leaves an item by
+-- leaving the bar -- straight down into a window, off the top of the
+-- screen, or through a popup that opens under it -- can consume the local
+-- exit, and the mark stays lit until the pointer happens to cross it again.
+--
+-- `mouse.exited.global` is the exit that always arrives, but a widget must
+-- not listen for it. It fires on every departure from the bar, and an item
+-- driven off `update_freq` restarts its countdown each time it is invoked:
+-- a pointer crossing the bar every few seconds would postpone the battery,
+-- weather and clock readings indefinitely. A routine is a clock, and a
+-- pointer must not be able to wind it back.
+--
+-- So the global exit is heard once, by the one item with no countdown to
+-- lose -- the hidden `panels.driver` below -- and every `on_leave` registers
+-- here for it to call. Hosts subscribe only to the two events that are
+-- genuinely their own; whichever release fires first returns the item to
+-- rest and the other is an idempotent repeat.
+--
+-- `lit` is what keeps the bar-wide release cheap: a departure repaints only
+-- the marks actually showing hover, not every registered one. It can only
+-- ever err towards a release that was already delivered.
+local releases = {}
+
+function M.hoverable(item, on_enter, on_leave)
+	local entry = { leave = on_leave, lit = false }
+	releases[#releases + 1] = entry
+
+	item:subscribe("mouse.entered", function(env)
+		entry.lit = true
+		on_enter(env)
+	end)
+
+	item:subscribe("mouse.exited", function(env)
+		entry.lit = false
+		on_leave(env)
+	end)
+end
+
+-- Every hover back to rest. Called by the driver on a bar-wide departure;
+-- widgets never call it.
+local function release_hovers()
+	for _, entry in ipairs(releases) do
+		if entry.lit then
+			entry.lit = false
+			entry.leave()
+		end
+	end
 end
 
 -- The one open popup, if any.
@@ -94,7 +148,17 @@ local driver = sbar.add("item", "panels.driver", {
 	updates = true,
 })
 
-driver:subscribe({ "mouse.exited.global", "display_change", "space_eager", "system_woke" }, function()
+-- Two subscriptions, not one: leaving the bar is the only one of these that
+-- says anything about where the pointer is. `releases` is read when the
+-- event fires rather than when this subscribes, so the widgets loaded after
+-- this module -- all of them, and all before `event_loop` -- are registered
+-- by the time it can matter.
+driver:subscribe("mouse.exited.global", function()
+	release_hovers()
+	M.close_all()
+end)
+
+driver:subscribe({ "display_change", "space_eager", "system_woke" }, function()
 	M.close_all()
 end)
 

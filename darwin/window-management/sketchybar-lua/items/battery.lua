@@ -197,6 +197,17 @@ local function absorb(next_percent, next_charging)
 	end
 end
 
+-- pmset has two ways of saying it has no number: "0:00 remaining" and
+-- "(no estimate)". Neither says whether one is coming. That depends on the
+-- power state: full, or idle on mains, and there is nothing left to
+-- estimate, so "Estimating" would promise a figure that never arrives.
+local function no_estimate_label(state)
+	if state and SETTLED_STATES[state] then
+		return "On power"
+	end
+	return "Estimating"
+end
+
 -- One pmset read serves both the cell and the panel, so opening the popup
 -- refreshes the reading behind it for free. Every write is guarded by its
 -- own match: a truncated or unparseable pmset leaves all three rows holding
@@ -216,19 +227,16 @@ local function refresh()
 		local hours, minutes = text:match("(%d+):(%d%d)%s+remaining")
 		if hours then
 			if tonumber(hours) == 0 and tonumber(minutes) == 0 then
-				if state and SETTLED_STATES[state] then
-					-- Full, or idle on mains: there is no estimate
-					-- outstanding, so saying "Estimating" would promise a
-					-- number that is never going to arrive.
-					time_row:set({ label = { string = "On power" } })
-				else
-					-- Genuinely unsettled: pmset prints 0:00 while it is
-					-- still learning the load.
-					time_row:set({ label = { string = "Estimating" } })
-				end
+				time_row:set({ label = { string = no_estimate_label(state) } })
 			else
 				time_row:set({ label = { string = hours .. ":" .. minutes } })
 			end
+		elseif text:find("(no estimate)", 1, true) then
+			-- Said outright rather than implied by a zero. The ordinary
+			-- "leave the last good text alone" rule would turn that into a
+			-- lie: the previous estimate was measured under a different
+			-- load and is not the current answer.
+			time_row:set({ label = { string = no_estimate_label(state) } })
 		end
 
 		local next_charging = nil
@@ -265,12 +273,10 @@ battery:subscribe("mouse.clicked", function(env)
 	end
 end)
 
-battery:subscribe("mouse.entered", function()
+ui.hoverable(battery, function()
 	hovered = true
 	paint()
-end)
-
-battery:subscribe("mouse.exited", function()
+end, function()
 	hovered = false
 	paint()
 end)
@@ -284,11 +290,9 @@ for _, row in ipairs({ power_row, time_row }) do
 	end)
 end
 
-settings_row:subscribe("mouse.entered", function()
+ui.hoverable(settings_row, function()
 	settings_row:set({ icon = { color = colors.ink } })
-end)
-
-settings_row:subscribe("mouse.exited", function()
+end, function()
 	settings_row:set({ icon = { color = colors.ink_dim } })
 end)
 

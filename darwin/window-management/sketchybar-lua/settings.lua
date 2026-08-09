@@ -84,12 +84,19 @@ return {
 	-- come up short -- a temperature and a percentage -- are filled from the
 	-- left, so the slack falls outside the datum rather than opening between
 	-- a mark and the value it qualifies.
+	--
+	-- The two word fields are the exception: an app name and a window title
+	-- have no widest string to measure, so they are budgeted against the
+	-- room the Space rail cannot claim and then truncated to what the budget
+	-- actually holds. The proof of both numbers is in items/spaces.lua.
 	width = {
 		numeral = 16, -- one Space numeral, and the tick's minimum length
 		percent = 31, -- "100%"
 		temp = 31, -- "-12°"
 		clock_time = 47, -- "12:56" at index 15pt
 		clock_date = 74, -- "Wed 10 Sep" at value 12pt
+		app_name = 60, -- app identity in DM Sans 12; "Reminders" measures 58
+		window_title = 84, -- title enrichment in DM Sans 12
 	},
 
 	-- Popups are flat panels, not cards: no radius, no shadow, 1pt edge.

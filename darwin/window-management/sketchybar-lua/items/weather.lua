@@ -21,11 +21,15 @@ local POPUP_ID = "weather"
 local REPORT = "curl -fsS --max-time 8 'https://wttr.in/?format=j1'"
 
 -- Half-hourly is as often as this datum can change usefully. Wake and
--- Wi-Fi association also refresh, and those arrive in bursts, so an
--- unforced attempt honours a floor between attempts: a flapping network
--- must not become a flapping process table. A right-click ignores it.
+-- Wi-Fi association also refresh, and those arrive in bursts, so every
+-- unforced attempt honours a floor between attempts, from the first one
+-- rather than from the first success: a flapping network must not become a
+-- flapping process table. A right-click ignores the floor.
 local ROUTINE_SECONDS = 1800
 local MIN_INTERVAL = 60
+-- The runtime's own ceiling on a subprocess it is waiting on: past this it
+-- has killed the child, and the completion callback will never arrive.
+local EXEC_ALARM = 60
 
 -- The detail panel is a two-column grid measured off the 24pt module gap:
 -- a 72pt key column, a 168pt value column, 12pt margins. Both columns are
@@ -138,14 +142,20 @@ local weather = sbar.add("item", "weather", {
 	popup = ui.popup_config("left"),
 })
 
--- A fixed pool of four rows, created once and only ever rewritten. Names go
+-- A fixed pool of five rows, created once and only ever rewritten. Names go
 -- in the word family, measurements in the mono family: the panel speaks in
 -- the same two voices as the bar.
+--
+-- `Updated` is the read time, and it is its own row because it is not a
+-- measurement of the weather: filing it after the wind made one row answer
+-- two unrelated questions, and the answer it gave to "how hard is it
+-- blowing" depended on a clock.
 local ROWS = {
 	{ id = "location", key = "Location", measured = false },
 	{ id = "condition", key = "Condition", measured = false },
 	{ id = "feels", key = "Feels", measured = true },
 	{ id = "wind", key = "Wind", measured = true },
+	{ id = "updated", key = "Updated", measured = true },
 }
 
 local rows = {}
@@ -175,13 +185,26 @@ for _, spec in ipairs(ROWS) do
 			y_offset = 0,
 		},
 	})
+
+	-- No outside-click event exists and no row here does anything, so
+	-- every one of them is the panel's own dismissal.
+	rows[spec.id]:subscribe("mouse.clicked", function()
+		ui.close_popup(POPUP_ID)
+	end)
 end
 
 -- Last good report, and whether it has since failed to refresh.
 local report = nil
 local stale = false
-local in_flight = false
 local last_attempt = 0
+-- When the current attempt started, or 0 for none. A deadline rather than a
+-- boolean latch: the runtime hard-kills its own subprocess after EXEC_ALARM
+-- seconds and the completion callback then never arrives, so a flag set
+-- before the call and cleared inside it would strand the widget for the
+-- rest of the session. curl is bounded at 8s, so a flight older than the
+-- runtime's own ceiling is gone rather than slow, and a replacement is one
+-- process, not a fan-out.
+local flight_started = 0
 
 -- wttr nests every display string one array deep: { { value = "Paris" } }.
 local function nested(node)
@@ -214,6 +237,7 @@ local function render()
 	rows.condition:set({ label = { string = report.condition, color = tone } })
 	rows.feels:set({ label = { string = report.feels, color = tone } })
 	rows.wind:set({ label = { string = report.wind, color = tone } })
+	rows.updated:set({ label = { string = report.updated, color = tone } })
 end
 
 local function absorb(payload)
@@ -255,9 +279,11 @@ local function absorb(payload)
 		location = place or UNKNOWN,
 		condition = condition or UNKNOWN,
 		feels = pair(feels and (feels .. "°"), humidity and (humidity .. "% humidity")),
-		-- The read time, not the observation time: what the last row
-		-- promises is how fresh this reading is.
-		wind = pair(blow, "at " .. os.date("%H:%M")),
+		wind = blow or UNKNOWN,
+		-- The read time, not the observation time: this row promises only
+		-- how fresh the reading is, which is the one thing the widget
+		-- knows for certain about it.
+		updated = os.date("%H:%M"),
 	}
 end
 
@@ -284,17 +310,22 @@ local function degrade()
 end
 
 local function refresh(by_hand)
-	if in_flight then
-		return
-	end
 	local now = os.time()
-	if not by_hand and report and now - last_attempt < MIN_INTERVAL then
+	if flight_started ~= 0 and now - flight_started < EXEC_ALARM then
 		return
 	end
-	in_flight = true
+	-- The floor holds from the first attempt, not from the first success.
+	-- Wake and Wi-Fi association arrive in bursts and a cold widget answers
+	-- every one of them, so gating this on `report` meant the one state
+	-- where the network is provably flapping was also the one state with no
+	-- brake on it. A right-click still ignores the floor.
+	if not by_hand and now - last_attempt < MIN_INTERVAL then
+		return
+	end
+	flight_started = now
 	last_attempt = now
 	sbar.exec(REPORT, function(payload, exit_code)
-		in_flight = false
+		flight_started = 0
 		local fresh = exit_code == 0 and absorb(payload) or nil
 		if fresh then
 			commit(fresh)
@@ -306,11 +337,9 @@ end
 
 -- Hover brightens the mark, which is the cell you can act on. It opens
 -- nothing and moves nothing.
-weather:subscribe("mouse.entered", function()
+ui.hoverable(weather, function()
 	weather:set({ icon = { color = colors.ink } })
-end)
-
-weather:subscribe("mouse.exited", function()
+end, function()
 	weather:set({ icon = { color = colors.ink_dim } })
 end)
 
@@ -330,3 +359,10 @@ sbar.add("event", "network_change")
 weather:subscribe({ "routine", "forced", "system_woke", "network_change" }, function()
 	refresh(false)
 end)
+
+-- First fetch. `routine` is half an hour away, `forced` arrives only on an
+-- explicit update and `network_change` only if the Wi-Fi happens to move,
+-- so a bar that starts on a working connection would otherwise show no
+-- weather at all until something else went first. One bounded request, and
+-- it sets the floor the automatic attempts then measure from.
+refresh(true)

@@ -149,12 +149,18 @@ local function refresh_grid()
 	end)
 end
 
-clock:subscribe({ "routine", "system_woke", "forced" }, refresh_time)
+-- The routine tick only ever has to move the minute; the grid cannot turn
+-- over on it.
+clock:subscribe("routine", refresh_time)
 
--- The month only turns over at a boundary, so the grid is rebuilt on the
--- events that can cross one -- and on every open, which is the only moment
--- it is looked at.
-clock:subscribe({ "system_woke", "forced" }, refresh_grid)
+-- Wake and an explicit update are the two events that can have crossed a
+-- month boundary while nothing was watching, so both views are rebuilt --
+-- in one callback, because a callback is registered per (item, event) pair
+-- and a second subscription to the same event silently replaces the first.
+clock:subscribe({ "system_woke", "forced" }, function()
+	refresh_time()
+	refresh_grid()
+end)
 
 clock:subscribe("mouse.clicked", function(env)
 	if env.BUTTON == "right" then
@@ -178,11 +184,9 @@ end)
 
 -- Hover brightens the dim half of the cell. The time is already ink and the
 -- geometry is fixed, so nothing moves.
-clock:subscribe("mouse.entered", function()
+ui.hoverable(clock, function()
 	clock:set({ icon = { color = colors.ink } })
-end)
-
-clock:subscribe("mouse.exited", function()
+end, function()
 	clock:set({ icon = { color = colors.ink_dim } })
 end)
 

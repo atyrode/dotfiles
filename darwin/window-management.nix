@@ -43,6 +43,8 @@ in
       ${yabai} -m signal --add label=bar-windows-destroyed event=window_destroyed action='${sketchybarBin} --trigger windows_on_spaces'
       ${yabai} -m signal --add label=bar-windows-moved event=window_moved action='${sketchybarBin} --trigger windows_on_spaces'
       ${yabai} -m signal --add label=bar-space-changed event=space_changed action='${sketchybarBin} --trigger windows_on_spaces'
+      ${yabai} -m signal --add label=bar-space-created event=space_created action='${sketchybarBin} --trigger windows_on_spaces'
+      ${yabai} -m signal --add label=bar-space-destroyed event=space_destroyed action='${sketchybarBin} --trigger windows_on_spaces'
       ${sketchybarBin} --trigger windows_on_spaces
     '';
   };
@@ -113,7 +115,7 @@ in
   # Nerd Font for measured values and glyphs, and DM Sans for named state.
   fonts.packages = [
     pkgs.nerd-fonts.jetbrains-mono
-    pkgs.dm-sans
+    (pkgs.google-fonts.override { fonts = [ "DM Sans" ]; })
   ];
 
   system.defaults = {

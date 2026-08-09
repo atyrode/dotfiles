@@ -27,6 +27,9 @@ local PLAY = "\u{F04B}" -- fa-play
 local PAUSE = "\u{F03E4}" -- md-pause
 -- Liveness only, and only while drawn.
 local LIVENESS_SECONDS = 60
+-- The runtime's own ceiling on a subprocess it is waiting on: past this it
+-- has killed the child, and the completion callback will never arrive.
+local EXEC_ALARM = 60
 
 -- SketchyBar coalesces wheel events into one signed integer per 150ms
 -- window. Skipping a track is not an accident you want, so a graze of the
@@ -163,12 +166,29 @@ for _, spec in ipairs(ROWS) do
 			y_offset = 0,
 		},
 	})
+
+	-- No outside-click event exists, so the inert rows are the panel's own
+	-- dismissal. The action row does something else with a click and is
+	-- wired separately below.
+	if not spec.action then
+		rows[spec.id]:subscribe("mouse.clicked", function()
+			ui.close_popup(POPUP_ID)
+		end)
+	end
 end
 
 -- Last good playback state, and whether the widget is currently on the bar.
 local track = nil
 local drawn = false
-local probing = false
+-- When the current probe started, or 0 for none. This is a deadline rather
+-- than a boolean latch: the runtime hard-kills a subprocess it is waiting
+-- on after EXEC_ALARM seconds, and the completion callback then never
+-- arrives -- so a flag set before the call and cleared inside it would
+-- switch liveness off permanently the first time osascript was wedged, and
+-- a ghost widget would outlive every Spotify on the machine. The osascript
+-- itself is bounded at 2s, so a probe older than the runtime's ceiling is
+-- dead rather than slow, and replacing it is one process, not a fan-out.
+local probe_started = 0
 
 local function clean(value)
 	if type(value) ~= "string" then
@@ -227,12 +247,13 @@ local function absent()
 end
 
 local function probe()
-	if probing then
+	local now = os.time()
+	if probe_started ~= 0 and now - probe_started < EXEC_ALARM then
 		return
 	end
-	probing = true
+	probe_started = now
 	sbar.exec(PROBE, function(reply, exit_code)
-		probing = false
+		probe_started = 0
 		if exit_code ~= 0 then
 			absent()
 			return
@@ -267,11 +288,9 @@ end)
 
 -- Hover brightens the mark, which is the play/pause button. It opens
 -- nothing and moves nothing.
-media:subscribe("mouse.entered", function()
+ui.hoverable(media, function()
 	media:set({ icon = { color = colors.ink } })
-end)
-
-media:subscribe("mouse.exited", function()
+end, function()
 	media:set({ icon = { color = colors.ink_dim } })
 end)
 
@@ -292,11 +311,9 @@ media:subscribe("mouse.scrolled", function(env)
 	sbar.exec(delta > 0 and PREVIOUS or NEXT)
 end)
 
-rows.open:subscribe("mouse.entered", function()
+ui.hoverable(rows.open, function()
 	rows.open:set({ icon = { color = colors.ink }, label = { color = colors.ink } })
-end)
-
-rows.open:subscribe("mouse.exited", function()
+end, function()
 	rows.open:set({ icon = { color = colors.ink_dim }, label = { color = colors.ink_dim } })
 end)
 

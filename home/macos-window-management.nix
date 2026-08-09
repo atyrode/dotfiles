@@ -46,6 +46,23 @@ in
     };
   };
 
+  # Both resident Lua consumers are owned by nix-darwin launch agents, while
+  # Home Manager owns their linked configuration. Relaunch them only after the
+  # new generation is linked so Lua-only changes become live without logout.
+  # A label may not be bootstrapped until its app has completed first launch;
+  # kickstart is therefore deliberately best-effort.
+  home.activation.restartManagedLuaConsumers = lib.mkIf pkgs.stdenv.isDarwin (
+    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+      if [[ -v DRY_RUN ]]; then
+        echo "Would relaunch managed SketchyBar and Hammerspoon agents"
+      else
+        user_domain="gui/$(${pkgs.coreutils}/bin/id -u)"
+        /bin/launchctl kickstart -k "$user_domain/org.nixos.sketchybar" >/dev/null 2>&1 || true
+        /bin/launchctl kickstart -k "$user_domain/org.nixos.hammerspoon" >/dev/null 2>&1 || true
+      fi
+    ''
+  );
+
   # Karabiner owns input transformation only: Caps Lock held becomes the
   # control+option+command leader that skhd already binds; tapping it does
   # nothing by design. skhd owns hotkey dispatch, yabai owns windows.

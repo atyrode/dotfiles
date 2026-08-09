@@ -98,13 +98,26 @@ in
     managedBy = "darwin/window-management.nix";
   };
 
+  # Hammerspoon owns event-driven automation (menu-bar hover watcher for the
+  # SketchyBar duck). Same Tahoe pattern as skhd: launch the app bundle for a
+  # stable Accessibility identity, nix-darwin owns the lifecycle.
+  launchd.user.agents.hammerspoon = {
+    serviceConfig = {
+      ProgramArguments = [ "/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" ];
+      KeepAlive = true;
+      ProcessType = "Interactive";
+      RunAtLoad = true;
+    };
+
+    managedBy = "darwin/window-management.nix";
+  };
+
   # SketchyBar owns the top edge, so the native menu bar auto-hides; it stays
   # reachable by mousing to the top of the screen.
   # JetBrainsMono Nerd Font carries every widget glyph as a codepoint
-  # (neutonfoo's one-family approach); the app font renders only the per-app
-  # ligatures in Space and front-app chips.
+  # (neutonfoo's one-family approach); Space chips use real app icons, so no
+  # ligature font exists in the stack.
   fonts.packages = [
-    pkgs.sketchybar-app-font
     pkgs.nerd-fonts.jetbrains-mono
   ];
 

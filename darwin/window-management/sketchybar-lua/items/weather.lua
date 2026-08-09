@@ -1,39 +1,22 @@
--- Moon-phase and weather chips right of the notch (operator direction: the
--- left side is reserved for Space management). Mechanism from neutonfoo with
--- his redundant double ipinfo call collapsed to one. Keyless endpoints;
--- failures keep the previous state.
+-- Weather chip right of the notch (operator direction: the left side is
+-- reserved for Space management). One chip: condition glyph, temperature,
+-- description, and the moon phase as a trailing glyph in the same label --
+-- one Nerd Font renders both, no separate fragment chip. Mechanism from
+-- neutonfoo with his redundant double ipinfo call collapsed to one. Keyless
+-- endpoints; failures keep the previous state.
 local colors = require("colors")
 local settings = require("settings")
 
-local moon = sbar.add("item", "weather.moon", {
-	position = "e",
-	-- Breathing room between the notch and the first chip; the pair itself
-	-- stays fused (1px inner gap).
-	padding_left = 14,
-	padding_right = 1,
-	icon = {
-		font = { family = settings.font, style = "Bold", size = 16.0 },
-		-- Accent glyph on the translucent surface: the thin moon outlines
-		-- disappear as dark-on-teal (pixel-audited), not the other way around.
-		color = colors.accent,
-		padding_left = 8,
-		padding_right = 8,
-	},
-	label = { drawing = false },
-	background = {
-		color = colors.chip,
-		corner_radius = settings.chip_radius,
-		height = settings.chip_height,
-	},
-})
-
 local weather = sbar.add("item", "weather", {
 	position = "e",
-	padding_left = 1,
+	-- Breathing room between the notch and the first chip.
+	padding_left = settings.notch_gap,
+	padding_right = settings.paddings,
 	update_freq = 1800,
 	icon = {
 		string = "\u{E30D}",
 		font = { family = settings.font, style = "Bold", size = 14.0 },
+		color = colors.accent,
 	},
 	label = { font = { family = settings.font, style = "Medium", size = 12.0 } },
 	background = {
@@ -44,24 +27,24 @@ local weather = sbar.add("item", "weather", {
 })
 
 -- wttr.in phase strings vary in case and spacing across backends, so match
--- keywords, not exact names. Material Design moon glyphs: the weather-icon
--- "alt" moons are outline rings by design and read as empty circles at chip
--- size (pixel-audited twice).
+-- keywords, not exact names. Emoji moons: both glyph-font moon sets render
+-- as thin outline slivers at chip size (pixel-audited three times); the
+-- emoji discs are legible at any size.
 local function moon_glyph(phase)
 	local p = (phase or ""):lower()
 	local waxing = p:find("waxing") ~= nil
 	if p:find("new") then
-		return "\u{F0F64}"
+		return "\u{1F311}"
 	elseif p:find("crescent") then
-		return waxing and "\u{F0F67}" or "\u{F0F65}"
+		return waxing and "\u{1F312}" or "\u{1F318}"
 	elseif p:find("first") or (p:find("quarter") and waxing) then
-		return "\u{F0F61}"
+		return "\u{1F313}"
 	elseif p:find("gibbous") then
-		return waxing and "\u{F0F68}" or "\u{F0F66}"
+		return waxing and "\u{1F314}" or "\u{1F316}"
 	elseif p:find("last") or p:find("third") or p:find("quarter") then
-		return "\u{F0F63}"
+		return "\u{1F317}"
 	else
-		return "\u{F0F62}" -- full moon
+		return "\u{1F315}" -- full moon
 	end
 end
 
@@ -98,16 +81,15 @@ local function refresh()
 			if #description > 25 then
 				description = description:sub(1, 25) .. "…"
 			end
-			weather:set({
-				icon = { string = weather_glyph(description) },
-				label = { string = temperature .. "°C " .. description },
-			})
 			local astronomy = report.weather
 				and report.weather[1]
 				and report.weather[1].astronomy
 				and report.weather[1].astronomy[1]
 			local phase = astronomy and astronomy.moon_phase
-			moon:set({ icon = { string = moon_glyph(phase) } })
+			weather:set({
+				icon = { string = weather_glyph(description) },
+				label = { string = temperature .. "°C " .. description .. "  " .. moon_glyph(phase) },
+			})
 		end
 	)
 end

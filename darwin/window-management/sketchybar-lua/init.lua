@@ -56,7 +56,6 @@ require("items.spotify")
 require("items.clock")
 require("items.battery")
 require("items.volume")
-require("items.dotfiles")
 require("items.menubar")
 
 sbar.hotload(false)

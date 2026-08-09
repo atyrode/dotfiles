@@ -43,7 +43,6 @@ let
       "clock.lua"
       "battery.lua"
       "volume.lua"
-      "dotfiles.lua"
     ];
 
   # The bar is a transparent full-width strip with no y offset, so yabai must

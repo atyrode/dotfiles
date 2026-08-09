@@ -25,11 +25,11 @@ in
       right_padding = 8;
       window_gap = 8;
 
-      # The bar floats at the top edge; the native menu bar auto-hides
-      # (reachable by mousing to the top). Reserve the ported bar's full
-      # vertical footprint -- height 39 plus y_offset 10, both read from the
-      # reference sketchybarrc; the check derives this sum from the rc file.
-      external_bar = "all:49:0";
+      # The bar is a transparent full-width strip at the top edge (neutonfoo
+      # language: chips float on the wallpaper, no slab); the native menu bar
+      # auto-hides (reachable by mousing to the top). Reserve exactly the bar
+      # height from settings.lua; the check derives this sum from that file.
+      external_bar = "all:38:0";
     };
 
     # Utility float rules, plus the two yabai->SketchyBar bridges the ported
@@ -48,22 +48,34 @@ in
   };
 
   # SketchyBar renders yabai/OS state; it owns no windows and no hotkeys.
-  # The configuration is a faithful port of FelixKratz/dotfiles@e6288b3 -- the
-  # upstream README-screenshot bar -- deployed as his literal file tree to
-  # ~/.config/sketchybar by Home Manager (see home/macos-window-management.nix).
-  # `config` stays unset here so the daemon reads that tree exactly as
-  # upstream's does. Deviations live in the tree, each marked in-file: no
-  # compiled CPU helper, no Spotify media widget (its event class is dead on
-  # macOS 26), System Settings instead of the retired System Preferences, and
-  # the space_eager fast-highlight event the keyboard bindings feed.
+  # The configuration is Lua on SbarLua (resident process, direct mach IPC --
+  # no fork-per-event), visual language from neutonfoo/dotfiles (transparent
+  # bar, floating chips, notch-aware layout) on the Rio palette, with plugin
+  # logic descended from the validated FelixKratz e6288b3 port. Deployed to
+  # ~/.config/sketchybar by Home Manager; `config` stays unset so the daemon
+  # boots the tree's own sketchybarrc, which execs the Lua runtime.
   services.sketchybar = {
     enable = true;
     extraPackages = [
       pkgs.yabai
       pkgs.jq
       pkgs.gh
+      pkgs.lua5_5
+      pkgs.curl
+      pkgs.git
     ];
   };
+
+  # The Karabiner virtual keyboard (vendor 1241, product 41119) must be
+  # registered ISO (41) in macOS's per-device keyboard-type store. The
+  # Keyboard Setup Assistant once recorded it as ANSI (40), which swaps the
+  # `@` and `<` keys on the French ISO layout -- every keystroke flows through
+  # the virtual device, so its type wins. Root-owned plist, so enforce it at
+  # activation; takes effect at next login.
+  system.activationScripts.extraActivation.text = ''
+    /usr/bin/defaults write /Library/Preferences/com.apple.keyboardtype keyboardtype \
+      -dict-add "41119-1241-0" -int 41
+  '';
 
   # Tahoe keys Accessibility grants to a stable app identity. The classic
   # nixpkgs skhd binary lives at a generation-specific store path, so launch
@@ -88,7 +100,13 @@ in
 
   # SketchyBar owns the top edge, so the native menu bar auto-hides; it stays
   # reachable by mousing to the top of the screen.
-  fonts.packages = [ pkgs.sketchybar-app-font ];
+  # JetBrainsMono Nerd Font carries every widget glyph as a codepoint
+  # (neutonfoo's one-family approach); the app font renders only the per-app
+  # ligatures in Space and front-app chips.
+  fonts.packages = [
+    pkgs.sketchybar-app-font
+    pkgs.nerd-fonts.jetbrains-mono
+  ];
 
   system.defaults = {
     dock.mru-spaces = false;

@@ -22,75 +22,80 @@ let
   yabaiExtraConfig = cfg.services.yabai.extraConfig;
   strayBordersSignals = lib.hasInfix "borders-solo" yabaiExtraConfig;
 
-  # SketchyBar runs the faithful FelixKratz e6288b3 port committed as a
-  # literal file tree; services.sketchybar.config stays empty so the daemon
-  # reads the deployed tree. The contracts therefore read the tree itself.
+  # SketchyBar runs the Lua redesign (SbarLua runtime, neutonfoo chip
+  # language, Rio palette) committed as the sketchybar-lua tree;
+  # services.sketchybar.config stays empty so the daemon boots the deployed
+  # tree's own sketchybarrc. The contracts therefore read the tree itself.
   sketchybarEnabled = cfg.services.sketchybar.enable;
   sketchybarInlineConfig = cfg.services.sketchybar.config;
-  barTreeDir = ../darwin/window-management/sketchybar;
-  barRc = builtins.readFile (barTreeDir + "/sketchybarrc");
-  barColors = builtins.readFile (barTreeDir + "/colors.sh");
-  barSpacesItem = builtins.readFile (barTreeDir + "/items/spaces.sh");
-  barSpacePlugin = builtins.readFile (barTreeDir + "/plugins/space.sh");
-  barTreeText = lib.concatMapStrings (file: builtins.readFile (barTreeDir + "/${file}")) [
-    "sketchybarrc"
-    "items/apple.sh"
-    "items/spaces.sh"
-    "items/front_app.sh"
-    "items/calendar.sh"
-    "items/brew.sh"
-    "items/github.sh"
-    "items/battery.sh"
-    "items/volume.sh"
-  ];
+  barTreeDir = ../darwin/window-management/sketchybar-lua;
+  barInit = builtins.readFile (barTreeDir + "/init.lua");
+  barSettings = builtins.readFile (barTreeDir + "/settings.lua");
+  barColors = builtins.readFile (barTreeDir + "/colors.lua");
+  barSpacesItem = builtins.readFile (barTreeDir + "/items/spaces.lua");
+  barTreeText =
+    barInit
+    + barSettings
+    + lib.concatMapStrings (file: builtins.readFile (barTreeDir + "/items/${file}")) [
+      "spaces.lua"
+      "weather.lua"
+      "spotify.lua"
+      "clock.lua"
+      "battery.lua"
+      "volume.lua"
+      "dotfiles.lua"
+    ];
 
-  # The bar floats with a y offset, so yabai must reserve height + offset.
-  barHeightMatch = builtins.match ".*\n  height=([0-9]+)\n.*" barRc;
-  barHeight = if barHeightMatch == null then null else lib.head barHeightMatch;
-  barOffsetMatch = builtins.match ".*\n  y_offset=([0-9]+)\n.*" barRc;
-  barOffset = if barOffsetMatch == null then 0 else lib.toInt (lib.head barOffsetMatch);
-  barFootprint = if barHeight == null then null else toString (lib.toInt barHeight + barOffset);
+  # The bar is a transparent full-width strip with no y offset, so yabai must
+  # reserve exactly the bar height declared in settings.lua.
+  barHeightMatch = builtins.match ".*bar_height = ([0-9]+),.*" barSettings;
+  barFootprint = if barHeightMatch == null then null else lib.head barHeightMatch;
   externalBar = cfg.services.yabai.config.external_bar or "";
 
   # Keyboard Space switches must announce their destination eagerly: macOS
   # emits space_change only when the slide animation commits, so a binding
   # without the trigger regresses the bar highlight to trailing the keypress
   # by the whole animation. Both halves are pinned: the skhd bindings fire the
-  # event, and the ported tree declares and handles it.
+  # event, and the Lua tree registers and handles it.
   bindingsMissingEagerTrigger = lib.filter (
     index:
     !(lib.hasInfix "--focus ${index} && sketchybar --trigger space_eager TARGET=${index}" skhdConfig)
   ) (map toString (lib.range 1 9));
   treeHandlesEager =
-    lib.hasInfix "space_eager" barSpacesItem && lib.hasInfix "\"space_eager\")" barSpacePlugin;
+    lib.hasInfix ''sbar.add("event", "space_eager")'' barSpacesItem
+    && lib.hasInfix ''subscribe("space_eager"'' barSpacesItem;
 
-  # Exclusions that must hold: the compiled CPU helper and the Spotify media
-  # widget (media_change-class, dead on macOS 26) stay out of the rc.
-  # Functional references only: prose in the deviation header may name the
-  # excluded components without reintroducing them.
-  forbiddenBarSources = lib.filter (name: lib.hasInfix name barRc) [
-    "cpu.sh"
-    "spotify.sh"
-    "mach_helper"
-    "helper/helper"
-    "&& make"
+  # Space chips must never hide their app-icon content: the operator rejected
+  # the reference collapse twice. The chip styler may only touch colors, and
+  # nothing in the tree may zero a label width or animate one away.
+  spacesCollapseRegression = lib.filter (needle: lib.hasInfix needle barSpacesItem) [
+    "width = 0"
+    "width=0"
+    "--animate"
+    "label.drawing"
   ];
+
+  # Exclusions that must hold: the deprecated media_change event class (dead
+  # on macOS 26; Spotify rides its own distributed notification instead) and
+  # wifi_change (broken since Sonoma) stay out of the tree.
   forbiddenBarEvents = lib.filter (event: lib.hasInfix event barTreeText) [
     "wifi_change"
     "media_change"
   ];
   requiredBarEvents = [
-    "front_app_switched"
     "power_source_change"
     "system_woke"
     "volume_change"
     "window_focus"
     "windows_on_spaces"
+    "com.spotify.client.PlaybackStateChanged"
   ];
   missingBarEvents = lib.filter (event: !(lib.hasInfix event barTreeText)) requiredBarEvents;
 
-  # Fidelity pin: the reference palette, not a local reinterpretation.
-  portPaletteIntact = lib.hasInfix "export BAR_COLOR=0xa024273a" barColors;
+  # Palette pin: chips carry the Rio theme -- the teal accent from
+  # home/rio/config.toml and the terminal background as text-on-accent.
+  portPaletteIntact =
+    lib.hasInfix "accent = 0xff70c0b1" barColors && lib.hasInfix "on_accent = 0xff282c34" barColors;
 
   # yabai must feed the two custom events the ported tree consumes.
   missingBarSignals = lib.filter (trigger: !(lib.hasInfix trigger cfg.services.yabai.extraConfig)) [
@@ -377,19 +382,17 @@ assert lib.assertMsg (
 ) "yabai still registers borders-solo signals although JankyBorders was removed";
 assert lib.assertMsg sketchybarEnabled "the Darwin workstation must enable SketchyBar (phase 4)";
 assert lib.assertMsg (sketchybarInlineConfig == "")
-  "SketchyBar must run the ported reference tree from ~/.config/sketchybar; an inline config would shadow it";
-assert lib.assertMsg (
-  barHeight != null
-) "could not parse the bar height out of the ported sketchybarrc";
+  "SketchyBar must boot the deployed Lua tree from ~/.config/sketchybar; an inline config would shadow it";
+assert lib.assertMsg (barFootprint != null) "could not parse bar_height out of settings.lua";
 assert lib.assertMsg (externalBar == "all:${barFootprint}:0") (
-  "yabai must reserve exactly the ported bar's footprint (height + y_offset) at the top edge:"
+  "yabai must reserve exactly the bar height at the top edge:"
   + " expected external_bar all:"
   + barFootprint
   + ":0 but found '"
   + externalBar
   + "'. A mismatch either hides the bar behind tiles or wastes screen"
 );
-assert lib.assertMsg (lib.hasInfix "position=top" barRc)
+assert lib.assertMsg (lib.hasInfix ''position = "top"'' barInit)
   "the bar owns the top edge; moving it requires flipping the external_bar reservation and the menu-bar policy together";
 assert lib.assertMsg cfg.system.defaults.NSGlobalDomain._HIHideMenuBar
   "a top-positioned SketchyBar requires the native menu bar to auto-hide, or the two bars stack";
@@ -399,20 +402,21 @@ assert lib.assertMsg (bindingsMissingEagerTrigger == [ ]) (
   + lib.concatStringsSep ", " bindingsMissingEagerTrigger
 );
 assert lib.assertMsg treeHandlesEager
-  "the ported tree must declare the space_eager event and handle it in plugins/space.sh; without it the keyboard bindings' announcements go nowhere";
-assert lib.assertMsg (forbiddenBarSources == [ ]) (
-  "the ported sketchybarrc references excluded components (compiled helper / media widget): "
-  + lib.concatStringsSep ", " forbiddenBarSources
+  "spaces.lua must register the space_eager event and subscribe to it; without it the keyboard bindings' announcements go nowhere";
+assert lib.assertMsg (spacesCollapseRegression == [ ]) (
+  "Space chips must keep their app-icon content visible at all times -- the operator rejected"
+  + " collapse/animation styling twice; offending constructs in spaces.lua: "
+  + lib.concatStringsSep ", " spacesCollapseRegression
 );
 assert lib.assertMsg (missingBarEvents == [ ]) (
-  "the ported tree lost required event subscriptions: " + lib.concatStringsSep ", " missingBarEvents
+  "the Lua tree lost required event subscriptions: " + lib.concatStringsSep ", " missingBarEvents
 );
 assert lib.assertMsg (forbiddenBarEvents == [ ]) (
-  "the ported tree subscribes to events broken or deprecated on this macOS: "
+  "the Lua tree subscribes to events broken or deprecated on this macOS: "
   + lib.concatStringsSep ", " forbiddenBarEvents
 );
 assert lib.assertMsg portPaletteIntact
-  "colors.sh must keep the reference palette verbatim (BAR_COLOR=0xa024273a); local reinterpretation of the reference design is the failure mode this port exists to end";
+  "colors.lua must carry the Rio theme: accent 0xff70c0b1 (vi-cursor teal) with 0xff282c34 text-on-accent; the bar and the terminal share one palette";
 assert lib.assertMsg (missingBarSignals == [ ]) (
   "yabai must feed the ported tree's custom events; missing signal actions: "
   + lib.concatStringsSep ", " missingBarSignals

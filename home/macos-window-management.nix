@@ -15,18 +15,27 @@ in
     pkgs.yabai
   ];
 
-  # The SketchyBar configuration is the faithful FelixKratz e6288b3 port
-  # committed under darwin/window-management/sketchybar. SketchyBar never
+  # The SketchyBar configuration is Lua on the SbarLua runtime, deployed as
+  # the darwin/window-management/sketchybar-lua tree. SketchyBar never
   # rewrites its config, so store symlinks are safe here (unlike Karabiner).
-  # icon_map.sh comes from the sketchybar-app-font package: the same project
-  # Felix's snapshot was taken from, maintained as a superset of it, so
-  # current applications resolve instead of falling back to ":default:".
+  # The sketchybarrc bootstrap is generated because it must name store paths:
+  # the SbarLua C module (LUA_CPATH), the sketchybar-app-font ligature table
+  # (LUA_PATH), and the Lua 5.5 interpreter the module is compiled against.
   xdg.configFile = lib.mkIf pkgs.stdenv.isDarwin {
     "sketchybar" = {
-      source = ../darwin/window-management/sketchybar;
+      source = ../darwin/window-management/sketchybar-lua;
       recursive = true;
     };
-    "sketchybar/plugins/icon_map.sh".source = "${pkgs.sketchybar-app-font}/bin/icon_map.sh";
+    "sketchybar/sketchybarrc" = {
+      executable = true;
+      text = ''
+        #!/bin/bash
+        # Generated bootstrap: exec the Lua runtime against this tree.
+        export LUA_CPATH="${pkgs.sbarlua}/lib/lua/5.5/?.so;;"
+        export LUA_PATH="$HOME/.config/sketchybar/?.lua;$HOME/.config/sketchybar/?/init.lua;${pkgs.sketchybar-app-font}/lib/sketchybar-app-font/?.lua;;"
+        exec ${pkgs.lua5_5}/bin/lua "$HOME/.config/sketchybar/init.lua"
+      '';
+    };
   };
 
   # Karabiner owns input transformation only: Caps Lock held becomes the

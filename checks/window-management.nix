@@ -7,6 +7,7 @@
 
 let
   cfg = darwinConfig.config;
+  darwinWindowManagementSource = builtins.readFile ../darwin/window-management.nix;
   packageNames = map lib.getName homeConfig.config.home.packages;
   caskName = cask: if builtins.isString cask then cask else cask.name;
   caskNames = map caskName cfg.homebrew.casks;
@@ -92,7 +93,6 @@ let
   hammerspoonAgent = cfg.launchd.user.agents.hammerspoon;
   sketchybarAgent = cfg.launchd.user.agents.sketchybar;
   sketchybarRuntimePackageNames = map lib.getName cfg.services.sketchybar.extraPackages;
-  dmSansPackage = pkgs.google-fonts.override { fonts = [ "DM Sans" ]; };
   installedFontPackageNames = map lib.getName cfg.fonts.packages;
   requestedFontFamilies = lib.all (needle: lib.hasInfix needle barSettingsCode) [
     ''measure = "JetBrainsMono Nerd Font",''
@@ -812,7 +812,7 @@ assert lib.assertMsg
     requestedFontFamilies
     && builtins.elem "nerd-fonts-jetbrains-mono" installedFontPackageNames
     && builtins.elem "google-fonts" installedFontPackageNames
-    && dmSansPackage.fonts == [ "DMSans" ]
+    && lib.hasInfix ''(pkgs.google-fonts.override { fonts = [ "DM Sans" ]; })'' darwinWindowManagementSource
     && !(builtins.elem "dm-sans" installedFontPackageNames)
   )
   "DATUM settings and installed outputs must pair JetBrainsMono Nerd Font with Google Fonts' genuine DM Sans family";

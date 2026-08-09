@@ -5,23 +5,33 @@ let
 
   # Shared palette, same source of truth the rest of the stack uses: Rio's
   # background, foreground, and vi-cursor accent (see home/rio/config.toml).
-  barHeight = 30;
-  colorBar = "0xff282c34";
+  # The two structural grays and the warning colors follow the proportions of
+  # FelixKratz's reference SketchyBar setup, which this bar's visual recipe is
+  # lifted from; they are chrome, not theme, so the check pins only the accent.
+  barHeight = 40;
+  colorBarBg = "0xf0282c34";
   colorLabel = "0xffffffff";
   colorAccent = "0xff70c0b1";
-  colorDim = "0xff3e4451";
+  colorGray1 = "0xff333743";
+  colorGray2 = "0xff3e4451";
+  colorEdge = "0xff181c22";
+  colorWarn = "0xfff39660";
+  colorCrit = "0xfffc5d7c";
+  appFont = "${pkgs.sketchybar-app-font}/bin/icon_map.sh";
 
   # SketchyBar visualizes yabai/OS state but owns none of it. Every item is
   # event-driven; the only timers are the clock and the battery percentage,
   # which have no native events to subscribe to.
   #
-  # One plugin owns all Space-item state -- existence, focus, occupancy -- so
-  # there is exactly one writer and no ordering race between subscribers of the
-  # same event. It runs on space events only: an event-triggered yabai query,
-  # never a polling loop. Items for Spaces that do not currently exist are
-  # hidden entirely, i3-style. label.alpha is not a real SketchyBar property
-  # (silently ignored), so occupancy dims through label.color. The focused
-  # numeral flips dark against the accent pill.
+  # One plugin owns all Space-item state -- existence, focus, occupancy and the
+  # per-Space application icons -- so there is exactly one writer and no
+  # ordering race between subscribers of the same event. Everything lands in a
+  # single animated sketchybar invocation: nine separate --set calls cost
+  # ~125ms per event and read as visible lag on a space switch.
+  #
+  # The focused accent is NOT set here: the items carry static
+  # highlight_colors in the config (where the check pins the palette) and the
+  # driver only flips the highlight booleans.
   spacesPlugin = pkgs.writeShellApplication {
     name = "sketchybar-spaces";
     runtimeInputs = [
@@ -30,27 +40,43 @@ let
       pkgs.jq
     ];
     text = ''
-      # One yabai query, one sketchybar invocation. Nine separate --set calls
-      # cost ~125ms per event and read as visible lag on a space switch;
-      # batching everything into a single IPC message is near-instant.
-      declare -A count focus
+      declare -A count focus icons
       while read -r index windows focused; do
         count[$index]=$windows
         focus[$index]=$focused
       done < <(yabai -m query --spaces | jq -r '.[] | "\(.index) \(.windows | length) \(."has-focus")"')
+
+      # App-icon ligatures per Space, rendered by sketchybar-app-font. One
+      # icon_map lookup per unique app; duplicates within a Space collapse.
+      declare -A seen
+      while IFS=$'\t' read -r space app; do
+        key="$space::$app"
+        [ -n "''${seen[$key]:-}" ] && continue
+        seen[$key]=1
+        icons[$space]="''${icons[$space]:-}$('${appFont}' "$app") "
+      done < <(yabai -m query --windows | jq -r '.[] | select(."is-minimized" | not) | "\(.space)\t\(.app)"')
+
       args=()
       for index in 1 2 3 4 5 6 7 8 9; do
         if [ -z "''${count[$index]:-}" ]; then
           args+=(--set "space.$index" drawing=off)
-        elif [ "''${focus[$index]}" = "true" ]; then
-          args+=(--set "space.$index" drawing=on background.drawing=on label.color=${colorBar})
-        elif [ "''${count[$index]}" -gt 0 ]; then
-          args+=(--set "space.$index" drawing=on background.drawing=off label.color=${colorLabel})
-        else
-          args+=(--set "space.$index" drawing=on background.drawing=off label.color=${colorDim})
+          continue
         fi
+        if [ "''${focus[$index]}" = "true" ]; then
+          highlight=on
+          edge=${colorEdge}
+        else
+          highlight=off
+          edge=${colorGray2}
+        fi
+        args+=(
+          --set "space.$index" drawing=on
+          "icon.highlight=$highlight" "label.highlight=$highlight"
+          background.border_color="$edge"
+          label="''${icons[$index]:-}"
+        )
       done
-      sketchybar "''${args[@]}"
+      sketchybar --animate tanh 10 "''${args[@]}"
     '';
   };
 
@@ -59,7 +85,7 @@ let
     runtimeInputs = [ pkgs.sketchybar ];
     text = ''
       # $INFO carries the application name on front_app_switched.
-      sketchybar --set "$NAME" label="''${INFO:-}"
+      sketchybar --set "$NAME" label="''${INFO:-}" icon="$('${appFont}' "''${INFO:-}")"
     '';
   };
 
@@ -67,7 +93,9 @@ let
     name = "sketchybar-clock";
     runtimeInputs = [ pkgs.sketchybar ];
     text = ''
-      sketchybar --set "$NAME" label="$(date '+%a %d %b  %H:%M')"
+      # Reference-setup calendar: textual date in the icon slot, time in the
+      # label. No SF Symbols clock glyph exists in the recipe.
+      sketchybar --set "$NAME" icon="$(date '+%a %d %b')" label="$(date '+%H:%M')"
     '';
   };
 
@@ -75,22 +103,41 @@ let
     name = "sketchybar-battery";
     runtimeInputs = [ pkgs.sketchybar ];
     text = ''
+      # SF Symbols battery glyphs, byte-exact from the reference setup.
       status=$(/usr/bin/pmset -g batt)
       percent=$(printf '%s' "$status" | /usr/bin/grep -oE '[0-9]+%' | head -1)
-      case $status in
-        *'AC Power'*) icon='~' ;;
-        *) icon='%' ;;
-      esac
-      sketchybar --set "$NAME" label="$icon $percent"
+      charge=''${percent%"%"}
+      color=${colorLabel}
+      if printf '%s' "$status" | /usr/bin/grep -q 'AC Power'; then
+        icon=$(printf '\xf4\x80\xa2\x8b')
+      elif [ "''${charge:-0}" -gt 80 ]; then
+        icon=$(printf '\xf4\x80\x9b\xa8')
+      elif [ "''${charge:-0}" -gt 60 ]; then
+        icon=$(printf '\xf4\x80\xba\xb8')
+      elif [ "''${charge:-0}" -gt 40 ]; then
+        icon=$(printf '\xf4\x80\xba\xb6')
+      elif [ "''${charge:-0}" -gt 20 ]; then
+        icon=$(printf '\xf4\x80\x9b\xa9'); color=${colorWarn}
+      else
+        icon=$(printf '\xf4\x80\x9b\xaa'); color=${colorCrit}
+      fi
+      sketchybar --set "$NAME" icon="$icon" icon.color="$color" label="$percent"
     '';
   };
 
   # Space items are passive click targets; spacesPlugin is their only writer.
+  # Numbers sit in the icon slot, per-Space app icons in the label slot. The
+  # accent lives here statically as highlight_color.
   spaceItems = lib.concatMapStrings (index: ''
     sketchybar --add space space.${index} left \
-      --set space.${index} space=${index} label=${index} label.padding_left=8 label.padding_right=8 \
-        background.corner_radius=4 background.height=20 background.color=${colorAccent} background.drawing=off \
-        drawing=off \
+      --set space.${index} space=${index} drawing=off \
+        icon=${index} icon.padding_left=12 icon.padding_right=6 \
+        icon.color=${colorLabel} icon.highlight_color=${colorAccent} \
+        label.font="sketchybar-app-font:Regular:16.0" label.y_offset=-1 \
+        label.padding_right=14 label.color=${colorGray2} label.highlight_color=${colorLabel} \
+        background.color=${colorGray1} background.border_width=1 \
+        background.height=26 background.corner_radius=9 background.border_color=${colorGray2} \
+        padding_left=2 padding_right=2 \
         click_script='${yabai} -m space --focus ${index}'
   '') (map toString (lib.range 1 9));
 in
@@ -115,10 +162,10 @@ in
       right_padding = 8;
       window_gap = 8;
 
-      # The bar sits at the bottom so the native menu bar stays untouched while
-      # SketchyBar proves itself (issue #360 phase 4). Reserve exactly the bar
-      # height so tiles never underlap it; the check pins this equality.
-      external_bar = "all:0:${toString barHeight}";
+      # The bar owns the top edge; the native menu bar auto-hides (reachable by
+      # mousing to the top). Reserve exactly the bar height so tiles never
+      # underlap it; the check pins this equality.
+      external_bar = "all:${toString barHeight}:0";
     };
 
     # Start with utility windows whose floating behavior is predictable. Add
@@ -135,30 +182,51 @@ in
   services.sketchybar = {
     enable = true;
     config = ''
-      sketchybar --bar position=bottom height=${toString barHeight} color=${colorBar} padding_left=8 padding_right=8
+      sketchybar --bar position=top height=${toString barHeight} color=${colorBarBg} padding_left=2 padding_right=2
 
-      sketchybar --default label.font="Helvetica:Bold:13.0" label.color=${colorLabel} \
-        icon.font="Helvetica:Bold:13.0" icon.color=${colorLabel} \
-        background.color=${colorDim} background.drawing=off
+      sketchybar --default \
+        icon.font="SF Pro:Bold:14.0" icon.color=${colorLabel} \
+        icon.padding_left=3 icon.padding_right=3 \
+        label.font="SF Pro:Semibold:13.0" label.color=${colorLabel} \
+        label.padding_left=3 label.padding_right=3 \
+        padding_left=5 padding_right=5 \
+        background.height=28 background.corner_radius=9 \
+        background.border_width=2 background.border_color=${colorGray2} \
+        background.drawing=off
 
       ${spaceItems}
       sketchybar --add item front_app left \
-        --set front_app label.padding_left=12 script='${lib.getExe frontAppPlugin}' \
+        --set front_app icon.font="sketchybar-app-font:Regular:16.0" \
+          label.font="SF Pro:Black:12.0" label.padding_left=6 padding_left=10 \
+          script='${lib.getExe frontAppPlugin}' \
         --subscribe front_app front_app_switched
 
       sketchybar --add item clock right \
-        --set clock update_freq=30 script='${lib.getExe clockPlugin}'
+        --set clock update_freq=30 \
+          icon.font="SF Pro:Black:12.0" icon.padding_left=10 \
+          label.padding_right=10 \
+          background.drawing=on background.color=${colorGray2} \
+          background.border_width=1 background.border_color=${colorEdge} \
+          script='${lib.getExe clockPlugin}'
 
       sketchybar --add item battery right \
-        --set battery update_freq=120 script='${lib.getExe batteryPlugin}' \
+        --set battery update_freq=120 \
+          icon.font="SF Pro:Regular:19.0" icon.padding_left=8 \
+          label.padding_right=8 \
+          background.drawing=on background.color=${colorGray1} \
+          background.border_width=1 background.border_color=${colorEdge} \
+          script='${lib.getExe batteryPlugin}' \
         --subscribe battery power_source_change system_woke
 
       sketchybar --add item spaces_driver left \
         --set spaces_driver drawing=off script='${lib.getExe spacesPlugin}' \
         --subscribe spaces_driver space_change space_windows_change display_change
 
-      # Populate initial Space state without waiting for the first event.
+      # Populate initial state without waiting for the first events. The
+      # plugins address their item through $NAME, which events normally set.
       ${lib.getExe spacesPlugin}
+      NAME=battery ${lib.getExe batteryPlugin}
+      NAME=clock ${lib.getExe clockPlugin}
 
       sketchybar --update
     '';
@@ -185,9 +253,15 @@ in
     managedBy = "darwin/window-management.nix";
   };
 
+  # SketchyBar owns the top edge, so the native menu bar auto-hides; it stays
+  # reachable by mousing to the top of the screen.
+  fonts.packages = [ pkgs.sketchybar-app-font ];
+
   system.defaults = {
     dock.mru-spaces = false;
     spaces.spans-displays = false;
+
+    NSGlobalDomain._HIHideMenuBar = true;
 
     WindowManager = {
       GloballyEnabled = false;

@@ -334,14 +334,18 @@ assert lib.assertMsg sketchybarEnabled "the Darwin workstation must enable Sketc
 assert lib.assertMsg (
   barHeight != null
 ) "could not parse the bar height out of the SketchyBar config";
-assert lib.assertMsg (externalBar == "all:0:${barHeight}") (
-  "yabai must reserve exactly the SketchyBar height at the bottom edge:"
-  + " expected external_bar all:0:"
+assert lib.assertMsg (externalBar == "all:${barHeight}:0") (
+  "yabai must reserve exactly the SketchyBar height at the top edge:"
+  + " expected external_bar all:"
   + barHeight
-  + " but found '"
+  + ":0 but found '"
   + externalBar
   + "'. A mismatch either hides the bar behind tiles or wastes screen"
 );
+assert lib.assertMsg (lib.hasInfix "position=top" sketchybarConfig)
+  "the bar owns the top edge; moving it requires flipping the external_bar reservation and the menu-bar policy together";
+assert lib.assertMsg cfg.system.defaults.NSGlobalDomain._HIHideMenuBar
+  "a top-positioned SketchyBar requires the native menu bar to auto-hide, or the two bars stack";
 assert lib.assertMsg (missingBarEvents == [ ]) (
   "SketchyBar items must stay event-driven; missing subscriptions: "
   + lib.concatStringsSep ", " missingBarEvents

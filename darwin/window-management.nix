@@ -3,15 +3,18 @@
 let
   yabai = lib.getExe pkgs.yabai;
 
-  # Shared palette, same source of truth the rest of the stack uses: Rio's
-  # background, foreground, and vi-cursor accent (see home/rio/config.toml).
-  # The two structural grays and the warning colors follow the proportions of
-  # FelixKratz's reference SketchyBar setup, which this bar's visual recipe is
-  # lifted from; they are chrome, not theme, so the check pins only the accent.
+  # Design tokens, spec v2 (pixel-audited 2026-08-09). Roles, not values:
+  # exactly two surfaces (capsule fill, clock fill doubling as border tone),
+  # one primary text color, one DEDICATED secondary-text color -- the v1 bar
+  # reused the surface gray for dim text, which dimmed inactive Space icons to
+  # invisibility -- and the Rio vi-cursor accent reserved exclusively for
+  # focused state. Structure allows two levels only: bar surface -> capsule.
+  # Every visible element sits in a capsule; nothing floats bare.
   barHeight = 40;
   barYOffset = 8;
   colorBarBg = "0xf0282c34";
   colorLabel = "0xffffffff";
+  colorTextDim = "0xff9aa3b2";
   colorAccent = "0xff70c0b1";
   colorGray1 = "0xff333743";
   colorGray2 = "0xff3e4451";
@@ -49,19 +52,24 @@ let
 
       # App-icon ligatures per Space, rendered by sketchybar-app-font. One
       # icon_map lookup per unique app; duplicates within a Space collapse.
+      # Apps the font does not know map to ":default:", a solid white box that
+      # reads as tofu (pixel audit) -- unmapped apps get no ligature instead.
       declare -A seen
       while IFS=$'\t' read -r space app; do
         key="$space::$app"
         [ -n "''${seen[$key]:-}" ] && continue
         seen[$key]=1
-        icons[$space]="''${icons[$space]:-}$('${appFont}' "$app") "
+        glyph=$('${appFont}' "$app")
+        case $glyph in
+          *:default:*) continue ;;
+        esac
+        icons[$space]="''${icons[$space]:-}$glyph "
       done < <(yabai -m query --windows | jq -r '.[] | select(."is-minimized" | not) | "\(.space)\t\(.app)"')
 
-      # FelixKratz's space-select pattern (dotfiles@e6288b3 plugins/space.sh):
-      # the focused Space collapses its app-icon strip to width 0 so the
-      # accent numeral stands alone; unfocused Spaces show their icons. Doc
-      # order semantics: sets BEFORE --animate snap (booleans, strings), sets
-      # AFTER it animate (widths, colors).
+      # Focused Space: accent numeral + edge ring; app icons stay visible on
+      # every Space (the reference setup's width-collapse was rejected by the
+      # operator). Doc order semantics: sets BEFORE --animate snap (booleans,
+      # strings), sets AFTER it fade (colors).
       snap=()
       fade=()
       for index in 1 2 3 4 5 6 7 8 9; do
@@ -72,21 +80,18 @@ let
         if [ "''${focus[$index]}" = "true" ]; then
           highlight=on
           edge=${colorEdge}
-          width=0
         else
           highlight=off
           edge=${colorGray2}
-          width=dynamic
         fi
         snap+=(
           --set "space.$index" drawing=on
           "icon.highlight=$highlight" "label.highlight=$highlight"
-          label="''${icons[$index]:-}"
+          label="''${icons[$index]:-}" label.width=dynamic
         )
         fade+=(
           --set "space.$index"
           "background.border_color=$edge"
-          "label.width=$width"
         )
       done
       sketchybar "''${snap[@]}" --animate tanh 20 "''${fade[@]}"
@@ -112,11 +117,9 @@ let
         if [ "$index" = "$target" ]; then
           highlight=on
           edge=${colorEdge}
-          width=0
         else
           highlight=off
           edge=${colorGray2}
-          width=dynamic
         fi
         snap+=(
           --set "space.$index"
@@ -125,12 +128,11 @@ let
         fade+=(
           --set "space.$index"
           "background.border_color=$edge"
-          "label.width=$width"
         )
       done
       # Booleans snap before --animate (they would otherwise commit at the
       # END of the animation window, re-adding the lag this path removes);
-      # colors and widths fade after it. Single message, doc-verified order.
+      # colors fade after it. Single message, doc-verified order.
       sketchybar "''${snap[@]}" --animate tanh 20 "''${fade[@]}"
     '';
   };
@@ -140,7 +142,13 @@ let
     runtimeInputs = [ pkgs.sketchybar ];
     text = ''
       # $INFO carries the application name on front_app_switched.
-      sketchybar --set "$NAME" label="''${INFO:-}" icon="$('${appFont}' "''${INFO:-}")"
+      # Unmapped apps produce the ":default:" white-box ligature; show text
+      # only for those instead of a tofu tile.
+      glyph=$('${appFont}' "''${INFO:-}")
+      case $glyph in
+        *:default:*) sketchybar --set "$NAME" label="''${INFO:-}" icon="" ;;
+        *) sketchybar --set "$NAME" label="''${INFO:-}" icon="$glyph" ;;
+      esac
     '';
   };
 
@@ -233,10 +241,14 @@ let
       # Weather has no native event, so this is one of the three sanctioned
       # timers (clock, battery percentage, weather). wttr.in needs no API key
       # and locates by IP; on failure the previous label is simply kept.
-      report=$(curl -fsS --max-time 5 'https://wttr.in/?format=%c%t' || true)
+      # Text-only on purpose: wttr's %c is a color emoji, which reads as a
+      # placeholder next to the bar's monochrome SF glyphs (pixel audit).
+      report=$(curl -fsS --max-time 5 'https://wttr.in/?format=%t' || true)
       case $report in
         *"Unknown location"*|"") exit 0 ;;
       esac
+      report=''${report#+}
+      report=''${report%C}
       sketchybar --set "$NAME" label="$report"
     '';
   };
@@ -247,13 +259,14 @@ let
   spaceItems = lib.concatMapStrings (index: ''
     sketchybar --add space space.${index} left \
       --set space.${index} space=${index} drawing=off \
-        icon=${index} icon.padding_left=12 icon.padding_right=6 \
+        icon=${index} icon.padding_left=8 icon.padding_right=6 \
+        icon.font="SF Pro:Bold:14.0" \
         icon.color=${colorLabel} icon.highlight_color=${colorAccent} \
         label.font="sketchybar-app-font:Regular:16.0" label.y_offset=-1 \
-        label.padding_right=14 label.color=${colorGray2} label.highlight_color=${colorLabel} \
-        background.color=${colorGray1} background.border_width=1 \
-        background.height=26 background.corner_radius=9 background.border_color=${colorGray2} \
-        padding_left=2 padding_right=2 \
+        label.padding_right=8 label.color=${colorTextDim} label.highlight_color=${colorLabel} \
+        background.drawing=on background.color=${colorGray1} background.border_width=1 \
+        background.height=28 background.corner_radius=9 background.border_color=${colorGray2} \
+        padding_left=3 padding_right=3 \
         click_script='${yabai} -m space --focus ${index} && sketchybar --trigger space_eager TARGET=${index}'
   '') (map toString (lib.range 1 9));
 in
@@ -299,10 +312,10 @@ in
   services.sketchybar = {
     enable = true;
     config = ''
-      sketchybar --bar position=top height=${toString barHeight} color=${colorBarBg} \
-        margin=12 y_offset=${toString barYOffset} corner_radius=12 blur_radius=30 \
+      sketchybar --bar position=top height=${toString barHeight} y_offset=${toString barYOffset} color=${colorBarBg} \
+        margin=12 corner_radius=12 blur_radius=30 \
         sticky=on shadow=on \
-        padding_left=6 padding_right=6
+        padding_left=8 padding_right=8
 
       sketchybar --default \
         icon.font="SF Pro:Bold:14.0" icon.color=${colorLabel} \
@@ -316,7 +329,8 @@ in
 
       sketchybar --add item apple_logo left \
         --set apple_logo icon="$(printf '\xf4\x80\xa3\xba')" icon.font="SF Pro:Black:16.0" \
-          icon.color=${colorAccent} icon.padding_left=10 icon.padding_right=10 \
+          icon.color=${colorLabel} icon.padding_left=10 icon.padding_right=9 icon.y_offset=1 \
+          padding_left=3 padding_right=3 \
           background.drawing=on background.color=${colorGray1} \
           background.border_width=1 background.border_color=${colorEdge} \
           popup.background.color=${colorBarBg} popup.background.corner_radius=9 \
@@ -337,47 +351,47 @@ in
           click_script='pmset displaysleepnow; sketchybar --set apple_logo popup.drawing=off'
 
       ${spaceItems}
-      # Felix's group pill: one shared bracket ring around all Space items
-      # (dotfiles@e6288b3 items/spaces.sh).
-      sketchybar --add bracket spaces_group '/space\..*/' \
-        --set spaces_group background.drawing=on background.color=0x00000000 \
-          background.border_color=${colorGray2} background.border_width=2 \
-          background.corner_radius=12 background.height=32
-
-      sketchybar --add item spaces_chevron left \
-        --set spaces_chevron icon="$(printf '\xf4\x80\x86\x8a')" icon.font="SF Pro:Bold:12.0" \
-          icon.color=${colorGray2} padding_left=4 padding_right=2
-
       sketchybar --add item front_app left \
         --set front_app icon.font="sketchybar-app-font:Regular:16.0" \
-          label.font="SF Pro:Black:12.0" label.padding_left=6 padding_left=10 \
+          icon.padding_left=8 icon.color=${colorLabel} \
+          label.font="SF Pro:Semibold:13.0" label.padding_left=4 label.padding_right=8 \
+          background.drawing=on background.color=${colorGray1} \
+          background.border_width=1 background.border_color=${colorGray2} \
+          background.height=28 background.corner_radius=9 \
+          padding_left=3 padding_right=3 \
           script='${lib.getExe frontAppPlugin}' \
         --subscribe front_app front_app_switched
 
       sketchybar --add item clock right \
         --set clock update_freq=30 \
-          icon.font="SF Pro:Black:12.0" icon.padding_left=10 \
-          label.padding_right=10 \
-          background.drawing=on background.color=${colorGray2} \
-          background.border_width=1 background.border_color=${colorEdge} \
+          icon.font="SF Pro:Semibold:13.0" icon.padding_left=8 \
+          label.font="SF Pro:Bold:13.0" label.padding_right=8 \
+          background.drawing=on background.color=${colorGray1} \
+          background.border_width=1 background.border_color=${colorGray2} \
+          background.height=28 background.corner_radius=9 \
+          padding_left=3 padding_right=3 \
           script='${lib.getExe clockPlugin}' \
           click_script='open -a Calendar'
 
       sketchybar --add item battery right \
         --set battery update_freq=120 \
-          icon.font="SF Pro:Regular:19.0" icon.padding_left=8 \
+          icon.font="SF Pro:Regular:16.0" icon.padding_left=8 \
           label.padding_right=8 \
           background.drawing=on background.color=${colorGray1} \
-          background.border_width=1 background.border_color=${colorEdge} \
+          background.border_width=1 background.border_color=${colorGray2} \
+          background.height=28 background.corner_radius=9 \
+          padding_left=3 padding_right=3 \
           script='${lib.getExe batteryPlugin}' \
           click_script='open "x-apple.systempreferences:com.apple.Battery-Settings.extension"' \
         --subscribe battery power_source_change system_woke
 
       sketchybar --add item volume right \
-        --set volume icon.font="SF Pro:Regular:15.0" icon.padding_left=8 \
+        --set volume icon.font="SF Pro:Regular:14.0" icon.padding_left=8 \
           label.padding_right=8 \
           background.drawing=on background.color=${colorGray1} \
-          background.border_width=1 background.border_color=${colorEdge} \
+          background.border_width=1 background.border_color=${colorGray2} \
+          background.height=28 background.corner_radius=9 \
+          padding_left=3 padding_right=3 \
           script='${lib.getExe volumePlugin}' \
           click_script='open "x-apple.systempreferences:com.apple.Sound-Settings.extension"' \
         --subscribe volume volume_change
@@ -385,7 +399,9 @@ in
       sketchybar --add item weather right \
         --set weather update_freq=1800 label.padding_left=8 label.padding_right=8 \
           background.drawing=on background.color=${colorGray1} \
-          background.border_width=1 background.border_color=${colorEdge} \
+          background.border_width=1 background.border_color=${colorGray2} \
+          background.height=28 background.corner_radius=9 \
+          padding_left=3 padding_right=3 \
           script='${lib.getExe weatherPlugin}' \
           click_script='open "https://wttr.in"' \
         --subscribe weather system_woke
@@ -414,6 +430,7 @@ in
       NAME=battery ${lib.getExe batteryPlugin}
       NAME=clock ${lib.getExe clockPlugin}
       NAME=volume INFO="$(/usr/bin/osascript -e 'output volume of (get volume settings)')" ${lib.getExe volumePlugin}
+      NAME=front_app INFO="$(${yabai} -m query --windows --window 2>/dev/null | ${lib.getExe pkgs.jq} -r '.app // empty')" ${lib.getExe frontAppPlugin}
 
       sketchybar --update
     '';

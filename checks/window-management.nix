@@ -33,7 +33,9 @@ let
   barHeightMatch = builtins.match ".*--bar[^\n]* height=([0-9]+).*" sketchybarConfig;
   barHeight = if barHeightMatch == null then null else lib.head barHeightMatch;
   # The bar floats with a y offset, so yabai must reserve height + offset.
-  barOffsetMatch = builtins.match ".*y_offset=([0-9]+).*" sketchybarConfig;
+  # Anchored to the --bar command's own continuation block: a bare ".*" prefix
+  # is greedy and would match a later item-level icon.y_offset instead.
+  barOffsetMatch = builtins.match ".*--bar[^\n]* y_offset=([0-9]+).*" sketchybarConfig;
   barOffset = if barOffsetMatch == null then 0 else lib.toInt (lib.head barOffsetMatch);
   barFootprint = if barHeight == null then null else toString (lib.toInt barHeight + barOffset);
   externalBar = cfg.services.yabai.config.external_bar or "";

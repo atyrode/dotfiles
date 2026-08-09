@@ -57,27 +57,39 @@ let
         icons[$space]="''${icons[$space]:-}$('${appFont}' "$app") "
       done < <(yabai -m query --windows | jq -r '.[] | select(."is-minimized" | not) | "\(.space)\t\(.app)"')
 
-      args=()
+      # FelixKratz's space-select pattern (dotfiles@e6288b3 plugins/space.sh):
+      # the focused Space collapses its app-icon strip to width 0 so the
+      # accent numeral stands alone; unfocused Spaces show their icons. Doc
+      # order semantics: sets BEFORE --animate snap (booleans, strings), sets
+      # AFTER it animate (widths, colors).
+      snap=()
+      fade=()
       for index in 1 2 3 4 5 6 7 8 9; do
         if [ -z "''${count[$index]:-}" ]; then
-          args+=(--set "space.$index" drawing=off)
+          snap+=(--set "space.$index" drawing=off)
           continue
         fi
         if [ "''${focus[$index]}" = "true" ]; then
           highlight=on
           edge=${colorEdge}
+          width=0
         else
           highlight=off
           edge=${colorGray2}
+          width=dynamic
         fi
-        args+=(
+        snap+=(
           --set "space.$index" drawing=on
           "icon.highlight=$highlight" "label.highlight=$highlight"
-          background.border_color="$edge"
           label="''${icons[$index]:-}"
         )
+        fade+=(
+          --set "space.$index"
+          "background.border_color=$edge"
+          "label.width=$width"
+        )
       done
-      sketchybar --animate tanh 10 "''${args[@]}"
+      sketchybar "''${snap[@]}" --animate tanh 20 "''${fade[@]}"
     '';
   };
 
@@ -94,24 +106,32 @@ let
     text = ''
       target=''${TARGET:-}
       [ -n "$target" ] || exit 0
-      args=()
+      snap=()
+      fade=()
       for index in 1 2 3 4 5 6 7 8 9; do
         if [ "$index" = "$target" ]; then
           highlight=on
           edge=${colorEdge}
+          width=0
         else
           highlight=off
           edge=${colorGray2}
+          width=dynamic
         fi
-        args+=(
+        snap+=(
           --set "space.$index"
           "icon.highlight=$highlight" "label.highlight=$highlight"
+        )
+        fade+=(
+          --set "space.$index"
           "background.border_color=$edge"
+          "label.width=$width"
         )
       done
-      # No --animate here: highlight booleans apply at animation END, which
-      # would defeat the eager path's entire purpose (~166ms at tanh 10).
-      sketchybar "''${args[@]}"
+      # Booleans snap before --animate (they would otherwise commit at the
+      # END of the animation window, re-adding the lag this path removes);
+      # colors and widths fade after it. Single message, doc-verified order.
+      sketchybar "''${snap[@]}" --animate tanh 20 "''${fade[@]}"
     '';
   };
 
@@ -166,7 +186,13 @@ let
     text = ''
       # $INFO carries the volume percentage on volume_change, a native
       # SketchyBar event. SF Symbols speaker glyphs from the reference setup.
-      volume=''${INFO:-0}
+      # volume_change delivers the percentage in $INFO; other senders (the
+      # unlock event, initial run) re-query the system instead.
+      if [ "''${SENDER:-}" = "volume_change" ]; then
+        volume=''${INFO:-0}
+      else
+        volume=$(/usr/bin/osascript -e 'output volume of (get volume settings)')
+      fi
       if [ "$volume" -ge 60 ]; then
         icon=$(printf '\xf4\x80\x8a\xa9')
       elif [ "$volume" -ge 30 ]; then
@@ -179,6 +205,39 @@ let
         icon=$(printf '\xf4\x80\x8a\xa3')
       fi
       sketchybar --set "$NAME" icon="$icon" label="$volume%"
+    '';
+  };
+
+  # FelixKratz's hover-popup pattern (dotfiles@e6288b3 items/github.sh):
+  # mouse.entered opens, mouse.exited and mouse.exited.global close. The
+  # daemon swallows exits that land inside the item's own popup, so the menu
+  # stays open while the pointer is over it.
+  hoverPopupPlugin = pkgs.writeShellApplication {
+    name = "sketchybar-hover-popup";
+    runtimeInputs = [ pkgs.sketchybar ];
+    text = ''
+      case "''${SENDER:-}" in
+        mouse.entered) sketchybar --set "$NAME" popup.drawing=on ;;
+        mouse.exited | mouse.exited.global) sketchybar --set "$NAME" popup.drawing=off ;;
+      esac
+    '';
+  };
+
+  weatherPlugin = pkgs.writeShellApplication {
+    name = "sketchybar-weather";
+    runtimeInputs = [
+      pkgs.sketchybar
+      pkgs.curl
+    ];
+    text = ''
+      # Weather has no native event, so this is one of the three sanctioned
+      # timers (clock, battery percentage, weather). wttr.in needs no API key
+      # and locates by IP; on failure the previous label is simply kept.
+      report=$(curl -fsS --max-time 5 'https://wttr.in/?format=%c%t' || true)
+      case $report in
+        *"Unknown location"*|"") exit 0 ;;
+      esac
+      sketchybar --set "$NAME" label="$report"
     '';
   };
 
@@ -195,7 +254,7 @@ let
         background.color=${colorGray1} background.border_width=1 \
         background.height=26 background.corner_radius=9 background.border_color=${colorGray2} \
         padding_left=2 padding_right=2 \
-        click_script='${yabai} -m space --focus ${index}'
+        click_script='${yabai} -m space --focus ${index} && sketchybar --trigger space_eager TARGET=${index}'
   '') (map toString (lib.range 1 9));
 in
 {
@@ -242,6 +301,7 @@ in
     config = ''
       sketchybar --bar position=top height=${toString barHeight} color=${colorBarBg} \
         margin=12 y_offset=${toString barYOffset} corner_radius=12 blur_radius=30 \
+        sticky=on shadow=on \
         padding_left=6 padding_right=6
 
       sketchybar --default \
@@ -262,7 +322,9 @@ in
           popup.background.color=${colorBarBg} popup.background.corner_radius=9 \
           popup.background.border_width=2 popup.background.border_color=${colorGray2} \
           popup.blur_radius=30 popup.height=30 \
-          click_script='sketchybar --set apple_logo popup.drawing=toggle'
+          script='${lib.getExe hoverPopupPlugin}' \
+          click_script='sketchybar --set apple_logo popup.drawing=toggle' \
+        --subscribe apple_logo mouse.entered mouse.exited mouse.exited.global
 
       sketchybar --add item apple.settings popup.apple_logo \
         --set apple.settings label="Settings" \
@@ -275,6 +337,13 @@ in
           click_script='pmset displaysleepnow; sketchybar --set apple_logo popup.drawing=off'
 
       ${spaceItems}
+      # Felix's group pill: one shared bracket ring around all Space items
+      # (dotfiles@e6288b3 items/spaces.sh).
+      sketchybar --add bracket spaces_group '/space\..*/' \
+        --set spaces_group background.drawing=on background.color=0x00000000 \
+          background.border_color=${colorGray2} background.border_width=2 \
+          background.corner_radius=12 background.height=32
+
       sketchybar --add item spaces_chevron left \
         --set spaces_chevron icon="$(printf '\xf4\x80\x86\x8a')" icon.font="SF Pro:Bold:12.0" \
           icon.color=${colorGray2} padding_left=4 padding_right=2
@@ -291,7 +360,8 @@ in
           label.padding_right=10 \
           background.drawing=on background.color=${colorGray2} \
           background.border_width=1 background.border_color=${colorEdge} \
-          script='${lib.getExe clockPlugin}'
+          script='${lib.getExe clockPlugin}' \
+          click_script='open -a Calendar'
 
       sketchybar --add item battery right \
         --set battery update_freq=120 \
@@ -300,6 +370,7 @@ in
           background.drawing=on background.color=${colorGray1} \
           background.border_width=1 background.border_color=${colorEdge} \
           script='${lib.getExe batteryPlugin}' \
+          click_script='open "x-apple.systempreferences:com.apple.Battery-Settings.extension"' \
         --subscribe battery power_source_change system_woke
 
       sketchybar --add item volume right \
@@ -308,7 +379,16 @@ in
           background.drawing=on background.color=${colorGray1} \
           background.border_width=1 background.border_color=${colorEdge} \
           script='${lib.getExe volumePlugin}' \
+          click_script='open "x-apple.systempreferences:com.apple.Sound-Settings.extension"' \
         --subscribe volume volume_change
+
+      sketchybar --add item weather right \
+        --set weather update_freq=1800 label.padding_left=8 label.padding_right=8 \
+          background.drawing=on background.color=${colorGray1} \
+          background.border_width=1 background.border_color=${colorEdge} \
+          script='${lib.getExe weatherPlugin}' \
+          click_script='open "https://wttr.in"' \
+        --subscribe weather system_woke
 
       sketchybar --add item spaces_driver left \
         --set spaces_driver drawing=off script='${lib.getExe spacesPlugin}' \
@@ -318,6 +398,15 @@ in
       sketchybar --add item eager_driver left \
         --set eager_driver drawing=off script='${lib.getExe spacesEagerPlugin}' \
         --subscribe eager_driver space_eager
+
+      # Push-driven freshness after unlock (docs: custom events can bind an
+      # NSDistributedNotification). Clock, battery, volume and weather refresh
+      # the moment the screen unlocks instead of waiting for their timers.
+      sketchybar --add event screen_unlocked com.apple.screenIsUnlocked \
+        --subscribe clock screen_unlocked \
+        --subscribe battery screen_unlocked \
+        --subscribe volume screen_unlocked \
+        --subscribe weather screen_unlocked
 
       # Populate initial state without waiting for the first events. The
       # plugins address their item through $NAME, which events normally set.

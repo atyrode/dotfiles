@@ -31,7 +31,9 @@ local slider = sbar.add("slider", "volume.slider", SLIDER_WIDTH, {
 			string = "\u{F111}",
 			font = { family = settings.font, style = "Bold", size = 11.0 },
 			color = colors.fg,
-			drawing = true,
+			-- Hidden while collapsed: the knob draws even at track width 0
+			-- and parks over the percentage label (operator screenshot).
+			drawing = false,
 		},
 	},
 	padding_left = 0,
@@ -78,6 +80,7 @@ local expanded = false
 
 local function toggle()
 	expanded = not expanded
+	slider:set({ slider = { knob = { drawing = expanded } } })
 	sbar.animate("tanh", 20, function()
 		slider:set({
 			slider = { width = expanded and SLIDER_WIDTH or 0 },

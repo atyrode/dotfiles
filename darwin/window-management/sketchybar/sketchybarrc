@@ -32,7 +32,10 @@ bar=(
   corner_radius=9
   y_offset=10
   margin=10
-  blur_radius=20
+  # DEVIATION from e6288b3: blur_radius=0. The backdrop blur samples a
+  # rectangle wider than the rounded pill, leaving a full-width hazy band the
+  # operator flagged (pixel-audited). Transparent fill without blur is clean.
+  blur_radius=0
   notch_width=0
 )
 

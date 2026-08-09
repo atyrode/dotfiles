@@ -37,26 +37,31 @@ ctrl + alt + cmd + shift - right : yabai -m window --warp east
 # Carbon kVK_ANSI_<n> constants, verified against Carbon.framework on-device:
 #   1 0x12   2 0x13   3 0x14   4 0x15   5 0x17
 #   6 0x16   7 0x1A   8 0x1C   9 0x19
-ctrl + alt + cmd - 0x12 : yabai -m space --focus 1
-ctrl + alt + cmd - 0x13 : yabai -m space --focus 2
-ctrl + alt + cmd - 0x14 : yabai -m space --focus 3
-ctrl + alt + cmd - 0x15 : yabai -m space --focus 4
-ctrl + alt + cmd - 0x17 : yabai -m space --focus 5
-ctrl + alt + cmd - 0x16 : yabai -m space --focus 6
-ctrl + alt + cmd - 0x1A : yabai -m space --focus 7
-ctrl + alt + cmd - 0x1C : yabai -m space --focus 8
-ctrl + alt + cmd - 0x19 : yabai -m space --focus 9
+#
+# Each switch also announces its destination to SketchyBar through the custom
+# space_eager event. macOS only emits space_change when the slide animation
+# commits, so without this the bar highlight trails the keypress by the whole
+# animation. Trackpad swipes have no knowable destination and stay commit-timed.
+ctrl + alt + cmd - 0x12 : yabai -m space --focus 1 && sketchybar --trigger space_eager TARGET=1
+ctrl + alt + cmd - 0x13 : yabai -m space --focus 2 && sketchybar --trigger space_eager TARGET=2
+ctrl + alt + cmd - 0x14 : yabai -m space --focus 3 && sketchybar --trigger space_eager TARGET=3
+ctrl + alt + cmd - 0x15 : yabai -m space --focus 4 && sketchybar --trigger space_eager TARGET=4
+ctrl + alt + cmd - 0x17 : yabai -m space --focus 5 && sketchybar --trigger space_eager TARGET=5
+ctrl + alt + cmd - 0x16 : yabai -m space --focus 6 && sketchybar --trigger space_eager TARGET=6
+ctrl + alt + cmd - 0x1A : yabai -m space --focus 7 && sketchybar --trigger space_eager TARGET=7
+ctrl + alt + cmd - 0x1C : yabai -m space --focus 8 && sketchybar --trigger space_eager TARGET=8
+ctrl + alt + cmd - 0x19 : yabai -m space --focus 9 && sketchybar --trigger space_eager TARGET=9
 
 # Send the focused window to a Space and follow it.
-ctrl + alt + cmd + shift - 0x12 : yabai -m window --space 1 && yabai -m space --focus 1
-ctrl + alt + cmd + shift - 0x13 : yabai -m window --space 2 && yabai -m space --focus 2
-ctrl + alt + cmd + shift - 0x14 : yabai -m window --space 3 && yabai -m space --focus 3
-ctrl + alt + cmd + shift - 0x15 : yabai -m window --space 4 && yabai -m space --focus 4
-ctrl + alt + cmd + shift - 0x17 : yabai -m window --space 5 && yabai -m space --focus 5
-ctrl + alt + cmd + shift - 0x16 : yabai -m window --space 6 && yabai -m space --focus 6
-ctrl + alt + cmd + shift - 0x1A : yabai -m window --space 7 && yabai -m space --focus 7
-ctrl + alt + cmd + shift - 0x1C : yabai -m window --space 8 && yabai -m space --focus 8
-ctrl + alt + cmd + shift - 0x19 : yabai -m window --space 9 && yabai -m space --focus 9
+ctrl + alt + cmd + shift - 0x12 : yabai -m window --space 1 && yabai -m space --focus 1 && sketchybar --trigger space_eager TARGET=1
+ctrl + alt + cmd + shift - 0x13 : yabai -m window --space 2 && yabai -m space --focus 2 && sketchybar --trigger space_eager TARGET=2
+ctrl + alt + cmd + shift - 0x14 : yabai -m window --space 3 && yabai -m space --focus 3 && sketchybar --trigger space_eager TARGET=3
+ctrl + alt + cmd + shift - 0x15 : yabai -m window --space 4 && yabai -m space --focus 4 && sketchybar --trigger space_eager TARGET=4
+ctrl + alt + cmd + shift - 0x17 : yabai -m window --space 5 && yabai -m space --focus 5 && sketchybar --trigger space_eager TARGET=5
+ctrl + alt + cmd + shift - 0x16 : yabai -m window --space 6 && yabai -m space --focus 6 && sketchybar --trigger space_eager TARGET=6
+ctrl + alt + cmd + shift - 0x1A : yabai -m window --space 7 && yabai -m space --focus 7 && sketchybar --trigger space_eager TARGET=7
+ctrl + alt + cmd + shift - 0x1C : yabai -m window --space 8 && yabai -m space --focus 8 && sketchybar --trigger space_eager TARGET=8
+ctrl + alt + cmd + shift - 0x19 : yabai -m window --space 9 && yabai -m space --focus 9 && sketchybar --trigger space_eager TARGET=9
 
 # Layout operations.
 ctrl + alt + cmd - space : yabai -m window --toggle float

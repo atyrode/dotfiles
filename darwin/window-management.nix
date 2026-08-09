@@ -9,6 +9,7 @@ let
   # FelixKratz's reference SketchyBar setup, which this bar's visual recipe is
   # lifted from; they are chrome, not theme, so the check pins only the accent.
   barHeight = 40;
+  barYOffset = 8;
   colorBarBg = "0xf0282c34";
   colorLabel = "0xffffffff";
   colorAccent = "0xff70c0b1";
@@ -77,6 +78,40 @@ let
         )
       done
       sketchybar --animate tanh 10 "''${args[@]}"
+    '';
+  };
+
+  # Eager highlight for keyboard switches. macOS emits space_change only when
+  # the slide animation commits, and yabai keeps reporting the old Space until
+  # then (verified: a query issued right after --focus still returns the
+  # origin). A trackpad swipe has no knowable destination, but the skhd
+  # bindings do -- they announce it through a custom event, and this handler
+  # flips highlights query-free while the slide is still animating. The
+  # authoritative spacesPlugin settles occupancy when space_change lands.
+  spacesEagerPlugin = pkgs.writeShellApplication {
+    name = "sketchybar-spaces-eager";
+    runtimeInputs = [ pkgs.sketchybar ];
+    text = ''
+      target=''${TARGET:-}
+      [ -n "$target" ] || exit 0
+      args=()
+      for index in 1 2 3 4 5 6 7 8 9; do
+        if [ "$index" = "$target" ]; then
+          highlight=on
+          edge=${colorEdge}
+        else
+          highlight=off
+          edge=${colorGray2}
+        fi
+        args+=(
+          --set "space.$index"
+          "icon.highlight=$highlight" "label.highlight=$highlight"
+          "background.border_color=$edge"
+        )
+      done
+      # No --animate here: highlight booleans apply at animation END, which
+      # would defeat the eager path's entire purpose (~166ms at tanh 10).
+      sketchybar "''${args[@]}"
     '';
   };
 
@@ -162,10 +197,11 @@ in
       right_padding = 8;
       window_gap = 8;
 
-      # The bar owns the top edge; the native menu bar auto-hides (reachable by
-      # mousing to the top). Reserve exactly the bar height so tiles never
-      # underlap it; the check pins this equality.
-      external_bar = "all:${toString barHeight}:0";
+      # The bar floats at the top edge with a y offset; the native menu bar
+      # auto-hides (reachable by mousing to the top). Reserve the bar's full
+      # vertical footprint -- height plus offset -- so tiles never underlap it;
+      # the check pins this equality.
+      external_bar = "all:${toString (barHeight + barYOffset)}:0";
     };
 
     # Start with utility windows whose floating behavior is predictable. Add
@@ -182,7 +218,9 @@ in
   services.sketchybar = {
     enable = true;
     config = ''
-      sketchybar --bar position=top height=${toString barHeight} color=${colorBarBg} padding_left=2 padding_right=2
+      sketchybar --bar position=top height=${toString barHeight} color=${colorBarBg} \
+        margin=12 y_offset=${toString barYOffset} corner_radius=12 blur_radius=30 \
+        padding_left=6 padding_right=6
 
       sketchybar --default \
         icon.font="SF Pro:Bold:14.0" icon.color=${colorLabel} \
@@ -194,7 +232,18 @@ in
         background.border_width=2 background.border_color=${colorGray2} \
         background.drawing=off
 
+      sketchybar --add item apple_logo left \
+        --set apple_logo icon="$(printf '\xf4\x80\xa3\xba')" icon.font="SF Pro:Black:16.0" \
+          icon.color=${colorAccent} icon.padding_left=10 icon.padding_right=10 \
+          background.drawing=on background.color=${colorGray1} \
+          background.border_width=1 background.border_color=${colorEdge} \
+          click_script='open -a "Mission Control"'
+
       ${spaceItems}
+      sketchybar --add item spaces_chevron left \
+        --set spaces_chevron icon="$(printf '\xf4\x80\x86\x8a')" icon.font="SF Pro:Bold:12.0" \
+          icon.color=${colorGray2} padding_left=4 padding_right=2
+
       sketchybar --add item front_app left \
         --set front_app icon.font="sketchybar-app-font:Regular:16.0" \
           label.font="SF Pro:Black:12.0" label.padding_left=6 padding_left=10 \
@@ -221,6 +270,11 @@ in
       sketchybar --add item spaces_driver left \
         --set spaces_driver drawing=off script='${lib.getExe spacesPlugin}' \
         --subscribe spaces_driver space_change space_windows_change display_change
+
+      sketchybar --add event space_eager
+      sketchybar --add item eager_driver left \
+        --set eager_driver drawing=off script='${lib.getExe spacesEagerPlugin}' \
+        --subscribe eager_driver space_eager
 
       # Populate initial state without waiting for the first events. The
       # plugins address their item through $NAME, which events normally set.

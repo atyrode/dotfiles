@@ -32,7 +32,20 @@ let
   sketchybarEnabled = cfg.services.sketchybar.enable;
   barHeightMatch = builtins.match ".*--bar[^\n]* height=([0-9]+).*" sketchybarConfig;
   barHeight = if barHeightMatch == null then null else lib.head barHeightMatch;
+  # The bar floats with a y offset, so yabai must reserve height + offset.
+  barOffsetMatch = builtins.match ".*y_offset=([0-9]+).*" sketchybarConfig;
+  barOffset = if barOffsetMatch == null then 0 else lib.toInt (lib.head barOffsetMatch);
+  barFootprint = if barHeight == null then null else toString (lib.toInt barHeight + barOffset);
   externalBar = cfg.services.yabai.config.external_bar or "";
+
+  # Keyboard Space switches must announce their destination eagerly: macOS
+  # emits space_change only when the slide animation commits, so a binding
+  # without the trigger regresses the bar highlight to trailing the keypress
+  # by the whole animation.
+  bindingsMissingEagerTrigger = lib.filter (
+    index:
+    !(lib.hasInfix "--focus ${index} && sketchybar --trigger space_eager TARGET=${index}" skhdConfig)
+  ) (map toString (lib.range 1 9));
   requiredBarEvents = [
     "space_change"
     "space_windows_change"
@@ -334,13 +347,18 @@ assert lib.assertMsg sketchybarEnabled "the Darwin workstation must enable Sketc
 assert lib.assertMsg (
   barHeight != null
 ) "could not parse the bar height out of the SketchyBar config";
-assert lib.assertMsg (externalBar == "all:${barHeight}:0") (
-  "yabai must reserve exactly the SketchyBar height at the top edge:"
+assert lib.assertMsg (externalBar == "all:${barFootprint}:0") (
+  "yabai must reserve exactly the SketchyBar footprint (height + y_offset) at the top edge:"
   + " expected external_bar all:"
-  + barHeight
+  + barFootprint
   + ":0 but found '"
   + externalBar
   + "'. A mismatch either hides the bar behind tiles or wastes screen"
+);
+assert lib.assertMsg (bindingsMissingEagerTrigger == [ ]) (
+  "these Space-focus bindings do not announce their destination through the space_eager"
+  + " trigger, so the bar highlight trails the keypress by the whole switch animation: "
+  + lib.concatStringsSep ", " bindingsMissingEagerTrigger
 );
 assert lib.assertMsg (lib.hasInfix "position=top" sketchybarConfig)
   "the bar owns the top edge; moving it requires flipping the external_bar reservation and the menu-bar policy together";

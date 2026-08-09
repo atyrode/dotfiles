@@ -22,20 +22,32 @@ let
   yabaiExtraConfig = cfg.services.yabai.extraConfig;
   strayBordersSignals = lib.hasInfix "borders-solo" yabaiExtraConfig;
 
-  # SketchyBar visualizes yabai/OS state without owning it. Three contracts:
-  # the bar height must equal the space yabai reserves (a mismatch either hides
-  # the bar behind tiles or wastes screen), items must stay on sanctioned
-  # event subscriptions (wifi_change is broken since Sonoma, media_change is
-  # deprecated on macOS 26), and the selected-Space accent must come from the
-  # shared Rio palette like the rest of the stack.
-  sketchybarConfig = cfg.services.sketchybar.config;
+  # SketchyBar runs the faithful FelixKratz e6288b3 port committed as a
+  # literal file tree; services.sketchybar.config stays empty so the daemon
+  # reads the deployed tree. The contracts therefore read the tree itself.
   sketchybarEnabled = cfg.services.sketchybar.enable;
-  barHeightMatch = builtins.match ".*--bar[^\n]* height=([0-9]+).*" sketchybarConfig;
-  barHeight = if barHeightMatch == null then null else lib.head barHeightMatch;
+  sketchybarInlineConfig = cfg.services.sketchybar.config;
+  barTreeDir = ../darwin/window-management/sketchybar;
+  barRc = builtins.readFile (barTreeDir + "/sketchybarrc");
+  barColors = builtins.readFile (barTreeDir + "/colors.sh");
+  barSpacesItem = builtins.readFile (barTreeDir + "/items/spaces.sh");
+  barSpacePlugin = builtins.readFile (barTreeDir + "/plugins/space.sh");
+  barTreeText = lib.concatMapStrings (file: builtins.readFile (barTreeDir + "/${file}")) [
+    "sketchybarrc"
+    "items/apple.sh"
+    "items/spaces.sh"
+    "items/front_app.sh"
+    "items/calendar.sh"
+    "items/brew.sh"
+    "items/github.sh"
+    "items/battery.sh"
+    "items/volume.sh"
+  ];
+
   # The bar floats with a y offset, so yabai must reserve height + offset.
-  # Anchored to the --bar command's own continuation block: a bare ".*" prefix
-  # is greedy and would match a later item-level icon.y_offset instead.
-  barOffsetMatch = builtins.match ".*--bar[^\n]* y_offset=([0-9]+).*" sketchybarConfig;
+  barHeightMatch = builtins.match ".*\n  height=([0-9]+)\n.*" barRc;
+  barHeight = if barHeightMatch == null then null else lib.head barHeightMatch;
+  barOffsetMatch = builtins.match ".*\n  y_offset=([0-9]+)\n.*" barRc;
   barOffset = if barOffsetMatch == null then 0 else lib.toInt (lib.head barOffsetMatch);
   barFootprint = if barHeight == null then null else toString (lib.toInt barHeight + barOffset);
   externalBar = cfg.services.yabai.config.external_bar or "";
@@ -43,30 +55,48 @@ let
   # Keyboard Space switches must announce their destination eagerly: macOS
   # emits space_change only when the slide animation commits, so a binding
   # without the trigger regresses the bar highlight to trailing the keypress
-  # by the whole animation.
+  # by the whole animation. Both halves are pinned: the skhd bindings fire the
+  # event, and the ported tree declares and handles it.
   bindingsMissingEagerTrigger = lib.filter (
     index:
     !(lib.hasInfix "--focus ${index} && sketchybar --trigger space_eager TARGET=${index}" skhdConfig)
   ) (map toString (lib.range 1 9));
-  requiredBarEvents = [
-    "space_change"
-    "space_windows_change"
-    "front_app_switched"
-    "power_source_change"
-    "system_woke"
+  treeHandlesEager =
+    lib.hasInfix "space_eager" barSpacesItem && lib.hasInfix "\"space_eager\")" barSpacePlugin;
+
+  # Exclusions that must hold: the compiled CPU helper and the Spotify media
+  # widget (media_change-class, dead on macOS 26) stay out of the rc.
+  # Functional references only: prose in the deviation header may name the
+  # excluded components without reintroducing them.
+  forbiddenBarSources = lib.filter (name: lib.hasInfix name barRc) [
+    "cpu.sh"
+    "spotify.sh"
+    "mach_helper"
+    "helper/helper"
+    "&& make"
   ];
-  missingBarEvents = lib.filter (event: !(lib.hasInfix event sketchybarConfig)) requiredBarEvents;
-  forbiddenBarEvents = lib.filter (event: lib.hasInfix event sketchybarConfig) [
+  forbiddenBarEvents = lib.filter (event: lib.hasInfix event barTreeText) [
     "wifi_change"
     "media_change"
   ];
-  rioViCursor =
-    let
-      matches = builtins.match ".*vi-cursor = \"#([0-9A-Fa-f]{6})\".*" (
-        builtins.readFile ../home/rio/config.toml
-      );
-    in
-    if matches == null then null else lib.toLower (lib.head matches);
+  requiredBarEvents = [
+    "front_app_switched"
+    "power_source_change"
+    "system_woke"
+    "volume_change"
+    "window_focus"
+    "windows_on_spaces"
+  ];
+  missingBarEvents = lib.filter (event: !(lib.hasInfix event barTreeText)) requiredBarEvents;
+
+  # Fidelity pin: the reference palette, not a local reinterpretation.
+  portPaletteIntact = lib.hasInfix "export BAR_COLOR=0xa024273a" barColors;
+
+  # yabai must feed the two custom events the ported tree consumes.
+  missingBarSignals = lib.filter (trigger: !(lib.hasInfix trigger cfg.services.yabai.extraConfig)) [
+    "--trigger window_focus"
+    "--trigger windows_on_spaces"
+  ];
 
   # skhd.zig resolves a character key literal through
   # TISCopyCurrentASCIICapableKeyboardLayoutInputSource + UCKeyTranslate, so a
@@ -346,41 +376,46 @@ assert lib.assertMsg (
   !strayBordersSignals
 ) "yabai still registers borders-solo signals although JankyBorders was removed";
 assert lib.assertMsg sketchybarEnabled "the Darwin workstation must enable SketchyBar (phase 4)";
+assert lib.assertMsg (sketchybarInlineConfig == "")
+  "SketchyBar must run the ported reference tree from ~/.config/sketchybar; an inline config would shadow it";
 assert lib.assertMsg (
   barHeight != null
-) "could not parse the bar height out of the SketchyBar config";
+) "could not parse the bar height out of the ported sketchybarrc";
 assert lib.assertMsg (externalBar == "all:${barFootprint}:0") (
-  "yabai must reserve exactly the SketchyBar footprint (height + y_offset) at the top edge:"
+  "yabai must reserve exactly the ported bar's footprint (height + y_offset) at the top edge:"
   + " expected external_bar all:"
   + barFootprint
   + ":0 but found '"
   + externalBar
   + "'. A mismatch either hides the bar behind tiles or wastes screen"
 );
+assert lib.assertMsg (lib.hasInfix "position=top" barRc)
+  "the bar owns the top edge; moving it requires flipping the external_bar reservation and the menu-bar policy together";
+assert lib.assertMsg cfg.system.defaults.NSGlobalDomain._HIHideMenuBar
+  "a top-positioned SketchyBar requires the native menu bar to auto-hide, or the two bars stack";
 assert lib.assertMsg (bindingsMissingEagerTrigger == [ ]) (
   "these Space-focus bindings do not announce their destination through the space_eager"
   + " trigger, so the bar highlight trails the keypress by the whole switch animation: "
   + lib.concatStringsSep ", " bindingsMissingEagerTrigger
 );
-assert lib.assertMsg (lib.hasInfix "position=top" sketchybarConfig)
-  "the bar owns the top edge; moving it requires flipping the external_bar reservation and the menu-bar policy together";
-assert lib.assertMsg cfg.system.defaults.NSGlobalDomain._HIHideMenuBar
-  "a top-positioned SketchyBar requires the native menu bar to auto-hide, or the two bars stack";
+assert lib.assertMsg treeHandlesEager
+  "the ported tree must declare the space_eager event and handle it in plugins/space.sh; without it the keyboard bindings' announcements go nowhere";
+assert lib.assertMsg (forbiddenBarSources == [ ]) (
+  "the ported sketchybarrc references excluded components (compiled helper / media widget): "
+  + lib.concatStringsSep ", " forbiddenBarSources
+);
 assert lib.assertMsg (missingBarEvents == [ ]) (
-  "SketchyBar items must stay event-driven; missing subscriptions: "
-  + lib.concatStringsSep ", " missingBarEvents
+  "the ported tree lost required event subscriptions: " + lib.concatStringsSep ", " missingBarEvents
 );
 assert lib.assertMsg (forbiddenBarEvents == [ ]) (
-  "SketchyBar subscribes to events that are broken or deprecated on this macOS: "
+  "the ported tree subscribes to events broken or deprecated on this macOS: "
   + lib.concatStringsSep ", " forbiddenBarEvents
-  + ". wifi_change has been broken since Sonoma and media_change is deprecated on macOS 26"
 );
-assert lib.assertMsg (rioViCursor != null)
-  "could not read the vi-cursor accent from home/rio/config.toml; the shared-palette contract needs it";
-assert lib.assertMsg (lib.hasInfix "0xff${rioViCursor}" (lib.toLower sketchybarConfig)) (
-  "the SketchyBar selected-Space accent must reuse Rio's vi-cursor #"
-  + rioViCursor
-  + " so the stack keeps one palette"
+assert lib.assertMsg portPaletteIntact
+  "colors.sh must keep the reference palette verbatim (BAR_COLOR=0xa024273a); local reinterpretation of the reference design is the failure mode this port exists to end";
+assert lib.assertMsg (missingBarSignals == [ ]) (
+  "yabai must feed the ported tree's custom events; missing signal actions: "
+  + lib.concatStringsSep ", " missingBarSignals
 );
 pkgs.runCommand "check-window-management-${pkgs.system}" { } ''
   mkdir "$out"

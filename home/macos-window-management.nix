@@ -15,6 +15,20 @@ in
     pkgs.yabai
   ];
 
+  # The SketchyBar configuration is the faithful FelixKratz e6288b3 port
+  # committed under darwin/window-management/sketchybar. SketchyBar never
+  # rewrites its config, so store symlinks are safe here (unlike Karabiner).
+  # icon_map.sh comes from the sketchybar-app-font package: the same project
+  # Felix's snapshot was taken from, maintained as a superset of it, so
+  # current applications resolve instead of falling back to ":default:".
+  xdg.configFile = lib.mkIf pkgs.stdenv.isDarwin {
+    "sketchybar" = {
+      source = ../darwin/window-management/sketchybar;
+      recursive = true;
+    };
+    "sketchybar/plugins/icon_map.sh".source = "${pkgs.sketchybar-app-font}/bin/icon_map.sh";
+  };
+
   # Karabiner owns input transformation only: Caps Lock held becomes the
   # control+option+command leader that skhd already binds; tapping it does
   # nothing by design. skhd owns hotkey dispatch, yabai owns windows.

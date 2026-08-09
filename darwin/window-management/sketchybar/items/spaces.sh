@@ -5,6 +5,11 @@ SPACE_ICONS=("1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12" "13" "14" "15")
 # Destroy space on right click, focus space on left click.
 # New space by left clicking separator (>)
 
+# DEVIATION from e6288b3: the space_eager event. Keyboard switches announce
+# their destination before the macOS switch animation commits. Declared BEFORE
+# the item loop: the daemon silently drops subscriptions to unknown events.
+sketchybar --add event space_eager
+
 sid=0
 spaces=()
 for i in "${!SPACE_ICONS[@]}"; do
@@ -53,10 +58,7 @@ separator=(
   icon.color=$WHITE
 )
 
-# DEVIATION from e6288b3: the space_eager event itself.
-sketchybar --add event space_eager \
-  \
-  --add bracket spaces '/space\..*/' \
+sketchybar --add bracket spaces '/space\..*/' \
   --set spaces "${spaces[@]}" \
   \
   --add item separator left \

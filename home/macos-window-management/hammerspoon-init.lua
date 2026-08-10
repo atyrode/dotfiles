@@ -6,14 +6,15 @@
 -- (SSID text in particular) is ever interpolated into a shell string.
 local SB = "/run/current-system/sw/bin/sketchybar"
 
--- The exact top pixel is easy to hit while using DATUM. Consume that event
--- and hold the pointer just below macOS's reveal edge while the dwell runs;
--- only a completed hold is released back to the native menu bar.
+-- Hold the exact top pixel without moving the pointer or leaking its event to
+-- macOS. After the dwell commits, DATUM ducks completely before one synthetic
+-- edge event releases the already-stationary pointer to the native menu bar.
 local LEAD_DWELL = 0.70
+local REVEAL_POLL = 0.02
+local REVEAL_TIMEOUT = 0.50
+local DATUM_HIDDEN_Y = -40
 local RETURN_HOLD = 0.14
 local MENUBAR_BAND = 44
-local EDGE_GUARD = 2
-local EDGE_GUARD_BAND = 4
 -- One bounded shot: SbarLua finishes building its items after Hammerspoon
 -- is already resident, so the first watcher event can arrive before anyone
 -- is subscribed. Reconcile every bridged state once, then stop.
@@ -64,6 +65,7 @@ local reasons = {
 	menu = false,
 }
 local emitted = false
+local nativeReleased = false
 -- SketchyBar survives Hammerspoon config reloads and remembers its last
 -- accepted SEQ. Seed from monotonic milliseconds since boot so a fresh Lua
 -- state can never restart below the resident bar's guard.
@@ -79,28 +81,108 @@ local function emit(down, force)
 	end
 end
 
--- These are the only timers in the cursor/menu state machine. Restarting a
--- delayed timer reuses it; mouse movement never allocates timer callbacks.
+-- Mouse movement never allocates timer callbacks. After the dwell, a bounded
+-- asynchronous probe waits for SketchyBar to report its final hidden geometry;
+-- only that observed state can release a synthetic edge event to macOS.
 local leadTimer
+local revealTimer
 local returnTimer
+local revealProbeTask
+local revealDeadline = 0
+local revealGeneration = 0
+local revealPending = false
+
+local function abortReveal(generation)
+	if generation ~= revealGeneration or reasons.menu then
+		return
+	end
+	revealPending = false
+	revealGeneration = revealGeneration + 1
+	reasons.hover = false
+	nativeReleased = false
+	emit(false)
+end
+
+local function releaseNativeMenu(generation)
+	if generation ~= revealGeneration then
+		return
+	end
+	local point = hs.mouse.absolutePosition()
+	if not emitted or reasons.menu or not onPrimaryEdge(point) then
+		abortReveal(generation)
+		return
+	end
+
+	revealPending = false
+	revealGeneration = revealGeneration + 1
+	nativeReleased = true
+	local reveal = hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = point.x, y = primary.y })
+	reveal:post()
+end
+
+local function probeDatumHidden()
+	if not revealPending then
+		return
+	end
+	local generation = revealGeneration
+	local point = hs.mouse.absolutePosition()
+	if not emitted or reasons.menu or not onPrimaryEdge(point) then
+		abortReveal(generation)
+		return
+	end
+
+	local task
+	task = hs.task.new(SB, function(exitCode, stdOut)
+		if revealProbeTask == task then
+			revealProbeTask = nil
+		end
+		if generation ~= revealGeneration then
+			return
+		end
+
+		local decoded
+		if exitCode == 0 then
+			local ok, state = pcall(hs.json.decode, stdOut)
+			if ok and type(state) == "table" then
+				decoded = state
+			end
+		end
+
+		if decoded and tonumber(decoded.y_offset) == DATUM_HIDDEN_Y then
+			releaseNativeMenu(generation)
+		elseif hs.timer.absoluteTime() < revealDeadline then
+			revealTimer:start()
+		else
+			abortReveal(generation)
+		end
+	end, { "--query", "bar" })
+
+	if not task then
+		abortReveal(generation)
+		return
+	end
+	revealProbeTask = task
+	if not task:start() then
+		revealProbeTask = nil
+		abortReveal(generation)
+	end
+end
+
+revealTimer = hs.timer.delayed.new(REVEAL_POLL, probeDatumHidden)
 
 leadTimer = hs.timer.delayed.new(LEAD_DWELL, function()
 	reasons.hover = true
+	nativeReleased = false
 	emit(true)
-
-	-- The guarded edge event never reached macOS. Once DATUM has accepted
-	-- its hide target, release the pointer onto the real edge so the native
-	-- bar begins revealing after, rather than during, the dwell.
-	local point = hs.mouse.absolutePosition()
-	if emitted and onPrimary(point) and point.y <= primary.y + EDGE_GUARD_BAND then
-		local reveal =
-			hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = point.x, y = primary.y })
-		reveal:post()
-	end
+	revealPending = true
+	revealGeneration = revealGeneration + 1
+	revealDeadline = hs.timer.absoluteTime() + REVEAL_TIMEOUT * 1000000000
+	revealTimer:start()
 end)
 
 returnTimer = hs.timer.delayed.new(RETURN_HOLD, function()
 	reasons.hover = false
+	nativeReleased = false
 	if not reasons.menu then
 		emit(false)
 	end
@@ -109,6 +191,17 @@ end)
 local function stopLead()
 	if leadTimer:running() then
 		leadTimer:stop()
+	end
+end
+
+local function stopReveal()
+	if not revealPending then
+		return
+	end
+	revealPending = false
+	revealGeneration = revealGeneration + 1
+	if revealTimer:running() then
+		revealTimer:stop()
 	end
 end
 
@@ -166,10 +259,12 @@ end
 -- watcher, which would silently stop the handoff or a native-state bridge.
 screenWatcher = hs.screen.watcher.new(function()
 	stopLead()
+	stopReveal()
 	stopReturn()
 	refreshPrimary()
 	local point = hs.mouse.absolutePosition()
 	reasons.hover = onPrimary(point) and point.y <= primary.y + MENUBAR_BAND
+	nativeReleased = reasons.menu or reasons.hover
 	-- A recreated SketchyBar window can retain its previous y-offset. Menu
 	-- tracking survives a display event too, so reconcile both live reasons
 	-- instead of unconditionally revealing the custom face underneath it.
@@ -177,37 +272,35 @@ screenWatcher = hs.screen.watcher.new(function()
 end)
 screenWatcher:start()
 
-menubarHoverWatcher = hs.eventtap.new({
-	hs.eventtap.event.types.mouseMoved,
-	hs.eventtap.event.types.leftMouseDragged,
-	hs.eventtap.event.types.rightMouseDragged,
-	hs.eventtap.event.types.otherMouseDragged,
-}, function(event)
+menubarHoverWatcher = hs.eventtap.new({ hs.eventtap.event.types.mouseMoved }, function(event)
 	local point = event:location()
 	local here = onPrimary(point)
 	local suppress = false
 
 	if onPrimaryEdge(point) then
-		-- macOS must not see the edge until the dwell commits, or its native
-		-- bar reveals underneath DATUM while DATUM is still waiting. Keep the
-		-- candidate 2pt inside the custom face and consume the original event.
 		stopReturn()
-		if not emitted and not reasons.menu then
-			if not leadTimer:running() then
+		if not reasons.menu and not nativeReleased then
+			if not emitted and not leadTimer:running() then
 				leadTimer:start()
 			end
-			hs.mouse.absolutePosition({ x = point.x, y = primary.y + EDGE_GUARD })
+			-- Delete every edge event until DATUM has finished ducking. The
+			-- physical pointer remains untouched at the edge throughout.
 			suppress = true
 		end
-	elseif leadTimer:running() and here and point.y <= primary.y + EDGE_GUARD_BAND then
-		-- The synthetic guard move preserves the same dwell candidate.
-		stopReturn()
 	elseif here and point.y <= primary.y + MENUBAR_BAND then
-		-- Moving away from the guarded edge cancels an incomplete dwell.
+		local aborted = leadTimer:running() or revealPending or (emitted and not nativeReleased)
 		stopLead()
-		stopReturn()
+		stopReveal()
+		if aborted and not reasons.menu then
+			reasons.hover = false
+			emit(false)
+		else
+			stopReturn()
+		end
 	else
 		stopLead()
+		stopReveal()
+		nativeReleased = false
 		beginReturn()
 	end
 	return suppress
@@ -216,7 +309,9 @@ menubarHoverWatcher:start()
 
 menubarMenuBeginWatcher = hs.distributednotifications.new(function()
 	reasons.menu = true
+	nativeReleased = true
 	stopLead()
+	stopReveal()
 	stopReturn()
 	emit(true)
 end, "com.apple.HIToolbox.beginMenuTrackingNotification")
@@ -230,6 +325,7 @@ menubarMenuEndWatcher = hs.distributednotifications.new(function()
 		stopReturn()
 	else
 		reasons.hover = false
+		nativeReleased = false
 		beginReturn()
 	end
 end, "com.apple.HIToolbox.endMenuTrackingNotification")
@@ -248,6 +344,7 @@ primeTimer = hs.timer.doAfter(PRIME_SECONDS, function()
 	-- Re-derive the live hover reason before the one bounded resend.
 	local point = hs.mouse.absolutePosition()
 	reasons.hover = onPrimary(point) and point.y <= primary.y + MENUBAR_BAND
+	nativeReleased = reasons.menu or reasons.hover
 	emit(reasons.menu or reasons.hover or emitted, true)
 	emitNetwork()
 	emitBattery()

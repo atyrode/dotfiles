@@ -6,12 +6,14 @@
 -- (SSID text in particular) is ever interpolated into a shell string.
 local SB = "/run/current-system/sw/bin/sketchybar"
 
--- The exact top pixel is easy to hit while using DATUM. Require a deliberate
--- hold before yielding to the native bar; a quick edge touch keeps the custom
--- face in place instead of turning a pointer overshoot into a mode switch.
+-- The exact top pixel is easy to hit while using DATUM. Consume that event
+-- and hold the pointer just below macOS's reveal edge while the dwell runs;
+-- only a completed hold is released back to the native menu bar.
 local LEAD_DWELL = 0.70
 local RETURN_HOLD = 0.14
 local MENUBAR_BAND = 44
+local EDGE_GUARD = 2
+local EDGE_GUARD_BAND = 4
 -- One bounded shot: SbarLua finishes building its items after Hammerspoon
 -- is already resident, so the first watcher event can arrive before anyone
 -- is subscribed. Reconcile every bridged state once, then stop.
@@ -85,6 +87,16 @@ local returnTimer
 leadTimer = hs.timer.delayed.new(LEAD_DWELL, function()
 	reasons.hover = true
 	emit(true)
+
+	-- The guarded edge event never reached macOS. Once DATUM has accepted
+	-- its hide target, release the pointer onto the real edge so the native
+	-- bar begins revealing after, rather than during, the dwell.
+	local point = hs.mouse.absolutePosition()
+	if emitted and onPrimary(point) and point.y <= primary.y + EDGE_GUARD_BAND then
+		local reveal =
+			hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = point.x, y = primary.y })
+		reveal:post()
+	end
 end)
 
 returnTimer = hs.timer.delayed.new(RETURN_HOLD, function()
@@ -173,22 +185,32 @@ menubarHoverWatcher = hs.eventtap.new({
 }, function(event)
 	local point = event:location()
 	local here = onPrimary(point)
+	local suppress = false
 
 	if onPrimaryEdge(point) then
-		-- Re-entry during the return hold cancels it without another event.
+		-- macOS must not see the edge until the dwell commits, or its native
+		-- bar reveals underneath DATUM while DATUM is still waiting. Keep the
+		-- candidate 2pt inside the custom face and consume the original event.
 		stopReturn()
-		if not emitted and not leadTimer:running() then
-			leadTimer:start()
+		if not emitted and not reasons.menu then
+			if not leadTimer:running() then
+				leadTimer:start()
+			end
+			hs.mouse.absolutePosition({ x = point.x, y = primary.y + EDGE_GUARD })
+			suppress = true
 		end
+	elseif leadTimer:running() and here and point.y <= primary.y + EDGE_GUARD_BAND then
+		-- The synthetic guard move preserves the same dwell candidate.
+		stopReturn()
 	elseif here and point.y <= primary.y + MENUBAR_BAND then
-		-- Crossing the reveal band is neither a reveal nor proof of withdrawal.
+		-- Moving away from the guarded edge cancels an incomplete dwell.
 		stopLead()
 		stopReturn()
 	else
 		stopLead()
 		beginReturn()
 	end
-	return false
+	return suppress
 end)
 menubarHoverWatcher:start()
 

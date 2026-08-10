@@ -403,6 +403,15 @@ let
   menubarHandoffIntact =
     lib.all (needle: lib.hasInfix needle hammerspoonText) [
       "local LEAD_DWELL = 0.70"
+      "local EDGE_GUARD = 2"
+      "local EDGE_GUARD_BAND = 4"
+      "local suppress = false"
+      "hs.mouse.absolutePosition({ x = point.x, y = primary.y + EDGE_GUARD })"
+      "local reveal ="
+      "hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = point.x, y = primary.y })"
+      "reveal:post()"
+      "elseif leadTimer:running() and here and point.y <= primary.y + EDGE_GUARD_BAND then"
+      "return suppress"
       "local RETURN_HOLD = 0.14"
       "hs.timer.delayed.new(LEAD_DWELL"
       "hs.timer.delayed.new(RETURN_HOLD"

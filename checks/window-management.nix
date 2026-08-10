@@ -402,7 +402,7 @@ let
   # task delivery harmless; SbarLua owns only the two measured strokes.
   menubarHandoffIntact =
     lib.all (needle: lib.hasInfix needle hammerspoonText) [
-      "local LEAD_DWELL = 0.02"
+      "local LEAD_DWELL = 0.70"
       "local RETURN_HOLD = 0.14"
       "hs.timer.delayed.new(LEAD_DWELL"
       "hs.timer.delayed.new(RETURN_HOLD"

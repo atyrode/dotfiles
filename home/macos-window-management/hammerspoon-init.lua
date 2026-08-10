@@ -6,9 +6,10 @@
 -- (SSID text in particular) is ever interpolated into a shell string.
 local SB = "/run/current-system/sw/bin/sketchybar"
 
--- Start just ahead of the system reveal, then keep the custom bar away long
--- enough for the native bar to finish withdrawing.
-local LEAD_DWELL = 0.02
+-- The exact top pixel is easy to hit while using DATUM. Require a deliberate
+-- hold before yielding to the native bar; a quick edge touch keeps the custom
+-- face in place instead of turning a pointer overshoot into a mode switch.
+local LEAD_DWELL = 0.70
 local RETURN_HOLD = 0.14
 local MENUBAR_BAND = 44
 -- One bounded shot: SbarLua finishes building its items after Hammerspoon

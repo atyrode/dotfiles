@@ -22,8 +22,19 @@
 --   first_member.padding_left .. last_member.padding_right
 -- (see group_get_length in group.c), so a group gap written as edge padding
 -- is swallowed by the tick and the ticks fuse into one continuous rule.
+--
+-- Interaction is carried by none of those cells. SketchyBar sizes an item's
+-- window to its content and never to its padding, so the atom gaps inside a
+-- group belong to no cell at all: per-cell hover subscriptions answered a
+-- crossing between a numeral and its icon with an exit that had no matching
+-- entry, and the group went dark in the middle of a traverse. Every Space
+-- therefore carries one hover cell as wide as its own tick, pulled back over
+-- the group by a negative padding of exactly that width. It hit-tests the
+-- whole group, adds nothing to the rail's length, and is the only thing on a
+-- Space that hears the mouse.
 local colors = require("colors")
 local settings = require("settings")
+local ui = require("ui")
 
 -- One numeral, three slots and an overflow cell exist for every Space the
 -- rail can ever draw. Ten saturates the 508pt rail budget exactly at the
@@ -51,6 +62,7 @@ local numeral = {}
 local slot = {}
 local more = {}
 local tick = {}
+local hit = {}
 
 -- Last good state. Nothing here is ever cleared by a failed query.
 local slot_app = {} -- slot_app[sid][k] = app name currently in that image
@@ -60,8 +72,7 @@ local main_display = nil -- yabai display index at frame origin (0,0)
 local main_uuid = nil
 local display_stale = true
 local focused = nil
-local hovered = nil
-local hovered_item = nil -- the exact cell the pointer is on, not just its sid
+local hovered = nil -- the Space whose hover cell holds the pointer
 local switching = false
 
 -- Adaptive cap. Returns icon cap, whether the +N cell may appear, and the
@@ -161,6 +172,18 @@ for sid = 1, POOL do
 			y_offset = settings.tick.y_offset,
 		},
 	})
+
+	-- The hover cell: sized to the tick, laid over the group, never drawn.
+	-- A negative padding_left of exactly its own width pulls it back across
+	-- the cells it measures and hands the layout cursor back where it found
+	-- it, so the rail's 508pt worst case is untouched. The two numbers move
+	-- together in draw_group, and the numeral's width is the group's floor.
+	hit[sid] = sbar.add("item", "space." .. sid .. ".hit", {
+		drawing = false,
+		icon = { string = "", width = settings.width.numeral },
+		label = { drawing = false },
+		padding_left = -settings.width.numeral,
+	})
 end
 
 --------------------------------------------------------------------------
@@ -184,12 +207,20 @@ end
 -- which makes the two worst cases not merely non-overlapping but still
 -- legally separated.
 --
--- Both word fields hold that budget two ways. A fixed label width pins the
--- lane's extent so it never follows the text, and a max_chars clips the ink
--- to roughly the width it was given: 9 characters keeps every sampled
--- app-name prefix inside 60pt (widest "Google Ch" at 58) and 12 keeps every
--- sampled window-title prefix inside 84pt (widest 81), measured on DM Sans
--- Regular 12 with the same CTLine glyph-path bounds SketchyBar uses.
+-- Both word fields hold that budget with a max_chars ceiling: 9 characters
+-- keeps every sampled app-name prefix inside 60pt (widest "Google Ch" at 58)
+-- and 12 keeps every sampled window-title prefix inside 84pt (widest 81),
+-- measured on DM Sans Regular 12 with the same CTLine glyph-path bounds
+-- SketchyBar uses. A clipped label is measured at its clipped ink, so the
+-- ceiling bounds the cell and not merely the glyphs.
+--
+-- Only the title also fixes its width. It is the field under the notch, and
+-- a fixed cell is what stops the notch gap from breathing with the text. The
+-- app name is sized to its ink instead: a fixed cell there holds all 60pt
+-- open for a three-letter name and parks "Rio" a finger's width from the
+-- title it qualifies. So the only edge that moves is the lane's left one,
+-- inside the 96pt the budget already granted it, and the worst case above
+-- stands unchanged.
 --
 -- Position q lays out right-to-left from the notch, so the item created
 -- first sits closest to it: title, then the app identity to its left.
@@ -228,10 +259,11 @@ local active_app = sbar.add("item", "space.app", {
 	label = {
 		font = settings.font.word,
 		color = colors.ink,
-		-- As on the clock, the 8pt gap qualifying the name is spent inside
-		-- this width rather than added outside it, so the name itself keeps
-		-- the full 60pt cell the budget granted it.
-		width = settings.width.app_name + settings.gap.glyph,
+		-- Sized to its ink rather than to the budget: the 60pt above is a
+		-- ceiling max_chars enforces, not a cell held open. The 8pt that
+		-- qualifies the name stays padding, so it is the exact distance
+		-- from artwork to first glyph at every name length.
+		width = "dynamic",
 		max_chars = 9,
 		padding_left = settings.gap.glyph,
 	},
@@ -247,25 +279,66 @@ local active_app = sbar.add("item", "space.app", {
 		},
 	},
 	-- With no title this is the item under the notch and it carries the
-	-- notch gap itself; set_title hands that duty over and back.
+	-- notch gap itself; a commit hands that duty over and back.
 	padding_right = settings.notch_gap,
 })
 
-local app_name = nil
+-- The lane is a pair, not two halves that happen to sit next to each other.
+-- macOS announces the frontmost app a query round trip before yabai can say
+-- which window it focused, so an identity painted from that announcement
+-- stands on the bar with no context until the title lands: a visible blink
+-- on every switch. Nothing here paints from an announcement. `front_app`
+-- only records what macOS said, `absorb` accepts one whole window
+-- observation, and `commit` writes both halves of it. SbarLua opens a
+-- transaction around every callback and commits it when the callback
+-- returns, so all the sets one commit issues reach SketchyBar in a single
+-- message and the lane steps from one complete state to the next.
+local shown_app = nil
 local shown_title = nil
+local front_app = nil
+
+-- Focus epoch. The rail's settle chain and the lane's own resolve query yabai
+-- independently, and either answer can arrive after the focus it describes
+-- has already been left. Every query records the epoch it was issued in; an
+-- answer from a spent epoch is dropped rather than painted, and whatever
+-- spent it has its own answer on the way.
+local focus_gen = 0
+
+-- The artwork half of a commit, reachable from nowhere else. Everything it
+-- writes lands in the same transaction as the title half, so no path exists
+-- that can leave a name standing without its context.
+local function paint_app(name)
+	active_app:set({ drawing = true, label = { string = name } })
+	-- An invalid app name leaves the previous image in place, so the old one
+	-- is torn down before the new name is assigned. Nothing switches the new
+	-- one back on: an image that resolves enables itself, and one that does
+	-- not must leave the reserved 20pt cell blank rather than go on showing
+	-- the app we just switched away from.
+	active_app:set({ background = { image = { drawing = false } } })
+	active_app:set({ background = { image = { string = app_image(name) } } })
+end
 
 -- Whichever item sits nearest the notch owns the 24pt notch gap, so a title
 -- taking that place hands active_app back down to the glyph gap that merely
 -- separates the app from its title. The two paddings are written in the
 -- order that keeps a notch-sized gap standing throughout the swap, so the
 -- only width the lane gains or loses is the title's own.
-local function set_title(text)
-	if text == "" or text == app_name then
+--
+-- Artwork is a function of the app alone. A title arriving for the app
+-- already shown must not send the icon through another Launch Services
+-- resolve, so the image is rewritten exactly when the app changes -- in the
+-- same transaction as the title it arrives with.
+local function commit(name, text)
+	if text == "" or text == name then
 		text = nil
 	end
-	if text == shown_title then
+	if name == shown_app and text == shown_title then
 		return
 	end
+	if name ~= shown_app then
+		paint_app(name)
+	end
+	shown_app = name
 	shown_title = text
 	if text then
 		window_title:set({ drawing = true, label = { string = text } })
@@ -276,22 +349,38 @@ local function set_title(text)
 	end
 end
 
-local function set_app(name)
-	if type(name) ~= "string" or name == "" or name == app_name then
+-- One window list is the entire answer for the lane, and the name and the
+-- title are read off the same window, so the pair can never be half a switch
+-- old.
+--
+-- When no window holds focus that same list says why. A frontmost app owning
+-- a visible unminimized window is mid-switch -- that window is about to take
+-- focus and yabai's window_focused will say so -- and the lane keeps the
+-- complete state it has rather than flashing a bare name. An app with no
+-- such window has no title to wait for, so its name alone is the whole
+-- truth, and this observation commits it.
+local function absorb(windows, epoch)
+	if epoch ~= focus_gen then
 		return
 	end
-	app_name = name
-	active_app:set({ drawing = true, label = { string = name } })
-	-- An invalid app name leaves the previous image in place, so the old one
-	-- is torn down before the new name is assigned. Nothing switches the new
-	-- one back on: an image that resolves enables itself, and one that does
-	-- not must leave the reserved 20pt cell blank rather than go on showing
-	-- the app we just switched away from.
-	active_app:set({ background = { image = { drawing = false } } })
-	active_app:set({ background = { image = { string = app_image(name) } } })
-	-- The old window's title does not belong to the new app; the next yabai
-	-- settle re-enriches, and until then the app name stands alone.
-	set_title(nil)
+	local app = nil
+	local text = nil
+	local pending = false
+	for _, w in ipairs(windows) do
+		if w["has-focus"] and type(w.app) == "string" and w.app ~= "" then
+			app = w.app
+			text = type(w.title) == "string" and w.title or nil
+		end
+		if w.app == front_app and w["is-visible"] and not w["is-minimized"] then
+			pending = true
+		end
+	end
+	if app then
+		return commit(app, text)
+	end
+	if front_app and not pending then
+		commit(front_app, nil)
+	end
 end
 
 --------------------------------------------------------------------------
@@ -347,6 +436,7 @@ local function hide_group(sid)
 	end
 	live[sid] = false
 	lead[sid]:set({ drawing = false })
+	hit[sid]:set({ drawing = false })
 	-- Reset the focus styling too: a Space that comes back must not return
 	-- still wearing the accent it held when it disappeared.
 	numeral[sid]:set({ drawing = false, icon = { color = colors.ink_dim } })
@@ -363,6 +453,11 @@ local function hide_group(sid)
 	end
 	if focused == sid then
 		focused = nil
+	end
+	-- A hidden group is delivered no exit, so a hover it still holds is
+	-- released here rather than left to light the Space on its return.
+	if hovered == sid then
+		hovered = nil
 	end
 end
 
@@ -412,6 +507,15 @@ local function draw_group(sid, first, gap, names, cap, show_more)
 		more[sid]:set({ drawing = false })
 	end
 
+	-- The group's extent, in the terms that produced it: the numeral, then
+	-- every drawn cell behind the atom that leads it. This is exactly the
+	-- span the tick brackets between the numeral's left edge and the last
+	-- glyph's right edge, and the hover cell has to match it to the point.
+	local span = settings.width.numeral
+		+ shown * (atom + settings.icon_box)
+		+ (overflow > 0 and (atom + settings.width.numeral) or 0)
+	hit[sid]:set({ drawing = true, icon = { width = span }, padding_left = -span })
+
 	tick[sid]:set({ drawing = true })
 	repaint_hover(sid)
 end
@@ -422,8 +526,9 @@ end
 
 local settle
 
--- Every member of a group carries the same bindings; an app icon labels its
--- Space and never focuses a window.
+-- An app icon labels its Space and never focuses a window: every click that
+-- lands inside a group -- on a glyph or in the whitespace between two of
+-- them -- is the same click on the same Space.
 local function focus_space(sid)
 	if switching then
 		return
@@ -474,7 +579,13 @@ local function scroll_space(delta)
 	focus_space(main_list[target])
 end
 
-local function bind(item, sid)
+-- One subscriber per Space, on the one cell that spans it. The numeral, the
+-- app icons, the overflow cell and the interior gaps are a single hit target,
+-- so crossing between them is not an event at all: the hover state changes
+-- only at the edges of the group.
+local function bind(sid)
+	local item = hit[sid]
+
 	item:subscribe("mouse.clicked", function(env)
 		if env.BUTTON == "right" then
 			send_to_space(sid)
@@ -482,47 +593,32 @@ local function bind(item, sid)
 			focus_space(sid)
 		end
 	end)
+
 	item:subscribe("mouse.scrolled", function(env)
 		scroll_space(tonumber(env.SCROLL_DELTA))
 	end)
-	item:subscribe("mouse.entered", function()
-		hovered, hovered_item = sid, item
+
+	-- `ui.hoverable` is the entry and the local exit. The release that a
+	-- pointer leaving the bar outright owes every lit mark is heard once, by
+	-- panels.driver, and this registers for it rather than listening itself.
+	ui.hoverable(item, function()
+		hovered = sid
 		repaint_hover(sid)
-	end)
-	item:subscribe("mouse.exited", function()
-		-- Every member of a group shares its sid, so the sid alone cannot
-		-- tell leaving the group from crossing to the cell next door, and
-		-- the exit of the cell we came from can land after the entry of the
-		-- one we are on. Ownership is the concrete item, not the group.
-		if hovered_item == item then
-			hovered, hovered_item = nil, nil
-		elseif hovered == sid then
-			-- A sibling cell holds the hover now: the pointer is still
-			-- inside the group and the group stays lit.
-			return
+	end, function()
+		-- Groups are held apart by a lead, so an exit here is a real
+		-- departure -- but a fast traverse can still land it after the
+		-- next group's entry, and whoever holds the hover keeps it. The
+		-- cell being left is repainted either way: its colour is derived
+		-- from `hovered`, so a stale exit still returns it to rest.
+		if hovered == sid then
+			hovered = nil
 		end
-		repaint_hover(sid)
-	end)
-	-- A pointer that leaves the bar outright -- or a bar that ducks out
-	-- from under a resting pointer -- never delivers the paired exit, and
-	-- the cell would stay lit until something else took the hover. The
-	-- global exit is the unconditional release: whoever holds the hover
-	-- drops it, and every other cell has nothing to drop.
-	item:subscribe("mouse.exited.global", function()
-		if hovered_item ~= item then
-			return
-		end
-		hovered, hovered_item = nil, nil
 		repaint_hover(sid)
 	end)
 end
 
 for sid = 1, POOL do
-	bind(numeral[sid], sid)
-	for k = 1, SLOTS do
-		bind(slot[sid][k], sid)
-	end
-	bind(more[sid], sid)
+	bind(sid)
 end
 
 --------------------------------------------------------------------------
@@ -547,6 +643,9 @@ local function finish()
 end
 
 local function read_windows(gen)
+	-- Taken when the query is issued, not when it answers: the rail's own
+	-- generation says nothing about focus having moved underneath it.
+	local epoch = focus_gen
 	sbar.exec("yabai -m query --windows", function(windows)
 		if gen ~= generation then
 			return finish()
@@ -559,17 +658,7 @@ local function read_windows(gen)
 
 		local apps = {}
 		local seen = {}
-		local title = nil
-		local front = nil
 		for _, w in ipairs(windows) do
-			if w["has-focus"] then
-				if type(w.title) == "string" then
-					title = w.title
-				end
-				if type(w.app) == "string" then
-					front = w.app
-				end
-			end
 			local space, app = w.space, w.app
 			if not w["is-minimized"] and type(space) == "number" and type(app) == "string" and app ~= "" then
 				local key = space .. "\0" .. app
@@ -594,14 +683,9 @@ local function read_windows(gen)
 			end
 		end
 
-		-- front_app_switched owns the identity; this only primes it before
-		-- the first switch of the session.
-		if not app_name then
-			set_app(front)
-		end
-		-- The title is enrichment only. Absent or unreadable, the app name
-		-- stands on its own rather than the lane going blank.
-		set_title(title)
+		-- The lane takes the observation the rail just drew from: one list,
+		-- one instant, one commit.
+		absorb(windows, epoch)
 		finish()
 	end)
 end
@@ -697,6 +781,48 @@ settle = function()
 end
 
 --------------------------------------------------------------------------
+-- Lane resolve
+--------------------------------------------------------------------------
+
+-- The lane's own observation, coalesced exactly as the rail's is: one query
+-- in flight, and anything arriving while it runs served by a single
+-- follow-up.
+--
+-- It is deliberately not `settle`. Settle paints the rail's focus from a
+-- spaces query, and front_app_switched fires immediately after a Space
+-- switch, while a query can still answer with pre-switch focus -- the exact
+-- read space_eager abandons chains to avoid. So the lane re-observes windows
+-- alone and never touches the rail's generation, in_flight or dirty.
+local lane_busy = false
+local lane_dirty = false
+local resolve_lane
+
+local function lane_finish()
+	lane_busy = false
+	if lane_dirty then
+		lane_dirty = false
+		resolve_lane()
+	end
+end
+
+resolve_lane = function()
+	if lane_busy then
+		lane_dirty = true
+		return
+	end
+	lane_busy = true
+	local epoch = focus_gen
+	sbar.exec("yabai -m query --windows", function(windows)
+		-- A failed query is not an observation: the lane keeps its last
+		-- complete state rather than committing a guess.
+		if type(windows) == "table" then
+			absorb(windows, epoch)
+		end
+		lane_finish()
+	end)
+end
+
+--------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------
 
@@ -708,7 +834,12 @@ sbar.add("event", "window_focus")
 
 local driver = sbar.add("item", "spaces.driver", { drawing = false, updates = true })
 
+-- Every one of these means focus may have moved, so each spends the current
+-- epoch: an answer already in flight describes a focus that no longer holds
+-- and must not reach the lane. The chain it invalidates is the chain `dirty`
+-- replaces immediately, so nothing is lost.
 driver:subscribe({ "windows_on_spaces", "window_focus", "forced" }, function()
+	focus_gen = focus_gen + 1
 	settle()
 end)
 
@@ -719,6 +850,7 @@ end)
 driver:subscribe({ "display_change", "system_woke" }, function()
 	display_stale = true
 	generation = generation + 1
+	focus_gen = focus_gen + 1
 	settle()
 end)
 
@@ -754,6 +886,18 @@ driver:subscribe("space_eager", function(env)
 	set_focus(target)
 end)
 
+-- The one focus signal that says nothing about windows: it names the app
+-- macOS just brought forward and stops there. Recording that name and
+-- spending the epoch is the whole handler -- painting the name here is the
+-- blink this lane exists not to have. The lane's own resolve answers with
+-- the pair, including the one case only this signal can explain: a frontmost
+-- app with no window at all, whose name is the complete state.
 active_app:subscribe("front_app_switched", function(env)
-	set_app(env.INFO)
+	local name = env.INFO
+	if type(name) ~= "string" or name == "" then
+		return
+	end
+	front_app = name
+	focus_gen = focus_gen + 1
+	resolve_lane()
 end)

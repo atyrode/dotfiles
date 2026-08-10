@@ -19,8 +19,14 @@ sbar.bar({
 	border_color = colors.track,
 	position = "top",
 	sticky = true,
-	-- Keep the opaque DATUM face above the native menu bar during edge dwell.
-	topmost = true,
+	-- The resting window level, and the reason DATUM does not eat
+	-- notifications. SketchyBar maps the plain boolean form of this property
+	-- to kCGStatusWindowLevel (25) and re-fronts the bar inside that level on
+	-- every reorder, so a Notification Center banner -- which composites at
+	-- that same status level -- always lost. `"window"` is
+	-- kCGFloatingWindowLevel (3): still above every application window, now
+	-- below the banner.
+	topmost = "window",
 	padding_left = settings.padding_left,
 	-- The macOS privacy indicator occupies ~12-22pt from the right edge;
 	-- give it its own lane instead of gluing it to the clock.

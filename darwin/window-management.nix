@@ -2,7 +2,22 @@
 
 let
   yabai = lib.getExe pkgs.yabai;
-  sketchybarBin = "${pkgs.sketchybar}/bin/sketchybar";
+  sketchybarPackage = pkgs.sketchybar.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./window-management/sketchybar-topmost-in-place.patch ];
+  });
+  sketchybarBin = "${sketchybarPackage}/bin/sketchybar";
+  builtInKeyboardMatch = builtins.toJSON {
+    VendorID = 0;
+    ProductID = 0;
+  };
+  capsLockLeaderMapping = builtins.toJSON {
+    UserKeyMapping = [
+      {
+        HIDKeyboardModifierMappingSrc = 30064771129;
+        HIDKeyboardModifierMappingDst = 30064771300;
+      }
+    ];
+  };
 in
 {
   services.yabai = {
@@ -57,11 +72,33 @@ in
   # the sole runtime entry point.
   services.sketchybar = {
     enable = true;
+    package = sketchybarPackage;
     extraPackages = [
       pkgs.yabai
       pkgs.lua5_5
       pkgs.curl
     ];
+  };
+
+  # Preserve macOS's native keyboard layout and change exactly one HID usage:
+  # Caps Lock (0x700000039) becomes right Control (0x7000000e4) on the built-in
+  # keyboard. `hidutil` is the macOS-native mapping layer; unlike a keyboard
+  # grabber, it creates no virtual device and never rewrites printable keys.
+  launchd.user.agents.caps-lock-leader = {
+    serviceConfig = {
+      ProgramArguments = [
+        "/usr/bin/hidutil"
+        "property"
+        "--matching"
+        builtInKeyboardMatch
+        "--set"
+        capsLockLeaderMapping
+      ];
+      ProcessType = "Background";
+      RunAtLoad = true;
+    };
+
+    managedBy = "darwin/window-management.nix";
   };
 
   # Tahoe keys Accessibility grants to a stable app identity. The classic
@@ -76,7 +113,7 @@ in
         "-c"
         "/etc/skhdrc"
       ];
-      EnvironmentVariables.PATH = "${pkgs.yabai}/bin:${pkgs.sketchybar}/bin:/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+      EnvironmentVariables.PATH = "${pkgs.yabai}/bin:${sketchybarPackage}/bin:/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin";
       KeepAlive = true;
       ProcessType = "Interactive";
       RunAtLoad = true;

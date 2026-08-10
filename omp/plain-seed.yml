@@ -134,7 +134,7 @@ stt:
 speechgen:
   enabled: true
 inspect_image:
-  enabled: true
+  mode: on
 
 # Obsidian integration is deferred work; keep it out of the system prompt.
 vault:

@@ -15,6 +15,8 @@ let
   skhdArguments = cfg.launchd.user.agents.skhd.serviceConfig.ProgramArguments;
   managedRestart = homeConfig.config.home.activation.restartManagedLuaConsumers;
   managedRestartText = builtins.unsafeDiscardStringContext managedRestart.data;
+  karabinerInstall = homeConfig.config.home.activation.installKarabinerConfig;
+  karabinerInstallText = builtins.unsafeDiscardStringContext karabinerInstall.data;
   managedRestartNeedles = [
     "if [[ -v DRY_RUN ]]; then"
     ''user_domain="gui/$(''
@@ -639,16 +641,19 @@ let
   ) karabinerManipulators;
   capsManipulator = lib.head capsManipulators;
 
-  # Karabiner presents a virtual keyboard to macOS. When its type is unset,
-  # macOS cannot identify it and reruns the Keyboard Setup Assistant. Karabiner
-  # then persists the answer by rewriting karabiner.json, so leaving this out of
-  # the managed file means every activation reverts it and the assistant returns.
-  # This workstation's built-in keyboard is ISO: kVK_ISO_Section resolves to a
-  # real character, which has no equivalent on ANSI.
+  # Karabiner-Elements issue #4201 swaps grave_accent_and_tilde with
+  # non_us_backslash on built-in ISO keyboards when its virtual keyboard is
+  # also declared ISO. The upstream-confirmed workaround on French MacBook
+  # keyboards is an ANSI virtual device; the physical keyboard and macOS input
+  # source remain French ISO.
   keyboardTypes = map (
     profile: profile.virtual_hid_keyboard.keyboard_type_v2 or ""
   ) karabinerProfiles;
-  untypedProfiles = lib.filter (keyboardType: keyboardType == "") keyboardTypes;
+  nonAnsiKeyboardTypes = lib.filter (keyboardType: keyboardType != "ansi") keyboardTypes;
+  karabinerInstallNeedles = [
+    "/bin/cmp -s"
+    "Karabiner configuration unchanged"
+  ];
 
   # The karabiner-elements cask is `auto_updates`, so the application updates
   # itself outside Homebrew and outside this flake. An unattended bump can carry
@@ -763,13 +768,16 @@ assert lib.assertMsg (capsTapEmits == [ ]) (
   + " dismisses dialogs and TUI prompts. Reintroduce `to_if_alone` only alongside a"
   + " deliberate basic.to_if_alone_timeout_milliseconds."
 );
-assert lib.assertMsg (untypedProfiles == [ ]) (
-  "every Karabiner profile must pin virtual_hid_keyboard.keyboard_type_v2."
-  + " An unset type leaves macOS unable to identify Karabiner's virtual keyboard,"
-  + " so it reruns the Keyboard Setup Assistant. Karabiner persists the answer by"
-  + " rewriting karabiner.json, which the next activation reverts, making the"
-  + " assistant reappear on a loop."
+assert lib.assertMsg (nonAnsiKeyboardTypes == [ ]) (
+  "every Karabiner profile must pin virtual_hid_keyboard.keyboard_type_v2 to ansi;"
+  + " Karabiner issue #4201 swaps the French ISO `@` and `<` keys when its virtual device is ISO: "
+  + lib.concatStringsSep ", " nonAnsiKeyboardTypes
 );
+assert lib.assertMsg (!lib.hasInfix "com.apple.keyboardtype" darwinWindowManagementSource)
+  "Darwin activation must not overwrite macOS's keyboard-type registry; Karabiner's pinned ANSI virtual device owns the issue #4201 workaround";
+assert lib.assertMsg
+  (lib.all (needle: lib.hasInfix needle karabinerInstallText) karabinerInstallNeedles)
+  "Home Manager must leave an unchanged Karabiner config and process running during unrelated activations";
 assert lib.assertMsg (!karabinerChecksForUpdates) (
   "Karabiner must not check for updates on startup. The cask is `auto_updates`, so the"
   + " application would update itself outside this flake, and a new DriverKit extension"

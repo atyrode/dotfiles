@@ -76,6 +76,10 @@ in
   # regular file and desynchronise the next activation. Writing a real file and
   # replacing it atomically keeps the reload trigger intact and makes a
   # Karabiner-side write a recoverable drift instead of a broken generation.
+  #
+  # Do not rewrite or restart Karabiner for an unrelated activation. Recreating
+  # its virtual HID keyboard makes macOS re-evaluate the per-device keyboard
+  # type, which can transiently restore the ANSI `@`/`<` swap until repaired.
   home.activation.installKarabinerConfig = lib.mkIf pkgs.stdenv.isDarwin (
     lib.hm.dag.entryAfter
       [
@@ -85,6 +89,9 @@ in
       ''
         if [[ -v DRY_RUN ]]; then
           echo "Would install Karabiner configuration at ${karabinerPath}"
+        elif [[ -f ${lib.escapeShellArg karabinerPath} ]] \
+          && ${pkgs.diffutils}/bin/cmp -s ${karabinerConfig} ${lib.escapeShellArg karabinerPath}; then
+          echo "Karabiner configuration unchanged"
         else
           ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg karabinerDirectory}
           temporary=${lib.escapeShellArg "${karabinerPath}.tmp"}.$$

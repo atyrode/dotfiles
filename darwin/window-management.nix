@@ -64,17 +64,6 @@ in
     ];
   };
 
-  # The Karabiner virtual keyboard (vendor 1241, product 41119) must be
-  # registered ISO (41) in macOS's per-device keyboard-type store. The
-  # Keyboard Setup Assistant once recorded it as ANSI (40), which swaps the
-  # `@` and `<` keys on the French ISO layout -- every keystroke flows through
-  # the virtual device, so its type wins. Root-owned plist, so enforce it at
-  # activation; takes effect at next login.
-  system.activationScripts.extraActivation.text = ''
-    /usr/bin/defaults write /Library/Preferences/com.apple.keyboardtype keyboardtype \
-      -dict-add "41119-1241-0" -int 41
-  '';
-
   # Tahoe keys Accessibility grants to a stable app identity. The classic
   # nixpkgs skhd binary lives at a generation-specific store path, so launch
   # the pinned skhd.zig app bundle while retaining nix-darwin lifecycle.

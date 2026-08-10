@@ -398,34 +398,17 @@ let
     && builtins.length (lib.splitString "env.PERCENTAGE" barVolumeCode) == 2
     && volumeForbiddenInteraction == [ ];
 
-  # Hammerspoon owns menu-bar policy. Ordered target events make concurrent
-  # task delivery harmless; SbarLua owns only the two measured strokes.
+  # DATUM remains opaque and topmost during the dwell, so the native bar can
+  # react to untouched mouse input behind it without either layer colliding.
   menubarHandoffIntact =
     lib.all (needle: lib.hasInfix needle hammerspoonText) [
       "local LEAD_DWELL = 0.70"
-      "local REVEAL_POLL = 0.02"
-      "local REVEAL_TIMEOUT = 0.50"
-      "local DATUM_HIDDEN_Y = -40"
       "local RETURN_HOLD = 0.14"
-      "local nativeReleased = false"
-      "local revealPending = false"
-      "local suppress = false"
-      "revealTimer = hs.timer.delayed.new(REVEAL_POLL, probeDatumHidden)"
-      "hs.task.new(SB, function(exitCode, stdOut)"
-      ''{ "--query", "bar" }''
-      "pcall(hs.json.decode, stdOut)"
-      "tonumber(decoded.y_offset) == DATUM_HIDDEN_Y"
-      "releaseNativeMenu(generation)"
-      "revealDeadline = hs.timer.absoluteTime() + REVEAL_TIMEOUT * 1000000000"
       "hs.timer.delayed.new(LEAD_DWELL"
       "hs.timer.delayed.new(RETURN_HOLD"
-      "if not reasons.menu and not nativeReleased then"
-      "local aborted = leadTimer:running() or revealPending or (emitted and not nativeReleased)"
+      "hs.timer.absoluteTime()"
       "hs.eventtap.new({ hs.eventtap.event.types.mouseMoved }"
-      "local reveal ="
-      "hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = point.x, y = primary.y })"
-      "reveal:post()"
-      "return suppress"
+      "if not reasons.menu and not emitted and not leadTimer:running() then"
       "emit(reasons.menu or reasons.hover, true)"
       "emit(reasons.menu or reasons.hover or emitted, true)"
       "com.apple.HIToolbox.beginMenuTrackingNotification"
@@ -439,11 +422,22 @@ let
       "settings.motion.duck.back"
       "down and -settings.bar_height or 0"
     ]
+    && lib.hasInfix "topmost = true" barInit
     && lib.all (needle: !(lib.hasInfix needle (hammerspoonText + barMenubarItem))) [
       "DWELL_SECONDS = 0.35"
       "menubar_hover_on"
       "menubar_hover_off"
-      "NATIVE_REVEAL_LAG"
+      "REVEAL_POLL"
+      "REVEAL_TIMEOUT"
+      "DATUM_HIDDEN_Y"
+      "nativeReleased"
+      "revealPending"
+      "local suppress"
+      "return suppress"
+      ''{ "--query", "bar" }''
+      "hs.json.decode"
+      "hs.eventtap.event.newMouseEvent("
+      "reveal:post()"
       "hs.mouse.absolutePosition({"
       "hs.eventtap.event.types.leftMouseDragged"
       "hs.eventtap.event.types.rightMouseDragged"

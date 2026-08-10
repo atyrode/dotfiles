@@ -19,6 +19,8 @@ sbar.bar({
 	border_color = colors.track,
 	position = "top",
 	sticky = true,
+	-- Keep the opaque DATUM face above the native menu bar during edge dwell.
+	topmost = true,
 	padding_left = settings.padding_left,
 	-- The macOS privacy indicator occupies ~12-22pt from the right edge;
 	-- give it its own lane instead of gluing it to the clock.

@@ -72,6 +72,8 @@ lib.mkIf pkgs.stdenv.isDarwin {
         previous="$destination_root/.$app_name.previous.$$"
         # A killed activation must not leave an unsigned app-shaped bundle in
         # the stable automation directory. These globs match only our names.
+        /bin/chmod -R u+w "$destination_root/.$app_name.staged."* \
+          "$destination_root/.$app_name.previous."* 2>/dev/null || true
         /bin/rm -rf "$destination_root/.$app_name.staged."* \
           "$destination_root/.$app_name.previous."*
         /bin/rm -rf "$staged" "$previous"

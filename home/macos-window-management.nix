@@ -44,8 +44,8 @@ lib.mkIf pkgs.stdenv.isDarwin {
     if [[ -v DRY_RUN ]]; then
       echo "Would install and sign managed automation apps in $destination_root"
     else
-      if ! /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
-        | /usr/bin/grep -Fq "\"$identity\""; then
+      identity_listing="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null)"
+      if ! /usr/bin/grep -Fq "\"$identity\"" <<< "$identity_listing"; then
         echo "home-manager: missing local code-signing identity '$identity'" >&2
         echo "run 'atyrode automation signing-bootstrap' once, then retry apply" >&2
         exit 1
@@ -63,8 +63,8 @@ lib.mkIf pkgs.stdenv.isDarwin {
         if [[ -f "$receipt" ]] \
           && /usr/bin/grep -Fxq "$source_app" "$receipt" \
           && /usr/bin/codesign --verify --deep --strict "$destination" >/dev/null 2>&1 \
-          && /usr/bin/codesign -dv --verbose=4 "$destination" 2>&1 \
-            | /usr/bin/grep -Fq "Authority=$identity"; then
+          && signature_info="$(/usr/bin/codesign -dv --verbose=4 "$destination" 2>&1)" \
+          && /usr/bin/grep -Fq "Authority=$identity" <<< "$signature_info"; then
           return
         fi
 
@@ -82,8 +82,8 @@ lib.mkIf pkgs.stdenv.isDarwin {
         /usr/bin/codesign --force --timestamp=none --options runtime \
           --identifier "$bundle_id" --sign "$identity" "$staged"
         /usr/bin/codesign --verify --deep --strict "$staged"
-        /usr/bin/codesign -dv --verbose=4 "$staged" 2>&1 \
-          | /usr/bin/grep -Fq "Authority=$identity"
+        signature_info="$(/usr/bin/codesign -dv --verbose=4 "$staged" 2>&1)"
+        /usr/bin/grep -Fq "Authority=$identity" <<< "$signature_info"
 
         if [[ -e "$destination" ]]; then
           /bin/mv "$destination" "$previous"

@@ -21,7 +21,7 @@ let
     ''/bin/id -u)"''
     ''/bin/launchctl kickstart -k "$user_domain/org.nixos.skhd" >/dev/null 2>&1 || true''
     ''/bin/launchctl kickstart -k "$user_domain/org.nixos.sketchybar" >/dev/null 2>&1 || true''
-    ''/bin/launchctl kickstart -k "$user_domain/org.nixos.hammerspoon" >/dev/null 2>&1 || true''
+    ''/bin/launchctl kickstart -k "$user_domain/org.nixos.macos-automation-bridge" >/dev/null 2>&1 || true''
   ];
 
   # JankyBorders was evaluated as Phase 3 and removed by operator decision
@@ -103,10 +103,29 @@ let
     "-lua-5.5."
     ''/bin/lua "$HOME/.config/sketchybar/init.lua"''
   ];
-  hammerspoonDeployment = homeConfig.config.home.file.".hammerspoon/init.lua";
-  hammerspoonText = builtins.readFile ../home/macos-window-management/hammerspoon-init.lua;
-  hammerspoonAgent = cfg.launchd.user.agents.hammerspoon;
+  homeDirectory = homeConfig.config.home.homeDirectory;
+  bridgeSource = builtins.readFile ../pkgs/macos-automation-bridge/main.m;
+  bridgeRecipe = builtins.readFile ../pkgs/macos-automation-bridge/default.nix;
+  skhdRecipe = builtins.readFile ../pkgs/skhd/default.nix;
+  bridgeAgent = cfg.launchd.user.agents.macos-automation-bridge;
   sketchybarAgent = cfg.launchd.user.agents.sketchybar;
+  signedAppsActivation = homeConfig.config.home.activation.installSignedAutomationApps;
+  signedAppsActivationText = builtins.unsafeDiscardStringContext signedAppsActivation.data;
+  automationPolicy = builtins.fromJSON cfg.environment.etc."atyrode/automation-security.json".text;
+  forbiddenAutomationConfigNeedles = [
+    ".load "
+    ".remap "
+    ".taphold "
+    "fn_layer"
+    "SpoonInstall"
+    "hs.loadSpoon"
+    "~/.hammerspoon"
+    "/opt/homebrew"
+    "/usr/local"
+  ];
+  forbiddenAutomationConfig = lib.filter (
+    needle: lib.any (text: lib.hasInfix needle text) ([ skhdConfig ] ++ barTreeTexts)
+  ) forbiddenAutomationConfigNeedles;
   sketchybarRuntimePackageNames = map lib.getName cfg.services.sketchybar.extraPackages;
   installedFontPackageNames = map lib.getName cfg.fonts.packages;
   requestedFontFamilies = lib.all (needle: lib.hasInfix needle barSettingsCode) [
@@ -497,31 +516,23 @@ let
   # Throughout, mouse input stays read-only -- the two layers are separated by
   # level, never by touching the pointer or an event.
   menubarHandoffIntact =
-    lib.all (needle: lib.hasInfix needle hammerspoonText) [
-      "local LEAD_DWELL = 0.70"
-      "local RETURN_HOLD = 0.14"
-      "local SETTLE_HOLD = 0.20"
-      "local LIFT_GUARD = 4"
-      "hs.timer.delayed.new(LEAD_DWELL"
-      "hs.timer.delayed.new(RETURN_HOLD"
-      "hs.timer.delayed.new(SETTLE_HOLD"
-      "hs.timer.absoluteTime()"
-      "hs.eventtap.new({ hs.eventtap.event.types.mouseMoved }"
-      "if not reasons.menu and not emitted and not leadTimer:running() then"
-      "emit(reasons.menu or reasons.hover, true)"
-      "emit(reasons.menu or reasons.hover or emitted, true)"
-      ''send("menubar_lift", up)''
-      "reasons.approach = inLiftGuard(point)"
-      "local guarded = inLiftGuard(point)"
-      "if guarded ~= reasons.approach then"
-      "lift(true)"
-      "lift(false)"
-      "lift(liftTarget())"
-      "lift(liftTarget(), true)"
-      "hs.caffeinate.watcher.systemDidWake"
+    lib.all (needle: lib.hasInfix needle bridgeSource) [
+      "static const NSTimeInterval LeadDwell = 0.70;"
+      "static const NSTimeInterval ReturnHold = 0.14;"
+      "static const NSTimeInterval SettleHold = 0.20;"
+      "static const CGFloat LiftGuard = 4.0;"
+      "scheduledTimerWithTimeInterval:LeadDwell"
+      "scheduledTimerWithTimeInterval:ReturnHold"
+      "scheduledTimerWithTimeInterval:SettleHold"
+      "NSProcessInfo.processInfo.systemUptime"
+      "NSEvent.mouseLocation"
+      ''sendStateEvent:@"menubar_lift"''
       "com.apple.HIToolbox.beginMenuTrackingNotification"
       "com.apple.HIToolbox.endMenuTrackingNotification"
-      ''"SEQ=" .. seq''
+      "NSWorkspaceDidWakeNotification"
+      "startMonitoringEventWithType:CWEventTypeLinkDidChange"
+      "IOPSNotificationCreateRunLoopSource"
+      "Association changes are the signal"
     ]
     && lib.all (needle: lib.hasInfix needle barMenubarItem) [
       ''sbar.add("event", "menubar_duck")''
@@ -536,7 +547,7 @@ let
     ]
     && lib.hasInfix ''topmost = "window",'' barInit
     && !(lib.hasInfix "topmost = true" (barInit + barMenubarItem))
-    && lib.all (needle: !(lib.hasInfix needle (hammerspoonText + barMenubarItem))) [
+    && lib.all (needle: !(lib.hasInfix needle (bridgeSource + barMenubarItem))) [
       "DWELL_SECONDS = 0.35"
       "menubar_hover_on"
       "menubar_hover_off"
@@ -549,8 +560,9 @@ let
       "return suppress"
       ''{ "--query", "bar" }''
       "hs.json.decode"
-      "hs.eventtap.event.newMouseEvent("
-      "reveal:post()"
+      "CGEventCreateKeyboardEvent"
+      "CGEventTapCreate"
+      "addGlobalMonitorForEventsMatchingMask"
       "hs.mouse.absolutePosition({"
       "hs.eventtap.event.types.leftMouseDown"
       "hs.eventtap.event.types.leftMouseDragged"
@@ -778,11 +790,11 @@ assert lib.assertMsg (
   !cfg.services.skhd.enable
   &&
     skhdArguments == [
-      "/Applications/skhd.app/Contents/MacOS/skhd"
+      "${homeDirectory}/Applications/Managed Automation/skhd.app/Contents/MacOS/skhd"
       "-c"
       "/etc/skhdrc"
     ]
-) "the Darwin workstation must launch the stable skhd app bundle";
+) "the Darwin workstation must launch the locally signed, stable skhd app bundle";
 assert lib.assertMsg (missingBindings == [ ]) (
   "skhd is missing required window-management bindings: " + lib.concatStringsSep ", " missingBindings
 );
@@ -807,12 +819,12 @@ assert lib.assertMsg (
   && !cfg.system.defaults.WindowManager.HideDesktop
 ) "macOS defaults must preserve stable, separate Spaces without Stage Manager";
 assert lib.assertMsg (
-  builtins.hasAttr "jackielii/homebrew-tap" cfg.nix-homebrew.taps
-  && builtins.elem "jackielii/tap/skhd-zig" caskNames
-) "nix-homebrew must pin and install the Tahoe-compatible skhd.zig app bundle";
-assert lib.assertMsg (
-  !(builtins.elem "skhd" packageNames) && builtins.elem "yabai" packageNames
-) "the desktop capability must expose yabai without the obsolete classic skhd package";
+  !(builtins.hasAttr "jackielii/homebrew-tap" cfg.nix-homebrew.taps)
+  && !(builtins.elem "jackielii/tap/skhd-zig" caskNames)
+  && !(builtins.elem "hammerspoon" caskNames)
+) "the retired third-party skhd tap and general-purpose Hammerspoon runtime must remain absent";
+assert lib.assertMsg (!(builtins.elem "skhd" packageNames) && builtins.elem "yabai" packageNames)
+  "the desktop capability exposes yabai while signed automation apps are installed by an audited activation";
 assert lib.assertMsg (!(builtins.elem "karabiner-elements" caskNames))
   "Karabiner-Elements must stay out of the workstation: its virtual keyboard rewrites printable French ISO input";
 assert lib.assertMsg (
@@ -858,14 +870,14 @@ assert lib.assertMsg (
 ) "Home Manager must generate an executable SbarLua bootstrap pinned to Lua 5.5";
 assert lib.assertMsg
   (
-    builtins.elem "linkGeneration" managedRestart.after
+    builtins.elem "installSignedAutomationApps" managedRestart.after
     && sketchybarAgent.serviceConfig.Label == "org.nixos.sketchybar"
-    && hammerspoonAgent.serviceConfig.Label == "org.nixos.hammerspoon"
+    && bridgeAgent.serviceConfig.Label == "org.nixos.macos-automation-bridge"
     && lib.all (
       needle: lib.hasInfix (builtins.unsafeDiscardStringContext needle) managedRestartText
     ) managedRestartNeedles
   )
-  "Home Manager must best-effort kickstart the managed SketchyBar and Hammerspoon labels after linkGeneration while remaining DRY_RUN-safe";
+  "Home Manager must best-effort kickstart skhd, SketchyBar, and the narrow bridge only after signed apps are installed";
 assert lib.assertMsg
   (
     lib.all (name: builtins.elem name sketchybarRuntimePackageNames) [
@@ -890,14 +902,61 @@ assert lib.assertMsg
   )
   "DATUM settings and installed outputs must pair JetBrainsMono Nerd Font with Google Fonts' genuine DM Sans family";
 assert lib.assertMsg (
-  hammerspoonDeployment.source == ../home/macos-window-management/hammerspoon-init.lua
+  !(cfg.launchd.user.agents ? hammerspoon)
+  && !(builtins.pathExists ../home/macos-window-management/hammerspoon-init.lua)
   &&
-    hammerspoonAgent.serviceConfig.ProgramArguments
-    == [ "/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" ]
-  && hammerspoonAgent.serviceConfig.KeepAlive
-  && hammerspoonAgent.serviceConfig.RunAtLoad
-  && hammerspoonAgent.managedBy == "darwin/window-management.nix"
-) "the managed Hammerspoon bridge config and nix-darwin launch agent must remain paired";
+    bridgeAgent.serviceConfig.ProgramArguments == [
+      "${homeDirectory}/Applications/Managed Automation/atyrode-automation-bridge.app/Contents/MacOS/atyrode-automation-bridge"
+    ]
+  && bridgeAgent.serviceConfig.KeepAlive
+  && bridgeAgent.serviceConfig.RunAtLoad
+  && bridgeAgent.serviceConfig.ProcessType == "Background"
+  && bridgeAgent.managedBy == "darwin/window-management.nix"
+) "Hammerspoon must remain removed and the narrow compiled bridge must own its former events";
+assert lib.assertMsg
+  (
+    builtins.elem "linkGeneration" signedAppsActivation.after
+    && lib.all (needle: lib.hasInfix needle signedAppsActivationText) [
+      "security find-identity -v -p codesigning"
+      "codesign --force --timestamp=none --options runtime"
+      "codesign --verify --deep --strict"
+      "Authority=$identity"
+      "atyrode Local Automation"
+      "skhd.app"
+      "atyrode-automation-bridge.app"
+    ]
+  )
+  "managed automation apps must be copied atomically and verified under the stable host-local signing identity";
+assert lib.assertMsg
+  (
+    lib.hasInfix ''version = "0.2.0";'' skhdRecipe
+    && lib.hasInfix "tag = \"v\${version}\";" skhdRecipe
+    && lib.hasInfix ''hash = "sha256-Qi5srrpdhf3VcXaqZbijJD23Um0G7WgRzK0hR+mb7nU=";'' skhdRecipe
+    && lib.hasInfix ''hash = "sha256-u/N1KkCeu4AgK4ZaR8PTgla1oDV5PsipiW48sImetW4=";'' skhdRecipe
+    && lib.hasInfix ".path = \"\${zbench}\"," skhdRecipe
+    && lib.hasInfix ''rm -rf "$out/bin"'' skhdRecipe
+    && lib.hasInfix "NSMicrophoneUsageDescription" skhdRecipe
+    && !(lib.hasInfix "NSMicrophoneUsageDescription" bridgeSource)
+    && lib.hasInfix "-fobjc-arc -Os -Wall -Wextra -Werror" bridgeRecipe
+  )
+  "skhd and the narrow bridge must remain source-pinned, locally built, and stripped of unused privileged surfaces";
+assert lib.assertMsg (forbiddenAutomationConfig == [ ]) (
+  "managed executable automation may not load plugins, Spoons, root grabbers, or unmanaged paths: "
+  + lib.concatStringsSep ", " forbiddenAutomationConfig
+);
+assert lib.assertMsg
+  (
+    automationPolicy.schemaVersion == 1
+    && automationPolicy.signingIdentity == "atyrode Local Automation"
+    && automationPolicy.expectedSIPEnabled
+    && !automationPolicy.expectedScriptingAdditionEnabled
+    && automationPolicy.allowedTcpListeners == [ ]
+    && automationPolicy.tccReview.maxAgeDays == 90
+    && builtins.length automationPolicy.managedApplications == 2
+    && builtins.elem "Hammerspoon" automationPolicy.forbiddenProcesses
+    && builtins.elem "skhd-grabber" automationPolicy.forbiddenProcesses
+  )
+  "the machine-readable automation policy must pin least privilege, identity checks, and quarterly TCC review";
 assert lib.assertMsg menubarHandoffIntact
   "the native/custom menu-bar handoff must keep its measured lead/hold/settle timers, ordered per-event delivery, bar-only y-offset strokes, a notification-safe resting window level, and a status level that is only ever a bounded lift";
 assert lib.assertMsg (!bordersEnabled)

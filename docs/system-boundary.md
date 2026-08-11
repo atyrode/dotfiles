@@ -128,6 +128,7 @@ The checks always appear in this order:
 | `antivirus-data` | Verifies ClamAV binaries are absent while no host owns signatures/scanning; an unmanaged binary is drift. |
 | `device-permissions` | Android access policy is ready, or the `mobile` capability is not selected. |
 | `homebrew-drift` | The generated nix-darwin Brewfile matches Homebrew state, or Homebrew does not apply. |
+| `automation-security` | On macOS, SIP is enabled, yabai scripting additions and root grabbers are absent, the retired Hammerspoon runtime is absent, locally signed app identities/versions verify, managed processes expose no TCP listener, configuration resolves to immutable Nix-store paths, and the manual TCC-review receipt matches current policy and is at most 90 days old. |
 
 Each row has a stable `id`, `owner`, `required`, `status`, `code`, `summary`,
 `remediation`, `expected`, and `actual` shape. Status is one of:
@@ -153,7 +154,12 @@ particular, the Android probe does not run `adb devices`, which could start a
 daemon and create authentication state. The Homebrew probe runs `brew bundle
 check` plus generated `brew bundle cleanup` with standard input closed and
 without `--force` or `--zap`; it reports drift without offering the
-activation-only reconciliation prompt.
+activation-only reconciliation prompt. The automation probe likewise reads
+process, signature, listener, immutable-path, and receipt state only; it does not
+change TCC or trust settings. Use `atyrode tcc-review` to print the reviewed grant
+contract, `atyrode tcc-review --acknowledge` only after manually checking System
+Settings, and `atyrode automation signing-bootstrap` for the one-time local
+code-signing identity.
 
 ## Login-shell activation and recovery
 

@@ -38,6 +38,8 @@ Usage:
   atyrode doctor system [HOST] [--json]
   atyrode doctor git [--json]
   atyrode doctor tools [--json]
+  atyrode tcc-review [--acknowledge] [--json]
+  atyrode automation signing-bootstrap [--json]
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
@@ -1552,6 +1554,161 @@ doctor_tools() {
   jq -e 'all(.[]; (.expected | not) or .status == "ok")' <<<"$rows" >/dev/null
 }
 
+automation_policy_path() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_AUTOMATION_POLICY:-}" ]]; then
+    printf '%s\n' "$_ATYRODE_TEST_AUTOMATION_POLICY"
+  else
+    jq -r '.automation.policyPath' "$system_policy"
+  fi
+}
+
+automation_receipt_path() {
+  local state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+  printf '%s/%s\n' "$state_home" "$(jq -r '.automation.receiptRelativePath' "$system_policy")"
+}
+
+automation_policy_digest() {
+  local policy="$1"
+  jq -cS '.tccReview.grants' "$policy" | sha256sum | awk '{ print $1 }'
+}
+
+cmd_tcc_review() {
+  local acknowledge=0 json=0 policy receipt digest max_age now reviewed_at=0 age=-1 current=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --acknowledge) acknowledge=1; shift ;;
+      --json) json=1; shift ;;
+      --*) die "$EX_USAGE" "unknown tcc-review option: $1" ;;
+      *) die "$EX_USAGE" "tcc-review accepts only --acknowledge and --json" ;;
+    esac
+  done
+  [[ "$(uname -s)" == Darwin || "$test_hooks" == 1 ]] ||
+    die "$EX_UNAVAILABLE" "tcc-review is only applicable to the managed macOS host"
+  policy="$(automation_policy_path)"
+  [[ -f "$policy" && ! -L "$policy" ]] ||
+    die "$EX_NOINPUT" "automation policy is unavailable at $policy; apply nix-darwin first"
+  jq -e '.schemaVersion == 1 and (.tccReview.grants | type == "object")' "$policy" >/dev/null ||
+    die "$EX_DATAERR" "automation policy is malformed"
+  receipt="$(automation_receipt_path)"
+  digest="$(automation_policy_digest "$policy")"
+  max_age="$(jq -r '.tccReview.maxAgeDays' "$policy")"
+  now="$(date +%s)"
+
+  if [[ -f "$receipt" && ! -L "$receipt" ]] && jq -e '.schemaVersion == 1' "$receipt" >/dev/null 2>&1; then
+    reviewed_at="$(jq -r '.reviewedAtEpoch // 0' "$receipt")"
+    if [[ "$reviewed_at" =~ ^[0-9]+$ && "$reviewed_at" -le "$now" ]]; then
+      age=$(( (now - reviewed_at) / 86400 ))
+      if [[ "$age" -le "$max_age" ]] &&
+        jq -e --arg digest "$digest" '.policyDigest == $digest' "$receipt" >/dev/null; then
+        current=true
+      fi
+    fi
+  fi
+
+  if [[ "$acknowledge" == 1 ]]; then
+    if [[ "$test_hooks" != 1 || "${_ATYRODE_TEST_ALLOW_TCC_ACK:-}" != 1 ]]; then
+      interactive || die "$EX_UNAVAILABLE" "--acknowledge requires an interactive terminal"
+      jq -r '.tccReview.grants | to_entries[] |
+        "\(.key): required=[\(.value.required | join(", "))] prohibited=[\(.value.prohibited | join(", "))]"' "$policy"
+      printf 'After reviewing System Settings > Privacy & Security, type reviewed: ' >&2
+      local confirmation
+      IFS= read -r confirmation
+      [[ "$confirmation" == reviewed ]] || die "$EX_DATAERR" "TCC review was not acknowledged"
+    fi
+    mkdir -p "${receipt%/*}"
+    local temporary="$receipt.tmp.$$"
+    jq -nc --arg digest "$digest" --arg reviewedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg host "$(hostname)" --argjson reviewedAtEpoch "$now" \
+      '{schemaVersion:1,policyDigest:$digest,reviewedAt:$reviewedAt,
+        reviewedAtEpoch:$reviewedAtEpoch,host:$host,attestation:"manual-system-settings-review"}' \
+      > "$temporary"
+    chmod 600 "$temporary"
+    mv "$temporary" "$receipt"
+    reviewed_at="$now"; age=0; current=true
+  fi
+
+  if [[ "$json" == 1 ]]; then
+    jq -nc --argjson current "$current" --argjson ageDays "$age" --argjson maxAgeDays "$max_age" \
+      --arg policyDigest "$digest" --arg receipt "$receipt" --argjson grants "$(jq -c '.tccReview.grants' "$policy")" \
+      '{schemaVersion:1,command:"tcc-review",current:$current,ageDays:$ageDays,
+        maxAgeDays:$maxAgeDays,policyDigest:$policyDigest,receipt:$receipt,grants:$grants}'
+  else
+    jq -r '.tccReview.grants | to_entries[] |
+      "\(.key): required=[\(.value.required | join(", "))] prohibited=[\(.value.prohibited | join(", "))]"' "$policy"
+    if [[ "$current" == true ]]; then
+      printf 'review receipt: current (%s days old; maximum %s)\n' "$age" "$max_age"
+    else
+      printf 'review receipt: missing, stale, or for an older policy (run %s)\n' \
+        "$(jq -r '.automation.acknowledgeCommand' "$system_policy")"
+    fi
+  fi
+}
+
+cmd_automation() {
+  local operation="${1:-}"
+  [[ -n "$operation" ]] || die "$EX_USAGE" "automation expects signing-bootstrap"
+  shift
+  case "$operation" in
+    signing-bootstrap) ;;
+    *) die "$EX_USAGE" "automation expects signing-bootstrap" ;;
+  esac
+  local json=0 identity state_dir certificate temporary password keychain
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --*) die "$EX_USAGE" "unknown automation signing-bootstrap option: $1" ;;
+      *) die "$EX_USAGE" "automation signing-bootstrap accepts only --json" ;;
+    esac
+  done
+  [[ "$(uname -s)" == Darwin ]] ||
+    die "$EX_UNAVAILABLE" "automation signing-bootstrap is only applicable to macOS"
+  identity="$(jq -r '.automation.signingIdentity' "$system_policy")"
+  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/automation-signing"
+  certificate="$state_dir/certificate.pem"
+  keychain="$HOME/Library/Keychains/login.keychain-db"
+
+  if /usr/bin/security find-identity -v -p codesigning 2>/dev/null |
+    grep -Fq "\"$identity\""; then
+    if [[ "$json" == 1 ]]; then
+      jq -nc --arg identity "$identity" '{schemaVersion:1,identity:$identity,status:"present"}'
+    else
+      printf 'code-signing identity is ready: %s\n' "$identity"
+    fi
+    return
+  fi
+
+  /bin/mkdir -p "$state_dir"
+  /bin/chmod 700 "$state_dir"
+  if [[ -f "$certificate" ]]; then
+    /usr/bin/security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$certificate"
+  else
+    temporary="$(mktemp -d "$state_dir/bootstrap.XXXXXX")"
+    password="$(openssl rand -hex 32)"
+    trap '/bin/rm -rf "$temporary"' RETURN
+    openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes \
+      -subj "/CN=$identity/O=atyrode local automation" \
+      -addext 'keyUsage=critical,digitalSignature' \
+      -addext 'extendedKeyUsage=critical,codeSigning' \
+      -keyout "$temporary/private-key.pem" -out "$temporary/certificate.pem"
+    openssl pkcs12 -export -legacy -passout "pass:$password" \
+      -inkey "$temporary/private-key.pem" -in "$temporary/certificate.pem" \
+      -out "$temporary/identity.p12"
+    /usr/bin/security import "$temporary/identity.p12" -k "$keychain" -P "$password" \
+      -T /usr/bin/codesign -T /usr/bin/security
+    /bin/cp "$temporary/certificate.pem" "$certificate"
+    /bin/chmod 600 "$certificate"
+    /usr/bin/security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$certificate"
+  fi
+  /usr/bin/security find-identity -v -p codesigning 2>/dev/null |
+    grep -Fq "\"$identity\"" ||
+    die "$EX_SOFTWARE" "the certificate was imported but is not a valid trusted code-signing identity"
+  if [[ "$json" == 1 ]]; then
+    jq -nc --arg identity "$identity" '{schemaVersion:1,identity:$identity,status:"created"}'
+  else
+    printf 'created trusted local code-signing identity: %s\n' "$identity"
+  fi
+}
+
 system_checks='[]'
 system_fixture='{}'
 
@@ -2011,6 +2168,132 @@ probe_homebrew_drift() {
     "$expected_json" "$actual_json"
 }
 
+probe_automation_security() {
+  local platform="$1" policy policy_loaded=false sip=false scripting_addition=false
+  local forbidden_running=false hammerspoon_absent=false identities=false versions=false
+  local unexpected_listeners=true immutable=false review_current=false digest_matches=false
+  local status code summary remediation expected_json actual_json
+
+  expected_json='{"sipEnabled":true,"scriptingAdditionEnabled":false,"forbiddenProcessesRunning":false,"hammerspoonAbsent":true,"identitiesValid":true,"versionsValid":true,"unexpectedTcpListeners":false,"immutableConfigs":true,"tccReviewCurrent":true,"tccPolicyDigestMatches":true}'
+  if [[ "$platform" != darwin ]]; then
+    actual_json='{"platform":"not-darwin"}'
+    system_check_add automation-security nix-darwin false not-applicable platform-not-darwin \
+      "privileged desktop automation is not part of the Linux boundary" "" "$expected_json" "$actual_json"
+    return
+  fi
+
+  if has_system_fixture; then
+    policy_loaded="$(jq -r '.automation.policyLoaded // true' <<<"$system_fixture")"
+    sip="$(jq -r '.automation.sipEnabled // false' <<<"$system_fixture")"
+    scripting_addition="$(jq -r 'if .automation | has("scriptingAdditionEnabled") then .automation.scriptingAdditionEnabled else true end' <<<"$system_fixture")"
+    forbidden_running="$(jq -r 'if .automation | has("forbiddenProcessesRunning") then .automation.forbiddenProcessesRunning else true end' <<<"$system_fixture")"
+    hammerspoon_absent="$(jq -r '.automation.hammerspoonAbsent // false' <<<"$system_fixture")"
+    identities="$(jq -r '.automation.identitiesValid // false' <<<"$system_fixture")"
+    versions="$(jq -r '.automation.versionsValid // false' <<<"$system_fixture")"
+    unexpected_listeners="$(jq -r 'if .automation | has("unexpectedTcpListeners") then .automation.unexpectedTcpListeners else true end' <<<"$system_fixture")"
+    immutable="$(jq -r '.automation.immutableConfigs // false' <<<"$system_fixture")"
+    review_current="$(jq -r '.automation.tccReviewCurrent // false' <<<"$system_fixture")"
+    digest_matches="$(jq -r '.automation.tccPolicyDigestMatches // false' <<<"$system_fixture")"
+  else
+    policy="$(automation_policy_path)"
+    if [[ -f "$policy" && ! -L "$policy" ]] &&
+      jq -e '.schemaVersion == 1' "$policy" >/dev/null 2>&1; then
+      policy_loaded=true
+      /usr/bin/csrutil status 2>/dev/null | grep -Fq 'System Integrity Protection status: enabled' && sip=true
+      [[ ! -e /Library/ScriptingAdditions/yabai.osax ]] && scripting_addition=false
+
+      forbidden_running=false
+      while IFS= read -r process; do
+        if pgrep -f "$process" >/dev/null 2>&1; then forbidden_running=true; break; fi
+      done < <(jq -r '.forbiddenProcesses[]' "$policy")
+
+      hammerspoon_absent=true
+      if [[ -e /Applications/Hammerspoon.app || -e "$HOME/Applications/Hammerspoon.app" ]] ||
+        pgrep -f '/Hammerspoon.app/' >/dev/null 2>&1; then
+        hammerspoon_absent=false
+      fi
+
+      identities=true; versions=true
+      while IFS= read -r app; do
+        local app_path bundle expected_version executable metadata actual_version
+        app_path="$(jq -r '.path' <<<"$app")"
+        bundle="$(jq -r '.bundleIdentifier' <<<"$app")"
+        expected_version="$(jq -r '.version' <<<"$app")"
+        if [[ ! -d "$app_path" ]]; then
+          identities=false; versions=false; continue
+        elif /usr/bin/codesign --verify --deep --strict "$app_path" >/dev/null 2>&1; then
+          :
+        else
+          identities=false; versions=false; continue
+        fi
+        metadata="$(/usr/bin/codesign -dv --verbose=4 "$app_path" 2>&1 || true)"
+        grep -Fq "Authority=$(jq -r '.signingIdentity' "$policy")" <<<"$metadata" || identities=false
+        grep -Fq "Identifier=$bundle" <<<"$metadata" || identities=false
+        executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Contents/Info.plist" 2>/dev/null || true)"
+        actual_version="$("$app_path/Contents/MacOS/$executable" --version 2>/dev/null || true)"
+        [[ "$actual_version" == "$expected_version" ]] || versions=false
+      done < <(jq -c '.managedApplications[]' "$policy")
+
+      unexpected_listeners=false
+      while IFS= read -r app_path; do
+        while IFS= read -r pid; do
+          [[ -n "$pid" ]] || continue
+          if /usr/sbin/lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN 2>/dev/null |
+            awk 'NR > 1 { found=1 } END { exit !found }'; then
+            unexpected_listeners=true
+          fi
+        done < <(pgrep -f "$app_path/Contents/MacOS/" 2>/dev/null || true)
+      done < <(jq -r '.managedApplications[].path' "$policy")
+
+      immutable=true
+      while IFS= read -r configured; do
+        local resolved
+        resolved="$(realpath "$configured" 2>/dev/null || true)"
+        if [[ "$resolved" != /nix/store/* || -w "$resolved" ]]; then immutable=false; fi
+      done < <(jq -r '.immutableConfigurationPaths[]' "$policy")
+
+      local receipt digest now reviewed_at max_age
+      receipt="$(automation_receipt_path)"
+      digest="$(automation_policy_digest "$policy")"
+      now="$(date +%s)"
+      max_age="$(jq -r '.tccReview.maxAgeDays' "$policy")"
+      if [[ -f "$receipt" && ! -L "$receipt" ]] &&
+        jq -e --arg digest "$digest" '.schemaVersion == 1 and .policyDigest == $digest' "$receipt" >/dev/null 2>&1; then
+        digest_matches=true
+        reviewed_at="$(jq -r '.reviewedAtEpoch // 0' "$receipt")"
+        if [[ "$reviewed_at" =~ ^[0-9]+$ && "$reviewed_at" -le "$now" ]] &&
+          (( now - reviewed_at <= max_age * 86400 )); then
+          review_current=true
+        fi
+      fi
+    fi
+  fi
+
+  actual_json="$(jq -nc --argjson policyLoaded "$policy_loaded" --argjson sipEnabled "$sip" \
+    --argjson scriptingAdditionEnabled "$scripting_addition" \
+    --argjson forbiddenProcessesRunning "$forbidden_running" --argjson hammerspoonAbsent "$hammerspoon_absent" \
+    --argjson identitiesValid "$identities" --argjson versionsValid "$versions" \
+    --argjson unexpectedTcpListeners "$unexpected_listeners" --argjson immutableConfigs "$immutable" \
+    --argjson tccReviewCurrent "$review_current" --argjson tccPolicyDigestMatches "$digest_matches" \
+    '{policyLoaded:$policyLoaded,sipEnabled:$sipEnabled,scriptingAdditionEnabled:$scriptingAdditionEnabled,
+      forbiddenProcessesRunning:$forbiddenProcessesRunning,hammerspoonAbsent:$hammerspoonAbsent,
+      identitiesValid:$identitiesValid,versionsValid:$versionsValid,
+      unexpectedTcpListeners:$unexpectedTcpListeners,immutableConfigs:$immutableConfigs,
+      tccReviewCurrent:$tccReviewCurrent,tccPolicyDigestMatches:$tccPolicyDigestMatches}')"
+  if [[ "$policy_loaded" == true && "$sip" == true && "$scripting_addition" == false \
+    && "$forbidden_running" == false && "$hammerspoon_absent" == true \
+    && "$identities" == true && "$versions" == true && "$unexpected_listeners" == false \
+    && "$immutable" == true && "$review_current" == true && "$digest_matches" == true ]]; then
+    status=ok; code=""; summary="automation identities, least privilege, immutable config, and TCC review match policy"; remediation=""
+  else
+    status=incomplete; code="automation-security-drift"
+    summary="the privileged macOS automation stack differs from its reviewed least-privilege contract"
+    remediation="run atyrode tcc-review, remove forbidden grants/processes, and reapply nix-darwin; use atyrode automation signing-bootstrap if identities are missing"
+  fi
+  system_check_add automation-security nix-darwin true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
 doctor_system() {
   local requested="" json=0 host data platform user system capabilities ok result
 
@@ -2044,6 +2327,7 @@ doctor_system() {
   probe_antivirus "$data"
   probe_device_permissions "$data" "$platform" "$user"
   probe_homebrew_drift "$platform"
+  probe_automation_security "$platform"
   jq -e --argjson expected "$(jq -c '.checkOrder' "$system_policy")" \
     'map(.id) == $expected' <<<"$system_checks" >/dev/null ||
     die "$EX_SOFTWARE" "system diagnostics do not match the policy order"
@@ -2897,6 +3181,8 @@ main() {
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
     inventory) inventory "$@" ;;
+    tcc-review) cmd_tcc_review "$@" ;;
+    automation) cmd_automation "$@" ;;
     windows) [[ "${1:-}" != apply ]] || guard_production_mutation "windows apply"; cmd_windows "$@" ;;
     workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;

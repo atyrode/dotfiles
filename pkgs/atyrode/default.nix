@@ -24,6 +24,7 @@
   nh,
   nix,
   openssh,
+  openssl,
   omp-configured,
   runtimeShell,
   stdenvNoCC,
@@ -212,6 +213,7 @@ stdenvNoCC.mkDerivation {
           nh
           nix
           openssh
+          openssl
         ]
       }
   '';

@@ -8,8 +8,6 @@
   "font-sf-mono"
   "font-sf-pro"
   "godot"
-  "hammerspoon"
-  "jackielii/tap/skhd-zig"
   "parsec"
   "plugdata"
   "sonos"

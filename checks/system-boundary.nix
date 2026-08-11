@@ -93,6 +93,7 @@ let
     "antivirus-data"
     "device-permissions"
     "homebrew-drift"
+    "automation-security"
   ];
   officialCache = "https://cache.nixos.org/";
   officialKey = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
@@ -184,6 +185,13 @@ assert lib.assertMsg (
       "plugdev"
     ]
 ) "Android device-access policy differs from the reviewed boundary";
+assert lib.assertMsg (
+  boundary.automation.policyPath == "/etc/atyrode/automation-security.json"
+  && boundary.automation.signingIdentity == "atyrode Local Automation"
+  && boundary.automation.receiptRelativePath == "atyrode/tcc-review.json"
+  && boundary.automation.reviewCommand == "atyrode tcc-review"
+  && boundary.automation.acknowledgeCommand == "atyrode tcc-review --acknowledge"
+) "macOS automation identity and manual TCC review workflow differ from policy";
 assert lib.assertMsg (
   boundary.homebrew.cleanup == "check"
   &&

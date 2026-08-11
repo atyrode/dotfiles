@@ -1,4 +1,9 @@
-{ lib, pkgs, ... }:
+{
+  homeDirectory,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   yabai = lib.getExe pkgs.yabai;
@@ -101,15 +106,15 @@ in
     managedBy = "darwin/window-management.nix";
   };
 
-  # Tahoe keys Accessibility grants to a stable app identity. The classic
-  # nixpkgs skhd binary lives at a generation-specific store path, so launch
-  # the pinned skhd.zig app bundle while retaining nix-darwin lifecycle.
+  # A host-local certificate gives skhd a stable, auditable TCC identity. Nix
+  # pins and builds the source; Home Manager verifies, copies, and signs the app
+  # at this stable path before nix-darwin restarts the agent.
   environment.etc."skhdrc".text = builtins.readFile ./window-management/skhdrc;
 
   launchd.user.agents.skhd = {
     serviceConfig = {
       ProgramArguments = [
-        "/Applications/skhd.app/Contents/MacOS/skhd"
+        "${homeDirectory}/Applications/Managed Automation/skhd.app/Contents/MacOS/skhd"
         "-c"
         "/etc/skhdrc"
       ];
@@ -122,18 +127,107 @@ in
     managedBy = "darwin/window-management.nix";
   };
 
-  # Hammerspoon owns native top-edge, Wi-Fi, and battery event bridges for
-  # SketchyBar. Same Tahoe pattern as skhd: launch the app bundle for a stable
-  # Accessibility identity while nix-darwin owns the lifecycle.
-  launchd.user.agents.hammerspoon = {
+  # A narrow compiled helper replaces the general-purpose Hammerspoon runtime.
+  # It polls only the public mouse position, observes screen/menu/wake/Wi-Fi/
+  # battery state, and launches SketchyBar with fixed argv; it cannot load Lua,
+  # synthesize input, read SSIDs, or open a network listener.
+  launchd.user.agents.macos-automation-bridge = {
     serviceConfig = {
-      ProgramArguments = [ "/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" ];
+      ProgramArguments = [
+        "${homeDirectory}/Applications/Managed Automation/atyrode-automation-bridge.app/Contents/MacOS/atyrode-automation-bridge"
+      ];
       KeepAlive = true;
-      ProcessType = "Interactive";
+      ProcessType = "Background";
       RunAtLoad = true;
     };
 
     managedBy = "darwin/window-management.nix";
+  };
+
+  # Machine-readable least-privilege contract consumed by `atyrode doctor
+  # system` and the periodic `atyrode tcc-review` acknowledgement workflow.
+  environment.etc."atyrode/automation-security.json".text = builtins.toJSON {
+    schemaVersion = 1;
+    signingIdentity = "atyrode Local Automation";
+    expectedSIPEnabled = true;
+    expectedScriptingAdditionEnabled = false;
+    allowedTcpListeners = [ ];
+    forbiddenProcesses = [
+      "skhd-grabber"
+      "karabiner_grabber"
+      "Karabiner-Core-Service"
+      "Hammerspoon"
+    ];
+    managedApplications = [
+      {
+        name = "skhd";
+        path = "${homeDirectory}/Applications/Managed Automation/skhd.app";
+        bundleIdentifier = "com.jackielii.skhd";
+        version = "0.2.0-7e95d99 (fast)";
+      }
+      {
+        name = "atyrode-automation-bridge";
+        path = "${homeDirectory}/Applications/Managed Automation/atyrode-automation-bridge.app";
+        bundleIdentifier = "dev.tyrode.automation-bridge";
+        version = "atyrode-automation-bridge 1.0.0";
+      }
+    ];
+    immutableConfigurationPaths = [
+      "/etc/skhdrc"
+      "${homeDirectory}/.config/sketchybar"
+    ];
+    tccReview = {
+      maxAgeDays = 90;
+      grants = {
+        yabai = {
+          required = [
+            "Accessibility"
+            "Background Items"
+          ];
+          prohibited = [
+            "Screen Recording"
+            "Input Monitoring"
+            "Full Disk Access"
+          ];
+        };
+        skhd = {
+          required = [
+            "Accessibility"
+            "Background Items"
+          ];
+          prohibited = [
+            "Input Monitoring"
+            "Microphone"
+            "Camera"
+            "Screen Recording"
+            "Full Disk Access"
+          ];
+        };
+        atyrode-automation-bridge = {
+          required = [ "Background Items" ];
+          prohibited = [
+            "Accessibility"
+            "Input Monitoring"
+            "Location Services"
+            "Microphone"
+            "Camera"
+            "Screen Recording"
+            "Full Disk Access"
+          ];
+        };
+        SketchyBar = {
+          required = [ "Background Items" ];
+          prohibited = [
+            "Accessibility"
+            "Input Monitoring"
+            "Microphone"
+            "Camera"
+            "Screen Recording"
+            "Full Disk Access"
+          ];
+        };
+      };
+    };
   };
 
   # SketchyBar owns the top edge, so the native menu bar auto-hides; it stays

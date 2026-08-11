@@ -1562,6 +1562,17 @@ automation_policy_path() {
   fi
 }
 
+automation_policy_is_trusted() {
+  local policy="$1" resolved
+  [[ -f "$policy" ]] || return 1
+  if [[ "$test_hooks" == 1 ]]; then
+    [[ ! -L "$policy" ]]
+    return
+  fi
+  resolved="$(realpath "$policy" 2>/dev/null || true)"
+  [[ "$resolved" == /nix/store/* && ! -w "$resolved" ]]
+}
+
 automation_receipt_path() {
   local state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
   printf '%s/%s\n' "$state_home" "$(jq -r '.automation.receiptRelativePath' "$system_policy")"
@@ -1585,8 +1596,8 @@ cmd_tcc_review() {
   [[ "$(uname -s)" == Darwin || "$test_hooks" == 1 ]] ||
     die "$EX_UNAVAILABLE" "tcc-review is only applicable to the managed macOS host"
   policy="$(automation_policy_path)"
-  [[ -f "$policy" && ! -L "$policy" ]] ||
-    die "$EX_NOINPUT" "automation policy is unavailable at $policy; apply nix-darwin first"
+  automation_policy_is_trusted "$policy" ||
+    die "$EX_NOINPUT" "automation policy is unavailable or mutable at $policy; apply nix-darwin first"
   jq -e '.schemaVersion == 1 and (.tccReview.grants | type == "object")' "$policy" >/dev/null ||
     die "$EX_DATAERR" "automation policy is malformed"
   receipt="$(automation_receipt_path)"
@@ -2180,7 +2191,7 @@ probe_homebrew_drift() {
 }
 
 probe_automation_security() {
-  local platform="$1" policy policy_resolved policy_loaded=false sip=false scripting_addition=false
+  local platform="$1" policy policy_loaded=false sip=false scripting_addition=false
   local forbidden_running=false hammerspoon_absent=false identities=false versions=false
   local unexpected_listeners=true immutable=false review_current=false digest_matches=false
   local status code summary remediation expected_json actual_json
@@ -2207,8 +2218,7 @@ probe_automation_security() {
     digest_matches="$(jq -r '.automation.tccPolicyDigestMatches // false' <<<"$system_fixture")"
   else
     policy="$(automation_policy_path)"
-    policy_resolved="$(realpath "$policy" 2>/dev/null || true)"
-    if [[ -f "$policy" && "$policy_resolved" == /nix/store/* && ! -w "$policy_resolved" ]] &&
+    if automation_policy_is_trusted "$policy" &&
       jq -e '.schemaVersion == 1' "$policy" >/dev/null 2>&1; then
       policy_loaded=true
       /usr/bin/csrutil status 2>/dev/null | grep -Fq 'System Integrity Protection status: enabled' && sip=true
@@ -2216,7 +2226,7 @@ probe_automation_security() {
 
       forbidden_running=false
       while IFS= read -r process; do
-        if pgrep -f "$process" >/dev/null 2>&1; then forbidden_running=true; break; fi
+        if pgrep -x "$process" >/dev/null 2>&1; then forbidden_running=true; break; fi
       done < <(jq -r '.forbiddenProcesses[]' "$policy")
 
       hammerspoon_absent=true
@@ -2242,7 +2252,7 @@ probe_automation_security() {
         grep -Fq "Authority=$(jq -r '.signingIdentity' "$policy")" <<<"$metadata" || identities=false
         grep -Fq "Identifier=$bundle" <<<"$metadata" || identities=false
         executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Contents/Info.plist" 2>/dev/null || true)"
-        actual_version="$("$app_path/Contents/MacOS/$executable" --version 2>/dev/null || true)"
+        actual_version="$("$app_path/Contents/MacOS/$executable" --version 2>&1 || true)"
         [[ "$actual_version" == "$expected_version" ]] || versions=false
       done < <(jq -c '.managedApplications[]' "$policy")
 

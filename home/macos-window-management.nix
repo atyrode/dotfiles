@@ -10,26 +10,33 @@ let
   signingIdentity = "atyrode Local Automation";
   skhdApp = "${pkgs.skhd}/Applications/skhd.app";
   bridgeApp = "${pkgs.macos-automation-bridge}/Applications/atyrode-automation-bridge.app";
+  sketchybarSource = ../darwin/window-management/sketchybar-lua;
+  sketchybarBootstrapText = ''
+    #!/bin/bash
+    # Generated bootstrap: exec the pinned Lua runtime against this tree.
+    export LUA_CPATH="${pkgs.sbarlua}/lib/lua/5.5/?.so;;"
+    export LUA_PATH="$HOME/.config/sketchybar/?.lua;$HOME/.config/sketchybar/?/init.lua;;"
+    exec ${pkgs.lua5_5}/bin/lua "$HOME/.config/sketchybar/init.lua"
+  '';
+  sketchybarConfig =
+    pkgs.runCommand "sketchybar-config"
+      {
+        passthru = { inherit sketchybarBootstrapText sketchybarSource; };
+      }
+      ''
+        /bin/mkdir -p "$out"
+        /bin/cp -R ${sketchybarSource}/. "$out/"
+        /bin/chmod -R u+w "$out"
+        /bin/cat > "$out/sketchybarrc" <<'EOF'
+        ${sketchybarBootstrapText}
+        EOF
+        /bin/chmod 0555 "$out/sketchybarrc"
+      '';
 in
 lib.mkIf pkgs.stdenv.isDarwin {
   home.packages = [ pkgs.yabai ];
 
-  xdg.configFile = {
-    "sketchybar" = {
-      source = ../darwin/window-management/sketchybar-lua;
-      recursive = true;
-    };
-    "sketchybar/sketchybarrc" = {
-      executable = true;
-      text = ''
-        #!/bin/bash
-        # Generated bootstrap: exec the pinned Lua runtime against this tree.
-        export LUA_CPATH="${pkgs.sbarlua}/lib/lua/5.5/?.so;;"
-        export LUA_PATH="$HOME/.config/sketchybar/?.lua;$HOME/.config/sketchybar/?/init.lua;;"
-        exec ${pkgs.lua5_5}/bin/lua "$HOME/.config/sketchybar/init.lua"
-      '';
-    };
-  };
+  xdg.configFile."sketchybar".source = sketchybarConfig;
 
   # The source apps are immutable and content-pinned in the Nix store, but an
   # ad-hoc signature does not provide a stable macOS privacy identity across

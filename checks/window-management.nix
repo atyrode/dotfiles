@@ -34,7 +34,7 @@ let
   strayBordersSignals = lib.hasInfix "borders-solo" yabaiExtraConfig;
 
   # SketchyBar runs the DATUM Lua tree on the resident SbarLua runtime.
-  # Home Manager owns the recursive tree and generated Lua 5.5 bootstrap;
+  # Home Manager owns one immutable tree and its generated Lua 5.5 bootstrap;
   # services.sketchybar.config stays empty so no inline configuration can
   # shadow that single deployment path.
   sketchybarEnabled = cfg.services.sketchybar.enable;
@@ -93,8 +93,7 @@ let
   barVolumeCode = barVolumeItem;
   barSpotifyItem = builtins.readFile (barTreeDir + "/items/spotify.lua");
   sketchybarDeployment = homeConfig.config.xdg.configFile."sketchybar";
-  sketchybarBootstrap = homeConfig.config.xdg.configFile."sketchybar/sketchybarrc";
-  sketchybarBootstrapText = builtins.unsafeDiscardStringContext sketchybarBootstrap.text;
+  sketchybarBootstrapText = builtins.unsafeDiscardStringContext sketchybarDeployment.source.sketchybarBootstrapText;
   bootstrapNeedles = [
     ''export LUA_CPATH="/nix/store/''
     "-lua5.5-sbarLua-"
@@ -845,9 +844,9 @@ assert lib.assertMsg (legacyLeaderLines == [ ]) (
   + lib.concatStringsSep ", " legacyLeaderLines
 );
 assert lib.assertMsg (
-  sketchybarDeployment.recursive
-  && sketchybarDeployment.source == ../darwin/window-management/sketchybar-lua
-) "Home Manager must recursively deploy the complete DATUM SketchyBar tree";
+  !sketchybarDeployment.recursive
+  && sketchybarDeployment.source.sketchybarSource == ../darwin/window-management/sketchybar-lua
+) "Home Manager must deploy the complete DATUM SketchyBar tree through one immutable symlink";
 assert lib.assertMsg sketchybarTopmostPatchIntact
   "SketchyBar must re-level an already-topmost bar in place; resetting it exposes a solid bare face during native-menu handoff";
 assert lib.assertMsg (barRootEntries == expectedBarRootEntries) (
@@ -864,10 +863,9 @@ assert lib.assertMsg (barItemEntries == expectedBarItemEntries) (
 );
 assert lib.assertMsg (lib.hasInfix expectedInitItemBlock barInit)
   "init.lua must load the complete DATUM item list in spaces/weather/spotify/clock/battery/volume/network/menubar order";
-assert lib.assertMsg (
-  sketchybarBootstrap.executable
-  && lib.all (needle: lib.hasInfix needle sketchybarBootstrapText) bootstrapNeedles
-) "Home Manager must generate an executable SbarLua bootstrap pinned to Lua 5.5";
+assert lib.assertMsg (lib.all (
+  needle: lib.hasInfix needle sketchybarBootstrapText
+) bootstrapNeedles) "Home Manager must generate an executable SbarLua bootstrap pinned to Lua 5.5";
 assert lib.assertMsg
   (
     builtins.elem "installSignedAutomationApps" managedRestart.after

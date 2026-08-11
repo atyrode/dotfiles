@@ -17,10 +17,11 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    # nixpkgs cctools 1010.6 crashes under macOS Tahoe while consuming this
-    # Objective-C binary. Retain Nix's pinned compiler and SDK inputs, but use
-    # the host Apple linker that matches the running Darwin kernel/toolchain.
-    $CC --ld-path=/usr/bin/ld -fobjc-arc -Os -Wall -Wextra -Werror \
+    # nixpkgs cctools 1010.6 crashes under macOS Tahoe while linking against
+    # Tahoe's system frameworks. The host Apple compiler/linker is part of the
+    # audited workstation boundary and matches those frameworks; all source and
+    # non-system inputs remain fixed-output Nix inputs.
+    /usr/bin/clang -fobjc-arc -Os -Wall -Wextra -Werror \
       -framework Cocoa \
       -framework CoreWLAN \
       -framework IOKit \

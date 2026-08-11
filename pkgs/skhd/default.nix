@@ -35,24 +35,29 @@ stdenv.mkDerivation {
   ];
 
   postPatch = ''
-        substituteInPlace build.zig.zon \
-          --replace-fail '.url = "https://github.com/hendriknielaender/zbench/archive/refs/tags/v0.13.0.tar.gz",' '.path = "${zbench}",' \
-          --replace-fail '.hash = "zbench-0.13.0-YTdc7xVBAQCCMC-IdLLuotBeiNNNm8k9Pi2V4VYqrwfI",' ""
+    # Zig 0.16 requires build.zig.zon paths to be relative to the package root.
+    # Copy the separately hash-pinned dependency into the ephemeral build tree;
+    # no network fetch or mutable global package cache is involved.
+    mkdir -p .vendor
+    cp -R ${zbench} .vendor/zbench
+    chmod -R u+w .vendor/zbench
+    substituteInPlace build.zig.zon \
+      --replace-fail '.url = "https://github.com/hendriknielaender/zbench/archive/refs/tags/v0.13.0.tar.gz",' '.path = ".vendor/zbench",' \
+      --replace-fail '.hash = "zbench-0.13.0-YTdc7xVBAQCCMC-IdLLuotBeiNNNm8k9Pi2V4VYqrwfI",' ""
 
-        # fetchFromGitHub intentionally strips .git. Keep the version identity
-        # deterministic rather than allowing the build script to report
-        # "dev-unknown" for an audited release tag.
-        substituteInPlace build.zig \
-          --replace-fail 'GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo '\'''unknown'\''')' 'GIT_HASH=${revision}' \
-          --replace-fail 'if git describe --exact-match --tags HEAD >/dev/null 2>&1; then' 'if true; then'
+    # fetchFromGitHub intentionally strips .git. Keep the version identity
+    # deterministic rather than allowing the build script to report
+    # "dev-unknown" for an audited release tag.
+    substituteInPlace build.zig \
+      --replace-fail 'GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo '\'''unknown'\''')' 'GIT_HASH=${revision}' \
+      --replace-fail 'if git describe --exact-match --tags HEAD >/dev/null 2>&1; then' 'if true; then'
 
-        # This workstation never delegates TCC-protected microphone access through
-        # a hotkey command. Do not advertise or invite a permission the managed
-        # configuration cannot use.
-        substituteInPlace assets/Info.plist.template \
-          --replace-fail '    <key>NSMicrophoneUsageDescription</key>
-        <string>Allow skhd to launch hotkeys that record audio, such as voice transcription commands.</string>
-    ' ""
+    # This workstation never delegates TCC-protected microphone access through
+    # a hotkey command. Do not advertise or invite a permission the managed
+    # configuration cannot use.
+    substituteInPlace assets/Info.plist.template \
+      --replace-fail '    <key>NSMicrophoneUsageDescription</key>' "" \
+      --replace-fail '    <string>Allow skhd to launch hotkeys that record audio, such as voice transcription commands.</string>' ""
   '';
 
   dontConfigure = true;

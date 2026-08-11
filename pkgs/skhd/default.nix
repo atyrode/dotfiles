@@ -59,6 +59,7 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
+    export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache"
     zig build app -Doptimize=ReleaseFast --prefix "$out"
     runHook postBuild
   '';

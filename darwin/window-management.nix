@@ -163,7 +163,7 @@ in
         name = "skhd";
         path = "${homeDirectory}/Applications/Managed Automation/skhd.app";
         bundleIdentifier = "com.jackielii.skhd";
-        version = "0.2.0-7e95d99 (fast)";
+        version = "skhd.zig v0.2.0-7e95d99 (fast)";
       }
       {
         name = "atyrode-automation-bridge";

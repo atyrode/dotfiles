@@ -21,7 +21,9 @@ stdenv.mkDerivation {
     # Tahoe's system frameworks. The host Apple compiler/linker is part of the
     # audited workstation boundary and matches those frameworks; all source and
     # non-system inputs remain fixed-output Nix inputs.
-    /usr/bin/clang --ld-path=/usr/bin/ld -fobjc-arc -Os -Wall -Wextra -Werror \
+    env DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+      SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk \
+      /usr/bin/clang --ld-path=/usr/bin/ld -fobjc-arc -Os -Wall -Wextra -Werror \
       -framework Cocoa \
       -framework CoreWLAN \
       -framework IOKit \

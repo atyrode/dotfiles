@@ -2194,7 +2194,7 @@ probe_automation_security() {
   local platform="$1" policy policy_loaded=false sip=false scripting_addition=false
   local forbidden_running=false hammerspoon_absent=false identities=false versions=false
   local unexpected_listeners=true immutable=false review_current=false digest_matches=false
-  local status code summary remediation expected_json actual_json
+  local status code summary remediation expected_json actual_json process_names
 
   expected_json='{"sipEnabled":true,"scriptingAdditionEnabled":false,"forbiddenProcessesRunning":false,"hammerspoonAbsent":true,"identitiesValid":true,"versionsValid":true,"unexpectedTcpListeners":false,"immutableConfigs":true,"tccReviewCurrent":true,"tccPolicyDigestMatches":true}'
   if [[ "$platform" != darwin ]]; then
@@ -2224,14 +2224,15 @@ probe_automation_security() {
       /usr/bin/csrutil status 2>/dev/null | grep -Fq 'System Integrity Protection status: enabled' && sip=true
       [[ ! -e /Library/ScriptingAdditions/yabai.osax ]] && scripting_addition=false
 
+      process_names="$(/bin/ps -axo ucomm=)"
       forbidden_running=false
       while IFS= read -r process; do
-        if pgrep -x "$process" >/dev/null 2>&1; then forbidden_running=true; break; fi
+        if grep -Fxq "$process" <<< "$process_names"; then forbidden_running=true; break; fi
       done < <(jq -r '.forbiddenProcesses[]' "$policy")
 
       hammerspoon_absent=true
       if [[ -e /Applications/Hammerspoon.app || -e "$HOME/Applications/Hammerspoon.app" ]] ||
-        pgrep -f '/Hammerspoon.app/' >/dev/null 2>&1; then
+        grep -Fxq Hammerspoon <<< "$process_names"; then
         hammerspoon_absent=false
       fi
 

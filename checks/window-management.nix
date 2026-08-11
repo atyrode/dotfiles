@@ -918,6 +918,7 @@ assert lib.assertMsg
     builtins.elem "linkGeneration" signedAppsActivation.after
     && lib.all (needle: lib.hasInfix needle signedAppsActivationText) [
       "security find-identity -v -p codesigning"
+      ''/bin/chmod -R u+w "$staged"''
       "codesign --force --timestamp=none --options runtime"
       "codesign --verify --deep --strict"
       "Authority=$identity"

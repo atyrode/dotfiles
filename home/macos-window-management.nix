@@ -72,6 +72,7 @@ lib.mkIf pkgs.stdenv.isDarwin {
         previous="$destination_root/.$app_name.previous.$$"
         /bin/rm -rf "$staged" "$previous"
         /usr/bin/ditto "$source_app" "$staged"
+        /bin/chmod -R u+w "$staged"
         /usr/bin/codesign --force --timestamp=none --options runtime \
           --identifier "$bundle_id" --sign "$identity" "$staged"
         /usr/bin/codesign --verify --deep --strict "$staged"

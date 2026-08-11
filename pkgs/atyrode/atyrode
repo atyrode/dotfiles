@@ -1652,7 +1652,7 @@ cmd_automation() {
     signing-bootstrap) ;;
     *) die "$EX_USAGE" "automation expects signing-bootstrap" ;;
   esac
-  local json=0 identity state_dir certificate temporary password keychain
+  local json=0 identity state_dir certificate temporary password keychain needs_import=true
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) json=1; shift ;;
@@ -1681,7 +1681,16 @@ cmd_automation() {
   /bin/chmod 700 "$state_dir"
   if [[ -f "$certificate" ]]; then
     /usr/bin/security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$certificate"
-  else
+    if /usr/bin/security find-identity -v -p codesigning 2>/dev/null |
+      grep -Fq "\"$identity\""; then
+      needs_import=false
+    else
+      # A public certificate without its matching private key cannot sign and
+      # must not trap every retry in a permanently incomplete state.
+      /bin/rm -f "$certificate"
+    fi
+  fi
+  if [[ "$needs_import" == true ]]; then
     temporary="$(mktemp -d "$state_dir/bootstrap.XXXXXX")"
     password="$(openssl rand -hex 32)"
     trap '[[ -z "${temporary:-}" ]] || /bin/rm -rf "$temporary"' EXIT

@@ -74,6 +74,8 @@ stdenv.mkDerivation {
     test -x "$out/skhd.app/Contents/MacOS/skhd"
     mkdir -p "$out/Applications"
     mv "$out/skhd.app" "$out/Applications/skhd.app"
+    rm -f "$out/Applications/skhd.app/Contents/MacOS/skhd-grabber"
+    test ! -e "$out/Applications/skhd.app/Contents/MacOS/skhd-grabber"
     # The optional root grabber is deliberately not shipped. Caps Lock is a
     # one-key Apple hidutil mapping and ordinary hotkeys remain user-session
     # only; enabling the grabber requires a new package and policy review.

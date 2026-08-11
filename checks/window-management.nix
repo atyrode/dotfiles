@@ -934,6 +934,8 @@ assert lib.assertMsg
     && lib.hasInfix ''hash = "sha256-Qi5srrpdhf3VcXaqZbijJD23Um0G7WgRzK0hR+mb7nU=";'' skhdRecipe
     && lib.hasInfix ''hash = "sha256-u/N1KkCeu4AgK4ZaR8PTgla1oDV5PsipiW48sImetW4=";'' skhdRecipe
     && lib.hasInfix ''.path = ".vendor/zbench",'' skhdRecipe
+    && lib.hasInfix ''rm -f "$out/Applications/skhd.app/Contents/MacOS/skhd-grabber"'' skhdRecipe
+    && lib.hasInfix ''test ! -e "$out/Applications/skhd.app/Contents/MacOS/skhd-grabber"'' skhdRecipe
     && lib.hasInfix ''rm -rf "$out/bin"'' skhdRecipe
     && lib.hasInfix "NSMicrophoneUsageDescription" skhdRecipe
     && !(lib.hasInfix "NSMicrophoneUsageDescription" bridgeSource)

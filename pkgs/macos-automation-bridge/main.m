@@ -2,6 +2,9 @@
 #import <CoreWLAN/CoreWLAN.h>
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
 
 static NSString *const SketchyBarPath = @"@sketchybar@";
 static const NSTimeInterval LeadDwell = 0.70;
@@ -11,7 +14,7 @@ static const CGFloat LiftGuard = 4.0;
 static const CGFloat MenuBarBand = 44.0;
 static const NSTimeInterval PrimeDelay = 4.0;
 
-@interface AutomationBridge : NSObject <NSApplicationDelegate, CWWiFiClientDelegate>
+@interface AutomationBridge : NSObject <NSApplicationDelegate, CWEventDelegate>
 @property(nonatomic) NSRect primaryFrame;
 @property(nonatomic) BOOL approach;
 @property(nonatomic) BOOL hover;
@@ -111,6 +114,7 @@ static void PowerChanged(void *context) {
   if (!self.lifted || self.emitted || [self liftTarget] || self.settleTimer) return;
   __weak AutomationBridge *weakSelf = self;
   self.settleTimer = [NSTimer scheduledTimerWithTimeInterval:SettleHold repeats:NO block:^(NSTimer *timer) {
+    (void)timer;
     AutomationBridge *strongSelf = weakSelf;
     strongSelf.settleTimer = nil;
     if (strongSelf && ![strongSelf liftTarget]) [strongSelf lift:NO force:NO];
@@ -121,6 +125,7 @@ static void PowerChanged(void *context) {
   if (!self.emitted || self.menu || self.returnTimer) return;
   __weak AutomationBridge *weakSelf = self;
   self.returnTimer = [NSTimer scheduledTimerWithTimeInterval:ReturnHold repeats:NO block:^(NSTimer *timer) {
+    (void)timer;
     AutomationBridge *strongSelf = weakSelf;
     strongSelf.returnTimer = nil;
     if (!strongSelf) return;
@@ -134,6 +139,7 @@ static void PowerChanged(void *context) {
   if (self.menu || self.emitted || self.leadTimer) return;
   __weak AutomationBridge *weakSelf = self;
   self.leadTimer = [NSTimer scheduledTimerWithTimeInterval:LeadDwell repeats:NO block:^(NSTimer *timer) {
+    (void)timer;
     AutomationBridge *strongSelf = weakSelf;
     strongSelf.leadTimer = nil;
     if (!strongSelf) return;
@@ -245,11 +251,10 @@ static void PowerChanged(void *context) {
     for (id source in (__bridge NSArray *)sources) {
       CFDictionaryRef raw = IOPSGetPowerSourceDescription(info, (__bridge CFTypeRef)source);
       NSDictionary *description = (__bridge NSDictionary *)raw;
-      if (![description[(__bridge NSString *)kIOPSTypeKey]
-              isEqualToString:(__bridge NSString *)kIOPSInternalBatteryType]) continue;
-      NSNumber *current = description[(__bridge NSString *)kIOPSCurrentCapacityKey];
-      NSNumber *maximum = description[(__bridge NSString *)kIOPSMaxCapacityKey];
-      NSNumber *charging = description[(__bridge NSString *)kIOPSIsChargingKey];
+      if (![description[@kIOPSTypeKey] isEqualToString:@kIOPSInternalBatteryType]) continue;
+      NSNumber *current = description[@kIOPSCurrentCapacityKey];
+      NSNumber *maximum = description[@kIOPSMaxCapacityKey];
+      NSNumber *charging = description[@kIOPSIsChargingKey];
       if (current && maximum.doubleValue > 0.0) {
         NSInteger percent = (NSInteger)llround(100.0 * current.doubleValue / maximum.doubleValue);
         [arguments addObject:[NSString stringWithFormat:@"PERCENT=%ld", (long)percent]];

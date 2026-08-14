@@ -65,11 +65,12 @@ retry:
       - openai-codex/gpt-5.6-terra:low
 
 # Advisor on a cheap fast model. xhigh thinking on a per-turn watchdog buys
-# latency, not much review quality; subagent advisors multiply calls and can
-# derail cheap mechanical agents (2026-07 advisor drift cost ~$265/day).
+# latency, not much review quality. Subagent advisors (17.3.0: per-agent
+# `task.agentAdvisor`, formerly `advisor.subagents`) stay off — they multiply
+# calls and can derail cheap mechanical agents (2026-07 advisor drift cost
+# ~$265/day).
 advisor:
   enabled: true
-  subagents: false
   syncBacklog: "3"
 
 autolearn:

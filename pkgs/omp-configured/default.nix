@@ -72,7 +72,6 @@ let
     "retry.fallbackChains"
     "personality"
     "advisor.enabled"
-    "advisor.subagents"
     "advisor.syncBacklog"
     "stt.enabled"
     "branchSummary.enabled"

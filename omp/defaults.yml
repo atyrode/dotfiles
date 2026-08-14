@@ -64,7 +64,6 @@ personality: pragmatic
 
 advisor:
   enabled: true
-  subagents: false
   syncBacklog: "1"
 
 stt:

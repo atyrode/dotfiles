@@ -1,0 +1,46 @@
+diff --git a/src/bar_manager.c b/src/bar_manager.c
+--- a/src/bar_manager.c
++++ b/src/bar_manager.c
+@@ -252,21 +252,38 @@ bool bar_manager_set_hidden(struct bar_manager *bar_manager, uint32_t adid, bool
+ }
+ 
+ bool bar_manager_set_topmost(struct bar_manager *bar_manager, char level, bool topmost) {
++  uint32_t window_level = kCGBackstopMenuLevel;
+   if (topmost) {
+     if (level == TOPMOST_LEVEL_WINDOW) {
+-      bar_manager->window_level = kCGFloatingWindowLevel;
++      window_level = kCGFloatingWindowLevel;
+     } else if (level == TOPMOST_LEVEL_ALL) {
+-      bar_manager->window_level = kCGStatusWindowLevel;
++      window_level = kCGStatusWindowLevel;
+     }
+-  } else {
+-    bar_manager->window_level = kCGBackstopMenuLevel;
+   }
+ 
+-  bar_manager_reset(bar_manager);
++  if (bar_manager->topmost == topmost
++      && bar_manager->window_level == window_level) return false;
++
++  bool geometry_changed = bar_manager->topmost != topmost;
++  bar_manager->window_level = window_level;
+   bar_manager->topmost = topmost;
+-  return true;
++
++  // Changing whether the bar is topmost changes how its frame accounts for a
++  // visible native menu bar, so that transition still needs a full reset.
++  // Moving an already-topmost bar between floating and status levels changes
++  // only z-order. Re-level the existing windows in one transaction instead of
++  // destroying every item window and briefly exposing the bare bar surface.
++  if (geometry_changed) {
++    bar_manager_reset(bar_manager);
++    return true;
++  }
++
++  for (int i = 0; i < bar_manager->bar_count; i++) {
++    bar_order_item_windows(bar_manager->bars[i]);
++  }
++  return false;
+ }
+ 
+ bool bar_manager_set_sticky(struct bar_manager *bar_manager, bool sticky) {

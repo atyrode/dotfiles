@@ -4,7 +4,6 @@
   homeModules,
   homebrew-cask,
   homebrew-core,
-  skhd-zig-tap,
   lib,
   pkgs,
   username,
@@ -103,7 +102,6 @@ in
     taps = {
       "homebrew/homebrew-core" = homebrew-core;
       "homebrew/homebrew-cask" = homebrew-cask;
-      "jackielii/homebrew-tap" = skhd-zig-tap;
     };
 
     mutableTaps = false;

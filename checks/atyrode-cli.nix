@@ -824,11 +824,13 @@ pkgs.runCommand "check-atyrode-cli"
         "container-engine",
         "antivirus-data",
         "device-permissions",
-        "homebrew-drift"
+        "homebrew-drift",
+        "automation-security"
       ]
       and (.checks[] | select(.id == "container-engine") | .actual.mode) == "rootless"
       and (.checks[] | select(.id == "antivirus-data") | .code) == "not-configured"
       and (.checks[] | select(.id == "homebrew-drift") | .status) == "not-applicable"
+      and (.checks[] | select(.id == "automation-security") | .status) == "not-applicable"
     ' <<< "$system_result" >/dev/null
     if grep -q 'super-secret' <<< "$system_result"; then
       echo 'system diagnostics exposed raw Nix configuration' >&2
@@ -958,7 +960,20 @@ pkgs.runCommand "check-atyrode-cli"
       },
       container: {dockerGroup:false, mode:"orbstack"},
       device: {adbAvailable:true, policy:"macos-user-authorization"},
-      homebrew: {available:true, drift:false}
+      homebrew: {available:true, drift:false},
+      automation: {
+        policyLoaded:true,
+        sipEnabled:true,
+        scriptingAdditionEnabled:false,
+        forbiddenProcessesRunning:false,
+        hammerspoonAbsent:true,
+        identitiesValid:true,
+        versionsValid:true,
+        unexpectedTcpListeners:false,
+        immutableConfigs:true,
+        tccReviewCurrent:true,
+        tccPolicyDigestMatches:true
+      }
     }' > "$darwin_ready"
     export _ATYRODE_TEST_SYSTEM="aarch64-darwin"
     export _ATYRODE_TEST_USER=alex
@@ -970,6 +985,7 @@ pkgs.runCommand "check-atyrode-cli"
       and (.checks[] | select(.id == "container-engine") | .actual.mode) == "orbstack"
       and (.checks[] | select(.id == "device-permissions") | .status) == "ok"
       and (.checks[] | select(.id == "homebrew-drift") | .status) == "ok"
+      and (.checks[] | select(.id == "automation-security") | .status) == "ok"
     ' <<< "$darwin_result" >/dev/null
 
     darwin_missing_adb="$TMPDIR/darwin-missing-adb.json"
@@ -1010,6 +1026,37 @@ pkgs.runCommand "check-atyrode-cli"
     jq -e '
       (.checks[] | select(.id == "homebrew-drift") | .code) == "homebrew-probe-failed"
     ' "$TMPDIR/darwin-probe-failure.out" >/dev/null
+
+    darwin_automation_drift="$TMPDIR/darwin-automation-drift.json"
+    jq '.automation.identitiesValid = false' "$darwin_ready" > "$darwin_automation_drift"
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$darwin_automation_drift"
+    if atyrode doctor system alex-aarch64-darwin --json > "$TMPDIR/darwin-automation-drift.out"; then
+      echo 'invalid automation identities unexpectedly passed diagnostics' >&2
+      exit 1
+    else
+      test "$?" -eq 69
+    fi
+    jq -e '
+      (.checks[] | select(.id == "automation-security") | .code) == "automation-security-drift"
+      and (.checks[] | select(.id == "automation-security") | .actual.identitiesValid) == false
+    ' "$TMPDIR/darwin-automation-drift.out" >/dev/null
+
+    automation_policy="$TMPDIR/automation-security.json"
+    jq -n '{schemaVersion:1,tccReview:{maxAgeDays:90,grants:{
+      yabai:{required:["Accessibility"],prohibited:["Screen Recording"]},
+      skhd:{required:["Accessibility"],prohibited:["Input Monitoring"]}
+    }}}' > "$automation_policy"
+    export _ATYRODE_TEST_AUTOMATION_POLICY="$automation_policy"
+    export _ATYRODE_TEST_ALLOW_TCC_ACK=1
+    export XDG_STATE_HOME="$TMPDIR/state"
+    atyrode tcc-review --json | jq -e '(.current | not) and .ageDays == -1' >/dev/null
+    atyrode tcc-review --acknowledge --json | jq -e '.current and .ageDays == 0' >/dev/null
+    atyrode tcc-review --json | jq -e '.current and (.grants.yabai.required == ["Accessibility"])' >/dev/null
+    jq '.tccReview.grants.yabai.required += ["Background Items"]' "$automation_policy"       > "$automation_policy.changed"
+    mv "$automation_policy.changed" "$automation_policy"
+    atyrode tcc-review --json | jq -e '(.current | not)' >/dev/null
+    unset _ATYRODE_TEST_AUTOMATION_POLICY _ATYRODE_TEST_ALLOW_TCC_ACK
+    export XDG_STATE_HOME="$HOME/.local/state"
 
     export _ATYRODE_TEST_SYSTEM="x86_64-linux"
     export _ATYRODE_TEST_USER="fixture"

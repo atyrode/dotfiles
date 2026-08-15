@@ -7,7 +7,8 @@
     "container-engine",
     "antivirus-data",
     "device-permissions",
-    "homebrew-drift"
+    "homebrew-drift",
+    "automation-security"
   ],
   "loginShell": {
     "program": "zsh",
@@ -22,7 +23,9 @@
   },
   "nix": {
     "store": "daemon",
-    "trustedUsers": ["root"],
+    "trustedUsers": [
+      "root"
+    ],
     "substituter": "https://cache.nixos.org/",
     "trustedPublicKey": "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
     "darwinOptimiserLabel": "org.nixos.nix-optimise"
@@ -31,7 +34,9 @@
     "linux": {
       "socketTemplate": "/run/user/{uid}/docker.sock",
       "requiredSecurityOption": "rootless",
-      "forbiddenGroups": ["docker"]
+      "forbiddenGroups": [
+        "docker"
+      ]
     },
     "darwin": {
       "context": "orbstack"
@@ -48,12 +53,28 @@
       "/usr/lib/udev/rules.d",
       "/lib/udev/rules.d"
     ],
-    "acceptedAccessPolicies": ["uaccess", "reviewed-user-group"],
+    "acceptedAccessPolicies": [
+      "uaccess",
+      "reviewed-user-group"
+    ],
     "ruleIdentification": "filename-mentions-android-or-adb",
-    "acceptedGroups": ["adbusers", "plugdev"]
+    "acceptedGroups": [
+      "adbusers",
+      "plugdev"
+    ]
   },
   "homebrew": {
     "cleanup": "check",
-    "forbiddenAutomaticModes": ["uninstall", "zap"]
+    "forbiddenAutomaticModes": [
+      "uninstall",
+      "zap"
+    ]
+  },
+  "automation": {
+    "policyPath": "/etc/atyrode/automation-security.json",
+    "receiptRelativePath": "atyrode/tcc-review.json",
+    "reviewCommand": "atyrode tcc-review",
+    "acknowledgeCommand": "atyrode tcc-review --acknowledge",
+    "signingIdentity": "atyrode Local Automation"
   }
 }

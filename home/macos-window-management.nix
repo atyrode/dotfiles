@@ -6,63 +6,122 @@
 }:
 
 let
-  karabinerConfig = ./macos-window-management/karabiner.json;
-  karabinerDirectory = "${config.home.homeDirectory}/.config/karabiner";
-  karabinerPath = "${karabinerDirectory}/karabiner.json";
+  automationDirectory = "${config.home.homeDirectory}/Applications/Managed Automation";
+  signingIdentity = "atyrode Local Automation";
+  skhdApp = "${pkgs.skhd}/Applications/skhd.app";
+  bridgeApp = "${pkgs.macos-automation-bridge}/Applications/atyrode-automation-bridge.app";
+  sketchybarSource = ../darwin/window-management/sketchybar-lua;
+  sketchybarBootstrapText = ''
+    #!/bin/bash
+    # Generated bootstrap: exec the pinned Lua runtime against this tree.
+    export LUA_CPATH="${pkgs.sbarlua}/lib/lua/5.5/?.so;;"
+    export LUA_PATH="$HOME/.config/sketchybar/?.lua;$HOME/.config/sketchybar/?/init.lua;;"
+    exec ${pkgs.lua5_5}/bin/lua "$HOME/.config/sketchybar/init.lua"
+  '';
+  sketchybarConfig =
+    pkgs.runCommand "sketchybar-config"
+      {
+        passthru = { inherit sketchybarBootstrapText sketchybarSource; };
+      }
+      ''
+        /bin/mkdir -p "$out"
+        /bin/cp -R ${sketchybarSource}/. "$out/"
+        /bin/chmod -R u+w "$out"
+        /bin/cat > "$out/sketchybarrc" <<'EOF'
+        ${sketchybarBootstrapText}
+        EOF
+        /bin/chmod 0555 "$out/sketchybarrc"
+      '';
 in
-{
-  home.packages = lib.optionals pkgs.stdenv.isDarwin [
-    pkgs.yabai
-  ];
+lib.mkIf pkgs.stdenv.isDarwin {
+  home.packages = [ pkgs.yabai ];
 
-  # The SketchyBar configuration is the faithful FelixKratz e6288b3 port
-  # committed under darwin/window-management/sketchybar. SketchyBar never
-  # rewrites its config, so store symlinks are safe here (unlike Karabiner).
-  # icon_map.sh comes from the sketchybar-app-font package: the same project
-  # Felix's snapshot was taken from, maintained as a superset of it, so
-  # current applications resolve instead of falling back to ":default:".
-  xdg.configFile = lib.mkIf pkgs.stdenv.isDarwin {
-    "sketchybar" = {
-      source = ../darwin/window-management/sketchybar;
-      recursive = true;
-    };
-    "sketchybar/plugins/icon_map.sh".source = "${pkgs.sketchybar-app-font}/bin/icon_map.sh";
-  };
+  xdg.configFile."sketchybar".source = sketchybarConfig;
 
-  # Karabiner owns input transformation only: Caps Lock held becomes the
-  # control+option+command leader that skhd already binds; tapping it does
-  # nothing by design. skhd owns hotkey dispatch, yabai owns windows.
-  #
-  # The live file is a regular writable 0600 file rather than a store symlink,
-  # for two upstream reasons. Karabiner reloads by watching the enclosing
-  # directory with FSEvents and documents that a symlinked karabiner.json
-  # defeats that watch. Its writer also renames a temporary file over the
-  # target, and rename(2) acts on the link rather than the store path, so any
-  # Settings toggle or profile switch would silently swap the symlink for a
-  # regular file and desynchronise the next activation. Writing a real file and
-  # replacing it atomically keeps the reload trigger intact and makes a
-  # Karabiner-side write a recoverable drift instead of a broken generation.
-  home.activation.installKarabinerConfig = lib.mkIf pkgs.stdenv.isDarwin (
-    lib.hm.dag.entryAfter
-      [
-        "installPackages"
-        "linkGeneration"
-      ]
+  # The source apps are immutable and content-pinned in the Nix store, but an
+  # ad-hoc signature does not provide a stable macOS privacy identity across
+  # rebuilds. Copy only these two owned bundles to a stable path and sign them
+  # with the workstation-local code-signing identity. Any byte-level drift
+  # invalidates verification and forces a clean replacement on the next apply.
+  home.activation.installSignedAutomationApps = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    identity=${lib.escapeShellArg signingIdentity}
+    destination_root=${lib.escapeShellArg automationDirectory}
+    receipt_root="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/automation-apps"
+
+    if [[ -v DRY_RUN ]]; then
+      echo "Would install and sign managed automation apps in $destination_root"
+    else
+      identity_listing="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null)"
+      if ! /usr/bin/grep -Fq "\"$identity\"" <<< "$identity_listing"; then
+        echo "home-manager: missing local code-signing identity '$identity'" >&2
+        echo "run 'atyrode automation signing-bootstrap' once, then retry apply" >&2
+        exit 1
+      fi
+
+      /bin/mkdir -p "$destination_root" "$receipt_root"
+
+      install_signed_app() {
+        source_app="$1"
+        app_name="$2"
+        bundle_id="$3"
+        destination="$destination_root/$app_name"
+        receipt="$receipt_root/$app_name.source"
+
+        if [[ -f "$receipt" ]] \
+          && /usr/bin/grep -Fxq "$source_app" "$receipt" \
+          && /usr/bin/codesign --verify --deep --strict "$destination" >/dev/null 2>&1 \
+          && signature_info="$(/usr/bin/codesign -dv --verbose=4 "$destination" 2>&1)" \
+          && /usr/bin/grep -Fq "Authority=$identity" <<< "$signature_info"; then
+          return
+        fi
+
+        staged="$destination_root/.$app_name.staged.$$"
+        previous="$destination_root/.$app_name.previous.$$"
+        # A killed activation must not leave an unsigned app-shaped bundle in
+        # the stable automation directory. These globs match only our names.
+        /bin/chmod -R u+w "$destination_root/.$app_name.staged."* \
+          "$destination_root/.$app_name.previous."* 2>/dev/null || true
+        /bin/rm -rf "$destination_root/.$app_name.staged."* \
+          "$destination_root/.$app_name.previous."*
+        /bin/rm -rf "$staged" "$previous"
+        /usr/bin/ditto "$source_app" "$staged"
+        /bin/chmod -R u+w "$staged"
+        /usr/bin/codesign --force --timestamp=none --options runtime \
+          --identifier "$bundle_id" --sign "$identity" "$staged"
+        /usr/bin/codesign --verify --deep --strict "$staged"
+        signature_info="$(/usr/bin/codesign -dv --verbose=4 "$staged" 2>&1)"
+        /usr/bin/grep -Fq "Authority=$identity" <<< "$signature_info"
+
+        if [[ -e "$destination" ]]; then
+          /bin/mv "$destination" "$previous"
+        fi
+        if ! /bin/mv "$staged" "$destination"; then
+          if [[ -e "$previous" ]]; then /bin/mv "$previous" "$destination"; fi
+          exit 1
+        fi
+        /bin/rm -rf "$previous"
+        /usr/bin/printf '%s\n' "$source_app" > "$receipt"
+      }
+
+      install_signed_app ${lib.escapeShellArg skhdApp} skhd.app com.jackielii.skhd
+      install_signed_app ${lib.escapeShellArg bridgeApp} \
+        atyrode-automation-bridge.app dev.tyrode.automation-bridge
+    fi
+  '';
+
+  # Reload every consumer after the signed bundles and managed Lua tree are in
+  # place. These are stable app identities; package generations no longer leak
+  # into TCC or Background Items identity.
+  home.activation.restartManagedDesktopConsumers =
+    lib.hm.dag.entryAfter [ "installSignedAutomationApps" ]
       ''
         if [[ -v DRY_RUN ]]; then
-          echo "Would install Karabiner configuration at ${karabinerPath}"
+          echo "Would relaunch managed skhd, SketchyBar, and automation bridge agents"
         else
-          ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg karabinerDirectory}
-          temporary=${lib.escapeShellArg "${karabinerPath}.tmp"}.$$
-          ${pkgs.coreutils}/bin/install -m 0600 ${karabinerConfig} "$temporary"
-          ${pkgs.coreutils}/bin/mv -f "$temporary" ${lib.escapeShellArg karabinerPath}
-          # The directory watch is the documented reload trigger, but it only
-          # exists once Karabiner has run. Kickstart is best-effort so a machine
-          # without the driver approved yet still activates cleanly.
-          /bin/launchctl kickstart -k \
-            "gui/$(${pkgs.coreutils}/bin/id -u)/org.pqrs.service.agent.karabiner_console_user_server" \
-            >/dev/null 2>&1 || true
+          user_domain="gui/$(${pkgs.coreutils}/bin/id -u)"
+          /bin/launchctl kickstart -k "$user_domain/org.nixos.skhd" >/dev/null 2>&1 || true
+          /bin/launchctl kickstart -k "$user_domain/org.nixos.sketchybar" >/dev/null 2>&1 || true
+          /bin/launchctl kickstart -k "$user_domain/org.nixos.macos-automation-bridge" >/dev/null 2>&1 || true
         fi
-      ''
-  );
+      '';
 }

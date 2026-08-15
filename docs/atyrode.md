@@ -105,6 +105,9 @@ atyrode doctor host --json
 atyrode doctor system --json
 atyrode doctor git --json
 atyrode doctor tools --json
+atyrode tcc-review
+atyrode tcc-review --acknowledge
+atyrode automation signing-bootstrap
 ```
 
 `inventory` is a thin, read-only consumer of the flake's schema-versioned
@@ -141,8 +144,12 @@ Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.
 `doctor system [HOST] [--json]` audits the boundary that package installation
 alone cannot satisfy: the real login shell, Nix daemon and trust policy,
-container engine, antivirus ownership, Android device policy, and Homebrew
-drift. Its stable check IDs, row schema, statuses, exits, and read-only probe
+container engine, antivirus ownership, Android device policy, Homebrew drift,
+and the privileged macOS automation contract. The automation row verifies SIP,
+the disabled yabai scripting addition, forbidden grabbers/runtimes, locally
+signed app identities and versions, absent TCP listeners, immutable config, and
+a current manual TCC-review receipt. Its stable check IDs, row schema, statuses,
+exits, and read-only probe
 contract are documented in [Home Manager and system boundary](system-boundary.md).
 `doctor git [--json]` is the matching user-side, read-only audit. Its ordered
 checks cover Git configuration readability, SSH-agent availability and loaded
@@ -155,5 +162,15 @@ without making the report fail. JSON uses schema version 1 and never includes
 keys, tokens, helper arguments, or remote URLs. Bootstrap, headless policy,
 rotation, revocation, recovery, and platform verification are documented in
 [Git SSH authentication and signing](git-keys.md).
+`atyrode automation signing-bootstrap` creates the workstation-only
+`atyrode Local Automation` certificate in the login keychain. Run it once before
+the first apply that installs the pinned skhd and narrow automation bridge apps.
+The private key never leaves the keychain after import; the retained state file
+is the public certificate used to repair trust settings. `atyrode tcc-review`
+prints the least-privilege checklist without reading or changing TCC. After
+manually comparing System Settings > Privacy & Security, `--acknowledge` records
+a policy-digest receipt that expires after 90 days or immediately when the grant
+policy changes.
+
 The `workspace` and `agent` namespaces are reserved for their owning follow-up
 issues and currently fail clearly.

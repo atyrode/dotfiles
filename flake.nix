@@ -30,11 +30,6 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
-
-    skhd-zig-tap = {
-      url = "github:jackielii/homebrew-tap";
-      flake = false;
-    };
   };
 
   outputs =
@@ -49,7 +44,6 @@
       treefmt-nix,
       homebrew-core,
       homebrew-cask,
-      skhd-zig-tap,
       ...
     }:
     let
@@ -334,8 +328,10 @@
             };
           })
           (
-            _final: previous:
+            final: previous:
             lib.optionalAttrs previous.stdenv.isDarwin {
+              macos-automation-bridge = final.callPackage ./pkgs/macos-automation-bridge { };
+              skhd = final.callPackage ./pkgs/skhd { };
               # nixpkgs Darwin fixup replaces Obsidian's Developer ID signature
               # with an ad-hoc one. The pinned upstream DMG and derivation audit
               # in #89 verified that skipping fixup preserves its signed bundle.
@@ -485,7 +481,6 @@
             inherit
               homebrew-cask
               homebrew-core
-              skhd-zig-tap
               ;
             inherit (host) homeDirectory;
             homeModules = modulesForHost name host;
@@ -604,6 +599,9 @@
             omp-configured
             omp-seed
             ;
+        }
+        // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
+          inherit (pkgs) macos-automation-bridge skhd;
         }
         // lib.optionalAttrs (lib.hasSuffix "-linux" system) {
           server-profile-manifest = serverProfileManifests.${system};

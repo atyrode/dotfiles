@@ -4,7 +4,7 @@
 # may change any of these values on the fly, local edits always win over a
 # reseed, and drift is reported by `atyrode apply` instead of overwritten.
 #
-# Decision log: operator settings review, 2026-07-11 (issue #61).
+# Decision log: operator settings reviews, 2026-07-11 (issue #61) and 2026-08-20.
 
 # Trusted-machine autonomy with the two cheap guardrails kept on: secret
 # obfuscation in outbound requests and copy-on-write task isolation.
@@ -17,6 +17,15 @@ task:
     mode: auto
     merge: patch
   showResolvedModelBadge: true
+  # Keep bare omp's baseline aligned with omp-managed. `code` owns richer
+  # per-session routing overlays and replaces these when a dialed launch starts.
+  agentModelOverrides:
+    designer: anthropic/claude-sonnet-5:medium
+    librarian: openai-codex/gpt-5.6-terra:medium
+    reviewer: anthropic/claude-sonnet-5:high
+    scout: openai-codex/gpt-5.6-luna:medium
+    sonic: openai-codex/gpt-5.6-luna:minimal
+    task: openai-codex/gpt-5.6-terra:medium
   # All bundled agents stay spawnable in plain omp. An unattributed machine
   # edit once disabled all six (issue #173); seeding the empty list makes any
   # future non-empty value surface as reviewable drift instead of silently
@@ -25,7 +34,7 @@ task:
 
 # Sol for interactive work; cheap Luna/Terra routes for recurring background
 # roles so commit messages, titles, and subtasks never bill at the main tier.
-# Only bundled roles are pinned; custom agents are a managed-launcher concern.
+# This is the non-dialed baseline; `code` owns generated per-session routing.
 modelRoles:
   default: openai-codex/gpt-5.6-sol:medium
   advisor: openai-codex/gpt-5.6-luna:medium
@@ -42,6 +51,11 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
+  # Preserve 5% of reported coding-plan quota for emergencies, falling through
+  # sibling accounts and then these model chains before a hard exhaustion.
+  usageAwareFallback: true
+  usageReservePct: 5
+  usageReservePolicy: confirm
   fallbackChains:
     default:
       - anthropic/claude-sonnet-5:medium
@@ -81,6 +95,8 @@ autolearn:
 
 branchSummary:
   enabled: true
+recap:
+  enabled: false
 checkpoint:
   enabled: true
 github:
@@ -92,6 +108,7 @@ astGrep:
   enabled: true
 edit:
   enforceSeenLines: true
+  mode: hashline
 
 # Local-first memory: mnemopi SQLite banks, one global bank so recall works
 # across projects (provenance stays in each memory's metadata). Extraction
@@ -107,21 +124,24 @@ providers:
   anthropic:
     serverSideFallback: false
   memoryModel: online
-  webSearch: auto
 
 # Never spend scarce weekly reset credits without the operator.
 codexResets:
   autoRedeem: "no"
 
+# GPT-5.6's 1M window bills the whole request at 2x input / 1.5x output
+# after 272K input. Compact at the standard-price boundary by default; use
+# /extended-context for the exceptional session that benefits from the premium tier.
+extendedContext: false
+
 compaction:
   idleEnabled: true
+  asyncEnabled: true
 features:
   unexpectedStopDetection: true
 
 defaultThinkingLevel: auto
 personality: pragmatic
-edit:
-  mode: hashline
 
 # Interaction posture.
 steeringMode: one-at-a-time

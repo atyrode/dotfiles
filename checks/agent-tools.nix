@@ -787,7 +787,7 @@ in
             for invocation in \
               'config set modelRoles {}' \
               'config set tools {}' \
-              'config --json reset providers.webSearch' \
+              'config --json reset extendedContext' \
               '--profile work config set tools.approvalMode yolo' \
               'config reset secrets.enabled --json'
             do

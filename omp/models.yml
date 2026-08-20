@@ -19,7 +19,7 @@
 #
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
-refreshed: '2026-07-13'
+refreshed: '2026-08-20'
 # probed: `code generate` refuses a catalog that is not marked verified, because
 # omp lists models an account cannot actually call and nothing in their metadata
 # says so. This file is a curated committed cache rather than a live scaffold, so
@@ -33,11 +33,11 @@ models:
     pool: O
     tier: 1
     bucket: codex-main
-    cost_in: 1
-    cost_out: 6
+    cost_in: 0.2
+    cost_out: 1.2
     speed: 52.3
     ttft: 1.18
-    context: 272000
+    context: 1000000
     thinking: low→max
     role: >-
       Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
@@ -47,11 +47,11 @@ models:
     pool: O
     tier: 2
     bucket: codex-main
-    cost_in: 2.5
-    cost_out: 15
+    cost_in: 2
+    cost_out: 12
     speed: 51.8
     ttft: 1.74
-    context: 272000
+    context: 1000000
     thinking: low→max
     role: >-
       Balanced workhorse. Leads the regular GPT tier and the mixed
@@ -65,7 +65,7 @@ models:
     cost_out: 30
     speed: 31.5
     ttft: 4.59
-    context: 272000
+    context: 1000000
     thinking: low→max
     role: Flagship. Leads the smart GPT tier.
   spark:

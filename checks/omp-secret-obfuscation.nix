@@ -15,8 +15,9 @@ let
   '';
   captureProvider = pkgs.writeText "omp-secret-obfuscation-provider.ts" ''
     import {
-      AssistantMessageEventStream,
+      type AssistantMessageEventStream,
       type AssistantMessage,
+      createAssistantMessageEventStream,
       type Model,
       type Usage,
     } from "@oh-my-pi/pi-ai";
@@ -67,7 +68,7 @@ let
           },
         ],
         streamSimple(model, context) {
-          const stream = new AssistantMessageEventStream();
+          const stream = createAssistantMessageEventStream();
           queueMicrotask(async () => {
             try {
               const capturePath = process.env.ISSUE17_SECRET_CAPTURE;
@@ -127,6 +128,7 @@ pkgs.runCommand "check-omp-secret-obfuscation"
         | .content[]
         | select(.type == "text")
         | .text
+        | select(startswith("marker:"))
       ]) as $texts
       | (($texts | length) == 1)
         and ($texts[0] | test("^marker:\\$\\$[A-Z0-9]{12}(:[ULCM])?\\$\\$$"))

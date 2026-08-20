@@ -1,6 +1,3 @@
-providers:
-  webSearch: auto
-
 symbolPreset: unicode
 colorBlindMode: true
 
@@ -25,6 +22,11 @@ retry:
   enabled: true
   modelFallback: true
   fallbackRevertPolicy: cooldown-expiry
+  # Preserve a small emergency margin instead of discovering quota exhaustion
+  # mid-turn. Reliable coding-plan reports only; ordinary API keys are ignored.
+  usageAwareFallback: true
+  usageReservePct: 5
+  usageReservePolicy: confirm
   # Redundancy first: a same-provider sibling backs each lead before the cross,
   # so a single-model outage never leaves its bucket; then the matched pair on
   # the other provider. Chains never route below the lead's tier. Spark (drain)
@@ -71,6 +73,21 @@ stt:
 
 branchSummary:
   enabled: true
+
+# GPT-5.6's 1M window bills the whole request at 2x input / 1.5x output
+# after 272K input. Compact at the standard-price boundary by default; use
+# /extended-context for the exceptional session that benefits from the premium tier.
+extendedContext: false
+
+# Prepare compaction before the standard-price boundary so the handoff is
+# immediate when needed; unlike idle recaps, this serves required maintenance.
+compaction:
+  asyncEnabled: true
+
+# Idle recaps spend a background model call for transient convenience. Branch
+# summaries and explicit compaction already preserve the useful state.
+recap:
+  enabled: false
 
 # Off with the memory backend (#258): the Auto-Learn prompt section and
 # capture nudges are the same class of context pollution (operator decision

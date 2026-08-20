@@ -12,7 +12,6 @@ import {
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const MANAGED_PATHS = [
-	"providers.webSearch",
 	"symbolPreset",
 	"colorBlindMode",
 	"modelRoles",
@@ -20,11 +19,17 @@ export const MANAGED_PATHS = [
 	"retry.modelFallback",
 	"retry.fallbackRevertPolicy",
 	"retry.fallbackChains",
+	"retry.usageAwareFallback",
+	"retry.usageReservePct",
+	"retry.usageReservePolicy",
 	"personality",
 	"advisor.enabled",
 	"advisor.syncBacklog",
 	"stt.enabled",
 	"branchSummary.enabled",
+	"extendedContext",
+	"compaction.asyncEnabled",
+	"recap.enabled",
 	"autolearn.enabled",
 	"autolearn.autoContinue",
 	"github.enabled",

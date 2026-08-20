@@ -62,7 +62,6 @@ let
     EOF
   '';
   managedDefaultPaths = [
-    "providers.webSearch"
     "symbolPreset"
     "colorBlindMode"
     "modelRoles"
@@ -70,11 +69,17 @@ let
     "retry.modelFallback"
     "retry.fallbackRevertPolicy"
     "retry.fallbackChains"
+    "retry.usageAwareFallback"
+    "retry.usageReservePct"
+    "retry.usageReservePolicy"
     "personality"
     "advisor.enabled"
     "advisor.syncBacklog"
     "stt.enabled"
     "branchSummary.enabled"
+    "extendedContext"
+    "compaction.asyncEnabled"
+    "recap.enabled"
     "autolearn.enabled"
     "autolearn.autoContinue"
     "github.enabled"

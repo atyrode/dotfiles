@@ -1210,13 +1210,13 @@ in
   # Linux-only leg: asserting on ExecStart pulls the earlyoom store path into
   # this derivation, and earlyoom is a Linux-only package.
   resource-guard = pkgs.runCommand "check-agent-resource-guard" { } ''
-    # The cap has to land on app.slice, because that is where OMP sessions,
-    # their language servers, Chrome, and bun workers actually run. Percentages
-    # keep one value correct on a 16 GB server and a large workstation alike.
+    # Account for the stack on app.slice, but do not impose a hard ceiling.
+    # MemoryMax cannot distinguish state-owning Orca/OMP processes from their
+    # recreatable workers; earlyoom below can, so it must see host-wide pressure.
     dropIn=${lib.escapeShellArg linuxSliceDropIn}
     grep -Fqx '[Slice]' <<<"$dropIn"
     grep -Fqx 'MemoryAccounting=yes' <<<"$dropIn"
-    grep -Fqx 'MemoryMax=75%' <<<"$dropIn"
+    grep -Fqx 'MemoryMax=infinity' <<<"$dropIn"
 
     # MemoryHigh must stay out of the default drop-in. It throttles instead of
     # limiting: the kernel charges reclaim to the allocating thread, which on
@@ -1227,9 +1227,12 @@ in
 
     # earlyoom backstops host-wide exhaustion and must stay unprivileged:
     # Nice=/OOMScoreAdjust= are what upstream recommends for its *root* unit,
-    # but a user service can set neither and would fail to start.
+    # but a user service can set neither and would fail to start. Assert the
+    # earlier 15% memory / 20% swap intervention point as part of the policy.
     guard=${lib.escapeShellArg linuxEarlyoomService.Service.ExecStart}
     grep -Fq 'earlyoom' "$guard"
+    grep -Fq -- '-m 15' "$guard"
+    grep -Fq -- '-s 20' "$guard"
     grep -Fq -- '--prefer' "$guard"
     grep -Fq -- '--avoid' "$guard"
 

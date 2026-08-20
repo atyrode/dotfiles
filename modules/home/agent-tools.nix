@@ -72,12 +72,12 @@ let
     exec ${rawOmp} --profile default auth-broker serve --bind=${brokerBind}
   '';
 
-  # Second layer behind the app.slice cap: when the host as a whole runs out of
-  # memory *and* swap, earlyoom kills the fattest agent process before the
-  # kernel starts thrashing. Runs unprivileged, which suffices because the whole
-  # agent stack belongs to this user. Deliberately no Nice=/OOMScoreAdjust= on
-  # the unit: upstream recommends both, but they need privileges a user service
-  # does not have and would make it fail to start.
+  # Host-wide pressure guard: when the machine is running out of both memory
+  # and swap, earlyoom kills the fattest expendable agent worker before the
+  # kernel chooses a state-owning process. Runs unprivileged, which suffices
+  # because the whole agent stack belongs to this user. Deliberately no
+  # Nice=/OOMScoreAdjust= on the unit: upstream recommends both, but they need
+  # privileges a user service does not have and would make it fail to start.
   #
   # Victim policy targets the work, not the things that own it. An `omp` session
   # holds conversation state and in-flight edits that nothing can reconstruct,
@@ -91,9 +91,8 @@ let
   # TypeScript servers, which are routinely the single largest processes here.
   #
   # This is a scoring preference, not immunity: earlyoom divides a process'
-  # badness rather than exempting it, and it has no say at all when the kernel
-  # or the app.slice MemoryMax cgroup OOM-kills. Real immunity would need a
-  # negative OOMScoreAdjust, which is privileged.
+  # badness rather than exempting it. Negative OOMScoreAdjust would provide
+  # kernel-level immunity, but requires privileges and careful child resets.
   earlyoomSupervisor = pkgs.writeShellScript "atyrode-earlyoom" ''
     exec ${pkgs.earlyoom}/bin/earlyoom \
       -m ${toString rgcfg.earlyoom.memoryPercent} \
@@ -181,18 +180,17 @@ in
 
     resourceGuard = {
       # The agent stack (OMP sessions, their language servers, Chrome, and bun
-      # workers) runs under the user manager's app.slice, which systemd already
-      # delegates the memory controller to. Capping that slice stops a runaway
-      # session from exhausting RAM and swap host-wide: SSH logins land in
-      # session scopes *outside* app.slice, so the machine stays reachable while
-      # the pressure is absorbed where it is generated.
+      # workers) runs under the user manager's app.slice. Account for it there,
+      # but let host-wide pressure reach earlyoom: unlike a cgroup MemoryMax
+      # kill, earlyoom can preserve Orca and OMP while shedding their
+      # individually recreatable workers.
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
         description = ''
-          Cap the memory the agent stack may consume and run an unprivileged
-          earlyoom as a backstop. Linux-only: both mechanisms are systemd and
-          cgroup features with no macOS equivalent.
+          Account for the agent stack in app.slice and run an unprivileged,
+          victim-aware earlyoom guard. Linux-only: both mechanisms are systemd
+          and cgroup features with no macOS equivalent.
         '';
       };
 
@@ -215,23 +213,24 @@ in
           throttle never once protected anything, it only wedged sessions, and
           a wedged agent session is unrecoverable in a way a killed one is not.
 
-          Removing it removes that proven harm; it does not buy a graceful
-          fallback. MemoryMax still bounds the host, and when it fires the
-          in-slice OOM kill can land on an `omp` process and take its state
-          with it. earlyoom triggers on host-wide floors, independently of the
-          cgroup cap, so it is not guaranteed to shed first. Set this only for
-          a workload whose allocation is smooth enough that reclaim keeps up.
+          Removing it removes that proven harm. Host-wide earlyoom is the
+          graceful fallback for the default policy: it waits for genuine
+          memory-and-swap pressure, then prefers recreatable workers over the
+          state-owning harness. Set MemoryHigh only for a workload whose
+          allocation is smooth enough that reclaim keeps up.
         '';
       };
 
       memoryMax = lib.mkOption {
         type = lib.types.str;
-        default = "75%";
+        default = "infinity";
         example = "12G";
         description = ''
-          MemoryMax for app.slice: the hard ceiling. Allocations past it are
-          OOM-killed inside the slice, bounding the blast radius to the agent
-          stack instead of taking the host down with it.
+          MemoryMax for app.slice. The default deliberately leaves the hard
+          ceiling disabled: a cgroup OOM kill cannot distinguish state-owning
+          Orca/OMP processes from recreatable workers, while earlyoom can.
+          Set a finite value only when bounding the entire slice matters more
+          than preserving its sessions.
         '';
       };
 
@@ -247,18 +246,18 @@ in
 
         memoryPercent = lib.mkOption {
           type = lib.types.ints.between 1 100;
-          default = 10;
+          default = 15;
           description = ''
             Available-memory floor, in percent. earlyoom acts only once this
             and the swap floor are breached together, so it stays dormant on a
-            healthy machine and fires on the swap-exhaustion pattern that
-            wedges a host into thrashing.
+            healthy machine and fires before the swap-exhaustion pattern wedges
+            the host into thrashing.
           '';
         };
 
         swapPercent = lib.mkOption {
           type = lib.types.ints.between 1 100;
-          default = 10;
+          default = 20;
           description = "Free-swap floor, in percent. See memoryPercent.";
         };
       };

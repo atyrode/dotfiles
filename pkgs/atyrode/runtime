@@ -369,9 +369,13 @@ advisor:
   enabled: false
 compaction:
   enabled: true
+  methodOrder:
+    - soft
   midTurnEnabled: true
   asyncEnabled: true
   reserveTokens: ${compaction_reserve_tokens}
+  keepRecentTokens: 20000
+  autoContinue: true
 EOF
   chmod 600 "$profile_root/local-only.yml"
 }

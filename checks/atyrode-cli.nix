@@ -159,6 +159,14 @@ pkgs.runCommand "check-atyrode-cli"
     test "$compaction_reserve_tokens" -ge "$((max_output_tokens + 4096))"
     grep -qF 'maxTokens: ''${max_output_tokens}' "$runtime_helper"
     grep -qF 'reserveTokens: ''${compaction_reserve_tokens}' "$runtime_helper"
+    local_only_template="$(${pkgs.gnused}/bin/sed -n \
+      '/cat >"$profile_root\/local-only.yml" <<EOF/,/^EOF$/p' "$runtime_helper")"
+    grep -qF '  methodOrder:' <<<"$local_only_template"
+    grep -qF '    - soft' <<<"$local_only_template"
+    ! grep -qF 'snapcompact' <<<"$local_only_template"
+    grep -qF '  asyncEnabled: true' <<<"$local_only_template"
+    grep -qF '  keepRecentTokens: 20000' <<<"$local_only_template"
+    grep -qF '  autoContinue: true' <<<"$local_only_template"
 
     # Production packages ignore every test-only identity override. Otherwise
     # a project environment could spoof apply and doctor preflight identity.

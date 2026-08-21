@@ -8,6 +8,8 @@ readonly source_url="https://github.com/syv-ai/qwen38-27b-rtx3090.git"
 readonly source_revision="51905d1902e699e35e4c11cb0eb9ffe230a11344"
 readonly model_id="qwen3.8-27b"
 readonly context_window=150000
+readonly max_output_tokens=32768
+readonly compaction_reserve_tokens=40000
 readonly estimated_disk_bytes=40000000000
 readonly omp_managed='@omp_managed@'
 
@@ -332,7 +334,7 @@ providers:
       - id: ${model_id}
         name: Qwen3.8 27B local (RTX 3090)
         contextWindow: ${context_window}
-        maxTokens: 32768
+        maxTokens: ${max_output_tokens}
         reasoning: true
 EOF
   chmod 600 "$profile_root/models.yml"
@@ -365,6 +367,11 @@ task:
     scout: ${local_model}
 advisor:
   enabled: false
+compaction:
+  enabled: true
+  midTurnEnabled: true
+  asyncEnabled: true
+  reserveTokens: ${compaction_reserve_tokens}
 EOF
   chmod 600 "$profile_root/local-only.yml"
 }

@@ -146,6 +146,20 @@ pkgs.runCommand "check-atyrode-cli"
     test ! -e "$XDG_CONFIG_HOME/atyrode/runtime"
     test ! -e "$XDG_STATE_HOME/atyrode/runtime"
 
+    # The local model reserves its full maximum response plus tokenizer/tool
+    # envelope headroom. Otherwise OMP's default 15% reserve compacts too late:
+    # 150000 input+output capacity minus 32768 output is only 117232 input.
+    runtime_helper=${atyrode}/libexec/atyrode-runtime
+    max_output_tokens="$(${pkgs.gnused}/bin/sed -nE \
+      's/^readonly max_output_tokens=([0-9]+)$/\1/p' "$runtime_helper")"
+    compaction_reserve_tokens="$(${pkgs.gnused}/bin/sed -nE \
+      's/^readonly compaction_reserve_tokens=([0-9]+)$/\1/p' "$runtime_helper")"
+    test -n "$max_output_tokens"
+    test -n "$compaction_reserve_tokens"
+    test "$compaction_reserve_tokens" -ge "$((max_output_tokens + 4096))"
+    grep -qF 'maxTokens: ''${max_output_tokens}' "$runtime_helper"
+    grep -qF 'reserveTokens: ''${compaction_reserve_tokens}' "$runtime_helper"
+
     # Production packages ignore every test-only identity override. Otherwise
     # a project environment could spoof apply and doctor preflight identity.
     set +e

@@ -16,7 +16,11 @@ func (m model) overviewView(width int) string {
 			rows = append(rows, "   "+clikit.StDim.Render(workspacePurpose(item.ID)))
 		}
 	}
-	workspaces := clikit.Panel(width, titleStyle.Render("Workspaces")+"\n\n"+strings.Join(rows, "\n"))
+	spacing := "\n\n"
+	if m.height < 24 {
+		spacing = "\n"
+	}
+	workspaces := clikit.Panel(width, titleStyle.Render("Workspaces")+spacing+strings.Join(rows, "\n"))
 	if m.height < 24 {
 		return workspaces
 	}
@@ -49,6 +53,8 @@ func workspacePurpose(id clikit.WorkspaceID) string {
 		return "Inspect host registration, system policy, and managed tools."
 	case workspaceCapability:
 		return "Browse active capabilities and their resolved deliverables."
+	case workspaceRuntime:
+		return "Provision, start, and open machine-local on-demand services."
 	case workspaceAsk:
 		return "Ask a read-only, command-grounded question about atyrode."
 	default:

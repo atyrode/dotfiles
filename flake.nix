@@ -70,6 +70,7 @@
         "chatgpt"
         "claude-code"
         "obsidian"
+        "nvidia-x11"
         "orbstack"
         "parsec-bin"
         "postman"

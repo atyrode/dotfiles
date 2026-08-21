@@ -49,8 +49,32 @@ in
     "flakes"
   ];
 
+  # Local CUDA runtime capabilities run in Docker. NVIDIA is supplied by
+  # Windows through WSL and exposed to containers through CDI; model data and
+  # containers remain machine-local and are never created by activation.
+  virtualisation.docker = {
+    enable = true;
+    enableOnBoot = true;
+  };
+  hardware.nvidia-container-toolkit = {
+    enable = true;
+    discovery-mode = "wsl";
+    suppressNvidiaDriverAssertion = true;
+
+    # The WSL generator discovers the matching Windows driver files. Avoid
+    # appending an unrelated Linux NVIDIA driver closure to the CDI spec.
+    mounts = lib.mkForce [ ];
+    mount-nvidia-executables = false;
+    mount-nvidia-docker-1-directories = false;
+  };
+  systemd.services.nvidia-container-toolkit-cdi-generator.serviceConfig.Environment =
+    "LD_LIBRARY_PATH=/usr/lib/wsl/lib";
+
   programs.zsh.enable = true;
-  users.users.${username}.shell = pkgs.zsh;
+  users.users.${username} = {
+    shell = pkgs.zsh;
+    extraGroups = [ "docker" ];
+  };
 
   atyrode.dotfiles.hostRegistry = hostRegistry;
   home-manager = {

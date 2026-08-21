@@ -15,6 +15,7 @@ const (
 	workspaceLifecycle  clikit.WorkspaceID = "lifecycle"
 	workspaceDoctor     clikit.WorkspaceID = "doctor"
 	workspaceCapability clikit.WorkspaceID = "capabilities"
+	workspaceRuntime    clikit.WorkspaceID = "runtime"
 	workspaceAsk        clikit.WorkspaceID = "ask"
 )
 
@@ -24,7 +25,8 @@ var cockpitWorkspaceItems = []clikit.WorkspaceItem{
 	{ID: workspaceLifecycle, Label: "Generations / Clean", Shortcut: "3"},
 	{ID: workspaceDoctor, Label: "Doctor", Shortcut: "4"},
 	{ID: workspaceCapability, Label: "Capabilities", Shortcut: "5"},
-	{ID: workspaceAsk, Label: "Ask", Shortcut: "6"},
+	{ID: workspaceRuntime, Label: "Runtime", Shortcut: "6"},
+	{ID: workspaceAsk, Label: "Ask", Shortcut: "7"},
 }
 
 func newCockpitNav() clikit.WorkspaceNav {
@@ -63,6 +65,8 @@ func (m *model) activateWorkspace(id clikit.WorkspaceID) tea.Cmd {
 		if m.plan.ResolvedRevision != "" {
 			return m.startInventory()
 		}
+	case workspaceRuntime:
+		return m.loadRuntime()
 	default:
 		return nil
 	}
@@ -99,26 +103,34 @@ func (m model) workspaceTabs(width int) string {
 		return ""
 	}
 	items := m.nav.Items()
-	columns := 2
+	columns := 3
 	switch {
 	case width >= 132:
-		columns = 6
+		columns = 7
 	case width >= 64:
-		columns = 3
+		columns = 4
 	}
 	rows := make([]string, 0, (len(items)+columns-1)/columns)
 	for start := 0; start < len(items); start += columns {
 		end := min(start+columns, len(items))
-		cells := make([]string, 0, end-start)
-		for index := start; index < end; index++ {
+		cells := make([]string, 0, columns)
+		for index := start; index < start+columns; index++ {
 			cellWidth := width / columns
 			if index%columns < width%columns {
 				cellWidth++
 			}
+			if index >= end {
+				cells = append(cells, workspaceTabStyle(cellWidth, false).Render(""))
+				continue
+			}
 			item := items[index]
 			label := item.Shortcut + ". " + item.Label
 			if item.ID == workspaceLifecycle && lipgloss.Width(label) > cellWidth {
-				label = item.Shortcut + ". Gen / Clean"
+				if cellWidth <= 11 {
+					label = item.Shortcut + ".Gen/Clean"
+				} else {
+					label = item.Shortcut + ". Gen / Clean"
+				}
 			}
 			if cellWidth > 1 {
 				label = ansi.Truncate(label, cellWidth, "…")
@@ -133,12 +145,12 @@ func (m model) workspaceTabs(width int) string {
 
 func (m model) shellFooter() string {
 	_, width := m.horizontalLayout()
-	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–6 jump  ·  Ctrl+O ask  ·  q quit"
+	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–7 jump  ·  Ctrl+O ask  ·  q quit"
 	switch {
 	case m.width < 60:
-		text = "Tab/⇧Tab navigate  ·  1–6 jump  ·  q"
+		text = "Tab/⇧Tab navigate  ·  1–7 jump  ·  q"
 	case m.width < 112:
-		text = "Tab/Shift+Tab navigate  ·  1–6 jump  ·  ^O ask  ·  q quit"
+		text = "Tab/Shift+Tab navigate  ·  1–7 jump  ·  ^O ask  ·  q quit"
 	}
 	return clikit.ClipLines(clikit.StDim.Render(text), width)
 }

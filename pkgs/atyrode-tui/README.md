@@ -21,7 +21,7 @@ Ask grounding, so packaged and checkout-specific behavior remain aligned.
 
 Overview explains the cockpit and lists every workspace without preallocating
 empty panel height. The top navigation is an aligned responsive grid of numbered
-titles (`1. Overview` through `6. Ask`); only the selected cell's background
+titles (`1. Overview` through `7. Ask`); only the selected cell's background
 moves. `Tab` and `Shift+Tab` cycle persistent workspaces, while `1`–`6` jump
 directly. Local loading, selection, scroll, preview, and confirmation state
 survives round trips between workspaces. Narrow and medium layouts wrap the
@@ -82,6 +82,16 @@ transport failures.
 Malformed or absent JSON remains a local report error. Refresh, cancellation,
 and generation-scoped stale-reply rejection match the existing inspection
 behavior.
+
+## Runtime workspace
+
+Runtime capabilities are deliberately separate from declarative host
+capabilities. The workspace reads `atyrode runtime status --json` and controls
+the machine-local `local-qwen` service. Provisioning is explicit and confirms
+before a new image/model download; an existing `~/qwen-serving` checkout is
+adopted in place. Enter starts the service, waits for health, and opens managed
+OMP with an isolated local provider profile. Nix activation never provisions a
+runtime, creates its bearer token, or allocates model storage.
 
 ## Generations / Clean workspace
 

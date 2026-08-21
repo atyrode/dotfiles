@@ -1296,6 +1296,9 @@ let
         OMP_AUTH_BROKER_TOKEN="$(<"$broker_state/token")"
         export OMP_AUTH_BROKER_TOKEN
       fi
+      # Resolve by command name rather than a Nix store path: atyrode owns
+      # machine-local capabilities, while code remains independently releasable.
+      export CODE_RUNTIME_BROKER="''${CODE_RUNTIME_BROKER:-atyrode}"
       export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
       export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"
       export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
@@ -1305,10 +1308,9 @@ let
       # daemon/model. The account manager owns only non-secret selection state;
       # every trusted launch receives the central broker plus an immutable
       # per-process account pool while remaining on the shared default client
-      # profile. Launch targets: ↵ always
-      # runs the generated profile for the current facets through the managed
-      # layering (CODE_OMP); `m` runs managed defaults with no overlay; `u` opens
-      # the fixed untrusted sandbox (CODE_OMP_UNTRUSTED).
+      # profile. On supported machines, code discovers machine-local targets
+      # from CODE_RUNTIME_BROKER. Selecting one delegates provisioning and launch
+      # to atyrode without forwarding the cloud broker environment.
 
       usage() {
         printf '%s\n' \
@@ -1327,8 +1329,8 @@ let
           "" \
           'In the generator: type a prompt or adjust the dials, v opens the' \
           'account manager, and ? shows all keys. Enter' \
-          'launches through the managed layering, m runs the managed defaults' \
-          'with no overlay, and u opens an untrusted sandbox.'
+          'launches the selected hosted or local runtime; m runs the managed' \
+          'hosted defaults, and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in

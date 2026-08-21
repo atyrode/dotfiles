@@ -325,6 +325,7 @@ in
         grep -Fq 'export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"' \
           ${pkgs.omp-configured}/bin/code
         grep -Fq 'export CODE_OMP_RAW="$omp_bin"' ${pkgs.omp-configured}/bin/code
+        grep -Fq 'export CODE_RUNTIME_BROKER="''${CODE_RUNTIME_BROKER:-atyrode}"' ${pkgs.omp-configured}/bin/code
         grep -Fq -- '--profile default usage --json' ${pkgs.omp-configured}/bin/code
         grep -Fq 'OMP_AUTH_BROKER_URL' ${pkgs.omp-configured}/bin/code
         grep -Fq '/atyrode/omp-auth-broker"' ${pkgs.omp-configured}/bin/code

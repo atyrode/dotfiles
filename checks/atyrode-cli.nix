@@ -131,6 +131,21 @@ pkgs.runCommand "check-atyrode-cli"
     export _ATYRODE_TEST_SYSTEM="x86_64-linux"
     export _ATYRODE_TEST_USER="alex"
 
+    # Runtime discovery is read-only and versioned. A generic Nix build host has
+    # no WSL GPU passthrough, so it must advertise the target as unsupported
+    # without allocating machine state or attempting a download.
+    runtime_list="$(env -u WSL_DISTRO_NAME atyrode runtime list --json)"
+    jq -e 'length == 1
+      and .[0].schemaVersion == 1
+      and .[0].name == "local-qwen"
+      and .[0].label == "Local Qwen 3.8 27B"
+      and .[0].phase == "unsupported"
+      and .[0].applicable == false
+      and .[0].estimatedDiskBytes == 40000000000
+      and (.[0].reason | contains("WSL2"))' <<<"$runtime_list" >/dev/null
+    test ! -e "$XDG_CONFIG_HOME/atyrode/runtime"
+    test ! -e "$XDG_STATE_HOME/atyrode/runtime"
+
     # Production packages ignore every test-only identity override. Otherwise
     # a project environment could spoof apply and doctor preflight identity.
     set +e
@@ -944,6 +959,51 @@ pkgs.runCommand "check-atyrode-cli"
         | all(. == "nixos"))
       and (.checks[] | select(.id == "nix-policy") | .expected.trustedUsers) == ["fixture", "root"]
     ' <<< "$server_result" >/dev/null
+
+    # NixOS can install a generated wrapped Zsh as the account shell. The
+    # wrapper is system-owned and executable but is not itself listed in
+    # /etc/shells, so diagnostics accept this NixOS-specific representation.
+    server_wrapped_ready="$TMPDIR/server-wrapped-ready.json"
+    jq '.loginShell = {
+      path:"/nix/store/00000000000000000000000000000000-wrapped-zsh/wrapper",
+      executable:true,
+      listed:false
+    }' "$linux_ready" > "$server_wrapped_ready"
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$server_wrapped_ready"
+    atyrode doctor system fixture-server --json | jq -e '
+      .ok and (.checks[] | select(.id == "login-shell") | .status) == "ok"
+    ' >/dev/null
+
+    # NixOS-WSL is selected by its activation backend, not by adding the
+    # unrelated server capability to a workstation host.
+    export _ATYRODE_TEST_USER=alex
+    export _ATYRODE_TEST_HOSTNAME=atyrode-wsl
+    wsl_result="$(atyrode doctor system alex-x86_64-linux-wsl --json)"
+    jq -e '
+      .ok
+      and (.checks[] | select(.id == "login-shell") | .status) == "ok"
+      and ([.checks[] | select(.id == "login-shell" or .id == "nix-daemon" or
+          .id == "nix-policy") | .owner] | all(. == "nixos"))
+    ' <<< "$wsl_result" >/dev/null
+    export _ATYRODE_TEST_USER=fixture
+    export _ATYRODE_TEST_HOSTNAME=fixture-linux
+
+    server_wrong_wrapper="$TMPDIR/server-wrong-wrapper.json"
+    jq '.loginShell = {
+      path:"/nix/store/00000000000000000000000000000000-wrapped-bash/wrapper",
+      executable:true,
+      listed:false
+    }' "$linux_ready" > "$server_wrong_wrapper"
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$server_wrong_wrapper"
+    if atyrode doctor system fixture-server --json > "$TMPDIR/server-wrong-wrapper.out"; then
+      echo 'a non-Zsh NixOS wrapper unexpectedly passed diagnostics' >&2
+      exit 1
+    else
+      test "$?" -eq 69
+    fi
+    jq -e '
+      (.checks[] | select(.id == "login-shell") | .code) == "login-shell-mismatch"
+    ' "$TMPDIR/server-wrong-wrapper.out" >/dev/null
 
     darwin_ready="$TMPDIR/darwin-ready.json"
     jq -n '{

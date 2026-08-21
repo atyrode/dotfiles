@@ -5,6 +5,11 @@ dotfiles. It reads the declarative registry described in [Hosts and
 capabilities](hosts.md); it does not infer a profile from the current directory
 or maintain a second mutable profile database.
 
+Runtime capabilities are a separate, opt-in layer for large machine-local
+services that do not belong in a Nix generation. `atyrode runtime` can inspect,
+provision, start, and stop them; simply applying these dotfiles does not create
+their state, credentials, containers, or model downloads.
+
 ## Interactive cockpit
 
 Running bare `atyrode` with both stdin and stdout attached to a terminal opens
@@ -95,6 +100,10 @@ Activation shows a generation package diff.
 ```sh
 atyrode capabilities list --json
 atyrode capabilities show alex-x86_64-linux --json
+atyrode runtime status local-qwen --json
+atyrode runtime provision local-qwen
+atyrode runtime run local-qwen
+atyrode runtime shortcut local-qwen
 atyrode inventory --json
 atyrode inventory --host alex-x86_64-linux --json
 atyrode inventory --ref <branch-tag-or-commit> --json

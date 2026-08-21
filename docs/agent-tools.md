@@ -145,8 +145,9 @@ pinned: its frontmatter declares the `smol` model role, so repository
 exploration follows the smol route and its fallback chain without a separate
 entry that could go stale.
 
-`code` is the profile generator. It opens a Bubble Tea TUI with a
-prompt→profile classifier running on the resident Nix-managed ollama daemon
+`code` is the model/runtime launcher and hosted-profile generator. It opens a
+Bubble Tea TUI with a prompt→profile classifier running on the resident
+Nix-managed ollama daemon
 (loopback HTTP). You type a prompt and/or adjust the facet dials (lane, model
 tier, thinking, spark, fable — with fable's manual-only "main" sub-dial that
 promotes it to the default agent), and a preview pane shows the resulting role →
@@ -241,6 +242,17 @@ require a terminal — they deliberately bypass the launcher's tty guard, so
 Sessions are recorded under `$XDG_STATE_HOME/code/sessions` while they run; a
 session holds a lock on its record, so a crashed session is detected and pruned
 rather than lingering as a stale entry.
+
+On an applicable x86_64 WSL2 host with NVIDIA CUDA passthrough, `code` also
+shows a **runtime** dial with `hosted` and `Local Qwen 3.8 27B`. The option is
+discovered through `CODE_RUNTIME_BROKER` (set to `atyrode` by the managed
+wrapper), so unsupported hosts retain the hosted-only interface. Selecting the
+local target delegates to `atyrode runtime run local-qwen`: the first launch
+asks before allocating storage or downloading roughly 40 GiB, later launches
+idempotently start the pinned syv-ai runtime, and every OMP role is routed to
+the loopback Qwen endpoint with cloud authentication and model fallbacks
+removed. Mutable model data, generated API keys, container state, and the
+selection of a storage path remain machine-local and outside the Nix store.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the generator derives every profile from it and the `omp/models.yml` catalog,

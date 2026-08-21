@@ -5,6 +5,7 @@ set -euo pipefail
 readonly registry='@registry@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
+readonly atyrode_runtime='@atyrode_runtime@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
 readonly homebrew_cask_inventory='@homebrew_casks@'
@@ -32,6 +33,12 @@ Usage:
   atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
+  atyrode runtime list|status [local-qwen] [--json]
+  atyrode runtime provision [local-qwen] [--data-dir PATH] [--yes]
+  atyrode runtime start|stop|run [local-qwen]
+  atyrode runtime autostart [local-qwen] on|off
+  atyrode runtime boot
+  atyrode runtime shortcut [local-qwen]
   atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
@@ -1646,7 +1653,7 @@ word_in_list() {
 probe_login_shell() {
   local data="$1" platform="$2" user="$3"
   local owner expected current="" executable=false listed=false status code summary remediation
-  local expected_json actual_json
+  local expected_json actual_json nixos_wrapped=false
 
   if [[ "$platform" == darwin ]]; then
     owner=nix-darwin
@@ -1669,14 +1676,23 @@ probe_login_shell() {
     elif command -v getent >/dev/null 2>&1; then
       current="$(getent passwd "$user" 2>/dev/null | awk -F: 'NR == 1 { print $7 }')"
     fi
-    [[ -x "$expected" ]] && executable=true
-    grep -Fqx -- "$expected" /etc/shells 2>/dev/null && listed=true
+    [[ -x "$current" ]] && executable=true
+    grep -Fqx -- "$current" /etc/shells 2>/dev/null && listed=true
+  fi
+
+  # NixOS may write its generated wrapped Zsh directly to the account database.
+  # That path is owned by the active system closure and intentionally does not
+  # need a second, store-specific entry in /etc/shells.
+  if [[ "$owner" == nixos && "$current" == /nix/store/*-wrapped-zsh/wrapper &&
+        "$executable" == true ]]; then
+    nixos_wrapped=true
   fi
 
   expected_json="$(jq -nc --arg path "$expected" '{program:"zsh",path:$path,listed:true,executable:true}')"
   actual_json="$(jq -nc --arg path "$current" --argjson executable "$executable" \
     --argjson listed "$listed" '{path:$path,executable:$executable,listed:$listed,source:"account-database"}')"
-  if [[ "$current" == "$expected" && "$executable" == true && "$listed" == true ]]; then
+  if { [[ "$current" == "$expected" && "$executable" == true && "$listed" == true ]]; } ||
+      [[ "$nixos_wrapped" == true ]]; then
     status=ok; code=""; summary="account login shell is the managed Zsh path"; remediation=""
   else
     status=incomplete; code="login-shell-mismatch"
@@ -2885,6 +2901,7 @@ main() {
     generations) cmd_generations "$@" ;;
     lifecycle) cmd_lifecycle "$@" ;;
     rollback) cmd_rollback "$@" ;;
+    runtime) exec "$atyrode_runtime" "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

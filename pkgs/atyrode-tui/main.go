@@ -198,6 +198,12 @@ type model struct {
 	doctorGeneration uint64
 	doctorCancel     context.CancelFunc
 
+	runtime         runtimeStatus
+	runtimeLoading  bool
+	runtimeMutating bool
+	runtimeErr      error
+	runtimeAction   string
+
 	inventoryDiagnostic  string
 	inventoryDetailsOpen bool
 	details              bool
@@ -500,6 +506,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case lifecycleMsg:
 		return m, m.handleLifecycleMsg(msg)
+	case runtimeStatusMsg:
+		m.runtimeLoading = false
+		m.runtime, m.runtimeErr = msg.status, msg.err
+		return m, nil
+	case runtimeActionMsg:
+		m.runtimeMutating = false
+		if msg.err != nil {
+			m.runtimeErr = fmt.Errorf("runtime %s failed: %w", msg.action, msg.err)
+			return m, nil
+		}
+		return m, m.loadRuntime()
 	case applyDoneMsg:
 		if msg.err != nil {
 			m.phase, m.err = failed, fmt.Errorf("apply failed: %w", msg.err)
@@ -538,6 +555,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.nav.Active() == workspaceCapability {
 			return m, m.capabilitiesWorkspaceUpdate(key)
+		}
+		if m.nav.Active() == workspaceRuntime {
+			return m, m.runtimeUpdate(key)
 		}
 		if m.nav.Active() == workspaceLifecycle {
 			return m, m.lifecycleUpdate(key)
@@ -683,6 +703,8 @@ func (m model) View() string {
 		content = m.doctorView(panelWidth)
 	case workspaceCapability:
 		content = m.capabilitiesWorkspaceView(panelWidth)
+	case workspaceRuntime:
+		content = m.runtimeView(panelWidth)
 	default:
 		content = m.overviewView(panelWidth)
 	}

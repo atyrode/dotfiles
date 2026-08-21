@@ -6,6 +6,7 @@
   claude-code,
   codex,
   coreutils,
+  curl,
   enableTestHooks ? false,
   findutils,
   # Published flake activated by `atyrode apply` without --repo. Must stay a
@@ -24,6 +25,7 @@
   nh,
   nix,
   openssh,
+  openssl,
   omp-configured,
   runtimeShell,
   stdenvNoCC,
@@ -178,14 +180,20 @@ stdenvNoCC.mkDerivation {
   pname = "atyrode";
   version = "0.1.0";
   src = ./atyrode;
+  runtimeSrc = ./runtime;
   nativeBuildInputs = [ makeWrapper ];
 
   dontUnpack = true;
   installPhase = ''
     install -D -m755 "$src" "$out/bin/atyrode"
+    install -D -m755 "$runtimeSrc" "$out/libexec/atyrode-runtime"
+    substituteInPlace "$out/libexec/atyrode-runtime" \
+      --replace-fail '@shell@' '${runtimeShell}' \
+      --replace-fail '@omp_managed@' '${lib.getExe' omp-configured "omp-managed"}'
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrode-preview-parser "atyrode-preview-parser"}' \
+      --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@git_allowed_signers@' '${gitAllowedSigners}' \
@@ -203,6 +211,7 @@ stdenvNoCC.mkDerivation {
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils
+          curl
           findutils
           gawk
           gitMinimal
@@ -212,6 +221,7 @@ stdenvNoCC.mkDerivation {
           nh
           nix
           openssh
+          openssl
         ]
       }
   '';

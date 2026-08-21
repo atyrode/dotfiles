@@ -257,8 +257,12 @@ The isolated profile keeps the model's full 32,768-token response budget but
 reserves 40,000 tokens for output and request-envelope headroom. OMP therefore
 starts speculative compaction around 96K input tokens and performs required
 mid-turn compaction above 110K, before the 150K server window can reject the
-next request. This override is local-Qwen-specific; hosted profiles retain
-their normal model-aware compaction policy.
+next request. Its generated method order contains only `soft`, because the
+local route is text-only and cannot consume SnapCompact's image archives. The
+background summary keeps the latest 20,000 tokens and automatically continues
+the interrupted turn after committing. These overrides live only in the
+isolated `local-qwen` profile; hosted profiles retain their normal model-aware
+compaction policy.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the generator derives every profile from it and the `omp/models.yml` catalog,

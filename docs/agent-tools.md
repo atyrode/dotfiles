@@ -253,6 +253,12 @@ idempotently start the pinned syv-ai runtime, and every OMP role is routed to
 the loopback Qwen endpoint with cloud authentication and model fallbacks
 removed. Mutable model data, generated API keys, container state, and the
 selection of a storage path remain machine-local and outside the Nix store.
+The isolated profile keeps the model's full 32,768-token response budget but
+reserves 40,000 tokens for output and request-envelope headroom. OMP therefore
+starts speculative compaction around 96K input tokens and performs required
+mid-turn compaction above 110K, before the 150K server window can reject the
+next request. This override is local-Qwen-specific; hosted profiles retain
+their normal model-aware compaction policy.
 
 `omp/defaults.yml` is the authoritative role map and fallback-chain definition;
 the generator derives every profile from it and the `omp/models.yml` catalog,

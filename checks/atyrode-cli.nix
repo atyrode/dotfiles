@@ -970,7 +970,7 @@ pkgs.runCommand "check-atyrode-cli"
       listed:false
     }' "$linux_ready" > "$server_wrapped_ready"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$server_wrapped_ready"
-    atyrode doctor system fixture-server --json | jq -e '
+    atyrode doctor system fixture-nixos --json | jq -e '
       .ok and (.checks[] | select(.id == "login-shell") | .status) == "ok"
     ' >/dev/null
 
@@ -995,7 +995,7 @@ pkgs.runCommand "check-atyrode-cli"
       listed:false
     }' "$linux_ready" > "$server_wrong_wrapper"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$server_wrong_wrapper"
-    if atyrode doctor system fixture-server --json > "$TMPDIR/server-wrong-wrapper.out"; then
+    if atyrode doctor system fixture-nixos --json > "$TMPDIR/server-wrong-wrapper.out"; then
       echo 'a non-Zsh NixOS wrapper unexpectedly passed diagnostics' >&2
       exit 1
     else

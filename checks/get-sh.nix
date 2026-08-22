@@ -60,6 +60,17 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   grep -F 'not this repository' "$TMPDIR/foreign-err" >/dev/null
   rmdir "$HOME/nix-dotfiles"
 
+  # Only registered hosts reach install.sh; unknown names fail with the
+  # available registry choices and cause no mutation.
+  if bash ${../get.sh} not-a-registered-host --yes >/dev/null 2>"$TMPDIR/host-err"; then
+    echo 'unregistered host unexpectedly succeeded' >&2
+    exit 1
+  fi
+  grep -F 'unknown configuration' "$TMPDIR/host-err" >/dev/null
+  grep -F 'choose one of:' "$TMPDIR/host-err" >/dev/null
+  grep -F 'alex-x86_64-linux' "$TMPDIR/host-err" >/dev/null
+  test ! -e "$INSTALL_ARGS_FILE"
+
   # Streamed like curl | bash: stdin is the script, no terminal exists, and
   # --yes hands off to the cloned install.sh with stdin detached.
   bash -s -- alex-x86_64-linux --yes < ${../get.sh} >/dev/null

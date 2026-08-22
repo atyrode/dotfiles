@@ -4,9 +4,9 @@ let
   system = pkgs.stdenv.hostPlatform.system;
   expectedHash =
     {
-      "aarch64-darwin" = "1e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b";
-      "aarch64-linux" = "1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b088";
-      "x86_64-linux" = "eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560ef";
+      "aarch64-darwin" = "71e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b";
+      "aarch64-linux" = "f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08";
+      "x86_64-linux" = "eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560e";
     }
     .${system};
 in

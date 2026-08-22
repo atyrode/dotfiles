@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-POOL_PROVIDER = {"O": "openai-codex", "A": "anthropic"}
+POOL_PROVIDER = {"O": "openai-codex", "A": "anthropic", "R": "openrouter"}
 
 
 def omp_models():
@@ -39,13 +39,29 @@ def omp_models():
 
 
 def bench_from(models_data):
-    """Index a bench --json payload by selector, keeping only successful runs."""
+    """Index a bench --json payload by selector, keeping only successful runs.
+
+    omp 18 moved the run aggregate from `models[].average` (flat) to
+    `models[].stats` (per-field min/p50/mean/...); both shapes are accepted so
+    the refresher works against either pinned omp. The mean is what a
+    multi-run refresh always meant.
+    """
+
+    def agg(m, field):
+        if m.get("average"):
+            return m["average"].get(field)
+        st = m.get("stats") or {}
+        return (st.get(field) or {}).get("mean")
+
     out = {}
     for m in models_data:
-        avg = m.get("average") or {}
         r0 = (m.get("results") or [{}])[0]
-        if r0.get("ok") and avg.get("tokensPerSecond"):
-            out[m["model"]] = avg
+        tps, ttft = agg(m, "tokensPerSecond"), agg(m, "ttftMs")
+        if r0.get("ok") and tps and ttft:
+            out[m.get("selector") or m["model"]] = {
+                "tokensPerSecond": tps,
+                "ttftMs": ttft,
+            }
     return out
 
 

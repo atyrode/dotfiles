@@ -11,7 +11,7 @@
 # edit the factual fields by hand — re-run the refresh instead. (speed/ttft are a
 # live benchmark, so they drift with load; re-run when you want fresh figures.)
 #
-#   pool:   O = openai-codex   ·   A = anthropic
+#   pool:   O = openai-codex   ·   A = anthropic   ·   R = openrouter (optional)
 #   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
 #           Tiers 1..3 form the per-pool fallback ladder; 0 and 4 are special
 #           leads (spark drains an idle bucket; fable is a scarce elite lead).
@@ -19,7 +19,7 @@
 #
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
-refreshed: '2026-08-20'
+refreshed: '2026-08-22'
 # probed: `code generate` refuses a catalog that is not marked verified, because
 # omp lists models an account cannot actually call and nothing in their metadata
 # says so. This file is a curated committed cache rather than a live scaffold, so
@@ -141,3 +141,55 @@ models:
     role: >-
       Most capable, and its own scarce bucket. A deliberate elite lead only
       (smart judgment and long-context plan roles) — never an automatic fallback net.
+  oxfast:
+    id: stealth/ox-alpha
+    pool: R
+    tier: 1
+    bucket: openrouter-free
+    cost_in: 0
+    cost_out: 0
+    speed: 24.6
+    ttft: 1.23
+    context: 1048576
+    thinking: low→low
+    role: >-
+      Ox Alpha at its floor — the free pool's cheap rung. Same model as the
+      other ox rungs; the tier is the thinking ceiling, not a different model.
+  ox:
+    id: stealth/ox-alpha
+    pool: R
+    tier: 2
+    bucket: openrouter-free
+    cost_in: 0
+    cost_out: 0
+    speed: 24.6
+    ttft: 1.23
+    context: 1048576
+    thinking: low→high
+    role: >-
+      The regular ox rung. Leads the free pool's workers and utility roles on
+      the ox lanes; every spawned agent follows it there.
+  oxmax:
+    id: stealth/ox-alpha
+    pool: R
+    tier: 3
+    bucket: openrouter-free
+    cost_in: 0
+    cost_out: 0
+    speed: 24.6
+    ttft: 1.23
+    context: 1048576
+    thinking: low→max
+    role: >-
+      Ox Alpha with full thinking headroom. Leads the smart ox tier; on
+      ox-only it leads every deliberative role too.
+
+# Pool R (OpenRouter) notes: the three entries above are one model — the same
+# id declared once per tier with ascending thinking ceilings, which is how a
+# single-model family rides the ladder (the generator refuses anything less
+# than a full tiers-1..3 run). Free while OpenRouter's promotional window
+# lasts; when it ends, delete these three blocks and re-render — the ox lanes
+# vanish from the generator on their own. `code generate init --refresh`
+# would drop them (it rewrites the file wholesale and skips $0 models), so
+# keep them curated here and let refresh-model-facts update their facts in
+# place (POOL_PROVIDER knows "R").

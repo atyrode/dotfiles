@@ -15,18 +15,21 @@ curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 
 `get.sh` lists each preset with its description and capability breakdown from
 `inventory/hosts.tsv`, then prompts for an explicit choice on the terminal.
-For non-interactive automation, pass the exact registered host and confirm the
-printed plan explicitly:
+For non-interactive Linux automation, pass the architecture-specific portable
+profile and confirm the printed plan explicitly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux --yes
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- development-x86_64-linux --yes
 ```
 
-Bootstrap validates explicit host names and never infers a profile from
-architecture alone: x86_64 Linux can be the base development machine or the
-desktop profile. Production NixOS servers
-instead import the [portable Home Manager profile](portable-profiles.md) from
-their infrastructure flake.
+Portable profiles validate and bind the invoking non-root user and canonical
+home directory at activation time. They reject a foreign-owned home or a home
+that disagrees with the account database. Fixed machine profiles retain their
+declared repository identity. Bootstrap validates explicit target names and
+never infers between portable, fixed, desktop, or Mac configurations.
+Production NixOS servers instead import the
+[portable Home Manager profile](portable-profiles.md) from their infrastructure
+flake.
 
 `get.sh` is deliberately thin: it verifies Git is present, clones the
 repository to `~/nix-dotfiles` (`DOTFILES_DIR` overrides it; an existing
@@ -40,7 +43,7 @@ bootstrap below still executes only from cloned, inspectable code. The
 clone-first command remains supported and equivalent:
 
 ```sh
-git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
+git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config development-x86_64-linux
 ```
 
 The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
@@ -51,10 +54,10 @@ The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
 The phases are independently callable:
 
 ```sh
-./install.sh preflight --config alex-x86_64-linux
-./install.sh plan --config alex-x86_64-linux
-./install.sh apply --config alex-x86_64-linux
-./install.sh verify --config alex-x86_64-linux
+./install.sh preflight --config development-x86_64-linux
+./install.sh plan --config development-x86_64-linux
+./install.sh apply --config development-x86_64-linux
+./install.sh verify --config development-x86_64-linux
 ./install.sh rollback --yes
 ```
 

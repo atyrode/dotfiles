@@ -77,6 +77,10 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config alex-x86_64-linux --yes'
   test ! -s "$INSTALL_STDIN_FILE"
 
+  bash -s -- development-x86_64-linux --yes < ${../get.sh} >/dev/null
+  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config development-x86_64-linux --yes'
+  test ! -s "$INSTALL_STDIN_FILE"
+
   # The existing correct-origin clone is reused, and without a terminal the
   # confirmation cannot be assumed: no --yes means no install.sh run.
   rm "$INSTALL_ARGS_FILE"

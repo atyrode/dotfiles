@@ -1,14 +1,19 @@
 # Hosts and capabilities
 
-`hosts/default.nix` is the authoritative registry for standalone dotfiles
-configurations. A host entry contains stable, non-secret facts: its canonical
-configuration ID, a one-line description, system, platform, activation owner,
-user, home directory, optional hostname, selected capabilities, and an optional
-declared Nix trusted-user boundary. The macOS/Linux bootstrap-eligible hosts are
-offered by `get.sh` through the committed `inventory/hosts.tsv` projection
-before Nix exists. Infrastructure-owned NixOS and repository-owned NixOS-WSL
-identities are excluded from that Unix picker; the host-registry check keeps
-these contracts honest.
+`hosts/default.nix` is the authoritative registry for fixed machine identities.
+A host entry contains stable, non-secret facts: its canonical configuration ID,
+description, system, platform, activation owner, user, home directory, optional
+hostname, selected capabilities, and optional declared Nix trusted-user
+boundary.
+
+`profiles/bootstrap.nix` defines account-portable Linux bootstrap profiles.
+These contain system, platform, activation, description, and capabilities, but
+never a username or home directory. `atyrode` validates the invoking non-root
+account and materializes those identity fields locally for Home Manager.
+`inventory/hosts.tsv` projects both bootstrap target kinds for `get.sh` before
+Nix exists. Infrastructure-owned NixOS and repository-owned NixOS-WSL identities
+remain excluded from that Unix picker; the registry check keeps the projection
+honest.
 
 Capabilities are declarative Home Manager modules, not imperative `nix
 profile` state. Home Manager generations remain activation history and rollback
@@ -45,12 +50,13 @@ Project compilers and runtimes are owned by committed dev shells, `mise.toml`,
 and native manifests. See [Package ownership](package-ownership.md) for the
 checked evaluated inventory and harness boundaries.
 
-Each activated Home Manager configuration exposes its canonical identity in
+Each activated Home Manager configuration exposes its target identity in
 `$ATYRODE_HOST`, its comma-separated capability set in
 `$ATYRODE_CAPABILITIES`, and a non-secret JSON projection at
-`~/.config/atyrode/host.json`. The same pure projection is available to flake
-consumers as `lib.hostRegistry`; `lib.capabilities` lists valid capability
-names.
+`~/.config/atyrode/host.json`. Fixed identities are available to flake consumers
+as `lib.hostRegistry`; account-portable profiles are in
+`lib.bootstrapProfiles`; `lib.targetRegistry` combines both.
+`lib.capabilities` lists valid capability names.
 
 External production NixOS hosts do not belong in this standalone registry.
 Their infrastructure flake supplies identity and system facts while importing
@@ -66,7 +72,9 @@ native Windows packages and state retain their separate WinGet/application
 boundary. The full Home Manager, nix-darwin, NixOS-WSL, and Windows ownership
 model is documented in [Home Manager and system boundary](system-boundary.md).
 
-## Adding a host
+## Adding a target
+
+For a fixed machine identity:
 
 1. Add one canonical entry to `hosts/default.nix`.
 2. Declare a supported `system`, matching `platform`, supported `activation`
@@ -74,22 +82,26 @@ model is documented in [Home Manager and system boundary](system-boundary.md).
    `description`, and at least one valid capability. A `nixos-wsl` host also
    requires a stable hostname. An infrastructure-supplied `nixos` identity must
    declare a unique, non-empty `nixTrustedUsers` list containing `root`.
-3. Add or reuse capability modules under `home/profiles/`; do not put
-   host-specific packages directly in the registry.
-4. Regenerate `inventory/hosts.tsv` for bootstrap-eligible standalone entries
-   (the host-registry check diffs it against that filtered projection).
-5. Run `nix flake check --all-systems --no-build --show-trace`. The aggregate
-   Home Manager, nix-darwin, and NixOS-WSL checks evaluate every canonical host
-   on its native system; the external NixOS fixture proves the portable
-   consumer contract.
+
+For a portable Linux bootstrap profile:
+
+1. Add an architecture-specific entry to `profiles/bootstrap.nix`.
+2. Declare Linux, Home Manager activation, a description, and capabilities.
+   Do not declare account or machine identity.
+
+Then add or reuse capability modules under `home/profiles/`; do not put
+target-specific packages in either registry. Regenerate `inventory/hosts.tsv`
+for bootstrap-eligible entries, then run
+`nix flake check --all-systems --no-build --show-trace`. The aggregate checks
+evaluate fixed targets and instantiate every portable profile for multiple
+account identities.
 
 Registry evaluation refuses unsupported systems or activation owners, platform
-mismatches, empty users, relative home directories, missing WSL hostnames,
-missing/duplicate NixOS trusted users or a NixOS trust set without `root`,
-missing base capabilities, server/desktop or server/development conflicts,
-non-Linux server selections, and duplicate or unknown capabilities. Portable
-consumers may omit `description`; for this repository's own registry the
-host-registry check requires it non-empty.
+mismatches, invalid fixed identities, account fields on runtime profiles,
+missing WSL hostnames, invalid NixOS trust boundaries, missing base
+capabilities, server/desktop or server/development conflicts, non-Linux server
+selections, and duplicate or unknown capabilities. Every repository-owned
+target requires a non-empty description.
 
 ## Renaming or retiring a host
 

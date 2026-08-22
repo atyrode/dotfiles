@@ -84,10 +84,15 @@ rewrite cannot redirect the accepted GitHub origin unnoticed.
 
 Fresh machines install upstream Nix 2.34.7 from the official
 `releases.nixos.org` archive. The three archive SHA-256 values are embedded in
-`install.sh` for x86_64/aarch64 Linux and aarch64 Darwin. Bootstrap downloads into a
-private temporary directory, verifies the complete archive before extraction,
-checks the expected installer path, and only then runs the upstream multi-user
-installer. Existing Nix installations are reused.
+`install.sh` for x86_64/aarch64 Linux and aarch64 Darwin. Bootstrap downloads
+into a private temporary directory, verifies the complete archive before
+extraction, checks the expected installer path, and only then runs the upstream
+installer non-interactively. Linux uses the upstream single-user mode, avoiding
+a daemon dependency on containers and other systemd-less environments; macOS
+uses its required multi-user mode. The installer does not add channels or edit
+shell profiles because the flake and Home Manager own those concerns. Existing
+Nix installations are reused. A Linux single-user install may still invoke
+`sudo` once to create `/nix` when it does not already exist.
 
 This choice was reviewed on 2026-07-10:
 

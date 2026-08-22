@@ -577,7 +577,7 @@ sha256_file() {
 }
 
 install_pinned_nix() {
-  local temporary archive extracted actual
+  local temporary archive extracted actual installer_mode
 
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/atyrode-nix.XXXXXX")"
   archive="$temporary/nix.tar.xz"
@@ -604,7 +604,12 @@ install_pinned_nix() {
     return 1
   fi
   append_transaction nix-source verified-upstream-artifact
-  if ! sh "$extracted" --daemon; then
+  case "$SYSTEM" in
+    *-darwin) installer_mode=--daemon ;;
+    *-linux) installer_mode=--no-daemon ;;
+    *) return 1 ;;
+  esac
+  if ! sh "$extracted" "$installer_mode" --yes --no-channel-add --no-modify-profile; then
     rm -rf "$temporary"
     return 1
   fi

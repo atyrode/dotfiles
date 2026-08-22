@@ -149,6 +149,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     #!${pkgs.runtimeShell}
     set -eu
     : > "$FAKE_INSTALL_EXECUTED"
+    printf '%s\n' "$*" > "$FAKE_INSTALL_ARGS"
     if [ "''${FAKE_INSTALLER_FAIL_AFTER_START:-0}" = 1 ]; then
       exit 71
     fi
@@ -251,6 +252,7 @@ pkgs.runCommand "check-bootstrap-${system}"
       repo="$TMPDIR/$fixture_name/repo"
       export FAKE_LOG="$TMPDIR/$fixture_name/nix.log"
       export FAKE_INSTALL_EXECUTED="$TMPDIR/$fixture_name/installer-executed"
+      export FAKE_INSTALL_ARGS="$TMPDIR/$fixture_name/installer-args"
       export FAKE_NIX_TEMPLATE="$fake_nix_template"
       export FAKE_INSTALLER_TEMPLATE="$fake_installer_template"
       export FAKE_SHA256SUM="$tool_root/sha256sum"
@@ -260,8 +262,14 @@ pkgs.runCommand "check-bootstrap-${system}"
       export BOOTSTRAP_ACCOUNT_SHELL_FILE="$TMPDIR/$fixture_name/account-shell"
       export BOOTSTRAP_SHELLS_FILE="$TMPDIR/$fixture_name/shells"
       case "$FAKE_SYSTEM" in
-        *-linux) export FAKE_EXPECTED_LOGIN_SHELL="$HOME/.nix-profile/bin/zsh" ;;
-        *-darwin) export FAKE_EXPECTED_LOGIN_SHELL=/run/current-system/sw/bin/zsh ;;
+        *-linux)
+          export FAKE_EXPECTED_LOGIN_SHELL="$HOME/.nix-profile/bin/zsh"
+          export FAKE_EXPECTED_INSTALL_ARGS="--no-daemon --yes --no-channel-add --no-modify-profile"
+          ;;
+        *-darwin)
+          export FAKE_EXPECTED_LOGIN_SHELL=/run/current-system/sw/bin/zsh
+          export FAKE_EXPECTED_INSTALL_ARGS="--daemon --yes --no-channel-add --no-modify-profile"
+          ;;
         *) exit 64 ;;
       esac
       unset \
@@ -414,6 +422,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     fi
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fresh.out"
     test -e "$FAKE_INSTALL_EXECUTED"
+    test "$(cat "$FAKE_INSTALL_ARGS")" = "$FAKE_EXPECTED_INSTALL_ARGS"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
     test "$(readlink "$HOME/.zshrc")" = /nix/store/fixture-home-manager-files/.zshrc
     test "$(readlink "$HOME/.zshenv")" = /nix/store/fixture-home-manager-files/.zshenv

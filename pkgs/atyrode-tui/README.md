@@ -93,6 +93,13 @@ adopted in place. Enter starts the service, waits for health, and opens managed
 OMP with an isolated local provider profile. Nix activation never provisions a
 runtime, creates its bearer token, or allocates model storage.
 
+Each managed local OMP process holds a session lease. After the final lease is
+released, a WSL user timer waits ten minutes, verifies that vLLM has no active
+or queued requests and that its token counters have remained unchanged, then
+stops the serving container and releases GPU memory. Concurrent sessions are
+independent, crashed-process leases are pruned, direct API activity resets the
+deadline, and opening another managed local session cancels a pending stop.
+
 ## Generations / Clean workspace
 
 The lifecycle workspace lists `generations --json --sizes`, marks the current

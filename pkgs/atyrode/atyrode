@@ -2343,7 +2343,9 @@ apply_config() {
     fi
   fi
   if [[ "$restart" == 1 ]]; then
-    printf 'Activation completed. Restart the current shell with: exec zsh -l\n' >&2
+    local shell_path=/run/current-system/sw/bin/zsh
+    [[ "$activation" != home-manager ]] || shell_path="$expected_home/.nix-profile/bin/zsh"
+    printf 'Activation completed. Restart the current shell with: exec %q -l\n' "$shell_path" >&2
   fi
 }
 

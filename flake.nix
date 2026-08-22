@@ -570,6 +570,9 @@
               {
                 home = {
                   inherit homeDirectory username;
+                  sessionPath = [
+                    "${homeDirectory}/.local/state/nix/profiles/home-manager/home-path/bin"
+                  ];
                   sessionVariables = {
                     ATYRODE_HOST = profileName;
                     ATYRODE_CAPABILITIES = lib.concatStringsSep "," profile.capabilities;
@@ -914,6 +917,14 @@
           portable-bootstrap = import ./checks/portable-bootstrap.nix {
             inherit lib mkPortableHomeConfiguration pkgs;
             profileName = "development-${system}";
+            fixedHomeConfig =
+              canonicalHomeConfigs.${
+                {
+                  "aarch64-linux" = "alex-aarch64-linux";
+                  "x86_64-linux" = "alex-x86_64-linux";
+                }
+                .${system}
+              };
           };
           portable-profiles = import ./checks/portable-profiles.nix {
             inherit

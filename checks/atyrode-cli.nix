@@ -472,7 +472,10 @@ pkgs.runCommand "check-atyrode-cli"
       and .backend == "nh-home"
       and .source == "local"
     ' >/dev/null
-    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" --dry-run >/dev/null
+    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" \
+      --dry-run --restart-shell > /dev/null 2> "$TMPDIR/runtime-restart.err"
+    grep -F "exec $TMPDIR/coder-home/.nix-profile/bin/zsh -l" \
+      "$TMPDIR/runtime-restart.err" >/dev/null
     jq -e --arg home "$TMPDIR/coder-home" '
       .profileName == "development-x86_64-linux"
       and .username == "coder"

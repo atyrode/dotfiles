@@ -421,6 +421,11 @@ pkgs.runCommand "check-bootstrap-${system}"
       export SHELL="$FAKE_EXPECTED_LOGIN_SHELL"
     fi
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fresh.out"
+    grep -F "exec $FAKE_EXPECTED_LOGIN_SHELL -l" "$TMPDIR/fresh.out" >/dev/null
+    if grep -F 'exec zsh -l' "$TMPDIR/fresh.out" >/dev/null; then
+      echo 'bootstrap emitted a PATH-dependent shell handoff' >&2
+      exit 1
+    fi
     test -e "$FAKE_INSTALL_EXECUTED"
     test "$(cat "$FAKE_INSTALL_ARGS")" = "$FAKE_EXPECTED_INSTALL_ARGS"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"

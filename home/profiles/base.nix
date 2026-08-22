@@ -1,4 +1,17 @@
 { lib, pkgs, ... }:
+
+let
+  # NixOS-WSL exposes the Windows NVIDIA driver through this fixed path rather
+  # than the normal Linux driver closure. Keep ordinary btop behavior on every
+  # other Linux host while enabling its already-compiled NVML support in WSL.
+  btopWithOptionalWslNvidia = pkgs.writeShellScriptBin "btop" ''
+    if [[ -r /usr/lib/wsl/lib/libnvidia-ml.so.1 ]]; then
+      export LD_LIBRARY_PATH="/usr/lib/wsl/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+    exec ${lib.getExe pkgs.btop} "$@"
+  '';
+  btopPackage = if pkgs.stdenv.isLinux then btopWithOptionalWslNvidia else pkgs.btop;
+in
 {
   imports = [
     ../git.nix
@@ -18,7 +31,7 @@
     (with pkgs; [
       atyrode
       bat
-      btop
+      btopPackage
       curl
       dua
       fd

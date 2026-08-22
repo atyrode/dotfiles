@@ -92,6 +92,20 @@ env_set_default() {
   grep -q "^${key}=" "$file" 2>/dev/null || printf '%s=%s\n' "$key" "$value" >>"$file"
 }
 
+env_append_default_arg() {
+  local file="$1" key="$2" option="$3" value="$4" current tmp
+  current="$(env_value "$key" "$file")"
+  [[ "$current" =~ (^|[[:space:]])${option}([=[:space:]]|$) ]] && return
+  tmp="$(mktemp "${file}.XXXXXX")"
+  awk -F= -v key="$key" -v suffix="$option $value" '
+    $1 == key { print $0 " " suffix; found = 1; next }
+    { print }
+    END { if (!found) print key "=" suffix }
+  ' "$file" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
 compose() {
   docker compose --project-directory "$DATA_DIR" \
     -f "$DATA_DIR/docker-compose.yml" -f "$compose_override" "$@"
@@ -143,7 +157,13 @@ ensure_env() {
   env_set_default "$env_file" PYTORCH_CUDA_ALLOC_CONF expandable_segments:False
   env_set_default "$env_file" HF_HUB_DISABLE_XET 1
   env_set_default "$env_file" PORT 18020
-  env_set_default "$env_file" EXTRA_ARGS "--enable-auto-tool-choice --tool-call-parser qwen3_coder"
+  env_set_default "$env_file" EXTRA_ARGS "--enable-auto-tool-choice --tool-call-parser qwen3_coder --max-num-batched-tokens 1024"
+  # The pinned syv-ai launcher uses 2048 for maximum benchmark throughput.
+  # Its EXTRA_ARGS are appended last, so this smaller prompt/prefill quantum
+  # improves desktop responsiveness when the same WSL GPU drives Windows.
+  # Append it to installations created before this default was introduced,
+  # while preserving an explicit machine-local value when one already exists.
+  env_append_default_arg "$env_file" EXTRA_ARGS --max-num-batched-tokens 1024
   [[ -n "$(env_value VLLM_API_KEY "$env_file")" ]] ||
     die "$EX_DATAERR" "$env_file has no VLLM_API_KEY"
 }

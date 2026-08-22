@@ -25,9 +25,10 @@ cloned `install.sh`. Each choice describes what it installs;
 Cloning first and running `./install.sh apply --config <host>` yourself remains
 equivalent.
 
-For automation, append the exact entry from `hosts/default.nix`, for example
-`bash -s -- alex-x86_64-linux --yes`. Bootstrap validates explicit names and
-will not guess between desktop, development, or Mac profiles. It uses explicit
+For portable Linux automation, pass the generic profile for the detected
+architecture, for example `bash -s -- development-x86_64-linux --yes`.
+Bootstrap validates explicit names and will not guess between portable, fixed,
+desktop, or Mac profiles. It uses explicit
 preflight, plan, apply, verify, and rollback phases, verifies a pinned upstream
 Nix artifact when Nix is absent, and preserves recoverable transaction
 receipts. See [Bootstrap](docs/bootstrap.md).
@@ -273,12 +274,12 @@ You can also set `ATYRODE_HOST=alex-x86_64-linux-desktop` before running
 `install.sh apply` runs record the active configuration so helper commands only
 show what applies to the current setup.
 
-### Change Username
+### Account identity
 
-Edit the owning entry in `hosts/default.nix`, including its username and home
-directory, then follow the validation workflow in [Hosts and
-capabilities](docs/hosts.md). Select a bootstrap host with `--config`; the
-`FLAKE_CONFIG` environment variable is the equivalent non-interactive input.
+Portable Linux bootstrap profiles resolve the invoking user and canonical home
+at activation time; no repository edit is needed when the login name changes.
+Fixed machine identities remain in `hosts/default.nix` and deliberately require
+their declared user and home. See [Hosts and capabilities](docs/hosts.md).
 
 ### Add Packages
 

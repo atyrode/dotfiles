@@ -127,6 +127,7 @@
       serverCapabilities = serverPolicy.capabilities;
       darwinModule = ./darwin;
       rawHosts = import ./hosts;
+      rawBootstrapProfiles = import ./profiles/bootstrap.nix;
 
       validateCapabilities =
         {
@@ -220,10 +221,57 @@
           inherit nixTrustedUsers;
         };
 
+      validateBootstrapProfile =
+        name: profile:
+        let
+          capabilities = validateCapabilities {
+            inherit name;
+            inherit (profile) system;
+            capabilities = profile.capabilities or [ ];
+          };
+        in
+        assert lib.assertMsg (lib.hasSuffix "-linux" profile.system)
+          "bootstrap profile ${name} must target Linux";
+        assert lib.assertMsg (
+          profile.platform == "linux"
+        ) "bootstrap profile ${name} must declare the Linux platform";
+        assert lib.assertMsg (
+          profile.activation == "home-manager"
+        ) "bootstrap profile ${name} must use Home Manager activation";
+        assert lib.assertMsg (
+          !(profile ? username) && !(profile ? homeDirectory)
+        ) "bootstrap profile ${name} must not declare account identity";
+        assert lib.assertMsg (
+          builtins.isString (profile.description or "") && profile.description != ""
+        ) "bootstrap profile ${name} must declare a description";
+        profile
+        // {
+          inherit capabilities;
+          identityMode = "runtime";
+        };
+
+      validateBootstrapProfileRegistry = registry: lib.mapAttrs validateBootstrapProfile registry;
+
       validateHostRegistry = registry: lib.mapAttrs validateHost registry;
 
       hosts = validateHostRegistry rawHosts;
+      bootstrapProfiles =
+        assert lib.assertMsg (
+          lib.intersectAttrs rawHosts rawBootstrapProfiles == { }
+        ) "fixed hosts and portable bootstrap profiles must use distinct IDs";
+        validateBootstrapProfileRegistry rawBootstrapProfiles;
 
+      publicBootstrapProfile = name: profile: {
+        id = name;
+        inherit (profile)
+          activation
+          capabilities
+          description
+          identityMode
+          platform
+          system
+          ;
+      };
       publicHost = name: host: {
         id = name;
         inherit (host)
@@ -237,26 +285,30 @@
           nixTrustedUsers
           username
           ;
+        identityMode = "fixed";
       };
       publicHosts = lib.mapAttrs publicHost hosts;
-      bootstrapHosts = lib.filterAttrs (
+      publicBootstrapProfiles = lib.mapAttrs publicBootstrapProfile bootstrapProfiles;
+      publicTargets = publicHosts // publicBootstrapProfiles;
+      fixedBootstrapHosts = lib.filterAttrs (
         _: host:
         !builtins.elem host.activation [
           "nixos"
           "nixos-wsl"
         ]
       ) publicHosts;
-      hostRegistryJson = builtins.toJSON publicHosts;
+      bootstrapTargets = fixedBootstrapHosts // publicBootstrapProfiles;
+      targetRegistryJson = builtins.toJSON publicTargets;
       # Flat projection consumed by the macOS/Linux get.sh before Nix exists.
       # Infrastructure-owned NixOS and repository-owned NixOS-WSL hosts are
-      # excluded; the host-registry check keeps the remaining projection honest.
+      # excluded; the target-registry check keeps the projection honest.
       hostsTsv = lib.concatMapStrings (
         name:
         let
-          host = bootstrapHosts.${name};
+          target = bootstrapTargets.${name};
         in
-        "${name}\t${host.system}\t${lib.concatStringsSep "," host.capabilities}\t${host.description}\n"
-      ) (builtins.attrNames bootstrapHosts);
+        "${name}\t${target.system}\t${lib.concatStringsSep "," target.capabilities}\t${target.description}\n"
+      ) (builtins.attrNames bootstrapTargets);
 
       mkHostIdentityModule =
         {
@@ -309,9 +361,13 @@
       mkPackageOverlay =
         {
           hostRegistry ? { },
+          runtimeProfiles ? { },
         }:
         let
           publicRegistry = lib.mapAttrs publicHost (validateHostRegistry hostRegistry);
+          publicRuntimeProfiles = lib.mapAttrs publicBootstrapProfile (
+            validateBootstrapProfileRegistry runtimeProfiles
+          );
         in
         lib.composeManyExtensions [
           (final: _previous: {
@@ -329,7 +385,7 @@
             atyrode = final.callPackage ./pkgs/atyrode {
               capabilities = capabilitySummary;
               inherit homebrewCasks;
-              hostRegistry = publicRegistry;
+              hostRegistry = publicRegistry // publicRuntimeProfiles;
               revision = inventoryRevision;
               windowsPackages = windowsPackageInventory;
             };
@@ -359,7 +415,10 @@
           )
         ];
 
-      agentToolsOverlay = mkPackageOverlay { hostRegistry = rawHosts; };
+      agentToolsOverlay = mkPackageOverlay {
+        hostRegistry = rawHosts;
+        runtimeProfiles = rawBootstrapProfiles;
+      };
 
       dotfilesHomeNixosModule =
         { config, lib, ... }:
@@ -479,6 +538,48 @@
           ];
         };
 
+      mkPortableHomeConfiguration =
+        {
+          homeDirectory,
+          profileName,
+          username,
+        }:
+        let
+          profile =
+            bootstrapProfiles.${profileName} or (throw "unknown portable bootstrap profile ${profileName}");
+          identity = publicBootstrapProfile profileName profile // {
+            inherit homeDirectory username;
+          };
+        in
+        assert lib.assertMsg (
+          builtins.isString username
+          && builtins.match "[a-z_][a-z0-9_-]*\\$?" username != null
+          && username != "root"
+        ) "portable bootstrap profile ${profileName} requires a valid non-root username";
+        assert lib.assertMsg (
+          builtins.isString homeDirectory && lib.hasPrefix "/" homeDirectory
+        ) "portable bootstrap profile ${profileName} requires an absolute homeDirectory";
+        home-manager.lib.homeManagerConfiguration {
+          pkgs = pkgsFor profile.system;
+          modules =
+            selectHomeManagerProfiles {
+              name = profileName;
+              inherit (profile) capabilities system;
+            }
+            ++ [
+              {
+                home = {
+                  inherit homeDirectory username;
+                  sessionVariables = {
+                    ATYRODE_HOST = profileName;
+                    ATYRODE_CAPABILITIES = lib.concatStringsSep "," profile.capabilities;
+                  };
+                };
+                xdg.configFile."atyrode/host.json".text = builtins.toJSON identity;
+              }
+            ];
+        };
+
       mkDarwinConfig =
         name: host:
         nix-darwin.lib.darwinSystem {
@@ -566,12 +667,15 @@
           allowedUnfreePackages
           mkHostIdentityModule
           mkPackageOverlay
+          mkPortableHomeConfiguration
           selectHomeManagerProfiles
           ;
+        bootstrapProfiles = publicBootstrapProfiles;
         capabilities = knownCapabilities;
         inherit capabilityDescriptions;
         hostRegistry = publicHosts;
         serverProfile = serverPolicy;
+        targetRegistry = publicTargets;
         windowsPackages = windowsPackageInventory;
       };
 
@@ -641,7 +745,7 @@
             enableTestHooks = true;
             atyrode-tui = cockpitStub;
             atyrode-preview-parser = pkgs.atyrode-tui;
-            hostRegistry = publicHosts // {
+            hostRegistry = publicTargets // {
               fixture-nixos = {
                 id = "fixture-nixos";
                 activation = "nixos";
@@ -699,7 +803,7 @@
               mkdir "$out"
             ''
           );
-          registryFile = pkgs.writeText "atyrode-host-registry.json" hostRegistryJson;
+          registryFile = pkgs.writeText "atyrode-target-registry.json" targetRegistryJson;
           registryCheck =
             pkgs.runCommand "check-host-registry-${system}"
               {
@@ -707,19 +811,29 @@
               }
               ''
                 jq -e '
-                  length >= 5
+                  length >= 7
                   and all(.[];
                     (.id | type == "string")
+                    and (.identityMode | IN("fixed", "runtime"))
                     and (.activation | IN("home-manager", "nix-darwin", "nixos-wsl"))
                     and (.system | type == "string")
-                    and (.username | type == "string")
-                    and (.homeDirectory | startswith("/"))
                     and (.description | type == "string" and length > 0)
-                    and (.capabilities | length > 0))
+                    and (.capabilities | length > 0)
+                    and (
+                      if .identityMode == "runtime" then
+                        .activation == "home-manager"
+                        and .platform == "linux"
+                        and (has("username") | not)
+                        and (has("homeDirectory") | not)
+                      else
+                        (.username | type == "string")
+                        and (.homeDirectory | startswith("/"))
+                      end
+                    ))
                   and ([.[].capabilities[]] | index("server") | not)
                 ' ${registryFile} >/dev/null
                 if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${./inventory/hosts.tsv}; then
-                  echo 'inventory/hosts.tsv is out of date with hosts/default.nix' >&2
+                  echo 'inventory/hosts.tsv is out of date with hosts/default.nix and profiles/bootstrap.nix' >&2
                   exit 1
                 fi
                 mkdir "$out"
@@ -797,6 +911,10 @@
           };
         }
         // lib.optionalAttrs isLinux {
+          portable-bootstrap = import ./checks/portable-bootstrap.nix {
+            inherit lib mkPortableHomeConfiguration pkgs;
+            profileName = "development-${system}";
+          };
           portable-profiles = import ./checks/portable-profiles.nix {
             inherit
               alternateServerHomeConfig

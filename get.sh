@@ -57,6 +57,22 @@ pick_host() {
   printf '%s\n' "${ids[$((choice - 1))]}"
 }
 
+require_registered_host() {
+  local dir="$1" requested="$2" inventory="$1/inventory/hosts.tsv"
+  [[ -r "$inventory" ]] || die 'host inventory missing from the clone'
+
+  local -a ids=()
+  local id host_system capabilities description
+  while IFS=$'\t' read -r id host_system capabilities description; do
+    ids+=("$id")
+    [[ "$id" == "$requested" ]] && return
+  done <"$inventory"
+
+  local quoted
+  printf -v quoted '%q' "$requested"
+  die "unknown configuration $quoted; choose one of: ${ids[*]}"
+}
+
 main() {
   local host=""
   if [[ $# -ge 1 && "$1" != -* ]]; then
@@ -78,6 +94,7 @@ main() {
   fi
 
   [[ -n "$host" ]] || host="$(pick_host "$dir")"
+  require_registered_host "$dir" "$host"
 
   # Under `curl | bash` stdin carries the script itself, so the bootstrap
   # confirmation must read from the terminal. Without one, only an explicit

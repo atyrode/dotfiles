@@ -49,6 +49,12 @@ pkgs.runCommand "check-atyrode-cli"
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
     printf '%s\n' "''${LC_ALL-}" > "$TMPDIR/nh-locale"
+    if [[ "$*" == *"--configuration development-x86_64-linux"* ]]; then
+      adapter="''${3#path:}"
+      printf '%s\n' "$adapter" > "$TMPDIR/runtime-adapter-path"
+      cp "$adapter/flake.nix" "$TMPDIR/runtime-adapter-flake.nix"
+      cp "$adapter/identity.json" "$TMPDIR/runtime-adapter-identity.json"
+    fi
     if [[ "$*" == *"home switch"* && "$*" == *" --dry"* ]]; then
       printf '\033[?25l⠋ Building\r⏱ 0s\rFinished at 14:18:57 after 0s\n'
       printf '\033[1m<<<\033[0m /nix/store/old-home-manager-generation\n'
@@ -167,6 +173,9 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF '  asyncEnabled: true' <<<"$local_only_template"
     grep -qF '  keepRecentTokens: 20000' <<<"$local_only_template"
     grep -qF '  autoContinue: true' <<<"$local_only_template"
+    ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+      ${pkgs.runtimeShell} ${./local-qwen-lifecycle.sh} "$runtime_helper"
+    ''}
 
     # Production packages ignore every test-only identity override. Otherwise
     # a project environment could spoof apply and doctor preflight identity.
@@ -439,6 +448,69 @@ pkgs.runCommand "check-atyrode-cli"
       and .mutationBoundary == "activation only after preflight"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
+
+    mkdir "$TMPDIR/coder-home" "$TMPDIR/developer-home"
+    export _ATYRODE_TEST_USER="coder"
+    export _ATYRODE_TEST_HOME="$TMPDIR/coder-home"
+    export _ATYRODE_TEST_UID=1000
+    export _ATYRODE_TEST_HOME_OWNER_UID=1000
+    export _ATYRODE_TEST_PASSWD_HOME="$TMPDIR/coder-home"
+    atyrode doctor host development-x86_64-linux --json | jq -e \
+      --arg home "$TMPDIR/coder-home" '
+      .ok
+      and .host == "development-x86_64-linux"
+      and .registered.identityMode == "runtime"
+      and .registered.username == "coder"
+      and .registered.homeDirectory == $home
+    ' >/dev/null
+    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" --plan --json | jq -e \
+      --arg home "$TMPDIR/coder-home" '
+      .host == "development-x86_64-linux"
+      and .identityMode == "runtime"
+      and .user == "coder"
+      and .homeDirectory == $home
+      and .backend == "nh-home"
+      and .source == "local"
+    ' >/dev/null
+    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" \
+      --dry-run --restart-shell > /dev/null 2> "$TMPDIR/runtime-restart.err"
+    grep -F "exec $TMPDIR/coder-home/.nix-profile/bin/zsh -l" \
+      "$TMPDIR/runtime-restart.err" >/dev/null
+    jq -e --arg home "$TMPDIR/coder-home" '
+      .profileName == "development-x86_64-linux"
+      and .username == "coder"
+      and .homeDirectory == $home
+    ' "$TMPDIR/runtime-adapter-identity.json" >/dev/null
+    grep -F 'dotfiles.lib.mkPortableHomeConfiguration identity' \
+      "$TMPDIR/runtime-adapter-flake.nix" >/dev/null
+    grep -F "inputs.dotfiles.url = \"path:$HOME/nix-dotfiles\";" \
+      "$TMPDIR/runtime-adapter-flake.nix" >/dev/null
+    test ! -e "$(cat "$TMPDIR/runtime-adapter-path")"
+
+    export _ATYRODE_TEST_USER="developer"
+    export _ATYRODE_TEST_HOME="$TMPDIR/developer-home"
+    export _ATYRODE_TEST_PASSWD_HOME="$TMPDIR/developer-home"
+    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" --plan --json | jq -e \
+      --arg home "$TMPDIR/developer-home" \
+      '.user == "developer" and .homeDirectory == $home and .identityMode == "runtime"' >/dev/null
+
+    if _ATYRODE_TEST_UID=0 atyrode doctor host development-x86_64-linux --json >/dev/null 2>&1; then
+      echo 'runtime profile unexpectedly accepted root' >&2
+      exit 1
+    fi
+    if _ATYRODE_TEST_HOME_OWNER_UID=2000 \
+      atyrode doctor host development-x86_64-linux --json >/dev/null 2>&1; then
+      echo 'runtime profile unexpectedly accepted a foreign-owned HOME' >&2
+      exit 1
+    fi
+    if _ATYRODE_TEST_PASSWD_HOME="$TMPDIR/other-home" \
+      atyrode doctor host development-x86_64-linux --json >/dev/null 2>&1; then
+      echo 'runtime profile unexpectedly accepted account HOME drift' >&2
+      exit 1
+    fi
+    export _ATYRODE_TEST_USER="alex"
+    unset _ATYRODE_TEST_HOME _ATYRODE_TEST_UID _ATYRODE_TEST_HOME_OWNER_UID \
+      _ATYRODE_TEST_PASSWD_HOME
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux

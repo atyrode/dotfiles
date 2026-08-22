@@ -15,19 +15,22 @@ cd ~/nix-dotfiles
 **Supported fresh-machine command:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 ```
 
-The fetched `get.sh` only clones the repository and hands off to the cloned
-`install.sh`; cloning first and running `./install.sh apply --config <host>`
-yourself remains equivalent. Omit the host to pick interactively from the
-registered presets for this machine, each described with what it installs;
+The fetched `get.sh` clones the repository, lists the registered presets for
+the detected platform, and asks which one to install before handing off to the
+cloned `install.sh`. Each choice describes what it installs;
 `atyrode capabilities list` shows the same descriptions per capability later.
+Cloning first and running `./install.sh apply --config <host>` yourself remains
+equivalent.
 
-Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
-will not guess between desktop, development, or Mac profiles. It uses
-explicit preflight, plan, apply, verify, and rollback phases, verifies a pinned
-upstream Nix artifact when Nix is absent, and preserves recoverable transaction
+For portable Linux automation, pass the generic profile for the detected
+architecture, for example `bash -s -- development-x86_64-linux --yes`.
+Bootstrap validates explicit names and will not guess between portable, fixed,
+desktop, or Mac profiles. It uses explicit
+preflight, plan, apply, verify, and rollback phases, verifies a pinned upstream
+Nix artifact when Nix is absent, and preserves recoverable transaction
 receipts. See [Bootstrap](docs/bootstrap.md).
 
 **Native Windows 11, from PowerShell:**
@@ -271,12 +274,12 @@ You can also set `ATYRODE_HOST=alex-x86_64-linux-desktop` before running
 `install.sh apply` runs record the active configuration so helper commands only
 show what applies to the current setup.
 
-### Change Username
+### Account identity
 
-Edit the owning entry in `hosts/default.nix`, including its username and home
-directory, then follow the validation workflow in [Hosts and
-capabilities](docs/hosts.md). Select a bootstrap host with `--config`; the
-`FLAKE_CONFIG` environment variable is the equivalent non-interactive input.
+Portable Linux bootstrap profiles resolve the invoking user and canonical home
+at activation time; no repository edit is needed when the login name changes.
+Fixed machine identities remain in `hosts/default.nix` and deliberately require
+their declared user and home. See [Hosts and capabilities](docs/hosts.md).
 
 ### Add Packages
 

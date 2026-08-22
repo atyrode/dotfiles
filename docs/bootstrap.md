@@ -6,22 +6,30 @@ managed environment is known to work.
 
 ## Fresh-machine command
 
-Choose the host from [`hosts/default.nix`](../hosts/default.nix), then run one
-command. This example selects the ordinary x86_64 Linux profile:
+Run one command and choose from the registered presets compatible with the
+machine:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 ```
 
-Substitute the exact registered host for a Mac or desktop Linux machine, or
-omit the host entirely: `get.sh` then lists the registered presets for this
-machine's system — each with its description and capability breakdown from
-`inventory/hosts.tsv` — and prompts for an explicit choice on the terminal
-(without one, it refuses and names the valid IDs). Bootstrap never infers a
-profile from architecture alone: x86_64 Linux can be the base development
-machine or the desktop profile. Production NixOS servers
-instead import the [portable Home Manager profile](portable-profiles.md) from
-their infrastructure flake.
+`get.sh` lists each preset with its description and capability breakdown from
+`inventory/hosts.tsv`, then prompts for an explicit choice on the terminal.
+For non-interactive Linux automation, pass the architecture-specific portable
+profile and confirm the printed plan explicitly:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- development-x86_64-linux --yes
+```
+
+Portable profiles validate and bind the invoking non-root user and canonical
+home directory at activation time. They reject a foreign-owned home or a home
+that disagrees with the account database. Fixed machine profiles retain their
+declared repository identity. Bootstrap validates explicit target names and
+never infers between portable, fixed, desktop, or Mac configurations.
+Production NixOS servers instead import the
+[portable Home Manager profile](portable-profiles.md) from their infrastructure
+flake.
 
 `get.sh` is deliberately thin: it verifies Git is present, clones the
 repository to `~/nix-dotfiles` (`DOTFILES_DIR` overrides it; an existing
@@ -35,7 +43,7 @@ bootstrap below still executes only from cloned, inspectable code. The
 clone-first command remains supported and equivalent:
 
 ```sh
-git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config alex-x86_64-linux
+git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config development-x86_64-linux
 ```
 
 The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
@@ -46,10 +54,10 @@ The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
 The phases are independently callable:
 
 ```sh
-./install.sh preflight --config alex-x86_64-linux
-./install.sh plan --config alex-x86_64-linux
-./install.sh apply --config alex-x86_64-linux
-./install.sh verify --config alex-x86_64-linux
+./install.sh preflight --config development-x86_64-linux
+./install.sh plan --config development-x86_64-linux
+./install.sh apply --config development-x86_64-linux
+./install.sh verify --config development-x86_64-linux
 ./install.sh rollback --yes
 ```
 
@@ -79,10 +87,15 @@ rewrite cannot redirect the accepted GitHub origin unnoticed.
 
 Fresh machines install upstream Nix 2.34.7 from the official
 `releases.nixos.org` archive. The three archive SHA-256 values are embedded in
-`install.sh` for x86_64/aarch64 Linux and aarch64 Darwin. Bootstrap downloads into a
-private temporary directory, verifies the complete archive before extraction,
-checks the expected installer path, and only then runs the upstream multi-user
-installer. Existing Nix installations are reused.
+`install.sh` for x86_64/aarch64 Linux and aarch64 Darwin. Bootstrap downloads
+into a private temporary directory, verifies the complete archive before
+extraction, checks the expected installer path, and only then runs the upstream
+installer non-interactively. Linux uses the upstream single-user mode, avoiding
+a daemon dependency on containers and other systemd-less environments; macOS
+uses its required multi-user mode. The installer does not add channels or edit
+shell profiles because the flake and Home Manager own those concerns. Existing
+Nix installations are reused. A Linux single-user install may still invoke
+`sudo` once to create `/nix` when it does not already exist.
 
 This choice was reviewed on 2026-07-10:
 

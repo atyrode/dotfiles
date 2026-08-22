@@ -106,16 +106,18 @@ detect_system() {
 select_nix_artifact() {
   case "$SYSTEM" in
     aarch64-darwin)
-      NIX_SHA256="1e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b"
+      NIX_SHA256="71e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b"
       ;;
     aarch64-linux)
-      NIX_SHA256="1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b088"
+      NIX_SHA256="f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08"
       ;;
     x86_64-linux)
-      NIX_SHA256="eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560ef"
+      NIX_SHA256="eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560e"
       ;;
     *) die "no pinned Nix artifact for $SYSTEM" ;;
   esac
+  [[ "$NIX_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    die "pinned Nix SHA-256 for $SYSTEM is malformed"
   NIX_URL="https://releases.nixos.org/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-${SYSTEM}.tar.xz"
 }
 
@@ -575,7 +577,7 @@ sha256_file() {
 }
 
 install_pinned_nix() {
-  local temporary archive extracted actual
+  local temporary archive extracted actual installer_mode
 
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/atyrode-nix.XXXXXX")"
   archive="$temporary/nix.tar.xz"
@@ -602,7 +604,12 @@ install_pinned_nix() {
     return 1
   fi
   append_transaction nix-source verified-upstream-artifact
-  if ! sh "$extracted" --daemon; then
+  case "$SYSTEM" in
+    *-darwin) installer_mode=--daemon ;;
+    *-linux) installer_mode=--no-daemon ;;
+    *) return 1 ;;
+  esac
+  if ! sh "$extracted" "$installer_mode" --yes --no-channel-add --no-modify-profile; then
     rm -rf "$temporary"
     return 1
   fi
@@ -687,12 +694,20 @@ run_privileged() {
   fi
 }
 
+managed_login_shell() {
+  if [[ "$SYSTEM" == *-linux ]]; then
+    printf '%s\n' "$HOME/.nix-profile/bin/zsh"
+  else
+    printf '%s\n' /run/current-system/sw/bin/zsh
+  fi
+}
+
 configure_linux_login_shell() {
   local user target shells_file current
 
   [[ "$SYSTEM" == *-linux ]] || return 0
   user="$(id -un)"
-  target="$HOME/.nix-profile/bin/zsh"
+  target="$(managed_login_shell)"
   shells_file=/etc/shells
   if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_SHELLS_FILE:-}" ]]; then
     shells_file="$BOOTSTRAP_SHELLS_FILE"
@@ -825,7 +840,8 @@ apply_configuration() {
   fi
   clear_login_shell_incomplete
 
-  printf '\nBootstrap complete. Open a new terminal or run: exec zsh -l\n'
+  printf '\nBootstrap complete. Open a new terminal or run: exec %q -l\n' \
+    "$(managed_login_shell)"
 }
 
 rollback_interrupted() {

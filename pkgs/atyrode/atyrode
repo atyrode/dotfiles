@@ -51,9 +51,10 @@ Usage:
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
   atyrode windows plan|apply [HOST] [--json]
 
-The host registry is the authority for identity, platform, and capabilities.
-apply activates the published flake by default, resolving REF (default main)
-to an exact commit first; --repo switches to a local checkout for development.
+Fixed hosts keep registry-owned identity; portable bootstrap profiles bind the
+validated invoking user and HOME at activation time. apply activates the
+published flake by default, resolving REF (default main) to an exact commit
+first; --repo switches to a local checkout for development.
 apply preview modes are non-activating: --plan resolves and validates the target
 then prints preflight metadata without invoking nh; --dry-run invokes the normal
 nh switch backend with --dry; --preview-json runs that dry backend and emits its
@@ -110,6 +111,46 @@ actual_user() {
   fi
 }
 
+actual_home() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_HOME:-}" ]]; then
+    printf '%s\n' "$_ATYRODE_TEST_HOME"
+  else
+    printf '%s\n' "${HOME:-}"
+  fi
+}
+
+runtime_identity_json() {
+  local data="$1" user home uid owner_uid passwd_home=""
+  user="$(actual_user)"
+  home="$(actual_home)"
+  if [[ "$test_hooks" == 1 ]]; then
+    uid="${_ATYRODE_TEST_UID:-1000}"
+    owner_uid="${_ATYRODE_TEST_HOME_OWNER_UID:-$uid}"
+    passwd_home="${_ATYRODE_TEST_PASSWD_HOME:-$home}"
+  else
+    uid="$(id -u)"
+    [[ -n "$home" && "$home" == /* && -d "$home" ]] ||
+      die "$EX_DATAERR" "runtime profile requires an existing absolute HOME"
+    owner_uid="$(stat -c '%u' -- "$home")" ||
+      die "$EX_DATAERR" "cannot determine HOME ownership: $home"
+    if command -v getent >/dev/null 2>&1; then
+      passwd_home="$(getent passwd "$user" | cut -d: -f6 || true)"
+    fi
+  fi
+  [[ "$uid" != 0 && "$user" != root ]] ||
+    die "$EX_DATAERR" "runtime profiles cannot activate as root"
+  [[ "$user" =~ ^[a-z_][a-z0-9_-]*\$?$ ]] ||
+    die "$EX_DATAERR" "runtime profile found an invalid username"
+  [[ -n "$home" && "$home" == /* && "$home" != *$'\n'* ]] ||
+    die "$EX_DATAERR" "runtime profile requires an absolute HOME"
+  [[ "$owner_uid" == "$uid" ]] ||
+    die "$EX_DATAERR" "runtime profile HOME is not owned by the invoking user: $home"
+  [[ -z "$passwd_home" || "$passwd_home" == "$home" ]] ||
+    die "$EX_DATAERR" "runtime profile HOME does not match the account database: $home"
+  jq -c --arg user "$user" --arg home "$home" \
+    '. + {username:$user,homeDirectory:$home}' <<<"$data"
+}
+
 actual_hostname() {
   if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_HOSTNAME:-}" ]]; then
     printf '%s\n' "$_ATYRODE_TEST_HOSTNAME"
@@ -138,7 +179,9 @@ resolve_host() {
   user="$(actual_user)"
   hostname="$(actual_hostname)"
   matches="$(jq -r --arg system "$system" --arg user "$user" --arg hostname "$hostname" '
-    [to_entries[] | select(.value.system == $system and .value.username == $user)]
+    [to_entries[]
+      | select((.value.identityMode // "fixed") == "fixed")
+      | select(.value.system == $system and .value.username == $user)]
     | ((map(select(.value.hostname == $hostname))) // []) as $exact
     | if ($exact | length) == 1 then $exact[0].key
       elif length == 1 then .[0].key
@@ -149,26 +192,35 @@ resolve_host() {
 }
 
 host_json() {
-  jq -c --arg host "$1" '.[$host]' "$registry"
+  local data
+  data="$(jq -c --arg host "$1" '.[$host]' "$registry")"
+  if [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == runtime ]]; then
+    runtime_identity_json "$data"
+  else
+    printf '%s\n' "$data"
+  fi
 }
 
 doctor_host() {
-  local requested="${1:-}" json="${2:-0}" host data system user hostname ok=true
+  local requested="${1:-}" json="${2:-0}" host data system user home hostname identity_mode ok=true
   host="$(resolve_host "$requested")"
   data="$(host_json "$host")"
   system="$(actual_system)"
   user="$(actual_user)"
+  home="$(actual_home)"
   hostname="$(actual_hostname)"
+  identity_mode="$(jq -r '.identityMode // "fixed"' <<<"$data")"
   [[ "$(jq -r '.system' <<<"$data")" == "$system" ]] || ok=false
   [[ "$(jq -r '.username' <<<"$data")" == "$user" ]] || ok=false
+  [[ "$identity_mode" != runtime || "$(jq -r '.homeDirectory' <<<"$data")" == "$home" ]] || ok=false
   local expected_hostname
   expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
   [[ -z "$expected_hostname" || "$expected_hostname" == "$hostname" ]] || ok=false
 
   if [[ "$json" == 1 ]]; then
-    jq -nc --arg host "$host" --arg system "$system" --arg user "$user" \
+    jq -nc --arg host "$host" --arg system "$system" --arg user "$user" --arg home "$home" \
       --arg hostname "$hostname" --argjson registered "$data" --argjson ok "$ok" \
-      '{ok:$ok,host:$host,actual:{system:$system,username:$user,hostname:$hostname},registered:$registered}'
+      '{ok:$ok,host:$host,actual:{system:$system,username:$user,homeDirectory:$home,hostname:$hostname},registered:$registered}'
   else
     printf 'host: %s\nsystem: %s\nuser: %s\nhostname: %s\nstatus: %s\n' \
       "$host" "$system" "$user" "$hostname" "$([[ "$ok" == true ]] && echo ok || echo mismatch)"
@@ -2080,6 +2132,29 @@ doctor_system() {
   [[ "$ok" == true ]] || return "$EX_UNAVAILABLE"
 }
 
+create_runtime_adapter() {
+  local profile="$1" data="$2" source="$3" directory source_literal
+  directory="$(mktemp -d)"
+  jq -n --arg profileName "$profile" \
+    --arg username "$(jq -r '.username' <<<"$data")" \
+    --arg homeDirectory "$(jq -r '.homeDirectory' <<<"$data")" \
+    '{profileName:$profileName,username:$username,homeDirectory:$homeDirectory}' \
+    >"$directory/identity.json"
+  source_literal="$(jq -Rn --arg source "$source" '$source')"
+  cat >"$directory/flake.nix" <<EOF
+{
+  inputs.dotfiles.url = $source_literal;
+  outputs = { self, dotfiles }: let
+    identity = builtins.fromJSON (builtins.readFile ./identity.json);
+  in {
+    homeConfigurations.\${identity.profileName} =
+      dotfiles.lib.mkPortableHomeConfiguration identity;
+  };
+}
+EOF
+  printf '%s\n' "$directory"
+}
+
 apply_config() {
   local requested="" repo="" ref="" plan=0 dry=0 json=0 preview_json=0 restart=0
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
@@ -2100,7 +2175,7 @@ apply_config() {
   [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
   [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
 
-  local host data expected_system expected_user expected_hostname platform activation source repository flake_source revision resolved_revision dirty backend installable
+  local host data expected_system expected_user expected_home expected_hostname platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
   local windows_preflight='null' mutation_boundary="activation only after preflight"
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
@@ -2110,9 +2185,11 @@ apply_config() {
   data="$(host_json "$host")"
   expected_system="$(jq -r '.system' <<<"$data")"
   expected_user="$(jq -r '.username' <<<"$data")"
+  expected_home="$(jq -r '.homeDirectory' <<<"$data")"
   expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
   platform="$(jq -r '.platform' <<<"$data")"
   activation="$(jq -r '.activation' <<<"$data")"
+  identity_mode="$(jq -r '.identityMode // "fixed"' <<<"$data")"
   [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
   [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
   [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
@@ -2163,20 +2240,22 @@ apply_config() {
 
   local output
   output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
-    --arg user "$expected_user" --arg activation "$activation" --arg backend "$backend" \
+    --arg user "$expected_user" --arg homeDirectory "$expected_home" \
+    --arg identityMode "$identity_mode" --arg activation "$activation" --arg backend "$backend" \
     --arg revision "$revision" --arg resolvedRevision "$resolved_revision" --arg source "$source" \
     --arg installable "$installable" --arg mutationBoundary "$mutation_boundary" \
     --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
     --argjson windowsPlan "$windows_preflight" \
     '{host:$host,installable:$installable,source:$source,system:$system,user:$user,
-      capabilities:$capabilities,activation:$activation,backend:$backend,revision:$revision,
+      homeDirectory:$homeDirectory,identityMode:$identityMode,capabilities:$capabilities,
+      activation:$activation,backend:$backend,revision:$revision,
       resolvedRevision:$resolvedRevision,dirty:$dirty,repository:$repository,
       windowsPlan:$windowsPlan,mutationBoundary:$mutationBoundary}')"
   if [[ "$preview_json" == 0 ]]; then
     if [[ "$json" == 1 ]]; then
       printf '%s\n' "$output"
     else
-      jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\ncapabilities: \(.capabilities | join(", "))\nactivation: \(.activation)\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"
+      jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\nhome: \(.homeDirectory)\nidentity: \(.identityMode)\ncapabilities: \(.capabilities | join(", "))\nactivation: \(.activation)\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"
       [[ "$activation" != nixos-wsl ]] || windows_render_plan "$windows_preflight"
     fi
   fi
@@ -2184,6 +2263,14 @@ apply_config() {
     return "$EX_UNAVAILABLE"
   fi
   [[ "$plan" == 0 ]] || return 0
+
+  local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source"
+  if [[ "$identity_mode" == runtime ]]; then
+    [[ "$source" != local ]] || adapter_source="path:$flake_source"
+    adapter_dir="$(create_runtime_adapter "$host" "$data" "$adapter_source")"
+    activation_flake_source="path:$adapter_dir"
+    trap '[[ -z "${adapter_dir:-}" ]] || rm -rf -- "$adapter_dir"' EXIT
+  fi
 
   local -a nh_args
   local nh_command=nh
@@ -2200,7 +2287,7 @@ apply_config() {
   # --configuration carries the host. System owners resolve the fragment.
   case "$activation" in
     home-manager)
-      nh_args=("$nh_command" home switch "$flake_source" --configuration "$host" --backup-extension backup --diff always)
+      nh_args=("$nh_command" home switch "$activation_flake_source" --configuration "$host" --backup-extension backup --diff always)
       ;;
     nix-darwin) nh_args=("$nh_command" darwin switch "$installable" --diff always) ;;
     nixos-wsl) nh_args=("$nh_command" os switch "$installable" --diff always) ;;
@@ -2226,9 +2313,13 @@ apply_config() {
     else
       printf '%s\n' "$preview_output"
     fi
+    [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
+    trap - EXIT
     return 0
   fi
   LC_ALL="$nh_locale" "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
+  [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
+  trap - EXIT
   if [[ "$dry" == 0 ]]; then
     local state_dir state_file temp
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
@@ -2252,7 +2343,9 @@ apply_config() {
     fi
   fi
   if [[ "$restart" == 1 ]]; then
-    printf 'Activation completed. Restart the current shell with: exec zsh -l\n' >&2
+    local shell_path=/run/current-system/sw/bin/zsh
+    [[ "$activation" != home-manager ]] || shell_path="$expected_home/.nix-profile/bin/zsh"
+    printf 'Activation completed. Restart the current shell with: exec %q -l\n' "$shell_path" >&2
   fi
 }
 

@@ -443,6 +443,17 @@ pkgs.runCommand "check-atyrode-cli"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
+    export _ATYRODE_TEST_USER="coder"
+    atyrode apply coder-x86_64-linux --repo "$HOME/nix-dotfiles" --plan --json | jq -e '
+      .host == "coder-x86_64-linux"
+      and .system == "x86_64-linux"
+      and .backend == "nh-home"
+      and .source == "local"
+      and .mutationBoundary == "activation only after preflight"
+    ' >/dev/null
+    test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
+    export _ATYRODE_TEST_USER="alex"
+
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"

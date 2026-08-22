@@ -49,6 +49,22 @@
     ];
   };
 
+  "coder-x86_64-linux" = {
+    description = "pad.ws Coder workspace with the headless development and agent tooling stack";
+    system = "x86_64-linux";
+    platform = "linux";
+    activation = "home-manager";
+    username = "coder";
+    homeDirectory = "/home/coder";
+    capabilities = [
+      "base"
+      "development"
+      "agent-tools"
+      "security"
+      "containers"
+    ];
+  };
+
   "alex-x86_64-linux-desktop" = {
     description = "x86_64 Linux workstation adding the desktop, mobile, media, and container stack";
     system = "x86_64-linux";

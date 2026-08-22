@@ -26,10 +26,11 @@ Cloning first and running `./install.sh apply --config <host>` yourself remains
 equivalent.
 
 For automation, append the exact entry from `hosts/default.nix`, for example
-`bash -s -- alex-x86_64-linux --yes`. Bootstrap validates explicit names and
-will not guess between desktop, development, or Mac profiles. It uses explicit
-preflight, plan, apply, verify, and rollback phases, verifies a pinned upstream
-Nix artifact when Nix is absent, and preserves recoverable transaction
+`bash -s -- alex-x86_64-linux --yes`. A pad.ws Coder workspace uses
+`bash -s -- coder-x86_64-linux --yes`. Bootstrap validates explicit names and
+will not guess between user identities, desktop, development, or Mac profiles.
+It uses explicit preflight, plan, apply, verify, and rollback phases, verifies a
+pinned upstream Nix artifact when Nix is absent, and preserves recoverable
 receipts. See [Bootstrap](docs/bootstrap.md).
 
 **Native Windows 11, from PowerShell:**

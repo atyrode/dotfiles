@@ -331,6 +331,8 @@ in
         grep -Fq '/atyrode/omp-auth-broker"' ${pkgs.omp-configured}/bin/code
         grep -Fq '"$broker_state/token"' ${pkgs.omp-configured}/bin/code
         grep -Fq '/atyrode/omp-auth-broker/snapshot.json' ${pkgs.omp-configured}/bin/code
+        grep -Fq 'unset OMP_AUTH_BROKER_URL OMP_AUTH_BROKER_TOKEN OMP_AUTH_BROKER_SNAPSHOT_CACHE' \
+          ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'CODE_AUTH_VAULTS=' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'CODE_AUTH_PROFILES' ${pkgs.omp-configured}/bin/code
         ! grep -Fq 'code-auth-profiles.json' ${pkgs.omp-configured}/bin/code

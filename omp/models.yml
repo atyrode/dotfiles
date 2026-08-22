@@ -165,7 +165,7 @@ models:
     speed: 24.6
     ttft: 1.23
     context: 1048576
-    thinking: low→high
+    thinking: low,high
     role: >-
       The regular ox rung. Leads the free pool's workers and utility roles on
       the ox lanes; every spawned agent follows it there.
@@ -179,7 +179,7 @@ models:
     speed: 24.6
     ttft: 1.23
     context: 1048576
-    thinking: low→max
+    thinking: low,high,max
     role: >-
       Ox Alpha with full thinking headroom. Leads the smart ox tier; on
       ox-only it leads every deliberative role too.

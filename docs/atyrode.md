@@ -116,6 +116,12 @@ atyrode doctor git --json
 atyrode doctor tools --json
 ```
 
+Managed `local-qwen` OMP processes hold independent session leases. Ten minutes
+after the final session closes, the WSL idle reaper verifies that vLLM has no
+active or queued requests and no new token activity, then stops the container
+and releases its GPU memory. A new session or direct API activity resets the
+deadline; stale leases from crashed processes are discarded.
+
 `inventory` is a thin, read-only consumer of the flake's schema-versioned
 evaluated manifest. By default it evaluates the exact immutable revision baked
 into the installed CLI, so an older binary cannot accidentally describe its own

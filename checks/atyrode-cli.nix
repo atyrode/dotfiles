@@ -167,6 +167,9 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF '  asyncEnabled: true' <<<"$local_only_template"
     grep -qF '  keepRecentTokens: 20000' <<<"$local_only_template"
     grep -qF '  autoContinue: true' <<<"$local_only_template"
+    ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+      ${pkgs.runtimeShell} ${./local-qwen-lifecycle.sh} "$runtime_helper"
+    ''}
 
     # Production packages ignore every test-only identity override. Otherwise
     # a project environment could spoof apply and doctor preflight identity.

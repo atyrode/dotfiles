@@ -85,6 +85,22 @@ in
         inherit username;
         inherit (host) homeDirectory;
       };
+      systemd.user.services.atyrode-local-qwen-idle-reaper = {
+        Unit.Description = "Stop an unused local Qwen runtime after its session grace period";
+        Service = {
+          Type = "oneshot";
+          ExecStart = "${lib.getExe pkgs.atyrode} runtime reap local-qwen";
+        };
+      };
+      systemd.user.timers.atyrode-local-qwen-idle-reaper = {
+        Unit.Description = "Check local Qwen session leases and API activity";
+        Timer = {
+          OnBootSec = "1m";
+          OnUnitActiveSec = "1m";
+          AccuracySec = "5s";
+        };
+        Install.WantedBy = [ "timers.target" ];
+      };
     };
   };
 

@@ -694,12 +694,20 @@ run_privileged() {
   fi
 }
 
+managed_login_shell() {
+  if [[ "$SYSTEM" == *-linux ]]; then
+    printf '%s\n' "$HOME/.nix-profile/bin/zsh"
+  else
+    printf '%s\n' /run/current-system/sw/bin/zsh
+  fi
+}
+
 configure_linux_login_shell() {
   local user target shells_file current
 
   [[ "$SYSTEM" == *-linux ]] || return 0
   user="$(id -un)"
-  target="$HOME/.nix-profile/bin/zsh"
+  target="$(managed_login_shell)"
   shells_file=/etc/shells
   if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_SHELLS_FILE:-}" ]]; then
     shells_file="$BOOTSTRAP_SHELLS_FILE"
@@ -832,7 +840,8 @@ apply_configuration() {
   fi
   clear_login_shell_incomplete
 
-  printf '\nBootstrap complete. Open a new terminal or run: exec zsh -l\n'
+  printf '\nBootstrap complete. Open a new terminal or run: exec %q -l\n' \
+    "$(managed_login_shell)"
 }
 
 rollback_interrupted() {

@@ -1,4 +1,5 @@
 {
+  fixedHomeConfig,
   lib,
   mkPortableHomeConfiguration,
   pkgs,
@@ -25,6 +26,12 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   coder.config.home.homeDirectory == "/home/coder"
 ) "portable bootstrap must use the supplied home";
+assert lib.assertMsg
+  (builtins.elem "/home/coder/.local/state/nix/profiles/home-manager/home-path/bin" coder.config.home.sessionPath)
+  "portable bootstrap must expose its complete managed command environment";
+assert lib.assertMsg (lib.all (path: !lib.hasSuffix "/nix/profiles/home-manager/home-path/bin" path)
+  fixedHomeConfig.config.home.sessionPath
+) "portable command paths must not leak into fixed host configurations";
 assert lib.assertMsg (
   coderIdentity == {
     activation = "home-manager";

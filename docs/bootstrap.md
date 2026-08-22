@@ -22,12 +22,6 @@ printed plan explicitly:
 curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux --yes
 ```
 
-pad.ws Coder workspaces use their registered `coder` identity:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- coder-x86_64-linux --yes
-```
-
 Bootstrap validates explicit host names and never infers a profile from
 architecture alone: x86_64 Linux can be the base development machine or the
 desktop profile. Production NixOS servers

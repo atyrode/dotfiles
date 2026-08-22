@@ -707,7 +707,7 @@
               }
               ''
                 jq -e '
-                  length >= 6
+                  length >= 5
                   and all(.[];
                     (.id | type == "string")
                     and (.activation | IN("home-manager", "nix-darwin", "nixos-wsl"))
@@ -717,10 +717,6 @@
                     and (.description | type == "string" and length > 0)
                     and (.capabilities | length > 0))
                   and ([.[].capabilities[]] | index("server") | not)
-                  and .["coder-x86_64-linux"].activation == "home-manager"
-                  and .["coder-x86_64-linux"].system == "x86_64-linux"
-                  and .["coder-x86_64-linux"].username == "coder"
-                  and .["coder-x86_64-linux"].homeDirectory == "/home/coder"
                 ' ${registryFile} >/dev/null
                 if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${./inventory/hosts.tsv}; then
                   echo 'inventory/hosts.tsv is out of date with hosts/default.nix' >&2

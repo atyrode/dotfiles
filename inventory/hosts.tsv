@@ -2,4 +2,3 @@ alex-aarch64-darwin	aarch64-darwin	base,development,agent-tools,security,desktop
 alex-aarch64-linux	aarch64-linux	base,development,agent-tools,security	Headless arm64 Linux development machine with agent tooling
 alex-x86_64-linux	x86_64-linux	base,development,agent-tools,security,containers	Headless x86_64 Linux development machine with agent tooling
 alex-x86_64-linux-desktop	x86_64-linux	base,development,agent-tools,security,desktop,mobile,media,containers	x86_64 Linux workstation adding the desktop, mobile, media, and container stack
-coder-x86_64-linux	x86_64-linux	base,development,agent-tools,security,containers	pad.ws Coder workspace with the headless development and agent tooling stack

@@ -6,20 +6,25 @@ managed environment is known to work.
 
 ## Fresh-machine command
 
-Choose the host from [`hosts/default.nix`](../hosts/default.nix), then run one
-command. This example selects the ordinary x86_64 Linux profile:
+Run one command and choose from the registered presets compatible with the
+machine:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 ```
 
-Substitute the exact registered host for a Mac or desktop Linux machine, or
-omit the host entirely: `get.sh` then lists the registered presets for this
-machine's system — each with its description and capability breakdown from
-`inventory/hosts.tsv` — and prompts for an explicit choice on the terminal
-(without one, it refuses and names the valid IDs). Bootstrap never infers a
-profile from architecture alone: x86_64 Linux can be the base development
-machine or the desktop profile. Production NixOS servers
+`get.sh` lists each preset with its description and capability breakdown from
+`inventory/hosts.tsv`, then prompts for an explicit choice on the terminal.
+For non-interactive automation, pass the exact registered host and confirm the
+printed plan explicitly:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux --yes
+```
+
+Bootstrap validates explicit host names and never infers a profile from
+architecture alone: x86_64 Linux can be the base development machine or the
+desktop profile. Production NixOS servers
 instead import the [portable Home Manager profile](portable-profiles.md) from
 their infrastructure flake.
 

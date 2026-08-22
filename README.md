@@ -15,19 +15,21 @@ cd ~/nix-dotfiles
 **Supported fresh-machine command:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash -s -- alex-x86_64-linux
+curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 ```
 
-The fetched `get.sh` only clones the repository and hands off to the cloned
-`install.sh`; cloning first and running `./install.sh apply --config <host>`
-yourself remains equivalent. Omit the host to pick interactively from the
-registered presets for this machine, each described with what it installs;
+The fetched `get.sh` clones the repository, lists the registered presets for
+the detected platform, and asks which one to install before handing off to the
+cloned `install.sh`. Each choice describes what it installs;
 `atyrode capabilities list` shows the same descriptions per capability later.
+Cloning first and running `./install.sh apply --config <host>` yourself remains
+equivalent.
 
-Replace the example host with the exact entry from `hosts/default.nix`; bootstrap
-will not guess between desktop, development, or Mac profiles. It uses
-explicit preflight, plan, apply, verify, and rollback phases, verifies a pinned
-upstream Nix artifact when Nix is absent, and preserves recoverable transaction
+For automation, append the exact entry from `hosts/default.nix`, for example
+`bash -s -- alex-x86_64-linux --yes`. Bootstrap validates explicit names and
+will not guess between desktop, development, or Mac profiles. It uses explicit
+preflight, plan, apply, verify, and rollback phases, verifies a pinned upstream
+Nix artifact when Nix is absent, and preserves recoverable transaction
 receipts. See [Bootstrap](docs/bootstrap.md).
 
 **Native Windows 11, from PowerShell:**

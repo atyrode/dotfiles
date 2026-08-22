@@ -106,16 +106,18 @@ detect_system() {
 select_nix_artifact() {
   case "$SYSTEM" in
     aarch64-darwin)
-      NIX_SHA256="1e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b"
+      NIX_SHA256="71e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b"
       ;;
     aarch64-linux)
-      NIX_SHA256="1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b088"
+      NIX_SHA256="f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08"
       ;;
     x86_64-linux)
-      NIX_SHA256="eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560ef"
+      NIX_SHA256="eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560e"
       ;;
     *) die "no pinned Nix artifact for $SYSTEM" ;;
   esac
+  [[ "$NIX_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    die "pinned Nix SHA-256 for $SYSTEM is malformed"
   NIX_URL="https://releases.nixos.org/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-${SYSTEM}.tar.xz"
 }
 

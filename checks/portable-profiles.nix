@@ -93,6 +93,14 @@ assert lib.assertMsg (
   serverConfig.programs.git.settings.gpg.ssh.allowedSignersFile
   == "${serverConfig.xdg.configHome}/git/allowed_signers"
 ) "Git must use the Home Manager-owned allowed_signers path";
+assert lib.assertMsg (
+  serverConfig.programs.git.settings.core.hooksPath == "${serverConfig.xdg.configHome}/git/hooks"
+) "Git must use the Home Manager-owned hooks path";
+assert lib.assertMsg (
+  serverConfig.xdg.configFile."git/hooks/pre-push".source == ../home/git-pre-push
+) "portable server must deploy the reviewed GitHub pre-push hook";
+assert lib.assertMsg serverConfig.xdg.configFile."git/hooks/pre-push".executable
+  "the managed GitHub pre-push hook must be executable";
 assert lib.assertMsg serverConfig.programs.fzf.enable "portable server must enable fzf";
 assert lib.assertMsg serverConfig.programs.zoxide.enable "portable server must enable zoxide";
 assert lib.assertMsg serverConfig.programs.direnv.nix-direnv.enable

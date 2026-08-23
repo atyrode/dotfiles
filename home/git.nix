@@ -13,6 +13,7 @@
       # a platform credential manager instead.
       gpg.format = "ssh";
       gpg.ssh.allowedSignersFile = "${config.xdg.configHome}/git/allowed_signers";
+      core.hooksPath = "${config.xdg.configHome}/git/hooks";
 
       # `insteadOf` would also rewrite anonymous HTTPS fetches (including Nix
       # flake inputs) on hosts that may not have a key loaded. Keep fetches
@@ -54,5 +55,11 @@
     gitCredentialHelper.enable = true;
   };
 
-  xdg.configFile."git/allowed_signers".source = ./git-allowed-signers;
+  xdg.configFile = {
+    "git/allowed_signers".source = ./git-allowed-signers;
+    "git/hooks/pre-push" = {
+      source = ./git-pre-push;
+      executable = true;
+    };
+  };
 }

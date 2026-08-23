@@ -181,6 +181,8 @@ let
   classifierTimer = linuxClassifierTools.systemd.user.timers.ollama-pull-classifier;
   linuxSliceDropIn =
     linuxAgentTools.xdg.configFile."systemd/user/app.slice.d/50-atyrode-memory.conf".text;
+  linuxUserConf =
+    linuxAgentTools.xdg.configFile."systemd/user.conf".text;
   linuxEarlyoomService = linuxAgentTools.systemd.user.services.atyrode-earlyoom;
   darwinHasSliceDropIn =
     darwinAgentTools.xdg.configFile ? "systemd/user/app.slice.d/50-atyrode-memory.conf";
@@ -1215,7 +1217,14 @@ in
   resource-guard = pkgs.runCommand "check-agent-resource-guard" { } ''
     # Account for the stack on app.slice, but do not impose a hard ceiling.
     # MemoryMax cannot distinguish state-owning Orca/OMP processes from their
-    # recreatable workers; earlyoom below can, so it must see host-wide pressure.
+    # recreatable workers; the guard below can, so it must see host-wide
+    # pressure.
+
+    # A single OOM kill inside a scope must not tear down the whole control
+    # group: that cascade is what turned one dead worker into every pane and
+    # omp session dying at once on 2026-08-20 and 2026-08-23.
+    grep -Fqx '[Manager]' <<<"$linuxUserConf"
+    grep -Fqx 'DefaultOOMPolicy=continue' <<<"$linuxUserConf"
     dropIn=${lib.escapeShellArg linuxSliceDropIn}
     grep -Fqx '[Slice]' <<<"$dropIn"
     grep -Fqx 'MemoryAccounting=yes' <<<"$dropIn"
@@ -1228,25 +1237,39 @@ in
     # OOM. It wedged agent sessions unrecoverably and protected nothing.
     ! grep -Fq 'MemoryHigh' <<<"$dropIn"
 
-    # earlyoom backstops host-wide exhaustion and must stay unprivileged:
-    # Nice=/OOMScoreAdjust= are what upstream recommends for its *root* unit,
+    # The guard backstops host-wide exhaustion and must stay unprivileged:
+    # Nice=/OOMScoreAdjust= are what upstream recommends for a *root* unit,
     # but a user service can set neither and would fail to start. Assert the
-    # earlier 15% memory / 20% swap intervention point as part of the policy.
+    # 15% memory / 20% swap intervention point as part of the policy.
     guard=${lib.escapeShellArg linuxEarlyoomService.Service.ExecStart}
-    grep -Fq 'earlyoom' "$guard"
-    grep -Fq -- '-m 15' "$guard"
-    grep -Fq -- '-s 20' "$guard"
-    grep -Fq -- '--prefer' "$guard"
-    grep -Fq -- '--avoid' "$guard"
+    grep -Fq 'memory_floor=15' "$guard"
+    grep -Fq 'swap_floor=20' "$guard"
 
-    # Victim policy is the point of the flags, so assert the membership rather
+    # Candidates must be scoped to the guard's own UID by construction: the
+    # 2026-08-20 and 2026-08-23 crashes showed an oom_score-ranked killer
+    # looping forever on "Operation not permitted" against another account's
+    # adj-boosted process while the host fell over.
+    grep -Fq '/^Uid:/' "$guard"
+
+    # Victims rank by reclaimable footprint, not oom_score - adj-boosted small
+    # fry must never outrank the fattest hog (11:32 chrome-renderer massacre).
+    pickFn=$(sed -n '/^    pick_victim() {/,/^    }$/p' "$guard")
+    grep -Fq 'VmRSS' <<<"$pickFn"
+    grep -Fq 'VmSwap' <<<"$pickFn"
+    ! grep -Fq 'oom_score' <<<"$pickFn"
+
+    # Escalation must be bounded: SIGTERM first, SIGKILL if it survives grace.
+    grep -Fq -- '--grace-secs' "$guard"
+    grep -Fq 'kill -KILL' "$guard"
+
+    # Victim policy is the point of the lists, so assert the membership rather
     # than their presence. Orca and an `omp` session own state that cannot be
     # reconstructed - panes, worktrees, conversation history - and Orca's Xvfb
     # additionally strands the :99 lock when hard-killed, so all three belong on
-    # the avoid side and must never drift back into --prefer. What a session
+    # the avoid side and must never drift into prefer. What a session
     # spawns is the unbounded, individually recreatable half and stays preferred.
-    preferList=$(grep -o -- "--prefer '[^']*'" "$guard")
-    avoidList=$(grep -o -- "--avoid '[^']*'" "$guard")
+    preferList=$(grep -o "prefer_re='[^']*'" "$guard")
+    avoidList=$(grep -o "avoid_re='[^']*'" "$guard")
     for expendable in bun node chrome MainThread; do
       grep -Fq "$expendable" <<<"$preferList"
     done

@@ -73,33 +73,150 @@ let
   '';
 
   # Host-wide pressure guard: when the machine is running out of both memory
-  # and swap, earlyoom kills the fattest expendable agent worker before the
-  # kernel chooses a state-owning process. Runs unprivileged, which suffices
-  # because the whole agent stack belongs to this user. Deliberately no
-  # Nice=/OOMScoreAdjust= on the unit: upstream recommends both, but they need
+  # and swap, kill the fattest expendable agent worker before the kernel
+  # chooses a state-owning process. Runs unprivileged, which suffices because
+  # the whole agent stack belongs to this user. Deliberately no Nice=/
+  # OOMScoreAdjust= on the unit: upstream recommends both, but they need
   # privileges a user service does not have and would make it fail to start.
   #
-  # Victim policy targets the work, not the things that own it. An `omp` session
-  # holds conversation state and in-flight edits that nothing can reconstruct,
-  # and Orca is the container those sessions live in - killing it discards every
-  # pane and worktree at once, and its `Xvfb` child owns the global `:99` lock
-  # that a hard kill strands (see pkgs/orca-ide). What a session *spawns* is the
-  # opposite: language servers, watchers, bundlers and headless Chrome are the
-  # unbounded half, they are what actually grows, and every one of them is
-  # recreated on demand. So the harness is avoided and its children preferred.
-  # `MainThread` is in that list because Node renames the main thread of the
-  # TypeScript servers, which are routinely the single largest processes here.
+  # This used to exec upstream earlyoom. The 2026-08-20 and 2026-08-23 OOM
+  # crashes showed why that cannot work on a shared host: earlyoom picks its
+  # victim purely by oom_score, and an unrelated account's node bot carries
+  # oom_score_adj=200, so it permanently outranked every local process while
+  # occupying almost no memory. A user service cannot signal another account's
+  # process, so every cycle logged "kill failed: Operation not permitted" until
+  # RAM and swap hit zero and the kernel OOM-killed Orca, taking every hosted
+  # session with it. The policy therefore lives in this script: candidates are
+  # restricted to this UID by construction, ranked by the kernel's own
+  # oom_score, and weighted by the lists below.
   #
-  # This is a scoring preference, not immunity: earlyoom divides a process'
-  # badness rather than exempting it. Negative OOMScoreAdjust would provide
-  # kernel-level immunity, but requires privileges and careful child resets.
-  earlyoomSupervisor = pkgs.writeShellScript "atyrode-earlyoom" ''
-    exec ${pkgs.earlyoom}/bin/earlyoom \
-      -m ${toString rgcfg.earlyoom.memoryPercent} \
-      -s ${toString rgcfg.earlyoom.swapPercent} \
-      -r 0 \
-      --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*|orca-ide|Xvfb|omp)$' \
-      --prefer '^(bun|node|chrome|MainThread)$'
+  # Victim policy targets the work, not the things that own it. An `omp`
+  # session holds conversation state and in-flight edits that nothing can
+  # reconstruct, and Orca is the container those sessions live in - killing it
+  # discards every pane and worktree at once, and its `Xvfb` child owns the
+  # global `:99` lock that a hard kill strands (see pkgs/orca-ide). What a
+  # session *spawns* is the opposite: language servers, watchers, bundlers and
+  # headless Chrome are the unbounded half, they are what actually grows, and
+  # every one of them is recreated on demand. `MainThread` is preferred because
+  # Node renames the main thread of the TypeScript servers, which are routinely
+  # the single largest recreatable processes here.
+  oomGuard = pkgs.writeShellScript "atyrode-earlyoom" ''
+    set -u
+
+    memory_floor=${toString rgcfg.earlyoom.memoryPercent}
+    swap_floor=${toString rgcfg.earlyoom.swapPercent}
+    poll_secs=1
+    grace_secs=3
+    dry_run=0
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --memory-floor) memory_floor=$2; shift 2 ;;
+        --swap-floor) swap_floor=$2; shift 2 ;;
+        --poll-secs) poll_secs=$2; shift 2 ;;
+        --grace-secs) grace_secs=$2; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        *) echo "atyrode-earlyoom: unknown argument: $1" >&2; exit 2 ;;
+      esac
+    done
+
+    avoid_re='^(sshd|systemd|dbus-daemon|zsh|tmux.*|orca-ide|Xvfb|omp)$'
+    prefer_re='^(bun|node|chrome|MainThread)$'
+    my_uid=$(id -u)
+    mkdir=${lib.getExe' pkgs.coreutils "mkdir"}
+    date_bin=${lib.getExe' pkgs.coreutils "date"}
+    sort_bin=${lib.getExe' pkgs.coreutils "sort"}
+    head_bin=${lib.getExe' pkgs.coreutils "head"}
+    tr_bin=${lib.getExe' pkgs.coreutils "tr"}
+    sleep_bin=${lib.getExe' pkgs.coreutils "sleep"}
+    state_dir=''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/oom-guard
+    "$mkdir" -p "$state_dir"
+    event_log="$state_dir/events.log"
+
+    meminfo_field() { awk -v key="$1" '$1 == key { print $2; exit }' /proc/meminfo; }
+
+    # Forensic record for each intervention: who was chosen and the full
+    # memory landscape at that moment, because the kernel's OOM reports are
+    # invisible to an unprivileged user here.
+    snapshot() {
+      {
+        echo "---- $($date_bin --iso-8601=seconds) $*"
+        echo "MemAvailable=$(meminfo_field MemAvailable:)kB MemTotal=$(meminfo_field MemTotal:)kB SwapFree=$(meminfo_field SwapFree:)kB"
+        for statm in /proc/[0-9]*; do
+          rss=$(awk '/^VmRSS:/{print $2; exit}' "$statm/status" 2>/dev/null) || continue
+          [[ -n $rss ]] || continue
+          cmd=$("$tr_bin" '\0' ' ' < "$statm/cmdline" 2>/dev/null)
+          printf '%8s %s %s\n' "$rss" "''${statm#/proc/}" "''${cmd:-[unreadable]}"
+        done | "$sort_bin" -rn | "$head_bin" -n 16
+      } >> "$event_log"
+      echo "atyrode-earlyoom: $($date_bin --iso-8601=seconds) $*" >&2
+    }
+
+    # Fattest signalable own-UID process, honouring the prefer/avoid weighting:
+    # preferred comms count tenfold, avoided ones a tenth.
+    pick_victim() {
+      # Rank by reclaimable footprint (VmRSS + VmSwap), not oom_score: the
+      # 2026-08-23 11:32 episode showed score-based selection wasting the
+      # intervention on a dozen ~60 MiB Chrome renderers that something had
+      # boosted to oom_score_adj=300 while the real hog kept growing. Killing
+      # the fattest process frees the most memory per intervention, which is
+      # the only thing that ends an allocation storm.
+      local statm pid uid comm rss swap eff best_pid=0 best_score=0
+      for statm in /proc/[0-9]*; do
+        pid=''${statm#/proc/}
+        [[ $pid != $$ ]] || continue
+        uid=$(awk '/^Uid:/{print $2; exit}' "$statm/status" 2>/dev/null) || continue
+        [[ $uid = $my_uid ]] || continue
+        comm=$(cat "$statm/comm" 2>/dev/null) || continue
+        rss=$(awk '/^VmRSS:/{print $2; exit}' "$statm/status" 2>/dev/null) || continue
+        [[ -n $rss ]] || continue
+        swap=$(awk '/^VmSwap:/{print $2; exit}' "$statm/status" 2>/dev/null) || continue
+        if [[ $comm =~ $prefer_re ]]; then eff=$((10 * (rss + swap)))
+        elif [[ $comm =~ $avoid_re ]]; then eff=$((rss / 10))
+        else eff=$((rss + swap))
+        fi
+        if (( eff > best_score )); then best_score=$eff; best_pid=$pid; fi
+      done
+      printf '%s' "$best_pid"
+    }
+
+    while :; do
+      total_mem=$(meminfo_field MemTotal:)
+      total_swap=$(meminfo_field SwapTotal:)
+      avail=$(meminfo_field MemAvailable:)
+      swap_free=$(meminfo_field SwapFree:)
+      # earlyoom semantics kept: act only once BOTH floors are breached, so a
+      # healthy machine never sees an intervention.
+      mem_ok=$((total_mem > 0 && avail * 100 > total_mem * memory_floor))
+      swap_ok=$((total_swap == 0 || swap_free * 100 > total_swap * swap_floor))
+      if (( mem_ok || swap_ok )); then
+        "$sleep_bin" "$poll_secs"
+        continue
+      fi
+
+      victim=$(pick_victim)
+      if [[ $victim = 0 ]]; then
+        snapshot "no eligible own-uid victim; leaving the choice to the kernel"
+        "$sleep_bin" "$poll_secs"
+        continue
+      fi
+      cmdline=$("$tr_bin" '\0' ' ' < "/proc/$victim/cmdline" 2>/dev/null || true)
+      if (( dry_run )); then
+        snapshot "DRY-RUN would terminate pid $victim: $cmdline"
+        "$sleep_bin" "$poll_secs"
+        continue
+      fi
+      snapshot "terminating pid $victim (SIGTERM): $cmdline"
+      kill -TERM "$victim" 2>/dev/null || true
+      for (( i = 0; i < grace_secs * 2; i++ )); do
+        [[ -d /proc/$victim ]] || break
+        "$sleep_bin" 0.5
+      done
+      if [[ -d /proc/$victim ]]; then
+        snapshot "pid $victim survived SIGTERM, sending SIGKILL"
+        kill -KILL "$victim" 2>/dev/null || true
+      fi
+      "$sleep_bin" "$poll_secs"
+    done
   '';
 
 in
@@ -421,18 +538,29 @@ in
         + ''
           MemoryMax=${rgcfg.memoryMax}
         '';
+
+        # When the kernel OOM-kills one process inside a scope - for example an
+        # app-orca-*.scope holding Orca plus every session it hosts - the
+        # manager default OOMPolicy=stop tears down the whole control group:
+        # one dead worker took every pane and omp session with it on
+        # 2026-08-20 and 2026-08-23. `continue` keeps a unit running when a
+        # single member is killed; the unit still fails normally if its own
+        # main process dies. The pressure guard exists precisely so the kernel
+        # should never get that far; this removes the cascade when it does.
+        xdg.configFile."systemd/user.conf".text = ''
+          [Manager]
+          DefaultOOMPolicy=continue
+        '';
       })
 
       (lib.mkIf (rgcfg.enable && rgcfg.earlyoom.enable && pkgs.stdenv.isLinux) {
-        home.packages = [ pkgs.earlyoom ];
-
         systemd.user.services.atyrode-earlyoom = {
           Unit = {
-            Description = "Userspace OOM killer guarding the agent stack";
+            Description = "Userspace OOM guard shedding expendable workers under host-wide memory pressure";
           };
           Service = {
             Type = "simple";
-            ExecStart = "${earlyoomSupervisor}";
+            ExecStart = "${oomGuard}";
             Restart = "on-failure";
             RestartSec = 5;
           };

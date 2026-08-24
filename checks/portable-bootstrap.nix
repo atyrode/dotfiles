@@ -55,15 +55,11 @@ assert lib.assertMsg (
 assert lib.assertMsg coderHttps.config.programs.gh.gitCredentialHelper.enable
   "portable HTTPS bootstrap must declare the gh credential helper";
 assert lib.assertMsg (
-  lib.attrByPath
-    [
-      "url"
-      "git@github.com:"
-      "pushInsteadOf"
-    ]
-    null
-    coderHttps.config.programs.git.settings
-  == null
+  lib.attrByPath [
+    "url"
+    "git@github.com:"
+    "pushInsteadOf"
+  ] null coderHttps.config.programs.git.settings == null
 ) "portable HTTPS bootstrap must not rewrite GitHub pushes to SSH";
 assert lib.assertMsg (
   !(fixedHomeConfig.config.home.sessionVariables ? CODE_FACET_GLYPHS)
@@ -91,12 +87,14 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   developerIdentity.homeDirectory == "/srv/developer"
 ) "portable bootstrap must keep identities isolated";
-builtins.deepSeq [
-  coder.activationPackage.drvPath
-  coderHttps.activationPackage.drvPath
-  developer.activationPackage.drvPath
-] (
-  pkgs.runCommand "check-portable-bootstrap-${pkgs.stdenv.hostPlatform.system}" { } ''
-    mkdir "$out"
-  ''
-)
+builtins.deepSeq
+  [
+    coder.activationPackage.drvPath
+    coderHttps.activationPackage.drvPath
+    developer.activationPackage.drvPath
+  ]
+  (
+    pkgs.runCommand "check-portable-bootstrap-${pkgs.stdenv.hostPlatform.system}" { } ''
+      mkdir "$out"
+    ''
+  )

@@ -55,10 +55,13 @@ declarative `gh` credential helper, and omits the SSH `pushInsteadOf` rules.
 Commit signing remains SSH-based and independent from repository
 authentication.
 
-Managed runtimes pass the selection through `ATYRODE_GIT_AUTH_MODE` and
-`atyrode apply --git-auth-mode`; the successful portable activation persists
-the choice for later manual applies. The default remains `ssh`, so fixed hosts
-and portable hosts without an explicit capability retain the policy above.
+The `atyrode` CLI accepts an explicit `ATYRODE_GIT_AUTH_MODE` or
+`--git-auth-mode` override and persists the successful portable selection.
+When this repository's installer is invoked without arguments inside a standard
+Coder workspace, its consumer-side adapter selects the architecture-specific
+portable profile and uses `https-gh` only when `gh` authentication is already
+usable. The default remains `ssh`, so fixed hosts and other portable runtimes
+retain the policy above.
 
 ## Workstation bootstrap
 

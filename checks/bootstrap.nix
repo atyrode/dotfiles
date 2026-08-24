@@ -127,6 +127,12 @@ pkgs.runCommand "check-bootstrap-${system}"
     exec "$@"
     EOF
 
+    cat > "$tool_root/gh" <<'EOF'
+    #!${pkgs.runtimeShell}
+    [ "$#" -eq 2 ] && [ "$1" = auth ] && [ "$2" = status ] || exit 64
+    [ "''${FAKE_GH_AUTH:-0}" = 1 ]
+    EOF
+
     cat > "$tool_root/chsh" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
@@ -235,10 +241,11 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/shasum" \
       "$tool_root/sudo" \
       "$tool_root/chsh" \
+      "$tool_root/gh" \
       "$tool_root/tar" \
       "$fake_installer_template" \
       "$fake_nix_template"
-    for tool in git curl sha256sum shasum sudo chsh tar; do
+    for tool in git curl sha256sum shasum sudo chsh gh tar; do
       ln -s "$tool_root/$tool" "$fresh_tools/$tool"
       ln -s "$tool_root/$tool" "$managed_tools/$tool"
     done
@@ -273,10 +280,14 @@ pkgs.runCommand "check-bootstrap-${system}"
         *) exit 64 ;;
       esac
       unset \
+        ATYRODE_GIT_AUTH_MODE \
+        CODER_AGENT_URL \
+        CODER_WORKSPACE_NAME \
         FAKE_ACTIVATION_FAIL \
         FAKE_BAD_SHA \
         FAKE_CHSH_FAIL \
         FAKE_CURL_FAIL \
+        FAKE_GH_AUTH \
         FAKE_GIT_FETCH_FAIL \
         FAKE_GIT_UPDATE_REPO \
         FAKE_INSTALLER_FAIL_AFTER_START \
@@ -435,8 +446,11 @@ pkgs.runCommand "check-bootstrap-${system}"
     test "$(readlink "$HOME/.zshrc")" = /nix/store/fixture-home-manager-files/.zshrc
     test "$(readlink "$HOME/.zshenv")" = /nix/store/fixture-home-manager-files/.zshenv
     "$repo/install.sh" verify --repo "$repo" --config "$host" >/dev/null
-    ATYRODE_BOOTSTRAP_CONFIG="$host" ATYRODE_GIT_AUTH_MODE=https-gh \
+    CODER_WORKSPACE_NAME=fixture \
+      CODER_AGENT_URL=https://coder.example.invalid \
+      FAKE_GH_AUTH=1 \
       "$repo/install.sh" >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "development-${system}"
     grep -F -- "--git-auth-mode https-gh" "$FAKE_LOG" >/dev/null
     grep -R -F $'git-auth-mode\thttps-gh' \
       "$XDG_STATE_HOME/atyrode/bootstrap/transactions" >/dev/null

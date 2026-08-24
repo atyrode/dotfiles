@@ -564,12 +564,10 @@
         assert lib.assertMsg (
           builtins.isString homeDirectory && lib.hasPrefix "/" homeDirectory
         ) "portable bootstrap profile ${profileName} requires an absolute homeDirectory";
-        assert lib.assertMsg (
-          builtins.elem gitAuthMode [
-            "ssh"
-            "https-gh"
-          ]
-        ) "portable bootstrap profile ${profileName} requires gitAuthMode ssh or https-gh";
+        assert lib.assertMsg (builtins.elem gitAuthMode [
+          "ssh"
+          "https-gh"
+        ]) "portable bootstrap profile ${profileName} requires gitAuthMode ssh or https-gh";
         home-manager.lib.homeManagerConfiguration {
           pkgs = pkgsFor profile.system;
           modules =

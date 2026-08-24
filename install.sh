@@ -39,7 +39,6 @@ if [[ -z "$COMMAND" && -n "${ATYRODE_BOOTSTRAP_CONFIG:-}" ]]; then
   ASSUME_YES=1
 fi
 
-
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
   return 1

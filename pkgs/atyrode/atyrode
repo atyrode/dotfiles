@@ -2266,6 +2266,7 @@ apply_config() {
     --arg revision "$revision" --arg resolvedRevision "$resolved_revision" --arg source "$source" \
     --arg installable "$installable" --arg mutationBoundary "$mutation_boundary" \
     --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
+    --argjson windowsPlan "$windows_preflight" \
     '{host:$host,installable:$installable,source:$source,system:$system,user:$user,
       homeDirectory:$homeDirectory,identityMode:$identityMode,gitAuthMode:$gitAuthMode,
       capabilities:$capabilities,activation:$activation,backend:$backend,revision:$revision,

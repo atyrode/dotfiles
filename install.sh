@@ -29,20 +29,11 @@ TRANSACTION=""
 SOURCE_CHANGED=0
 ACTIVE_PHASE="bootstrap"
 
-# Coder and other managed runtimes conventionally invoke a cloned dotfiles
-# installer with no arguments. Mutation remains opt-in: only an explicit
-# bootstrap configuration turns that no-command invocation into an unattended
-# apply.
-if [[ -z "$COMMAND" && -n "${ATYRODE_BOOTSTRAP_CONFIG:-}" ]]; then
-  COMMAND=apply
-  FLAKE_CONFIG="$ATYRODE_BOOTSTRAP_CONFIG"
-  ASSUME_YES=1
-fi
-
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
   return 1
 }
+
 GIT_AUTH_MODE="${ATYRODE_GIT_AUTH_MODE:-ssh}"
 case "$GIT_AUTH_MODE" in
   ssh | https-gh) ;;
@@ -67,9 +58,9 @@ Options:
   --yes                Confirm apply or rollback without an interactive prompt.
   -h, --help           Show this help.
 
-No command mutates only when ATYRODE_BOOTSTRAP_CONFIG explicitly selects a
-configuration; managed runtimes use that convention for unattended activation.
-Otherwise run `plan`, inspect it, then run `apply`.
+Inside a standard Coder workspace, a no-command invocation selects this
+repository's architecture-specific portable profile. Elsewhere, run `plan`,
+inspect it, then run `apply`.
 EOF
 }
 
@@ -118,6 +109,29 @@ detect_system() {
     Linux:x86_64) printf 'x86_64-linux\n' ;;
     *) die "unsupported system: $(uname -s) $(uname -m)" ;;
   esac
+}
+
+configure_coder_runtime() {
+  if [[ -n "$COMMAND" ]]; then
+    return 0
+  fi
+  if [[ -z "${CODER_WORKSPACE_NAME:-}" || -z "${CODER_AGENT_URL:-}" ]]; then
+    return 0
+  fi
+
+  SYSTEM="$(detect_system)"
+  COMMAND=apply
+  FLAKE_CONFIG="development-$SYSTEM"
+  ASSUME_YES=1
+
+  # pad.ws and similar Coder deployments provision GitHub's HTTPS credential
+  # helper independently of dotfiles. Prefer it when it is already usable;
+  # otherwise retain the normal SSH-first policy.
+  if [[ -z "${ATYRODE_GIT_AUTH_MODE:-}" ]] &&
+    command -v gh >/dev/null 2>&1 &&
+    gh auth status >/dev/null 2>&1; then
+    GIT_AUTH_MODE=https-gh
+  fi
 }
 
 select_nix_artifact() {
@@ -899,6 +913,7 @@ rollback_interrupted() {
   printf 'Interrupted bootstrap changes were rolled back.\n'
 }
 
+configure_coder_runtime
 parse_options "$@"
 
 case "$COMMAND" in

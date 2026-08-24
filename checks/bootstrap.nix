@@ -317,6 +317,9 @@ pkgs.runCommand "check-bootstrap-${system}"
     grep -q '^Plan' "$TMPDIR/plan.out"
     test ! -e "$FAKE_LOG"
     test ! -e "$XDG_STATE_HOME"
+    expect_failure "$repo/install.sh"
+    test ! -e "$FAKE_LOG"
+    test ! -e "$XDG_STATE_HOME"
 
     # Production bootstrap ignores ambient test hooks, including an arbitrary
     # profile script that would otherwise be sourced before activation.
@@ -432,7 +435,11 @@ pkgs.runCommand "check-bootstrap-${system}"
     test "$(readlink "$HOME/.zshrc")" = /nix/store/fixture-home-manager-files/.zshrc
     test "$(readlink "$HOME/.zshenv")" = /nix/store/fixture-home-manager-files/.zshenv
     "$repo/install.sh" verify --repo "$repo" --config "$host" >/dev/null
-    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    ATYRODE_BOOTSTRAP_CONFIG="$host" ATYRODE_GIT_AUTH_MODE=https-gh \
+      "$repo/install.sh" >/dev/null
+    grep -F -- "--git-auth-mode https-gh" "$FAKE_LOG" >/dev/null
+    grep -R -F $'git-auth-mode\thttps-gh' \
+      "$XDG_STATE_HOME/atyrode/bootstrap/transactions" >/dev/null
     find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.complete' | grep -q .
     test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = "$FAKE_EXPECTED_LOGIN_SHELL"
     test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1

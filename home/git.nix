@@ -1,6 +1,18 @@
-{ config, ... }:
+{ config, lib, gitAuthMode ? "ssh", ... }:
 
+let
+  useSshAuth = gitAuthMode == "ssh";
+in
 {
+  assertions = [
+    {
+      assertion = builtins.elem gitAuthMode [
+        "ssh"
+        "https-gh"
+      ];
+      message = "gitAuthMode must be either ssh or https-gh";
+    }
+  ];
   programs.git = {
     enable = true;
 
@@ -9,18 +21,12 @@
       user.email = "alex@tyrode.dev";
       user.signingKey = "${config.home.homeDirectory}/.ssh/id_ed25519_git_signing.pub";
 
-      # Never persist Git credentials in plaintext; use SSH remotes/agents or
-      # a platform credential manager instead.
+      # Authentication and commit signing are independent. SSH-first hosts use
+      # push-only rewrites; external-auth runtimes keep HTTPS so the declared gh
+      # credential helper can serve Git without an additional authentication key.
       gpg.format = "ssh";
       gpg.ssh.allowedSignersFile = "${config.xdg.configHome}/git/allowed_signers";
       core.hooksPath = "${config.xdg.configHome}/git/hooks";
-
-      # `insteadOf` would also rewrite anonymous HTTPS fetches (including Nix
-      # flake inputs) on hosts that may not have a key loaded. Keep fetches
-      # unchanged: gh emits SSH clone URLs, while these push-only rewrites make
-      # GitHub and GitLab authentication use SSH for manually added HTTPS remotes.
-      url."git@github.com:".pushInsteadOf = "https://github.com/";
-      url."git@gitlab.com:".pushInsteadOf = "https://gitlab.com/";
       # Useful defaults
       init.defaultBranch = "main";
       pull.rebase = false;
@@ -42,12 +48,16 @@
       alias.unstage = "reset HEAD --";
       alias.last = "log -1 HEAD";
       alias.visual = "!gitk";
+    }
+    // lib.optionalAttrs useSshAuth {
+      url."git@github.com:".pushInsteadOf = "https://github.com/";
+      url."git@gitlab.com:".pushInsteadOf = "https://gitlab.com/";
     };
   };
 
   programs.gh = {
     enable = true;
-    settings.git_protocol = "ssh";
+    settings.git_protocol = if useSshAuth then "ssh" else "https";
 
     # Keep gh's Git helper declarative so `gh auth setup-git` never needs to
     # rewrite the managed Git config. doctor git audits gh's token store

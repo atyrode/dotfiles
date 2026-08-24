@@ -467,25 +467,37 @@ pkgs.runCommand "check-atyrode-cli"
       --arg home "$TMPDIR/coder-home" '
       .host == "development-x86_64-linux"
       and .identityMode == "runtime"
+      and .gitAuthMode == "ssh"
       and .user == "coder"
       and .homeDirectory == $home
       and .backend == "nh-home"
       and .source == "local"
     ' >/dev/null
     atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" \
-      --dry-run --restart-shell > /dev/null 2> "$TMPDIR/runtime-restart.err"
+      --git-auth-mode https-gh --dry-run --restart-shell > /dev/null 2> "$TMPDIR/runtime-restart.err"
     grep -F "exec $TMPDIR/coder-home/.nix-profile/bin/zsh -l" \
       "$TMPDIR/runtime-restart.err" >/dev/null
     jq -e --arg home "$TMPDIR/coder-home" '
       .profileName == "development-x86_64-linux"
       and .username == "coder"
       and .homeDirectory == $home
+      and .gitAuthMode == "https-gh"
     ' "$TMPDIR/runtime-adapter-identity.json" >/dev/null
     grep -F 'dotfiles.lib.mkPortableHomeConfiguration identity' \
       "$TMPDIR/runtime-adapter-flake.nix" >/dev/null
     grep -F "inputs.dotfiles.url = \"path:$HOME/nix-dotfiles\";" \
       "$TMPDIR/runtime-adapter-flake.nix" >/dev/null
     test ! -e "$(cat "$TMPDIR/runtime-adapter-path")"
+    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" \
+      --git-auth-mode https-gh >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/git-auth-mode")" = https-gh
+    atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" \
+      --plan --json | jq -e '.gitAuthMode == "https-gh"' >/dev/null
+    if atyrode apply development-x86_64-linux --repo "$HOME/nix-dotfiles" \
+      --git-auth-mode invalid >/dev/null 2>&1; then
+      echo 'runtime profile unexpectedly accepted an invalid Git auth mode' >&2
+      exit 1
+    fi
 
     export _ATYRODE_TEST_USER="developer"
     export _ATYRODE_TEST_HOME="$TMPDIR/developer-home"

@@ -572,9 +572,6 @@
         ) "portable bootstrap profile ${profileName} requires gitAuthMode ssh or https-gh";
         home-manager.lib.homeManagerConfiguration {
           pkgs = pkgsFor profile.system;
-          extraSpecialArgs = {
-            inherit gitAuthMode;
-          };
           modules =
             selectHomeManagerProfiles {
               name = profileName;
@@ -582,6 +579,7 @@
             }
             ++ [
               {
+                atyrode.gitAuthMode = gitAuthMode;
                 home = {
                   inherit homeDirectory username;
                   sessionPath = [

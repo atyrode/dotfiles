@@ -46,6 +46,20 @@ gh config get git_protocol
 
 An expected GitHub/GitLab push URL starts with `git@…` or `ssh://…`.
 
+### External-auth runtimes
+
+Portable profiles may explicitly select `gitAuthMode = "https-gh"` when the
+runtime already provides HTTPS authentication and a persistent `gh` login.
+That mode keeps `gh` clone URLs and Git push URLs on HTTPS, enables the
+declarative `gh` credential helper, and omits the SSH `pushInsteadOf` rules.
+Commit signing remains SSH-based and independent from repository
+authentication.
+
+Managed runtimes pass the selection through `ATYRODE_GIT_AUTH_MODE` and
+`atyrode apply --git-auth-mode`; the successful portable activation persists
+the choice for later manual applies. The default remains `ssh`, so fixed hosts
+and portable hosts without an explicit capability retain the policy above.
+
 ## Workstation bootstrap
 
 Generate keys on the machine that will use them. The examples create ordinary

@@ -29,10 +29,25 @@ TRANSACTION=""
 SOURCE_CHANGED=0
 ACTIVE_PHASE="bootstrap"
 
+# Coder and other managed runtimes conventionally invoke a cloned dotfiles
+# installer with no arguments. Mutation remains opt-in: only an explicit
+# bootstrap configuration turns that no-command invocation into an unattended
+# apply.
+if [[ -z "$COMMAND" && -n "${ATYRODE_BOOTSTRAP_CONFIG:-}" ]]; then
+  COMMAND=apply
+  FLAKE_CONFIG="$ATYRODE_BOOTSTRAP_CONFIG"
+  ASSUME_YES=1
+fi
+
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
   return 1
 }
+GIT_AUTH_MODE="${ATYRODE_GIT_AUTH_MODE:-ssh}"
+case "$GIT_AUTH_MODE" in
+  ssh | https-gh) ;;
+  *) die "ATYRODE_GIT_AUTH_MODE must be ssh or https-gh" ;;
+esac
 
 usage() {
   cat <<'EOF'
@@ -52,7 +67,9 @@ Options:
   --yes                Confirm apply or rollback without an interactive prompt.
   -h, --help           Show this help.
 
-No command defaults to mutation. Run `plan`, inspect it, then run `apply`.
+No command mutates only when ATYRODE_BOOTSTRAP_CONFIG explicitly selects a
+configuration; managed runtimes use that convention for unattended activation.
+Otherwise run `plan`, inspect it, then run `apply`.
 EOF
 }
 
@@ -396,6 +413,7 @@ begin_transaction() {
     printf 'configuration\t%s\n' "$FLAKE_CONFIG"
     printf 'revision\t%s\n' "$revision"
     printf 'nix-version\t%s\n' "$NIX_VERSION"
+    printf 'git-auth-mode\t%s\n' "$GIT_AUTH_MODE"
     printf 'nix-sha256\t%s\n' "$NIX_SHA256"
     printf 'installer-sha256\t%s\n' "$installer_sha"
     printf 'phase\tstarted\n'
@@ -645,11 +663,11 @@ run_atyrode() {
 }
 
 managed_activation_plan() {
-  run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --plan
+  run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --plan
 }
 
 activate_configuration() {
-  run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --restart-shell
+  run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --restart-shell
 }
 
 verify_installation() {

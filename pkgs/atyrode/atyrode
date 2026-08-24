@@ -30,7 +30,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  atyrode apply [HOST] [--ref REF] [--repo PATH] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
+  atyrode apply [HOST] [--ref REF] [--repo PATH] [--git-auth-mode ssh|https-gh] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode runtime list|status [local-qwen] [--json]
@@ -2133,12 +2133,13 @@ doctor_system() {
 }
 
 create_runtime_adapter() {
-  local profile="$1" data="$2" source="$3" directory source_literal
+  local profile="$1" data="$2" source="$3" git_auth_mode="$4" directory source_literal
   directory="$(mktemp -d)"
   jq -n --arg profileName "$profile" \
     --arg username "$(jq -r '.username' <<<"$data")" \
     --arg homeDirectory "$(jq -r '.homeDirectory' <<<"$data")" \
-    '{profileName:$profileName,username:$username,homeDirectory:$homeDirectory}' \
+    --arg gitAuthMode "$git_auth_mode" \
+    '{profileName:$profileName,username:$username,homeDirectory:$homeDirectory,gitAuthMode:$gitAuthMode}' \
     >"$directory/identity.json"
   source_literal="$(jq -Rn --arg source "$source" '$source')"
   cat >"$directory/flake.nix" <<EOF
@@ -2156,12 +2157,13 @@ EOF
 }
 
 apply_config() {
-  local requested="" repo="" ref="" plan=0 dry=0 json=0 preview_json=0 restart=0
+  local requested="" repo="" ref="" git_auth_mode="${ATYRODE_GIT_AUTH_MODE:-}" plan=0 dry=0 json=0 preview_json=0 restart=0
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) [[ $# -ge 2 ]] || die "$EX_USAGE" "--repo requires a path"; repo="$2"; shift 2 ;;
       --ref) [[ $# -ge 2 ]] || die "$EX_USAGE" "--ref requires a branch, tag, or full commit"; ref="$2"; shift 2 ;;
+      --git-auth-mode) [[ $# -ge 2 ]] || die "$EX_USAGE" "--git-auth-mode requires ssh or https-gh"; git_auth_mode="$2"; shift 2 ;;
       --plan) plan=1; shift ;;
       --dry-run) dry=1; shift ;;
       --preview-json) preview_json=1; dry=1; shift ;;
@@ -2190,6 +2192,24 @@ apply_config() {
   platform="$(jq -r '.platform' <<<"$data")"
   activation="$(jq -r '.activation' <<<"$data")"
   identity_mode="$(jq -r '.identityMode // "fixed"' <<<"$data")"
+  if [[ "$identity_mode" == runtime ]]; then
+    if [[ -z "$git_auth_mode" ]]; then
+      local persisted_git_auth_mode="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/git-auth-mode"
+      [[ ! -L "$persisted_git_auth_mode" ]] ||
+        die "$EX_DATAERR" "persisted Git auth mode must not be a symlink"
+      if [[ -f "$persisted_git_auth_mode" ]]; then
+        git_auth_mode="$(cat "$persisted_git_auth_mode")"
+      else
+        git_auth_mode=ssh
+      fi
+    fi
+    case "$git_auth_mode" in
+      ssh | https-gh) ;;
+      *) die "$EX_USAGE" "Git auth mode must be ssh or https-gh" ;;
+    esac
+  else
+    git_auth_mode=ssh
+  fi
   [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
   [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
   [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
@@ -2241,14 +2261,15 @@ apply_config() {
   local output
   output="$(jq -nc --arg host "$host" --arg repository "$repository" --arg system "$expected_system" \
     --arg user "$expected_user" --arg homeDirectory "$expected_home" \
-    --arg identityMode "$identity_mode" --arg activation "$activation" --arg backend "$backend" \
+    --arg identityMode "$identity_mode" --arg gitAuthMode "$git_auth_mode" \
+    --arg activation "$activation" --arg backend "$backend" \
     --arg revision "$revision" --arg resolvedRevision "$resolved_revision" --arg source "$source" \
     --arg installable "$installable" --arg mutationBoundary "$mutation_boundary" \
     --argjson dirty "$dirty" --argjson capabilities "$(jq -c '.capabilities' <<<"$data")" \
     --argjson windowsPlan "$windows_preflight" \
     '{host:$host,installable:$installable,source:$source,system:$system,user:$user,
-      homeDirectory:$homeDirectory,identityMode:$identityMode,capabilities:$capabilities,
-      activation:$activation,backend:$backend,revision:$revision,
+      homeDirectory:$homeDirectory,identityMode:$identityMode,gitAuthMode:$gitAuthMode,
+      capabilities:$capabilities,activation:$activation,backend:$backend,revision:$revision,
       resolvedRevision:$resolvedRevision,dirty:$dirty,repository:$repository,
       windowsPlan:$windowsPlan,mutationBoundary:$mutationBoundary}')"
   if [[ "$preview_json" == 0 ]]; then
@@ -2267,7 +2288,7 @@ apply_config() {
   local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source"
   if [[ "$identity_mode" == runtime ]]; then
     [[ "$source" != local ]] || adapter_source="path:$flake_source"
-    adapter_dir="$(create_runtime_adapter "$host" "$data" "$adapter_source")"
+    adapter_dir="$(create_runtime_adapter "$host" "$data" "$adapter_source" "$git_auth_mode")"
     activation_flake_source="path:$adapter_dir"
     trap '[[ -z "${adapter_dir:-}" ]] || rm -rf -- "$adapter_dir"' EXIT
   fi
@@ -2328,6 +2349,15 @@ apply_config() {
     temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
     printf '%s\n' "$host" >"$temp"
     mv -f "$temp" "$state_file"
+    if [[ "$identity_mode" == runtime ]]; then
+      local git_auth_mode_file="$state_dir/git-auth-mode"
+      [[ ! -L "$git_auth_mode_file" ]] ||
+        die "$EX_DATAERR" "persisted Git auth mode must not be a symlink"
+      temp="$(mktemp "$state_dir/.git-auth-mode.XXXXXX")"
+      printf '%s\n' "$git_auth_mode" >"$temp"
+      chmod 600 "$temp"
+      mv -f "$temp" "$git_auth_mode_file"
+    fi
     if [[ "$activation" == nixos-wsl ]]; then
       local windows_result
       if ! windows_result="$(windows_reconcile apply "$host" 1)"; then

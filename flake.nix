@@ -543,12 +543,17 @@
           homeDirectory,
           profileName,
           username,
+          gitAuthMode ? "ssh",
         }:
         let
           profile =
             bootstrapProfiles.${profileName} or (throw "unknown portable bootstrap profile ${profileName}");
           identity = publicBootstrapProfile profileName profile // {
-            inherit homeDirectory username;
+            inherit
+              gitAuthMode
+              homeDirectory
+              username
+              ;
           };
         in
         assert lib.assertMsg (
@@ -559,6 +564,10 @@
         assert lib.assertMsg (
           builtins.isString homeDirectory && lib.hasPrefix "/" homeDirectory
         ) "portable bootstrap profile ${profileName} requires an absolute homeDirectory";
+        assert lib.assertMsg (builtins.elem gitAuthMode [
+          "ssh"
+          "https-gh"
+        ]) "portable bootstrap profile ${profileName} requires gitAuthMode ssh or https-gh";
         home-manager.lib.homeManagerConfiguration {
           pkgs = pkgsFor profile.system;
           modules =
@@ -568,6 +577,7 @@
             }
             ++ [
               {
+                atyrode.gitAuthMode = gitAuthMode;
                 home = {
                   inherit homeDirectory username;
                   sessionPath = [
@@ -576,6 +586,7 @@
                   sessionVariables = {
                     ATYRODE_HOST = profileName;
                     ATYRODE_CAPABILITIES = lib.concatStringsSep "," profile.capabilities;
+                    ATYRODE_GIT_AUTH_MODE = gitAuthMode;
                     # Browser-hosted terminals choose fonts on the client, so
                     # server-installed Nerd Fonts cannot supply Code's PUA
                     # glyphs. Keep portable profiles single-cell and readable

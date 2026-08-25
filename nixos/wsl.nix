@@ -71,9 +71,20 @@ in
     "LD_LIBRARY_PATH=/usr/lib/wsl/lib";
 
   programs.zsh.enable = true;
+
+  # SSH access for remote management of the WSL instance.
+  services.openssh = {
+    enable = true;
+    startWhenNeeded = true;
+    settings.PasswordAuthentication = false;
+  };
+
   users.users.${username} = {
     shell = pkgs.zsh;
     extraGroups = [ "docker" ];
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOG2gDla8zu6J8xeBsssLwx5BL3AyduQtkNeMYV4MjbS"
+    ];
   };
 
   atyrode.dotfiles.hostRegistry = hostRegistry;

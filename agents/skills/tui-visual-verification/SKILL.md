@@ -192,11 +192,10 @@ fi
 
 You MUST NEVER run `tmux kill-server`. It destroys every session belonging to
 the user, not just yours. Development hosts run long-lived work inside tmux -
-Orca hosts its panes there, so `orca serve` and its Xvfb child are pane
-children - and killing the server takes all of it down, losing scrollback and
-shell state that nothing can restore. Worse, a hard-killed `orca serve` strands
-its Xvfb on display :99 and wedges every later start. Having already killed your
-own session by name, `kill-server` adds no cleanup and unbounded blast radius.
+agents, servers, watchers all live as pane children - and killing the server
+takes all of it down, losing scrollback and shell state that nothing can
+restore. Having already killed your own session by name, `kill-server` adds no
+cleanup and unbounded blast radius.
 
 Fixed paths are the same mistake in smaller form: a shared `/tmp/ttyd.pid` will
 collide with a concurrent run, or with an unrelated ttyd, and you will kill

@@ -53,8 +53,8 @@ vi-cursor = "#70C0B1"
 selection-foreground = "#282C34"
 selection-background = "#FFFFFF"
 
-# Rio owns terminal tabs and splits while Orca owns worktree and agent-terminal
-# orchestration. Tab is portable across macOS, Linux, and Windows.
+# Rio owns terminal tabs and splits; Tab navigation is portable across macOS,
+# Linux, and Windows.
 [navigation]
 mode = "Tab"
 use-split = true

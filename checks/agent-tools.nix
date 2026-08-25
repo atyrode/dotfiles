@@ -1214,7 +1214,7 @@ in
   # this derivation, and earlyoom is a Linux-only package.
   resource-guard = pkgs.runCommand "check-agent-resource-guard" { } ''
     # Account for the stack on app.slice, but do not impose a hard ceiling.
-    # MemoryMax cannot distinguish state-owning Orca/OMP processes from their
+    # MemoryMax cannot distinguish state-owning harness processes from their
     # recreatable workers; earlyoom below can, so it must see host-wide pressure.
     dropIn=${lib.escapeShellArg linuxSliceDropIn}
     grep -Fqx '[Slice]' <<<"$dropIn"
@@ -1240,17 +1240,17 @@ in
     grep -Fq -- '--avoid' "$guard"
 
     # Victim policy is the point of the flags, so assert the membership rather
-    # than their presence. Orca and an `omp` session own state that cannot be
-    # reconstructed - panes, worktrees, conversation history - and Orca's Xvfb
-    # additionally strands the :99 lock when hard-killed, so all three belong on
-    # the avoid side and must never drift back into --prefer. What a session
-    # spawns is the unbounded, individually recreatable half and stays preferred.
+    # than their presence. An `omp` session and the tmux server it lives in own
+    # state that cannot be reconstructed - panes, worktrees, conversation
+    # history - so both belong on the avoid side and must never drift back into
+    # --prefer. What a session spawns is the unbounded, individually recreatable
+    # half and stays preferred.
     preferList=$(grep -o -- "--prefer '[^']*'" "$guard")
     avoidList=$(grep -o -- "--avoid '[^']*'" "$guard")
     for expendable in bun node chrome MainThread; do
       grep -Fq "$expendable" <<<"$preferList"
     done
-    for protected in orca-ide Xvfb omp; do
+    for protected in omp; do
       grep -Fq "$protected" <<<"$avoidList"
       ! grep -Fq "$protected" <<<"$preferList"
     done

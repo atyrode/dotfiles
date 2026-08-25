@@ -11,10 +11,7 @@ let
   rgcfg = cfg.resourceGuard;
   managedSkills = pkgs.symlinkJoin {
     name = "atyrode-agent-skills";
-    paths = [
-      ../../agents/skills
-    ]
-    ++ lib.optional (builtins.elem "desktop" config.atyrode.capabilities.selected) ../../agents/desktop-skills;
+    paths = [ ../../agents/skills ];
   };
   ollamaBin = lib.getExe pkgs.ollama;
   # Pull the generator's classifier model to disk once the daemon is up (only if
@@ -79,14 +76,14 @@ let
   # Nice=/OOMScoreAdjust= on the unit: upstream recommends both, but they need
   # privileges a user service does not have and would make it fail to start.
   #
-  # Victim policy targets the work, not the things that own it. An `omp` session
-  # holds conversation state and in-flight edits that nothing can reconstruct,
-  # and Orca is the container those sessions live in - killing it discards every
-  # pane and worktree at once, and its `Xvfb` child owns the global `:99` lock
-  # that a hard kill strands (see pkgs/orca-ide). What a session *spawns* is the
-  # opposite: language servers, watchers, bundlers and headless Chrome are the
-  # unbounded half, they are what actually grows, and every one of them is
-  # recreated on demand. So the harness is avoided and its children preferred.
+  # Victim policy targets the work, not the things that own it. An `omp`
+  # session holds conversation state and in-flight edits that nothing can
+  # reconstruct, and the terminal and machine infrastructure around it (tmux,
+  # sshd, systemd, zsh) anchors even more of it. What a session *spawns* is
+  # the opposite: language servers, watchers, bundlers and headless Chrome
+  # are the unbounded half, they are what actually grows, and every one of
+  # them is recreated on demand. So the harness and its anchors are avoided;
+  # its children preferred.
   # `MainThread` is in that list because Node renames the main thread of the
   # TypeScript servers, which are routinely the single largest processes here.
   #
@@ -98,7 +95,7 @@ let
       -m ${toString rgcfg.earlyoom.memoryPercent} \
       -s ${toString rgcfg.earlyoom.swapPercent} \
       -r 0 \
-      --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*|orca-ide|Xvfb|omp)$' \
+      --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*|omp)$' \
       --prefer '^(bun|node|chrome|MainThread)$'
   '';
 
@@ -182,8 +179,8 @@ in
       # The agent stack (OMP sessions, their language servers, Chrome, and bun
       # workers) runs under the user manager's app.slice. Account for it there,
       # but let host-wide pressure reach earlyoom: unlike a cgroup MemoryMax
-      # kill, earlyoom can preserve Orca and OMP while shedding their
-      # individually recreatable workers.
+      # kill, earlyoom can preserve state-owning harness processes while
+      # shedding their individually recreatable workers.
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
@@ -228,7 +225,7 @@ in
         description = ''
           MemoryMax for app.slice. The default deliberately leaves the hard
           ceiling disabled: a cgroup OOM kill cannot distinguish state-owning
-          Orca/OMP processes from recreatable workers, while earlyoom can.
+          harness processes from recreatable workers, while earlyoom can.
           Set a finite value only when bounding the entire slice matters more
           than preserving its sessions.
         '';

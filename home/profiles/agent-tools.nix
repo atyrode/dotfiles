@@ -1,10 +1,14 @@
-{ lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     ../../modules/home/agent-tools.nix
     ../claude.nix
     ../codex.nix
-    ../orca.nix
   ];
 
   atyrode.agentTools.enable = true;
@@ -27,18 +31,63 @@
       codex
       jetbrains-mono
       nerd-fonts.symbols-only
-      # npx supports Orca's skill registry and powers its remote SSH relay.
+      # General-purpose JS runtime for agent tooling and one-off npx calls.
       nodejs_24
       tmux
     ])
     ++ lib.optionals pkgs.stdenv.isLinux [
       pkgs.bubblewrap
-      # Orca terminals run inside an AppImage FHS root that masks the host
-      # /usr. Carry the user-service and process clients agents need to inspect
-      # the host through its mounted D-Bus socket and /proc.
+      # Agents inspect host user services and processes; carry the process
+      # and user-service clients they need for that.
       pkgs.procps
       pkgs.systemd
     ];
+
+  # One-time reconciliation for dropping the Orca integration: removes the
+  # user-local launchers Orca's headless installer created and its mutable
+  # state directory. Drop this block once every managed host has applied it.
+  home.activation.removeOrcaArtifacts = lib.mkIf pkgs.stdenv.isLinux (
+    lib.hm.dag.entryAfter
+      [
+        "installPackages"
+        "linkGeneration"
+      ]
+      ''
+        binDirectory=${lib.escapeShellArg "${config.home.homeDirectory}/.local/bin"}
+        orcaState=${lib.escapeShellArg "${config.home.homeDirectory}/.orca"}
+
+        orcaIde="$binDirectory/orca-ide"
+        orcaIdeTarget="$(${pkgs.coreutils}/bin/readlink "$orcaIde" 2>/dev/null || :)"
+        case "$orcaIdeTarget" in
+          /nix/store/*-orca-ide-*-extracted/resources/bin/orca-ide)
+            if [[ -v DRY_RUN ]]; then
+              echo "Would remove Orca-managed launcher $orcaIde"
+            else
+              ${pkgs.coreutils}/bin/rm -f "$orcaIde"
+            fi
+            ;;
+        esac
+
+        orcaLauncher="$binDirectory/orca"
+        if [[ -f "$orcaLauncher" && ! -L "$orcaLauncher" ]] \
+          && ${pkgs.gnugrep}/bin/grep -qF '# orca-serve-bare-orca-dispatcher' "$orcaLauncher"; then
+          if [[ -v DRY_RUN ]]; then
+            echo "Would remove Orca-managed dispatcher $orcaLauncher"
+          else
+            ${pkgs.coreutils}/bin/rm -f "$orcaLauncher"
+          fi
+        fi
+
+        if [[ -e "$orcaState" ]]; then
+          if [[ -v DRY_RUN ]]; then
+            echo "Would remove Orca state directory $orcaState"
+          else
+            ${pkgs.coreutils}/bin/chmod -R u+w "$orcaState" || :
+            ${pkgs.coreutils}/bin/rm -rf "$orcaState"
+          fi
+        fi
+      ''
+  );
 
   # Retire only the mutable OMP extension installed by the removed multiplexer
   # integration. Preserve its state and worktree directories as user data.

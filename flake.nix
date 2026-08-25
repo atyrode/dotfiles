@@ -351,7 +351,6 @@
         "code"
         "codex"
         "atyrode-codex-seed"
-        "orca-ide"
         "omp"
         "omp-agents"
         "omp-configured"
@@ -377,7 +376,6 @@
             code = final.callPackage ./pkgs/code { };
             codex = final.callPackage ./pkgs/codex-bin { };
             codex-seed = final.callPackage ./pkgs/codex-seed { };
-            orca-ide = final.callPackage ./pkgs/orca-ide { };
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
             omp-configured = final.callPackage ./pkgs/omp-configured { };
@@ -722,7 +720,6 @@
             code
             codex
             codex-seed
-            orca-ide
             omp
             omp-agents
             omp-configured
@@ -875,10 +872,6 @@
           bootstrap = import ./checks/bootstrap.nix { inherit pkgs; };
           codex-seed = import ./checks/codex-seed.nix { inherit pkgs; };
           get-entrypoint = import ./checks/get-sh.nix { inherit pkgs; };
-          orca = import ./checks/orca.nix {
-            inherit lib pkgs;
-            hostConfigs = canonicalHomeConfigs;
-          };
           rio = import ./checks/rio.nix {
             inherit lib pkgs;
             hostConfigs = canonicalHomeConfigs;

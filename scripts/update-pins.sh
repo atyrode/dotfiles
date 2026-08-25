@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh selected repository-owned binary pins to their latest releases.
-# With no package names, refresh OMP, code, Codex, and Orca. Prints one line
+# With no package names, refresh OMP, code, and Codex. Prints one line
 # per bump; exits quietly when current. Requires curl, jq, awk, and nix.
 set -euo pipefail
 
@@ -9,9 +9,9 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 targets=("$@")
 for target in "${targets[@]}"; do
   case "$target" in
-    omp | code | codex | orca) ;;
+    omp | code | codex) ;;
     *)
-      printf 'usage: %s [omp|code|codex|orca]...\n' "${0##*/}" >&2
+      printf 'usage: %s [omp|code|codex]...\n' "${0##*/}" >&2
       exit 2
       ;;
   esac
@@ -80,23 +80,4 @@ if wants codex; then
   bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
     'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
     codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
-fi
-
-if wants orca; then
-  bump orca "$repo_root/pkgs/orca-ide/default.nix" stablyai/orca v \
-    'https://github.com/stablyai/orca/releases/download/@tag@/@asset@' \
-    orca-linux.AppImage orca-linux-arm64.AppImage orca-macos-x64.dmg orca-macos-arm64.dmg
-fi
-
-if wants orca; then
-  # Orca's reviewed desktop skill is kept at the same release as its package.
-  # checks/orca.nix blocks automatic bumps until that skill is re-reviewed.
-  orca_pin="$(current_version "$repo_root/pkgs/orca-ide/default.nix")"
-  orca_skill="$(grep -oE 'ORCA_SKILL_UPSTREAM_VERSION=[0-9.]+' \
-    "$repo_root/agents/desktop-skills/computer-use/SKILL.md" |
-    grep -oE '[0-9.]+$')"
-  if [[ "$orca_pin" != "$orca_skill" ]]; then
-    printf 'Orca computer-use skill vendored at %s lags pin %s: review https://github.com/stablyai/orca/tree/v%s/skills, then refresh computer-use\n' \
-      "$orca_skill" "$orca_pin" "$orca_pin"
-  fi
 fi

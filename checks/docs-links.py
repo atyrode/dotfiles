@@ -20,7 +20,7 @@ link_re = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 skill_re = re.compile(r"^skill://([^/]+)(?:/(.*))?$")
 # Every tree that contributes skills to a session, so a skill:// link is checked
 # against the same set of names the runtime will discover.
-skill_roots = ["agents/skills", "agents/desktop-skills", ".agents/skills"]
+skill_roots = ["agents/skills", ".agents/skills"]
 # A skill:// target the runtime would refuse. Distinct from None, which means
 # "not a skill URL at all" and falls back to plain relative resolution.
 REJECTED = object()

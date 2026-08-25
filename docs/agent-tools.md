@@ -343,62 +343,6 @@ instead.
 The readable managed copies are linked under `~/.config/omp/`. Edit their
 sources in this repository instead of editing the links.
 
-## Orca
-
-Orca is installed on every `agent-tools` host. The repository
-pins one official release for Apple Silicon macOS and x86_64/aarch64 Linux;
-the native Windows control plane installs `StablyAI.Orca` through WinGet and
-then lets Orca own its normal update channel. Node 24 supplies `npx` for Orca's
-skill-registry and SSH-relay workflows. The Linux package includes OpenSSH for
-Git remotes and Xvfb so a headless host can start the runtime directly:
-
-```bash
-orca serve --port 6768 --pairing-address <reachable-private-address>
-```
-
-On macOS, Nix owns the signed app bundle while Orca owns its supported
-`/usr/local/bin/orca` or `~/.local/bin/orca` launcher; exposing the bundle
-executable through the Nix profile makes Orca correctly treat it as a foreign
-CLI. The reviewed `computer-use` skill remains dotfiles-owned and updates with
-the package pin, not through Orca's mutable in-app skill updater.
-
-The desktop app can also act as a server without a separate daemon: use
-**Settings → Remote Orca Servers → Advertise this app as a server → New Link**.
-The generated access grant is revocable and secret-bearing. Keep it on a
-private network path such as Tailscale, a LAN, or an SSH tunnel.
-
-There is deliberately no systemd or launchd service. Start `orca serve`
-manually on the VPS; the consuming infrastructure owns its service lifecycle,
-pairing address, firewall, monitoring, and secrets.
-Dotfiles own the cross-platform binary, runtime dependencies, and the reviewed
-`computer-use` skill, which is deployed only when the host has the `desktop`
-capability. The `orca-cli` skill is not deployed; OMP already exposes Orca CLI
-operations directly. Orca's `orchestration` skill is also deliberately not
-deployed because it collides with OMP's built-in orchestration system. On
-Linux, the Nix profile always provides
-`orca` and `orca-ide`; Orca may additionally create user-local launchers for
-managed terminals. Home Manager never creates those paths, but activation
-removes files
-carrying Orca's own launcher signatures so a package upgrade resolves through
-the new Nix profile. The next `orca serve` recreates matching mutable launchers.
-See the upstream [Remote Orca Servers documentation](https://www.onorca.dev/docs/remote-servers)
-for pairing and client setup.
-
-Orca does not currently expose a supported declarative settings file, settings
-CLI, or policy layer. Its UI writes `orca-data.json` inside Electron's user-data
-directory; that single mutable database mixes global settings with repositories,
-worktrees, layouts, terminal state, integrations, encrypted secrets, and pairing
-state. Nix must not replace or merge that private schema. Configure Orca in the
-app and let it own this mutable state. Dotfiles can revisit
-declarative settings if upstream publishes a stable config or policy interface;
-the existing `ORCA_USER_DATA_PATH` variable selects a data directory but does
-not turn its contents into a supported configuration contract.
-
-Claude's required Orca hooks remain declarative, but activation installs
-`~/.claude/settings.json` as a writable regular file rather than a Nix-store
-symlink. This lets Orca create its backup and idempotently reconcile hooks
-without `EACCES`; the next activation restores the reviewed template.
-
 ## Seeded plain-omp defaults
 
 `omp/plain-seed.yml` holds the operator's agreed defaults for plain `omp` —
@@ -448,10 +392,8 @@ pty-backed automation.
 ## Skills
 
 Generic, cross-project skills belong in `agents/skills/` and Home Manager links
-them to `~/.agents/skills`. Capability-specific skills live under
-`agents/desktop-skills/` and join that tree only on desktop profiles. OMP
-discovers `.agent/skills` and `.agents/skills` from the home directory and
-while walking up a project tree.
+them to `~/.agents/skills`. OMP discovers `.agent/skills` and `.agents/skills`
+from the home directory and while walking up a project tree.
 
 Project-specific skills should be committed with the project:
 
@@ -485,7 +427,6 @@ instead of leaving a stale list here.
 |---|---|---|
 | [`ts-react-dead-code-sweep`](../agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
-| [`computer-use`](../agents/desktop-skills/computer-use/SKILL.md) | desktop only | vendored, [stablyai/orca](https://github.com/stablyai/orca) |
 | [`bump-omp-fork`](../.agents/skills/bump-omp-fork/SKILL.md) | this repository | repository-authored |
 | [`contribute-omp-upstream`](../.agents/skills/contribute-omp-upstream/SKILL.md) | this repository | repository-authored |
 
@@ -495,10 +436,8 @@ Public skill text becomes trusted agent instructions the moment it lands in
 `~/.agents/skills`, so a vendored skill carries a provenance marker directly
 below its frontmatter naming the upstream repository, the exact commit, the
 license, and every local change. Refreshing one means reviewing the upstream
-diff, never copying blind. `computer-use` is pinned to the Orca package version
-and `checks/orca.nix` fails the build when the two disagree; a skill with no
-package to track pins a commit instead, and refresh is a deliberate operator
-action.
+diff, never copying blind. A skill with no package to track pins a commit
+instead, and refresh is a deliberate operator action.
 
 ### Turning a skill off
 
@@ -521,18 +460,14 @@ with the skill instead of a machine-wide deny list.
 ## Updating
 
 The `update-pins` workflow refreshes the repository-owned binary pins (OMP,
-Codex, `code`, and Orca) every six hours: `scripts/update-pins.sh` bumps
+Codex, and `code`) every six hours: `scripts/update-pins.sh` bumps
 versions and hashes, a bot pull request runs the full dispatched CI, and a
 green run merges itself. Pass package names to narrow a manual refresh; for
 example, `scripts/update-pins.sh omp` changes only OMP. No arguments retain the
 scheduled all-package behavior.
 
 A red run leaves the pull request open for curation — that is the expected
-outcome when upstream changes bundled content. Orca bumps deliberately stay red
-until its vendored `computer-use` skill is re-reviewed: `checks/orca.nix`
-compares the instruction marker to the package pin because public upstream
-skill text becomes trusted agent instructions and must never refresh without
-review. The pin script prints the upstream review pointer.
+outcome when upstream changes bundled content.
 
 Manual OMP updates MUST follow `.agents/skills/bump-omp-fork/SKILL.md`. The pin
 consumes upstream `can1357/oh-my-pi` release binaries directly (operator

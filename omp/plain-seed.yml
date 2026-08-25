@@ -138,7 +138,7 @@ compaction:
   idleEnabled: true
   asyncEnabled: true
 features:
-  unexpectedStopDetection: true
+  unexpectedStopDetection: smart
 
 defaultThinkingLevel: auto
 personality: pragmatic

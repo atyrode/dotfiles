@@ -3025,7 +3025,7 @@ vault_open_session() {
   status="$(vault_status_value)"
   if [[ "$status" == unauthenticated && "$allow_login" == 1 ]]; then
     interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
-    bw_cli login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
+    bw_cli login >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden login failed"
     status="$(vault_status_value)"
   fi
   case "$status" in

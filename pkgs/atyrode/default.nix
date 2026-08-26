@@ -1,7 +1,9 @@
 {
+  age,
   atyrode-tui,
   atyrode-preview-parser ? atyrode-tui,
   bubblewrap,
+  bitwarden-cli,
   capabilities,
   claude-code,
   codex,
@@ -55,6 +57,7 @@ let
     builtins.toJSON windowsPackages
   );
   rioWindowsConfig = ../../home/rio/config.toml;
+  operatorInfra = ../../inventory/operator-infra.json;
   systemPolicy = ../../inventory/system-boundary.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
@@ -202,6 +205,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
       --replace-fail '@revision@' '${revision}' \
+      --replace-fail '@operator_infra@' '${operatorInfra}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}' \
@@ -211,6 +215,8 @@ stdenvNoCC.mkDerivation {
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils
+          age
+          bitwarden-cli
           curl
           findutils
           gawk

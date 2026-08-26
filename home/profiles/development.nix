@@ -6,6 +6,7 @@
   # manifests.
   home.packages = with pkgs; [
     actionlint
+    bitwarden-cli
     nixd
     nixfmt
     shellcheck

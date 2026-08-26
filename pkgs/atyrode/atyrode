@@ -42,6 +42,10 @@ Usage:
   atyrode runtime shortcut [local-qwen]
   atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
   atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]
+  atyrode vault status [--json]
+  atyrode vault login|lock
+  atyrode vault get NAME
+  atyrode vault put NAME
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -73,6 +77,10 @@ Bitwarden identity, pinned infra checkout, Vars state, and strict SSH path
 without activation, and apply deploys through Clan after confirmation. The
 private age identity is read only after an interactive Bitwarden unlock,
 materialized in temporary storage, never printed, and removed on every exit.
+vault provides exact-name Bitwarden Secure Note storage. get and put sync and
+unlock interactively when needed, then relock only when they opened the session.
+put accepts secret material only from hidden terminal input or stdin; get is the
+explicit secret-output boundary. Duplicate names and non-note items are refused.
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
@@ -2996,10 +3004,180 @@ cmd_rollback() {
   printf 'atyrode: now on generation %s\n' "$target" >&2
 }
 
-infra_bw() {
+bw_cli() {
   local command=bw
   [[ "$test_hooks" != 1 || -z "${ATYRODE_BW:-}" ]] || command="$ATYRODE_BW"
   "$command" "$@"
+}
+
+vault_session=""
+vault_unlocked_here=0
+
+vault_status_value() {
+  bw_cli status | jq -er '.status' ||
+    die "$EX_UNAVAILABLE" "cannot read Bitwarden status"
+}
+
+vault_open_session() {
+  local allow_login="$1" status
+  vault_session=""
+  vault_unlocked_here=0
+  status="$(vault_status_value)"
+  if [[ "$status" == unauthenticated && "$allow_login" == 1 ]]; then
+    interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+    bw_cli login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
+    status="$(vault_status_value)"
+  fi
+  case "$status" in
+    unlocked) ;;
+    locked)
+      interactive || die "$EX_UNAVAILABLE" "Bitwarden unlock requires an interactive terminal"
+      vault_session="$(bw_cli unlock --raw)" ||
+        die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
+      export BW_SESSION="$vault_session"
+      vault_unlocked_here=1
+      ;;
+    unauthenticated)
+      die "$EX_UNAVAILABLE" "Bitwarden is not logged in; run 'atyrode vault login'"
+      ;;
+    *) die "$EX_SOFTWARE" "unsupported Bitwarden status: $status" ;;
+  esac
+}
+
+vault_close_session() {
+  if [[ "${vault_unlocked_here:-0}" == 1 ]]; then
+    bw_cli lock >/dev/null 2>&1 || true
+  fi
+  unset BW_SESSION
+  vault_session=""
+  vault_unlocked_here=0
+}
+
+vault_secure_temp_dir() {
+  local prefix="$1" root
+  if [[ -d /dev/shm && -w /dev/shm ]]; then
+    root=/dev/shm
+  else
+    root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  fi
+  umask 077
+  mktemp -d "$root/$prefix.XXXXXX"
+}
+
+vault_find_exact_item() {
+  local name="$1" destination="$2"
+  bw_cli list items --search "$name" |
+    jq -e --arg name "$name" '[.[] | select(.name == $name)]' >"$destination" ||
+    die "$EX_UNAVAILABLE" "could not search the Bitwarden vault"
+  local count
+  count="$(jq -er 'length' "$destination")"
+  [[ "$count" -le 1 ]] ||
+    die "$EX_DATAERR" "Bitwarden contains duplicate items named '$name'"
+}
+
+cmd_vault() {
+  local action="${1:-}"
+  case "$action" in
+    status | login | lock | get | put) shift ;;
+    *) die "$EX_USAGE" "vault expects status, login, lock, get, or put" ;;
+  esac
+
+  if [[ "$action" == status ]]; then
+    local json=0
+    if [[ "${1:-}" == --json ]]; then
+      json=1
+      shift
+    fi
+    [[ $# == 0 ]] || die "$EX_USAGE" "vault status accepts only --json"
+    if [[ "$json" == 1 ]]; then
+      bw_cli status
+    else
+      printf 'status: %s\n' "$(vault_status_value)"
+    fi
+    return
+  fi
+
+  guard_production_mutation "vault $action"
+  case "$action" in
+    login)
+      [[ $# == 0 ]] || die "$EX_USAGE" "vault login takes no arguments"
+      local status
+      status="$(vault_status_value)"
+      if [[ "$status" == unauthenticated ]]; then
+        interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+        bw_cli login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
+      else
+        printf 'atyrode: Bitwarden is already %s\n' "$status"
+      fi
+      ;;
+    lock)
+      [[ $# == 0 ]] || die "$EX_USAGE" "vault lock takes no arguments"
+      bw_cli lock >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden lock failed"
+      printf 'atyrode: Bitwarden vault locked\n'
+      ;;
+    get | put)
+      [[ $# == 1 && -n "$1" ]] ||
+        die "$EX_USAGE" "vault $action expects exactly one item name"
+      local name="$1" tmp matches id type secret_file=""
+      tmp="$(vault_secure_temp_dir atyrode-vault)"
+      matches="$tmp/matches.json"
+      vault_command_cleanup() {
+        rm -rf -- "${tmp:-}"
+        vault_close_session
+      }
+      trap vault_command_cleanup EXIT HUP INT TERM
+      vault_open_session 0
+      bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
+      vault_find_exact_item "$name" "$matches"
+      if [[ "$(jq -er 'length' "$matches")" == 1 ]]; then
+        id="$(jq -er '.[0].id' "$matches")"
+        type="$(jq -er '.[0].type' "$matches")"
+        [[ "$type" == 2 ]] ||
+          die "$EX_DATAERR" "Bitwarden item '$name' exists but is not a Secure Note"
+      else
+        id=""
+      fi
+
+      if [[ "$action" == get ]]; then
+        [[ -n "$id" ]] || die "$EX_NOINPUT" "Bitwarden Secure Note '$name' does not exist"
+        bw_cli get item "$id" |
+          jq -er '.notes | select(type == "string")' ||
+          die "$EX_DATAERR" "Bitwarden Secure Note '$name' has no text value"
+      else
+        secret_file="$tmp/secret"
+        if [[ -t 0 ]]; then
+          local secret
+          read -r -s -p "Secret value: " secret ||
+            die "$EX_DATAERR" "could not read the secret value"
+          printf '\n' >&2
+          printf '%s' "$secret" >"$secret_file"
+          secret=""
+        else
+          cat >"$secret_file"
+        fi
+        [[ -s "$secret_file" ]] || die "$EX_DATAERR" "refusing to store an empty secret"
+        if [[ -n "$id" ]]; then
+          bw_cli get item "$id" |
+            jq -e --arg name "$name" --rawfile value "$secret_file" \
+              '.name = $name | .type = 2 | .secureNote = {"type": 0} | .notes = $value' |
+            bw_cli encode |
+            bw_cli edit item "$id" >/dev/null ||
+            die "$EX_UNAVAILABLE" "could not update Bitwarden Secure Note '$name'"
+          printf 'atyrode: updated Bitwarden Secure Note %s\n' "$name" >&2
+        else
+          bw_cli get template item |
+            jq -e --arg name "$name" --rawfile value "$secret_file" \
+              '.name = $name | .type = 2 | .secureNote = {"type": 0} | .notes = $value' |
+            bw_cli encode |
+            bw_cli create item >/dev/null ||
+            die "$EX_UNAVAILABLE" "could not create Bitwarden Secure Note '$name'"
+          printf 'atyrode: created Bitwarden Secure Note %s\n' "$name" >&2
+        fi
+      fi
+      vault_command_cleanup
+      trap - EXIT HUP INT TERM
+      ;;
+  esac
 }
 
 infra_age_keygen() {
@@ -3104,47 +3282,19 @@ cmd_infra() {
   [[ -f "$repo/flake.nix" && -f "$repo/clan.nix" ]] ||
     die "$EX_DATAERR" "not a tyrode-infra checkout: $repo"
 
-  local status session="" unlocked_here=0
-  status="$(infra_bw status | jq -er '.status')" ||
-    die "$EX_UNAVAILABLE" "cannot read Bitwarden status"
-  if [[ "$status" == unauthenticated && "$action" == setup ]]; then
-    interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
-    infra_bw login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
-    status="$(infra_bw status | jq -er '.status')"
-  fi
-  case "$status" in
-    unlocked) ;;
-    locked)
-      interactive || die "$EX_UNAVAILABLE" "Bitwarden unlock requires an interactive terminal"
-      session="$(infra_bw unlock --raw)" || die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
-      export BW_SESSION="$session"
-      unlocked_here=1
-      ;;
-    unauthenticated)
-      die "$EX_UNAVAILABLE" "Bitwarden is not logged in; run 'atyrode infra setup'"
-      ;;
-    *) die "$EX_SOFTWARE" "unsupported Bitwarden status: $status" ;;
-  esac
+  vault_open_session "$([[ "$action" == setup ]] && printf 1 || printf 0)"
 
-  local temp_root tmp key actual_recipient result=0
-  if [[ -d /dev/shm && -w /dev/shm ]]; then
-    temp_root=/dev/shm
-  else
-    temp_root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
-  fi
-  umask 077
-  tmp="$(mktemp -d "$temp_root/atyrode-infra.XXXXXX")"
+  local tmp key actual_recipient result=0
+  tmp="$(vault_secure_temp_dir atyrode-infra)"
   key="$tmp/operator.agekey"
   infra_cleanup() {
     rm -rf -- "${tmp:-}"
-    unset AGE_KEYFILE BW_SESSION
-    if [[ "${unlocked_here:-0}" == 1 ]]; then
-      infra_bw lock >/dev/null 2>&1 || true
-    fi
+    unset AGE_KEYFILE
+    vault_close_session
   }
   trap infra_cleanup EXIT HUP INT TERM
 
-  infra_bw get item "$item_id" |
+  bw_cli get item "$item_id" |
     jq -er --arg name "$item_name" \
       'select(.name == $name) | .notes | select(type == "string" and startswith("AGE-SECRET-KEY-"))' >"$key" ||
     die "$EX_DATAERR" "Bitwarden does not contain the reviewed Tyrode operator identity"
@@ -3276,6 +3426,7 @@ main() {
     rollback) cmd_rollback "$@" ;;
     runtime) exec "$atyrode_runtime" "$@" ;;
     infra) cmd_infra "$@" ;;
+    vault) cmd_vault "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

@@ -124,12 +124,37 @@ pkgs.runCommand "check-atyrode-cli"
     cat > "$TMPDIR/bin/bw" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "$TMPDIR/bw-args"
-    case "''${1:-}" in
+    case "$*" in
       status) printf '%s\n' '{"status":"unlocked"}' ;;
-      get)
+      sync|lock|login) ;;
+      'list items --search vault-existing')
+        printf '%s\n' '[{"id":"vault-existing-id","name":"vault-existing","type":2}]'
+        ;;
+      'list items --search vault-login')
+        printf '%s\n' '[{"id":"vault-login-id","name":"vault-login","type":1}]'
+        ;;
+      'list items --search vault-duplicate')
+        printf '%s\n' \
+          '[{"id":"duplicate-1","name":"vault-duplicate","type":2},{"id":"duplicate-2","name":"vault-duplicate","type":2}]'
+        ;;
+      'list items --search '*) printf '%s\n' '[]' ;;
+      'get template item')
+        printf '%s\n' '{"type":2,"name":"","notes":null,"secureNote":{"type":0}}'
+        ;;
+      'get item vault-existing-id')
+        printf '%s\n' '{"id":"vault-existing-id","name":"vault-existing","type":2,"notes":"VAULT-OLD-SECRET","secureNote":{"type":0}}'
+        ;;
+      'get item '*)
         printf '%s\n' '{"id":"f0b39ebf-62ae-4198-808b-b4b200002e8c","name":"Tyrode Clan operator age identity","notes":"AGE-SECRET-KEY-1TESTONLY"}'
         ;;
-      lock) ;;
+      encode)
+        tee "$TMPDIR/bw-encoded-input" >/dev/null
+        printf '%s\n' 'ENCODED'
+        ;;
+      'create item'|'edit item '*)
+        test "$(cat)" = ENCODED
+        printf '%s\n' '{"notes":"VAULT-WRITE-RESPONSE-MUST-NOT-PRINT"}'
+        ;;
       *) exit 64 ;;
     esac
     EOF
@@ -1606,6 +1631,46 @@ pkgs.runCommand "check-atyrode-cli"
       echo 'inventory must require the explicit JSON contract' >&2
       exit 1
     fi
+    vault_test_env=(env ATYRODE_BW="$TMPDIR/bin/bw")
+    vault_status="$("''${vault_test_env[@]}" atyrode vault status --json)"
+    jq -e '.status == "unlocked"' <<<"$vault_status" >/dev/null
+    vault_get="$("''${vault_test_env[@]}" atyrode vault get vault-existing)"
+    test "$vault_get" = VAULT-OLD-SECRET
+
+    printf '%s' VAULT-NEW-SECRET |
+      "''${vault_test_env[@]}" atyrode vault put vault-new \
+        >"$TMPDIR/vault-put-out" 2>"$TMPDIR/vault-put-err"
+    test ! -s "$TMPDIR/vault-put-out"
+    grep -qF 'created Bitwarden Secure Note vault-new' "$TMPDIR/vault-put-err"
+    jq -e '.name == "vault-new" and .type == 2 and .secureNote.type == 0
+      and .notes == "VAULT-NEW-SECRET"' "$TMPDIR/bw-encoded-input" >/dev/null
+    ! grep -qF 'VAULT-NEW-SECRET' "$TMPDIR/bw-args"
+    ! grep -qF 'VAULT-WRITE-RESPONSE-MUST-NOT-PRINT' \
+      "$TMPDIR/vault-put-out" "$TMPDIR/vault-put-err"
+
+    printf '%s' VAULT-UPDATED-SECRET |
+      "''${vault_test_env[@]}" atyrode vault put vault-existing \
+        >"$TMPDIR/vault-edit-out" 2>"$TMPDIR/vault-edit-err"
+    test ! -s "$TMPDIR/vault-edit-out"
+    grep -qF 'updated Bitwarden Secure Note vault-existing' "$TMPDIR/vault-edit-err"
+    jq -e '.id == "vault-existing-id" and .notes == "VAULT-UPDATED-SECRET"' \
+      "$TMPDIR/bw-encoded-input" >/dev/null
+    grep -qF 'edit item vault-existing-id' "$TMPDIR/bw-args"
+
+    if "''${vault_test_env[@]}" atyrode vault get vault-missing >/dev/null 2>&1; then
+      echo 'vault get must reject a missing Secure Note' >&2
+      exit 1
+    fi
+    if "''${vault_test_env[@]}" atyrode vault get vault-login >/dev/null 2>&1; then
+      echo 'vault get must reject a non-note item' >&2
+      exit 1
+    fi
+    if "''${vault_test_env[@]}" atyrode vault get vault-duplicate >/dev/null 2>&1; then
+      echo 'vault get must reject duplicate exact names' >&2
+      exit 1
+    fi
+    ! grep -qxF lock "$TMPDIR/bw-args"
+
     infra_test_env=(
       env
       ATYRODE_AGE_KEYGEN="$TMPDIR/bin/age-keygen"
@@ -1652,6 +1717,8 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF 'atyrode capabilities list [--json]' <<<"$help"
     grep -qF 'atyrode capabilities show [HOST] [--json]' <<<"$help"
     grep -qF 'atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]' <<<"$help"
+    grep -qF 'atyrode vault get NAME' <<<"$help"
+    grep -qF 'atyrode vault put NAME' <<<"$help"
     unset _ATYRODE_TEST_INVENTORY
 
     mkdir "$out"

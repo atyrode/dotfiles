@@ -80,8 +80,6 @@ run the same apply command again.
 - **dua** - Disk usage analyzer
 - **Docker** + **docker-compose** - Linux clients in the `containers` capability
 - **OrbStack** - Docker/Linux runtime on macOS
-- **dive** - Docker image inspector
-- **fastfetch** - Explicit system information command (not a startup side effect)
 - **Explicit capabilities** - ffmpeg (`media`), Android tools/scrcpy (`mobile`),
   and nmap/socat (`security`)
 

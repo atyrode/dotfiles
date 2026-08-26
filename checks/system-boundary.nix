@@ -59,12 +59,10 @@ let
   expectedContainerPackages =
     if lib.hasSuffix "-darwin" system then
       [
-        "dive"
         "orbstack"
       ]
     else
       [
-        "dive"
         "docker"
         "docker-compose"
       ];

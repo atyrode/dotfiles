@@ -35,7 +35,6 @@ in
       curl
       dua
       fd
-      fastfetch
       file
       gnutar
       gzip
@@ -43,7 +42,6 @@ in
       less
       lsof
       nano
-      ncdu
       ncurses
       ripgrep
       rsync

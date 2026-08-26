@@ -3369,10 +3369,10 @@ cmd_infra() {
           --arg targetHost "$target" --arg drvPath "$drv_path" \
           '{ok:true,action:"plan",machine:$machine,repository:$repository,
             targetHost:$targetHost,drvPath:$drvPath,hostKeyCheck:"strict",
-            buildHost:$targetHost,privateMaterialPrinted:false}'
+            buildHost:"localhost",privateMaterialPrinted:false}'
       else
         printf 'machine: %s\nrepository: %s\ntarget: %s\nbuild host: %s\nhost key check: strict\nderivation: %s\n' \
-          "$machine" "$repo" "$target" "$target" "$drv_path"
+          "$machine" "$repo" "$target" "localhost" "$drv_path"
         printf 'atyrode: plan passed; no activation was performed\n'
       fi
     else
@@ -3386,7 +3386,7 @@ cmd_infra() {
       fi
       infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
         clan machines update "$machine" --flake "$repo" \
-        --target-host "$target" --build-host "$target" --upload-inputs \
+        --target-host "$target" --build-host localhost --upload-inputs \
         --host-key-check strict ||
         die "$EX_SOFTWARE" "Clan deployment failed"
       infra_ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \

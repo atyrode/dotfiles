@@ -1709,7 +1709,7 @@ pkgs.runCommand "check-atyrode-cli"
     infra_plan="$("''${infra_test_env[@]}" atyrode infra plan --repo "$TMPDIR/infra" --json)"
     jq -e '.ok and .action == "plan" and .machine == "tyrode-dev-01"
       and .targetHost == "alex@target.example" and .hostKeyCheck == "strict"
-      and .buildHost == "alex@target.example"
+      and .buildHost == "localhost"
       and .drvPath == "/nix/store/test-tyrode-dev-01-system.drv"
       and .privateMaterialPrinted == false' <<<"$infra_plan" >/dev/null
     grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/infra-ssh-args"
@@ -1721,7 +1721,7 @@ pkgs.runCommand "check-atyrode-cli"
       and .targetHost == "alex@target.example" and .verified
       and .privateMaterialPrinted == false' <<<"$infra_apply" >/dev/null
     grep -qF 'clan machines update tyrode-dev-01' "$TMPDIR/infra-nix-args"
-    grep -qF -- '--target-host alex@target.example --build-host alex@target.example --upload-inputs --host-key-check strict' \
+    grep -qF -- '--target-host alex@target.example --build-host localhost --upload-inputs --host-key-check strict' \
       "$TMPDIR/infra-nix-args"
     grep -qF 'alex@target.example atyrode doctor host --json' "$TMPDIR/infra-ssh-args"
     ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_apply"

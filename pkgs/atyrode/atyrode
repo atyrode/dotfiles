@@ -3031,9 +3031,15 @@ vault_open_session() {
   case "$status" in
     unlocked) ;;
     locked)
-      interactive || die "$EX_UNAVAILABLE" "Bitwarden unlock requires an interactive terminal"
-      vault_session="$(bw_cli unlock --raw)" ||
-        die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
+      if interactive; then
+        vault_session="$(bw_cli unlock --raw)" ||
+          die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
+      elif [[ -r /dev/tty && -w /dev/tty ]]; then
+        vault_session="$(bw_cli unlock --raw </dev/tty)" ||
+          die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
+      else
+        die "$EX_UNAVAILABLE" "Bitwarden unlock requires an interactive terminal"
+      fi
       export BW_SESSION="$vault_session"
       vault_unlocked_here=1
       ;;

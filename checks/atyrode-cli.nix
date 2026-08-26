@@ -145,7 +145,7 @@ pkgs.runCommand "check-atyrode-cli"
         printf '%s\n' '{"id":"vault-existing-id","name":"vault-existing","type":2,"notes":"VAULT-OLD-SECRET","secureNote":{"type":0}}'
         ;;
       'get item '*)
-        printf '%s\n' '{"id":"f0b39ebf-62ae-4198-808b-b4b200002e8c","name":"Tyrode Clan operator age identity","notes":"AGE-SECRET-KEY-1TESTONLY"}'
+        printf '%s\n' '{"id":"f0b39ebf-62ae-4198-808b-b4b200002e8c","name":"Tyrode Clan operator age identity","notes":"# created: 2026-08-25T00:00:00Z\n# public key: age1test\nAGE-SECRET-KEY-1TESTONLY"}'
         ;;
       encode)
         tee "$TMPDIR/bw-encoded-input" >/dev/null

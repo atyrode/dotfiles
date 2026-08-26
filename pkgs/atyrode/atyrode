@@ -3318,7 +3318,7 @@ cmd_infra() {
 
   bw_cli get item "$item_id" |
     jq -er --arg name "$item_name" \
-      'select(.name == $name) | .notes | select(type == "string" and startswith("AGE-SECRET-KEY-"))' >"$key" ||
+      'select(.name == $name) | .notes | select(type == "string" and (split("\n") | any(startswith("AGE-SECRET-KEY-"))))' >"$key" ||
     die "$EX_DATAERR" "Bitwarden does not contain the reviewed Tyrode operator identity"
   actual_recipient="$(infra_age_keygen -y "$key")" ||
     die "$EX_DATAERR" "Bitwarden Tyrode operator identity is invalid"

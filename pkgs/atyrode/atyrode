@@ -15,6 +15,7 @@ readonly tool_inventory='@tools@'
 readonly windows_package_inventory='@windows_packages@'
 readonly rio_windows_config='@rio_windows_config@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
+readonly operator_infra='@operator_infra@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
 readonly flake_remote_url="https://github.com/${flake_ref#github:}"
@@ -40,6 +41,7 @@ Usage:
   atyrode runtime boot
   atyrode runtime shortcut [local-qwen]
   atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
+  atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -65,6 +67,12 @@ keep-or-reset review on a terminal.
 inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
+infra provides the portable controller for the externally owned tyrode-dev-01
+NixOS host. setup performs one-time Clan age enrollment, plan verifies the
+Bitwarden identity, pinned infra checkout, Vars state, and strict SSH path
+without activation, and apply deploys through Clan after confirmation. The
+private age identity is read only after an interactive Bitwarden unlock,
+materialized in temporary storage, never printed, and removed on every exit.
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
@@ -2988,10 +2996,252 @@ cmd_rollback() {
   printf 'atyrode: now on generation %s\n' "$target" >&2
 }
 
+infra_bw() {
+  local command=bw
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_BW:-}" ]] || command="$ATYRODE_BW"
+  "$command" "$@"
+}
+
+infra_age_keygen() {
+  local command=age-keygen
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_AGE_KEYGEN:-}" ]] || command="$ATYRODE_AGE_KEYGEN"
+  "$command" "$@"
+}
+
+infra_nix() {
+  local command=nix
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX:-}" ]] || command="$ATYRODE_NIX"
+  "$command" "$@"
+}
+
+infra_ssh() {
+  local command=ssh
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_SSH:-}" ]] || command="$ATYRODE_SSH"
+  "$command" "$@"
+}
+
+infra_git() {
+  local command=git
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || command="$ATYRODE_GIT"
+  "$command" "$@"
+}
+
+infra_ensure_recipient() {
+  local repo="$1" machine="$2" recipient="$3"
+  local clan_file="$repo/clan.nix"
+  if grep -Fq "\"$recipient\"" "$clan_file"; then
+    printf 'false\n'
+    return
+  fi
+
+  local marker='  vars.settings.secretStore = "age";'
+  [[ "$(grep -Fxc "$marker" "$clan_file")" == 1 ]] ||
+    die "$EX_DATAERR" "cannot safely add the operator recipient: clan.nix secret-store marker changed"
+  local rendered="$repo/.clan.nix.atyrode.$$"
+  awk -v marker="$marker" -v machine="$machine" -v recipient="$recipient" '
+    {
+      print
+      if ($0 == marker) {
+        print ""
+        print "  # Portable operator identity managed by `atyrode infra`."
+        print "  # The private half remains in Bitwarden; only this public recipient is Git state."
+        print "  vars.settings.recipients.hosts." machine " = ["
+        print "    \"" recipient "\""
+        print "  ];"
+      }
+    }
+  ' "$clan_file" >"$rendered" || {
+    rm -f -- "$rendered"
+    die "$EX_SOFTWARE" "could not render the Clan recipient update"
+  }
+  mv -- "$rendered" "$clan_file" ||
+    die "$EX_SOFTWARE" "could not install the Clan recipient update"
+  printf 'true\n'
+}
+
+cmd_infra() {
+  local action="${1:-}"
+  case "$action" in
+    setup | plan | apply) shift ;;
+    *) die "$EX_USAGE" "infra expects setup, plan, or apply" ;;
+  esac
+
+  local repo="" json=0 assume_yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        shift
+        repo="${1:-}"
+        [[ -n "$repo" ]] || die "$EX_USAGE" "--repo expects a path"
+        ;;
+      --json) json=1 ;;
+      -y | --yes) assume_yes=1 ;;
+      *) die "$EX_USAGE" "unknown infra option: $1" ;;
+    esac
+    shift || true
+  done
+  [[ "$action" == apply || "$assume_yes" == 0 ]] ||
+    die "$EX_USAGE" "--yes is valid only for infra apply"
+
+  local repository checkout machine target item_id item_name expected_recipient
+  repository="$(jq -er '.repository' "$operator_infra")"
+  checkout="$(jq -er '.checkoutDirectory' "$operator_infra")"
+  machine="$(jq -er '.machine' "$operator_infra")"
+  target="$(jq -er '.targetHost' "$operator_infra")"
+  item_id="$(jq -er '.vaultItemId' "$operator_infra")"
+  item_name="$(jq -er '.vaultItemName' "$operator_infra")"
+  expected_recipient="$(jq -er '.publicRecipient' "$operator_infra")"
+  repo="${repo:-$HOME/$checkout}"
+  [[ "$repo" == /* ]] || die "$EX_USAGE" "infra repository path must be absolute: $repo"
+
+  if [[ ! -d "$repo/.git" && ! -f "$repo/.git" ]]; then
+    [[ "$action" == setup ]] ||
+      die "$EX_NOINPUT" "infra checkout is missing at $repo; run 'atyrode infra setup'"
+    mkdir -p "$(dirname "$repo")"
+    infra_git clone "$repository" "$repo" ||
+      die "$EX_UNAVAILABLE" "could not clone $repository"
+  fi
+  [[ -f "$repo/flake.nix" && -f "$repo/clan.nix" ]] ||
+    die "$EX_DATAERR" "not a tyrode-infra checkout: $repo"
+
+  local status session="" unlocked_here=0
+  status="$(infra_bw status | jq -er '.status')" ||
+    die "$EX_UNAVAILABLE" "cannot read Bitwarden status"
+  if [[ "$status" == unauthenticated && "$action" == setup ]]; then
+    interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+    infra_bw login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
+    status="$(infra_bw status | jq -er '.status')"
+  fi
+  case "$status" in
+    unlocked) ;;
+    locked)
+      interactive || die "$EX_UNAVAILABLE" "Bitwarden unlock requires an interactive terminal"
+      session="$(infra_bw unlock --raw)" || die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
+      export BW_SESSION="$session"
+      unlocked_here=1
+      ;;
+    unauthenticated)
+      die "$EX_UNAVAILABLE" "Bitwarden is not logged in; run 'atyrode infra setup'"
+      ;;
+    *) die "$EX_SOFTWARE" "unsupported Bitwarden status: $status" ;;
+  esac
+
+  local temp_root tmp key actual_recipient result=0
+  if [[ -d /dev/shm && -w /dev/shm ]]; then
+    temp_root=/dev/shm
+  else
+    temp_root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  fi
+  umask 077
+  tmp="$(mktemp -d "$temp_root/atyrode-infra.XXXXXX")"
+  key="$tmp/operator.agekey"
+  infra_cleanup() {
+    rm -rf -- "${tmp:-}"
+    unset AGE_KEYFILE BW_SESSION
+    if [[ "${unlocked_here:-0}" == 1 ]]; then
+      infra_bw lock >/dev/null 2>&1 || true
+    fi
+  }
+  trap infra_cleanup EXIT HUP INT TERM
+
+  infra_bw get item "$item_id" |
+    jq -er --arg name "$item_name" \
+      'select(.name == $name) | .notes | select(type == "string" and startswith("AGE-SECRET-KEY-"))' >"$key" ||
+    die "$EX_DATAERR" "Bitwarden does not contain the reviewed Tyrode operator identity"
+  actual_recipient="$(infra_age_keygen -y "$key")" ||
+    die "$EX_DATAERR" "Bitwarden Tyrode operator identity is invalid"
+  [[ "$actual_recipient" == "$expected_recipient" ]] ||
+    die "$EX_DATAERR" "Bitwarden identity does not match the reviewed public recipient"
+  export AGE_KEYFILE="$key"
+
+  if [[ "$action" == setup ]]; then
+    guard_production_mutation "infra setup"
+    local source_changed
+    source_changed="$(infra_ensure_recipient "$repo" "$machine" "$expected_recipient")"
+    infra_nix develop "$repo" --command nixfmt "$repo/clan.nix" ||
+      die "$EX_SOFTWARE" "could not format the Clan recipient update"
+    infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+      clan vars fix "$machine" --flake "$repo" ||
+      die "$EX_SOFTWARE" "Clan recipient enrollment failed"
+    infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+      clan vars check "$machine" --flake "$repo" ||
+      die "$EX_SOFTWARE" "Clan Vars check failed after enrollment"
+    if [[ "$json" == 1 ]]; then
+      jq -nc --arg machine "$machine" --arg repository "$repo" \
+        --argjson sourceChanged "$source_changed" \
+        '{ok:true,action:"setup",machine:$machine,repository:$repository,
+          sourceChanged:$sourceChanged,privateMaterialPrinted:false}'
+    else
+      printf 'atyrode: Clan operator enrollment is valid for %s\n' "$machine"
+      if [[ -n "$(infra_git -C "$repo" status --porcelain)" ]]; then
+        printf 'atyrode: review and commit the encrypted Clan changes in %s before apply\n' "$repo"
+      fi
+    fi
+  else
+    [[ -z "$(infra_git -C "$repo" status --porcelain)" ]] ||
+      die "$EX_DATAERR" "infra checkout is dirty; review and commit it before $action"
+    infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+      clan vars check "$machine" --flake "$repo" ||
+      die "$EX_SOFTWARE" "Clan Vars check failed"
+    infra_ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+      "$target" true ||
+      die "$EX_UNAVAILABLE" "strict SSH preflight failed for $target"
+    local drv_path
+    drv_path="$(infra_nix eval --raw \
+      "$repo#nixosConfigurations.$machine.config.system.build.toplevel.drvPath")" ||
+      die "$EX_SOFTWARE" "NixOS target evaluation failed"
+
+    if [[ "$action" == plan ]]; then
+      if [[ "$json" == 1 ]]; then
+        jq -nc --arg machine "$machine" --arg repository "$repo" \
+          --arg targetHost "$target" --arg drvPath "$drv_path" \
+          '{ok:true,action:"plan",machine:$machine,repository:$repository,
+            targetHost:$targetHost,drvPath:$drvPath,hostKeyCheck:"strict",
+            buildHost:$targetHost,privateMaterialPrinted:false}'
+      else
+        printf 'machine: %s\nrepository: %s\ntarget: %s\nbuild host: %s\nhost key check: strict\nderivation: %s\n' \
+          "$machine" "$repo" "$target" "$target" "$drv_path"
+        printf 'atyrode: plan passed; no activation was performed\n'
+      fi
+    else
+      guard_production_mutation "infra apply"
+      if [[ "$assume_yes" == 0 ]]; then
+        confirm "deploy $machine to $target now?" || {
+          infra_cleanup
+          trap - EXIT HUP INT TERM
+          return 0
+        }
+      fi
+      infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+        clan machines update "$machine" --flake "$repo" \
+        --target-host "$target" --build-host "$target" --upload-inputs \
+        --host-key-check strict ||
+        die "$EX_SOFTWARE" "Clan deployment failed"
+      infra_ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
+        atyrode doctor host --json |
+        jq -e --arg machine "$machine" \
+          '.ok == true and .host == $machine and .registered.activation == "nixos"' >/dev/null ||
+        die "$EX_SOFTWARE" "deployment completed, but host identity verification failed"
+      if [[ "$json" == 1 ]]; then
+        jq -nc --arg machine "$machine" --arg targetHost "$target" \
+          '{ok:true,action:"apply",machine:$machine,targetHost:$targetHost,verified:true,
+            privateMaterialPrinted:false}'
+      else
+        printf 'atyrode: %s deployed and verified through %s\n' "$machine" "$target"
+      fi
+    fi
+  fi
+
+  infra_cleanup
+  trap - EXIT HUP INT TERM
+  return "$result"
+}
+
 # guard_production_mutation refuses to run a store-mutating command when a
 # test-only tool-substitution override is present on a production binary. Those
-# vars (ATYRODE_NH, ATYRODE_NIX_STORE, ATYRODE_NIX_ENV, ATYRODE_GIT,
-# ATYRODE_GEN_PROFILE, ATYRODE_WINGET) are honoured only under enableTestHooks;
+# vars (including ATYRODE_BW, ATYRODE_AGE_KEYGEN, ATYRODE_NIX, ATYRODE_SSH,
+# ATYRODE_GIT, ATYRODE_NH, and store/profile overrides) are honoured only
+# under enableTestHooks;
 # a production build silently ignores them, so a caller who sets them expecting stubs would instead
 # drive the REAL nh / nix-store / nix-env against the live store. Aborting turns
 # that silent, potentially destructive trap into a loud, safe stop. Scoped to the
@@ -3000,7 +3250,7 @@ cmd_rollback() {
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_NH ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM; do
+  for v in ATYRODE_AGE_KEYGEN ATYRODE_BW ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done
@@ -3025,6 +3275,7 @@ main() {
     lifecycle) cmd_lifecycle "$@" ;;
     rollback) cmd_rollback "$@" ;;
     runtime) exec "$atyrode_runtime" "$@" ;;
+    infra) cmd_infra "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

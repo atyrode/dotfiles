@@ -121,6 +121,40 @@ pkgs.runCommand "check-atyrode-cli"
         ;;
     esac
     EOF
+    cat > "$TMPDIR/bin/bw" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/bw-args"
+    case "''${1:-}" in
+      status) printf '%s\n' '{"status":"unlocked"}' ;;
+      get)
+        printf '%s\n' '{"id":"f0b39ebf-62ae-4198-808b-b4b200002e8c","name":"Tyrode Clan operator age identity","notes":"AGE-SECRET-KEY-1TESTONLY"}'
+        ;;
+      lock) ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    cat > "$TMPDIR/bin/age-keygen" <<'EOF'
+    #!${pkgs.runtimeShell}
+    [[ "''${1:-}" == -y ]] || exit 64
+    printf '%s\n' 'age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm'
+    EOF
+    cat > "$TMPDIR/bin/infra-nix" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/infra-nix-args"
+    case "''${1:-}" in
+      develop) exit 0 ;;
+      eval) printf '%s\n' '/nix/store/test-tyrode-dev-01-system.drv' ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    cat > "$TMPDIR/bin/infra-ssh" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/infra-ssh-args"
+    if [[ "$*" == *'atyrode doctor host --json'* ]]; then
+      printf '%s\n' '{"ok":true,"host":"tyrode-dev-01","registered":{"activation":"nixos"}}'
+    fi
+    EOF
+    chmod +x "$TMPDIR/bin/bw" "$TMPDIR/bin/age-keygen" "$TMPDIR/bin/infra-nix" "$TMPDIR/bin/infra-ssh"
     chmod +x "$TMPDIR/bin/git" "$TMPDIR/bin/nh" "$TMPDIR/bin/nix-env" "$TMPDIR/bin/omp"
     # Make the home-manager generations profile path exist so clean/generations
     # accept it (gen_profile → $XDG_STATE_HOME/nix/profiles/home-manager).
@@ -130,6 +164,13 @@ pkgs.runCommand "check-atyrode-cli"
     export ATYRODE_GIT="$TMPDIR/bin/git"
     export ATYRODE_NH="$TMPDIR/bin/nh"
     export ATYRODE_NIX_ENV="$TMPDIR/bin/nix-env"
+    mkdir -p "$TMPDIR/infra/.git"
+    touch "$TMPDIR/infra/flake.nix"
+    cat > "$TMPDIR/infra/clan.nix" <<'EOF'
+    {
+      vars.settings.secretStore = "age";
+    }
+    EOF
     # Pin the generations profile so clean --json is platform-agnostic in the
     # check (on darwin gen_profile would otherwise point at the system profile).
     export ATYRODE_GEN_PROFILE="$XDG_STATE_HOME/nix/profiles/home-manager"
@@ -1565,11 +1606,52 @@ pkgs.runCommand "check-atyrode-cli"
       echo 'inventory must require the explicit JSON contract' >&2
       exit 1
     fi
+    infra_test_env=(
+      env
+      ATYRODE_AGE_KEYGEN="$TMPDIR/bin/age-keygen"
+      ATYRODE_BW="$TMPDIR/bin/bw"
+      ATYRODE_NIX="$TMPDIR/bin/infra-nix"
+      ATYRODE_SSH="$TMPDIR/bin/infra-ssh"
+    )
+    infra_setup="$("''${infra_test_env[@]}" atyrode infra setup --repo "$TMPDIR/infra" --json)"
+    jq -e '.ok and .action == "setup" and .machine == "tyrode-dev-01"
+      and .sourceChanged and .privateMaterialPrinted == false' <<<"$infra_setup" >/dev/null
+    grep -qF 'clan vars fix tyrode-dev-01' "$TMPDIR/infra-nix-args"
+    grep -qF 'clan vars check tyrode-dev-01' "$TMPDIR/infra-nix-args"
+    ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_setup"
+    grep -qF 'vars.settings.recipients.hosts.tyrode-dev-01' "$TMPDIR/infra/clan.nix"
+    grep -qF 'age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm' \
+      "$TMPDIR/infra/clan.nix"
+    infra_setup_again="$("''${infra_test_env[@]}" atyrode infra setup --repo "$TMPDIR/infra" --json)"
+    jq -e '.ok and .action == "setup" and (.sourceChanged | not)' <<<"$infra_setup_again" >/dev/null
+    test "$(grep -Fc 'vars.settings.recipients.hosts.tyrode-dev-01' "$TMPDIR/infra/clan.nix")" = 1
+
+    infra_plan="$("''${infra_test_env[@]}" atyrode infra plan --repo "$TMPDIR/infra" --json)"
+    jq -e '.ok and .action == "plan" and .machine == "tyrode-dev-01"
+      and .targetHost == "alex@tyrode.dev" and .hostKeyCheck == "strict"
+      and .buildHost == "alex@tyrode.dev"
+      and .drvPath == "/nix/store/test-tyrode-dev-01-system.drv"
+      and .privateMaterialPrinted == false' <<<"$infra_plan" >/dev/null
+    grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/infra-ssh-args"
+    grep -qF 'alex@tyrode.dev true' "$TMPDIR/infra-ssh-args"
+    ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_plan"
+
+    infra_apply="$("''${infra_test_env[@]}" atyrode infra apply --repo "$TMPDIR/infra" --yes --json)"
+    jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"
+      and .targetHost == "alex@tyrode.dev" and .verified
+      and .privateMaterialPrinted == false' <<<"$infra_apply" >/dev/null
+    grep -qF 'clan machines update tyrode-dev-01' "$TMPDIR/infra-nix-args"
+    grep -qF -- '--target-host alex@tyrode.dev --build-host alex@tyrode.dev --upload-inputs --host-key-check strict' \
+      "$TMPDIR/infra-nix-args"
+    grep -qF 'alex@tyrode.dev atyrode doctor host --json' "$TMPDIR/infra-ssh-args"
+    ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_apply"
+
     help="$(atyrode --help)"
     grep -qF 'then prints preflight metadata without invoking nh; --dry-run invokes the normal' <<<"$help"
     grep -qF 'nh switch backend with --dry; --preview-json runs that dry backend and emits its' <<<"$help"
     grep -qF 'atyrode capabilities list [--json]' <<<"$help"
     grep -qF 'atyrode capabilities show [HOST] [--json]' <<<"$help"
+    grep -qF 'atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]' <<<"$help"
     unset _ATYRODE_TEST_INVENTORY
 
     mkdir "$out"

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "repository": "git@github.com:tyrode-dev/infra.git",
+  "checkoutDirectory": "tyrode-infra",
+  "machine": "tyrode-dev-01",
+  "targetHost": "alex@tyrode.dev",
+  "vaultItemId": "f0b39ebf-62ae-4198-808b-b4b200002e8c",
+  "vaultItemName": "Tyrode Clan operator age identity",
+  "publicRecipient": "age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm"
+}

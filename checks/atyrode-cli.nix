@@ -29,14 +29,31 @@ pkgs.runCommand "check-atyrode-cli"
     fi
     if [[ "$*" == *'status --porcelain'* ]]; then
       [[ "$*" == *'/malformed'* ]] && exit 1
-      [[ "$*" == *'/dirty'* ]] && printf ' M fixture\n'
+      if [[ "$*" == *"$TMPDIR/infra"* && "''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}" == dirty ]]; then
+        printf ' M fixture\n'
+      elif [[ "$*" == *'/dirty'* ]]; then
+        printf ' M fixture\n'
+      fi
       exit 0
     fi
     if [[ "$*" == *'symbolic-ref --quiet --short HEAD'* ]]; then
+      if [[ "$*" == *"$TMPDIR/infra"* ]]; then
+        [[ "''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}" == feature ]] &&
+          printf 'fix/unsafe-deploy\n' || printf 'main\n'
+        exit 0
+      fi
       [[ "$*" == *'/branch-live'* ]] && printf 'omp/live\n' && exit 0
       exit 1
     fi
     case "$*" in
+      *fetch\ --quiet\ origin\ main) exit 0 ;;
+      *rev-parse\ FETCH_HEAD*)
+        if [[ "''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}" == stale ]]; then
+          echo feedfacefeedfacefeedfacefeedfacefeedface
+        else
+          echo 0123456789abcdef0123456789abcdef01234567
+        fi
+        ;;
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
       *rev-parse\ HEAD*) echo 0123456789abcdef0123456789abcdef01234567 ;;
@@ -1715,6 +1732,21 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/infra-ssh-args"
     grep -qF 'alex@target.example true' "$TMPDIR/infra-ssh-args"
     ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_plan"
+
+    for checkout_state in dirty feature stale; do
+      case "$checkout_state" in
+        dirty) expected_error='infra checkout is dirty' ;;
+        feature) expected_error='infra apply requires the main branch' ;;
+        stale) expected_error='infra checkout must exactly match origin/main' ;;
+      esac
+      if "''${infra_test_env[@]}" ATYRODE_TEST_INFRA_GIT_STATE="$checkout_state" \
+        atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
+        >"$TMPDIR/infra-$checkout_state.out" 2>"$TMPDIR/infra-$checkout_state.err"; then
+        echo "infra apply must reject a $checkout_state checkout" >&2
+        exit 1
+      fi
+      grep -qF "$expected_error" "$TMPDIR/infra-$checkout_state.err"
+    done
 
     infra_apply="$("''${infra_test_env[@]}" atyrode infra apply --repo "$TMPDIR/infra" --yes --json)"
     jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"

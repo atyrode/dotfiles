@@ -74,9 +74,10 @@ checkout. It is read-only and currently requires --json.
 infra provides the portable controller for the externally owned tyrode-dev-01
 NixOS host. setup performs one-time Clan age enrollment, plan verifies the
 Bitwarden identity, pinned infra checkout, Vars state, and strict SSH path
-without activation, and apply deploys through Clan after confirmation. The
-private age identity is read only after an interactive Bitwarden unlock,
-materialized in temporary storage, never printed, and removed on every exit.
+without activation, and apply deploys through Clan after confirmation only from
+a clean main branch exactly matching the freshly fetched origin/main. The private
+age identity is read only after an interactive Bitwarden unlock, materialized
+in temporary storage, never printed, and removed on every exit.
 vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
@@ -3210,6 +3211,24 @@ infra_git() {
   "$command" "$@"
 }
 
+infra_require_canonical_apply_checkout() {
+  local repo="$1" branch head remote_head
+  [[ -z "$(infra_git -C "$repo" status --porcelain)" ]] ||
+    die "$EX_DATAERR" "infra checkout is dirty; review and commit it before apply"
+  branch="$(infra_git -C "$repo" symbolic-ref --quiet --short HEAD)" ||
+    die "$EX_DATAERR" "infra apply requires the main branch, not a detached checkout"
+  [[ "$branch" == main ]] ||
+    die "$EX_DATAERR" "infra apply requires the main branch; current branch is $branch"
+  infra_git -C "$repo" fetch --quiet origin main ||
+    die "$EX_UNAVAILABLE" "could not refresh origin/main before infra apply"
+  head="$(infra_git -C "$repo" rev-parse HEAD)" ||
+    die "$EX_DATAERR" "could not resolve the infra checkout revision"
+  remote_head="$(infra_git -C "$repo" rev-parse FETCH_HEAD)" ||
+    die "$EX_DATAERR" "could not resolve the fetched origin/main revision"
+  [[ "$head" == "$remote_head" ]] ||
+    die "$EX_DATAERR" "infra checkout must exactly match origin/main; update $repo before apply"
+}
+
 infra_ensure_recipient() {
   local repo="$1" machine="$2" recipient="$3"
   local clan_file="$repo/clan.nix"
@@ -3290,6 +3309,7 @@ cmd_infra() {
   local network_intent="$repo/machines/$machine/network-intent.json"
   [[ -f "$enrollment_inventory" && -f "$network_intent" ]] ||
     die "$EX_DATAERR" "tyrode-infra lacks deployment identity for $machine"
+  [[ "$action" != apply ]] || infra_require_canonical_apply_checkout "$repo"
   local target_user target_address
   target_user="$(
     jq -er --arg machine "$machine" \
@@ -3350,8 +3370,8 @@ cmd_infra() {
       fi
     fi
   else
-    [[ -z "$(infra_git -C "$repo" status --porcelain)" ]] ||
-      die "$EX_DATAERR" "infra checkout is dirty; review and commit it before $action"
+    [[ "$action" != plan || -z "$(infra_git -C "$repo" status --porcelain)" ]] ||
+      die "$EX_DATAERR" "infra checkout is dirty; review and commit it before plan"
     infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
       clan vars check "$machine" --flake "$repo" ||
       die "$EX_SOFTWARE" "Clan Vars check failed"

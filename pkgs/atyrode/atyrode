@@ -3271,7 +3271,6 @@ cmd_infra() {
   repository="$(jq -er '.repository' "$operator_infra")"
   checkout="$(jq -er '.checkoutDirectory' "$operator_infra")"
   machine="$(jq -er '.machine' "$operator_infra")"
-  target="$(jq -er '.targetHost' "$operator_infra")"
   item_id="$(jq -er '.vaultItemId' "$operator_infra")"
   item_name="$(jq -er '.vaultItemName' "$operator_infra")"
   expected_recipient="$(jq -er '.publicRecipient' "$operator_infra")"
@@ -3287,6 +3286,23 @@ cmd_infra() {
   fi
   [[ -f "$repo/flake.nix" && -f "$repo/clan.nix" ]] ||
     die "$EX_DATAERR" "not a tyrode-infra checkout: $repo"
+  local enrollment_inventory="$repo/inventory/vps-enrollment.json"
+  local network_intent="$repo/machines/$machine/network-intent.json"
+  [[ -f "$enrollment_inventory" && -f "$network_intent" ]] ||
+    die "$EX_DATAERR" "tyrode-infra lacks deployment identity for $machine"
+  local target_user target_address
+  target_user="$(
+    jq -er --arg machine "$machine" \
+      '.machines[$machine] as $host
+       | .roles[$host.role].profile as $profile
+       | .profiles[$profile].username' "$enrollment_inventory"
+  )" || die "$EX_DATAERR" "cannot resolve the deployment user for $machine"
+  target_address="$(
+    jq -er \
+      '[.uplinks[].addresses[] | select(.family == "ipv4") | .value]
+       | select(length == 1) | .[0]' "$network_intent"
+  )" || die "$EX_DATAERR" "cannot resolve the unique IPv4 deployment address for $machine"
+  target="$target_user@$target_address"
 
   vault_open_session "$([[ "$action" == setup ]] && printf 1 || printf 0)"
 

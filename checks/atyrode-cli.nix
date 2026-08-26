@@ -189,11 +189,26 @@ pkgs.runCommand "check-atyrode-cli"
     export ATYRODE_GIT="$TMPDIR/bin/git"
     export ATYRODE_NH="$TMPDIR/bin/nh"
     export ATYRODE_NIX_ENV="$TMPDIR/bin/nix-env"
-    mkdir -p "$TMPDIR/infra/.git"
+    mkdir -p "$TMPDIR/infra/.git" "$TMPDIR/infra/inventory" \
+      "$TMPDIR/infra/machines/tyrode-dev-01"
     touch "$TMPDIR/infra/flake.nix"
     cat > "$TMPDIR/infra/clan.nix" <<'EOF'
     {
       vars.settings.secretStore = "age";
+    }
+    EOF
+    cat > "$TMPDIR/infra/inventory/vps-enrollment.json" <<'EOF'
+    {
+      "machines": {"tyrode-dev-01": {"role": "personal-development"}},
+      "roles": {"personal-development": {"profile": "alex"}},
+      "profiles": {"alex": {"username": "alex"}}
+    }
+    EOF
+    cat > "$TMPDIR/infra/machines/tyrode-dev-01/network-intent.json" <<'EOF'
+    {
+      "uplinks": [
+        {"addresses": [{"family": "ipv4", "value": "target.example"}]}
+      ]
     }
     EOF
     # Pin the generations profile so clean --json is platform-agnostic in the
@@ -1693,22 +1708,22 @@ pkgs.runCommand "check-atyrode-cli"
 
     infra_plan="$("''${infra_test_env[@]}" atyrode infra plan --repo "$TMPDIR/infra" --json)"
     jq -e '.ok and .action == "plan" and .machine == "tyrode-dev-01"
-      and .targetHost == "alex@tyrode.dev" and .hostKeyCheck == "strict"
-      and .buildHost == "alex@tyrode.dev"
+      and .targetHost == "alex@target.example" and .hostKeyCheck == "strict"
+      and .buildHost == "alex@target.example"
       and .drvPath == "/nix/store/test-tyrode-dev-01-system.drv"
       and .privateMaterialPrinted == false' <<<"$infra_plan" >/dev/null
     grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/infra-ssh-args"
-    grep -qF 'alex@tyrode.dev true' "$TMPDIR/infra-ssh-args"
+    grep -qF 'alex@target.example true' "$TMPDIR/infra-ssh-args"
     ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_plan"
 
     infra_apply="$("''${infra_test_env[@]}" atyrode infra apply --repo "$TMPDIR/infra" --yes --json)"
     jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"
-      and .targetHost == "alex@tyrode.dev" and .verified
+      and .targetHost == "alex@target.example" and .verified
       and .privateMaterialPrinted == false' <<<"$infra_apply" >/dev/null
     grep -qF 'clan machines update tyrode-dev-01' "$TMPDIR/infra-nix-args"
-    grep -qF -- '--target-host alex@tyrode.dev --build-host alex@tyrode.dev --upload-inputs --host-key-check strict' \
+    grep -qF -- '--target-host alex@target.example --build-host alex@target.example --upload-inputs --host-key-check strict' \
       "$TMPDIR/infra-nix-args"
-    grep -qF 'alex@tyrode.dev atyrode doctor host --json' "$TMPDIR/infra-ssh-args"
+    grep -qF 'alex@target.example atyrode doctor host --json' "$TMPDIR/infra-ssh-args"
     ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_apply"
 
     help="$(atyrode --help)"

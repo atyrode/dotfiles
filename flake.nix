@@ -984,8 +984,15 @@
             ];
             text = ''python3 ${./omp/refresh-model-facts.py} "$@"'';
           };
+          atyrodeApp = {
+            type = "app";
+            program = "${pkgs.atyrode}/bin/atyrode";
+            meta.description = "Manage atyrode dotfiles and infrastructure";
+          };
         in
         {
+          default = atyrodeApp;
+          atyrode = atyrodeApp;
           home-manager = {
             type = "app";
             program = "${home-manager.packages.${system}.home-manager}/bin/home-manager";

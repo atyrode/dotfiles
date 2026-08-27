@@ -10,7 +10,6 @@
   nixos-wsl,
   homebrew-core,
   homebrew-cask,
-  skhd-zig-tap,
   targets,
   packages,
 }:
@@ -186,7 +185,6 @@ let
         inherit
           homebrew-cask
           homebrew-core
-          skhd-zig-tap
           ;
         inherit (host) homeDirectory;
         homeModules = modulesForHost name host;

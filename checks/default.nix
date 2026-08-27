@@ -166,8 +166,7 @@ let
     omp-stack = import ./omp-stack.nix { inherit lib pkgs; };
     omp-wrapper = import ./omp-wrapper.nix { inherit lib pkgs; };
     omp-agent-references = import ./omp-agent-references.nix { inherit lib pkgs; };
-    resource-guard = import ./agent-resource-guard.nix { inherit lib pkgs; };
-    agent-tools-terminal-viewing = import ./agent-terminal-viewing.nix { inherit lib pkgs; };
+    agent-tools-terminal-viewing = import ./agent-terminal-viewing.nix { inherit pkgs; };
     classifier-schedule = import ./classifier-schedule.nix { inherit lib pkgs; };
   }
   // {
@@ -224,11 +223,6 @@ let
       externalFixture = if isLinux then externalServerFixture else null;
       darwinConfigs = systemDarwinConfigs;
     };
-    window-management = import ./window-management.nix {
-      inherit lib pkgs;
-      darwinConfig = canonicalDarwinConfigs.alex-aarch64-darwin;
-      homeConfig = canonicalHomeConfigs.alex-aarch64-darwin;
-    };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {
     # Platform-independent lints: their output is a pure function of the
@@ -249,6 +243,9 @@ let
     };
   }
   // lib.optionalAttrs isLinux {
+    # The resource guard evaluates the Linux module branch (earlyoom is a
+    # Linux-only package), so it exists on Linux systems only.
+    resource-guard = import ./agent-resource-guard.nix { inherit lib pkgs; };
     portable-profile-contract = import ./portable-profile-contract.nix {
       inherit lib mkPortableHomeConfiguration pkgs;
       profileName = "development-${system}";

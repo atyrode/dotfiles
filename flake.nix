@@ -30,11 +30,6 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
-
-    skhd-zig-tap = {
-      url = "github:jackielii/homebrew-tap";
-      flake = false;
-    };
   };
 
   outputs =
@@ -49,7 +44,6 @@
       treefmt-nix,
       homebrew-core,
       homebrew-cask,
-      skhd-zig-tap,
       ...
     }:
     let
@@ -97,7 +91,6 @@
           nixos-wsl
           homebrew-core
           homebrew-cask
-          skhd-zig-tap
           targets
           ;
         packages = packagesLib;

@@ -8,8 +8,6 @@
   "font-sf-mono"
   "font-sf-pro"
   "godot"
-  "jackielii/tap/skhd-zig"
-  "karabiner-elements"
   "parsec"
   "plugdata"
   "sonos"

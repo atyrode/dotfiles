@@ -4,7 +4,6 @@
   homeModules,
   homebrew-cask,
   homebrew-core,
-  skhd-zig-tap,
   lib,
   pkgs,
   username,
@@ -15,8 +14,6 @@ let
   casks = import ./casks.nix;
 in
 {
-  imports = [ ./window-management.nix ];
-
   system = {
     primaryUser = username;
     stateVersion = 7;
@@ -103,7 +100,6 @@ in
     taps = {
       "homebrew/homebrew-core" = homebrew-core;
       "homebrew/homebrew-cask" = homebrew-cask;
-      "jackielii/homebrew-tap" = skhd-zig-tap;
     };
 
     mutableTaps = false;

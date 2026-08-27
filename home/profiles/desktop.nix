@@ -5,7 +5,6 @@ in
 {
   imports = [
     ../linux-desktop.nix
-    ../macos-window-management.nix
     ../rio.nix
   ];
 

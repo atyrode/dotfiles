@@ -1,16 +1,6 @@
 { lib, pkgs, ... }:
 {
   projectRootFile = "flake.nix";
-
-  # The SketchyBar configuration is vendored upstream code (a faithful port of
-  # FelixKratz/dotfiles@e6288b3). Repository tooling neither reformats nor
-  # lints it: fidelity to upstream is the point, and its shell style predates
-  # shellcheck-cleanliness.
-  settings.global.excludes = [
-    "darwin/window-management/sketchybar/*"
-    "darwin/window-management/sketchybar/*/*"
-  ];
-
   programs = {
     nixfmt.enable = true;
     gofmt.enable = true;

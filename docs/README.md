@@ -16,6 +16,7 @@ not in a checklist.
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
 | [git-keys.md](git-keys.md) | SSH-first Git authentication/signing, public allowed signers, and machine-key lifecycle |
+| [manifold.md](manifold.md) | The manifold fleet node capability: enrollment, upgrade discipline, and master runbooks |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
 | [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |

@@ -3052,6 +3052,19 @@ bw_cli() {
   "$command" "$@"
 }
 
+# The operator's Bitwarden account lives on the EU cloud. The bw CLI defaults
+# to vault.bitwarden.com and then fails a first login on a fresh machine with
+# a misleading "invalid master password", so pin the server before any login.
+# Server changes are only accepted (and only needed) while unauthenticated.
+readonly bitwarden_server="https://vault.bitwarden.eu"
+vault_ensure_server() {
+  local current
+  current="$(bw_cli config server 2>/dev/null || true)"
+  [[ "$current" == "$bitwarden_server" ]] && return 0
+  bw_cli config server "$bitwarden_server" >/dev/null ||
+    die "$EX_UNAVAILABLE" "could not point the Bitwarden CLI at $bitwarden_server"
+}
+
 vault_session=""
 vault_unlocked_here=0
 
@@ -3067,6 +3080,7 @@ vault_open_session() {
   status="$(vault_status_value)"
   if [[ "$status" == unauthenticated && "$allow_login" == 1 ]]; then
     interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+    vault_ensure_server
     bw_cli login >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden login failed"
     status="$(vault_status_value)"
   fi
@@ -3174,6 +3188,7 @@ cmd_vault() {
       status="$(vault_status_value)"
       if [[ "$status" == unauthenticated ]]; then
         interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+        vault_ensure_server
         bw_cli login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
       else
         printf 'atyrode: Bitwarden is already %s\n' "$status"

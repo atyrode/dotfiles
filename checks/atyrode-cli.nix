@@ -142,8 +142,10 @@ pkgs.runCommand "check-atyrode-cli"
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "$TMPDIR/bw-args"
     case "$*" in
-      status) printf '%s\n' '{"status":"unlocked"}' ;;
+      status) printf '{"status":"%s"}\n' "''${ATYRODE_TEST_BW_STATUS:-unlocked}" ;;
       sync|lock|login) ;;
+      'config server') printf '%s\n' 'https://vault.bitwarden.com' ;;
+      'config server '*) ;;
       'list items --search vault-existing')
         printf '%s\n' '[{"id":"vault-existing-id","name":"vault-existing","type":2}]'
         ;;
@@ -1734,6 +1736,14 @@ pkgs.runCommand "check-atyrode-cli"
       exit 1
     fi
     ! grep -qxF lock "$TMPDIR/bw-args"
+
+    # A first login on a fresh machine must pin the operator's EU server
+    # before authenticating: bw defaults to vault.bitwarden.com and then
+    # rejects the correct master password with a misleading error.
+    "''${vault_test_env[@]}" ATYRODE_TEST_BW_STATUS=unauthenticated _ATYRODE_TEST_TTY=1 \
+      atyrode vault login >/dev/null
+    grep -qxF 'config server https://vault.bitwarden.eu' "$TMPDIR/bw-args"
+    grep -qxF login "$TMPDIR/bw-args"
 
     backup_test_env=(env ATYRODE_BW="$TMPDIR/bin/bw" ATYRODE_RCLONE="$TMPDIR/bin/rclone")
 

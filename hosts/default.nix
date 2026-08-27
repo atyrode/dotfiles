@@ -46,6 +46,7 @@
       "agent-tools"
       "security"
       "containers"
+      "manifold-node"
     ];
   };
 

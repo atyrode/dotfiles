@@ -94,14 +94,22 @@ other's hello in an endless ping-pong:
 
 1. From SSH: `atyrode runtime status manifold-agent --json` — confirm
    `enrolled: true` (the existing 0600 token is adopted as-is; no re-mint).
-2. Retire the stopgap definition so nothing respawns. `cd ~/manifold &&
-   omp ps` lists the broker-supervised entries; `manifold-agent-devbox`
-   (`restart: always`, `persist`) is the agent. `omp ps stop
-   manifold-agent-devbox` if it is running, then delete its persisted spec
-   (the `ps` CLI has no delete action):
+2. Retire every stopgap definition so nothing respawns. `cd ~/manifold &&
+   omp ps` lists the broker-supervised entries, but match on the command,
+   not the name — an audit found five specs running the agent entrypoint
+   (`manifold-agent-devbox`, `-production-v3`, `-v031`, two smoke ones),
+   three of them `restart: always` + `persist`, two also `detached` (they
+   survive broker shutdown and would fence the service-managed socket by
+   presenting the same token). The `ps` CLI has no delete action, so stop
+   each and remove its persisted spec:
 
    ```sh
-   rm -rf ~/.omp/run/daemons/*/daemons/manifold-agent-devbox
+   for m in ~/.omp/run/daemons/*/daemons/*/meta.json; do
+     grep -q 'agent/src/main.ts' "$m" || continue
+     n=$(basename "$(dirname "$m")")
+     omp ps stop "$n" --dir ~/manifold 2>/dev/null
+     rm -rf "$(dirname "$m")"
+   done
    ```
 3. Sweep orphaned source agents — flaps and worktrees accumulate them (a
    census found 138: the main checkout, deleted feature worktrees, the

@@ -74,7 +74,10 @@ jobs:
           fi
           gh workflow run nix.yml --ref "$branch"
           sleep 30
-          run_id="$(gh run list --workflow nix.yml --branch "$branch" --limit 1 --json databaseId --jq '.[0].databaseId')"
+          # The bot's branch push also creates a pull_request-event run that
+          # sits in action_required awaiting approval; watching it would fail
+          # the job. Watch only the run this job just dispatched.
+          run_id="$(gh run list --workflow nix.yml --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
           gh run watch "$run_id" --exit-status
           gh pr merge "$branch" --squash --delete-branch --auto
           gh workflow run nix.yml --ref main

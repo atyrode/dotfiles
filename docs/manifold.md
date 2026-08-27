@@ -82,21 +82,35 @@ delivery there is a pin bump in that repository plus `atyrode infra apply`
 
 ## tyrode-dev-01 cutover (#419)
 
-The VPS currently runs a detached OMP-managed stopgap agent pinned to v0.3.1;
-it is not host-supervised and holds the operator's own working sessions. The
+The VPS runs OMP-managed stopgap agents from the mutable checkout; they are
+not host-supervised, they hold the operator's own working sessions, and every
+past flap left orphaned agent pairs re-dialing with the machine token. The
 swap to the declared service kills those PTYs, so it must be run from plain
-SSH, never from a manifold terminal:
+SSH, never from a manifold terminal — and the stopgaps must be gone *before*
+the deploy, or `Restart=always` and the re-dialing orphans supersede each
+other's hello in an endless ping-pong:
 
 1. From SSH: `atyrode runtime status manifold-agent --json` — confirm
    `enrolled: true` (the existing 0600 token is adopted as-is; no re-mint).
-2. Deploy the generation that delivers the unit (`atyrode infra apply`), then
-   `systemctl --user start manifold-agent` and verify `welcome` in
-   `journalctl --user -u manifold-agent` (status reports
+2. Retire the supervised stopgap definitions (`omp hub ps` in `~/manifold`;
+   stop and delete `manifold-agent-devbox` and any recovery entries) so
+   nothing respawns.
+3. Sweep orphaned source agents, sparing the hub container's own agent — it
+   runs the identical cmdline, is host-visible in the shared PID namespace,
+   and only respawns at server boot:
+
+   ```sh
+   for p in $(pgrep -f 'packages/agent/src/main.ts'); do
+     grep -q docker /proc/$p/cgroup 2>/dev/null || kill "$p"
+   done
+   ```
+
+   Re-run with `echo` instead of `kill` to confirm zero host survivors.
+4. Deploy the generation that delivers the unit (`atyrode infra apply`) and
+   verify `welcome` in `journalctl --user -u manifold-agent` (status reports
    `lastLogEvent: "welcome"`, phase `connected`).
-3. Only then stop and delete the OMP stopgap definitions (`omp` process
-   `manifold-agent-devbox` and any recovery entries) so a respawned stopgap
-   can never fence the service-managed socket by presenting the same token.
-4. Confirm the hub lists the machine online and re-adopts surviving PTYs.
+5. Confirm the hub lists both the machine and `hub` online, and open a fresh
+   terminal from the browser.
 
 ## Master migration
 

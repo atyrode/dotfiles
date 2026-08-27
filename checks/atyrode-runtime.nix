@@ -17,19 +17,125 @@ pkgs.runCommand "check-atyrode-runtime"
     ${fixtures.gitNh}
     ${fixtures.identity}
     # Runtime discovery is read-only and versioned. A generic Nix build host has
-    # no WSL GPU passthrough, so it must advertise the target as unsupported
-    # without allocating machine state or attempting a download.
+    # no WSL GPU passthrough and no manifold-node capability, so both runtime
+    # capabilities must advertise as unsupported without allocating machine
+    # state or attempting a download.
     runtime_list="$(env -u WSL_DISTRO_NAME atyrode runtime list --json)"
-    jq -e 'length == 1
+    jq -e 'length == 2
       and .[0].schemaVersion == 1
       and .[0].name == "local-qwen"
       and .[0].label == "Local Qwen 3.8 27B"
       and .[0].phase == "unsupported"
       and .[0].applicable == false
       and .[0].estimatedDiskBytes == 40000000000
-      and (.[0].reason | contains("WSL2"))' <<<"$runtime_list" >/dev/null
+      and (.[0].reason | contains("WSL2"))
+      and .[1].schemaVersion == 1
+      and .[1].name == "manifold-agent"
+      and .[1].phase == "unsupported"
+      and .[1].applicable == false
+      and .[1].enrolled == false
+      and .[1].unit.present == false' <<<"$runtime_list" >/dev/null
     test ! -e "$XDG_CONFIG_HOME/atyrode/runtime"
     test ! -e "$XDG_STATE_HOME/atyrode/runtime"
+
+    # Manifold enrollment is vault-brokered and idempotent (#418). The stubs
+    # prove the wire contract: the owner key flows only through the curl
+    # config file (never argv), a fresh enrollment lands a 0600 token, a
+    # re-run touches neither the vault nor the master, a token-less existing
+    # row demands the explicit --rotate-token recovery, and rotation mints.
+    # Provisioning is Linux-only, so the Darwin leg keeps the discovery and
+    # refusal assertions but skips the enrollment scenarios.
+    if [[ "$(uname -s)" == Linux ]]; then
+    export _ATYRODE_TEST_HOSTNAME=fixture-node
+    mkdir -p "$TMPDIR/manifold-bin"
+    cat > "$TMPDIR/manifold-bin/bw" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    case "$1" in
+      status) printf '{"status":"unlocked"}\n' ;;
+      sync) ;;
+      list) printf '[{"id":"item-1","name":"manifold owner key","type":2}]\n' ;;
+      get) printf '{"id":"item-1","name":"manifold owner key","type":2,"notes":"fixture-owner-key"}\n' ;;
+      lock) ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    cat > "$TMPDIR/manifold-bin/curl-stub" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    config="" output="" payload=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --config) shift; config="$1" ;;
+        -o) shift; output="$1" ;;
+        -d) shift; payload="$1" ;;
+        *) ;;
+      esac
+      shift
+    done
+    grep -q 'Authorization: Bearer fixture-owner-key' "$config"
+    printf '%s\n' "$payload" >> "$MANIFOLD_ENROLL_LOG"
+    if [[ "$payload" == *rotateToken* ]]; then
+      printf '{"machineToken":"rotated-token"}\n' > "$output"
+    elif [[ -e "$MANIFOLD_ROW_EXISTS" ]]; then
+      printf '{"id":"machine-1","name":"fixture-node"}\n' > "$output"
+    else
+      printf '{"machineToken":"minted-token"}\n' > "$output"
+    fi
+    EOF
+    chmod +x "$TMPDIR/manifold-bin/bw" "$TMPDIR/manifold-bin/curl-stub"
+    export ATYRODE_BW="$TMPDIR/manifold-bin/bw"
+    export ATYRODE_FETCH="$TMPDIR/manifold-bin/curl-stub"
+    export MANIFOLD_ENROLL_LOG="$TMPDIR/manifold-enroll.log"
+    export MANIFOLD_ROW_EXISTS="$TMPDIR/manifold-row-exists"
+
+    atyrode runtime provision manifold-agent >/dev/null 2>&1
+    token_file="$HOME/.config/manifold/machine.token"
+    test "$(cat "$token_file")" = minted-token
+    test "$(stat -c %a "$token_file")" = 600
+    jq -e '.name == "fixture-node" and (has("rotateToken") | not)' \
+      "$MANIFOLD_ENROLL_LOG" >/dev/null
+
+    # Idempotent re-run: an enrolled machine must not touch the vault or the
+    # master again — poisoned stubs prove the code path is never reached.
+    ATYRODE_BW=/bin/false ATYRODE_FETCH=/bin/false \
+      atyrode runtime provision manifold-agent >/dev/null 2>&1
+    test "$(cat "$token_file")" = minted-token
+
+    # A lost token against an existing row must refuse and name the recovery.
+    rm "$token_file"
+    touch "$MANIFOLD_ROW_EXISTS"
+    if atyrode runtime provision manifold-agent >/dev/null 2>"$TMPDIR/manifold-lost.err"; then
+      echo 'provision unexpectedly succeeded without a minted token' >&2
+      exit 1
+    fi
+    grep -q -- --rotate-token "$TMPDIR/manifold-lost.err"
+    test ! -e "$token_file"
+
+    # Explicit rotation mints a replacement and fences the old token.
+    atyrode runtime provision manifold-agent --rotate-token >/dev/null 2>&1
+    test "$(cat "$token_file")" = rotated-token
+    jq -e 'select(has("rotateToken")) | .rotateToken == true and .name == "fixture-node"' \
+      "$MANIFOLD_ENROLL_LOG" >/dev/null
+
+    # Status is a read-only probe with a stable JSON contract.
+    atyrode runtime status manifold-agent --json | jq -e '
+      .schemaVersion == 1
+      and .name == "manifold-agent"
+      and .enrolled == true
+      and .machineName == "fixture-node"
+      and (.masterUrl | startswith("https://"))
+      and .unit.present == false
+      and .lastLogEvent == "none"' >/dev/null
+
+    # Unknown capabilities stay refused by the local-qwen helper.
+    if atyrode runtime provision other-runtime >/dev/null 2>&1; then
+      echo 'runtime unexpectedly accepted an unknown capability' >&2
+      exit 1
+    fi
+    rm -rf "$HOME/.config/manifold" "$MANIFOLD_ENROLL_LOG" "$MANIFOLD_ROW_EXISTS"
+    unset ATYRODE_BW ATYRODE_FETCH MANIFOLD_ENROLL_LOG MANIFOLD_ROW_EXISTS _ATYRODE_TEST_HOSTNAME
+    fi
 
     # The local model reserves its full maximum response plus tokenizer/tool
     # envelope headroom. Otherwise OMP's default 15% reserve compacts too late:

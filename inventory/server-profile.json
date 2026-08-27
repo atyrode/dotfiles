@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "profile": "server",
-  "capabilities": ["base", "server", "agent-tools", "security"],
+  "capabilities": ["base", "server", "agent-tools", "security", "manifold-node"],
   "supportedSystems": ["aarch64-linux", "x86_64-linux"],
   "excludedCapabilities": [
     "development",

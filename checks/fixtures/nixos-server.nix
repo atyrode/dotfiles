@@ -8,12 +8,10 @@
 
 let
   hostId = "fixture-server";
-  capabilities = [
-    "base"
-    "server"
-    "agent-tools"
-    "security"
-  ];
+  # The reviewed portable server capability set, not a hand copy: the fixture
+  # exists to prove the NixOS-imported composition matches the standalone
+  # profile, so its selection must follow the same source of truth.
+  inherit ((builtins.fromJSON (builtins.readFile ../../inventory/server-profile.json))) capabilities;
   host = {
     inherit
       capabilities
@@ -64,11 +62,7 @@ in
           };
 
           home-manager.users.${username} = {
-            imports = [
-              profiles.base
-              profiles.server
-              profiles.agent-tools
-              profiles.security
+            imports = map (name: profiles.${name}) capabilities ++ [
               (dotfiles.lib.mkHostIdentityModule {
                 inherit host;
                 name = hostId;

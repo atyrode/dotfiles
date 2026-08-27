@@ -3,6 +3,7 @@
 # and evaluationPkgsFor (empty-registry overlay for portable evaluations).
 {
   lib,
+  manifold,
   nixpkgs,
   self,
   targets,
@@ -52,6 +53,7 @@ let
     "omp-agents"
     "omp-configured"
     "atyrode-omp-seed"
+    "manifold-agent"
   ];
 
   inventoryRevision = self.rev or self.dirtyRev or "dirty";
@@ -79,6 +81,11 @@ let
         omp-agents = final.callPackage ../pkgs/omp-agents { };
         omp-configured = final.callPackage ../pkgs/omp-configured { };
         omp-seed = final.callPackage ../pkgs/omp-seed { };
+        # Fleet agent for the self-hosted manifold hub (#418), consumed as the
+        # pinned upstream flake output rather than a release asset (none are
+        # published). Only systems with a filled upstream bun-deps hash can
+        # build it; inventory/manifold.json supportedSystems gates consumers.
+        manifold-agent = manifold.packages.${final.stdenv.hostPlatform.system}.manifold-agent;
         atyrode = final.callPackage ../pkgs/atyrode {
           capabilities = capabilitySummary;
           inherit homebrewCasks;

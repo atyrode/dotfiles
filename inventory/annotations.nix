@@ -56,6 +56,16 @@
       mutableState = "None beyond operator-selected project files";
       securityBoundary = "Media contents are never inspected";
     };
+    manifold-node = {
+      title = "Manifold node";
+      purpose = "Fleet agent joining this machine to the self-hosted manifold hub";
+      consumer = "Operator terminals on the shared manifold canvas";
+      group = "operations";
+      deliveryBoundary = "Home Manager installs the pinned agent and its user service; enrollment and the machine token stay machine-local through atyrode runtime";
+      mutableState = "The 0600 machine token and agent runtime state remain in the user home, outside the Nix store";
+      securityBoundary = "The owner key lives only in the operator vault and is read once during interactive provisioning; no token or key is evaluated, logged, or committed";
+      platforms = [ "linux" ];
+    };
     mobile = {
       title = "Mobile";
       purpose = "Android device tooling";

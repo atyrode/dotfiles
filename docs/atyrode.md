@@ -88,6 +88,10 @@ from the seeded repository defaults (see
 [Agent tools](agent-tools.md#seeded-plain-omp-defaults)) and, when running on
 a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
 never resolved automatically; skipping the review keeps every local value.
+It also reviews session-backup health: when the machine has no Cellar
+credentials it offers `atyrode backup setup` on a terminal (see
+[Agent tools](agent-tools.md#session-archive)), and it warns when the hourly
+archive has not succeeded within 48 hours.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
 selected host and capabilities, installable, source, backend, revision,

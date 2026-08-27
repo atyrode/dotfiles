@@ -99,6 +99,68 @@ let
       --prefer '^(bun|node|chrome|MainThread)$'
   '';
 
+  # Continuous agent-session archive: append-only rclone copy of omp/codex/
+  # Claude transcripts to a Cellar (S3) bucket, client-side encrypted with
+  # rclone crypt. Credentials come from a machine-local env file seeded from
+  # the Bitwarden vault by `atyrode backup setup`; an unconfigured machine is
+  # a silent no-op here (apply/status surface it), never a unit failure.
+  # `copy` (not `sync`) never deletes remote objects, so the archive is
+  # append/update-only; rclone's size+modtime comparison re-uploads sessions
+  # that append under an unchanged filename.
+  sessionBackupSync = pkgs.writeShellApplication {
+    name = "atyrode-session-backup";
+    runtimeInputs = [
+      pkgs.rclone
+      pkgs.coreutils
+    ];
+    text = ''
+      env_file="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/session-backup/env"
+      state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/session-backup"
+
+      if [[ ! -f "$env_file" ]]; then
+        echo "atyrode-session-backup: not configured; run: atyrode backup setup" >&2
+        exit 0
+      fi
+
+      set -a
+      # shellcheck source=/dev/null
+      source "$env_file"
+      set +a
+
+      host="$(uname -n)"
+      flags=(--fast-list --transfers 8 --checkers 8 --contimeout 30s --timeout 5m --retries 3 --log-level NOTICE)
+      if [[ -t 2 ]]; then
+        flags+=(--progress)
+      fi
+
+      # One tree failing must not block the others; report at the end.
+      fail=0
+      copy_tree() {
+        [[ -d "$1" ]] || return 0
+        rclone copy "''${flags[@]}" "$1" "archive:$host/$2" || fail=1
+      }
+      copy_file() {
+        [[ -f "$1" ]] || return 0
+        rclone copyto "''${flags[@]}" "$1" "archive:$host/$2" || fail=1
+      }
+
+      copy_tree "$HOME/.omp/agent/sessions" omp/sessions
+      copy_tree "$HOME/.omp/collab" omp/collab
+      copy_tree "$HOME/.codex/sessions" codex/sessions
+      copy_file "$HOME/.codex/history.jsonl" codex/history.jsonl
+      copy_file "$HOME/.codex/session_index.jsonl" codex/session_index.jsonl
+      copy_tree "$HOME/.codex/attachments" codex/attachments
+      copy_tree "$HOME/.claude/projects" claude/projects
+
+      [[ "$fail" == 0 ]] || exit 1
+      umask 077
+      mkdir -p "$state_dir"
+      stamp_tmp="$(mktemp "$state_dir/.last-success.XXXXXX")"
+      date -u +%FT%TZ >"$stamp_tmp"
+      mv -f "$stamp_tmp" "$state_dir/last-success"
+    '';
+  };
+
 in
 {
   options.atyrode.agentTools = {
@@ -357,6 +419,50 @@ in
               KeepAlive = true;
               ProcessType = "Background";
             };
+          };
+        };
+      }
+
+      {
+        # rclone on PATH for manual browse/restore; the sync script by name so
+        # `atyrode backup now` can exec it.
+        home.packages = [
+          pkgs.rclone
+          sessionBackupSync
+        ];
+
+        # No Install on the service: the first run can move multiple GB, and a
+        # startup-transaction job that long holds user-manager readiness at
+        # "starting" (same rationale as ollama-pull-classifier below). The
+        # timer triggers it instead.
+        systemd.user.services.atyrode-session-backup = lib.mkIf pkgs.stdenv.isLinux {
+          Unit = {
+            Description = "Archive agent session histories to Cellar";
+            After = [ "network.target" ];
+          };
+          Service = {
+            Type = "oneshot";
+            ExecStart = "${sessionBackupSync}/bin/atyrode-session-backup";
+          };
+        };
+
+        systemd.user.timers.atyrode-session-backup = lib.mkIf pkgs.stdenv.isLinux {
+          Unit.Description = "Hourly agent-session archive to Cellar";
+          Timer = {
+            OnCalendar = "hourly";
+            RandomizedDelaySec = "10m";
+            Persistent = true;
+          };
+          Install.WantedBy = [ "timers.target" ];
+        };
+
+        launchd.agents.atyrode-session-backup = lib.mkIf pkgs.stdenv.isDarwin {
+          enable = true;
+          config = {
+            ProgramArguments = [ "${sessionBackupSync}/bin/atyrode-session-backup" ];
+            StartInterval = 3600;
+            RunAtLoad = true;
+            ProcessType = "Background";
           };
         };
       }

@@ -389,6 +389,33 @@ instead of writing.
 `ATYRODE_SEED_REVIEW=0` suppresses the interactive apply-time review for
 pty-backed automation.
 
+## Session archive
+
+Every managed machine continuously archives its agent session histories — omp
+(`~/.omp/agent/sessions`, `~/.omp/collab`), codex (`~/.codex/sessions`,
+`history.jsonl`, `session_index.jsonl`, `attachments`), and Claude Code
+(`~/.claude/projects`) — to a Clever Cloud Cellar (S3) bucket under an
+`archive:<hostname>/` prefix. Content is client-side encrypted with rclone
+crypt; every upload is `rclone copy`/`copyto` (never `sync`), so the archive is
+append/update-only and a remote object is never deleted. Sources missing on a
+machine are skipped silently.
+
+Connection material (endpoint, bucket, S3 key pair, crypt password/salt) lives
+in one Bitwarden Secure Note, `Agent session archive`, and nowhere in this
+repository. `atyrode backup setup` — offered interactively after `atyrode
+apply` when unconfigured — renders it into a machine-local 0600 env file at
+`~/.config/atyrode/session-backup/env` (crypt secrets stored `rclone
+obscure`d, transferred via pipes only). An hourly systemd user timer (launchd
+agent on macOS) then runs `atyrode-session-backup`; unconfigured machines
+no-op instead of failing the unit. `atyrode backup now` runs the same upload
+in the foreground, `atyrode backup status [--json]` reports configuration,
+last-success age (state in
+`~/.local/state/atyrode/session-backup/last-success`), and remote
+reachability, and `atyrode apply` warns when the archive is unconfigured or
+has not succeeded within 48 hours (`ATYRODE_BACKUP_REVIEW=0` suppresses the
+interactive offer). Browse or restore with rclone directly: source the env
+file, then `rclone lsd archive:$(uname -n)` / `rclone copy archive:… <dest>`.
+
 ## Skills
 
 Generic, cross-project skills belong in `agents/skills/` and Home Manager links

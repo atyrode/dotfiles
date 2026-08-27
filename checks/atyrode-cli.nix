@@ -154,12 +154,22 @@ pkgs.runCommand "check-atyrode-cli"
         printf '%s\n' \
           '[{"id":"duplicate-1","name":"vault-duplicate","type":2},{"id":"duplicate-2","name":"vault-duplicate","type":2}]'
         ;;
+      'list items --search Agent session archive')
+        printf '%s\n' '[{"id":"backup-note-id","name":"Agent session archive","type":2}]'
+        ;;
       'list items --search '*) printf '%s\n' '[]' ;;
       'get template item')
         printf '%s\n' '{"type":2,"name":"","notes":null,"secureNote":{"type":0}}'
         ;;
       'get item vault-existing-id')
         printf '%s\n' '{"id":"vault-existing-id","name":"vault-existing","type":2,"notes":"VAULT-OLD-SECRET","secureNote":{"type":0}}'
+        ;;
+      'get item backup-note-id')
+        if [[ "''${ATYRODE_TEST_BACKUP_NOTE:-full}" == incomplete ]]; then
+          printf '%s\n' '{"id":"backup-note-id","type":2,"notes":"{\"endpoint\":\"cellar.test.example\",\"bucket\":\"test-bucket\",\"keyId\":\"TESTKEYID\",\"cryptPassword\":\"TEST-CRYPT-PW\",\"cryptSalt\":\"TEST-CRYPT-SALT\"}"}'
+        else
+          printf '%s\n' '{"id":"backup-note-id","type":2,"notes":"{\"endpoint\":\"cellar.test.example\",\"bucket\":\"test-bucket\",\"keyId\":\"TESTKEYID\",\"keySecret\":\"TEST-S3-SECRET\",\"cryptPassword\":\"TEST-CRYPT-PW\",\"cryptSalt\":\"TEST-CRYPT-SALT\"}"}'
+        fi
         ;;
       'get item '*)
         printf '%s\n' '{"id":"f0b39ebf-62ae-4198-808b-b4b200002e8c","name":"Tyrode Clan operator age identity","notes":"# created: 2026-08-25T00:00:00Z\n# public key: age1test\nAGE-SECRET-KEY-1TESTONLY"}'
@@ -171,6 +181,23 @@ pkgs.runCommand "check-atyrode-cli"
       'create item'|'edit item '*)
         test "$(cat)" = ENCODED
         printf '%s\n' '{"notes":"VAULT-WRITE-RESPONSE-MUST-NOT-PRINT"}'
+        ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    cat > "$TMPDIR/bin/rclone" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/rclone-args"
+    case "''${1:-}" in
+      obscure)
+        # Plaintext must arrive on stdin, never as an argument.
+        [[ "''${2:-}" == - ]] || exit 64
+        printf 'OBSCURED-%s\n' "$(cat)"
+        ;;
+      lsd)
+        # Proves the env file was sourced into the probe's environment.
+        [[ -n "''${RCLONE_CONFIG_CELLAR_ENDPOINT:-}" ]] || exit 64
+        [[ "''${ATYRODE_TEST_RCLONE_LSD_FAIL:-0}" != 1 ]]
         ;;
       *) exit 64 ;;
     esac
@@ -196,7 +223,7 @@ pkgs.runCommand "check-atyrode-cli"
       printf '%s\n' '{"ok":true,"host":"tyrode-dev-01","registered":{"activation":"nixos"}}'
     fi
     EOF
-    chmod +x "$TMPDIR/bin/bw" "$TMPDIR/bin/age-keygen" "$TMPDIR/bin/infra-nix" "$TMPDIR/bin/infra-ssh"
+    chmod +x "$TMPDIR/bin/bw" "$TMPDIR/bin/rclone" "$TMPDIR/bin/age-keygen" "$TMPDIR/bin/infra-nix" "$TMPDIR/bin/infra-ssh"
     chmod +x "$TMPDIR/bin/git" "$TMPDIR/bin/nh" "$TMPDIR/bin/nix-env" "$TMPDIR/bin/omp"
     # Make the home-manager generations profile path exist so clean/generations
     # accept it (gen_profile → $XDG_STATE_HOME/nix/profiles/home-manager).
@@ -622,7 +649,12 @@ pkgs.runCommand "check-atyrode-cli"
     unset _ATYRODE_TEST_HOME _ATYRODE_TEST_UID _ATYRODE_TEST_HOME_OWNER_UID \
       _ATYRODE_TEST_PASSWD_HOME
 
-    LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null
+    LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
+      { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
+    # A successful apply with no backup env file surfaces the setup pointer
+    # (non-interactive here, so no prompt) without failing the activation.
+    grep -qF 'session backup not configured; set up with: atyrode backup setup' \
+      "$TMPDIR/apply-success.err"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
@@ -1703,6 +1735,59 @@ pkgs.runCommand "check-atyrode-cli"
     fi
     ! grep -qxF lock "$TMPDIR/bw-args"
 
+    backup_test_env=(env ATYRODE_BW="$TMPDIR/bin/bw" ATYRODE_RCLONE="$TMPDIR/bin/rclone")
+
+    backup_status="$("''${backup_test_env[@]}" atyrode backup status --json)"
+    jq -e '.configured == false and .lastSuccess == null
+      and .ageHours == null and .remoteReachable == null' <<<"$backup_status" >/dev/null
+
+    set +e
+    "''${backup_test_env[@]}" atyrode backup now >/dev/null 2>"$TMPDIR/backup-now.err"
+    backup_now_status=$?
+    set -e
+    test "$backup_now_status" = 69
+    grep -qF 'atyrode apply' "$TMPDIR/backup-now.err"
+
+    if "''${backup_test_env[@]}" ATYRODE_TEST_BACKUP_NOTE=incomplete \
+      atyrode backup setup >/dev/null 2>"$TMPDIR/backup-bad.err"; then
+      echo 'backup setup must reject a vault note with a missing field' >&2
+      exit 1
+    fi
+    grep -qF "missing or has an empty 'keySecret' field" "$TMPDIR/backup-bad.err"
+    test ! -e "$XDG_CONFIG_HOME/atyrode/session-backup/env"
+
+    rm -f "$TMPDIR/rclone-args"
+    "''${backup_test_env[@]}" atyrode backup setup \
+      >"$TMPDIR/backup-setup.out" 2>"$TMPDIR/backup-setup.err"
+    test ! -s "$TMPDIR/backup-setup.out"
+    grep -qF 'atyrode backup now' "$TMPDIR/backup-setup.err"
+    backup_env_file="$XDG_CONFIG_HOME/atyrode/session-backup/env"
+    test -f "$backup_env_file"
+    test "$(stat -c %a "$backup_env_file")" = 600
+    test "$(stat -c %a "$XDG_CONFIG_HOME/atyrode/session-backup")" = 700
+    grep -qxF 'RCLONE_CONFIG_CELLAR_ENDPOINT=cellar.test.example' "$backup_env_file"
+    grep -qxF 'RCLONE_CONFIG_ARCHIVE_REMOTE=cellar:test-bucket' "$backup_env_file"
+    grep -qxF 'RCLONE_CONFIG_ARCHIVE_PASSWORD=OBSCURED-TEST-CRYPT-PW' "$backup_env_file"
+    grep -qxF 'RCLONE_CONFIG_ARCHIVE_PASSWORD2=OBSCURED-TEST-CRYPT-SALT' "$backup_env_file"
+    # The crypt secrets reach rclone via stdin only, and no secret reaches an
+    # argv, stdout, or stderr.
+    ! grep -qF 'TEST-CRYPT-PW' "$TMPDIR/rclone-args"
+    ! grep -qF 'TEST-CRYPT-SALT' "$TMPDIR/rclone-args"
+    ! grep -qF 'TEST-S3-SECRET' "$TMPDIR/rclone-args" "$TMPDIR/bw-args" \
+      "$TMPDIR/backup-setup.out" "$TMPDIR/backup-setup.err"
+    ! grep -qF 'TEST-CRYPT-PW' "$TMPDIR/backup-setup.out" "$TMPDIR/backup-setup.err"
+
+    mkdir -p "$XDG_STATE_HOME/atyrode/session-backup"
+    date -u +%FT%TZ >"$XDG_STATE_HOME/atyrode/session-backup/last-success"
+    backup_status="$("''${backup_test_env[@]}" atyrode backup status --json)"
+    jq -e '.configured == true and .remoteReachable == true and .ageHours == 0
+      and (.lastSuccess | type == "string")' <<<"$backup_status" >/dev/null
+    grep -qF 'lsd archive: --contimeout 10s --timeout 20s' "$TMPDIR/rclone-args"
+
+    backup_status="$("''${backup_test_env[@]}" ATYRODE_TEST_RCLONE_LSD_FAIL=1 \
+      atyrode backup status --json)"
+    jq -e '.configured == true and .remoteReachable == false' <<<"$backup_status" >/dev/null
+
     infra_test_env=(
       env
       ATYRODE_AGE_KEYGEN="$TMPDIR/bin/age-keygen"
@@ -1766,6 +1851,9 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF 'atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]' <<<"$help"
     grep -qF 'atyrode vault get NAME' <<<"$help"
     grep -qF 'atyrode vault put NAME' <<<"$help"
+    grep -qF 'atyrode backup setup' <<<"$help"
+    grep -qF 'atyrode backup status [--json]' <<<"$help"
+    grep -qF 'atyrode backup now' <<<"$help"
     unset _ATYRODE_TEST_INVENTORY
 
     mkdir "$out"

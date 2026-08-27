@@ -1884,6 +1884,17 @@ pkgs.runCommand "check-atyrode-cli"
       grep -qF "$expected_error" "$TMPDIR/infra-$checkout_state.err"
     done
 
+    if "''${infra_test_env[@]}" ATYRODE_TEST_BW_STATUS=unauthenticated \
+      atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
+      >"$TMPDIR/infra-unauthenticated.out" 2>"$TMPDIR/infra-unauthenticated.err"; then
+      echo "infra apply must reject an unauthenticated vault" >&2
+      exit 1
+    fi
+    grep -qF '0123456789ab -> 0123456789ab' "$TMPDIR/infra-unauthenticated.err"
+    grep -qF 'infra checkout already matches origin/main' "$TMPDIR/infra-unauthenticated.err"
+    grep -qF "Bitwarden is not logged in; run 'atyrode vault login'" \
+      "$TMPDIR/infra-unauthenticated.err"
+
     rm -f "$TMPDIR/infra-fast-forwarded"
     printf 'y\n' |
       "''${infra_test_env[@]}" _ATYRODE_TEST_TTY=1 ATYRODE_TEST_INFRA_GIT_STATE=behind \

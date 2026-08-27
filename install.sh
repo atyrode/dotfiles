@@ -120,8 +120,8 @@ configure_coder_runtime() {
   FLAKE_CONFIG="development-$SYSTEM"
   ASSUME_YES=1
 
-  # pad.ws and similar Coder deployments provision GitHub's HTTPS credential
-  # helper independently of dotfiles. Prefer it when it is already usable;
+  # Coder-style deployments provision GitHub's HTTPS credential helper
+  # independently of dotfiles. Prefer it when it is already usable;
   # otherwise retain the normal SSH-first policy.
   if [[ -z "${ATYRODE_GIT_AUTH_MODE:-}" ]] &&
     command -v gh >/dev/null 2>&1 &&

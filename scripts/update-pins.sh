@@ -9,9 +9,9 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 targets=("$@")
 for target in "${targets[@]}"; do
   case "$target" in
-    omp | code | codex) ;;
+    omp | code | codex | manifold) ;;
     *)
-      printf 'usage: %s [omp|code|codex]...\n' "${0##*/}" >&2
+      printf 'usage: %s [omp|code|codex|manifold]...\n' "${0##*/}" >&2
       exit 2
       ;;
   esac
@@ -80,4 +80,17 @@ if wants codex; then
   bump codex "$repo_root/pkgs/codex/default.nix" openai/codex rust-v \
     'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
     codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
+fi
+
+if wants manifold; then
+  # The manifold agent is a pinned flake input, not a release-asset pin:
+  # bump the tag in flake.nix, then relock that single input.
+  flake="$repo_root/flake.nix"
+  current_tag="$(sed -nE 's|.*github:atyrode/manifold/([^"]+)".*|\1|p' "$flake" | head -n 1)"
+  tag="$(latest_tag atyrode/manifold)"
+  if [[ "$tag" != "$current_tag" ]]; then
+    sed -i "s|github:atyrode/manifold/$current_tag|github:atyrode/manifold/$tag|" "$flake"
+    nix flake update manifold --flake "$repo_root"
+    printf 'manifold %s -> %s\n' "$current_tag" "$tag"
+  fi
 fi

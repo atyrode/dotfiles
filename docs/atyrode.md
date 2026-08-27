@@ -108,6 +108,8 @@ atyrode runtime status local-qwen --json
 atyrode runtime provision local-qwen
 atyrode runtime run local-qwen
 atyrode runtime shortcut local-qwen
+atyrode runtime provision manifold-agent
+atyrode runtime status manifold-agent --json
 atyrode inventory --json
 atyrode inventory --host alex-x86_64-linux --json
 atyrode inventory --ref <branch-tag-or-commit> --json
@@ -125,6 +127,10 @@ after the final session closes, the WSL idle reaper verifies that vLLM has no
 active or queued requests and no new token activity, then stops the container
 and releases its GPU memory. A new session or direct API activity resets the
 deadline; stale leases from crashed processes are discarded.
+
+`manifold-agent` joins the machine to the self-hosted manifold hub declared in
+`inventory/manifold.json`; enrollment, upgrade discipline, the tyrode-dev-01
+cutover, and the master-migration runbook live in [manifold](manifold.md).
 
 `inventory` is a thin, read-only consumer of the flake's schema-versioned
 evaluated manifest. By default it evaluates the exact immutable revision baked

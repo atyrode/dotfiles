@@ -246,6 +246,10 @@ let
     # The resource guard evaluates the Linux module branch (earlyoom is a
     # Linux-only package), so it exists on Linux systems only.
     resource-guard = import ./agent-resource-guard.nix { inherit lib pkgs; };
+    manifold-node = import ./manifold-node.nix {
+      inherit lib pkgs system;
+      serverConfig = serverHomeConfig.config;
+    };
     portable-profile-contract = import ./portable-profile-contract.nix {
       inherit lib mkPortableHomeConfiguration pkgs;
       profileName = "development-${system}";

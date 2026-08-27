@@ -11,8 +11,8 @@ Nix owns:
 - the pinned OMP binary and generated Zsh completion;
 - the managed OMP defaults, enforced policy, and model catalog;
 - the curated plain-omp seed and its drift-aware activation step;
-- the pinned bundled agents, global generic skills, managed-settings guard,
-  and vault-usage footer;
+- the pinned bundled agents, global generic skills, and managed-settings
+  guard;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator;
 - Claude Code's user-scope operator policy: the deployed
@@ -30,7 +30,7 @@ Manager links the managed agents, rules, extensions, and skills. If
 Manager, preserve wanted content outside the managed namespace, move or remove
 the collision, and rerun `atyrode apply`.
 
-Agents, rules, the settings guard, and the vault-usage footer are assembled into
+Agents, rules, and the settings guard are assembled into
 a read-only OMP extension-package root in the Nix store and injected explicitly
 by every managed session. They are not copied into OMP's mutable agent
 directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the

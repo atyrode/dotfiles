@@ -340,7 +340,7 @@ pkgs.runCommand "check-omp-stack"
 
     test "$(
       find ${pkgs.omp-configured.platformRoot}/extensions -maxdepth 1 -name '*.ts' -printf '%f\n' | sort | paste -sd, -
-    )" = "managed-settings-guard.ts,vault-usage-footer.ts"
+    )" = "managed-settings-guard.ts"
     grep -q 'isolated: true' ${parallelWriteRule}
 
     test "$(
@@ -348,7 +348,6 @@ pkgs.runCommand "check-omp-stack"
     )" -eq 7
     test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 7
     test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
-    test -f ${pkgs.omp-configured.platformRoot}/extensions/vault-usage-footer.ts
     test -f ${pkgs.omp-configured.platformRoot}/rules/no-shell-text-surgery.md
     test -f ${pkgs.omp-configured.platformRoot}/rules/parallel-write-isolation.md
 

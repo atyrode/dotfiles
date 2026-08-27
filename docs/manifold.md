@@ -61,9 +61,8 @@ therefore operator-timed:
    ```sh
    cd ~/manifold && git pull --ff-only
    docker exec manifold-manifold-1 bun -e \
-     'import {Database} from "bun:sqlite";
-      new Database("/data/manifold.db").exec("VACUUM INTO '/data/pre-upgrade.db'")'
-   docker cp manifold-manifold-1:/data/pre-upgrade.db /srv/backups/
+     "import {Database} from 'bun:sqlite'; new Database('/data/manifold.db').exec(\"VACUUM INTO '/data/pre-upgrade.db'\")"
+   docker cp manifold-manifold-1:/data/pre-upgrade.db /tmp/
    MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose build
    MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose up -d
    curl -s https://manifold.tyrode.dev/healthz   # build must equal the new rev

@@ -53,6 +53,7 @@ Usage:
   atyrode backup setup
   atyrode backup status [--json]
   atyrode backup now
+  atyrode provision git [--persist] [--yes]
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -1276,7 +1277,7 @@ doctor_git() {
     status=failed
     code=agent-unavailable
     summary="SSH agent is unavailable"
-    remediation="start the platform SSH agent and export its socket; do not fall back to a plaintext HTTPS helper"
+    remediation="start the platform SSH agent and export its socket (apply enables services.ssh-agent on Linux), then run 'atyrode provision git'; do not fall back to a plaintext HTTPS helper"
   fi
   git_check_add ssh-agent operator true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
@@ -1292,7 +1293,7 @@ doctor_git() {
     status=failed
     code=no-agent-keys
     summary="SSH agent has no usable keys"
-    remediation="load this machine's distinct authentication and signing keys into the agent"
+    remediation="run 'atyrode provision git' to load this machine's vault-backed authentication and signing keys into the agent"
   fi
   git_check_add ssh-agent-keys operator true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
@@ -1338,7 +1339,7 @@ doctor_git() {
     status=failed
     code=signing-key-invalid
     summary="Configured SSH signing public key is missing, unreadable, invalid, or writable by group or others"
-    remediation="provision this machine's public signing key at user.signingKey with mode 0644 or stricter"
+    remediation="run 'atyrode provision git' to materialize the public signing key at user.signingKey with mode 0644 or stricter"
   fi
   git_check_add signing-key operator true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
@@ -2397,6 +2398,7 @@ apply_config() {
     fi
     review_seed_drift "$json"
     review_backup_health "$json"
+    review_git_identity_health
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
     if [[ "$json" == 0 && -t 1 ]]; then
@@ -2428,6 +2430,25 @@ review_seed_drift() {
   else
     printf 'review with: atyrode-omp-seed resolve\n' >&2
   fi
+}
+
+# Post-apply git-identity nudge (#8): if the agent is reachable but holds no
+# keys, or the configured signing public key is missing, name the provision
+# command. Detection only — apply never prompts for the vault itself.
+# Always non-fatal, no vault, no network.
+review_git_identity_health() {
+  local signing_public
+  signing_public="$(git config --global --get user.signingKey 2>/dev/null || true)"
+  if [[ -n "$signing_public" && ! -r "$(expand_home_path "$signing_public")" ]]; then
+    printf 'git identity incomplete (signing key missing); provision with: atyrode provision git\n' >&2
+    return 0
+  fi
+  if command -v ssh-add >/dev/null 2>&1 &&
+    [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] &&
+    ! ssh-add -l >/dev/null 2>&1; then
+    printf 'git identity incomplete (agent holds no keys); provision with: atyrode provision git\n' >&2
+  fi
+  return 0
 }
 
 # After a successful activation, surface session-backup health. Unconfigured
@@ -3165,6 +3186,37 @@ vault_item_notes() {
     die "$EX_DATAERR" "Bitwarden Secure Note '$name' has no text value"
 }
 
+# vault_store_note creates or updates the exact-name Secure Note NAME from
+# SECRET_FILE. SCRATCH is a caller-owned secure temp dir under the caller's
+# cleanup trap; the vault session must already be open (vault_open_session).
+vault_store_note() {
+  local name="$1" secret_file="$2" scratch="$3" matches id
+  matches="$scratch/store-matches.json"
+  [[ -s "$secret_file" ]] || die "$EX_DATAERR" "refusing to store an empty secret"
+  bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
+  vault_find_exact_item "$name" "$matches"
+  if [[ "$(jq -er 'length' "$matches")" == 1 ]]; then
+    [[ "$(jq -er '.[0].type' "$matches")" == 2 ]] ||
+      die "$EX_DATAERR" "Bitwarden item '$name' exists but is not a Secure Note"
+    id="$(jq -er '.[0].id' "$matches")"
+    bw_cli get item "$id" |
+      jq -e --arg name "$name" --rawfile value "$secret_file" \
+        '.name = $name | .type = 2 | .secureNote = {"type": 0} | .notes = $value' |
+      bw_cli encode |
+      bw_cli edit item "$id" >/dev/null ||
+      die "$EX_UNAVAILABLE" "could not update Bitwarden Secure Note '$name'"
+    printf 'atyrode: updated Bitwarden Secure Note %s\n' "$name" >&2
+  else
+    bw_cli get template item |
+      jq -e --arg name "$name" --rawfile value "$secret_file" \
+        '.name = $name | .type = 2 | .secureNote = {"type": 0} | .notes = $value' |
+      bw_cli encode |
+      bw_cli create item >/dev/null ||
+      die "$EX_UNAVAILABLE" "could not create Bitwarden Secure Note '$name'"
+    printf 'atyrode: created Bitwarden Secure Note %s\n' "$name" >&2
+  fi
+}
+
 cmd_vault() {
   local action="${1:-}"
   case "$action" in
@@ -3209,7 +3261,7 @@ cmd_vault() {
     get | put)
       [[ $# == 1 && -n "$1" ]] ||
         die "$EX_USAGE" "vault $action expects exactly one item name"
-      local name="$1" tmp matches id type secret_file=""
+      local name="$1" tmp secret_file=""
       tmp="$(vault_secure_temp_dir atyrode-vault)"
       vault_command_cleanup() {
         rm -rf -- "${tmp:-}"
@@ -3219,18 +3271,7 @@ cmd_vault() {
       if [[ "$action" == get ]]; then
         vault_item_notes "$name" "$tmp"
       else
-        matches="$tmp/matches.json"
         vault_open_session 0
-        bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
-        vault_find_exact_item "$name" "$matches"
-        if [[ "$(jq -er 'length' "$matches")" == 1 ]]; then
-          id="$(jq -er '.[0].id' "$matches")"
-          type="$(jq -er '.[0].type' "$matches")"
-          [[ "$type" == 2 ]] ||
-            die "$EX_DATAERR" "Bitwarden item '$name' exists but is not a Secure Note"
-        else
-          id=""
-        fi
         secret_file="$tmp/secret"
         if [[ -t 0 ]]; then
           local secret
@@ -3242,24 +3283,7 @@ cmd_vault() {
         else
           cat >"$secret_file"
         fi
-        [[ -s "$secret_file" ]] || die "$EX_DATAERR" "refusing to store an empty secret"
-        if [[ -n "$id" ]]; then
-          bw_cli get item "$id" |
-            jq -e --arg name "$name" --rawfile value "$secret_file" \
-              '.name = $name | .type = 2 | .secureNote = {"type": 0} | .notes = $value' |
-            bw_cli encode |
-            bw_cli edit item "$id" >/dev/null ||
-            die "$EX_UNAVAILABLE" "could not update Bitwarden Secure Note '$name'"
-          printf 'atyrode: updated Bitwarden Secure Note %s\n' "$name" >&2
-        else
-          bw_cli get template item |
-            jq -e --arg name "$name" --rawfile value "$secret_file" \
-              '.name = $name | .type = 2 | .secureNote = {"type": 0} | .notes = $value' |
-            bw_cli encode |
-            bw_cli create item >/dev/null ||
-            die "$EX_UNAVAILABLE" "could not create Bitwarden Secure Note '$name'"
-          printf 'atyrode: created Bitwarden Secure Note %s\n' "$name" >&2
-        fi
+        vault_store_note "$name" "$secret_file" "$tmp"
       fi
       vault_command_cleanup
       trap - EXIT HUP INT TERM
@@ -3689,7 +3713,7 @@ cmd_infra() {
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_AGE_KEYGEN ATYRODE_BW ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL; do
+  for v in ATYRODE_AGE_KEYGEN ATYRODE_BW ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_SSH_KEYGEN ATYRODE_SSH_ADD ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done
@@ -3725,7 +3749,7 @@ manifold_inventory_field() {
 
 # Optional runtime-host command (unlike windows_hook_command this must not
 # die: a machine without systemd still gets a truthful status report).
-manifold_host_command() {
+optional_host_command() {
   local variable="$1" default="$2" candidate
   candidate="$default"
   if [[ "$test_hooks" == 1 && -n "${!variable:-}" ]]; then
@@ -3761,7 +3785,7 @@ manifold_status_json() {
     enrolled=true
     [[ "$applicable" != true ]] || phase=enrolled
   fi
-  if systemctl="$(manifold_host_command ATYRODE_SYSTEMCTL systemctl)"; then
+  if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
     if "$systemctl" --user cat manifold-agent.service >/dev/null 2>&1; then
       unit_present=true
       active_state="$("$systemctl" --user show -P ActiveState manifold-agent.service 2>/dev/null || printf unknown)"
@@ -3771,7 +3795,7 @@ manifold_status_json() {
       fi
     fi
   fi
-  if journalctl="$(manifold_host_command ATYRODE_JOURNALCTL journalctl)"; then
+  if journalctl="$(optional_host_command ATYRODE_JOURNALCTL journalctl)"; then
     # Value-free connection probe: the agent logs `welcome` after the hub
     # accepts it and names rejections explicitly; neither line carries the
     # token. Report only which event was seen last.
@@ -3846,7 +3870,7 @@ manifold_provision() {
     >"$scratch/curl.cfg"
 
   local fetch payload response token
-  fetch="$(manifold_host_command ATYRODE_FETCH curl)" ||
+  fetch="$(optional_host_command ATYRODE_FETCH curl)" ||
     die "$EX_UNAVAILABLE" "curl is required to enroll with the manifold master"
   payload="$(jq -nc --arg name "$machine_name" --argjson rotate "$([[ "$rotate" == 1 ]] && printf true || printf false)" \
     '{name:$name} + (if $rotate then {rotateToken:true} else {} end)')"
@@ -3875,7 +3899,7 @@ manifold_provision() {
 
 manifold_service() {
   local verb="$1" systemctl
-  systemctl="$(manifold_host_command ATYRODE_SYSTEMCTL systemctl)" ||
+  systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" ||
     die "$EX_UNAVAILABLE" "systemctl is unavailable; manifold-agent service control requires systemd"
   "$systemctl" --user "$verb" manifold-agent.service
 }
@@ -3919,6 +3943,151 @@ cmd_runtime() {
   fi
 }
 
+# --- provision ----------------------------------------------------------------
+# One-time interactive machine provisioning (#8, operator decision 2026-08-27):
+# per-machine Git SSH keys are vault-backed. `provision git` reconciles the
+# machine's auth and signing identities against Bitwarden — materializing a
+# vault key into agent memory, backing up a pre-vault local key, or
+# bootstrapping a brand-new one (generate, store, register with GitHub).
+# Default custody is agent-memory: no private file lands on disk; --persist
+# writes the 0600 file for machines that must survive agent restarts
+# unattended. Public halves are always written (they are the reviewed data).
+
+provision_git_agent_loaded() { # pub_file
+  local ssh_add fingerprint
+  ssh_add="$(optional_host_command ATYRODE_SSH_ADD ssh-add)" || return 1
+  [[ -f "$1" ]] || return 1
+  fingerprint="$("$provision_ssh_keygen" -lf "$1" 2>/dev/null | awk '{print $2}')" || return 1
+  [[ -n "$fingerprint" ]] || return 1
+  "$ssh_add" -l 2>/dev/null | grep -qF "$fingerprint"
+}
+
+provision_git_role() { # role private_path item_name persist yes scratch
+  local role="$1" private_path="$2" item_name="$3" persist="$4" yes="$5" scratch="$6"
+  local public_path="$private_path.pub" matches count material="$scratch/$role.key"
+  matches="$scratch/$role-matches.json"
+  vault_find_exact_item "$item_name" "$matches"
+  count="$(jq -er 'length' "$matches")"
+
+  if [[ "$count" == 1 ]]; then
+    [[ "$(jq -er '.[0].type' "$matches")" == 2 ]] ||
+      die "$EX_DATAERR" "Bitwarden item '$item_name' exists but is not a Secure Note"
+    bw_cli get item "$(jq -er '.[0].id' "$matches")" |
+      jq -er '.notes | select(type == "string")' >"$material" ||
+      die "$EX_DATAERR" "Bitwarden Secure Note '$item_name' has no text value"
+    chmod 600 "$material"
+    "$provision_ssh_keygen" -y -f "$material" >"$material.pub" 2>/dev/null ||
+      die "$EX_DATAERR" "Bitwarden Secure Note '$item_name' is not a private SSH key"
+    if [[ -f "$private_path" ]]; then
+      local local_fp vault_fp
+      local_fp="$("$provision_ssh_keygen" -lf "$private_path" 2>/dev/null | awk '{print $2}')"
+      vault_fp="$("$provision_ssh_keygen" -lf "$material.pub" | awk '{print $2}')"
+      [[ "$local_fp" == "$vault_fp" ]] ||
+        die "$EX_DATAERR" "the local $role key and Secure Note '$item_name' are different keys; resolve that conflict manually before provisioning"
+      printf 'atyrode: %s key matches the vault\n' "$role" >&2
+    else
+      install -m 644 "$material.pub" "$public_path"
+      if [[ "$persist" == 1 ]]; then
+        install -m 600 "$material" "$private_path"
+        printf 'atyrode: installed the vault-backed %s key at %s\n' "$role" "$private_path" >&2
+      fi
+    fi
+    if ! provision_git_agent_loaded "$public_path"; then
+      "$provision_ssh_add" "$material" 2>/dev/null ||
+        die "$EX_UNAVAILABLE" "could not load the $role key into the ssh-agent"
+      printf 'atyrode: loaded the %s key into the agent\n' "$role" >&2
+    fi
+    return 0
+  fi
+
+  if [[ -f "$private_path" ]]; then
+    # Pre-vault key: this machine predates the vault-backed custody decision.
+    if [[ "$yes" == 1 ]] || confirm "Back up the existing $role key to Secure Note '$item_name'?"; then
+      vault_store_note "$item_name" "$private_path" "$scratch"
+    else
+      printf 'atyrode: left the %s key device-local (no vault recovery)\n' "$role" >&2
+    fi
+    if ! provision_git_agent_loaded "$public_path"; then
+      "$provision_ssh_add" "$private_path" 2>/dev/null ||
+        printf 'atyrode: warning: could not load the %s key into the ssh-agent\n' "$role" >&2
+    fi
+    return 0
+  fi
+
+  # Brand new identity: generate, store first (the vault is the recovery
+  # authority — no window where agent memory holds the only copy), register
+  # the public half, then load.
+  if [[ "$yes" != 1 ]]; then
+    confirm "Generate a new $role key for this machine and store it in Secure Note '$item_name'?" ||
+      die "$EX_USAGE" "provision git needs the $role key decision"
+  fi
+  "$provision_ssh_keygen" -t ed25519 -N "" \
+    -C "$(actual_user)@$(manifold_machine_name) git-$role" -f "$material" -q
+  vault_store_note "$item_name" "$material" "$scratch"
+  install -m 644 "$material.pub" "$public_path"
+  if [[ "$persist" == 1 ]]; then
+    install -m 600 "$material" "$private_path"
+  fi
+  "$provision_ssh_add" "$material" 2>/dev/null ||
+    die "$EX_UNAVAILABLE" "could not load the new $role key into the ssh-agent"
+  local gh_cli register=(ssh-key add "$public_path" --title "$(manifold_machine_name) git-$role")
+  [[ "$role" != signing ]] || register+=(--type signing)
+  if gh_cli="$(optional_host_command ATYRODE_GH gh)" && "$gh_cli" "${register[@]}" >/dev/null 2>&1; then
+    printf 'atyrode: registered the %s public key with GitHub\n' "$role" >&2
+  else
+    printf 'atyrode: register the %s key yourself: gh %s\n' "$role" "${register[*]}" >&2
+  fi
+}
+
+cmd_provision() {
+  local target="${1:-}" persist=0 yes=0
+  [[ "$target" == git ]] || die "$EX_USAGE" "provision expects git"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --persist) persist=1 ;;
+      -y | --yes) yes=1 ;;
+      *) die "$EX_USAGE" "unknown provision git option: $1" ;;
+    esac
+    shift
+  done
+  provision_ssh_keygen="$(optional_host_command ATYRODE_SSH_KEYGEN ssh-keygen)" ||
+    die "$EX_UNAVAILABLE" "ssh-keygen is required by provision git"
+  provision_ssh_add="$(optional_host_command ATYRODE_SSH_ADD ssh-add)" ||
+    die "$EX_UNAVAILABLE" "ssh-add is required by provision git"
+  [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] ||
+    die "$EX_UNAVAILABLE" "no ssh-agent socket; apply this configuration and log in again (services.ssh-agent supervises the Linux agent), or start your platform agent"
+
+  local ssh_home="$HOME/.ssh"
+  mkdir -p "$ssh_home"
+  chmod 700 "$ssh_home"
+
+  local scratch host
+  host="$(manifold_machine_name)"
+  scratch="$(vault_secure_temp_dir atyrode-provision)"
+  provision_cleanup() {
+    rm -rf -- "${scratch:-}"
+    vault_close_session
+  }
+  trap provision_cleanup EXIT HUP INT TERM
+  vault_open_session 0
+  bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
+
+  provision_git_role auth "$ssh_home/id_ed25519" \
+    "Git SSH auth key ($host)" "$persist" "$yes" "$scratch"
+  provision_git_role signing "$ssh_home/id_ed25519_git_signing" \
+    "Git SSH signing key ($host)" "$persist" "$yes" "$scratch"
+
+  # The reviewed signer set is git-owned data: a new signing key becomes
+  # trusted only through a reviewed commit, never through provisioning.
+  local signing_public="$ssh_home/id_ed25519_git_signing.pub" key_blob=""
+  key_blob="$(awk '{print $2}' "$signing_public" 2>/dev/null || true)"
+  if [[ -n "$key_blob" ]] && ! grep -qF "$key_blob" "$managed_git_allowed_signers"; then
+    printf 'atyrode: the signing key is not yet in home/git-allowed-signers; add it through a reviewed commit, then apply\n' >&2
+  fi
+  printf 'atyrode: verify with: atyrode doctor git\n' >&2
+}
+
 main() {
   if [[ $# == 0 ]] && interactive; then
     export ATYRODE_CLI="$0"
@@ -3929,7 +4098,7 @@ main() {
   # A production binary must never mutate the store while a caller believes its
   # tool overrides are in effect (they are not) — refuse before dispatching.
   case "$subcommand" in
-    apply | clean | rollback) guard_production_mutation "$subcommand" ;;
+    apply | clean | rollback | provision) guard_production_mutation "$subcommand" ;;
   esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
@@ -3941,6 +4110,7 @@ main() {
     infra) cmd_infra "$@" ;;
     vault) cmd_vault "$@" ;;
     backup) cmd_backup "$@" ;;
+    provision) cmd_provision "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

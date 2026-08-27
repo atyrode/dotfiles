@@ -509,5 +509,109 @@ pkgs.runCommand "check-atyrode-credentials"
     grep -qF 'alex@target.example atyrode doctor host --json' "$TMPDIR/infra-ssh-args"
     ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_apply"
 
+    # --- provision git (#8): vault-backed per-machine key custody -------------
+    # A stateful vault stub emulates Bitwarden storage, a REAL ssh-agent and
+    # ssh-keygen exercise the custody mechanics: generate on one home, recover
+    # on a second home from the vault alone, and prove the two homes hold the
+    # same identities while no private key ever lands on disk (memory default).
+    export VAULT_STORE="$TMPDIR/vault-store"
+    mkdir -p "$VAULT_STORE"
+    cat > "$TMPDIR/bin/vault-bw" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    note_id() { printf 'note-%s\n' "$(printf '%s' "$1" | base64 -w0 | tr '+/=' '._-')"; }
+    case "$*" in
+      status) printf '{"status":"unlocked"}\n' ;;
+      sync|lock) ;;
+      'list items --search '*)
+        all="$*"
+        name="''${all#list items --search }"
+        id="$(note_id "$name")"
+        if [[ -f "$VAULT_STORE/$id" ]]; then
+          jq -nc --arg id "$id" --arg name "$name" '[{id:$id,name:$name,type:2}]'
+        else
+          printf '[]\n'
+        fi
+        ;;
+      'get template item')
+        printf '%s\n' '{"type":2,"name":"","notes":null,"secureNote":{"type":0}}'
+        ;;
+      'get item note-'*)
+        id="$3"
+        [[ -f "$VAULT_STORE/$id" ]] || exit 64
+        jq -nc --arg id "$id" --rawfile notes "$VAULT_STORE/$id" \
+          '{id:$id,type:2,secureNote:{type:0},notes:$notes}'
+        ;;
+      encode)
+        tee "$VAULT_STORE/.encode-last" >/dev/null
+        printf 'ENCODED\n'
+        ;;
+      'create item')
+        test "$(cat)" = ENCODED
+        name="$(jq -r '.name' "$VAULT_STORE/.encode-last")"
+        jq -rj '.notes' "$VAULT_STORE/.encode-last" > "$VAULT_STORE/$(note_id "$name")"
+        printf '{}\n'
+        ;;
+      'edit item '*)
+        test "$(cat)" = ENCODED
+        name="$(jq -r '.name' "$VAULT_STORE/.encode-last")"
+        jq -rj '.notes' "$VAULT_STORE/.encode-last" > "$VAULT_STORE/$(note_id "$name")"
+        printf '{}\n'
+        ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    cat > "$TMPDIR/bin/gh-stub" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/gh-args"
+    EOF
+    chmod +x "$TMPDIR/bin/vault-bw" "$TMPDIR/bin/gh-stub"
+
+    eval "$(${pkgs.openssh}/bin/ssh-agent -s)" >/dev/null
+    provision_env=(env ATYRODE_BW="$TMPDIR/bin/vault-bw" ATYRODE_GH="$TMPDIR/bin/gh-stub" \
+      _ATYRODE_TEST_HOSTNAME=fixture-host)
+
+    # No agent socket → fail closed, never downgrade.
+    if "''${provision_env[@]}" SSH_AUTH_SOCK= atyrode provision git --yes >/dev/null 2>&1; then
+      echo 'provision git unexpectedly ran without an ssh-agent' >&2
+      exit 1
+    fi
+
+    # Fresh machine: generate both identities, vault first, agent memory only.
+    "''${provision_env[@]}" atyrode provision git --yes 2> "$TMPDIR/provision-fresh.err"
+    test -f "$HOME/.ssh/id_ed25519.pub"
+    test -f "$HOME/.ssh/id_ed25519_git_signing.pub"
+    test ! -e "$HOME/.ssh/id_ed25519"
+    test ! -e "$HOME/.ssh/id_ed25519_git_signing"
+    test "$(${pkgs.openssh}/bin/ssh-add -l | wc -l)" = 2
+    test -f "$VAULT_STORE/$(printf 'note-%s' "$(printf '%s' 'Git SSH auth key (fixture-host)' | base64 -w0 | tr '+/=' '._-')")"
+    grep -qF -- 'ssh-key add' "$TMPDIR/gh-args"
+    grep -qF -- '--type signing' "$TMPDIR/gh-args"
+    grep -qF 'not yet in home/git-allowed-signers' "$TMPDIR/provision-fresh.err"
+    auth_fingerprint="$(${pkgs.openssh}/bin/ssh-keygen -lf "$HOME/.ssh/id_ed25519.pub" | awk '{print $2}')"
+    signing_fingerprint="$(${pkgs.openssh}/bin/ssh-keygen -lf "$HOME/.ssh/id_ed25519_git_signing.pub" | awk '{print $2}')"
+    test "$auth_fingerprint" != "$signing_fingerprint"
+
+    # Re-run: reconciles against the vault without generating or minting.
+    "''${provision_env[@]}" atyrode provision git --yes 2> "$TMPDIR/provision-again.err"
+    gh_calls="$(grep -cF 'ssh-key add' "$TMPDIR/gh-args")"
+    if [[ "$gh_calls" != 2 ]]; then
+      echo "re-run minted new keys: $gh_calls gh registrations" >&2
+      cat "$TMPDIR/gh-args" >&2
+      cat "$TMPDIR/provision-again.err" >&2
+      exit 1
+    fi
+
+    # Blank-machine recovery: a second home materializes the same identities
+    # from the vault alone; --persist writes the 0600 private files.
+    recovery_home="$TMPDIR/recovery-home"
+    mkdir -p "$recovery_home"
+    HOME="$recovery_home" "''${provision_env[@]}" atyrode provision git --yes --persist >/dev/null 2>&1
+    test "$(${pkgs.openssh}/bin/ssh-keygen -lf "$recovery_home/.ssh/id_ed25519.pub" | awk '{print $2}')" = "$auth_fingerprint"
+    test "$(${pkgs.openssh}/bin/ssh-keygen -lf "$recovery_home/.ssh/id_ed25519_git_signing.pub" | awk '{print $2}')" = "$signing_fingerprint"
+    test "$(stat -c %a "$recovery_home/.ssh/id_ed25519")" = 600
+    test "$(stat -c %a "$recovery_home/.ssh/id_ed25519_git_signing")" = 600
+    ${pkgs.openssh}/bin/ssh-agent -k >/dev/null 2>&1 || true
+
     mkdir "$out"
   ''

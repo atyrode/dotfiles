@@ -25,6 +25,37 @@ The operator owns private-key generation, agent/keychain availability, forge key
 registration, and revocation. Public keys may be committed and enter the Nix
 store; private keys and tokens must not.
 
+## Vault-backed custody and `atyrode provision git`
+
+Since the 2026-08-27 operator decision (#8), per-machine keys are
+**vault-backed on every machine, including macOS**: Bitwarden is the custody
+and recovery authority, and `atyrode provision git` is the one interactive
+verb that reconciles a machine against it, under the same
+unlock→fetch→lock discipline as `atyrode backup setup`:
+
+- **Blank machine, keys in the vault** → materializes them into the running
+  ssh-agent's memory and writes only the public halves. No private file
+  touches disk unless `--persist` is passed (0600, for machines that must
+  survive agent restarts unattended).
+- **Blank machine, nothing in the vault** → generates distinct ed25519
+  auth/signing keys, stores them in per-machine Secure Notes (`Git SSH auth
+  key (<hostname>)`, `Git SSH signing key (<hostname>)`) *before* anything
+  else holds the only copy, registers the public halves with GitHub through
+  `gh` (the signing key with `--type signing`), and loads the agent.
+- **Pre-vault local keys** → offers to back them up; a local/vault key
+  mismatch always fails loudly and is never resolved silently.
+
+The reviewed signer set stays git-owned: a new signing key enters
+[`../home/git-allowed-signers`](../home/git-allowed-signers) only through a
+reviewed commit, and provisioning reminds you when that step is pending.
+On Linux, Home Manager supervises the user `ssh-agent`
+(`services.ssh-agent`), so agent sessions and headless logins inherit
+`SSH_AUTH_SOCK`; agent-memory keys survive until reboot, after which one
+interactive re-provision reloads them. macOS keeps the system
+Keychain-backed agent. `atyrode apply` and `atyrode doctor git` detect an
+incomplete identity and name the provision command; they never open the
+vault themselves.
+
 ## What “SSH-first” means
 
 `gh repo clone` uses SSH because Home Manager sets `gh`'s `git_protocol` to

@@ -3565,6 +3565,7 @@ cmd_infra() {
        | select(length == 1) | .[0]' "$network_intent"
   )" || die "$EX_DATAERR" "cannot resolve the unique IPv4 deployment address for $machine"
   target="$target_user@$target_address"
+  [[ "$action" != apply ]] || infra_print_apply_source "$machine" "$target"
 
   vault_open_session "$([[ "$action" == setup ]] && printf 1 || printf 0)"
 
@@ -3639,7 +3640,6 @@ cmd_infra() {
       fi
     else
       guard_production_mutation "infra apply"
-      infra_print_apply_source "$machine" "$target"
       if [[ "$assume_yes" == 0 ]]; then
         confirm "deploy $machine to $target from ${infra_sync_new:0:12} now?" || {
           infra_cleanup

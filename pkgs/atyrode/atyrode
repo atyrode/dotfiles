@@ -46,6 +46,9 @@ Usage:
   atyrode vault login|lock
   atyrode vault get NAME
   atyrode vault put NAME
+  atyrode backup setup
+  atyrode backup status [--json]
+  atyrode backup now
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -83,6 +86,11 @@ vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
 explicit secret-output boundary. Duplicate names and non-note items are refused.
+backup archives agent session histories (omp, codex, Claude Code) to Cellar
+object storage, client-side encrypted. setup seeds machine-local credentials
+from the 'Agent session archive' vault note (interactive unlock); status is a
+read-only health report; now runs the append-only upload in the foreground
+(the hourly timer runs it unattended).
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
@@ -2384,6 +2392,7 @@ apply_config() {
       [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
     fi
     review_seed_drift "$json"
+    review_backup_health "$json"
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
     if [[ "$json" == 0 && -t 1 ]]; then
@@ -2415,6 +2424,38 @@ review_seed_drift() {
   else
     printf 'review with: atyrode-omp-seed resolve\n' >&2
   fi
+}
+
+# After a successful activation, surface session-backup health. Unconfigured
+# on a terminal → offer the one-time credential setup (vault unlock included);
+# otherwise point at `atyrode backup setup`. Configured but stale → warn.
+# Always non-fatal, and never a network call during apply.
+review_backup_health() {
+  local json="$1" env_file state_file
+  env_file="${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/session-backup/env"
+  state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/session-backup/last-success"
+  if [[ ! -f "$env_file" ]]; then
+    if [[ "$json" == 0 && "${ATYRODE_BACKUP_REVIEW:-1}" == 1 && -t 0 && -t 1 ]]; then
+      if confirm "Set up session backup to Cellar now?"; then
+        cmd_backup setup || true
+      fi
+    else
+      printf 'session backup not configured; set up with: atyrode backup setup\n' >&2
+    fi
+    return 0
+  fi
+  local last="" last_epoch now
+  [[ ! -f "$state_file" ]] || read -r last <"$state_file" || true
+  if [[ -z "$last" ]]; then
+    printf 'session backup stale (last success: never); check with: atyrode backup status\n' >&2
+    return 0
+  fi
+  last_epoch="$(date -u -d "$last" +%s 2>/dev/null)" || return 0
+  now="$(date -u +%s)"
+  if (( now - last_epoch > 48 * 3600 )); then
+    printf 'session backup stale (last success: %s); check with: atyrode backup status\n' "$last" >&2
+  fi
+  return 0
 }
 
 # interactive reports whether we can hold a yes/no dialogue with a human (both
@@ -3012,6 +3053,19 @@ bw_cli() {
   "$command" "$@"
 }
 
+# The operator's Bitwarden account lives on the EU cloud. The bw CLI defaults
+# to vault.bitwarden.com and then fails a first login on a fresh machine with
+# a misleading "invalid master password", so pin the server before any login.
+# Server changes are only accepted (and only needed) while unauthenticated.
+readonly bitwarden_server="https://vault.bitwarden.eu"
+vault_ensure_server() {
+  local current
+  current="$(bw_cli config server 2>/dev/null || true)"
+  [[ "$current" == "$bitwarden_server" ]] && return 0
+  bw_cli config server "$bitwarden_server" >/dev/null ||
+    die "$EX_UNAVAILABLE" "could not point the Bitwarden CLI at $bitwarden_server"
+}
+
 vault_session=""
 vault_unlocked_here=0
 
@@ -3027,6 +3081,7 @@ vault_open_session() {
   status="$(vault_status_value)"
   if [[ "$status" == unauthenticated && "$allow_login" == 1 ]]; then
     interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+    vault_ensure_server
     bw_cli login >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden login failed"
     status="$(vault_status_value)"
   fi
@@ -3083,6 +3138,27 @@ vault_find_exact_item() {
     die "$EX_DATAERR" "Bitwarden contains duplicate items named '$name'"
 }
 
+# vault_item_notes prints the notes body of the exact-name Bitwarden Secure
+# Note NAME (opening a vault session as needed; missing, duplicate, and
+# non-note items are refused). SCRATCH must be a caller-owned secure temp dir
+# whose cleanup trap also calls vault_close_session — the lookup result it
+# holds can contain secret material.
+vault_item_notes() {
+  local name="$1" scratch="$2" matches id
+  matches="$scratch/matches.json"
+  vault_open_session 0
+  bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
+  vault_find_exact_item "$name" "$matches"
+  [[ "$(jq -er 'length' "$matches")" == 1 ]] ||
+    die "$EX_NOINPUT" "Bitwarden Secure Note '$name' does not exist"
+  [[ "$(jq -er '.[0].type' "$matches")" == 2 ]] ||
+    die "$EX_DATAERR" "Bitwarden item '$name' exists but is not a Secure Note"
+  id="$(jq -er '.[0].id' "$matches")"
+  bw_cli get item "$id" |
+    jq -er '.notes | select(type == "string")' ||
+    die "$EX_DATAERR" "Bitwarden Secure Note '$name' has no text value"
+}
+
 cmd_vault() {
   local action="${1:-}"
   case "$action" in
@@ -3113,6 +3189,7 @@ cmd_vault() {
       status="$(vault_status_value)"
       if [[ "$status" == unauthenticated ]]; then
         interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
+        vault_ensure_server
         bw_cli login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
       else
         printf 'atyrode: Bitwarden is already %s\n' "$status"
@@ -3128,30 +3205,26 @@ cmd_vault() {
         die "$EX_USAGE" "vault $action expects exactly one item name"
       local name="$1" tmp matches id type secret_file=""
       tmp="$(vault_secure_temp_dir atyrode-vault)"
-      matches="$tmp/matches.json"
       vault_command_cleanup() {
         rm -rf -- "${tmp:-}"
         vault_close_session
       }
       trap vault_command_cleanup EXIT HUP INT TERM
-      vault_open_session 0
-      bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
-      vault_find_exact_item "$name" "$matches"
-      if [[ "$(jq -er 'length' "$matches")" == 1 ]]; then
-        id="$(jq -er '.[0].id' "$matches")"
-        type="$(jq -er '.[0].type' "$matches")"
-        [[ "$type" == 2 ]] ||
-          die "$EX_DATAERR" "Bitwarden item '$name' exists but is not a Secure Note"
-      else
-        id=""
-      fi
-
       if [[ "$action" == get ]]; then
-        [[ -n "$id" ]] || die "$EX_NOINPUT" "Bitwarden Secure Note '$name' does not exist"
-        bw_cli get item "$id" |
-          jq -er '.notes | select(type == "string")' ||
-          die "$EX_DATAERR" "Bitwarden Secure Note '$name' has no text value"
+        vault_item_notes "$name" "$tmp"
       else
+        matches="$tmp/matches.json"
+        vault_open_session 0
+        bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
+        vault_find_exact_item "$name" "$matches"
+        if [[ "$(jq -er 'length' "$matches")" == 1 ]]; then
+          id="$(jq -er '.[0].id' "$matches")"
+          type="$(jq -er '.[0].type' "$matches")"
+          [[ "$type" == 2 ]] ||
+            die "$EX_DATAERR" "Bitwarden item '$name' exists but is not a Secure Note"
+        else
+          id=""
+        fi
         secret_file="$tmp/secret"
         if [[ -t 0 ]]; then
           local secret
@@ -3184,6 +3257,142 @@ cmd_vault() {
       fi
       vault_command_cleanup
       trap - EXIT HUP INT TERM
+      ;;
+  esac
+}
+
+rclone_cli() {
+  local command=rclone
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_RCLONE:-}" ]] || command="$ATYRODE_RCLONE"
+  "$command" "$@"
+}
+
+backup_vault_item='Agent session archive'
+
+# backup — continuous agent-session archive to Cellar object storage. setup
+# seeds the machine-local rclone env file from the vault note; status is a
+# read-only health report; now runs the installed sync script in the
+# foreground. The heavy lifting (what gets copied, where) lives in
+# atyrode-session-backup, owned by the agent-tools module.
+cmd_backup() {
+  local action="${1:-}"
+  case "$action" in
+    setup | status | now) shift ;;
+    *) die "$EX_USAGE" "backup expects setup, status, or now" ;;
+  esac
+
+  local cfg_dir env_file state_file
+  cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/session-backup"
+  env_file="$cfg_dir/env"
+  state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/session-backup/last-success"
+
+  case "$action" in
+    setup)
+      [[ $# == 0 ]] || die "$EX_USAGE" "backup setup takes no arguments"
+      guard_production_mutation "backup setup"
+      local tmp note field
+      tmp="$(vault_secure_temp_dir atyrode-backup)"
+      backup_setup_cleanup() {
+        rm -rf -- "${tmp:-}"
+        vault_close_session
+      }
+      trap backup_setup_cleanup EXIT HUP INT TERM
+      note="$tmp/note.json"
+      vault_item_notes "$backup_vault_item" "$tmp" >"$note"
+      jq -e . "$note" >/dev/null 2>&1 ||
+        die "$EX_DATAERR" "vault note '$backup_vault_item' is not valid JSON"
+      for field in endpoint bucket keyId keySecret cryptPassword cryptSalt; do
+        jq -e --arg f "$field" '.[$f] | select(type == "string" and . != "")' "$note" >/dev/null ||
+          die "$EX_DATAERR" "vault note '$backup_vault_item' is missing or has an empty '$field' field"
+      done
+      # The crypt secrets flow jq → rclone obscure over pipes only: plaintext
+      # never enters an argv or the env file (the S3 key pair necessarily does,
+      # at the same trust level as ~/.codex/auth.json — 0600 file, 0700 dir).
+      local endpoint bucket key_id key_secret pw_obscured salt_obscured
+      endpoint="$(jq -er '.endpoint' "$note")"
+      bucket="$(jq -er '.bucket' "$note")"
+      key_id="$(jq -er '.keyId' "$note")"
+      key_secret="$(jq -er '.keySecret' "$note")"
+      pw_obscured="$(jq -jr '.cryptPassword' "$note" | rclone_cli obscure -)" ||
+        die "$EX_UNAVAILABLE" "rclone obscure failed"
+      salt_obscured="$(jq -jr '.cryptSalt' "$note" | rclone_cli obscure -)" ||
+        die "$EX_UNAVAILABLE" "rclone obscure failed"
+      local env_tmp
+      umask 077
+      mkdir -p "$cfg_dir"
+      chmod 0700 "$cfg_dir"
+      env_tmp="$(mktemp "$cfg_dir/.env.XXXXXX")"
+      {
+        printf 'RCLONE_CONFIG_CELLAR_TYPE=s3\n'
+        printf 'RCLONE_CONFIG_CELLAR_PROVIDER=Other\n'
+        printf 'RCLONE_CONFIG_CELLAR_ENDPOINT=%s\n' "$endpoint"
+        printf 'RCLONE_CONFIG_CELLAR_ACCESS_KEY_ID=%s\n' "$key_id"
+        printf 'RCLONE_CONFIG_CELLAR_SECRET_ACCESS_KEY=%s\n' "$key_secret"
+        printf 'RCLONE_CONFIG_ARCHIVE_TYPE=crypt\n'
+        printf 'RCLONE_CONFIG_ARCHIVE_REMOTE=cellar:%s\n' "$bucket"
+        printf 'RCLONE_CONFIG_ARCHIVE_PASSWORD=%s\n' "$pw_obscured"
+        printf 'RCLONE_CONFIG_ARCHIVE_PASSWORD2=%s\n' "$salt_obscured"
+      } >"$env_tmp"
+      mv -f "$env_tmp" "$env_file"
+      backup_setup_cleanup
+      trap - EXIT HUP INT TERM
+      printf 'atyrode: session-backup credentials written to %s\n' "$env_file" >&2
+      printf 'start the first upload with: atyrode backup now (the hourly timer also picks it up)\n' >&2
+      ;;
+    status)
+      local json=0
+      if [[ "${1:-}" == --json ]]; then
+        json=1
+        shift
+      fi
+      [[ $# == 0 ]] || die "$EX_USAGE" "backup status accepts only --json"
+      local configured=false last_json=null age_json=null reachable=null last=""
+      [[ ! -f "$env_file" ]] || configured=true
+      if [[ -f "$state_file" ]]; then
+        read -r last <"$state_file" || true
+      fi
+      if [[ -n "$last" ]]; then
+        last_json="\"$last\""
+        local last_epoch
+        if last_epoch="$(date -u -d "$last" +%s 2>/dev/null)"; then
+          age_json="$(( ($(date -u +%s) - last_epoch) / 3600 ))"
+        fi
+      fi
+      if [[ "$configured" == true ]]; then
+        # shellcheck source=/dev/null
+        if (
+          set -a
+          . "$env_file"
+          set +a
+          rclone_cli lsd archive: --contimeout 10s --timeout 20s
+        ) >/dev/null 2>&1; then
+          reachable=true
+        else
+          reachable=false
+        fi
+      fi
+      if [[ "$json" == 1 ]]; then
+        printf '{"configured":%s,"lastSuccess":%s,"ageHours":%s,"remoteReachable":%s}\n' \
+          "$configured" "$last_json" "$age_json" "$reachable"
+      else
+        printf 'configured: %s\n' "$([[ "$configured" == true ]] && echo yes || echo "no (run: atyrode backup setup)")"
+        if [[ -n "$last" ]]; then
+          printf 'last success: %s (%sh ago)\n' "$last" "${age_json/null/?}"
+        else
+          printf 'last success: never\n'
+        fi
+        case "$reachable" in
+          true) printf 'remote: reachable\n' ;;
+          false) printf 'remote: unreachable\n' ;;
+          null) printf 'remote: not checked (not configured)\n' ;;
+        esac
+      fi
+      ;;
+    now)
+      [[ $# == 0 ]] || die "$EX_USAGE" "backup now takes no arguments"
+      command -v atyrode-session-backup >/dev/null 2>&1 ||
+        die "$EX_UNAVAILABLE" "atyrode-session-backup is not installed; apply the dotfiles first: atyrode apply"
+      exec atyrode-session-backup
       ;;
   esac
 }
@@ -3501,6 +3710,7 @@ main() {
     runtime) exec "$atyrode_runtime" "$@" ;;
     infra) cmd_infra "$@" ;;
     vault) cmd_vault "$@" ;;
+    backup) cmd_backup "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

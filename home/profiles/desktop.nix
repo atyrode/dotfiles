@@ -1,8 +1,6 @@
 { lib, pkgs, ... }:
 let
-  lichess = import ../pkgs/lichess.nix {
-    inherit lib pkgs;
-  };
+  lichess = import ../desktop/lichess.nix { inherit lib pkgs; };
 in
 {
   imports = [

@@ -126,9 +126,9 @@ let
             };
 
             config = {
-              xdg.configHome = "/tmp/check-agent-auth-vaults/xdg-config";
-              xdg.stateHome = "/tmp/check-agent-auth-vaults/xdg-state";
-              xdg.cacheHome = "/tmp/check-agent-auth-vaults/xdg-cache";
+              xdg.configHome = "/tmp/check-agent-auth-broker/xdg-config";
+              xdg.stateHome = "/tmp/check-agent-auth-broker/xdg-state";
+              xdg.cacheHome = "/tmp/check-agent-auth-broker/xdg-cache";
               atyrode.agentTools = {
                 enable = true;
                 seedPlainConfig = false;
@@ -191,7 +191,7 @@ let
   darwinHasBackupService = darwinAgentTools.systemd.user.services ? atyrode-session-backup;
 in
 {
-  auth-vaults = pkgs.runCommand "check-agent-auth-broker" { } ''
+  omp-auth-broker = pkgs.runCommand "check-agent-auth-broker" { } ''
     supervisor=${lib.escapeShellArg linuxBrokerSupervisor}
     test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
     test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
@@ -200,9 +200,10 @@ in
     grep -Fq '"$chmod" 0600 "$token_tmp"' "$supervisor"
     grep -Fq -- '--profile default auth-broker token' "$supervisor"
     grep -Fq -- '--profile default auth-broker serve --bind=127.0.0.1:46171' "$supervisor"
+    # The retired auth-vaults.json manifest must stay absent from the supervisor.
     ! grep -Fq 'auth-vaults.json' "$supervisor"
 
-    rm -rf /tmp/check-agent-auth-vaults
+    rm -rf /tmp/check-agent-auth-broker
     export BROKER_STUB_LOG="$TMPDIR/broker-starts"
     : > "$BROKER_STUB_LOG"
     "$supervisor" > "$TMPDIR/broker-serve.out" 2> "$TMPDIR/broker-serve.err" &
@@ -216,7 +217,7 @@ in
     test "$(wc -l < "$BROKER_STUB_LOG")" = 1
     grep -Fxq default "$BROKER_STUB_LOG"
 
-    token=/tmp/check-agent-auth-vaults/xdg-state/atyrode/omp-auth-broker/token
+    token=/tmp/check-agent-auth-broker/xdg-state/atyrode/omp-auth-broker/token
     test "$(stat -c %a "$token")" = 600
     grep -Fxq -- '--profile' "$token"
     grep -Fxq default "$token"

@@ -127,7 +127,7 @@
       serverCapabilities = serverPolicy.capabilities;
       darwinModule = ./darwin;
       rawHosts = import ./hosts;
-      rawBootstrapProfiles = import ./profiles/bootstrap.nix;
+      rawBootstrapProfiles = import ./hosts/bootstrap.nix;
 
       validateCapabilities =
         {
@@ -374,7 +374,7 @@
             # Repository-owned on every platform: upstream releases outpace
             # nixpkgs, which also cannot build codex on aarch64-darwin.
             code = final.callPackage ./pkgs/code { };
-            codex = final.callPackage ./pkgs/codex-bin { };
+            codex = final.callPackage ./pkgs/codex { };
             codex-seed = final.callPackage ./pkgs/codex-seed { };
             omp = final.callPackage ./pkgs/omp { };
             omp-agents = final.callPackage ./pkgs/omp-agents { };
@@ -760,7 +760,7 @@
           systemDoctorAtyrode = pkgs.atyrode.override {
             enableTestHooks = true;
             atyrode-tui = cockpitStub;
-            atyrode-preview-parser = pkgs.atyrode-tui;
+            atyrodeTuiPackage = pkgs.atyrode-tui;
             hostRegistry = publicTargets // {
               fixture-nixos = {
                 id = "fixture-nixos";
@@ -849,7 +849,7 @@
                   and ([.[].capabilities[]] | index("server") | not)
                 ' ${registryFile} >/dev/null
                 if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${./inventory/hosts.tsv}; then
-                  echo 'inventory/hosts.tsv is out of date with hosts/default.nix and profiles/bootstrap.nix' >&2
+                  echo 'inventory/hosts.tsv is out of date with hosts/default.nix and hosts/bootstrap.nix' >&2
                   exit 1
                 fi
                 mkdir "$out"
@@ -923,7 +923,7 @@
           };
         }
         // lib.optionalAttrs isLinux {
-          portable-bootstrap = import ./checks/portable-bootstrap.nix {
+          portable-profile-contract = import ./checks/portable-profile-contract.nix {
             inherit lib mkPortableHomeConfiguration pkgs;
             profileName = "development-${system}";
             fixedHomeConfig =

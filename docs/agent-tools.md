@@ -440,9 +440,7 @@ inside that project. The same ownership rule applies to project-specific
 Project-specific auto-learned skills under `~/.omp/agent/managed-skills`
 remain OMP-owned mutable state. Move each one into its owning repository after
 removing machine-specific assumptions. The repository-specific
-`.agents/skills/contribute-omp-upstream` skill owns research, preparation, and
-operator-authorized upstream OMP pull requests; it hands pin updates and any
-temporary emergency fork release to `.agents/skills/bump-omp-fork`. Generic skills
+`.agents/skills/bump-omp` skill owns OMP pin updates. Generic skills
 such as `ts-react-dead-code-sweep` remain under `agents/skills/`.
 
 ### Installed skills
@@ -454,8 +452,7 @@ instead of leaving a stale list here.
 |---|---|---|
 | [`ts-react-dead-code-sweep`](../agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
-| [`bump-omp-fork`](../.agents/skills/bump-omp-fork/SKILL.md) | this repository | repository-authored |
-| [`contribute-omp-upstream`](../.agents/skills/contribute-omp-upstream/SKILL.md) | this repository | repository-authored |
+| [`bump-omp`](../.agents/skills/bump-omp/SKILL.md) | this repository | repository-authored |
 
 ### Vendoring a third-party skill
 
@@ -496,10 +493,8 @@ scheduled all-package behavior.
 A red run leaves the pull request open for curation — that is the expected
 outcome when upstream changes bundled content.
 
-Manual OMP updates MUST follow `.agents/skills/bump-omp-fork/SKILL.md`. The pin
-consumes upstream `can1357/oh-my-pi` release binaries directly (operator
-decision 2026-08-08); the `atyrode/omp` fork stays dormant as the contribution
-vehicle and emergency-patch release pipeline.
+Manual OMP updates MUST follow `.agents/skills/bump-omp/SKILL.md`. Routine
+bumps consume upstream `can1357/oh-my-pi` releases directly; there is no fork.
 
 `omp-agents` regenerates the upstream bundled agents from the pinned OMP
 binary, and the `omp-agent-references` check asserts that every agent name

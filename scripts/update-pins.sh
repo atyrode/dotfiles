@@ -77,7 +77,7 @@ if wants code; then
 fi
 
 if wants codex; then
-  bump codex "$repo_root/pkgs/codex-bin/default.nix" openai/codex rust-v \
+  bump codex "$repo_root/pkgs/codex/default.nix" openai/codex rust-v \
     'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
     codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
 fi

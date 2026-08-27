@@ -1,10 +1,7 @@
 { lib, pkgs, ... }:
 
 let
-  lichess = import ./pkgs/lichess.nix {
-    inherit pkgs;
-    inherit (pkgs) lib;
-  };
+  lichess = import ./desktop/lichess.nix { inherit lib pkgs; };
 in
 lib.mkIf pkgs.stdenv.isLinux {
   home.packages = with pkgs; [

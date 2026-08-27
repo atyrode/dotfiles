@@ -38,16 +38,17 @@ the cloned `install.sh`, which owns every mutation. The 2026-07-10 decision to
 support no `curl | shell` path was revised on 2026-07-11 with these
 mitigations: the fetched script is function-wrapped so a truncated download
 executes nothing, the confirmation prompt reads from the terminal and a
-non-interactive run requires an explicit `--yes`, and the transactional
-bootstrap below still executes only from cloned, inspectable code. The
+non-interactive run requires an explicit `--yes`, and the bootstrap below
+still executes only from cloned, inspectable code. The
 clone-first command remains supported and equivalent:
 
 ```sh
 git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config development-x86_64-linux
 ```
 
-The unmanaged prerequisites are Git, Bash, `curl`, `tar`, and either
-`sha256sum` or `shasum`.
+The unmanaged prerequisites are Git and Bash. `curl` is needed only when `nix`
+is absent, and `tar` plus `sha256sum` or `shasum` only for a fresh Nix
+install.
 
 ## Phases and source policy
 
@@ -58,12 +59,12 @@ The phases are independently callable:
 ./install.sh plan --config development-x86_64-linux
 ./install.sh apply --config development-x86_64-linux
 ./install.sh verify --config development-x86_64-linux
-./install.sh rollback --yes
 ```
 
 `preflight` verifies the platform, explicit host selection, repository root,
 raw and Git-resolved origin, branch/revision relationship to cached
-`origin/main`, required tools, and the absence of an interrupted transaction.
+`origin/main`, and required tools, and warns when a previous apply was
+interrupted.
 It rejects staged, tracked, and untracked changes. `plan` adds the ordered Nix,
 activation, and verification actions without creating state, downloading an
 artifact, fetching Git, or moving a file.
@@ -72,13 +73,13 @@ artifact, fetching Git, or moving a file.
 uses the packaged `atyrode apply` plan and activation, so the host registry and
 the `nh` backend remain the only activation contract. Flakes are enabled only
 through the process-scoped `NIX_CONFIG`; bootstrap does not append to a
-user-owned `nix.conf`. After the Home Manager transaction succeeds, bootstrap
+user-owned `nix.conf`. After the Home Manager activation succeeds, bootstrap
 also verifies the system-owned login-shell prerequisite described in [Home
 Manager and system boundary](system-boundary.md).
 
 Use `--update` to explicitly fetch the verified origin and fast-forward main.
-If source changes, bootstrap re-enters the fetched `install.sh` before opening
-a transaction. It never pulls implicitly. `--allow-dirty` and
+If source changes, bootstrap re-enters the fetched `install.sh` before writing
+the interrupted-apply marker. It never pulls implicitly. `--allow-dirty` and
 `--allow-non-main` are review acknowledgements for intentional local work;
 `--update` cannot be combined with a dirty checkout. A Git `url.*.insteadOf`
 rewrite cannot redirect the accepted GitHub origin unnoticed.
@@ -99,76 +100,51 @@ Nix installations are reused. A Linux single-user install may still invoke
 
 This choice was reviewed on 2026-07-10:
 
-- [Upstream Nix](https://nix.dev/manual/nix/latest/) keeps the existing runtime,
-  supports all three repository targets (the Intel Mac was retired with
-  nixpkgs 26.11, which dropped x86_64-darwin), and provides official
-  versioned release archives. Its
-  multi-user uninstall is manual and OS-specific rather than receipt-driven.
-- The [Lix installer](https://git.lix.systems/lix-project/lix-installer) has
-  strong plan, receipt, recovery, and uninstall behavior without diagnostic
-  telemetry, but selecting it also changes the Nix implementation and its
-  current Intel-Mac path is legacy. That product/retirement decision is outside
-  bootstrap hardening.
-- The [Determinate installer](https://github.com/DeterminateSystems/nix-installer)
-  has strong planning and receipt-based uninstall, but now defaults to
-  Determinate Nix, its upstream-Nix compatibility flag was documented only
-  through 2026-01-01, current releases do not cover Intel Darwin, and
-  diagnostics are enabled unless configured otherwise.
+- [Upstream Nix](https://nix.dev/manual/nix/latest/) keeps the existing
+  runtime, supports all three repository targets, and provides official
+  versioned release archives.
+- The [Lix installer](https://git.lix.systems/lix-project/lix-installer) and
+  the [Determinate installer](https://github.com/DeterminateSystems/nix-installer)
+  were rejected: each changes the Nix implementation or its defaults, which is
+  outside bootstrap hardening.
 
-The bootstrap transaction records the selected upstream version, platform
-hash, source disposition, and repository revision. A partial upstream
-installer failure remains visible as a failed bootstrap receipt. Bootstrap
-does not automatically remove a system-wide Nix install: that could destroy a
-pre-existing or concurrently repaired store. To uninstall a bootstrap-created
-Nix, first preserve the failed receipt, confirm that Nix was not present before
-the run, and follow the official
+A partial upstream installer failure remains visible through the
+interrupted-apply marker. Bootstrap does not automatically remove a
+system-wide Nix install: that could destroy a pre-existing or concurrently
+repaired store. To uninstall a bootstrap-created Nix, confirm that Nix was not
+present before the run and follow the official
 [multi-user uninstall procedure](https://nix.dev/manual/nix/2.22/installation/uninstall)
 for the current OS. That procedure is destructive and intentionally remains an
 operator action.
 
-## Transactions, receipts, and recovery
+## Interrupted-apply marker and recovery
 
 Bootstrap state lives under:
 
 ```text
-${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/
-├── apply.pending/
-├── login-shell.incomplete
-└── transactions/
-    └── apply-v1-<timestamp>-<process>.{complete,failed,rolled-back}
+${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/
+├── dotfiles-config
+├── install-interrupted
+└── bootstrap/
+    └── login-shell.incomplete
 ```
 
-`apply.pending` is constructed privately and published by one rename only
-after its receipt, prior host-state snapshot, and checksummed recovery copies
-are complete. An interrupted pre-publication directory is preserved as an
-`*.abandoned` transaction on the next apply; it is never interpreted as a
-successful or recoverable apply. Completed receipts contain schema/version
-identifiers, hashes, relative logical actions, phases, host, system, revision,
-and outcome. They do not contain repository/home absolute paths, remote URLs,
-environment dumps, or credentials.
-
-An activation or verification failure verifies the transaction-owned recovery
-copy, restores the previous active-host state, and archives the journal as
-failed. If the process is killed after the pending marker is published, run:
+`apply` writes `install-interrupted` immediately before its first mutating
+step. The marker holds two lines, `config=<host>` and `started=<ISO-8601
+UTC>`, and is removed only after verification succeeds. While it exists,
+`plan` and `apply` print a warning naming the configuration and start time;
+`plan` only warns, and a successful `apply` clears it. State is safe after an
+interruption — recover by re-running:
 
 ```sh
-./install.sh rollback --yes
+./install.sh apply --config <host>
 ```
 
-Rollback refuses corrupted receipts, unsafe state namespaces, or a live
-active-host receipt that cannot be restored without overwriting newly created
-data. On refusal, preserve the pending transaction for inspection. If the
-checkout is unavailable, run the transaction-owned copy directly:
+Bootstrap never rolls back a successfully activated generation. Use the
+standard `home-manager generations` (or nix-darwin) rollback when a previous
+generation is needed.
 
-```sh
-bash "${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/apply.pending/recovery/install.sh" rollback --yes
-```
-
-Rollback restores the active-host receipt owned by the interrupted transaction.
-It does not uninstall Nix or roll back a successfully activated Home Manager or
-nix-darwin generation. Those are separate, explicit system operations.
-
-The login shell is deliberately outside the Home Manager transaction. On
+The login shell is deliberately outside the Home Manager activation. On
 standalone Linux, bootstrap verifies the managed Zsh executable, registers it
 once in `/etc/shells` with explicit privilege, selects it with `chsh`, and
 reads the account database back. On macOS, nix-darwin owns the equivalent
@@ -176,23 +152,20 @@ reads the account database back. On macOS, nix-darwin owns the equivalent
 accepted as proof because an inherited environment can be stale or forged.
 
 If this post-activation prerequisite cannot be completed, bootstrap returns
-`69` but leaves the successful Home Manager activation and completed receipt
-intact. It atomically publishes `login-shell.incomplete` before archiving the
-completed receipt, and clears it only after account-database verification, so
+`69` but leaves the successful Home Manager activation intact. It atomically
+publishes `login-shell.incomplete` before clearing the interrupted-apply
+marker, and clears it only after account-database verification, so
 an interruption cannot look like a fully ready machine. Fix the system
 prerequisite and run `./install.sh verify --config <host>`, or rerun `apply`
 with the required privilege. A passing verification removes the marker.
 
 ## Verification coverage
 
-`checks/bootstrap.nix` uses temporary homes and repositories. It covers a clean
-plan, fresh and repeated application, successful and failed source updates,
-wrong and rewritten origins, dirty/staged/non-main revisions, download and
-checksum failure, partial installer failure, activation and verification
-failure, interruption before and after transaction publication, rollback,
-receipt privacy, login-shell marker interruption, unsafe state types, privilege
-failure and recovery, recovery-script tampering, production-only test-hook
-gating, and idempotence. The same check runs natively in all three CI jobs.
+`checks/bootstrap.nix` uses temporary homes and repositories, covering the
+read-only plan, fresh and repeated application, source updates, origin and
+revision defenses, installer failures, the interrupted-apply marker contract,
+login-shell recovery, unsafe state types, production-only test-hook gating,
+and idempotence. The same check runs natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

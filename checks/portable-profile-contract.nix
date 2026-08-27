@@ -94,7 +94,7 @@ builtins.deepSeq
     developer.activationPackage.drvPath
   ]
   (
-    pkgs.runCommand "check-portable-bootstrap-${pkgs.stdenv.hostPlatform.system}" { } ''
+    pkgs.runCommand "check-portable-profile-contract-${pkgs.stdenv.hostPlatform.system}" { } ''
       mkdir "$out"
     ''
   )

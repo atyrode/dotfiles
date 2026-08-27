@@ -110,6 +110,7 @@ atyrode runtime run local-qwen
 atyrode runtime shortcut local-qwen
 atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
+atyrode provision git
 atyrode inventory --json
 atyrode inventory --host alex-x86_64-linux --json
 atyrode inventory --ref <branch-tag-or-commit> --json
@@ -121,6 +122,10 @@ atyrode doctor system --json
 atyrode doctor git --json
 atyrode doctor tools --json
 ```
+
+`provision git` reconciles this machine's Git SSH auth/signing keys against
+the Bitwarden vault (one-time, interactive); custody details live in
+[git-keys](git-keys.md).
 
 Managed `local-qwen` OMP processes hold independent session leases. Ten minutes
 after the final session closes, the WSL idle reaper verifies that vLLM has no

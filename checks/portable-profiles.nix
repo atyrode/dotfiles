@@ -101,6 +101,8 @@ assert lib.assertMsg (
 ) "portable server must deploy the reviewed GitHub pre-push hook";
 assert lib.assertMsg serverConfig.xdg.configFile."git/hooks/pre-push".executable
   "the managed GitHub pre-push hook must be executable";
+assert lib.assertMsg serverConfig.services.ssh-agent.enable
+  "portable server must supervise a user ssh-agent for vault-backed git keys (#8)";
 assert lib.assertMsg serverConfig.programs.fzf.enable "portable server must enable fzf";
 assert lib.assertMsg serverConfig.programs.zoxide.enable "portable server must enable zoxide";
 assert lib.assertMsg serverConfig.programs.direnv.nix-direnv.enable

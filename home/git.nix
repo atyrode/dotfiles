@@ -1,4 +1,9 @@
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   gitAuthMode = config.atyrode.gitAuthMode;
@@ -56,6 +61,14 @@ in
         url."git@gitlab.com:".pushInsteadOf = "https://gitlab.com/";
       };
     };
+
+    # Supervised user ssh-agent (#8, operator decision 2026-08-27): agent
+    # sessions and headless logins inherit SSH_AUTH_SOCK from the user
+    # manager, so SSH pushes and commit signing work without per-session key
+    # loading. `atyrode provision git` loads the vault-backed keys. Linux
+    # only: macOS keeps the validated Keychain-backed system agent, which a
+    # Home Manager agent would shadow.
+    services.ssh-agent.enable = pkgs.stdenv.isLinux;
 
     programs.gh = {
       enable = true;

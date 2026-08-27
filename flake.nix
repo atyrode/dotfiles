@@ -85,103 +85,26 @@
 
       forAllSystems = lib.genAttrs systems;
 
-      # Each name corresponds to a reviewed package in a selected capability.
-      # Homebrew casks are governed independently by the nix-darwin module.
-      allowedUnfreePackages = [
-        "arduino-ide"
-        "chatgpt"
-        "claude-code"
-        "obsidian"
-        "nvidia-x11"
-        "orbstack"
-        "parsec-bin"
-        "postman"
-        "reaper"
-        "signal-desktop"
-        "spotify"
-        "steam"
-        "steam-original"
-        "steam-unwrapped"
-        "steamcmd"
-        "vital"
-      ];
-      homebrewCasks = import ./darwin/casks.nix;
-      windowsPackageInventory = import ./windows/packages.nix;
+      packagesLib = import ./lib/packages.nix {
+        inherit
+          lib
+          nixpkgs
+          self
+          targets
+          ;
+      };
+      inherit (packagesLib)
+        agentToolsOverlay
+        allowedUnfreePackages
+        evaluationPkgsFor
+        inventoryRevision
+        mkPackageOverlay
+        repositoryPackageNames
+        repositoryPkgsFor
+        windowsPackageInventory
+        ;
 
       darwinModule = ./darwin;
-
-      repositoryPackageNames = [
-        "atyrode"
-        "atyrode-tui"
-        "code"
-        "codex"
-        "atyrode-codex-seed"
-        "omp"
-        "omp-agents"
-        "omp-configured"
-        "atyrode-omp-seed"
-      ];
-
-      mkPackageOverlay =
-        {
-          hostRegistry ? { },
-          runtimeProfiles ? { },
-        }:
-        let
-          publicRegistry = lib.mapAttrs publicHost (validateHostRegistry hostRegistry);
-          publicRuntimeProfiles = lib.mapAttrs publicBootstrapProfile (
-            validateBootstrapProfileRegistry runtimeProfiles
-          );
-        in
-        lib.composeManyExtensions [
-          (final: _previous: {
-            atyrode-tui = final.callPackage ./pkgs/atyrode-tui { };
-            # Repository-owned on every platform: upstream releases outpace
-            # nixpkgs, which also cannot build codex on aarch64-darwin.
-            code = final.callPackage ./pkgs/code { };
-            codex = final.callPackage ./pkgs/codex { };
-            codex-seed = final.callPackage ./pkgs/codex-seed { };
-            omp = final.callPackage ./pkgs/omp { };
-            omp-agents = final.callPackage ./pkgs/omp-agents { };
-            omp-configured = final.callPackage ./pkgs/omp-configured { };
-            omp-seed = final.callPackage ./pkgs/omp-seed { };
-            atyrode = final.callPackage ./pkgs/atyrode {
-              capabilities = capabilitySummary;
-              inherit homebrewCasks;
-              hostRegistry = publicRegistry // publicRuntimeProfiles;
-              revision = inventoryRevision;
-              windowsPackages = windowsPackageInventory;
-            };
-          })
-          (
-            _final: previous:
-            lib.optionalAttrs previous.stdenv.isDarwin {
-              # nixpkgs Darwin fixup replaces Obsidian's Developer ID signature
-              # with an ad-hoc one. The pinned upstream DMG and derivation audit
-              # in #89 verified that skipping fixup preserves its signed bundle.
-              obsidian = previous.obsidian.overrideAttrs (_: {
-                dontFixup = true;
-              });
-              # nixpkgs Darwin fixup replaces Spotify's Developer ID signature
-              # with an ad-hoc one, breaking macOS privacy identity (TN3179).
-              # The focused test in #89 validated that skipping fixup preserves it.
-              spotify = previous.spotify.overrideAttrs (_: {
-                dontFixup = true;
-              });
-              # nixpkgs Darwin fixup likewise replaces VLC's verified upstream
-              # Developer ID signature even though the derivation only repacks
-              # the app bundle and creates a wrapper outside it (#89).
-              vlc-bin = previous.vlc-bin.overrideAttrs (_: {
-                dontFixup = true;
-              });
-            }
-          )
-        ];
-
-      agentToolsOverlay = mkPackageOverlay {
-        hostRegistry = rawHosts;
-        runtimeProfiles = rawBootstrapProfiles;
-      };
 
       dotfilesHomeNixosModule =
         { config, lib, ... }:
@@ -206,24 +129,8 @@
           };
         };
 
-      pkgsFor =
-        system:
-        import nixpkgs {
-          inherit system;
-          config.allowUnfreePredicate = package: builtins.elem (lib.getName package) allowedUnfreePackages;
-          overlays = [ agentToolsOverlay ];
-        };
-
-      portablePkgsFor =
-        system:
-        import nixpkgs {
-          inherit system;
-          config.allowUnfreePredicate = package: builtins.elem (lib.getName package) allowedUnfreePackages;
-          overlays = [ (mkPackageOverlay { }) ];
-        };
-
       treefmtEval = forAllSystems (
-        system: treefmt-nix.lib.evalModule (pkgsFor system) ./checks/treefmt.nix
+        system: treefmt-nix.lib.evalModule (repositoryPkgsFor system) ./checks/treefmt.nix
       );
 
       # Keep unrelated documentation changes from invalidating the gate while
@@ -255,7 +162,7 @@
           username ? "fixture",
         }:
         home-manager.lib.homeManagerConfiguration {
-          pkgs = portablePkgsFor system;
+          pkgs = evaluationPkgsFor system;
           modules =
             selectHomeManagerProfiles {
               name = "portable server profile";
@@ -284,14 +191,14 @@
             serverPolicy
             system
             ;
-          pkgs = portablePkgsFor system;
+          pkgs = evaluationPkgsFor system;
         }
       ) serverHomeConfigs;
 
       mkHomeConfig =
         name: host:
         home-manager.lib.homeManagerConfiguration {
-          pkgs = pkgsFor host.system;
+          pkgs = repositoryPkgsFor host.system;
 
           modules = modulesForHost name host ++ [
             {
@@ -332,7 +239,7 @@
           "https-gh"
         ]) "portable bootstrap profile ${profileName} requires gitAuthMode ssh or https-gh";
         home-manager.lib.homeManagerConfiguration {
-          pkgs = pkgsFor profile.system;
+          pkgs = repositoryPkgsFor profile.system;
           modules =
             selectHomeManagerProfiles {
               name = profileName;
@@ -413,7 +320,6 @@
       canonicalDarwinConfigs = lib.mapAttrs mkDarwinConfig darwinHosts;
       nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
       canonicalNixosWslConfigs = lib.mapAttrs mkNixosWslConfig nixosWslHosts;
-      inventoryRevision = self.rev or self.dirtyRev or "dirty";
       inventoryBySystem = forAllSystems (
         system:
         import ./inventory {
@@ -426,7 +332,7 @@
             system
             ;
           annotations = inventoryAnnotations;
-          pkgs = pkgsFor system;
+          pkgs = repositoryPkgsFor system;
           revision = inventoryRevision;
           homeConfigs = lib.filterAttrs (name: _: hosts.${name}.system == system) canonicalHomeConfigs;
           darwinConfigs = lib.filterAttrs (
@@ -476,7 +382,7 @@
       packages = forAllSystems (
         system:
         let
-          pkgs = pkgsFor system;
+          pkgs = repositoryPkgsFor system;
         in
         {
           inherit (pkgs)
@@ -499,7 +405,7 @@
       checks = forAllSystems (
         system:
         let
-          pkgs = pkgsFor system;
+          pkgs = repositoryPkgsFor system;
           isLinux = lib.hasSuffix "-linux" system;
           serverHomeConfig = if isLinux then serverHomeConfigs.${system} else null;
           alternateServerHomeConfig =
@@ -737,7 +643,7 @@
       apps = forAllSystems (
         system:
         let
-          pkgs = pkgsFor system;
+          pkgs = repositoryPkgsFor system;
           # Re-pull the factual fields in omp/models.yml from omp (cost/context via
           # `omp models`, speed/ttft via `omp bench`). Run from the repo root:
           #   nix run .#refresh-model-facts [-- --skip-bench | --runs 3 | …]

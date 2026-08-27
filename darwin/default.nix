@@ -116,12 +116,16 @@ in
       brewfile = true;
     };
 
-    # Supported check mode reports undeclared packages and aborts without
-    # deleting them; the operator owns the explicit uninstall and retry.
+    # Declarative removal semantics (operator decision 2026-08-27): anything
+    # no longer declared is uninstalled and zapped during activation, so
+    # retiring a cask removes it and its support files from the machine on
+    # the next apply with no bespoke removal code. Zap is deliberately
+    # data-destructive for undeclared casks; native state worth keeping must
+    # be declared.
     onActivation = {
       autoUpdate = false;
       upgrade = false;
-      cleanup = "check";
+      cleanup = "zap";
     };
   };
 }

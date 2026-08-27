@@ -100,7 +100,6 @@ let
     let
       postActivation = config.system.activationScripts.postActivation.text;
       homebrewActivation = config.system.activationScripts.homebrew.text;
-      activationChecks = config.system.activationScripts.checks.text;
       shellPaths = map toString config.environment.shells;
       sudoPam = config.security.pam.services.${boundary.sudo.darwinService};
       configuredCasks = map (
@@ -125,14 +124,12 @@ let
     && config.homebrew.global.brewfile
     && config.homebrew.onActivation.autoUpdate == false
     && config.homebrew.onActivation.upgrade == false
-    && config.homebrew.onActivation.cleanup == "check"
+    && config.homebrew.onActivation.cleanup == "zap"
     && config.homebrew.onActivation.extraEnv == { }
     && config.homebrew.onActivation.extraFlags == [ ]
     && sort configuredCasks == sort darwinCasks
-    && lib.hasInfix "homebrewCleanupResult=$(PATH=" activationChecks
-    && lib.hasInfix "cleanup 2>&1) || homebrewCleanupExitCode=$?" activationChecks
-    && !(lib.hasInfix "cleanup --force 2>&1" activationChecks)
-    && !(lib.hasInfix "cleanup --zap 2>&1" activationChecks)
+    && lib.hasInfix "--zap --force-cleanup" homebrewActivation
+    && lib.hasInfix "--no-upgrade" homebrewActivation
     && !(lib.hasInfix "HOMEBREW_ASK" homebrewActivation)
     && !(lib.hasInfix "manaflow-ai/cmux" homebrewActivation)
     && lib.hasInfix "/usr/bin/dscl" postActivation
@@ -182,14 +179,8 @@ assert lib.assertMsg (
       "plugdev"
     ]
 ) "Android device-access policy differs from the reviewed boundary";
-assert lib.assertMsg (
-  boundary.homebrew.cleanup == "check"
-  &&
-    boundary.homebrew.forbiddenAutomaticModes == [
-      "uninstall"
-      "zap"
-    ]
-) "Homebrew cleanup must report drift without deleting operator state";
+assert lib.assertMsg (boundary.homebrew.cleanup == "zap")
+  "Homebrew cleanup must remove undeclared native state declaratively (operator decision 2026-08-27)";
 assert lib.assertMsg (
   sort capabilityOwners == sort knownCapabilities
 ) "the evaluated inventory has missing or unknown capability owners";

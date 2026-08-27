@@ -274,7 +274,7 @@ pkgs.runCommand "check-atyrode-apply"
     #!${pkgs.runtimeShell}
     set -eu
     printf '%s\n' "$*" >> "$MSI_LOG"
-    printf '0.4.7\n' > "$WINGET_STATE/rio-version"
+    printf '0.5.25\n' > "$WINGET_STATE/rio-version"
     EOF
     cat > "$TMPDIR/bin/wslpath" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -286,7 +286,7 @@ pkgs.runCommand "check-atyrode-apply"
     #!${pkgs.runtimeShell}
     set -eu
     case "$(cat "$1")" in
-      good) printf '%s  %s\n' 4b635ec754fadc24a8c58f47af04e07047f448e43e24fc3131d5de28dad0d55d "$1" ;;
+      good) printf '%s  %s\n' ${(builtins.fromJSON (builtins.readFile ../inventory/rio-windows.json)).installer.sha256} "$1" ;;
       *) printf '%064d  %s\n' 0 "$1" ;;
     esac
     EOF
@@ -333,7 +333,7 @@ pkgs.runCommand "check-atyrode-apply"
       and ([.packages[] | select(
         .id == "raphamorim.rio"
         and .source == "github-release"
-        and .pinnedVersion == "0.4.7"
+        and .pinnedVersion == "0.5.25"
         and .installedVersion == null
         and .installedVersionSource == "absent"
         and (.configMatches | not)
@@ -400,7 +400,7 @@ pkgs.runCommand "check-atyrode-apply"
       || { echo "Windows plan did not converge after apply: $converged_windows" >&2; exit 1; }
     grep -Fx -- '/i C:\mock\rio-installer-x86_64.msi /qn /norestart' "$MSI_LOG" >/dev/null
     cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
-    test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.4.7
+    test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.5.25
     grep -qF 'New-ItemProperty' "$POWERSHELL_LOG"
     # Config-only drift is repaired atomically without downloading or invoking
     # the MSI again.
@@ -428,10 +428,10 @@ pkgs.runCommand "check-atyrode-apply"
     cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
     # Winget/ARP is authoritative: a stale pinned stamp cannot mask an older
     # external MSI install, which follows the natural MSI upgrade path.
-    printf '0.4.7\n' > "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version"
+    printf '0.5.25\n' > "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version"
     printf '0.4.6\n' > "$WINGET_STATE/rio-version"
     rio_upgrade_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
-    jq -e '[.packages[] | select(.id == "raphamorim.rio" and .status == "upgrade" and .installedVersion == "0.4.6" and .installedVersionSource == "winget" and .pinnedVersion == "0.4.7")] | length == 1' \
+    jq -e '[.packages[] | select(.id == "raphamorim.rio" and .status == "upgrade" and .installedVersion == "0.4.6" and .installedVersionSource == "winget" and .pinnedVersion == "0.5.25")] | length == 1' \
       <<<"$rio_upgrade_plan" >/dev/null
     # An uninstall cannot be masked either: winget reporting no installed
     # Rio (exit 20) is authoritative absence, and a leftover pinned stamp
@@ -444,7 +444,7 @@ pkgs.runCommand "check-atyrode-apply"
     : > "$MSI_LOG"
     atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
     grep -Fx -- '/i C:\mock\rio-installer-x86_64.msi /qn /norestart' "$MSI_LOG" >/dev/null
-    test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.4.7
+    test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.5.25
 
     rm -f "$WINGET_STATE/twilight"
     touch "$WINGET_STATE/stable"

@@ -68,7 +68,7 @@ pkgs.runCommand "check-windows-control-plane"
       and ([.packages[] | select(
         .id == "raphamorim.rio"
         and .source == "github-release"
-        and .version == "0.4.7"
+        and .version == "0.5.25"
         and (.installer.sha256 | test("^[0-9a-f]{64}$"))
         and .config.destination == "%LOCALAPPDATA%\\rio\\config.toml"
         and .graphicsPreference == {

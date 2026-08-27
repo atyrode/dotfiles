@@ -94,9 +94,15 @@ other's hello in an endless ping-pong:
 
 1. From SSH: `atyrode runtime status manifold-agent --json` — confirm
    `enrolled: true` (the existing 0600 token is adopted as-is; no re-mint).
-2. Retire the supervised stopgap definitions (`omp hub ps` in `~/manifold`;
-   stop and delete `manifold-agent-devbox` and any recovery entries) so
-   nothing respawns.
+2. Retire the stopgap definition so nothing respawns. `cd ~/manifold &&
+   omp ps` lists the broker-supervised entries; `manifold-agent-devbox`
+   (`restart: always`, `persist`) is the agent. `omp ps stop
+   manifold-agent-devbox` if it is running, then delete its persisted spec
+   (the `ps` CLI has no delete action):
+
+   ```sh
+   rm -rf ~/.omp/run/daemons/*/daemons/manifold-agent-devbox
+   ```
 3. Sweep orphaned source agents — flaps and worktrees accumulate them (a
    census found 138: the main checkout, deleted feature worktrees, the
    stopgap copy). The hub container's own agent runs the identical cmdline,

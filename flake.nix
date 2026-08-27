@@ -13,15 +13,6 @@
     nixos-wsl.url = "github:nix-community/NixOS-WSL";
     nixos-wsl.inputs.nixpkgs.follows = "nixpkgs";
 
-    # Pinned release tag of the fleet workspace (#418); bump = reviewed commit
-    # via scripts/update-pins.sh. Deliberately NOT following this repository's
-    # nixpkgs: the agent's bun-deps fixed-output hash was computed against
-    # manifold's own locked bun, so keeping its lock makes the build
-    # deterministic forever instead of breaking on unrelated weekly nixpkgs
-    # bumps. The second nixpkgs is build-time only; the compiled agent embeds
-    # its runtime and carries no store references.
-    manifold.url = "github:atyrode/manifold/v0.4.3";
-
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     nix-index-database.url = "github:nix-community/nix-index-database";
@@ -49,7 +40,6 @@
       nix-darwin,
       nix-homebrew,
       nixos-wsl,
-      manifold,
       nix-index-database,
       treefmt-nix,
       homebrew-core,
@@ -78,7 +68,6 @@
       packagesLib = import ./lib/packages.nix {
         inherit
           lib
-          manifold
           nixpkgs
           self
           targets

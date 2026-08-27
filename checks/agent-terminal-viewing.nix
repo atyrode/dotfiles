@@ -25,14 +25,16 @@ pkgs.runCommand "check-agent-tools-terminal-viewing"
     printf '\x1b[38;2;255;95;175mpill \xee\x82\xb6 glyph\x1b[0m\n' > frame.ansi
 
     # freeze is a cgo Go binary whose SVG raster path runs through an
-    # embedded JIT-compiling WASM runtime, and it sporadically dies with
+    # embedded JIT-compiling WASM runtime, and it dies with
     # `fatal error: unsafe.Slice: len out of range` on part of the GitHub
-    # runner fleet: the bit-identical derivation built green on 2026-08-06
-    # and crashed twice on 2026-08-08 (golang/go#78976 closed unresolved).
-    # This check defends wiring — tool presence, nixpkgs attributes, font
-    # files — so one sporadic runtime crash must not fail the flake. Retry
-    # bounded; deterministic breakage still fails every attempt, and the
-    # CPU model correlates any recurrence with a runner host class.
+    # runner fleet (golang/go#78976, closed unresolved): green on
+    # 2026-08-06, sporadic on 2026-08-08, and consistently red on
+    # 2026-08-27's runner image. This check defends wiring — tool presence,
+    # nixpkgs attributes, font files — so the crashy PNG rasterizer must not
+    # be load-bearing. Retry PNG bounded; when every attempt crashes, an SVG
+    # render (no WASM rasterizer) must still prove the ANSI/font wiring.
+    # Deterministic breakage — bad arguments, missing fonts, renamed
+    # attributes — fails the SVG path too, so it still fails the flake.
     grep -m1 'model name' /proc/cpuinfo || true
     rendered=0
     for attempt in 1 2 3; do
@@ -43,7 +45,13 @@ pkgs.runCommand "check-agent-tools-terminal-viewing"
       fi
       echo "freeze attempt $attempt crashed; retrying" >&2
     done
-    test "$rendered" = 1
+    if [[ "$rendered" != 1 ]]; then
+      echo 'PNG rasterizer crashed on every attempt; proving wiring via SVG render' >&2
+      freeze --language ansi frame.ansi -o frame.svg \
+        --font.family "JetBrains Mono,Symbols Nerd Font Mono"
+      test -s frame.svg
+      grep -q 'pill' frame.svg
+    fi
 
     mkdir "$out"
   ''

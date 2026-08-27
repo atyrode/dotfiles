@@ -74,10 +74,11 @@ checkout. It is read-only and currently requires --json.
 infra provides the portable controller for the externally owned tyrode-dev-01
 NixOS host. setup performs one-time Clan age enrollment, plan verifies the
 Bitwarden identity, pinned infra checkout, Vars state, and strict SSH path
-without activation, and apply deploys through Clan after confirmation only from
-a clean main branch exactly matching the freshly fetched origin/main. The private
-age identity is read only after an interactive Bitwarden unlock, materialized
-in temporary storage, never printed, and removed on every exit.
+without activation. apply fetches origin/main, visibly fast-forwards a clean
+main checkout, refuses local or divergent commits, and deploys through Clan only
+after showing the revision and incoming commits for confirmation. The private age
+identity is read only after an interactive Bitwarden unlock, materialized in
+temporary storage, never printed, and removed on every exit.
 vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
@@ -3211,22 +3212,51 @@ infra_git() {
   "$command" "$@"
 }
 
-infra_require_canonical_apply_checkout() {
-  local repo="$1" branch head remote_head
+infra_synchronize_apply_checkout() {
+  local repo="$1" branch head remote_head merge_base updated_head
   [[ -z "$(infra_git -C "$repo" status --porcelain)" ]] ||
     die "$EX_DATAERR" "infra checkout is dirty; review and commit it before apply"
   branch="$(infra_git -C "$repo" symbolic-ref --quiet --short HEAD)" ||
     die "$EX_DATAERR" "infra apply requires the main branch, not a detached checkout"
   [[ "$branch" == main ]] ||
     die "$EX_DATAERR" "infra apply requires the main branch; current branch is $branch"
-  infra_git -C "$repo" fetch --quiet origin main ||
+  infra_git -C "$repo" fetch --quiet origin \
+    refs/heads/main:refs/remotes/origin/main ||
     die "$EX_UNAVAILABLE" "could not refresh origin/main before infra apply"
   head="$(infra_git -C "$repo" rev-parse HEAD)" ||
     die "$EX_DATAERR" "could not resolve the infra checkout revision"
-  remote_head="$(infra_git -C "$repo" rev-parse FETCH_HEAD)" ||
+  remote_head="$(infra_git -C "$repo" rev-parse refs/remotes/origin/main)" ||
     die "$EX_DATAERR" "could not resolve the fetched origin/main revision"
-  [[ "$head" == "$remote_head" ]] ||
-    die "$EX_DATAERR" "infra checkout must exactly match origin/main; update $repo before apply"
+  infra_sync_old="$head"
+  infra_sync_new="$remote_head"
+  infra_sync_commits=""
+  [[ "$head" != "$remote_head" ]] || return 0
+  merge_base="$(infra_git -C "$repo" merge-base "$head" "$remote_head")" ||
+    die "$EX_DATAERR" "could not compare the infra checkout with origin/main"
+  [[ "$merge_base" == "$head" ]] ||
+    die "$EX_DATAERR" "infra checkout has local commits or diverged from origin/main; reconcile $repo before apply"
+  infra_sync_commits="$(infra_git -C "$repo" log --oneline --no-decorate "$head..$remote_head")" ||
+    die "$EX_DATAERR" "could not summarize incoming infra commits"
+  infra_git -C "$repo" merge --ff-only "$remote_head" >/dev/null ||
+    die "$EX_SOFTWARE" "could not fast-forward the infra checkout to origin/main"
+  updated_head="$(infra_git -C "$repo" rev-parse HEAD)" ||
+    die "$EX_DATAERR" "could not verify the updated infra checkout revision"
+  [[ "$updated_head" == "$remote_head" ]] ||
+    die "$EX_SOFTWARE" "infra checkout did not reach the fetched origin/main revision"
+}
+
+infra_print_apply_source() {
+  local machine="$1" target="$2" line
+  printf 'atyrode: deployment source for %s at %s: %s -> %s\n' \
+    "$machine" "$target" "${infra_sync_old:0:12}" "${infra_sync_new:0:12}" >&2
+  if [[ -n "$infra_sync_commits" ]]; then
+    printf 'atyrode: incoming infra commits:\n' >&2
+    while IFS= read -r line; do
+      printf '  %s\n' "$line" >&2
+    done <<<"$infra_sync_commits"
+  else
+    printf 'atyrode: infra checkout already matches origin/main\n' >&2
+  fi
 }
 
 infra_ensure_recipient() {
@@ -3270,6 +3300,7 @@ cmd_infra() {
   esac
 
   local repo="" json=0 assume_yes=0
+  local infra_sync_old="" infra_sync_new="" infra_sync_commits=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
@@ -3305,11 +3336,11 @@ cmd_infra() {
   fi
   [[ -f "$repo/flake.nix" && -f "$repo/clan.nix" ]] ||
     die "$EX_DATAERR" "not a tyrode-infra checkout: $repo"
+  [[ "$action" != apply ]] || infra_synchronize_apply_checkout "$repo"
   local enrollment_inventory="$repo/inventory/vps-enrollment.json"
   local network_intent="$repo/machines/$machine/network-intent.json"
   [[ -f "$enrollment_inventory" && -f "$network_intent" ]] ||
     die "$EX_DATAERR" "tyrode-infra lacks deployment identity for $machine"
-  [[ "$action" != apply ]] || infra_require_canonical_apply_checkout "$repo"
   local target_user target_address
   target_user="$(
     jq -er --arg machine "$machine" \
@@ -3397,8 +3428,9 @@ cmd_infra() {
       fi
     else
       guard_production_mutation "infra apply"
+      infra_print_apply_source "$machine" "$target"
       if [[ "$assume_yes" == 0 ]]; then
-        confirm "deploy $machine to $target now?" || {
+        confirm "deploy $machine to $target from ${infra_sync_new:0:12} now?" || {
           infra_cleanup
           trap - EXIT HUP INT TERM
           return 0

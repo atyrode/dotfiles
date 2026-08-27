@@ -23,13 +23,16 @@ pkgs.runCommand "check-atyrode-cli"
 
     cat > "$TMPDIR/bin/git" <<'EOF'
     #!${pkgs.runtimeShell}
+    infra_state="''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}"
+    infra_old=0123456789abcdef0123456789abcdef01234567
+    infra_new=feedfacefeedfacefeedfacefeedfacefeedface
     if [[ "$*" == *'worktree list --porcelain'* ]]; then
       printf 'worktree %s\nworktree %s\n' "$TMPDIR/lifecycle-repo" "$HOME/.omp/wt/dirty"
       exit 0
     fi
     if [[ "$*" == *'status --porcelain'* ]]; then
       [[ "$*" == *'/malformed'* ]] && exit 1
-      if [[ "$*" == *"$TMPDIR/infra"* && "''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}" == dirty ]]; then
+      if [[ "$*" == *"$TMPDIR/infra"* && "$infra_state" == dirty ]]; then
         printf ' M fixture\n'
       elif [[ "$*" == *'/dirty'* ]]; then
         printf ' M fixture\n'
@@ -38,7 +41,7 @@ pkgs.runCommand "check-atyrode-cli"
     fi
     if [[ "$*" == *'symbolic-ref --quiet --short HEAD'* ]]; then
       if [[ "$*" == *"$TMPDIR/infra"* ]]; then
-        [[ "''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}" == feature ]] &&
+        [[ "$infra_state" == feature ]] &&
           printf 'fix/unsafe-deploy\n' || printf 'main\n'
         exit 0
       fi
@@ -46,17 +49,30 @@ pkgs.runCommand "check-atyrode-cli"
       exit 1
     fi
     case "$*" in
-      *fetch\ --quiet\ origin\ main) exit 0 ;;
-      *rev-parse\ FETCH_HEAD*)
-        if [[ "''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}" == stale ]]; then
-          echo feedfacefeedfacefeedfacefeedfacefeedface
-        else
-          echo 0123456789abcdef0123456789abcdef01234567
-        fi
+      *fetch\ --quiet\ origin\ refs/heads/main:refs/remotes/origin/main) exit 0 ;;
+      *rev-parse\ refs/remotes/origin/main)
+        [[ "$infra_state" == behind || "$infra_state" == divergent ]] &&
+          echo "$infra_new" || echo "$infra_old"
         ;;
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
-      *rev-parse\ HEAD*) echo 0123456789abcdef0123456789abcdef01234567 ;;
+      *rev-parse\ HEAD*)
+        [[ "$infra_state" == behind && -e "$TMPDIR/infra-fast-forwarded" ]] &&
+          echo "$infra_new" || echo "$infra_old"
+        ;;
+      *merge-base*)
+        [[ "$infra_state" == behind ]] &&
+          echo "$infra_old" || echo deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+        ;;
+      *log\ --oneline\ --no-decorate*)
+        printf '%s\n' \
+          'feedface pin: update reviewed dotfiles' \
+          'decafbad fix: retain manifold ingress'
+        ;;
+      *merge\ --ff-only\ "$infra_new")
+        [[ "$infra_state" == behind ]] || exit 1
+        touch "$TMPDIR/infra-fast-forwarded"
+        ;;
       *diff\ --quiet*) exit 0 ;;
       *ls-remote*) printf 'feedfacefeedfacefeedfacefeedfacefeedface\trefs/heads/main\n' ;;
       *) exit 1 ;;
@@ -1733,11 +1749,11 @@ pkgs.runCommand "check-atyrode-cli"
     grep -qF 'alex@target.example true' "$TMPDIR/infra-ssh-args"
     ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_plan"
 
-    for checkout_state in dirty feature stale; do
+    for checkout_state in dirty feature divergent; do
       case "$checkout_state" in
         dirty) expected_error='infra checkout is dirty' ;;
         feature) expected_error='infra apply requires the main branch' ;;
-        stale) expected_error='infra checkout must exactly match origin/main' ;;
+        divergent) expected_error='infra checkout has local commits or diverged from origin/main' ;;
       esac
       if "''${infra_test_env[@]}" ATYRODE_TEST_INFRA_GIT_STATE="$checkout_state" \
         atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
@@ -1748,10 +1764,29 @@ pkgs.runCommand "check-atyrode-cli"
       grep -qF "$expected_error" "$TMPDIR/infra-$checkout_state.err"
     done
 
-    infra_apply="$("''${infra_test_env[@]}" atyrode infra apply --repo "$TMPDIR/infra" --yes --json)"
+    rm -f "$TMPDIR/infra-fast-forwarded"
+    printf 'y\n' |
+      "''${infra_test_env[@]}" _ATYRODE_TEST_TTY=1 ATYRODE_TEST_INFRA_GIT_STATE=behind \
+        atyrode infra apply --repo "$TMPDIR/infra" --json \
+        >"$TMPDIR/infra-behind.out" 2>"$TMPDIR/infra-behind.err"
+    test -e "$TMPDIR/infra-fast-forwarded"
+    jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"
+      and .targetHost == "alex@target.example" and .verified' \
+      "$TMPDIR/infra-behind.out" >/dev/null
+    grep -qF '0123456789ab -> feedfacefeed' "$TMPDIR/infra-behind.err"
+    grep -qF 'feedface pin: update reviewed dotfiles' "$TMPDIR/infra-behind.err"
+    grep -qF 'decafbad fix: retain manifold ingress' "$TMPDIR/infra-behind.err"
+    grep -qF 'deploy tyrode-dev-01 to alex@target.example from feedfacefeed now?' \
+      "$TMPDIR/infra-behind.err"
+
+    infra_apply="$("''${infra_test_env[@]}" \
+      atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
+      2>"$TMPDIR/infra-current.err")"
     jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"
       and .targetHost == "alex@target.example" and .verified
       and .privateMaterialPrinted == false' <<<"$infra_apply" >/dev/null
+    grep -qF '0123456789ab -> 0123456789ab' "$TMPDIR/infra-current.err"
+    grep -qF 'infra checkout already matches origin/main' "$TMPDIR/infra-current.err"
     grep -qF 'clan machines update tyrode-dev-01' "$TMPDIR/infra-nix-args"
     grep -qF -- '--target-host alex@target.example --build-host localhost --upload-inputs --host-key-check strict' \
       "$TMPDIR/infra-nix-args"

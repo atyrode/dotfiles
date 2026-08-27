@@ -2,11 +2,11 @@
 
 let
   inventory = builtins.fromJSON (builtins.readFile ../../inventory/manifold.json);
-  # Upstream fills its bun-deps fixed-output hash per platform and only
-  # x86_64-linux is filled today; unsupported systems keep evaluating (and
+  # Upstream publishes compiled release assets per platform and only
+  # x86_64-linux exists today; unsupported systems keep evaluating (and
   # keep the capability selectable) without referencing an unbuildable
   # package. Widen inventory/manifold.json supportedSystems as upstream
-  # hashes land. Supported systems are Linux, so the systemd unit gate below
+  # assets land. Supported systems are Linux, so the systemd unit gate below
   # collapses to the same condition.
   supported = builtins.elem pkgs.stdenv.hostPlatform.system inventory.supportedSystems;
 in

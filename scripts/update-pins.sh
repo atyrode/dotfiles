@@ -83,14 +83,7 @@ if wants codex; then
 fi
 
 if wants manifold; then
-  # The manifold agent is a pinned flake input, not a release-asset pin:
-  # bump the tag in flake.nix, then relock that single input.
-  flake="$repo_root/flake.nix"
-  current_tag="$(sed -nE 's|.*github:atyrode/manifold/([^"]+)".*|\1|p' "$flake" | head -n 1)"
-  tag="$(latest_tag atyrode/manifold)"
-  if [[ "$tag" != "$current_tag" ]]; then
-    sed -i "s|github:atyrode/manifold/$current_tag|github:atyrode/manifold/$tag|" "$flake"
-    nix flake update manifold --flake "$repo_root"
-    printf 'manifold %s -> %s\n' "$current_tag" "$tag"
-  fi
+  bump manifold "$repo_root/pkgs/manifold-agent/default.nix" atyrode/manifold v \
+    'https://github.com/atyrode/manifold/releases/download/@tag@/@asset@' \
+    manifold-agent-linux-x64
 fi

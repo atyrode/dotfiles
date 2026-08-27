@@ -13,12 +13,13 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
   Vault write access can never redirect fleet terminals (the Bitwarden-based
   discovery alternative was rejected in #418 for exactly that reason).
 - **Nix owns the agent and its unit.** The `manifold-node` capability installs
-  the pinned `manifold-agent` (a flake-input pin on an upstream release tag)
-  and a `systemd --user` unit that executes the immutable store binary with
-  `Restart=always`, a bounded delay, and the committed master URL. The
-  capability currently delivers on `x86_64-linux` only — widen
-  `supportedSystems` in `inventory/manifold.json` when upstream fills the
-  matching bun-deps hash in its `flake.nix`.
+  the pinned `manifold-agent` (a release-asset pin, like omp/code/codex —
+  the upstream flake's bun-deps derivation is not reproducible across
+  machines, atyrode/manifold#51) and a `systemd --user` unit that executes
+  the immutable store binary with `Restart=always`, a bounded delay, and the
+  committed master URL. The capability currently delivers on `x86_64-linux`
+  only — widen `supportedSystems` in `inventory/manifold.json` as upstream
+  publishes assets for more platforms.
 - **The runtime layer owns machine state.** Enrollment and the machine token
   live outside the Nix store, exactly like `local-qwen`.
 
@@ -51,7 +52,7 @@ An agent restart kills every PTY it owns, so upgrades are operator-timed:
 1. Upgrade the hub first (protocol compat accepts older agents; the reverse is
    rejected loudly). Snapshot `manifold.db` before any hub upgrade that
    applies a schema migration.
-2. Bump the `manifold` flake input (`./scripts/update-pins.sh manifold`) and
+2. Bump the `manifold` pin (`./scripts/update-pins.sh manifold`) and
    merge. Applying that generation restarts the agent on each machine as its
    unit changes — apply on a machine hosting live manifold sessions from a
    plain SSH session, never from inside one of its own terminals.

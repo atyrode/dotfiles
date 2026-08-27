@@ -3142,11 +3142,13 @@ vault_find_exact_item() {
 # Note NAME (opening a vault session as needed; missing, duplicate, and
 # non-note items are refused). SCRATCH must be a caller-owned secure temp dir
 # whose cleanup trap also calls vault_close_session — the lookup result it
-# holds can contain secret material.
+# holds can contain secret material. ALLOW_LOGIN (default 0) lets an
+# unauthenticated CLI log in interactively first — onboarding commands only,
+# mirroring infra setup.
 vault_item_notes() {
-  local name="$1" scratch="$2" matches id
+  local name="$1" scratch="$2" allow_login="${3:-0}" matches id
   matches="$scratch/matches.json"
-  vault_open_session 0
+  vault_open_session "$allow_login"
   bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
   vault_find_exact_item "$name" "$matches"
   [[ "$(jq -er 'length' "$matches")" == 1 ]] ||
@@ -3298,7 +3300,7 @@ cmd_backup() {
       }
       trap backup_setup_cleanup EXIT HUP INT TERM
       note="$tmp/note.json"
-      vault_item_notes "$backup_vault_item" "$tmp" >"$note"
+      vault_item_notes "$backup_vault_item" "$tmp" 1 >"$note"
       jq -e . "$note" >/dev/null 2>&1 ||
         die "$EX_DATAERR" "vault note '$backup_vault_item' is not valid JSON"
       for field in endpoint bucket keyId keySecret cryptPassword cryptSalt; do

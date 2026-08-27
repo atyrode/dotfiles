@@ -158,8 +158,20 @@ pkgs.runCommand "check-atyrode-cli"
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "$TMPDIR/bw-args"
     case "$*" in
-      status) printf '{"status":"%s"}\n' "''${ATYRODE_TEST_BW_STATUS:-unlocked}" ;;
-      sync|lock|login) ;;
+      status)
+        # ATYRODE_TEST_BW_STATE_FILE makes the stub stateful: once `login` has
+        # run (the file exists), status flips to unlocked — exercising the
+        # login-then-proceed path of onboarding commands.
+        if [[ -n "''${ATYRODE_TEST_BW_STATE_FILE:-}" && -f "''${ATYRODE_TEST_BW_STATE_FILE:-}" ]]; then
+          printf '{"status":"unlocked"}\n'
+        else
+          printf '{"status":"%s"}\n' "''${ATYRODE_TEST_BW_STATUS:-unlocked}"
+        fi
+        ;;
+      login)
+        [[ -z "''${ATYRODE_TEST_BW_STATE_FILE:-}" ]] || touch "$ATYRODE_TEST_BW_STATE_FILE"
+        ;;
+      sync|lock) ;;
       'config server') printf '%s\n' 'https://vault.bitwarden.com' ;;
       'config server '*) ;;
       'list items --search vault-existing')
@@ -1813,6 +1825,19 @@ pkgs.runCommand "check-atyrode-cli"
     backup_status="$("''${backup_test_env[@]}" ATYRODE_TEST_RCLONE_LSD_FAIL=1 \
       atyrode backup status --json)"
     jq -e '.configured == true and .remoteReachable == false' <<<"$backup_status" >/dev/null
+
+    # A fresh machine (never logged in) must be able to onboard through
+    # `backup setup` alone: pin the EU server, log in, unlock, render the env
+    # file — no separate `vault login` step required.
+    rm -f "$XDG_CONFIG_HOME/atyrode/session-backup/env" "$TMPDIR/bw-args"
+    "''${backup_test_env[@]}" ATYRODE_TEST_BW_STATUS=unauthenticated \
+      ATYRODE_TEST_BW_STATE_FILE="$TMPDIR/bw-logged-in" _ATYRODE_TEST_TTY=1 \
+      atyrode backup setup >/dev/null 2>"$TMPDIR/backup-fresh.err"
+    grep -qxF 'config server https://vault.bitwarden.eu' "$TMPDIR/bw-args"
+    grep -qxF login "$TMPDIR/bw-args"
+    test -f "$XDG_CONFIG_HOME/atyrode/session-backup/env"
+    test "$(stat -c %a "$XDG_CONFIG_HOME/atyrode/session-backup/env")" = 600
+    rm -f "$TMPDIR/bw-logged-in"
 
     infra_test_env=(
       env

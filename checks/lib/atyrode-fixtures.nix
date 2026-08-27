@@ -13,23 +13,56 @@
   gitNh = ''
     cat > "$TMPDIR/bin/git" <<'EOF'
     #!${pkgs.runtimeShell}
+    infra_state="''${ATYRODE_TEST_INFRA_GIT_STATE:-canonical}"
+    infra_old=0123456789abcdef0123456789abcdef01234567
+    infra_new=feedfacefeedfacefeedfacefeedfacefeedface
     if [[ "$*" == *'worktree list --porcelain'* ]]; then
       printf 'worktree %s\nworktree %s\n' "$TMPDIR/lifecycle-repo" "$HOME/.omp/wt/dirty"
       exit 0
     fi
     if [[ "$*" == *'status --porcelain'* ]]; then
       [[ "$*" == *'/malformed'* ]] && exit 1
-      [[ "$*" == *'/dirty'* ]] && printf ' M fixture\n'
+      if [[ "$*" == *"$TMPDIR/infra"* && "$infra_state" == dirty ]]; then
+        printf ' M fixture\n'
+      elif [[ "$*" == *'/dirty'* ]]; then
+        printf ' M fixture\n'
+      fi
       exit 0
     fi
     if [[ "$*" == *'symbolic-ref --quiet --short HEAD'* ]]; then
+      if [[ "$*" == *"$TMPDIR/infra"* ]]; then
+        [[ "$infra_state" == feature ]] &&
+          printf 'fix/unsafe-deploy\n' || printf 'main\n'
+        exit 0
+      fi
       [[ "$*" == *'/branch-live'* ]] && printf 'omp/live\n' && exit 0
       exit 1
     fi
     case "$*" in
+      *fetch\ --quiet\ origin\ refs/heads/main:refs/remotes/origin/main) exit 0 ;;
+      *rev-parse\ refs/remotes/origin/main)
+        [[ "$infra_state" == behind || "$infra_state" == divergent ]] &&
+          echo "$infra_new" || echo "$infra_old"
+        ;;
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;
-      *rev-parse\ HEAD*) echo 0123456789abcdef0123456789abcdef01234567 ;;
+      *rev-parse\ HEAD*)
+        [[ "$infra_state" == behind && -e "$TMPDIR/infra-fast-forwarded" ]] &&
+          echo "$infra_new" || echo "$infra_old"
+        ;;
+      *merge-base*)
+        [[ "$infra_state" == behind ]] &&
+          echo "$infra_old" || echo deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+        ;;
+      *log\ --oneline\ --no-decorate*)
+        printf '%s\n' \
+          'feedface pin: update reviewed dotfiles' \
+          'decafbad fix: retain manifold ingress'
+        ;;
+      *merge\ --ff-only\ "$infra_new")
+        [[ "$infra_state" == behind ]] || exit 1
+        touch "$TMPDIR/infra-fast-forwarded"
+        ;;
       *diff\ --quiet*) exit 0 ;;
       *ls-remote*) printf 'feedfacefeedfacefeedfacefeedfacefeedface\trefs/heads/main\n' ;;
       *) exit 1 ;;

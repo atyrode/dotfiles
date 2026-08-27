@@ -119,7 +119,12 @@ pkgs.runCommand "check-atyrode-apply"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
-    LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null
+    LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
+      { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
+    # A successful apply with no backup env file surfaces the setup pointer
+    # (non-interactive here, so no prompt) without failing the activation.
+    grep -qF 'session backup not configured; set up with: atyrode backup setup' \
+      "$TMPDIR/apply-success.err"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
@@ -797,6 +802,9 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]' <<<"$help"
     grep -qF 'atyrode vault get NAME' <<<"$help"
     grep -qF 'atyrode vault put NAME' <<<"$help"
+    grep -qF 'atyrode backup setup' <<<"$help"
+    grep -qF 'atyrode backup status [--json]' <<<"$help"
+    grep -qF 'atyrode backup now' <<<"$help"
 
     mkdir "$out"
   ''

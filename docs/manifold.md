@@ -95,17 +95,24 @@ other's hello in an endless ping-pong:
 2. Retire the supervised stopgap definitions (`omp hub ps` in `~/manifold`;
    stop and delete `manifold-agent-devbox` and any recovery entries) so
    nothing respawns.
-3. Sweep orphaned source agents, sparing the hub container's own agent — it
-   runs the identical cmdline, is host-visible in the shared PID namespace,
-   and only respawns at server boot:
+3. Sweep orphaned source agents — flaps and worktrees accumulate them (a
+   census found 138: the main checkout, deleted feature worktrees, the
+   stopgap copy). The hub container's own agent runs the identical cmdline,
+   is host-visible in the shared PID namespace, and only respawns at server
+   boot — so sweep fail-closed: kill only what is positively identified as
+   host-side (the container agent's cwd is `/app`; anything unreadable or
+   unexpected is spared):
 
    ```sh
    for p in $(pgrep -f 'packages/agent/src/main.ts'); do
-     grep -q docker /proc/$p/cgroup 2>/dev/null || kill "$p"
+     case "$(readlink /proc/$p/cwd 2>/dev/null)" in
+       "$HOME"/*|/tmp/*) kill "$p" ;;
+     esac
    done
    ```
 
-   Re-run with `echo` instead of `kill` to confirm zero host survivors.
+   Dry-run with `echo` in place of `kill` first; expect every process except
+   the single `/app` one.
 4. Deploy the generation that delivers the unit (`atyrode infra apply`) and
    verify `welcome` in `journalctl --user -u manifold-agent` (status reports
    `lastLogEvent: "welcome"`, phase `connected`).

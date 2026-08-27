@@ -6,6 +6,8 @@ description, system, platform, activation owner, user, home directory, optional
 hostname, selected capabilities, and optional declared Nix trusted-user
 boundary.
 
+Decision record: [ADR-0001](adr/0001-capability-based-host-composition.md).
+
 `hosts/bootstrap.nix` defines account-portable Linux bootstrap profiles.
 These contain system, platform, activation, description, and capabilities, but
 never a username or home directory. `atyrode` validates the invoking non-root

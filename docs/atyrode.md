@@ -148,6 +148,8 @@ lock/activity marker are `live` and `protected`; a worktree is `reclaimable`
 only when all of those liveness probes are quiet. Unreadable Git state remains
 protected as `unknown`.
 
+Decision record: [ADR-0007](adr/0007-explicit-generation-cleanup.md).
+
 When `omp` is available, the same `atyrode lifecycle` report captures the
 supported `omp gc` default dry-run and `omp worktree clear --dry-run` output.
 When it is absent, the command still exits successfully with the filesystem

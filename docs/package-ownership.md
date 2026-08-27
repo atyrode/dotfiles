@@ -8,6 +8,8 @@ only titles, purpose, demonstrated consumers, and state/security/delivery
 boundaries. It intentionally contains no ordinary installed package or cask
 arrays.
 
+Decision record: [ADR-0003](adr/0003-layered-package-ownership.md).
+
 Each manifest is schema version 1 and identifies the exact flake revision,
 system, and platform. Package and cask rows include deterministic name, version,
 description, homepage, delivery, and source fields. Missing pinned metadata uses
@@ -45,9 +47,6 @@ sessions, caches, device identities, or other mutable state.
   missing tools back to the owning capability instead of suggesting a global
   install.
 
-Desktop applications are retained as an operator-use decision, separate from
-the agent platform. Pi and Zed remain absent, coherent experiments owned by #29
-and #30; neither is pulled into the baseline for harness symmetry.
 
 ### Native Windows package policy
 
@@ -94,32 +93,22 @@ launcher is a separate local-wrapper class and must not claim a vendor identity.
 
 The table covers every Nix/Home Manager app bundle selected by
 [`home/profiles/desktop.nix`](../home/profiles/desktop.nix), plus the current
-OrbStack bundle from the `containers` capability and the specifically requested
-historical Godot Mono audit. Evidence is against locked nixpkgs revision
-`753cc8a3a87467296ddd1fa93f0cc3e81120ee46`; preserved identities already
-present before this audit come from the operator's Home Manager bundle audit in
-[#89](https://github.com/atyrode/dotfiles/issues/89). Nix-darwin/Homebrew casks
-are system-owned, never pass through Nix's Darwin fixup or Home Manager
-`copyApps`, and are therefore outside this Nix-bundle table.
+OrbStack bundle from the `containers` capability. Nix-darwin/Homebrew casks are
+system-owned, never pass through Nix's Darwin fixup or Home Manager `copyApps`,
+and are therefore outside this Nix-bundle table.
 
 | Application (package) | Classification and expected identity | Evidence and rationale |
 |---|---|---|
 | ChatGPT (`chatgpt`) | Vendor-signed preserved: `com.openai.chat` / `2DC432GLL2` | #89 observed the identity in the delivered bundle; the locked derivation copies the official `ChatGPT.app` under `stdenvNoCC`. |
-| Obsidian (`obsidian`) | Vendor-signed preserved: `md.obsidian` / `6JSW4SJWN9` | The locked `Obsidian-1.12.7.dmg` is `sha256-O4XBO0zlVRLobhcKfNKklOLbaVrIiMBgHhU8uFt3iBs=`. `rcodesign` reports a verifying Developer ID Application chain for Dynalist Inc. on both executable slices. The derivation copies `Obsidian.app` unchanged and creates wrappers outside it; the overlay skips destructive fixup and [`obsidian-signature`](../checks/obsidian-signature.nix) enforces the identity. |
+| Obsidian (`obsidian`) | Vendor-signed preserved: `md.obsidian` / `6JSW4SJWN9` | The locked `Obsidian-1.12.7.dmg` is `sha256-O4XBO0zlVRLobhcKfNKklOLbaVrIiMBgHhU8uFt3iBs=`. `rcodesign` reports a verifying Developer ID Application chain for Dynalist Inc. on both executable slices. The derivation copies `Obsidian.app` unchanged and creates wrappers outside it; the overlay skips destructive fixup and [`app-signatures`](../checks/app-signatures.nix) enforces the identity. |
 | Postman (`postman`) | Vendor-signed preserved: `com.postmanlabs.mac` / `H7H8Q7M5CK` | #89 observed the identity; the locked Darwin derivation already sets `dontFixup = true` because changing embedded scripts invalidates notarization. |
 | Prism Launcher (`prismlauncher`) | Intentionally source-built/ad-hoc: bundle `org.prismlauncher.PrismLauncher`, no team ID | `prismlauncher-unwrapped` fetches source tag `11.0.2`, applies a Nix-specific patch and branding, builds with CMake, and is then Qt-wrapped. No upstream vendor signature can survive that build. |
 | REAPER (`reaper`) | Vendor-signed preserved: `com.cockos.reaper` / `Y3T58622SG` | #89 observed the identity; the locked derivation copies the official universal DMG bundle and disables stripping. |
 | Signal (`signal-desktop`) | Intentionally source-built/ad-hoc: bundle `org.whispersystems.signal-desktop`, no team ID | The locked derivation fetches Signal source tag `v8.15.0`, patches it, rebuilds native dependencies, and invokes Electron Builder with `mac.identity=null`; it does not repackage Signal's vendor-signed release. |
-| Spotify (`spotify`) | Vendor-signed preserved: `com.spotify.client` / `2FNC3A47ZF` | The exact-artifact audit and native built-bundle proof landed in [#242](https://github.com/atyrode/dotfiles/pull/242); [`spotify-signature`](../checks/spotify-signature.nix) enforces the identity. |
-| VLC (`vlc-bin`) | Vendor-signed preserved: `org.videolan.vlc` / `75GAHG3SZQ` | The locked `vlc-3.0.23-arm64.dmg` is `sha256-/G+sCNh/U4UX1ErKDF56JEtnyMTLWJv0eDY6cxX9Xg0=`. `rcodesign` reports a verifying Developer ID Application chain for VideoLAN. The derivation copies `VLC.app` unchanged and creates its wrapper outside it; the overlay skips destructive fixup and [`vlc-signature`](../checks/vlc-signature.nix) enforces the identity. |
-| Lichess (`lichess`) | Local web-app wrapper: `org.lichess.webapp`, no vendor team ID | [`home/pkgs/lichess.nix`](../home/pkgs/lichess.nix) generates the bundle, plist, and shell launcher locally; it only opens `https://lichess.org`. |
+| Spotify (`spotify`) | Vendor-signed preserved: `com.spotify.client` / `2FNC3A47ZF` | The exact-artifact audit and native built-bundle proof landed in [#242](https://github.com/atyrode/dotfiles/pull/242); [`app-signatures`](../checks/app-signatures.nix) enforces the identity. |
+| VLC (`vlc-bin`) | Vendor-signed preserved: `org.videolan.vlc` / `75GAHG3SZQ` | The locked `vlc-3.0.23-arm64.dmg` is `sha256-/G+sCNh/U4UX1ErKDF56JEtnyMTLWJv0eDY6cxX9Xg0=`. `rcodesign` reports a verifying Developer ID Application chain for VideoLAN. The derivation copies `VLC.app` unchanged and creates its wrapper outside it; the overlay skips destructive fixup and [`app-signatures`](../checks/app-signatures.nix) enforces the identity. |
+| Lichess (`lichess`) | Local web-app wrapper: `org.lichess.webapp`, no vendor team ID | [`home/desktop/lichess.nix`](../home/desktop/lichess.nix) generates the bundle, plist, and shell launcher locally; it only opens `https://lichess.org`. |
 | OrbStack (`orbstack`, `containers`) | Vendor-signed preserved: `dev.kdrag0n.MacVirt` / `HUAQ24HBR6` | #89 observed the identity in the delivered bundle; this app belongs to the `containers` capability rather than the desktop profile. |
-| Godot Mono (`godot_4-mono`, former) | Source-built/ad-hoc when Nix-delivered: bundle `org.godotengine.godot.nixpkgs`, no team ID | The locked derivation compiles Godot and its Mono assemblies from source with SCons and generates `GodotMono.app`; no vendor identity exists. [#104](https://github.com/atyrode/dotfiles/pull/104) removed it from Home Manager and moved current Godot delivery to the system-owned official Homebrew cask. |
-
-Among the six remaining #89 audit targets, Obsidian and VLC are class (a)
-unmodified vendor artifacts; Godot Mono, Prism Launcher, and Signal are class
-(c) source builds; and Lichess is the separate local-wrapper class. None is
-class (b), an upstream binary artifact modified inside its sealed bundle.
 
 ## Harness and surface contract
 
@@ -131,8 +120,6 @@ class (b), an upstream binary artifact modified inside its sealed bundle.
 | tmux adapter | `agent-tools` | pinned nixpkgs | tmux server sockets and sessions | interactive |
 | bubblewrap backend | Linux `agent-tools` | pinned nixpkgs | none | OMP task isolation |
 | comma + nix-index | `base` | pinned flake input | immutable index/shared store | lookup, on-demand command |
-| Pi/extensions | none pending #29 | unassigned | must be isolated | evaluation only |
-| Zed/ACP surface | none pending #30 | unassigned | editor-owned | evaluation only |
 
 `atyrode doctor tools --json` reports these versions, launch modes, paths,
 owners, and missing-capability remediation without reading authentication state.

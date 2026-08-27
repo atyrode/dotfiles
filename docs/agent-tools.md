@@ -14,380 +14,173 @@ Nix owns:
 - the pinned bundled agents, global generic skills, managed-settings guard,
   and vault-usage footer;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
-  restricted `ompu` launcher, and the `code` profile generator; and
-- Claude Code's user-scope operator policy: the deployed `~/.claude/CLAUDE.md`
-  instructions and `~/.claude/settings.json` permission rules; and
+  restricted `ompu` launcher, and the `code` profile generator;
+- Claude Code's user-scope operator policy: the deployed
+  `~/.claude/CLAUDE.md` instructions and `~/.claude/settings.json` permission
+  rules; and
 - mise itself, with no globally declared mise tools.
 
-OMP continues to own mutable runtime data such as authentication,
-sessions, caches, onboarding state, and machine-local UI state. Secrets never
-belong in this repository or the Nix store.
+OMP owns mutable runtime data such as authentication, sessions, caches,
+onboarding state, and machine-local UI state. Secrets never belong in this
+repository or the Nix store.
 
 Activation does not rewrite or back up pre-existing mutable paths before Home
 Manager links the managed agents, rules, extensions, and skills. If
 `checkLinkTargets` reports a collision, inspect the exact path named by Home
-Manager, preserve any content still wanted outside the managed namespace, then
-remove or move the collision and rerun `atyrode apply`. Do not delete an
-uninspected path merely to make activation pass.
+Manager, preserve wanted content outside the managed namespace, move or remove
+the collision, and rerun `atyrode apply`.
 
-This subsystem deliberately owns neither a `pi` executable nor a `.pi`
-mutable-state namespace. The bounded Pi experiment in #29 may therefore install
-alongside OMP without an executable collision, shared authentication/session
-state, or any parity requirement. Security boundaries and the
-untrusted-project launcher are
-documented in [Agent security](agent-security.md). The package check asserts
-the exact managed OMP binary set — the `omp`, `omp-managed`, and `ompu`
-launchers plus the `code` generator — and verifies that an OMP clean-home
-startup does not create `.pi` state.
+Agents, rules, the settings guard, and the vault-usage footer are assembled into
+a read-only OMP extension-package root in the Nix store and injected explicitly
+by every managed session. They are not copied into OMP's mutable agent
+directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the
+same platform assets without sharing authentication, sessions, or caches.
 
-Agents, rules, the settings guard, and vault-usage footer are assembled into a
-read-only OMP extension-package root in the Nix store and
-injected explicitly by every managed session. They are not copied into OMP's mutable
-agent directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots
-receive the same platform assets without sharing authentication, sessions, or
-caches. The vault-usage footer renders one responsive row below the editor
-box (where `code` shows its own usage panel), tied to the box by a dim `─`
-rule spanning the row's inset width (rule and row both sit inset 4 columns
-on each edge, mirroring the border's corner-to-π indent), for the launch
-vault with `code`-parity visuals (cli-kit
-palette, green→red gradient bars, `claude`/`codex` display names, `↻︎` reset
-countdowns with urgency tinting, `cached <age> ago` staleness): per
-broker-reported provider it shows every distinct labeled window (the busiest
-per label — e.g. `5h · 7d · 7d fable` for Claude; never an invented
-aggregate), provider groups delimited by `│`, the active model's provider
-first, and a live minute-granular `refresh in Xm` suffix on healthy rows. On
-wide rows the usage bars stretch to fill the inset width exactly and re-fit
-on every paint, so resizes adapt; width is measured in terminal cells via
-the TUI's own `visibleWidth`, matching how the engine lays out the row.
-`alt+u` forces a fetch (a raw-input listener registered ahead of the editor;
-its `(alt+u)` cue decorates the suffix). When width runs short the row
-deterministically drops identity and cue decoration, replaces bars with compact
-cells, sheds named variant buckets before core duration windows, and drops
-trailing providers only as a final guard. `/vault-usage` opens a read-only
-viewer of the full window/scope set with a fetched/next-refresh status line
-(enter/esc close it); `/vault-usage refresh` matches the hotkey. It reads only
-the aggregate usage report, non-secret auth-state booleans, and the read-only
-display identities. Identities are masked together with OMP's collision-aware
-`usage --redact` algorithm and appear only when the complete row fits; credentials,
-tokens, and raw report metadata are never read. The footer hides itself instead
-of wrapping on narrow terminals.
-
-The package overlay lives in `flake.nix`, reusable package derivations live in
-`pkgs/`, and Home Manager deployment lives in
-`modules/home/agent-tools.nix`. On Linux, the OMP package preserves upstream's
-binary unchanged and launches it through Nix's dynamic loader instead of
-rewriting the Bun executable with `patchelf`.
+Reusable package derivations live in `pkgs/`, Home Manager deployment lives in
+`modules/home/agent-tools.nix`, and the package overlay is assembled by
+`lib/packages.nix`. On Linux, the OMP package preserves upstream's binary and
+launches it through Nix's dynamic loader instead of rewriting the Bun executable
+with `patchelf`.
 
 ## OMP commands
 
-Four commands make up the surface. Plain `omp` is the user-owned daily driver;
-`omp-managed` is the managed-layering primitive that the generator launches;
-`ompu` is the untrusted sandbox; and `code` is the profile generator that ties
-them together.
+Four commands make up the operator surface:
 
 | Command | Intended use | Configuration |
 | --- | --- | --- |
-| `omp` | Mutable daily driver; user-owned configuration | Whatever the operator's own OMP config selects; unmanaged apart from the blocked `update` and profile-aware resume lookup |
-| `omp-managed` | The managed launch target: platform extensions, managed defaults, and enforced policy over a one-shot `--config`, with no preset overlay | Managed defaults and policy, plus the generated `--config` the generator passes |
-| `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and isolated writing tasks |
-| `code` | The profile generator TUI (see below) | Always launches through `omp-managed`: Enter passes the generated profile as a one-shot `--config`; `m` runs the managed defaults with no overlay |
+| `omp` | Mutable daily driver | The operator's writable OMP configuration, apart from the blocked `update` command and profile-aware resume lookup |
+| `omp-managed` | Managed launch target | Platform extensions, managed defaults, enforced policy, and any generated one-shot `--config` |
+| `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and approval-gated shell/task use |
+| `code` | Profile generator and launcher | Generated profiles launched through `omp-managed`, the managed defaults, or the `ompu` sandbox |
 
-For plain upstream discoverability, use the pinned binary's `omp --help` and
-`omp <command> --help`; [upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
-may describe behavior newer than the repository pin. This document remains
+Use `omp --help` and `omp <command> --help` for the pinned upstream command
+surface. [Upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
+may describe behavior newer than the repository pin. This document is
 authoritative for `code`, `omp-managed`, and `ompu`.
 
-Plain `omp` executes upstream OMP directly: no extension, defaults, or policy
-overlay is injected, so its models, approvals, and interface belong to the
-operator's mutable configuration and can change on the fly. `omp update` is
-blocked so nothing shadows the Nix-pinned binary. For a UUID or UUID-prefix
-passed to `--resume`, the launcher searches the default and named-profile
-session roots and injects the sole matching profile; explicit profile/state
-selection always wins, and ambiguous matches require `--profile`. This repairs
-upstream's profile-free end-of-session resume hint without changing ordinary
-launches. Activation seeds the curated defaults from `omp/plain-seed.yml` into
-the writable configuration with local edits always winning; see
-[Seeded plain-omp defaults](#seeded-plain-omp-defaults).
+Plain `omp` executes upstream OMP directly, with no managed extension, defaults,
+or policy overlay. `omp update` is blocked so it cannot shadow the Nix-pinned
+binary. For a UUID or UUID prefix passed to `--resume`, the launcher searches
+the default and named-profile session roots and injects the sole matching
+profile; explicit state or profile selection wins, and ambiguous matches require
+`--profile`.
 
-`omp-managed` is the managed launcher with no profile of its own. It layers the
-platform extensions, the managed defaults, and the enforced policy over a
-one-shot `--config`, and is the launch target the generator uses; it carries no
-hand-curated preset. The managed defaults use Sol for interactive daily work,
-keep cheap, fast roles on Luna, keep the text-trivial `commit`/`tiny` roles on
-GPT-5.6-luna, and reserve Fable/Opus for planning and the deliberative fallback
-tier. Fallback chains follow one rule: try a same-provider sibling first (it
-rules out a single model at capacity for free), then make the last, load-bearing
-hop cross to the other provider; trivial background roles carry no chain at all.
-The fast-execution and background roles lead on `gpt-5.3-codex-spark` — its
-5h/7d Codex quota is a separate, normally-idle bucket, so draining it costs
-nothing on the main meters, and each role falls back to the per-pool cheap rung
-(Luna or Haiku) the moment that bucket is exhausted. The managed defaults are
-policy, not provider pricing data; revisit the routes when model quality or
-pricing changes.
-
-The balanced routing rationale is:
-
-| Role or role group | Capability and intended use | Thinking | Cost posture and fallback rationale |
-| --- | --- | --- | --- |
-| `default` | Interactive daily work on Sol | Medium | Sol is the user-selected default; a Terra sibling absorbs a Sol blip, then Sonnet is the cross-provider net |
-| `task` | General implementation on Terra | Medium | Mid-cost worker; a Luna sibling first, then Sonnet crosses providers |
-| `librarian` | Repository and documentation research on Terra | Medium | A Luna sibling keeps the read-heavy role cheap, then Sonnet crosses for depth |
-| `smol`, `sonic` | Fast lookup and naming on Luna | Minimal–low | Cheapest recurring work; no fallback chain — a blip is harmless and crossing them is wasteful |
-| `advisor` | Per-turn peer review — a judgment role, not a drain target | Tier-dependent | Base is a budget Haiku; the generator's advisor dial can raise it (Sonnet 5), leave it, or turn it **off** for a generated profile |
-| `tiny`, `commit` | Labels and commit messages on GPT-5.6-luna | Low | The cheapest supported Codex rung for text-trivial, always-on work; no fallback chain |
-| `designer` | Product and interface design on Sonnet | Medium | Crosses straight to Terra, Sonnet's price-twin (Sonnet has no lateral Anthropic sibling) |
-| `reviewer` | High-scrutiny review on Sonnet | High | Higher-cost quality gate; escalates to Opus, then Sol, if the primary is unavailable |
-| `plan` | Architecture and planning on Fable | High | Premium reasoning is intentional for decisions with broad downstream impact; Opus then Sol are the escape routes |
-| `slow` | Hard debugging and deliberate reasoning on Sol | Xhigh | Expensive OpenAI reasoning is reserved for difficult failures; a Terra sibling, then Opus crosses providers |
-
-The bundled `scout` agent (upstream's rename of `explore`) is deliberately not
-pinned: its frontmatter declares the `smol` model role, so repository
-exploration follows the smol route and its fallback chain without a separate
-entry that could go stale.
-
-`code` is the model/runtime launcher and hosted-profile generator. It opens a
-Bubble Tea TUI with a prompt→profile classifier running on the resident
-Nix-managed ollama daemon
-(loopback HTTP). You type a prompt and/or adjust the facet dials (lane, model
-tier, thinking, spark, fable — with fable's manual-only "main" sub-dial that
-promotes it to the default agent), and a preview pane shows the resulting role →
-model routing — model names coloured by provider (blue/orange) and brightness
-scaled by thinking level — above the `omp usage` panel (per-window `N% used`
-with green→red gradient bars, `free` on an idle bucket and `tight` at ≥80%).
-
-The Usage widget groups broker-reported identities by provider and shows a
-separate bar for every reported quota window. Press **`v`** for the full-screen
-account manager. Provider and account rows use one shared bar width, so usage
-geometry stays aligned across labels, reset credits, and status suffixes.
-Press **`i`** to reveal full account addresses when compact labels are
-ambiguous.
-
-The manager edits named account-selection presets, not authentication.
-**Space** toggles the highlighted identity, arrow keys move through accounts,
-**`n`** creates a preset, **`x`** deletes one after confirmation, and the
-left/right keys change the active preset. **`s`** toggles Usage and **`r`**
-refreshes the broker snapshot and usage. A provider with every account disabled
-is valid and is shown explicitly as disabled.
-
-Trusted authentication uses one OMP v17 broker backed by the `default` profile.
-The Home Manager service listens on `127.0.0.1:46171`, writes its bearer token
-to `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` with mode `0600`, and keeps
-the client snapshot cache under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
-The earlier `code/auth-vaults.json` profile/port manifest is retired; changing
-an account selection no longer starts a different broker or credential store.
-
-The central store may contain several authenticated identities for each
-provider. `code` reads the broker's redacted snapshot and presents those
-identities in its account manager (**`v`**). Presets and per-account enabled
-flags are non-secret state in
-`$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. Newly discovered
-identities default to enabled.
-
-Before each trusted launch, `code` writes a mode-`0600` temporary account-pool
-file keyed by provider and OMP's stable credential `identityKey`. The child
-receives that path through `OMP_AUTH_BROKER_ACCOUNT_POOL_FILE`; OMP loads it
-once and filters credential selection, refresh, health checks, usage fan-out,
-direct-id lookups, snapshot export, and broker updates before considering an
-identity.
-An explicitly empty provider list disables that provider for the process.
-Excluded credentials stay stored and authenticated: no logout, refresh,
-disable, block, or database mutation occurs. A running session keeps its
-captured account pool even if a later `code` process edits the preset.
-
-Usage remains broker-sourced and is displayed per account. Missing provider
-coverage is reported as unavailable rather than zero. A successful partial
-refresh retains the last observed rows for omitted identities and marks them
-cached with their age; aggregate values include only enabled accounts with
-actual reports. Reset credits are listed under the account that owns them.
-
-Authenticate or remove central accounts explicitly with OMP's
-`auth-broker login` and `auth-broker logout` commands. The `code` account
-manager never reads OAuth material and never mutates OMP's credential database.
-The `u` sandbox remains on its fixed, credential-sanitized `untrusted` profile.
-
-There are three ways to leave the TUI — every trusted launch goes through
-`omp-managed`; plain `omp` is reached by typing `omp` directly, never via
-`code`:
-
-- **Enter** always launches the generated routing profile for the current
-  facets through `omp-managed` as a one-shot `--config`, with the selected
-  vault's broker environment and any typed prompt carried into the shared
-  `default` client profile. The generated profile carries
-  `task.agentModelOverrides` mirroring its agent-backed roles, so spawned task
-  agents follow the generated routing instead of staying pinned to the static
-  managed defaults.
-- **`m`** runs `omp-managed` with no overlay — the managed defaults — against
-  the same selected vault and shared client profile.
-- **`u`** opens the untrusted sandbox (`ompu`) for the current context; it never
-  inherits a personal authentication vault.
-
-`code --no-usage` (`-U`) skips the usage fetch, and `code --help` (`-h`) prints
-help. The full facet grid of profiles is enumerated at package build time by
-`code generate` from the model catalog in `omp/models.yml`, so the TUI's
-preview always matches what a launch would route.
-
-`code` also carries subcommands that never open the TUI and therefore do not
-require a terminal — they deliberately bypass the launcher's tty guard, so
-`ssh host 'code ls'` works:
-
-- **`code ls`** (`code session list`) lists live sessions with their age, the
-  directory they were started in, and whether their launcher has since been
-  superseded by a newer build.
-- **`code session reap`** retires them, filtered by `--older-than` or
-  `--superseded`. It prints and kills nothing unless `--yes` is passed, and
-  takes each session's whole process tree so the language servers, browsers,
-  and workers it spawned go with it rather than being orphaned onto init.
-- **`code generate`** re-renders the profile catalog.
-
-Sessions are recorded under `$XDG_STATE_HOME/code/sessions` while they run; a
-session holds a lock on its record, so a crashed session is detected and pruned
-rather than lingering as a stale entry.
-
-On an applicable x86_64 WSL2 host with NVIDIA CUDA passthrough, `code` also
-shows a **runtime** dial with `hosted` and `Local Qwen 3.8 27B`. The option is
-discovered through `CODE_RUNTIME_BROKER` (set to `atyrode` by the managed
-wrapper), so unsupported hosts retain the hosted-only interface. Selecting the
-local target delegates to `atyrode runtime run local-qwen`: the first launch
-asks before allocating storage or downloading roughly 40 GiB, later launches
-idempotently start the pinned syv-ai runtime, and every OMP role is routed to
-the loopback Qwen endpoint with cloud authentication and model fallbacks
-removed. Mutable model data, generated API keys, container state, and the
-selection of a storage path remain machine-local and outside the Nix store.
-The isolated profile keeps the model's full 32,768-token response budget but
-reserves 40,000 tokens for output and request-envelope headroom. OMP therefore
-starts speculative compaction around 96K input tokens and performs required
-mid-turn compaction above 110K, before the 150K server window can reject the
-next request. Its generated method order contains only `soft`, because the
-local route is text-only and cannot consume SnapCompact's image archives. The
-background summary keeps the latest 20,000 tokens and automatically continues
-the interrupted turn after committing. These overrides live only in the
-isolated `local-qwen` profile; hosted profiles retain their normal model-aware
-compaction policy.
-
-`omp/defaults.yml` is the authoritative role map and fallback-chain definition;
-the generator derives every profile from it and the `omp/models.yml` catalog,
-adjusting the table by facet (lane, model tier, thinking, spark, fable, and
-fable's main sub-dial) rather
-than from hand-curated preset files.
-
-`omp-managed` loads configuration in this order:
+`omp-managed` is the managed-layering primitive used by `code`. It loads
+configuration in this order:
 
 1. OMP's writable machine config at `~/.omp/agent/config.yml`, with
    `config.yaml` selected only when the canonical filename is absent;
 2. the Nix-managed portable defaults;
-3. native project configuration from `<cwd>/.omp/settings.json` followed by
-   `<cwd>/.omp/config.yml`, reapplied after the defaults so a repository can
-   specialize non-security settings;
+3. native project configuration from `<cwd>/.omp/settings.json` and then
+   `<cwd>/.omp/config.yml`;
 4. optional machine-local overrides at `~/.config/omp/local.yml`;
-5. one-shot `--config` overlays, in command-line order — including the profile
-   the generator produces;
+5. one-shot `--config` overlays, including the profile generated by `code`;
 6. the Nix-managed enforced policy; and
 7. explicit runtime flags such as `--model` or `--approval-mode`.
 
-Later layers win. The enforced policy fixes trusted-machine yolo approvals for
-workspace edits, shell/eval, browser, task spawning, and GitHub capabilities,
-plus secret obfuscation and automatic task isolation with patch merging.
-Machine, project, and one-shot config files cannot change those
-controls. `omp acp` receives the same layers in the same order, with the
+Later layers win. `omp acp` receives the same layers in the same order, with
 overlays placed after the `acp` subcommand as required by OMP's parser.
-
-`omp-managed` sessions are unattended trusted-machine profiles. Explicit
-`--yolo`, `--auto-approve`, and `--approval-mode yolo` flags remain supported
-for compatibility, but do not grant those sessions additional tool approval.
-Plain `omp` carries none of these layers: its approval posture is whatever the
-operator's mutable configuration selects. Use `ompu` for deliberately
-untrusted repositories.
-
-OMP maintenance subcommands are passed directly to OMP because their parsers do
-not consistently accept interactive launch flags. `omp-managed` preserves
-that passthrough instead of prepending its overlays to a maintenance command,
-and its `setup` warns that it writes lower-priority machine state and points
-back to the effective diagnostic.
-`omp update` is refused so it cannot shadow the
-Nix-managed version.
+Maintenance subcommands pass directly to OMP because their parsers do not
+consistently accept interactive launch flags.
 
 When launched from `$HOME` without `--cwd` or `--allow-home`, the wrapper
-mirrors OMP's safety chdir (`$HOME/tmp`, `/tmp`, `/var/tmp`, then the platform
-temporary directory) before resolving project layers. Relative one-shot
-`--config` paths are resolved from that effective project directory.
+mirrors OMP's safety change of directory before resolving project layers.
+Relative one-shot `--config` paths resolve from that effective project
+directory.
 
-Use `omp config managed --json` to inspect the active profile and state path,
-ordered source paths, ownership, and effective managed values for the managed
-session. The diagnostic includes the writable machine layer, both native
-project settings files, one-shot overlays, and supported runtime overrides,
-but filters output to Nix-owned keys so credentials and unrelated private
-settings are never printed. The diagnostic applies the same legacy-key
-migrations the pinned binary applies at load, so it reports what OMP actually
-resolves. `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR`, named
-profiles, the effective project directory, and OMP's selected writable config
-filename are reflected in the report.
+Use `omp config managed --json` to inspect the managed profile, state path,
+ordered configuration sources, ownership, and effective Nix-owned values. Use
+`~/.config/omp/local.yml` for machine-only overrides of defaults; it cannot
+weaken enforced policy. The readable managed copies under `~/.config/omp/` are
+links—edit their repository sources instead.
 
-`omp config set` and `omp config reset` refuse keys supplied by the managed
-defaults or enforced policy, including parent/child paths
-that overlap a managed key. `omp config get` likewise refuses managed keys
-because upstream's command reads only writable machine state; `omp config list`
-prints an explicit warning about that limitation. Edit the repository source,
-or use `~/.config/omp/local.yml` for a machine-only override of a default.
-Local overrides cannot weaken enforced policy.
+`code` classifies a prompt and selected facets into a generated routing profile.
+Its trusted launches always use `omp-managed`; plain `omp` is invoked directly,
+never through `code`. The launch choices are:
 
-The managed extension intercepts the normal `/settings` path before OMP opens
-its in-session settings UI and explains the supported edit paths. It also
-watches OMP's writable config and restores Nix-owned paths if another UI path,
-including follow-up submission or setup, tries to persist them; unrelated
-machine edits are retained and the session receives a warning. Managed root
-sessions refuse `--no-extensions`, because upstream would otherwise disable
-this guard together with the managed agents and rules. Use
-`omp config managed`, the machine-local file, or the repository sources
-instead.
+- launch the generated profile through `omp-managed`;
+- launch `omp-managed` without an overlay to use the managed defaults; or
+- launch the current context through the credential-sanitized `ompu` sandbox.
 
-The readable managed copies are linked under `~/.config/omp/`. Edit their
-sources in this repository instead of editing the links.
+`code --no-usage` skips the usage fetch, `code --help` prints help, `code ls`
+lists live managed sessions, `code session reap` previews or retires selected
+session process trees, and `code generate` regenerates the profile catalog.
+Sessions are recorded under `$XDG_STATE_HOME/code/sessions` while they run; a
+session locks its record so crashed sessions can be pruned.
+
+On an applicable x86_64 WSL2 host with NVIDIA CUDA passthrough, `code` can
+discover the `local-qwen` runtime through `CODE_RUNTIME_BROKER=atyrode`.
+Selecting it delegates lifecycle to `atyrode runtime run local-qwen`; model
+data, generated API keys, container state, and the selected storage path remain
+machine-local and outside the Nix store. Unsupported hosts remain hosted-only.
+
+## Security boundaries
+
+Decision record: [ADR-0005](adr/0005-no-declarative-secret-manager.md).
+
+The enforced policy fixes trusted-machine approvals, secret obfuscation, and
+automatic task isolation with patch merging. Writable machine, project, and
+one-shot configuration cannot weaken those controls. Plain `omp` carries none
+of these managed layers and uses the operator's mutable approval policy. Use
+`ompu --cwd <project>` for deliberately untrusted repositories; its complete
+trust boundary and limits are documented in [Agent security](agent-security.md).
+
+Trusted authentication uses one OMP broker backed by the `default` profile. The
+Home Manager service binds only to `127.0.0.1:46171`, writes its bearer token to
+`$XDG_STATE_HOME/atyrode/omp-auth-broker/token` with mode `0600`, and keeps the
+client snapshot cache under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
+Account-selection presets are non-secret state in
+`$XDG_STATE_HOME/atyrode/code-auth-account-state.json`; authentication and
+credential removal remain explicit OMP operations. The `code` account manager
+reads only redacted broker data and never reads OAuth material or mutates OMP's
+credential database.
+
+The `ompu` sandbox uses dedicated HOME, XDG, temporary, cache, worktree,
+authentication, and session paths below
+`$XDG_STATE_HOME/atyrode/omp-untrusted/`. It does not inherit personal
+authentication, GitHub or SSH credentials, caller Git configuration, normal
+sessions, MCP state, or caches.
+
+## State ownership
+
+| State | Owner |
+| --- | --- |
+| `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state |
+| `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` | Home Manager broker service; secret bearer token, mode `0600` |
+| `$XDG_CACHE_HOME/atyrode/omp-auth-broker/` | Broker client snapshot cache |
+| `$XDG_STATE_HOME/atyrode/code-auth-account-state.json` | `code`; non-secret account-selection presets |
+| `$XDG_STATE_HOME/code/sessions` | `code`; live session records |
+| `$XDG_STATE_HOME/atyrode/omp-untrusted/` | `ompu`; isolated mutable sandbox state |
+| `~/.local/state/atyrode/omp-plain-seed/` | Plain-OMP seeder; last-applied seed and drift state |
+| `~/.omp/agent/managed-skills` | OMP; project-specific auto-learned mutable skills |
 
 ## Seeded plain-omp defaults
 
-`omp/plain-seed.yml` holds the operator's agreed defaults for plain `omp` —
-the trusted-machine guardrails (secret obfuscation, automatic task isolation),
-the bundled-role model map and fallback chains, and interface preferences. It
-is deliberately not a managed layer: OMP's `--config` overlays always outrank
-the writable machine configuration, so a "defaults that lose to local edits"
-layer cannot exist at launch time. Instead, `atyrode-omp-seed apply` runs
-during activation and three-way merges the seed into OMP's selected writable
-machine config against the last-applied seed recorded in
-`~/.local/state/atyrode/omp-plain-seed/`. The seeder always targets that
-default state root — a caller's profile-scoped environment (for example
-`atyrode apply` run from inside an omp session) never redirects it, and named
-profile roots are never seeded:
+`omp/plain-seed.yml` holds the agreed defaults for plain `omp`: trusted-machine
+guardrails, the bundled-role model map and fallback chains, and interface
+preferences. It is deliberately not a managed launch layer. During activation,
+`atyrode-omp-seed apply` three-way merges it into OMP's selected writable
+machine configuration against the last-applied seed stored at the fixed seed
+state root `~/.local/state/atyrode/omp-plain-seed/`. A caller's profile-scoped
+environment never redirects that root, and named profile roots are never
+seeded.
 
-- a key the operator never touched is written and later follows repository
-  updates;
-- a key the operator changed or deleted is left alone and reported as drift,
-  including across later seed updates;
-- unmanaged keys are never modified.
+- A key the operator never touched is written and follows repository updates.
+- A key the operator changed or deleted is left alone and reported as drift.
+- Unmanaged keys are never modified.
 
-`atyrode apply` prints the drift report after a successful activation and, on
-a terminal, offers a per-key keep-or-reset review; `atyrode-omp-seed status
-[--json]` and `atyrode-omp-seed resolve [--reset-all]` are available directly.
-This keeps the tinkering loop intact: change anything on the fly in plain
-`omp`, then either adopt the change into `omp/plain-seed.yml` or reset it at
-the next apply. `AGENT_TOOLS_DRY_RUN=1` (or a Home Manager dry run) prints the
-plan without writing.
+`atyrode apply` reports drift after activation and, on a terminal, offers a
+per-key keep-or-reset review. Direct commands are `atyrode-omp-seed status
+[--json]` and `atyrode-omp-seed resolve [--reset-all]`.
+`AGENT_TOOLS_DRY_RUN=1` prints the plan without writing, and
+`ATYRODE_SEED_REVIEW=0` suppresses apply-time interactive review for
+PTY-backed automation.
 
-The seed may overlap keys the managed launchers own: managed sessions layer
-`defaults.yml` and `policy.yml` above the machine configuration, so seeded
-values never change managed behavior, and the flake check asserts that seeded
-values agree with the enforced policy wherever they overlap it. One caveat:
-the managed-settings guard restores managed paths in the writable file to
-their session-start state, so reseeding an overlapping key while a managed
-session is running can be reverted and will then surface as drift — resolve
-it at the next apply, or apply while managed sessions are closed.
-
-Known, accepted limits: the writable configuration is machine-formatted (OMP
-itself rewrites it without comments, and so does the seeder); a write aborts
-rather than merges when the file changed between read and write (rerun to
-pick up the new state); and a seed path blocked by a local scalar reports drift
-instead of writing.
-`ATYRODE_SEED_REVIEW=0` suppresses the interactive apply-time review for
-pty-backed automation.
+The seed may overlap keys owned by managed launchers: `defaults.yml` and
+`policy.yml` layer above the machine configuration, so seeded values cannot
+change managed behavior. The flake check asserts agreement wherever seeded and
+enforced values overlap. Writes abort if the machine configuration changes
+between read and write; rerun to evaluate the new state.
 
 ## Session archive
 
@@ -418,11 +211,11 @@ file, then `rclone lsd archive:$(uname -n)` / `rclone copy archive:… <dest>`.
 
 ## Skills
 
-Generic, cross-project skills belong in `agents/skills/` and Home Manager links
-them to `~/.agents/skills`. OMP discovers `.agent/skills` and `.agents/skills`
-from the home directory and while walking up a project tree.
-
-Project-specific skills should be committed with the project:
+Generic cross-project skills belong in `agents/skills/`, which Home Manager
+links to `~/.agents/skills`. OMP discovers `.agent/skills` and
+`.agents/skills` from the home directory and while walking up a project tree.
+Project-specific skills and other project instructions belong in the owning
+repository:
 
 ```text
 project/
@@ -432,21 +225,17 @@ project/
             └── SKILL.md
 ```
 
-This keeps project facts, commands, and conventions versioned with the code
-that needs them while still making them available automatically when OMP runs
-inside that project. The same ownership rule applies to project-specific
-`.agents/AGENTS.md`, rules, prompts, and commands.
-
-Project-specific auto-learned skills under `~/.omp/agent/managed-skills`
-remain OMP-owned mutable state. Move each one into its owning repository after
-removing machine-specific assumptions. The repository-specific
-`.agents/skills/bump-omp` skill owns OMP pin updates. Generic skills
-such as `ts-react-dead-code-sweep` remain under `agents/skills/`.
+Project-specific auto-learned skills under
+`~/.omp/agent/managed-skills` remain OMP-owned mutable state. Move each useful
+one into its owning repository after removing machine-specific assumptions.
+The repository-specific `.agents/skills/bump-omp` skill owns OMP pin updates;
+generic skills such as `ts-react-dead-code-sweep` remain under
+`agents/skills/`.
 
 ### Installed skills
 
 `docs-links` resolves every path below, so a renamed or deleted skill fails CI
-instead of leaving a stale list here.
+instead of leaving a stale list.
 
 | Skill | Tree | Origin |
 |---|---|---|
@@ -456,117 +245,38 @@ instead of leaving a stale list here.
 
 ### Vendoring a third-party skill
 
-Public skill text becomes trusted agent instructions the moment it lands in
-`~/.agents/skills`, so a vendored skill carries a provenance marker directly
-below its frontmatter naming the upstream repository, the exact commit, the
-license, and every local change. Refreshing one means reviewing the upstream
-diff, never copying blind. A skill with no package to track pins a commit
-instead, and refresh is a deliberate operator action.
+Public skill text becomes trusted agent instructions when it lands in
+`~/.agents/skills`. A vendored skill therefore carries a provenance marker
+directly below its frontmatter naming the upstream repository, exact commit,
+license, and every local change. Refresh by reviewing the upstream diff, never
+by copying blindly.
 
 ### Turning a skill off
 
-OMP already owns this and the dotfiles add nothing: `skills.ignoredSkills`
-takes glob patterns and is the per-skill mute, `skills.includeSkills` inverts
-it into an allowlist, `skills.enabled` is the global kill switch, and, for a
-single launch, `--skills=<comma-separated globs>` narrows discovery to the
-matching skills while bare `--no-skills` turns it off entirely. The restricted
-`ompu` launcher refuses `--skills`, so an untrusted session cannot widen its
-own skill set. Set the durable machine value
-through `omp/plain-seed.yml`, which keeps it reviewable drift rather than an
-unattributed local edit; a managed-session value belongs in `omp/defaults.yml`,
-which layers above the machine configuration.
+OMP owns skill selection. `skills.ignoredSkills` mutes matching skills,
+`skills.includeSkills` makes an allowlist, `skills.enabled` is the global
+switch, and `--skills=<comma-separated globs>` narrows one launch. Bare
+`--no-skills` disables them for one launch. `ompu` refuses `--skills`, so an
+untrusted session cannot widen its skill set.
 
-Muting is rarely the right tool. A skill that should never fire unprompted
-should say so in its own frontmatter with `disable-model-invocation: true`,
-which leaves `/skill:<name>` as the only entry point and keeps the decision
-with the skill instead of a machine-wide deny list.
+Put a durable mutable-machine choice in `omp/plain-seed.yml`; put a
+managed-session choice in `omp/defaults.yml`. A skill that should never fire
+unprompted should set `disable-model-invocation: true`, leaving
+`/skill:<name>` as its explicit entry point.
 
 ## Updating
 
-The `update-pins` workflow refreshes the repository-owned binary pins (OMP,
-Codex, and `code`) every six hours: `scripts/update-pins.sh` bumps
-versions and hashes, a bot pull request runs the full dispatched CI, and a
-green run merges itself. Pass package names to narrow a manual refresh; for
-example, `scripts/update-pins.sh omp` changes only OMP. No arguments retain the
-scheduled all-package behavior.
+The `update-pins` workflow refreshes repository-owned binary pins every six
+hours. `scripts/update-pins.sh` updates versions and hashes, a bot pull request
+runs dispatched CI, and a green run merges itself. Pass package names to narrow
+a manual refresh; for example, `scripts/update-pins.sh omp` changes only OMP.
+A red run remains open for curation when upstream bundled content changes.
 
-A red run leaves the pull request open for curation — that is the expected
-outcome when upstream changes bundled content.
+Manual OMP updates MUST follow
+[`bump-omp`](../.agents/skills/bump-omp/SKILL.md). Routine bumps consume
+upstream `can1357/oh-my-pi` releases directly; there is no fork.
 
-Manual OMP updates MUST follow `.agents/skills/bump-omp/SKILL.md`. Routine
-bumps consume upstream `can1357/oh-my-pi` releases directly; there is no fork.
-
-`omp-agents` regenerates the upstream bundled agents from the pinned OMP
-binary, and the `omp-agent-references` check asserts that every agent name
-referenced by `task.agentModelOverrides`, `task.disabledAgents`, or an
-agent-named `retry.fallbackChains` key in the managed defaults
-still exists in that unpacked set, so an upstream agent rename or removal
-fails the build instead of silently misrouting models.
-
-## Local CI equivalents
-
-Run `nix fmt` for the repository formatter. It applies nixfmt, gofmt, shfmt,
-deadnix, and statix. The consolidated Linux gate also enforces ShellCheck,
-actionlint, and zizmor:
-
-```bash
-nix build --no-link .#checks.x86_64-linux.treefmt
-```
-
-The required matrix command is `nix flake check --show-trace`, run natively on
-each supported system. Native execution matters: evaluating another system is
-not a substitute for building its derivations.
-
-| Required matrix leg | Local equivalent |
-| --- | --- |
-| `x86_64-linux` | On an x86_64 Linux host, `nix flake check --show-trace` |
-| `aarch64-linux` | On an aarch64 Linux host, `nix flake check --show-trace` |
-| `aarch64-darwin` | On an Apple Silicon macOS host, `nix flake check --show-trace` |
-
-The `changes` job chooses that matrix or the documentation fast path. Its
-classifier and regression suite can be run locally on x86_64 Linux:
-
-```bash
-printf '%s\n' docs/agent-tools.md | ./scripts/classify-ci-paths.sh
-nix build --no-link .#checks.x86_64-linux.classify-ci-paths
-```
-
-For a documentation-only change, run the same two whole-tree checks as the
-`docs-links` job, then compare the check derivations at the base and head
-revisions:
-
-```bash
-nix build --no-link \
-  .#checks.x86_64-linux.docs-links \
-  .#checks.x86_64-linux.production-facts
-./scripts/docs-drift-guard.sh <base-revision> <head-revision>
-```
-
-The always-reporting `ci-gate` job is only an aggregate: it succeeds when
-classification succeeds and either the applicable native matrix or the
-documentation fast path succeeds. It has no additional local executable beyond
-the commands above.
-
-### Flake output metadata
-
-Nix's recognized reusable Home Manager output is `homeModules`; applications
-carry `meta.description`, so those outputs pass the supported schema checks.
-`inventory` and `capabilityInventory` deliberately remain public top-level
-evaluation interfaces: the former is the versioned source used by `atyrode
-inventory`, and both paths are documented for direct `nix eval` use. Nix 2.34
-has no custom-output schema registration, so `nix flake check --no-build`
-reports those two names as unknown. Relocating them under `lib` would silence
-the checker by changing the public paths rather than describing the existing
-contract. Those two warnings are therefore expected; app-metadata or
-`homeManagerModules` warnings are not.
-
-### CI cache strategy
-
-The native matrix in [nix.yml](../.github/workflows/nix.yml) restores and saves
-a per-system Nix store snapshot with `cache-nix-action` in GitHub Actions'
-repository cache. It uses no repository secret, remains an acceleration only,
-and is optional: local contributors run the commands above against their normal
-Nix store and configured substituters. A fleet-wide binary substituter would
-need a service, signing policy, and CI push credential; self-hosted Attic is
-deliberately deferred to [#54](https://github.com/atyrode/dotfiles/issues/54)
-until the managed VPS owns that security boundary.
+`omp-agents` regenerates the bundled agents from the pinned OMP binary. The
+`omp-agent-references` check ensures every agent name referenced by managed
+defaults still exists, so an upstream rename or removal fails the build rather
+than silently misrouting a role.

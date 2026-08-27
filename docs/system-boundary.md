@@ -7,6 +7,8 @@ account database, daemon, device rule, privileged group, or package manager
 operational. Those prerequisites belong to the corresponding system layer and
 are checked separately.
 
+Decision record: [ADR-0002](adr/0002-home-manager-primary-authority.md).
+
 ## Ownership matrix
 
 | Concern | Standalone Home Manager on Linux | Home Manager through nix-darwin | Home Manager imported by NixOS |
@@ -98,13 +100,9 @@ readiness also depends on state that Home Manager must not silently create:
 - Declared Homebrew casks can be present while additional, undeclared Homebrew
   state has drifted outside the generated Brewfile.
 
-ClamAV was removed rather than treated as ready merely because its executable
-was installed. No registered host owns signature updates, scheduled scans,
-quarantine, or alert handling. The `security` capability therefore provides
-network diagnostics (`nmap` and `socat`), not an implied antivirus service.
-The doctor only checks for binary presence; it never executes ClamAV or updates
-signatures. A leftover binary is `incomplete` unmanaged drift until removed or
-backed by a separately reviewed system policy.
+Antivirus signature updates, scheduled scans, quarantine, and alert handling
+are system-owned; no managed host declares that policy, so ClamAV binaries must
+be absent.
 
 ## System diagnostics
 
@@ -159,7 +157,7 @@ activation-only reconciliation prompt.
 
 Home Manager owns Zsh configuration but not the account's login-shell field.
 The bootstrap closes that prerequisite after a successful Home Manager
-transaction:
+activation:
 
 - Linux verifies `$HOME/.nix-profile/bin/zsh`, adds it to `/etc/shells` once,
   uses explicit root or `sudo` privilege for `chsh`, and then reads the account

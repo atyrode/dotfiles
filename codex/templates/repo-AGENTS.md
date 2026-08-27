@@ -1,61 +1,41 @@
-# AGENTS.md
+# Repository instructions
 
-These instructions apply to this repository. Keep this file focused on local facts, workflows, and constraints. Personal global preferences belong in the global Codex `AGENTS.md`.
+Fill only applicable repository-specific facts, then delete empty headings and prompts.
 
-## Project Facts
+## Commands
 
-- Package manager:
-- Runtime/framework:
-- Main test command:
-- Lint command:
-- Typecheck command:
-- Build command:
-- Primary deployment target:
+- Setup:
+- Build:
+- Test:
+- Lint/typecheck:
+- Other required workflows:
 
-## Repository Layout
+## Generated files
 
-- Main app:
-- Tests:
-- Generated files:
-- Documentation:
-- Scripts:
-- Deployment/configuration:
+- Generated paths and their source of truth:
+- Regeneration command:
+- Files that must not be edited directly:
 
-## Local Rules
+## Deployment
 
-- Source of truth:
-- Files or directories agents should not edit:
-- Generated files and how to regenerate them:
-- Domain constraints:
-- External systems or live services:
-- Secret handling specific to this repo:
+- Targets and environments:
+- Deployment or release command:
+- Required approvals or environment-specific constraints:
 
-## Documentation
+## Live systems and secrets
 
-- Main README:
-- Architecture doc:
-- Product/spec docs:
-- Operations/deployment docs:
-- Update docs when:
+- Connected live services or shared resources:
+- Repository-specific credential locations and handling constraints:
+- Actions prohibited against live systems:
 
 ## Verification
 
-- For code changes, run:
-- For docs-only changes, run:
-- For UI changes, capture:
-- For deployment changes, validate:
-- If a check cannot run:
+- Required checks by change type:
+- Manual or environment-specific verification:
+- Evidence expected when a check cannot run:
 
-## Git And Delivery
+## Delivery
 
-- Default branch:
-- Branch naming:
-- PR expectations:
-- CI expectations:
-- Release/publish workflow:
-
-## Known Caveats
-
-- Current risks:
-- Open decisions:
-- Historical context:
+- Repository-specific branch or PR convention:
+- Required CI state:
+- Release, publish, or handoff requirements:

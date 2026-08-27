@@ -17,7 +17,7 @@ not in a checklist.
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
 | [git-keys.md](git-keys.md) | SSH-first Git authentication/signing, public allowed signers, and machine-key lifecycle |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
-| [tui-verification.md](tui-verification.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
+| [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
 | [shell.md](shell.md) | The interactive shell surface (a launcher, not a dev environment) |
 | [codex-state.md](codex-state.md) | Codex mutable configuration and the one-time defaults seed |

@@ -28,10 +28,10 @@ equivalent.
 For portable Linux automation, pass the generic profile for the detected
 architecture, for example `bash -s -- development-x86_64-linux --yes`.
 Bootstrap validates explicit names and will not guess between portable, fixed,
-desktop, or Mac profiles. It uses explicit
-preflight, plan, apply, verify, and rollback phases, verifies a pinned upstream
-Nix artifact when Nix is absent, and preserves recoverable transaction
-receipts. See [Bootstrap](docs/bootstrap.md).
+desktop, or Mac profiles. It uses explicit preflight, plan, apply, and verify
+phases, verifies a pinned upstream Nix artifact when Nix is absent, and marks
+an interrupted apply so the next run can warn and recover.
+See [Bootstrap](docs/bootstrap.md).
 
 **Native Windows 11, from PowerShell:**
 
@@ -173,32 +173,27 @@ Pinned OMP updates have additional hash and integration checks documented in
 
 ```
 dotfiles/
-├── .github/workflows/       # Native Linux/macOS flake checks
-├── agents/                  # Generic cross-project skills
-├── checks/                  # Nix package and integration checks
+├── .agents/                 # Repository-local agent skills (bump-omp)
+├── .github/                 # Native Linux/macOS flake-check workflows
+├── agents/                  # Generic cross-project agent skills
+├── checks/                  # Nix check registry, suites, and fixtures
+├── codex/                   # Codex guidance layer and templates
 ├── darwin/                  # nix-darwin and Homebrew configuration
-│   ├── casks.nix            # Shared declarative Homebrew cask list
-│   └── default.nix          # macOS system ownership and activation
 ├── docs/                    # Architecture and maintenance guides
-├── flake.nix                # Main flake configuration
-├── get.ps1                 # Plan-first native Windows/NixOS-WSL bootstrap
-├── get.sh                  # Fresh macOS/Linux bootstrap entrypoint
-├── install.sh               # Phased, transactional bootstrap
+├── home/                    # Home Manager modules and capability profiles
+├── hosts/                   # Host and portable-profile registries
+├── inventory/               # Checked inventories (hosts, packages, CI)
+├── lib/                     # Flake library: targets, packages, configurations
 ├── modules/                 # Reusable Home Manager modules
 ├── nixos/                   # Repository-owned NixOS-WSL system module
-├── omp/                     # Managed config, model catalog, agents, and rules
+├── omp/                     # Managed OMP config, model catalog, and rules
 ├── pkgs/                    # Pinned custom derivations and wrappers
 ├── scripts/                 # CI, update, and seeding utilities
 ├── windows/                 # Native WinGet package declarations
-└── home/                    # Home Manager modules
-    ├── default.nix          # Main configuration
-    ├── linux-desktop.nix    # Optional Linux desktop packages
-    ├── profiles/            # Composable host capability modules
-    ├── zsh.nix              # Zsh configuration
-    ├── git.nix              # Git configuration
-    └── shell/               # Thin interactive shell surface
-        ├── cwd.zsh          # OSC 7 working-directory metadata
-        └── startup.zsh      # Interactive-only local override hook
+├── flake.nix                # Inputs and output assembly
+├── get.ps1                  # Plan-first native Windows/NixOS-WSL bootstrap
+├── get.sh                   # Fresh macOS/Linux bootstrap entrypoint
+└── install.sh               # Phased bootstrap with interrupted-apply marker
 ```
 
 ---
@@ -207,21 +202,13 @@ dotfiles/
 
 ### System Configurations
 
-The installer detects the current system and selects the matching configuration:
-
-```bash
-alex-aarch64-darwin
-alex-aarch64-linux
-alex-x86_64-linux
-alex-x86_64-linux-desktop
-```
-
-These outputs are generated from the authoritative host registry and
-composable capability modules. Production NixOS servers consume the exported
-`base + server + agent-tools` profile from their infrastructure flake instead
-of appearing in this personal host registry. Host IDs are canonical and have no
-compatibility aliases. See [Hosts and capabilities](docs/hosts.md) for the
-identity contract and the add/rename/retire workflow.
+The installer detects the current system and selects the matching
+configuration. The authoritative registry lives in
+[Hosts and capabilities](docs/hosts.md); list the registered targets and their
+capabilities with `atyrode capabilities list`. Production NixOS servers
+consume the exported `base + server + agent-tools` profile from their
+infrastructure flake instead of appearing in this personal host registry.
+Host IDs are canonical and have no compatibility aliases.
 
 [Portable Home Manager profiles](docs/portable-profiles.md) documents the
 external NixOS interface, one-way infrastructure dependency, server manifest,
@@ -287,10 +274,6 @@ package inventory, then run `atyrode apply`.
 Edit `darwin/casks.nix`, then run `atyrode apply` on macOS. nix-darwin
 generates the matching Brewfile; Homebrew Bundle shows any undeclared state and
 asks before removing it during activation.
-
-### Modify Shell Functions
-
-Edit files in `home/shell/` - they're organized by category for easy maintenance.
 
 ---
 

@@ -9,8 +9,16 @@ pkgs.runCommand "check-docs-drift-guard"
   {
     nativeBuildInputs = [ pkgs.jq ];
     guard = ../scripts/docs-drift-guard.sh;
+    ciInventory = ../inventory/ci.json;
   }
   ''
+    # The guard resolves inventory/ci.json relative to its own location;
+    # replicate the repository layout.
+    mkdir scripts inventory
+    cp "$guard" scripts/docs-drift-guard.sh
+    cp "$ciInventory" inventory/ci.json
+    guard=$PWD/scripts/docs-drift-guard.sh
+
     write() { printf '%s' "$2" > "$1"; }
 
     base='{

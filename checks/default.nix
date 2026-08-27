@@ -155,114 +155,163 @@ let
         fi
         mkdir "$out"
       '';
-in
-import ./agent-tools.nix { inherit lib pkgs; }
-// {
-  atyrode-cli = import ./atyrode-cli.nix {
-    inherit pkgs;
-    atyrode = systemDoctorAtyrode;
-    productionAtyrode = pkgs.atyrode;
-    productionHost =
-      {
-        "aarch64-darwin" = "alex-aarch64-darwin";
-        "aarch64-linux" = "alex-aarch64-linux";
-        "x86_64-linux" = "alex-x86_64-linux";
-      }
-      .${system};
-  };
-  bootstrap = import ./bootstrap.nix { inherit pkgs; };
-  codex-seed = import ./codex-seed.nix { inherit pkgs; };
-  get-entrypoint = import ./get-sh.nix { inherit pkgs; };
-  rio = import ./rio.nix {
-    inherit lib pkgs;
-    hostConfigs = canonicalHomeConfigs;
-  };
-  omp-seed = import ./omp-seed.nix { inherit pkgs; };
-  omp-secret-obfuscation = import ./omp-secret-obfuscation.nix { inherit pkgs; };
-  omp-isolated-writer = import ./omp-isolated-writer.nix { inherit pkgs; };
-  omp-vault-usage-footer = import ./omp-vault-usage-footer.nix { inherit pkgs; };
-  home-evaluation = homeEvaluation;
-  host-registry = registryCheck;
-  package-ownership = import ./package-ownership.nix {
-    inherit pkgs;
-    inventory = inventoryBySystem.${system};
-  };
-  shell-surface = import ./shell-surface.nix {
-    inherit lib pkgs;
-    hostConfigs = canonicalHomeConfigs;
-  };
-  system-boundary = import ./system-boundary.nix {
-    inherit lib pkgs system;
-    inventory = inventoryBySystem.${system};
-    homeConfigs = systemHomeConfigs;
-    serverConfig = if isLinux then serverHomeConfig.config else null;
-    externalFixture = if isLinux then externalServerFixture else null;
-    darwinConfigs = systemDarwinConfigs;
-  };
-  window-management = import ./window-management.nix {
-    inherit lib pkgs;
-    darwinConfig = canonicalDarwinConfigs.alex-aarch64-darwin;
-    homeConfig = canonicalHomeConfigs.alex-aarch64-darwin;
-  };
-}
-// lib.optionalAttrs (system == "x86_64-linux") {
-  # Platform-independent lints: their output is a pure function of the
-  # source tree, so emitting them on every system just re-runs the same
-  # work three times in CI. Keep them on one leg only (#169).
-  # docs-links and production-facts scan the whole tree (docs
-  # included); they are the two intentional exceptions the docs-only
-  # fast path builds directly and scripts/docs-drift-guard.sh excludes.
-  docs-links = import ./docs-links.nix { inherit lib pkgs; };
-  docs-drift-guard = import ./docs-drift-guard.nix { inherit pkgs; };
-  classify-ci-paths = import ./classify-ci-paths.nix { inherit pkgs; };
-  production-facts = import ./production-facts.nix { inherit pkgs; };
-  treefmt = treefmtCheck;
-  windows = import ./windows.nix {
-    inherit lib pkgs;
-    nixosConfig = canonicalNixosWslConfigs.alex-x86_64-linux-wsl;
-    windowsPackages = windowsPackageInventory;
-  };
-}
-// lib.optionalAttrs isLinux {
-  portable-profile-contract = import ./portable-profile-contract.nix {
-    inherit lib mkPortableHomeConfiguration pkgs;
-    profileName = "development-${system}";
-    fixedHomeConfig =
-      canonicalHomeConfigs.${
+  ciInventory = builtins.fromJSON (builtins.readFile ../inventory/ci.json);
+
+  # The registry imports the shared CI constants (also read by
+  # scripts/docs-drift-guard.sh and mirrored by the static matrix in
+  # .github/workflows/nix.yml) so a drifting inventory/ci.json fails
+  # evaluation instead of silently desynchronizing.
+  checksForSystem = {
+    omp-auth-broker = import ./omp-auth-broker.nix { inherit lib pkgs; };
+    omp-stack = import ./omp-stack.nix { inherit lib pkgs; };
+    omp-wrapper = import ./omp-wrapper.nix { inherit lib pkgs; };
+    omp-agent-references = import ./omp-agent-references.nix { inherit lib pkgs; };
+    resource-guard = import ./agent-resource-guard.nix { inherit lib pkgs; };
+    agent-tools-terminal-viewing = import ./agent-terminal-viewing.nix { inherit lib pkgs; };
+    classifier-schedule = import ./classifier-schedule.nix { inherit lib pkgs; };
+  }
+  // {
+    atyrode-apply = import ./atyrode-apply.nix {
+      inherit pkgs;
+      atyrode = systemDoctorAtyrode;
+      productionAtyrode = pkgs.atyrode;
+      productionHost =
         {
+          "aarch64-darwin" = "alex-aarch64-darwin";
           "aarch64-linux" = "alex-aarch64-linux";
           "x86_64-linux" = "alex-x86_64-linux";
         }
-        .${system}
-      };
-  };
-  portable-profiles = import ./portable-profiles.nix {
-    inherit
-      alternateServerHomeConfig
-      lib
-      pkgs
-      selectHomeManagerProfiles
-      serverHomeConfig
-      serverPolicy
-      system
-      ;
-    externalFixture = externalServerFixture;
-    serverProfileManifest = serverProfileManifests.${system};
-  };
-  server-profile = serverProfileManifests.${system};
-}
-// lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
-  darwin-evaluation = darwinEvaluation;
-  obsidian-signature = import ./obsidian-signature.nix {
-    inherit pkgs;
-    inherit (pkgs) obsidian;
-  };
-  spotify-signature = import ./spotify-signature.nix {
-    inherit pkgs;
-    inherit (pkgs) spotify;
-  };
-  vlc-signature = import ./vlc-signature.nix {
-    inherit pkgs;
-    inherit (pkgs) vlc-bin;
-  };
-}
+        .${system};
+    };
+    atyrode-lifecycle = import ./atyrode-lifecycle.nix {
+      inherit pkgs;
+      atyrode = systemDoctorAtyrode;
+    };
+    atyrode-runtime = import ./atyrode-runtime.nix {
+      inherit pkgs;
+      atyrode = systemDoctorAtyrode;
+    };
+    atyrode-credentials = import ./atyrode-credentials.nix {
+      inherit pkgs;
+      atyrode = systemDoctorAtyrode;
+    };
+    bootstrap = import ./bootstrap.nix { inherit pkgs; };
+    codex-seed = import ./codex-seed.nix { inherit pkgs; };
+    get-entrypoint = import ./get-sh.nix { inherit pkgs; };
+    rio = import ./rio.nix {
+      inherit lib pkgs;
+      hostConfigs = canonicalHomeConfigs;
+    };
+    omp-seed = import ./omp-seed.nix { inherit pkgs; };
+    omp-secret-obfuscation = import ./omp-secret-obfuscation.nix { inherit pkgs; };
+    omp-isolated-writer = import ./omp-isolated-writer.nix { inherit pkgs; };
+    omp-vault-usage-footer = import ./omp-vault-usage-footer.nix { inherit pkgs; };
+    home-evaluation = homeEvaluation;
+    host-registry = registryCheck;
+    package-ownership = import ./package-ownership.nix {
+      inherit pkgs;
+      inventory = inventoryBySystem.${system};
+    };
+    shell-surface = import ./shell-surface.nix {
+      inherit lib pkgs;
+      hostConfigs = canonicalHomeConfigs;
+    };
+    system-boundary = import ./system-boundary.nix {
+      inherit lib pkgs system;
+      inventory = inventoryBySystem.${system};
+      homeConfigs = systemHomeConfigs;
+      serverConfig = if isLinux then serverHomeConfig.config else null;
+      externalFixture = if isLinux then externalServerFixture else null;
+      darwinConfigs = systemDarwinConfigs;
+    };
+    window-management = import ./window-management.nix {
+      inherit lib pkgs;
+      darwinConfig = canonicalDarwinConfigs.alex-aarch64-darwin;
+      homeConfig = canonicalHomeConfigs.alex-aarch64-darwin;
+    };
+  }
+  // lib.optionalAttrs (system == "x86_64-linux") {
+    # Platform-independent lints: their output is a pure function of the
+    # source tree, so emitting them on every system just re-runs the same
+    # work three times in CI. Keep them on one leg only (#169).
+    # docs-links and production-facts scan the whole tree (docs
+    # included); they are the two intentional exceptions the docs-only
+    # fast path builds directly and scripts/docs-drift-guard.sh excludes.
+    docs-links = import ./docs-links.nix { inherit lib pkgs; };
+    docs-drift-guard = import ./docs-drift-guard.nix { inherit pkgs; };
+    classify-ci-paths = import ./classify-ci-paths.nix { inherit pkgs; };
+    production-facts = import ./production-facts.nix { inherit pkgs; };
+    treefmt = treefmtCheck;
+    windows = import ./windows.nix {
+      inherit lib pkgs;
+      nixosConfig = canonicalNixosWslConfigs.alex-x86_64-linux-wsl;
+      windowsPackages = windowsPackageInventory;
+    };
+  }
+  // lib.optionalAttrs isLinux {
+    portable-profile-contract = import ./portable-profile-contract.nix {
+      inherit lib mkPortableHomeConfiguration pkgs;
+      profileName = "development-${system}";
+      fixedHomeConfig =
+        canonicalHomeConfigs.${
+          {
+            "aarch64-linux" = "alex-aarch64-linux";
+            "x86_64-linux" = "alex-x86_64-linux";
+          }
+          .${system}
+        };
+    };
+    portable-profiles = import ./portable-profiles.nix {
+      inherit
+        alternateServerHomeConfig
+        lib
+        pkgs
+        selectHomeManagerProfiles
+        serverHomeConfig
+        serverPolicy
+        system
+        ;
+      externalFixture = externalServerFixture;
+      serverProfileManifest = serverProfileManifests.${system};
+    };
+    server-profile = serverProfileManifests.${system};
+  }
+  // lib.optionalAttrs (lib.hasSuffix "-darwin" system) (
+    {
+      darwin-evaluation = darwinEvaluation;
+    }
+    // import ./app-signatures.nix {
+      inherit pkgs;
+      apps = [
+        {
+          name = "obsidian-signature";
+          app = "Obsidian";
+          bundleId = "md.obsidian";
+          teamId = "6JSW4SJWN9";
+          package = pkgs.obsidian;
+        }
+        {
+          name = "spotify-signature";
+          app = "Spotify";
+          bundleId = "com.spotify.client";
+          teamId = "2FNC3A47ZF";
+          package = pkgs.spotify;
+        }
+        {
+          name = "vlc-signature";
+          app = "VLC";
+          bundleId = "org.videolan.vlc";
+          teamId = "75GAHG3SZQ";
+          package = pkgs.vlc-bin;
+        }
+      ];
+    }
+  );
+in
+assert lib.assertMsg (builtins.elem system ciInventory.systems)
+  "inventory/ci.json systems must cover ${system}";
+assert lib.assertMsg (
+  system != "x86_64-linux"
+  || lib.all (name: builtins.hasAttr name checksForSystem) ciInventory.docsOnlyChecks
+) "inventory/ci.json docsOnlyChecks must name existing x86_64-linux checks";
+checksForSystem

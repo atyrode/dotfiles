@@ -45,7 +45,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     fi
 
     mkdir -p "$fresh_tools" "$managed_tools"
-    grep -Fqx 'readonly BOOTSTRAP_TEST_HOOKS=0' "$bootstrap"
 
     cat > "$tool_root/git" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -341,10 +340,24 @@ pkgs.runCommand "check-bootstrap-${system}"
     BOOTSTRAP_NIX_PROFILE_SCRIPT="$TMPDIR/poison-profile" \
       bash "$bootstrap" plan --repo "$repo" --config "$host" >/dev/null
     test ! -e "$BOOTSTRAP_POISON_MARKER"
-    grep -F '"$BOOTSTRAP_TEST_HOOKS" == 1 && -n "''${BOOTSTRAP_SHELLS_FILE:-}"' \
-      "$bootstrap" >/dev/null
-    grep -F '"$BOOTSTRAP_TEST_HOOKS" == 1 && -n "''${BOOTSTRAP_ACCOUNT_SHELL_FILE:-}"' \
-      "$bootstrap" >/dev/null
+
+    # Production bootstrap also ignores the login-shell fixture hooks: with
+    # the fixture files exported, a production Linux apply must consult the
+    # real /etc/shells (absent in the sandbox) and report the system
+    # prerequisite instead of consuming the fixtures the hooked script uses.
+    if [[ "$FAKE_SYSTEM" == *-linux ]]; then
+      new_fixture production-hook-gating
+      export PATH="$managed_tools:$base_path"
+      set +e
+      bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
+        > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err"
+      production_status="$?"
+      set -e
+      test "$production_status" = 69
+      grep -q '/etc/shells' "$TMPDIR/production-hooks.err"
+      test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+      test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
+    fi
 
     # Repository identity, every class of dirt, and revision state are conservative.
     "$real_git" -C "$repo" remote set-url origin https://example.invalid/not-dotfiles.git

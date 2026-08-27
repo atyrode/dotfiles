@@ -16,12 +16,15 @@ pkgs.runCommand "check-atyrode-runtime"
     ${fixtures.base}
     ${fixtures.gitNh}
     ${fixtures.identity}
-    # Runtime discovery is read-only and versioned. A generic Nix build host has
-    # no WSL GPU passthrough and no manifold-node capability, so both runtime
-    # capabilities must advertise as unsupported without allocating machine
-    # state or attempting a download.
+    # Runtime discovery is read-only and versioned. `runtime list` is the
+    # surface `code` renders in its runtime dial (CODE_RUNTIME_BROKER=atyrode),
+    # so it MUST enumerate launchable model runtimes only — never a service
+    # daemon like manifold-agent, which hosts no model and whose state is
+    # reachable through its own `status` verb. A generic Nix build host has no
+    # WSL GPU passthrough, so the one model runtime advertises as unsupported
+    # without allocating machine state or attempting a download.
     runtime_list="$(env -u WSL_DISTRO_NAME atyrode runtime list --json)"
-    jq -e 'length == 2
+    jq -e 'length == 1
       and .[0].schemaVersion == 1
       and .[0].name == "local-qwen"
       and .[0].label == "Local Qwen 3.8 27B"
@@ -29,12 +32,15 @@ pkgs.runCommand "check-atyrode-runtime"
       and .[0].applicable == false
       and .[0].estimatedDiskBytes == 40000000000
       and (.[0].reason | contains("WSL2"))
-      and .[1].schemaVersion == 1
-      and .[1].name == "manifold-agent"
-      and .[1].phase == "unsupported"
-      and .[1].applicable == false
-      and .[1].enrolled == false
-      and .[1].unit.present == false' <<<"$runtime_list" >/dev/null
+      and all(.[]; has("estimatedDiskBytes"))' <<<"$runtime_list" >/dev/null
+    # The daemon stays fully reachable — just unlisted.
+    jq -e '.schemaVersion == 1
+      and .name == "manifold-agent"
+      and .phase == "unsupported"
+      and .applicable == false
+      and .enrolled == false
+      and .unit.present == false' \
+      <<<"$(env -u WSL_DISTRO_NAME atyrode runtime status manifold-agent --json)" >/dev/null
     test ! -e "$XDG_CONFIG_HOME/atyrode/runtime"
     test ! -e "$XDG_STATE_HOME/atyrode/runtime"
 

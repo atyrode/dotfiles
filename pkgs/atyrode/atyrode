@@ -3924,20 +3924,15 @@ cmd_runtime_manifold() {
 }
 
 cmd_runtime() {
-  # local-qwen keeps its dedicated helper untouched; the front door only
-  # routes the manifold capability and merges the discovery list.
+  # `runtime list` enumerates *launchable model runtimes* only: it is what
+  # `code` renders in its runtime dial (CODE_RUNTIME_BROKER=atyrode). The
+  # manifold capability is a PTY service daemon that hosts no model, so it
+  # routes here for provision/status/start/stop/restart but MUST NOT appear
+  # in that list — see checks/atyrode-runtime.nix, which asserts it.
   if [[ "${2:-}" == manifold-agent ]]; then
     local verb="${1:-}"
     shift 2
     cmd_runtime_manifold "$verb" "$@"
-  elif [[ "${1:-}" == list ]]; then
-    if [[ "${2:-}" == --json ]]; then
-      jq -cn --argjson qwen "$("$atyrode_runtime" list --json)" \
-        --argjson manifold "$(manifold_status_json)" '$qwen + [$manifold]'
-    else
-      "$atyrode_runtime" list
-      manifold_render_status
-    fi
   else
     exec "$atyrode_runtime" "$@"
   fi

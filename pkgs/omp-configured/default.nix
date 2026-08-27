@@ -1328,12 +1328,13 @@ let
           'subcommands (no terminal required):' \
           '  code ls              list live sessions' \
           '  code session reap    retire sessions (dry run unless --yes)' \
+          '  code wt              list and clean session worktrees' \
           '  code generate        re-render the profile catalog' \
           "" \
           'In the generator: type a prompt or adjust the dials, v opens the' \
-          'account manager, and ? shows all keys. Enter' \
-          'launches the selected hosted or local runtime; m runs the managed' \
-          'hosted defaults, and u opens an untrusted sandbox.'
+          'account manager, w toggles an isolated git worktree, and ? shows' \
+          'all keys. Enter launches the selected hosted or local runtime; m' \
+          'runs the managed hosted defaults, and u opens an untrusted sandbox.'
       }
 
       case "''${1:-}" in
@@ -1346,7 +1347,7 @@ let
       # 'code ls'`, which is exactly when no tty is attached; only the
       # generator below needs one.
       case "''${1:-}" in
-        generate | session | sessions | ls) exec ${lib.getExe code} "$@" ;;
+        generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
       esac
 
       if [[ ! -t 0 || ! -t 1 ]]; then

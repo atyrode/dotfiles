@@ -205,7 +205,6 @@ let
     omp-seed = import ./omp-seed.nix { inherit pkgs; };
     omp-secret-obfuscation = import ./omp-secret-obfuscation.nix { inherit pkgs; };
     omp-isolated-writer = import ./omp-isolated-writer.nix { inherit pkgs; };
-    omp-vault-usage-footer = import ./omp-vault-usage-footer.nix { inherit pkgs; };
     home-evaluation = homeEvaluation;
     host-registry = registryCheck;
     package-ownership = import ./package-ownership.nix {

@@ -1,13 +1,10 @@
 { lib, pkgs, ... }:
 let
-  lichess = import ../pkgs/lichess.nix {
-    inherit lib pkgs;
-  };
+  lichess = import ../desktop/lichess.nix { inherit lib pkgs; };
 in
 {
   imports = [
     ../linux-desktop.nix
-    ../macos-window-management.nix
     ../rio.nix
   ];
 

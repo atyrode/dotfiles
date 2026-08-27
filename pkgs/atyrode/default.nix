@@ -1,7 +1,7 @@
 {
   age,
   atyrode-tui,
-  atyrode-preview-parser ? atyrode-tui,
+  atyrodeTuiPackage ? atyrode-tui,
   bubblewrap,
   bitwarden-cli,
   capabilities,
@@ -196,7 +196,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@omp_managed@' '${lib.getExe' omp-configured "omp-managed"}'
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
-      --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrode-preview-parser "atyrode-preview-parser"}' \
+      --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \

@@ -45,7 +45,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     fi
 
     mkdir -p "$fresh_tools" "$managed_tools"
-    grep -Fqx 'readonly BOOTSTRAP_TEST_HOOKS=0' "$bootstrap"
 
     cat > "$tool_root/git" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -341,10 +340,24 @@ pkgs.runCommand "check-bootstrap-${system}"
     BOOTSTRAP_NIX_PROFILE_SCRIPT="$TMPDIR/poison-profile" \
       bash "$bootstrap" plan --repo "$repo" --config "$host" >/dev/null
     test ! -e "$BOOTSTRAP_POISON_MARKER"
-    grep -F '"$BOOTSTRAP_TEST_HOOKS" == 1 && -n "''${BOOTSTRAP_SHELLS_FILE:-}"' \
-      "$bootstrap" >/dev/null
-    grep -F '"$BOOTSTRAP_TEST_HOOKS" == 1 && -n "''${BOOTSTRAP_ACCOUNT_SHELL_FILE:-}"' \
-      "$bootstrap" >/dev/null
+
+    # Production bootstrap also ignores the login-shell fixture hooks: with
+    # the fixture files exported, a production Linux apply must consult the
+    # real /etc/shells (absent in the sandbox) and report the system
+    # prerequisite instead of consuming the fixtures the hooked script uses.
+    if [[ "$FAKE_SYSTEM" == *-linux ]]; then
+      new_fixture production-hook-gating
+      export PATH="$managed_tools:$base_path"
+      set +e
+      bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
+        > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err"
+      production_status="$?"
+      set -e
+      test "$production_status" = 69
+      grep -q '/etc/shells' "$TMPDIR/production-hooks.err"
+      test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+      test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
+    fi
 
     # Repository identity, every class of dirt, and revision state are conservative.
     "$real_git" -C "$repo" remote set-url origin https://example.invalid/not-dotfiles.git
@@ -375,16 +388,16 @@ pkgs.runCommand "check-bootstrap-${system}"
     expect_failure "$repo/install.sh" plan --repo "$repo" --config "$host"
     "$repo/install.sh" plan --repo "$repo" --config "$host" --allow-non-main >/dev/null
 
-    # A failed source update is journaled and never reaches activation.
+    # A failed source update never reaches activation or writes the marker.
     new_fixture network-failure
     export PATH="$managed_tools:$base_path"
     export FAKE_GIT_FETCH_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --update --repo "$repo" --config "$host"
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
     test ! -e "$FAKE_LOG"
     test ! -e "$XDG_STATE_HOME"
 
-    # A successful update re-enters the fetched bootstrap and receipts the new revision.
+    # A successful update re-enters the fetched bootstrap and activates it.
     new_fixture update-success
     export PATH="$managed_tools:$base_path"
     upstream="$TMPDIR/update-success/upstream"
@@ -398,8 +411,8 @@ pkgs.runCommand "check-bootstrap-${system}"
     export FAKE_GIT_UPDATE_REPO="$upstream"
     "$repo/install.sh" apply --yes --update --repo "$repo" --config "$host" >/dev/null
     test "$("$real_git" -C "$repo" rev-parse HEAD)" = "$updated_revision"
-    grep -R -F $'revision\t'"$updated_revision" \
-      "$XDG_STATE_HOME/atyrode/bootstrap/transactions" >/dev/null
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
 
     # Download and integrity failures cannot execute the unverified installer.
     new_fixture download-failure
@@ -407,7 +420,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     export FAKE_CURL_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     test ! -e "$FAKE_INSTALL_EXECUTED"
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
 
     new_fixture checksum-failure
     export PATH="$fresh_tools:$base_path"
@@ -415,6 +428,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     test ! -e "$FAKE_INSTALL_EXECUTED"
     test ! -e "$HOME/.nix-profile/bin/nix"
+    grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
 
     new_fixture partial-installer-failure
     export PATH="$fresh_tools:$base_path"
@@ -422,8 +436,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     test -e "$FAKE_INSTALL_EXECUTED"
     test ! -e "$HOME/.nix-profile/bin/nix"
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.failed' | grep -q .
+    grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
 
     # Fresh installation verifies the artifact, activates, verifies, and remains
     # idempotent on a repeated upgrade-style invocation.
@@ -452,26 +465,14 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$repo/install.sh" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "development-${system}"
     grep -F -- "--git-auth-mode https-gh" "$FAKE_LOG" >/dev/null
-    grep -R -F $'git-auth-mode\thttps-gh' \
-      "$XDG_STATE_HOME/atyrode/bootstrap/transactions" >/dev/null
-    find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.complete' | grep -q .
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
     test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = "$FAKE_EXPECTED_LOGIN_SHELL"
     test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
     unset SHELL
-    if find "$XDG_STATE_HOME/atyrode/bootstrap" -name receipt.tsv \
-      -exec grep -F "$HOME" {} + | grep -q .; then
-      echo 'receipt exposed an absolute home path' >&2
-      exit 1
-    fi
-    if find "$XDG_STATE_HOME/atyrode/bootstrap" -name receipt.tsv \
-      -exec grep -Ei 'token|password|credential|github\.com' {} + | grep -q .; then
-      echo 'receipt exposed credential-shaped or remote data' >&2
-      exit 1
-    fi
 
-    # The conservative prerequisite marker is published before the completed
-    # activation receipt. An interruption after that receipt therefore cannot
-    # make an unverified login-shell transition look ready.
+    # The conservative prerequisite marker is published before the
+    # interrupted-apply marker clears. An interruption after that point
+    # cannot make an unverified login-shell transition look ready.
     new_fixture login-shell-receipt-interruption
     export PATH="$managed_tools:$base_path"
     if BOOTSTRAP_FAILPOINT=after-login-shell-receipt \
@@ -479,9 +480,8 @@ pkgs.runCommand "check-bootstrap-${system}"
       echo 'login-shell receipt failpoint unexpectedly succeeded' >&2
       exit 1
     fi
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
     test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-    find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.complete' | grep -q .
     "$repo/install.sh" verify --repo "$repo" --config "$host" >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
 
@@ -517,7 +517,7 @@ pkgs.runCommand "check-bootstrap-${system}"
       set -e
       test "$login_shell_status" = 69
       test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
-      find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.complete' | grep -q .
+      test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
       test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
       test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = /bin/bash
       unset FAKE_SUDO_FAIL
@@ -549,7 +549,8 @@ pkgs.runCommand "check-bootstrap-${system}"
       test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
     fi
 
-    # Failed activation restores the prior host state.
+    # A failed activation leaves the interrupted-apply marker naming the
+    # attempted configuration; the prior host state is untouched.
     new_fixture activation-failure
     export PATH="$managed_tools:$base_path"
     mkdir -p "$XDG_STATE_HOME/atyrode"
@@ -557,34 +558,19 @@ pkgs.runCommand "check-bootstrap-${system}"
     export FAKE_ACTIVATION_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
 
-    # A post-activation verification failure also restores the previous
-    # active-host receipt instead of being mistaken for success.
+    # A post-activation verification failure also leaves the marker instead of
+    # being mistaken for success.
     new_fixture verification-failure
     export PATH="$managed_tools:$base_path"
     mkdir -p "$XDG_STATE_HOME/atyrode"
     printf 'sentinel\n' > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export FAKE_VERIFY_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
-    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
 
-    # The pending marker is published atomically only after its recovery payload,
-    # receipt, and prior-state snapshot are complete.
-    new_fixture transaction-publish-interruption
-    export PATH="$managed_tools:$base_path"
-    if BOOTSTRAP_FAILPOINT=before-transaction-publish \
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null 2>&1; then
-      echo 'transaction publication failpoint unexpectedly succeeded' >&2
-      exit 1
-    fi
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    test -z "$(find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -mindepth 1 -print -quit)"
-    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-    find "$XDG_STATE_HOME/atyrode/bootstrap/transactions" -name '*.abandoned' | grep -q .
-
-    # State and transaction namespaces may not redirect writes through symlinks.
+    # State and marker namespaces may not redirect writes through symlinks.
     new_fixture state-root-link
     export PATH="$managed_tools:$base_path"
     mkdir -p "$HOME/redirect" "$XDG_STATE_HOME/atyrode"
@@ -599,21 +585,16 @@ pkgs.runCommand "check-bootstrap-${system}"
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     test -z "$(find "$HOME/redirect" -mindepth 1 -print -quit)"
 
-    new_fixture transactions-link
+    new_fixture interrupted-marker-link
     export PATH="$managed_tools:$base_path"
-    mkdir -p "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap"
-    ln -s "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap/transactions"
+    mkdir -p "$HOME/redirect" "$XDG_STATE_HOME/atyrode"
+    ln -s "$HOME/redirect" "$XDG_STATE_HOME/atyrode/install-interrupted"
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     test -z "$(find "$HOME/redirect" -mindepth 1 -print -quit)"
 
-    new_fixture pending-link
-    export PATH="$managed_tools:$base_path"
-    mkdir -p "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap"
-    ln -s "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    expect_failure "$repo/install.sh" rollback --yes --repo "$repo"
-
-    # An abrupt interruption after transaction publication is recoverable
-    # through the explicit rollback phase.
+    # An abrupt interruption leaves the marker naming the attempted
+    # configuration, plan warns about it without clearing it, and a
+    # subsequent successful apply removes it.
     new_fixture interrupted
     export PATH="$managed_tools:$base_path"
     mkdir -p "$XDG_STATE_HOME/atyrode"
@@ -623,28 +604,20 @@ pkgs.runCommand "check-bootstrap-${system}"
       echo 'interruption failpoint unexpectedly succeeded' >&2
       exit 1
     fi
-    test -d "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
+    marker="$XDG_STATE_HOME/atyrode/install-interrupted"
+    test -f "$marker"
+    grep -Fxq "config=$host" "$marker"
+    grep -Eq '^started=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$marker"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
-    "$repo/install.sh" rollback --yes --repo "$repo" >/dev/null
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
-    "$repo/install.sh" rollback --yes --repo "$repo" >/dev/null
-
-
-    # Recovery refuses a tampered transaction-owned installer and preserves the
-    # pending transaction for manual inspection.
-    new_fixture tampered-recovery
-    export PATH="$managed_tools:$base_path"
-    if BOOTSTRAP_FAILPOINT=before-activation \
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null 2>&1; then
-      echo 'tampered-recovery setup unexpectedly succeeded' >&2
-      exit 1
-    fi
-    printf '\n# tampered\n' >> \
-      "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending/recovery/install.sh"
-    expect_failure "$repo/install.sh" rollback --yes --repo "$repo"
-    test -d "$XDG_STATE_HOME/atyrode/bootstrap/apply.pending"
-
+    "$repo/install.sh" plan --repo "$repo" --config "$host" \
+      > "$TMPDIR/interrupted-plan.out" 2> "$TMPDIR/interrupted-plan.err"
+    grep -F "previous apply of $host" "$TMPDIR/interrupted-plan.err" >/dev/null
+    grep -F "re-run: ./install.sh apply --config $host" \
+      "$TMPDIR/interrupted-plan.err" >/dev/null
+    test -f "$marker"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test ! -e "$marker"
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
 
     mkdir "$out"
   ''

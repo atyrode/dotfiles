@@ -4,6 +4,8 @@ Codex runs vanilla against `~/.codex`. The repository contributes a **one-time
 config seed** plus a few **portable managed files**; everything else in
 `~/.codex` is Codex-owned mutable state the dotfiles never touch.
 
+Decision record: [ADR-0006](adr/0006-managed-layering-over-profiles.md).
+
 ## What the repository manages
 
 | Path | Owner | Behavior |

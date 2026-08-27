@@ -7,7 +7,6 @@ set -Eeuo pipefail
 readonly REPO_HTTPS_URL="https://github.com/atyrode/dotfiles.git"
 readonly REPO_SSH_URL="git@github.com:atyrode/dotfiles.git"
 readonly NIX_VERSION="2.34.7"
-readonly BOOTSTRAP_SCHEMA="1"
 readonly BOOTSTRAP_TEST_HOOKS=0
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -25,9 +24,7 @@ ASSUME_YES=0
 SYSTEM=""
 NIX_URL=""
 NIX_SHA256=""
-TRANSACTION=""
 SOURCE_CHANGED=0
-ACTIVE_PHASE="bootstrap"
 
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
@@ -47,7 +44,6 @@ Usage:
   ./install.sh plan [OPTIONS]
   ./install.sh apply [OPTIONS]
   ./install.sh verify [OPTIONS]
-  ./install.sh rollback --yes [OPTIONS]
 
 Options:
   --repo PATH          Use this existing checkout (default: script checkout).
@@ -55,7 +51,7 @@ Options:
   --update             Fetch origin and fast-forward main before activation.
   --allow-dirty        Intentionally use a checkout with local changes.
   --allow-non-main     Intentionally use a branch or detached revision other than main.
-  --yes                Confirm apply or rollback without an interactive prompt.
+  --yes                Confirm apply without an interactive prompt.
   -h, --help           Show this help.
 
 Inside a standard Coder workspace, a no-command invocation selects this
@@ -247,11 +243,30 @@ bootstrap_state_root() {
   printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap"
 }
 
-preflight() {
-  local pending
+interrupted_marker_path() {
+  printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/install-interrupted"
+}
 
+warn_if_interrupted() {
+  local marker line config="" started=""
+
+  marker="$(interrupted_marker_path)"
+  if [[ ! -e "$marker" && ! -L "$marker" ]]; then
+    return 0
+  fi
+  [[ -f "$marker" && ! -L "$marker" ]] || die "unsafe interrupted-apply marker: $marker"
+  while IFS= read -r line; do
+    case "$line" in
+      config=*) config="${line#config=}" ;;
+      started=*) started="${line#started=}" ;;
+    esac
+  done <"$marker"
+  printf 'bootstrap: warning: previous apply of %s (started %s) was interrupted; state is safe — re-run: ./install.sh apply --config %s\n' \
+    "${config:-unknown}" "${started:-unknown}" "${config:-$FLAKE_CONFIG}" >&2
+}
+
+preflight() {
   command_exists git || die "git is required"
-  command_exists tar || die "tar is required"
   command_exists mktemp || die "mktemp is required"
   canonicalize_repo
   verify_checkout
@@ -266,17 +281,15 @@ preflight() {
   esac
 
   source_nix
-  if ! command_exists sha256sum && ! command_exists shasum; then
-    die "sha256sum or shasum is required for verified receipts and Nix artifacts"
-  fi
   if ! command_exists nix; then
     command_exists curl || die "curl is required to download the pinned Nix artifact"
+    command_exists tar || die "tar is required to unpack the pinned Nix artifact"
+    if ! command_exists sha256sum && ! command_exists shasum; then
+      die "sha256sum or shasum is required to verify the pinned Nix artifact"
+    fi
   fi
 
-  pending="$(bootstrap_state_root)/apply.pending"
-  if [[ -e "$pending" || -L "$pending" ]]; then
-    die "an interrupted bootstrap transaction exists; run ./install.sh rollback --yes before applying again"
-  fi
+  warn_if_interrupted
 
   printf 'Preflight passed\n'
   printf '  system: %s\n' "$SYSTEM"
@@ -304,7 +317,7 @@ print_plan() {
   step=$((step + 1))
   printf '  %s. Activate %s through atyrode/nh.\n' "$step" "$FLAKE_CONFIG"
   step=$((step + 1))
-  printf '  %s. Verify host state and complete the bootstrap receipt.\n' "$step"
+  printf '  %s. Verify host state and clear the interrupted-apply marker.\n' "$step"
   step=$((step + 1))
   if [[ "$SYSTEM" == *-darwin ]]; then
     printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$step"
@@ -333,7 +346,6 @@ confirm_action() {
 ensure_safe_state_root() {
   local root="$1"
   local parent="${root%/*}"
-  local transactions="$root/transactions"
 
   if [[ -e "$parent" || -L "$parent" ]]; then
     [[ -d "$parent" && ! -L "$parent" ]] || die "$parent must be a real directory"
@@ -345,13 +357,7 @@ ensure_safe_state_root() {
   else
     mkdir -p "$root"
   fi
-  if [[ -e "$transactions" || -L "$transactions" ]]; then
-    [[ -d "$transactions" && ! -L "$transactions" ]] ||
-      die "$transactions must be a real directory"
-  else
-    mkdir "$transactions"
-  fi
-  chmod 700 "$root" "$transactions"
+  chmod 700 "$root"
 }
 
 ensure_safe_login_shell_marker() {
@@ -367,203 +373,34 @@ ensure_safe_login_shell_marker() {
   fi
 }
 
-append_transaction() {
-  [[ $# -eq 2 ]] || die "internal receipt error"
-  printf '%s\t%s\n' "$1" "$2" >>"$TRANSACTION/receipt.tsv"
-}
+write_interrupted_marker() {
+  local marker state_dir temporary
 
-archive_abandoned_transactions() {
-  local root="$1"
-  local abandoned name target
-
-  shopt -s nullglob
-  for abandoned in "$root"/.apply.creating.*; do
-    [[ -d "$abandoned" && ! -L "$abandoned" ]] ||
-      die "unsafe abandoned bootstrap transaction: $abandoned"
-    name="${abandoned##*/}"
-    target="$root/transactions/${name#.}.abandoned"
-    if [[ -e "$target" || -L "$target" ]]; then
-      target="$target.$$"
-    fi
-    mv "$abandoned" "$target"
-  done
-  shopt -u nullglob
-}
-
-begin_transaction() {
-  local root pending creating state_file state_status revision installer_sha
-
-  root="$(bootstrap_state_root)"
-  state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/dotfiles-config"
-  if [[ -L "$state_file" ]]; then
-    die "$state_file must not be a symlink"
-  elif [[ -f "$state_file" ]]; then
-    state_status=present
-  elif [[ -e "$state_file" ]]; then
-    die "$state_file has an unsupported type"
+  marker="$(interrupted_marker_path)"
+  [[ ! -L "$marker" ]] || die "unsafe interrupted-apply marker: $marker"
+  state_dir="${marker%/*}"
+  if [[ -e "$state_dir" || -L "$state_dir" ]]; then
+    [[ -d "$state_dir" && ! -L "$state_dir" ]] || die "$state_dir must be a real directory"
   else
-    state_status=absent
+    mkdir -p "$state_dir"
   fi
-
-  ensure_safe_state_root "$root"
-  ensure_safe_login_shell_marker
-  archive_abandoned_transactions "$root"
-  pending="$root/apply.pending"
-  [[ ! -e "$pending" && ! -L "$pending" ]] ||
-    die "an interrupted bootstrap transaction already exists"
-  creating="$(mktemp -d "$root/.apply.creating.XXXXXX")"
-  [[ -d "$creating" && ! -L "$creating" ]] || die "could not create a safe transaction"
-  TRANSACTION="$creating"
-  chmod 700 "$TRANSACTION"
-  mkdir "$TRANSACTION/backup" "$TRANSACTION/recovery"
-  chmod 700 "$TRANSACTION/backup" "$TRANSACTION/recovery"
-  cp "${BASH_SOURCE[0]}" "$TRANSACTION/recovery/install.sh"
-  chmod 700 "$TRANSACTION/recovery/install.sh"
-  installer_sha="$(sha256_file "$TRANSACTION/recovery/install.sh")"
-  revision="$(git -C "$DOTFILES_DIR" rev-parse HEAD)"
+  temporary="$(mktemp "$state_dir/.install-interrupted.XXXXXX")"
   {
-    printf 'version\t%s\n' "$BOOTSTRAP_SCHEMA"
-    printf 'system\t%s\n' "$SYSTEM"
-    printf 'configuration\t%s\n' "$FLAKE_CONFIG"
-    printf 'revision\t%s\n' "$revision"
-    printf 'nix-version\t%s\n' "$NIX_VERSION"
-    printf 'git-auth-mode\t%s\n' "$GIT_AUTH_MODE"
-    printf 'nix-sha256\t%s\n' "$NIX_SHA256"
-    printf 'installer-sha256\t%s\n' "$installer_sha"
-    printf 'phase\tstarted\n'
-  } >"$TRANSACTION/receipt.tsv"
-  chmod 600 "$TRANSACTION/receipt.tsv"
+    printf 'config=%s\n' "$FLAKE_CONFIG"
+    printf 'started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$marker"
+}
 
-  if [[ "$state_status" == present ]]; then
-    cp "$state_file" "$TRANSACTION/backup/dotfiles-config"
-    chmod 600 "$TRANSACTION/backup/dotfiles-config"
+clear_interrupted_marker() {
+  local marker
+
+  marker="$(interrupted_marker_path)"
+  [[ ! -L "$marker" ]] || die "unsafe interrupted-apply marker: $marker"
+  if [[ -f "$marker" ]]; then
+    rm "$marker"
   fi
-  append_transaction state-before "$state_status"
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-transaction-publish ]]; then
-    printf 'bootstrap: interrupted at test failpoint before-transaction-publish\n' >&2
-    exit 75
-  fi
-  mv "$TRANSACTION" "$pending"
-  TRANSACTION="$pending"
-}
-
-transaction_value() {
-  local key="$1"
-  local record value extra found=""
-
-  [[ -f "$TRANSACTION/receipt.tsv" && ! -L "$TRANSACTION/receipt.tsv" ]] ||
-    die "unsafe bootstrap transaction receipt"
-  while IFS=$'\t' read -r record value extra; do
-    if [[ "$record" == "$key" ]]; then
-      [[ -z "${extra:-}" && -z "$found" ]] || die "unsafe bootstrap receipt: duplicate or extra fields"
-      found="$value"
-    fi
-  done <"$TRANSACTION/receipt.tsv"
-  [[ -n "$found" ]] || die "unsafe bootstrap receipt: missing $key"
-  printf '%s\n' "$found"
-}
-
-restore_previous_state() {
-  local status config state_dir state_file backup current="" current_exists=0 temporary
-
-  status="$(transaction_value state-before)"
-  config="$(transaction_value configuration)"
-  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
-  state_file="$state_dir/dotfiles-config"
-  backup="$TRANSACTION/backup/dotfiles-config"
-  if [[ -f "$state_file" && ! -L "$state_file" ]]; then
-    current_exists=1
-    current="$(cat "$state_file")"
-  elif [[ -e "$state_file" || -L "$state_file" ]]; then
-    die "$state_file changed to an unsafe type; preserve it and recover manually"
-  fi
-
-  case "$status" in
-    present)
-      [[ -f "$backup" && ! -L "$backup" ]] || die "previous host-state backup is missing"
-      if [[ "$current_exists" -eq 1 && "$current" != "$config" ]] && ! cmp -s "$state_file" "$backup"; then
-        die "host state changed after bootstrap began; refusing to overwrite it"
-      fi
-      if [[ -e "$state_dir" || -L "$state_dir" ]]; then
-        [[ -d "$state_dir" && ! -L "$state_dir" ]] || die "$state_dir must be a real directory"
-      else
-        mkdir -p "$state_dir"
-      fi
-      temporary="$(mktemp "$state_dir/.dotfiles-config.restore.XXXXXX")"
-      cp "$backup" "$temporary"
-      chmod 600 "$temporary"
-      mv "$temporary" "$state_file"
-      ;;
-    absent)
-      if [[ "$current_exists" -eq 1 && "$current" != "$config" ]]; then
-        die "host state was created by another process; refusing to remove it"
-      fi
-      if [[ -f "$state_file" && ! -L "$state_file" ]]; then
-        rm "$state_file"
-      fi
-      ;;
-    *) die "unsafe bootstrap receipt: invalid prior state" ;;
-  esac
-}
-
-finish_transaction() {
-  local outcome="$1"
-  local root target stamp
-
-  append_transaction outcome "$outcome"
-  root="$(bootstrap_state_root)"
-  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  target="$root/transactions/apply-v${BOOTSTRAP_SCHEMA}-${stamp}-$$.$outcome"
-  if [[ -e "$target" || -L "$target" ]]; then
-    target="$target.$$"
-  fi
-  mv "$TRANSACTION" "$target"
-  TRANSACTION=""
-  printf 'Bootstrap receipt: %s\n' "${target#"$root/"}"
-}
-
-verify_recovery_script() {
-  local name="$1"
-  local key="$2"
-  local path="$TRANSACTION/recovery/$name"
-  local expected actual
-
-  [[ -f "$path" && ! -L "$path" ]] || die "transaction recovery copy $name is missing or unsafe"
-  expected="$(transaction_value "$key")"
-  actual="$(sha256_file "$path")"
-  [[ "$actual" == "$expected" ]] || die "transaction recovery copy $name failed verification"
-}
-
-rollback_current_transaction() {
-  restore_previous_state
-}
-
-fail_transaction() {
-  local reason="$1"
-  local recovery="$TRANSACTION/recovery/install.sh"
-
-  trap - ERR INT TERM
-  printf 'bootstrap: apply failed during %s\n' "$reason" >&2
-  if [[ -n "$TRANSACTION" && -d "$TRANSACTION" ]]; then
-    if BOOTSTRAP_RECOVERY_OUTCOME=failed BOOTSTRAP_FAILURE_REASON="$reason" \
-      bash "$recovery" rollback --yes; then
-      printf 'Original shell entrypoints and host-state receipt were restored.\n' >&2
-    else
-      printf 'Automatic recovery was incomplete. Preserve %s and run:\n' "$TRANSACTION" >&2
-      printf '  bash %s rollback --yes\n' "$recovery" >&2
-    fi
-  fi
-  printf 'Nix generations are not changed automatically during bootstrap recovery.\n' >&2
-  exit 1
-}
-
-on_apply_error() {
-  local status="$1"
-
-  if [[ "${BASH_SUBSHELL:-0}" -gt 0 ]]; then
-    return "$status"
-  fi
-  fail_transaction "$ACTIVE_PHASE (exit $status)"
 }
 
 update_checkout() {
@@ -635,7 +472,6 @@ install_pinned_nix() {
     rm -rf "$temporary"
     return 1
   fi
-  append_transaction nix-source verified-upstream-artifact
   case "$SYSTEM" in
     *-darwin) installer_mode=--daemon ;;
     *-linux) installer_mode=--no-daemon ;;
@@ -648,13 +484,11 @@ install_pinned_nix() {
   rm -rf "$temporary"
   source_nix
   command_exists nix || return 1
-  append_transaction nix-installed by-bootstrap
 }
 
 ensure_nix() {
   source_nix
   if command_exists nix; then
-    append_transaction nix-source existing-installation
     return
   fi
   install_pinned_nix
@@ -818,30 +652,25 @@ verify_system_login_shell() {
 }
 
 apply_configuration() {
-
   preflight
   print_plan
   confirm_action "Apply this bootstrap plan?"
 
   if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
-    update_checkout || die "source update failed before any bootstrap transaction started"
+    update_checkout || die "source update failed before the interrupted-apply marker was written"
     verify_checkout
     if [[ "$SOURCE_CHANGED" -eq 1 ]]; then
       restart_after_source_update
     fi
   fi
 
-  begin_transaction
-  trap 'on_apply_error $?' ERR
-  trap 'fail_transaction "interrupt signal"' INT TERM
+  ensure_safe_state_root "$(bootstrap_state_root)"
+  ensure_safe_login_shell_marker
+  write_interrupted_marker
 
-  ACTIVE_PHASE="Nix installation"
-  append_transaction phase ensuring-nix
   ensure_nix
   enable_flakes_for_process
 
-  ACTIVE_PHASE="managed host preflight"
-  append_transaction phase managed-preflight
   managed_activation_plan
 
   if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-activation ]]; then
@@ -849,15 +678,10 @@ apply_configuration() {
     exit 75
   fi
 
-  ACTIVE_PHASE="configuration activation"
-  append_transaction phase activating
   activate_configuration
-  ACTIVE_PHASE="verification"
-  append_transaction phase verifying
   verify_installation
-  trap - ERR INT TERM
   mark_login_shell_incomplete
-  finish_transaction complete
+  clear_interrupted_marker
 
   if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == after-login-shell-receipt ]]; then
     printf 'bootstrap: interrupted at test failpoint after-login-shell-receipt\n' >&2
@@ -874,43 +698,6 @@ apply_configuration() {
 
   printf '\nBootstrap complete. Open a new terminal or run: exec %q -l\n' \
     "$(managed_login_shell)"
-}
-
-rollback_interrupted() {
-  local root current_sha expected_sha outcome reason
-
-  root="$(bootstrap_state_root)"
-  TRANSACTION="$root/apply.pending"
-  if [[ ! -e "$TRANSACTION" && ! -L "$TRANSACTION" ]]; then
-    printf 'No interrupted bootstrap transaction needs rollback.\n'
-    return
-  fi
-  [[ -d "$TRANSACTION" && ! -L "$TRANSACTION" ]] ||
-    die "interrupted transaction must be a real directory"
-  [[ -f "$TRANSACTION/receipt.tsv" && ! -L "$TRANSACTION/receipt.tsv" ]] ||
-    die "interrupted transaction has no safe receipt"
-  verify_recovery_script install.sh installer-sha256
-  expected_sha="$(transaction_value installer-sha256)"
-  current_sha="$(sha256_file "${BASH_SOURCE[0]}")"
-  if [[ "$current_sha" != "$expected_sha" ]]; then
-    if [[ "$ASSUME_YES" -eq 1 ]]; then
-      exec bash "$TRANSACTION/recovery/install.sh" rollback --yes
-    fi
-    exec bash "$TRANSACTION/recovery/install.sh" rollback
-  fi
-  FLAKE_CONFIG="$(transaction_value configuration)"
-  SYSTEM="$(transaction_value system)"
-  confirm_action "Restore the interrupted bootstrap transaction?"
-  rollback_current_transaction
-  outcome="${BOOTSTRAP_RECOVERY_OUTCOME:-rolled-back}"
-  case "$outcome" in
-    failed | rolled-back) ;;
-    *) die "invalid recovery outcome" ;;
-  esac
-  reason="${BOOTSTRAP_FAILURE_REASON:-operator-requested recovery}"
-  append_transaction recovery "$reason"
-  finish_transaction "$outcome"
-  printf 'Interrupted bootstrap changes were rolled back.\n'
 }
 
 configure_coder_runtime
@@ -930,7 +717,6 @@ case "$COMMAND" in
     verify_system_login_shell || die "login-shell system prerequisite is incomplete"
     clear_login_shell_incomplete
     ;;
-  rollback) rollback_interrupted ;;
   -h | --help | help) usage ;;
   '')
     usage >&2

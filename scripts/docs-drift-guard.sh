@@ -17,7 +17,12 @@
 # Snapshot JSON shape: { "<system>": { "<check>": "<drvPath>", ... }, ... }
 set -euo pipefail
 
-SYSTEMS=(x86_64-linux aarch64-linux aarch64-darwin)
+# CI platform and docs-only-lint constants are centralized in
+# inventory/ci.json (also imported by checks/default.nix and mirrored by the
+# static matrix in .github/workflows/nix.yml).
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+CI_INVENTORY="$SCRIPT_DIR/../inventory/ci.json"
+read -r -a SYSTEMS <<<"$(jq -r '.systems | join(" ")' "$CI_INVENTORY")"
 
 usage() {
   sed -n 's/^# \{0,1\}//p' "$0" | sed -n '1,19p' >&2
@@ -28,9 +33,9 @@ usage() {
 # ignoring the intentional whole-tree lints (emitted on x86_64-linux only).
 # Exits 0 with no output when clean.
 drift_list() {
-  jq -rn --slurpfile base "$1" --slurpfile head "$2" '
+  jq -rn --slurpfile base "$1" --slurpfile head "$2" --slurpfile ci "$CI_INVENTORY" '
     def prune:
-      del(.["x86_64-linux"]["docs-links"], .["x86_64-linux"]["production-facts"]);
+      del(.["x86_64-linux"][$ci[0].docsOnlyChecks[]]);
     ($base[0] | prune) as $a
     | ($head[0] | prune) as $b
     | (($a | keys) + ($b | keys) | unique)[] as $sys

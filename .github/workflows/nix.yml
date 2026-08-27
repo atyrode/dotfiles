@@ -52,6 +52,8 @@ jobs:
               darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"
             fi
           fi
+          # The system set is centralized in inventory/ci.json; keep this
+          # static matrix in sync with it.
           if "$darwin"; then
             matrix='{"include":[{"system":"x86_64-linux","runner":"ubuntu-24.04"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"},{"system":"aarch64-darwin","runner":"macos-15"}]}'
           else

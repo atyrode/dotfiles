@@ -47,15 +47,38 @@ logout; on the managed NixOS server that is system-owned.
 
 ## Upgrades
 
-An agent restart kills every PTY it owns, so upgrades are operator-timed:
+Starting or restarting an agent is destructive twice over: a restart kills
+every PTY the old process owns, and a *new* agent presenting the same machine
+token supersedes the live one on hello — the hub closes the older socket and
+reconciles away every session the newcomer does not advertise. Upgrades are
+therefore operator-timed:
 
 1. Upgrade the hub first (protocol compat accepts older agents; the reverse is
-   rejected loudly). Snapshot `manifold.db` before any hub upgrade that
-   applies a schema migration.
-2. Bump the `manifold` pin (`./scripts/update-pins.sh manifold`) and
-   merge. Applying that generation restarts the agent on each machine as its
-   unit changes — apply on a machine hosting live manifold sessions from a
-   plain SSH session, never from inside one of its own terminals.
+   rejected loudly). The DB lives in the `manifold-data` named volume, in WAL
+   mode — never `cp` it live. Snapshot before any upgrade that applies a
+   schema migration, and stamp the build so `/healthz` proves what deployed:
+
+   ```sh
+   cd ~/manifold && git pull --ff-only
+   docker exec manifold-manifold-1 bun -e \
+     'import {Database} from "bun:sqlite";
+      new Database("/data/manifold.db").exec("VACUUM INTO '/data/pre-upgrade.db'")'
+   docker cp manifold-manifold-1:/data/pre-upgrade.db /srv/backups/
+   MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose build
+   MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose up -d
+   curl -s https://manifold.tyrode.dev/healthz   # build must equal the new rev
+   ```
+
+2. Bump the `manifold` pin (`./scripts/update-pins.sh manifold`) and merge.
+   Applying that generation restarts the agent on each machine as its unit
+   changes — apply on a machine hosting live manifold sessions from a plain
+   SSH session, never from inside one of its own terminals.
+
+On tyrode-dev-01 the capability arrives through the `alex-x86_64-linux`
+registry entry, which tyrode-dev/infra consumes via its dotfiles flake pin:
+delivery there is a pin bump in that repository plus `atyrode infra apply`
+(interactive: Bitwarden unlock for the Clan operator identity), not
+`atyrode apply`.
 
 ## tyrode-dev-01 cutover (#419)
 
@@ -66,7 +89,7 @@ SSH, never from a manifold terminal:
 
 1. From SSH: `atyrode runtime status manifold-agent --json` — confirm
    `enrolled: true` (the existing 0600 token is adopted as-is; no re-mint).
-2. Apply the generation that delivers the unit, then
+2. Deploy the generation that delivers the unit (`atyrode infra apply`), then
    `systemctl --user start manifold-agent` and verify `welcome` in
    `journalctl --user -u manifold-agent` (status reports
    `lastLogEvent: "welcome"`, phase `connected`).
@@ -77,7 +100,8 @@ SSH, never from a manifold terminal:
 
 ## Master migration
 
-The master is a stateful pet: `data/manifold.db` holds pads, scenes,
+The master is a stateful pet: `manifold.db` in the `manifold-data` volume
+holds pads, scenes,
 principals, and hashed tokens. Until tyrode-dev/infra's backup engine covers
 it (ADR 0002 gates; SQLite online-backup class), pads are not durable state.
 Migration is snapshot → restore on the new host → edit

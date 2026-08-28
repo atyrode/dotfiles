@@ -2,9 +2,11 @@
 
 let
   fixtures = import ./lib/omp-fixtures.nix { inherit lib pkgs; };
-  inherit (fixtures) darwinAgentTools linuxAgentTools;
+  inherit (fixtures) darwinAgentTools linuxAgentTools linuxClientAgentTools;
   linuxBrokerSupervisor =
     linuxAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Service.ExecStart;
+  linuxClientBrokerSupervisor =
+    linuxClientAgentTools.systemd.user.services.atyrode-omp-auth-brokers.Service.ExecStart;
   darwinBrokerAgent = darwinAgentTools.launchd.agents.atyrode-omp-auth-brokers;
 in
 pkgs.runCommand "check-agent-auth-broker" { } ''
@@ -44,6 +46,42 @@ pkgs.runCommand "check-agent-auth-broker" { } ''
     grep -Fxq token "$token"
 
     kill "$supervisor_pid"
+
+    config_dir=/tmp/check-agent-auth-broker/xdg-config/atyrode/omp-auth-broker
+    mkdir -p "$config_dir"
+    cat > "$config_dir/env" <<'EOF'
+  OMP_AUTH_BROKER_MODE=client
+  OMP_AUTH_BROKER_URL=http://127.0.0.1:46171
+  OMP_AUTH_BROKER_TOKEN=BROKER-TOKEN-TEST
+  OMP_AUTH_BROKER_SSH_HOST=alex@broker.example
+  EOF
+    chmod 600 "$config_dir/env"
+    export SSH_STUB_LOG="$TMPDIR/ssh-start"
+    client_supervisor=${lib.escapeShellArg linuxClientBrokerSupervisor}
+    "$client_supervisor" > "$TMPDIR/client.out" 2> "$TMPDIR/client.err" &
+    client_pid=$!
+    trap 'kill "$client_pid" 2>/dev/null || true' EXIT
+    for _ in $(seq 1 50); do
+      test -s "$SSH_STUB_LOG" && break
+      sleep 0.1
+    done
+    cat > "$TMPDIR/expected-ssh-start" <<'EOF'
+  -NT
+  -L
+  127.0.0.1:46171:127.0.0.1:46171
+  -o
+  ExitOnForwardFailure=yes
+  -o
+  ServerAliveInterval=30
+  -o
+  ServerAliveCountMax=3
+  alex@broker.example
+  EOF
+    cmp "$TMPDIR/expected-ssh-start" "$SSH_STUB_LOG"
+    ! grep -qF BROKER-TOKEN-TEST "$SSH_STUB_LOG"
+    kill "$client_pid"
+    wait "$client_pid"
+    trap - EXIT
     wait "$supervisor_pid"
     trap - EXIT
     touch "$out"

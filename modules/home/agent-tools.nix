@@ -42,6 +42,7 @@ let
   # or duplicates credentials.
   brokerStateDir = "${config.xdg.stateHome}/atyrode/omp-auth-broker";
   brokerTokenFile = "${brokerStateDir}/token";
+  brokerConfigFile = "${config.xdg.configHome}/atyrode/omp-auth-broker/env";
   brokerBind = "127.0.0.1:46171";
   rawOmpPackage = cfg.ompPackage.rawOmp or pkgs.omp;
   rawOmp = lib.getExe rawOmpPackage;
@@ -51,10 +52,37 @@ let
 
     state_dir=${lib.escapeShellArg brokerStateDir}
     token_file=${lib.escapeShellArg brokerTokenFile}
+    config_file=${lib.escapeShellArg brokerConfigFile}
     mkdir=${lib.getExe' pkgs.coreutils "mkdir"}
     mktemp=${lib.getExe' pkgs.coreutils "mktemp"}
     chmod=${lib.getExe' pkgs.coreutils "chmod"}
     mv=${lib.getExe' pkgs.coreutils "mv"}
+
+    if [[ -r "$config_file" ]]; then
+      # Provisioned by `atyrode auth broker setup`; values are shell-escaped
+      # and the file is private (0600).
+      # shellcheck source=/dev/null
+      source "$config_file"
+    fi
+    mode="''${OMP_AUTH_BROKER_MODE:-local}"
+    if [[ "$mode" == client ]]; then
+      target="''${OMP_AUTH_BROKER_SSH_HOST:-}"
+      [[ -n "$target" ]] || {
+        echo "omp auth broker client has no SSH host; rerun: atyrode auth broker setup" >&2
+        exit 1
+      }
+      exec ${lib.getExe pkgs.openssh} \
+        -NT \
+        -L ${brokerBind}:127.0.0.1:46171 \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=30 \
+        -o ServerAliveCountMax=3 \
+        "$target"
+    fi
+    if [[ "$mode" != local ]]; then
+      echo "unknown OMP auth broker mode: $mode" >&2
+      exit 1
+    fi
 
     "$mkdir" -p -m 0700 "$state_dir"
     token="$(${rawOmp} --profile default auth-broker token)"
@@ -397,7 +425,7 @@ in
         systemd.user.services = lib.mkIf pkgs.stdenv.isLinux {
           atyrode-omp-auth-brokers = {
             Unit = {
-              Description = "Machine-local OMP authentication broker";
+              Description = "OMP authentication broker or SSH client tunnel";
               After = [ "network.target" ];
             };
             Service = {

@@ -33,6 +33,24 @@ let
             chmod +x "$out/bin/omp"
             printf '#compdef omp\n' > "$out/share/zsh/site-functions/_omp"
       '';
+  stubSsh =
+    pkgs.runCommand "ssh-stub"
+      {
+        meta = {
+          mainProgram = "ssh";
+          platforms = lib.platforms.all;
+        };
+      }
+      ''
+        mkdir -p "$out/bin"
+        cat > "$out/bin/ssh" <<'EOF'
+        #!${pkgs.runtimeShell}
+        printf '%s\n' "$@" > "''${SSH_STUB_LOG:?}"
+        trap 'exit 0' INT TERM
+        while true; do sleep 1; done
+        EOF
+        chmod +x "$out/bin/ssh"
+      '';
 
   configuredStub = pkgs.callPackage ../../pkgs/omp-configured {
     omp = stubOmp;
@@ -113,6 +131,16 @@ let
       };
     }
   ) { };
+  linuxClientAgentTools = evalAgentTools (
+    pkgs
+    // {
+      openssh = stubSsh;
+      stdenv = pkgs.stdenv // {
+        isLinux = true;
+        isDarwin = false;
+      };
+    }
+  ) { };
   darwinAgentTools = evalAgentTools (
     pkgs
     // {
@@ -130,6 +158,7 @@ in
     defaultsConfig
     evalAgentTools
     linuxAgentTools
+    linuxClientAgentTools
     policyConfig
     stubOmp
     untrustedConfig

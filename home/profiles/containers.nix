@@ -4,12 +4,12 @@
   # rootless-engine ownership remains with the system layer on Linux. OrbStack
   # is the selected Darwin engine and retains its own runtime state.
   home.packages =
-    lib.optionals pkgs.stdenv.isLinux (
+    lib.optionals pkgs.stdenv.hostPlatform.isLinux (
       with pkgs;
       [
         docker
         docker-compose
       ]
     )
-    ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.orbstack ];
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.orbstack ];
 }

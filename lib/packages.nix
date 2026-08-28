@@ -96,7 +96,7 @@ let
       })
       (
         _final: previous:
-        lib.optionalAttrs previous.stdenv.isDarwin {
+        lib.optionalAttrs previous.stdenv.hostPlatform.isDarwin {
           # nixpkgs Darwin fixup replaces Obsidian's Developer ID signature
           # with an ad-hoc one. The pinned upstream DMG and derivation audit
           # in #89 verified that skipping fixup preserves its signed bundle.

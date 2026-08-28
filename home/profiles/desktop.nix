@@ -10,7 +10,7 @@ in
 
   # Retention of desktop applications reflects operator use, not the agent
   # baseline. Homebrew-owned applications remain in the nix-darwin module.
-  home.packages = lib.optionals pkgs.stdenv.isDarwin (
+  home.packages = lib.optionals pkgs.stdenv.hostPlatform.isDarwin (
     (with pkgs; [
       chatgpt
       obsidian

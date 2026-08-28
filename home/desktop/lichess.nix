@@ -19,7 +19,7 @@ pkgs.stdenvNoCC.mkDerivation {
       exec open "$url"
     fi
 
-    ${lib.optionalString pkgs.stdenv.isLinux ''
+    ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
       if [ -x "${pkgs.xdg-utils}/bin/xdg-open" ]; then
         exec "${pkgs.xdg-utils}/bin/xdg-open" "$url"
       fi
@@ -43,7 +43,7 @@ pkgs.stdenvNoCC.mkDerivation {
     Categories=Game;BoardGame;
     EOF
   ''
-  + lib.optionalString pkgs.stdenv.isDarwin ''
+  + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
         mkdir -p "$out/Applications/Lichess.app/Contents/MacOS"
 
         cat > "$out/Applications/Lichess.app/Contents/Info.plist" <<'EOF'

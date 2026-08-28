@@ -34,7 +34,7 @@
       nodejs_24
       tmux
     ])
-    ++ lib.optionals pkgs.stdenv.isLinux [
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       pkgs.bubblewrap
       # Agents inspect host user services and processes; carry the process
       # and user-service clients they need for that.

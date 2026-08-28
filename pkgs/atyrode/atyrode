@@ -22,6 +22,10 @@ readonly embedded_revision='@revision@'
 readonly flake_remote_url="https://github.com/${flake_ref#github:}"
 readonly EX_USAGE=64 EX_DATAERR=65 EX_NOINPUT=66 EX_UNAVAILABLE=69 EX_SOFTWARE=70
 
+# Set only by the private manager-owned apply worker after it validates its job
+# directory. Environment variables cannot bypass supervised activation.
+apply_job_worker=0
+
 die() {
   local code="$1"
   shift
@@ -33,6 +37,7 @@ usage() {
   cat <<'EOF'
 Usage:
   atyrode apply [HOST] [--ref REF] [--repo PATH] [--git-auth-mode ssh|https-gh] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
+  atyrode apply-status [JOB] [--json]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode runtime list [--json]
@@ -78,8 +83,11 @@ then prints preflight metadata without invoking nh; --dry-run invokes the normal
 nh switch backend with --dry; --preview-json runs that dry backend and emits its
 normalized package/action preview as JSON.
 apply validates everything before invoking nh, and afterwards reports plain-omp
-settings that drifted from the seeded defaults, offering an interactive
-keep-or-reset review on a terminal.
+settings that drifted from the seeded defaults. Mutating Linux Home Manager
+applies run as manager-owned jobs, so replacing a terminal-hosting service
+cannot terminate the activation; apply-status reconnects to their durable
+result and output. On a terminal, apply offers an interactive keep-or-reset
+review after activation.
 inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
@@ -2191,8 +2199,224 @@ EOF
   printf '%s\n' "$directory"
 }
 
+apply_jobs_root() {
+  printf '%s/atyrode/apply-jobs\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+apply_systemd_run_command() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_SYSTEMD_RUN:-}" ]]; then
+    printf '%s\n' "$ATYRODE_SYSTEMD_RUN"
+  else
+    command -v systemd-run 2>/dev/null
+  fi
+}
+
+apply_systemctl_command() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_SYSTEMCTL:-}" ]]; then
+    printf '%s\n' "$ATYRODE_SYSTEMCTL"
+  else
+    command -v systemctl 2>/dev/null
+  fi
+}
+
+apply_supervision_available() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_SYSTEMD_AVAILABLE:-}" ]]; then
+    [[ "$_ATYRODE_TEST_SYSTEMD_AVAILABLE" == 1 ]]
+    return
+  fi
+  [[ "$(uname -s)" == Linux ]] || return 1
+  local systemd_run systemctl
+  systemd_run="$(apply_systemd_run_command)" || return 1
+  systemctl="$(apply_systemctl_command)" || return 1
+  [[ -n "$systemd_run" && -n "$systemctl" ]] || return 1
+  "$systemctl" --user show-environment >/dev/null 2>&1
+}
+
+write_apply_job_json() {
+  local path="$1" value="$2" temp
+  temp="$(mktemp "$path.XXXXXX")"
+  printf '%s\n' "$value" >"$temp"
+  mv -f "$temp" "$path"
+}
+
+apply_job_phase() {
+  local job_dir="$1" unit="$2" systemctl
+  if [[ -f "$job_dir/result.json" ]]; then
+    jq -r '.phase' "$job_dir/result.json"
+    return
+  fi
+  systemctl="$(apply_systemctl_command)" || {
+    printf 'interrupted\n'
+    return
+  }
+  if "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+    if [[ -f "$job_dir/running.json" ]]; then
+      printf 'running\n'
+    else
+      printf 'submitted\n'
+    fi
+  else
+    printf 'interrupted\n'
+  fi
+}
+
+cmd_apply_status() {
+  local job_id="" json=0 root job_dir unit phase
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --*) die "$EX_USAGE" "unknown apply-status option: $1" ;;
+      *)
+        [[ -z "$job_id" ]] || die "$EX_USAGE" "apply-status accepts at most one job"
+        job_id="$1"
+        shift
+        ;;
+    esac
+  done
+  root="$(apply_jobs_root)"
+  if [[ -z "$job_id" ]]; then
+    [[ -r "$root/latest" ]] || die "$EX_NOINPUT" "no apply jobs have been submitted"
+    job_id="$(cat "$root/latest")"
+  fi
+  [[ "$job_id" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] ||
+    die "$EX_USAGE" "invalid apply job: $job_id"
+  job_dir="$root/$job_id"
+  [[ -r "$job_dir/metadata.json" ]] || die "$EX_NOINPUT" "unknown apply job: $job_id"
+  unit="$(jq -r '.unit' "$job_dir/metadata.json")"
+  phase="$(apply_job_phase "$job_dir" "$unit")"
+  if [[ "$json" == 1 ]]; then
+    if [[ -r "$job_dir/result.json" ]]; then
+      jq -nc --slurpfile metadata "$job_dir/metadata.json" \
+        --slurpfile result "$job_dir/result.json" \
+        --rawfile output "$job_dir/output.log" --arg phase "$phase" \
+        '$metadata[0] + {phase:$phase,result:$result[0],output:$output}'
+    else
+      jq -nc --slurpfile metadata "$job_dir/metadata.json" \
+        --rawfile output "$job_dir/output.log" --arg phase "$phase" \
+        '$metadata[0] + {phase:$phase,result:null,output:$output}'
+    fi
+  else
+    [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
+    printf 'atyrode: apply job %s: %s\n' "$job_id" "$phase" >&2
+  fi
+  if [[ -r "$job_dir/result.json" ]]; then
+    return "$(jq -r '.exitCode' "$job_dir/result.json")"
+  fi
+  [[ "$phase" != interrupted ]] ||
+    return "$EX_SOFTWARE"
+}
+
+run_apply_job_worker() {
+  local job_dir="${1:-}"
+  shift || true
+  local root job_id metadata unit started_at finished_at status phase result
+  root="$(apply_jobs_root)"
+  [[ -n "$job_dir" && "$job_dir" == "$root/"* ]] ||
+    die "$EX_USAGE" "invalid private apply job directory"
+  job_id="${job_dir#"$root/"}"
+  [[ "$job_id" =~ ^[0-9]+-[0-9]+-[0-9]+$ && "$job_dir" == "$root/$job_id" ]] ||
+    die "$EX_USAGE" "invalid private apply job"
+  [[ -r "$job_dir/metadata.json" ]] ||
+    die "$EX_NOINPUT" "private apply job metadata is unavailable"
+  metadata="$(cat "$job_dir/metadata.json")"
+  unit="$(jq -r '.unit' <<<"$metadata")"
+  [[ "$unit" == "atyrode-apply.service" ]] ||
+    die "$EX_DATAERR" "private apply job metadata is invalid"
+
+  apply_job_worker=1
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  write_apply_job_json "$job_dir/running.json" \
+    "$(jq -nc --arg startedAt "$started_at" '{schemaVersion:1,startedAt:$startedAt}')"
+  set +e
+  (apply_config "$@") >>"$job_dir/output.log" 2>&1
+  status="$?"
+  set -e
+  finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  phase=failed
+  [[ "$status" == 0 ]] && phase=succeeded
+  result="$(jq -nc --arg phase "$phase" --arg startedAt "$started_at" \
+    --arg finishedAt "$finished_at" --argjson exitCode "$status" \
+    '{schemaVersion:1,phase:$phase,exitCode:$exitCode,startedAt:$startedAt,finishedAt:$finishedAt}')"
+  write_apply_job_json "$job_dir/result.json" "$result"
+  rm -f "$job_dir/running.json"
+  return "$status"
+}
+
+submit_apply_job() {
+  local root job_id job_dir unit created_at metadata latest_temp self public_self systemd_run systemctl env_name
+  local -a run_args
+  root="$(apply_jobs_root)"
+  mkdir -p "$root"
+  chmod 700 "$root"
+  job_id="$(date -u +%s)-$$-$RANDOM"
+  job_dir="$root/$job_id"
+  unit="atyrode-apply.service"
+  mkdir -m 700 "$job_dir"
+  : >"$job_dir/output.log"
+  chmod 600 "$job_dir/output.log"
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  metadata="$(jq -nc --arg jobId "$job_id" --arg unit "$unit" \
+    --arg createdAt "$created_at" \
+    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt}')"
+  write_apply_job_json "$job_dir/metadata.json" "$metadata"
+
+  self="$(readlink -f "$0")"
+  # makeWrapper executes the payload as .atyrode-wrapped. Re-enter through the
+  # public wrapper so the manager-owned worker receives the package's pinned
+  # PATH instead of depending on the user manager's sparse environment.
+  if [[ "${self##*/}" == .atyrode-wrapped ]]; then
+    public_self="${self%/*}/atyrode"
+    [[ -x "$public_self" ]] ||
+      die "$EX_UNAVAILABLE" "atyrode package wrapper is unavailable"
+    self="$public_self"
+  fi
+  systemd_run="$(apply_systemd_run_command)" ||
+    die "$EX_UNAVAILABLE" "systemd-run became unavailable while submitting apply"
+  systemctl="$(apply_systemctl_command)" ||
+    die "$EX_UNAVAILABLE" "systemctl became unavailable while submitting apply"
+  if "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+    die "$EX_UNAVAILABLE" "another apply job is active; inspect it with: atyrode apply-status"
+  fi
+  run_args=(
+    "$systemd_run" --user --unit="$unit" --collect --quiet
+    --service-type=exec
+    --description="atyrode apply job $job_id"
+  )
+  for env_name in XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME \
+    ATYRODE_HOST ATYRODE_GIT_AUTH_MODE SSH_AUTH_SOCK; do
+    [[ -z "${!env_name:-}" ]] ||
+      run_args+=("--setenv=$env_name=${!env_name}")
+  done
+  if ! "${run_args[@]}" -- "$self" __apply-job "$job_dir" "$@"; then
+    write_apply_job_json "$job_dir/result.json" \
+      "$(jq -nc --arg createdAt "$created_at" \
+        '{schemaVersion:1,phase:"failed",exitCode:69,startedAt:$createdAt,
+          finishedAt:$createdAt,error:"systemd-run submission failed"}')"
+    die "$EX_UNAVAILABLE" "could not submit apply job $job_id; inspect it with: atyrode apply-status $job_id"
+  fi
+  latest_temp="$(mktemp "$root/.latest.XXXXXX")"
+  printf '%s\n' "$job_id" >"$latest_temp"
+  mv -f "$latest_temp" "$root/latest"
+  printf 'atyrode: apply job %s submitted; reconnect with: atyrode apply-status %s\n' \
+    "$job_id" "$job_id" >&2
+
+  while [[ ! -f "$job_dir/result.json" ]]; do
+    if ! "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+      sleep 0.1
+      if [[ ! -f "$job_dir/result.json" ]]; then
+        printf 'atyrode: apply job %s stopped without publishing a result; inspect: journalctl --user -u %s\n' \
+          "$job_id" "$unit" >&2
+        return "$EX_SOFTWARE"
+      fi
+    fi
+    sleep 0.1
+  done
+  cat "$job_dir/output.log"
+  return "$(jq -r '.exitCode' "$job_dir/result.json")"
+}
 apply_config() {
   local requested="" repo="" ref="" git_auth_mode="${ATYRODE_GIT_AUTH_MODE:-}" plan=0 dry=0 json=0 preview_json=0 restart=0
+  local -a original_args=("$@")
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2211,6 +2435,11 @@ apply_config() {
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
   [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
   [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
+  if [[ "$apply_job_worker" == 0 && "$plan" == 0 && "$dry" == 0 ]] &&
+    apply_supervision_available; then
+    submit_apply_job "${original_args[@]}"
+    return $?
+  fi
 
   local host data expected_system expected_user expected_home expected_hostname platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
   local windows_preflight='null' mutation_boundary="activation only after preflight"
@@ -3940,8 +4169,8 @@ cmd_infra() {
 # guard_production_mutation refuses to run a store-mutating command when a
 # test-only tool-substitution override is present on a production binary. Those
 # vars (including ATYRODE_BW, ATYRODE_AGE_KEYGEN, ATYRODE_NIX, ATYRODE_SSH,
-# ATYRODE_GIT, ATYRODE_NH, and store/profile overrides) are honoured only
-# under enableTestHooks;
+# ATYRODE_GIT, ATYRODE_NH, ATYRODE_SYSTEMD_RUN, and store/profile overrides)
+# are honoured only under enableTestHooks;
 # a production build silently ignores them, so a caller who sets them expecting stubs would instead
 # drive the REAL nh / nix-store / nix-env against the live store. Aborting turns
 # that silent, potentially destructive trap into a loud, safe stop. Scoped to the
@@ -3950,7 +4179,7 @@ cmd_infra() {
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_AGE_KEYGEN ATYRODE_BW ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_SSH_KEYGEN ATYRODE_SSH_ADD ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
+  for v in ATYRODE_AGE_KEYGEN ATYRODE_BW ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_SSH_KEYGEN ATYRODE_SSH_ADD ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done
@@ -4334,6 +4563,8 @@ main() {
   esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
+    apply-status) cmd_apply_status "$@" ;;
+    __apply-job) run_apply_job_worker "$@" ;;
     clean) cmd_clean "$@" ;;
     generations) cmd_generations "$@" ;;
     lifecycle) cmd_lifecycle "$@" ;;

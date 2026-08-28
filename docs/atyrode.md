@@ -53,6 +53,8 @@ atyrode apply            # activate the latest published main; no checkout neede
 atyrode apply --plan
 atyrode apply --dry-run
 atyrode apply --preview-json # stable schema for the read-only dry-run preview
+atyrode apply-status     # reconnect to the latest manager-owned apply job
+atyrode apply-status JOB --json
 ```
 
 The default host comes from `ATYRODE_HOST`, then the managed host identity file,
@@ -82,6 +84,16 @@ Before calling `nh`, the CLI validates the host, user, system, backend, and
 revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
 path. A successful real activation records the canonical host atomically;
 failures and dry runs do not update state.
+
+On Linux with an available systemd user manager, a mutating apply runs in a
+transient service rather than as a child of the invoking terminal. The CLI
+prints the durable job ID, waits for completion, replays its output, and exits
+with the activation's status. Closing the terminal does not terminate the
+activation; reconnect with `atyrode apply-status [JOB]`. Job metadata, output,
+and the atomic final result live under
+`$XDG_STATE_HOME/atyrode/apply-jobs` (or `~/.local/state/atyrode/apply-jobs`).
+Read-only plans and dry runs remain terminal-bound. Platforms without a
+systemd user manager retain the direct activation path.
 
 After a successful activation, apply reports plain-omp settings that drifted
 from the seeded repository defaults (see

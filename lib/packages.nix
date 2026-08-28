@@ -103,6 +103,18 @@ let
           obsidian = previous.obsidian.overrideAttrs (_: {
             dontFixup = true;
           });
+          # Prism Launcher 11.0.3 bundles executable framework symlinks.
+          # The generic Qt hook scans every one and crashes Bash on Darwin,
+          # so wrap only the app's actual launcher.
+          prismlauncher = previous.prismlauncher.overrideAttrs (previousAttrs: {
+            dontWrapQtApps = true;
+            buildCommand = previousAttrs.buildCommand + ''
+              launcher="$out/Applications/PrismLauncher.app/Contents/MacOS/prismlauncher"
+              target="$(readlink -e "$launcher")"
+              rm "$launcher"
+              makeQtWrapper "$target" "$launcher"
+            '';
+          });
           # nixpkgs Darwin fixup replaces Spotify's Developer ID signature
           # with an ad-hoc one, breaking macOS privacy identity (TN3179).
           # The focused test in #89 validated that skipping fixup preserves it.

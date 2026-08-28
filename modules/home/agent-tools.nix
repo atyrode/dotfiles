@@ -394,7 +394,7 @@ in
       }
 
       {
-        systemd.user.services = lib.mkIf pkgs.stdenv.isLinux {
+        systemd.user.services = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           atyrode-omp-auth-brokers = {
             Unit = {
               Description = "Machine-local OMP authentication broker";
@@ -410,7 +410,7 @@ in
           };
         };
 
-        launchd.agents = lib.mkIf pkgs.stdenv.isDarwin {
+        launchd.agents = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
           atyrode-omp-auth-brokers = {
             enable = true;
             config = {
@@ -435,7 +435,7 @@ in
         # startup-transaction job that long holds user-manager readiness at
         # "starting" (same rationale as ollama-pull-classifier below). The
         # timer triggers it instead.
-        systemd.user.services.atyrode-session-backup = lib.mkIf pkgs.stdenv.isLinux {
+        systemd.user.services.atyrode-session-backup = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           Unit = {
             Description = "Archive agent session histories to Cellar";
             After = [ "network.target" ];
@@ -446,7 +446,7 @@ in
           };
         };
 
-        systemd.user.timers.atyrode-session-backup = lib.mkIf pkgs.stdenv.isLinux {
+        systemd.user.timers.atyrode-session-backup = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           Unit.Description = "Hourly agent-session archive to Cellar";
           Timer = {
             OnCalendar = "hourly";
@@ -456,7 +456,7 @@ in
           Install.WantedBy = [ "timers.target" ];
         };
 
-        launchd.agents.atyrode-session-backup = lib.mkIf pkgs.stdenv.isDarwin {
+        launchd.agents.atyrode-session-backup = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
           enable = true;
           config = {
             ProgramArguments = [ "${sessionBackupSync}/bin/atyrode-session-backup" ];
@@ -484,7 +484,7 @@ in
         # is-system-running` at "starting" for its whole duration. The timer
         # below triggers it shortly after startup instead, outside the
         # readiness transaction.
-        systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
+        systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           Unit = {
             Description = "Pull the code generator's local classifier model to disk (${lcfg.model})";
             After = [ "ollama.service" ];
@@ -496,7 +496,7 @@ in
           };
         };
 
-        systemd.user.timers.ollama-pull-classifier = lib.mkIf pkgs.stdenv.isLinux {
+        systemd.user.timers.ollama-pull-classifier = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           Unit.Description = "Trigger the classifier model pull after session startup";
           Timer = {
             # 30s keeps the trigger comfortably outside the startup job queue
@@ -509,7 +509,7 @@ in
         };
       })
 
-      (lib.mkIf (rgcfg.enable && pkgs.stdenv.isLinux) {
+      (lib.mkIf (rgcfg.enable && pkgs.stdenv.hostPlatform.isLinux) {
         # A drop-in rather than a systemd.user.slices unit: Home Manager would
         # write a full app.slice into ~/.config/systemd/user, which takes
         # precedence over and therefore replaces systemd's own definition. The
@@ -526,7 +526,7 @@ in
         '';
       })
 
-      (lib.mkIf (rgcfg.enable && rgcfg.earlyoom.enable && pkgs.stdenv.isLinux) {
+      (lib.mkIf (rgcfg.enable && rgcfg.earlyoom.enable && pkgs.stdenv.hostPlatform.isLinux) {
         home.packages = [ pkgs.earlyoom ];
 
         systemd.user.services.atyrode-earlyoom = {

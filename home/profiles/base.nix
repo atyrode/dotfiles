@@ -10,7 +10,7 @@ let
     fi
     exec ${lib.getExe pkgs.btop} "$@"
   '';
-  btopPackage = if pkgs.stdenv.isLinux then btopWithOptionalWslNvidia else pkgs.btop;
+  btopPackage = if pkgs.stdenv.hostPlatform.isLinux then btopWithOptionalWslNvidia else pkgs.btop;
 in
 {
   imports = [
@@ -53,10 +53,10 @@ in
       xz
       zip
     ])
-    ++ lib.optionals pkgs.stdenv.isDarwin [
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
       pkgs.watch
     ]
-    ++ lib.optionals pkgs.stdenv.isLinux [
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       (pkgs.buildEnv {
         name = "bind-tools";
         paths = [

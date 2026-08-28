@@ -3,7 +3,7 @@
 let
   lichess = import ./desktop/lichess.nix { inherit lib pkgs; };
 in
-lib.mkIf pkgs.stdenv.isLinux {
+lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
   home.packages = with pkgs; [
     arduino-ide
     lichess

@@ -19,7 +19,7 @@ while IFS= read -r path; do
     README.md | docs/*)
       ;;
 
-    # This module contributes configuration only when pkgs.stdenv.isLinux.
+    # This module contributes configuration only when pkgs.stdenv.hostPlatform.isLinux.
     # The Linux CI legs still evaluate it; native Darwin has no affected
     # configuration to verify.
     home/linux-desktop.nix)

@@ -50,7 +50,7 @@ pkgs.runCommand "check-atyrode-lifecycle"
     touch "$XDG_STATE_HOME/nix/profiles/home-manager"
     export ATYRODE_GEN_PROFILE="$XDG_STATE_HOME/nix/profiles/home-manager"
     # Exercise the packaged local-qwen lease/reaper lifecycle state machine.
-    ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
       ${pkgs.runtimeShell} ${./test-data/local-qwen-lifecycle.sh} ${atyrode}/libexec/atyrode-runtime
     ''}
     # store-lifecycle guards (#21): cleanup keeps a rollback window, rollback

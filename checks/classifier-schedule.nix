@@ -13,8 +13,10 @@ let
         // {
           ollama = ollamaStub;
           stdenv = pkgs.stdenv // {
-            isLinux = true;
-            isDarwin = false;
+            hostPlatform = pkgs.stdenv.hostPlatform // {
+              isLinux = true;
+              isDarwin = false;
+            };
           };
         }
       )

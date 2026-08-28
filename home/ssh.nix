@@ -29,7 +29,7 @@ in
   # `ssh-add --apple-load-keychain` adds every key whose passphrase is stored in
   # the Keychain without prompting, which restores the behaviour the agent is
   # generally assumed to have.
-  launchd.agents.ssh-load-keychain-keys = lib.mkIf pkgs.stdenv.isDarwin {
+  launchd.agents.ssh-load-keychain-keys = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
     enable = true;
     config = {
       ProgramArguments = [ "${loadKeychainKeys}" ];
@@ -43,7 +43,7 @@ in
   # Keep the Keychain populated going forward: a key unlocked once is stored and
   # added to the agent on later use, so the job above has something to load.
   # UseKeychain is macOS-only and makes ssh reject the config elsewhere.
-  programs.ssh = lib.mkIf pkgs.stdenv.isDarwin {
+  programs.ssh = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
     enable = true;
     enableDefaultConfig = false;
     settings."*" = {

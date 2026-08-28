@@ -32,6 +32,14 @@
       nerd-fonts.symbols-only
       # General-purpose JS runtime for agent tooling and one-off npx calls.
       nodejs_24
+      # Babel's archival engine (atyrode/babel SPEC.md 2.3): it encrypts and
+      # deduplicates this machine's agent session history. It belongs to this
+      # capability rather than base because the sessions Babel archives are
+      # exactly what agent-tools installs, so every machine that produces them
+      # can also preserve them. The version is pinned by flake.lock, and the
+      # retention policy is append-only: Babel never runs `restic forget` or
+      # `restic prune`.
+      restic
       tmux
     ])
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [

@@ -126,8 +126,10 @@ let
     pkgs
     // {
       stdenv = pkgs.stdenv // {
-        isLinux = true;
-        isDarwin = false;
+        hostPlatform = pkgs.stdenv.hostPlatform // {
+          isLinux = true;
+          isDarwin = false;
+        };
       };
     }
   ) { };
@@ -145,8 +147,10 @@ let
     pkgs
     // {
       stdenv = pkgs.stdenv // {
-        isLinux = false;
-        isDarwin = true;
+        hostPlatform = pkgs.stdenv.hostPlatform // {
+          isLinux = false;
+          isDarwin = true;
+        };
       };
     }
   ) { };

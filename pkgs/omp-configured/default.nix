@@ -1287,6 +1287,12 @@ let
       export CODE_OMP_RAW="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
       broker_state="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-auth-broker"
+      broker_config="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/omp-auth-broker/env"
+      if [[ -r "$broker_config" ]]; then
+        # Provisioned from Bitwarden by `atyrode auth broker setup`.
+        # shellcheck source=/dev/null
+        source "$broker_config"
+      fi
       if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_state/token" ]]; then
         OMP_AUTH_BROKER_TOKEN="$(<"$broker_state/token")"
       fi
@@ -1294,6 +1300,9 @@ let
         export OMP_AUTH_BROKER_TOKEN
         export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
         export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
+        if [[ -n "''${OMP_AUTH_BROKER_SSH_HOST:-}" ]]; then
+          export CODE_AUTH_LOGIN_VIA="''${CODE_AUTH_LOGIN_VIA:-$OMP_AUTH_BROKER_SSH_HOST}"
+        fi
       else
         unset OMP_AUTH_BROKER_URL OMP_AUTH_BROKER_TOKEN OMP_AUTH_BROKER_SNAPSHOT_CACHE
       fi

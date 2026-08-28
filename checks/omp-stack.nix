@@ -28,6 +28,7 @@ let
       printf 'OMP_AUTH_BROKER_URL=%s\n' "''${OMP_AUTH_BROKER_URL-unset}"
       printf 'OMP_AUTH_BROKER_TOKEN=%s\n' "''${OMP_AUTH_BROKER_TOKEN-unset}"
       printf 'OMP_AUTH_BROKER_SNAPSHOT_CACHE=%s\n' "''${OMP_AUTH_BROKER_SNAPSHOT_CACHE-unset}"
+      printf 'CODE_AUTH_LOGIN_VIA=%s\n' "''${CODE_AUTH_LOGIN_VIA-unset}"
       printf 'args=%s\n' "$*"
     } > "''${CODE_ENV_LOG:?}"
   '';
@@ -149,8 +150,32 @@ pkgs.runCommand "check-omp-stack"
       'OMP_AUTH_BROKER_URL=http://127.0.0.1:46171' \
       'OMP_AUTH_BROKER_TOKEN=broker-token' \
       "OMP_AUTH_BROKER_SNAPSHOT_CACHE=$TMPDIR/code-broker-cache/atyrode/omp-auth-broker/snapshot.json" \
+      'CODE_AUTH_LOGIN_VIA=unset' \
       'args=ls' > "$TMPDIR/expected-code-broker-env"
     cmp "$TMPDIR/expected-code-broker-env" "$TMPDIR/code-broker-env"
+
+    broker_config="$TMPDIR/code-broker-config/atyrode/omp-auth-broker"
+    mkdir -p "$broker_config"
+    cat > "$broker_config/env" <<'EOF'
+    OMP_AUTH_BROKER_MODE=client
+    OMP_AUTH_BROKER_URL=http://127.0.0.1:46171
+    OMP_AUTH_BROKER_TOKEN=shared-broker-token
+    OMP_AUTH_BROKER_SSH_HOST=alex@broker.example
+    EOF
+    chmod 600 "$broker_config/env"
+    CODE_ENV_LOG="$TMPDIR/code-shared-broker-env" \
+      XDG_CONFIG_HOME="$TMPDIR/code-broker-config" \
+      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
+      XDG_CACHE_HOME="$TMPDIR/code-broker-cache" \
+      ${configuredCodeStub}/bin/code ls
+    printf '%s\n' \
+      'OMP_AUTH_BROKER_URL=http://127.0.0.1:46171' \
+      'OMP_AUTH_BROKER_TOKEN=shared-broker-token' \
+      "OMP_AUTH_BROKER_SNAPSHOT_CACHE=$TMPDIR/code-broker-cache/atyrode/omp-auth-broker/snapshot.json" \
+      'CODE_AUTH_LOGIN_VIA=alex@broker.example' \
+      'args=ls' > "$TMPDIR/expected-code-shared-broker-env"
+    cmp "$TMPDIR/expected-code-shared-broker-env" "$TMPDIR/code-shared-broker-env"
+    rm -rf "$TMPDIR/code-broker-config"
 
     rm "$broker_state/token"
     CODE_ENV_LOG="$TMPDIR/code-no-broker-env" \
@@ -163,6 +188,7 @@ pkgs.runCommand "check-omp-stack"
       'OMP_AUTH_BROKER_URL=unset' \
       'OMP_AUTH_BROKER_TOKEN=unset' \
       'OMP_AUTH_BROKER_SNAPSHOT_CACHE=unset' \
+      'CODE_AUTH_LOGIN_VIA=unset' \
       'args=ls' > "$TMPDIR/expected-code-no-broker-env"
     cmp "$TMPDIR/expected-code-no-broker-env" "$TMPDIR/code-no-broker-env"
     ! grep -Fq 'CODE_AUTH_VAULTS=' ${pkgs.omp-configured}/bin/code

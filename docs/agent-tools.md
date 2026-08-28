@@ -125,15 +125,45 @@ of these managed layers and uses the operator's mutable approval policy. Use
 `ompu --cwd <project>` for deliberately untrusted repositories; its complete
 trust boundary and limits are documented in [Agent security](agent-security.md).
 
-Trusted authentication uses one OMP broker backed by the `default` profile. The
-Home Manager service binds only to `127.0.0.1:46171`, writes its bearer token to
-`$XDG_STATE_HOME/atyrode/omp-auth-broker/token` with mode `0600`, and keeps the
-client snapshot cache under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
-Account-selection presets are non-secret state in
-`$XDG_STATE_HOME/atyrode/code-auth-account-state.json`; authentication and
-credential removal remain explicit OMP operations. The `code` account manager
-reads only redacted broker data and never reads OAuth material or mutates OMP's
-credential database.
+Trusted authentication uses one canonical OMP broker backed by the `default`
+profile. The broker host's Home Manager service binds only to
+`127.0.0.1:46171`, writes its bearer token to
+`$XDG_STATE_HOME/atyrode/omp-auth-broker/token` with mode `0600`, and is the
+only process that stores or rotates OAuth refresh tokens. Bitwarden Secure Note
+`OMP auth broker` custodies only that broker's loopback URL, bearer token, and
+SSH target—not account credentials. Client machines materialize the note into
+`$XDG_CONFIG_HOME/atyrode/omp-auth-broker/env` (mode `0600`); the same Home
+Manager service then becomes a persistent SSH local-forward instead of starting
+another broker. `code` consumes the forwarded endpoint and keeps its encrypted
+snapshot cache under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
+
+Bootstrap the canonical host after applying the configuration, replacing the
+SSH target with the address every client can reach:
+
+```sh
+atyrode auth broker publish --via alex@broker-host
+```
+
+On each other machine, apply the configuration and pull the connection secret:
+
+```sh
+atyrode auth broker setup
+atyrode auth broker status
+```
+
+Add Anthropic/OpenAI OAuth accounts from `code` with `v`, then `a`, or directly
+with `omp auth-broker login <provider> --via=alex@broker-host`. Add API-key
+providers without exposing the key in argv:
+
+```sh
+atyrode auth broker add-api-key deepseek
+```
+
+Both paths mutate the canonical broker, so every connected machine sees the new
+account on its next automatic or manual (`r`) refresh; no credential file is
+copied between machines. Account-selection presets remain non-secret state in
+`$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. The `code` account
+manager reads only redacted broker data and never reads OAuth material.
 
 The `ompu` sandbox uses dedicated HOME, XDG, temporary, cache, worktree,
 authentication, and session paths below
@@ -146,7 +176,8 @@ sessions, MCP state, or caches.
 | State | Owner |
 | --- | --- |
 | `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state |
-| `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` | Home Manager broker service; secret bearer token, mode `0600` |
+| `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` | Canonical Home Manager broker service; secret bearer token, mode `0600` |
+| `$XDG_CONFIG_HOME/atyrode/omp-auth-broker/env` | Client bootstrap from Bitwarden; broker token and SSH target, mode `0600` |
 | `$XDG_CACHE_HOME/atyrode/omp-auth-broker/` | Broker client snapshot cache |
 | `$XDG_STATE_HOME/atyrode/code-auth-account-state.json` | `code`; non-secret account-selection presets |
 | `$XDG_STATE_HOME/code/sessions` | `code`; live session records |

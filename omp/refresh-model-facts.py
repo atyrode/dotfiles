@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-POOL_PROVIDER = {"O": "openai-codex", "A": "anthropic", "R": "openrouter"}
+POOL_PROVIDER = {"O": "openai-codex", "A": "anthropic", "D": "deepseek"}
 
 
 def omp_models():

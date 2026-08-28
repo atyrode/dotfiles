@@ -111,6 +111,7 @@ atyrode runtime shortcut local-qwen
 atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
 atyrode provision git
+atyrode auth broker status --json
 atyrode inventory --json
 atyrode inventory --host alex-x86_64-linux --json
 atyrode inventory --ref <branch-tag-or-commit> --json

@@ -64,6 +64,14 @@ in
       echo "nix-darwin: primary user $shell_user does not exist; refusing to create it" >&2
       exit 1
     fi
+    # nix-darwin does not unload launch agents when their declaring module is
+    # removed. Retire the window-management agents removed in #421.
+    user_uid="$(/usr/bin/id -u "$shell_user")"
+    for retired_agent in org.nixos.sketchybar org.nixos.yabai org.nixos.skhd; do
+      /bin/launchctl bootout "gui/$user_uid/$retired_agent" 2>/dev/null || true
+      /bin/rm -f "$shell_record/Library/LaunchAgents/$retired_agent.plist"
+    done
+
     current_shell="$(/usr/bin/dscl . -read "$shell_record" UserShell 2>/dev/null \
       | /usr/bin/awk '{ print $2 }')"
     if [ "$current_shell" != "$expected_shell" ]; then

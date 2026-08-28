@@ -20,6 +20,38 @@ pkgs.runCommand "check-atyrode-apply"
     ${fixtures.base}
     ${fixtures.gitNh}
     ${fixtures.identity}
+    cat > "$TMPDIR/bin/fake-systemd-run" <<'EOF'
+    #!${pkgs.runtimeShell}
+    mkdir -p "$TMPDIR/fake-systemd"
+    printf '%s\n' "$*" >> "$TMPDIR/fake-systemd/run-args"
+    unit=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --unit=*) unit="''${1#--unit=}"; shift ;;
+        --setenv=*) export "''${1#--setenv=}"; shift ;;
+        --) shift; break ;;
+        *) shift ;;
+      esac
+    done
+    [[ -n "$unit" && $# -gt 0 ]] || exit 64
+    ${pkgs.util-linux}/bin/setsid "$@" </dev/null >/dev/null 2>&1 &
+    printf '%s\n' "$!" > "$TMPDIR/fake-systemd/$unit.pid"
+    EOF
+    cat > "$TMPDIR/bin/fake-systemctl" <<'EOF'
+    #!${pkgs.runtimeShell}
+    case "$*" in
+      *show-environment*) exit 0 ;;
+      *is-active*)
+        unit=""
+        for arg in "$@"; do unit="$arg"; done
+        pid_file="$TMPDIR/fake-systemd/$unit.pid"
+        [[ -r "$pid_file" ]] || exit 3
+        kill -0 "$(cat "$pid_file")" 2>/dev/null
+        ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/fake-systemd-run" "$TMPDIR/bin/fake-systemctl"
     # Production packages ignore every test-only identity override. Otherwise
     # a project environment could spoof apply and doctor preflight identity.
     set +e
@@ -50,6 +82,16 @@ pkgs.runCommand "check-atyrode-apply"
         || { echo "production $prod_cmd must refuse a tool override (exit $prod_guard_status): $(cat "$TMPDIR/prod-guard.err")" >&2; exit 1; }
       grep -qF 'ATYRODE_NIX_STORE is set' "$TMPDIR/prod-guard.err" \
         || { echo "production $prod_cmd refusal must name the offending override" >&2; exit 1; }
+    done
+    for override in ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL; do
+      set +e
+      env -u ATYRODE_NH -u ATYRODE_NIX_ENV -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
+        "$override=/bin/true" ${productionAtyrode}/bin/atyrode apply --plan \
+        > /dev/null 2> "$TMPDIR/prod-apply-manager-guard.err"
+      prod_apply_manager_guard_status="$?"
+      set -e
+      test "$prod_apply_manager_guard_status" = 64
+      grep -qF "$override is set" "$TMPDIR/prod-apply-manager-guard.err"
     done
     for override in ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM; do
       set +e
@@ -178,6 +220,61 @@ pkgs.runCommand "check-atyrode-apply"
     grep -F -- 'home switch github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface --configuration alex-x86_64-linux' \
       "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
+
+    # The user manager, not the invoking terminal, owns a mutating apply. Kill
+    # the waiting CLI while nh is blocked and prove the private worker still
+    # publishes its result. The fixed transient-unit name also rejects overlap.
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    rm -f "$TMPDIR/nh-started"
+    export _ATYRODE_TEST_SYSTEMD_AVAILABLE=1
+    export ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run"
+    export ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl"
+    ATYRODE_NH_DELAY=1 atyrode apply --repo "$HOME/nix-dotfiles" \
+      >"$TMPDIR/detached-apply.out" 2>"$TMPDIR/detached-apply.err" &
+    apply_caller="$!"
+    for _ in $(seq 1 100); do
+      [[ ! -e "$TMPDIR/nh-started" ]] || break
+      sleep 0.05
+    done
+    test -e "$TMPDIR/nh-started"
+    if atyrode apply --repo "$HOME/nix-dotfiles" \
+      >"$TMPDIR/overlap.out" 2>"$TMPDIR/overlap.err"; then
+      echo 'overlapping apply unexpectedly succeeded' >&2
+      exit 1
+    fi
+    grep -F 'another apply job is active' "$TMPDIR/overlap.err" >/dev/null
+    kill "$apply_caller"
+    wait "$apply_caller" 2>/dev/null || true
+    job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    for _ in $(seq 1 100); do
+      [[ ! -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" ]] || break
+      sleep 0.05
+    done
+    test -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json"
+    jq -e '.phase == "succeeded" and .exitCode == 0' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" >/dev/null
+    apply_status="$(atyrode apply-status "$job_id" --json)"
+    jq -e '
+      .jobId == $job
+      and .unit == "atyrode-apply.service"
+      and .phase == "succeeded"
+      and .result.exitCode == 0
+      and (.output | contains("detached activation completed"))
+    ' --arg job "$job_id" <<<"$apply_status" >/dev/null
+    grep -F -- '--collect' "$TMPDIR/fake-systemd/run-args" >/dev/null
+    grep -F -- '--service-type=exec' "$TMPDIR/fake-systemd/run-args" >/dev/null
+    grep -F -- '/bin/atyrode __apply-job' "$TMPDIR/fake-systemd/run-args" >/dev/null
+    if grep -F -- '/bin/.atyrode-wrapped __apply-job' "$TMPDIR/fake-systemd/run-args" >/dev/null; then
+      echo 'manager worker bypassed the packaged PATH wrapper' >&2
+      exit 1
+    fi
+    test "$(wc -l < "$TMPDIR/fake-systemd/run-args")" = 1
+    if grep -F -- '--scope' "$TMPDIR/fake-systemd/run-args" >/dev/null; then
+      echo 'apply supervision used a caller-owned systemd scope' >&2
+      exit 1
+    fi
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
+    unset _ATYRODE_TEST_SYSTEMD_AVAILABLE ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL
 
     atyrode apply --ref 0123456789012345678901234567890123456789 --plan --json | jq -e '
       .source == "remote"

@@ -72,6 +72,11 @@
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
     printf '%s\n' "''${LC_ALL-}" > "$TMPDIR/nh-locale"
+    if [[ -n "''${ATYRODE_NH_DELAY:-}" ]]; then
+      : > "$TMPDIR/nh-started"
+      sleep "$ATYRODE_NH_DELAY"
+      printf 'detached activation completed\n'
+    fi
     if [[ "$*" == *"--configuration development-x86_64-linux"* ]]; then
       adapter="''${3#path:}"
       printf '%s\n' "$adapter" > "$TMPDIR/runtime-adapter-path"

@@ -18,9 +18,9 @@ in
     primaryUser = username;
     stateVersion = 7;
   };
-  # Keep the native menu bar available on hover without permanently consuming
-  # the top edge now that SketchyBar has been retired.
-  system.defaults.NSGlobalDomain._HIHideMenuBar = true;
+  # Keep the native macOS menu bar permanently visible now that SketchyBar
+  # no longer occupies the top edge.
+  system.defaults.NSGlobalDomain._HIHideMenuBar = false;
 
   environment.shells = [ pkgs.zsh ];
 

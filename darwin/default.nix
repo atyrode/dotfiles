@@ -18,6 +18,9 @@ in
     primaryUser = username;
     stateVersion = 7;
   };
+  # Keep the native menu bar available on hover without permanently consuming
+  # the top edge now that SketchyBar has been retired.
+  system.defaults.NSGlobalDomain._HIHideMenuBar = true;
 
   environment.shells = [ pkgs.zsh ];
 

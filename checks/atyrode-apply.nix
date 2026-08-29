@@ -522,6 +522,38 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -s "$TMPDIR/windows-unavailable.out"
     grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/windows-unavailable.err"
 
+    # The detached apply job must fail the same way as the synchronous path.
+    # apply_config's command substitutions are unguarded because it assumes
+    # errexit, and the worker's `set +e` was inherited by the subshell running
+    # it: windows_plan's failure then became an empty string that reached
+    # `jq --argjson` as a raw parse error, and the job still published success.
+    # Asserting the absence of the second winget diagnostic pins the abort to
+    # the first failure instead of some later one.
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    set +e
+    _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
+      ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
+      ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
+      ATYRODE_WINGET="$TMPDIR/bin/missing-winget.exe" \
+      atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" \
+      > "$TMPDIR/wsl-job.out" 2> "$TMPDIR/wsl-job.err"
+    wsl_job_status="$?"
+    set -e
+    test "$wsl_job_status" = 69
+    grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/wsl-job.out"
+    if grep -qF 'invalid JSON text passed to --argjson' \
+      "$TMPDIR/wsl-job.out" "$TMPDIR/wsl-job.err"; then
+      echo 'apply leaked a raw jq parse error instead of its own diagnostic' >&2
+      exit 1
+    fi
+    if grep -qF 'could not report its version' "$TMPDIR/wsl-job.out"; then
+      echo 'apply continued past an unavailable winget.exe' >&2
+      exit 1
+    fi
+    wsl_job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    jq -e '.phase == "failed" and .exitCode == 69' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$wsl_job_id/result.json" >/dev/null
+
     set +e
     WINGET_QUERY_ERROR=1 atyrode windows plan alex-x86_64-linux-wsl --json \
       > "$TMPDIR/windows-query-error.out" 2> "$TMPDIR/windows-query-error.err"

@@ -1,6 +1,12 @@
 #!@shell@
 # shellcheck shell=bash disable=SC1008,SC2239
 set -euo pipefail
+# Without inherit_errexit, bash unsets errexit inside every $(...) subshell.
+# This script is written for errexit - its command substitutions are unguarded
+# and `die` is expected to stop the program - so a `die` reached inside a
+# substitution would only end that subshell, handing the caller an empty string
+# and letting it carry on past the failure.
+shopt -s inherit_errexit
 
 readonly registry='@registry@'
 readonly atyrode_tui='@atyrode_tui@'
@@ -2152,8 +2158,15 @@ run_apply_job_worker() {
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   write_apply_job_json "$job_dir/running.json" \
     "$(jq -nc --arg startedAt "$started_at" '{schemaVersion:1,startedAt:$startedAt}')"
+  # apply_config is written for errexit: its command substitutions are
+  # unguarded, and the synchronous `atyrode apply` path runs it that way. The
+  # subshell inherits this `set +e`, so it must re-enable errexit for itself -
+  # otherwise a failed substitution yields an empty string and execution
+  # continues, turning an actionable diagnostic into a raw jq error further
+  # down (and reporting the job as succeeded). `|| status=$?` cannot replace
+  # this: bash propagates errexit suppression into the callee.
   set +e
-  (apply_config "$@") >>"$job_dir/output.log" 2>&1
+  (set -e; apply_config "$@") >>"$job_dir/output.log" 2>&1
   status="$?"
   set -e
   finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

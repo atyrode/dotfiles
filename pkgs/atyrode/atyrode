@@ -2247,6 +2247,11 @@ submit_apply_job() {
     if ! "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
       sleep 0.1
       if [[ ! -f "$job_dir/result.json" ]]; then
+        # The worker died without publishing, so its captured output is the
+        # only account of how far the apply got. It is already on disk and
+        # apply-status prints it; withholding it here sends the operator to
+        # the journal for evidence this command is holding.
+        [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
         printf 'atyrode: apply job %s stopped without publishing a result; inspect: journalctl --user -u %s\n' \
           "$job_id" "$unit" >&2
         return "$EX_SOFTWARE"

@@ -364,6 +364,37 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
+
+    # A worker that dies without publishing leaves its captured output as the
+    # only account of how far the apply got. The waiting CLI must hand that
+    # output to the operator instead of sending them to the journal for
+    # evidence it is already holding.
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    rm -f "$TMPDIR/nh-started"
+    set +e
+    ATYRODE_NH_DELAY=30 atyrode apply --repo "$HOME/nix-dotfiles" \
+      >"$TMPDIR/killed-apply.out" 2>"$TMPDIR/killed-apply.err" &
+    apply_caller="$!"
+    for _ in $(seq 1 200); do
+      [[ ! -e "$TMPDIR/nh-started" ]] || break
+      sleep 0.05
+    done
+    set -e
+    test -e "$TMPDIR/nh-started"
+    worker_pid="$(cat "$TMPDIR/fake-systemd/atyrode-apply.service.pid")"
+    kill -9 -"$worker_pid" 2>/dev/null || kill -9 "$worker_pid" 2>/dev/null || true
+    wait "$apply_caller" 2>/dev/null || true
+    killed_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    if [[ -e "$XDG_STATE_HOME/atyrode/apply-jobs/$killed_job/result.json" ]]; then
+      echo 'killed worker unexpectedly published a result' >&2
+      exit 1
+    fi
+    grep -qF 'stopped without publishing a result' "$TMPDIR/killed-apply.err"
+    if ! grep -qF 'mutation boundary:' "$TMPDIR/killed-apply.out"; then
+      echo 'CLI withheld the dead worker output it already had on disk' >&2
+      cat "$TMPDIR/killed-apply.out" >&2
+      exit 1
+    fi
     unset _ATYRODE_TEST_SYSTEMD_AVAILABLE ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL
 
     atyrode apply --ref 0123456789012345678901234567890123456789 --plan --json | jq -e '

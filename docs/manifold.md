@@ -82,21 +82,22 @@ delivery there is a pin bump in that repository plus `atyrode infra apply`
 
 ## tyrode-dev-01 cutover (#419)
 
-The VPS currently runs a detached OMP-managed stopgap agent pinned to v0.3.1;
-it is not host-supervised and holds the operator's own working sessions. The
-swap to the declared service kills those PTYs, so it must be run from plain
-SSH, never from a manifold terminal:
+Done on 2026-08-28. The VPS runs the declared user service against the pinned
+`manifold-agent` release, and the detached OMP-managed stopgap it replaced is
+gone: `atyrode runtime status manifold-agent --json` reports `enrolled: true`
+with `unit.present: true` and an active unit.
 
-1. From SSH: `atyrode runtime status manifold-agent --json` — confirm
-   `enrolled: true` (the existing 0600 token is adopted as-is; no re-mint).
-2. Deploy the generation that delivers the unit (`atyrode infra apply`), then
-   `systemctl --user start manifold-agent` and verify `welcome` in
-   `journalctl --user -u manifold-agent` (status reports
-   `lastLogEvent: "welcome"`, phase `connected`).
-3. Only then stop and delete the OMP stopgap definitions (`omp` process
-   `manifold-agent-devbox` and any recovery entries) so a respawned stopgap
-   can never fence the service-managed socket by presenting the same token.
-4. Confirm the hub lists the machine online and re-adopts surviving PTYs.
+Two constraints from that swap are structural, not specific to this host, so
+they carry to the next one:
+
+- Run it from plain SSH, never from a manifold terminal. Starting the declared
+  service kills the stopgap's PTYs, including the session issuing the command.
+- Delete the stopgap definitions only after the service reports `welcome`. A
+  respawned stopgap presenting the same token can otherwise fence the
+  service-managed socket.
+
+Enrollment survives the swap untouched: the existing 0600 machine token is
+adopted as-is, never re-minted.
 
 ## Master migration
 

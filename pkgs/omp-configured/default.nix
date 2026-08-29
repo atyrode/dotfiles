@@ -1282,9 +1282,6 @@ let
       omp_bin=${lib.escapeShellArg (lib.getExe omp)}
       export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
       export CODE_OMP=${lib.getExe ompManagedDefault}
-      # CODE_OMP_RAW and the CODE_USAGE below are legacy: current `code` reads
-      # neither (usage is broker-sourced), but older pins still rely on them.
-      export CODE_OMP_RAW="$omp_bin"
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
       broker_state="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-auth-broker"
       broker_config="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/omp-auth-broker/env"
@@ -1374,9 +1371,15 @@ runCommand "omp-configured-${lib.getVersion omp}"
 
     passthru = {
       rawOmp = omp;
+      # managedDefaultPaths/enforcedPolicyPaths are exposed so
+      # checks/omp-managed-keys.nix can prove they still mirror the YAML they
+      # gate. Drift there makes `omp config set` silently accept a key Nix
+      # overrides.
       inherit
         goplsCommand
         defaultsConfig
+        enforcedPolicyPaths
+        managedDefaultPaths
         neutralRoot
         platformRoot
         policyConfig

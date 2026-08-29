@@ -211,6 +211,7 @@ let
       date -u +%FT%TZ >"$stamp_tmp"
       mv -f "$stamp_tmp" "$state_dir/last-success"
     '';
+    meta.description = "Hourly Babel archive push of this machine's agent session history";
   };
 
 in

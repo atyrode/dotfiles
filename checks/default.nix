@@ -37,6 +37,7 @@ let
     ;
 
   isLinux = lib.hasSuffix "-linux" system;
+  hostBudgets = (lib.importJSON ../inventory/host-budgets.json).budgets;
   serverHomeConfig = if isLinux then serverHomeConfigs.${system} else null;
   alternateServerHomeConfig =
     if isLinux then
@@ -225,6 +226,8 @@ let
     };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {
+    # Two unrelated reasons land checks on this one leg.
+    #
     # Platform-independent lints: their output is a pure function of the
     # source tree, so emitting them on every system just re-runs the same
     # work three times in CI. Keep them on one leg only (#169).
@@ -236,6 +239,15 @@ let
     classify-ci-paths = import ./classify-ci-paths.nix { inherit pkgs; };
     production-facts = import ./production-facts.nix { inherit pkgs; };
     treefmt = treefmtCheck;
+    omp-managed-keys = import ./omp-managed-keys.nix {
+      inherit lib pkgs;
+      ompConfigured = pkgs.omp-configured;
+    };
+
+    # windows is neither a lint nor source-pure: it stubs wsl.exe and
+    # winget.exe and drives pwsh, which makes it the heaviest check in the
+    # registry. It sits on this leg because its subject host,
+    # alex-x86_64-linux-wsl, only exists on x86_64-linux.
     windows = import ./windows.nix {
       inherit lib pkgs;
       nixosConfig = canonicalNixosWslConfigs.alex-x86_64-linux-wsl;
@@ -276,6 +288,11 @@ let
       serverProfileManifest = serverProfileManifests.${system};
     };
     server-profile = serverProfileManifests.${system};
+    host-closure = import ./host-closure.nix {
+      inherit lib pkgs system;
+      budgets = hostBudgets;
+      hostConfigs = systemHomeConfigs;
+    };
   }
   // lib.optionalAttrs (lib.hasSuffix "-darwin" system) (
     {

@@ -53,24 +53,21 @@ pkgs.runCommand "check-atyrode-lifecycle"
     ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
       ${pkgs.runtimeShell} ${./test-data/local-qwen-lifecycle.sh} ${atyrode}/libexec/atyrode-runtime
     ''}
-    # store-lifecycle guards (#21): cleanup keeps a rollback window, rollback
-    # refuses the current generation, and the trio is wired (not reserved) — so
-    # the current generation and the configured rollback set can't be destroyed.
-    grep -F 'keep=5 keep_since=30d' ${../pkgs/atyrode/atyrode} >/dev/null
-    grep -F 'is already current' ${../pkgs/atyrode/atyrode} >/dev/null
-    for wired in 'clean) cmd_clean' 'rollback) cmd_rollback' 'generations) cmd_generations'; do
-      grep -F "$wired" ${../pkgs/atyrode/atyrode} >/dev/null || { echo "atyrode: $wired not wired" >&2; exit 1; }
-    done
-    # cleanup must never be an implicit side effect of apply
+    # store-lifecycle guards (#21): cleanup must never be an implicit side effect
+    # of apply. A structural scan on purpose — it proves the property for EVERY
+    # path through apply_config, which no single apply invocation can. The
+    # retention window, the rollback refusal, and the clean/rollback/generations
+    # dispatch are asserted behaviourally below (on nh's actual argv and on the
+    # CLI's own output) rather than on the wording of the source.
     if awk '/^apply_config\(\) \{/{f=1} f&&/cmd_clean|cmd_rollback/{print; hit=1} /^\}/{if(f)f=0} END{exit hit?0:1}' \
       ${../pkgs/atyrode/atyrode}; then
       echo 'apply invokes cleanup/rollback implicitly' >&2
       exit 1
     fi
-    grep -F '"$test_hooks" == 1 && -n "''${ATYRODE_GIT:-}"' \
-      ${../pkgs/atyrode/atyrode} >/dev/null
-    grep -F '"$test_hooks" == 1 && -n "''${ATYRODE_NH:-}"' \
-      ${../pkgs/atyrode/atyrode} >/dev/null
+    # ATYRODE_GIT / ATYRODE_NH are honoured only under test hooks. That seam is
+    # asserted behaviourally in checks/atyrode-apply.nix: a stub reachable only
+    # through the env var IS used by this test-hooks build, and a production
+    # build refuses the command instead of driving the real git/nh.
 
     # clean splits the GC out of nh (--no-gc) and runs it itself so the slow
     # phase can show progress; a stub stands in for the real collector.
@@ -90,6 +87,39 @@ pkgs.runCommand "check-atyrode-lifecycle"
     test ! -e "$TMPDIR/gc-args" \
       || { echo 'dry-run clean must not collect garbage' >&2; exit 1; }
     unset ATYRODE_NIX_STORE
+
+    # A bare clean keeps a rollback window: 5 generations plus everything newer
+    # than 30d (#21), so the current generation and the configured rollback set
+    # can never be destroyed. Pinned on the retention nh is actually asked for.
+    rm -f "$TMPDIR/nh-args"
+    default_retention="$(atyrode clean --yes 2>&1 >/dev/null)"
+    grep -qxF 'clean user --keep 5 --keep-since 30d --no-gc' "$TMPDIR/nh-args" \
+      || { echo "bare clean must ask nh for the default retention window: $(cat "$TMPDIR/nh-args")" >&2; exit 1; }
+    grep -qF 'keeping 5 generation(s) + everything newer than 30d' <<<"$default_retention" \
+      || { echo "bare clean must state the default retention window: $default_retention" >&2; exit 1; }
+
+    # rollback refuses the generation that is already current (#3 in the stub
+    # listing), so the running configuration can't be rolled onto itself.
+    set +e
+    rollback_current="$(atyrode rollback --to 3 --yes 2>&1 >/dev/null)"
+    rollback_current_status="$?"
+    set -e
+    test "$rollback_current_status" = 64 \
+      || { echo "rollback onto the current generation must be refused (exit $rollback_current_status): $rollback_current" >&2; exit 1; }
+    grep -qF 'generation 3 is already current' <<<"$rollback_current" \
+      || { echo "rollback refusal must name the current generation: $rollback_current" >&2; exit 1; }
+
+    # clean/rollback/generations are dispatched to their implementations, not
+    # reserved: each reaches real behaviour instead of dying "reserved for a
+    # follow-up issue" (clean is exercised throughout this check).
+    atyrode generations --json | jq -e \
+      'length == 3 and ([.[] | select(.current)] | map(.generation) == [3])' >/dev/null \
+      || { echo 'generations must report the stub profile listing' >&2; exit 1; }
+    rollback_previous="$(atyrode rollback --dry-run --yes 2>&1 >/dev/null)"
+    grep -qF 'back from generation 3 to 2' <<<"$rollback_previous" \
+      || { echo "rollback must default to the previous generation: $rollback_previous" >&2; exit 1; }
+    grep -qF 'dry run — nothing activated' <<<"$rollback_previous" \
+      || { echo "rollback --dry-run must not activate anything: $rollback_previous" >&2; exit 1; }
 
     # clean --json emits a machine-readable reclaim summary on stdout; nh's own
     # chatter must go to stderr. With 3 generations (current #3) and --keep 2, the

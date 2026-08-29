@@ -3,6 +3,8 @@
 let
   manifest = pkgs.writeText "atyrode-inventory.json" (builtins.toJSON inventory);
 in
+# Deliberately does not re-assert deliverable-name uniqueness: checks/system-boundary.nix
+# owns that invariant and fails earlier, at evaluation time rather than at build time.
 builtins.deepSeq inventory (
   pkgs.runCommand "check-evaluated-inventory-${inventory.identity.system}"
     { nativeBuildInputs = [ pkgs.jq ]; }
@@ -39,7 +41,6 @@ builtins.deepSeq inventory (
           and (.platform == $platform)
           and (.capabilities | type == "array" and length > 0)
           and (.deliverables | type == "array"))
-        and ([.capabilities[].deliverables[].name] | length == (unique | length))
         and (if $platform == "darwin"
           then ([.capabilities.desktop.deliverables[] | select(.kind == "application")] | length > 0)
           else ([.capabilities[].deliverables[] | select(.kind == "application")] | length == 0)

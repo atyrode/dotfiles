@@ -317,6 +317,10 @@ instead of leaving a stale list.
 | [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
 | [`bump-omp`](../.agents/skills/bump-omp/SKILL.md) | this repository | repository-authored |
 
+`ts-react-dead-code-sweep` has no surface in this repository — it is a
+cross-project skill, deployed to the global `~/.agents/skills` so it is
+available whenever these machines work on a TypeScript project.
+
 ### Vendoring a third-party skill
 
 Public skill text becomes trusted agent instructions when it lands in

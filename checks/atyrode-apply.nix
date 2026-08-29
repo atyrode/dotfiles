@@ -54,9 +54,20 @@ pkgs.runCommand "check-atyrode-apply"
       *is-active*)
         unit=""
         for arg in "$@"; do unit="$arg"; done
+        # systemctl separates answers from failures to answer: 0 active,
+        # 3 inactive, 4 no such unit, and 1 when the query itself failed.
+        # A bus that cannot answer is not evidence the unit is gone.
+        bus="$TMPDIR/fake-systemd/bus-unanswerable"
+        if [[ -s "$bus" ]]; then
+          remaining="$(cat "$bus")"
+          if [[ "$remaining" -gt 0 ]]; then
+            printf '%s\n' "$((remaining - 1))" > "$bus"
+            exit 1
+          fi
+        fi
         pid_file="$TMPDIR/fake-systemd/$unit.pid"
-        [[ -r "$pid_file" ]] || exit 3
-        kill -0 "$(cat "$pid_file")" 2>/dev/null
+        [[ -r "$pid_file" ]] || exit 4
+        kill -0 "$(cat "$pid_file")" 2>/dev/null || exit 3
         ;;
       *) exit 64 ;;
     esac
@@ -395,6 +406,36 @@ pkgs.runCommand "check-atyrode-apply"
       cat "$TMPDIR/killed-apply.out" >&2
       exit 1
     fi
+
+    # Activation restarts session infrastructure, so mid-apply the user bus
+    # stops answering for a moment and a live worker reports the same status
+    # as a dead one. The CLI must keep waiting for a job that is still running
+    # rather than declare a successful apply lost.
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    rm -f "$TMPDIR/nh-started"
+    mkdir -p "$TMPDIR/fake-systemd"
+    printf '20\n' > "$TMPDIR/fake-systemd/bus-unanswerable"
+    set +e
+    ATYRODE_NH_DELAY=3 atyrode apply --repo "$HOME/nix-dotfiles" \
+      >"$TMPDIR/bus-apply.out" 2>"$TMPDIR/bus-apply.err"
+    bus_apply_status="$?"
+    set -e
+    if [[ "$bus_apply_status" != 0 ]]; then
+      echo "CLI abandoned a live apply job when the user bus could not answer (exit $bus_apply_status)" >&2
+      cat "$TMPDIR/bus-apply.err" >&2
+      exit 1
+    fi
+    # The poll rate is not a contract, so require only that the CLI actually
+    # met an unanswerable bus and carried on: one refusal is what the old
+    # code abandoned the job on.
+    if [[ "$(cat "$TMPDIR/fake-systemd/bus-unanswerable")" -ge 20 ]]; then
+      echo 'the unanswerable-bus window never opened; the scenario proves nothing' >&2
+      exit 1
+    fi
+    bus_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    jq -e '.phase == "succeeded" and .exitCode == 0' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$bus_job/result.json" >/dev/null
+    grep -qF 'detached activation completed' "$TMPDIR/bus-apply.out"
     unset _ATYRODE_TEST_SYSTEMD_AVAILABLE ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL
 
     atyrode apply --ref 0123456789012345678901234567890123456789 --plan --json | jq -e '

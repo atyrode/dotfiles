@@ -2181,7 +2181,7 @@ run_apply_job_worker() {
 }
 
 submit_apply_job() {
-  local root job_id job_dir unit created_at metadata latest_temp self public_self systemd_run systemctl env_name
+  local root job_id job_dir unit created_at metadata latest_temp self public_self systemd_run systemctl env_name probe_status unreachable
   local -a run_args
   root="$(apply_jobs_root)"
   mkdir -p "$root"
@@ -2243,20 +2243,43 @@ submit_apply_job() {
   printf 'atyrode: apply job %s submitted; reconnect with: atyrode apply-status %s\n' \
     "$job_id" "$job_id" >&2
 
+  # systemctl separates answers from failures to answer: 0 active, 3 inactive,
+  # 4 no such unit, and 1 when the query itself failed. A live worker reports 1
+  # exactly like a dead one whenever the user bus cannot answer - which is what
+  # activation does to it - so reading any non-zero status as death abandons a
+  # running apply and reports the machine's state as unknown when it is fine.
+  unreachable=0
   while [[ ! -f "$job_dir/result.json" ]]; do
-    if ! "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
-      sleep 0.1
-      if [[ ! -f "$job_dir/result.json" ]]; then
-        # The worker died without publishing, so its captured output is the
-        # only account of how far the apply got. It is already on disk and
-        # apply-status prints it; withholding it here sends the operator to
-        # the journal for evidence this command is holding.
-        [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
-        printf 'atyrode: apply job %s stopped without publishing a result; inspect: journalctl --user -u %s\n' \
-          "$job_id" "$unit" >&2
-        return "$EX_SOFTWARE"
-      fi
+    if "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+      probe_status=0
+    else
+      probe_status=$?
     fi
+    case "$probe_status" in
+      0) unreachable=0 ;;
+      3 | 4)
+        unreachable=0
+        sleep 0.1
+        if [[ ! -f "$job_dir/result.json" ]]; then
+          # The worker died without publishing, so its captured output is the
+          # only account of how far the apply got. It is already on disk and
+          # apply-status prints it; withholding it here sends the operator to
+          # the journal for evidence this command is holding.
+          [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
+          printf 'atyrode: apply job %s stopped without publishing a result; inspect: journalctl --user -u %s\n' \
+            "$job_id" "$unit" >&2
+          return "$EX_SOFTWARE"
+        fi
+        ;;
+      *)
+        unreachable=$((unreachable + 1))
+        if [[ "$unreachable" -ge 300 ]]; then
+          printf 'atyrode: lost contact with the user manager while apply job %s ran; it may still be running - reconnect with: atyrode apply-status %s\n' \
+            "$job_id" "$job_id" >&2
+          return "$EX_UNAVAILABLE"
+        fi
+        ;;
+    esac
     sleep 0.1
   done
   cat "$job_dir/output.log"

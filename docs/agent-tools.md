@@ -231,15 +231,26 @@ Babel keeps a shared PostgreSQL catalog alongside the repository, so
 `babel sessions list` can answer which machine held which session, and when,
 without downloading snapshots.
 
-Provisioning is a one-time ceremony, run by hand on a terminal from a checkout.
-It names the machine's stable archive identity explicitly, because that
-identity — not the reported hostname — is what the snapshots are filed under:
+Provisioning happens through `atyrode apply`. A machine that installs Babel's
+hourly timer but has no archive configuration is archiving nothing while
+reporting no failure, so apply offers the ceremony after a successful
+activation and configures the machine once you accept. It supplies the archive
+identity from the host registry, because that identity — not the reported
+hostname — is what snapshots are filed under, and the registry is already where
+this fleet names its machines. Declining is honoured; the activation succeeds
+either way.
+
+The one step that cannot be automated is the Bitwarden password: the restic
+repository password lives in the vault, and only the operator can open it. That
+is the whole of the manual surface — one password prompt per machine, ever.
+
+The ceremony is also a command, for recovery and for inspecting what it would
+do. It takes no arguments on a machine that has been configured before, and
+resolves the Clever Cloud add-ons by name at run time, so no add-on identifier
+is recorded in this repository or carried by an operator:
 
 ```sh
-~/nix-dotfiles/scripts/babel-storage-configure.sh \
-  --host-id alex-x86_64-linux --instance-id 1 --dry-run
-~/nix-dotfiles/scripts/babel-storage-configure.sh \
-  --host-id alex-x86_64-linux --instance-id 1
+atyrode provision babel --dry-run
 ```
 
 `--dry-run` reports the repository locator, catalog host, password file, and

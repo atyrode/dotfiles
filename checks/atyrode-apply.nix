@@ -153,14 +153,39 @@ pkgs.runCommand "check-atyrode-apply"
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
     # A successful apply with neither Babel's storage document nor a success
-    # stamp names the provisioning ceremony, without failing the activation and
-    # without prompting (the ceremony needs an unlocked vault).
-    grep -qF 'babel archive not configured; configure with: ~/nix-dotfiles/scripts/babel-storage-configure.sh' \
+    # stamp names the provisioning ceremony without failing the activation.
+    # This harness has no terminal, so the non-interactive path must name the
+    # ceremony rather than offer it -- and it must carry the identity from the
+    # host registry, because a ceremony that has to be told who this machine is
+    # puts the operator back in the business of remembering.
+    grep -qF 'babel archive not configured, so this machine archives nothing; configure with: atyrode provision babel' \
       "$TMPDIR/apply-success.err"
+    # No prompt without a terminal, and nothing an operator cannot retype: not a
+    # checkout path, and not the store path the ceremony actually lives at.
+    ! grep -qiF 'bitwarden password' "$TMPDIR/apply-success.err"
+    ! grep -qF 'nix-dotfiles/scripts' "$TMPDIR/apply-success.err"
+    ! grep -qF '/nix/store' "$TMPDIR/apply-success.err"
     ! grep -qiF 'set up session backup' "$TMPDIR/apply-success.err"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
+
+    # With a terminal, the same state offers the ceremony instead of narrating
+    # it. This is the path a real machine takes, so it must ask before doing
+    # anything, name the identity it would configure, and honour a refusal by
+    # leaving a way back in -- while the activation itself still succeeds.
+    decline_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$decline_out" >&2; exit 1; }
+    printf '%s\n' "$decline_out" | grep -qF 'the hourly timer is installed but archives nothing'
+    printf '%s\n' "$decline_out" | grep -qF 'configure the babel archive for alex-x86_64-linux now?'
+    printf '%s\n' "$decline_out" | grep -qF 'skipped; configure later with: atyrode provision babel'
+    # Declining must not have configured anything.
+    test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
+
+    # provision names both targets, so a mistyped one cannot be mistaken for a
+    # missing feature.
+    ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
+    grep -qF 'provision expects git or babel' "$TMPDIR/provision-usage.err"
 
     # Babel's storage document present but no success stamp: the archive has
     # never run here, so point at Babel's own status and push commands.

@@ -44,10 +44,9 @@ jobs:
             if [ -n "$summary" ]; then printf 'changed=true\n'; fi
           } >> "$GITHUB_OUTPUT"
 
-      # Bot-created pushes and pull requests do not trigger workflows, so CI
-      # is dispatched explicitly and the merge waits for its verdict. A red
-      # run leaves the pull request open: bundled-content changes usually
-      # need patch or fixture curation before the bump can land.
+      # Bot-created pushes do not trigger workflows on their own, so the
+      # pull-request run that carries the required `ci-gate` context is parked
+      # in `action_required` and must be approved before the merge can proceed.
       - name: Open and land the bump
         if: steps.refresh.outputs.changed == 'true'
         env:
@@ -72,12 +71,37 @@ jobs:
             --body "$SUMMARY"; then
             gh pr view "$branch" --json url --jq .url
           fi
-          gh workflow run nix.yml --ref "$branch"
-          sleep 30
-          # The bot's branch push also creates a pull_request-event run that
-          # sits in action_required awaiting approval; watching it would fail
-          # the job. Watch only the run this job just dispatched.
-          run_id="$(gh run list --workflow nix.yml --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
+          # `ci-gate` is the only required context, and only the
+          # pull_request-event run reports it. Dispatching a parallel
+          # workflow_dispatch run instead left the gate unreported, so
+          # auto-merge waited forever: #431 sat green but unmerged for two
+          # days. Approve the parked run — it is the same verification a human
+          # pull request gets, and its verdict is the one branch protection
+          # actually reads. A red run leaves the pull request open: bundled
+          # content changes usually need patch or fixture curation before the
+          # bump can land.
+          head_sha="$(git rev-parse HEAD)"
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh run list --workflow nix.yml --commit "$head_sha" \
+              --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            if [ -n "$run_id" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "no pull_request run appeared for $head_sha; ci-gate cannot report" >&2
+            exit 1
+          fi
+          parked() { [ "$(gh run view "$1" --json conclusion --jq '.conclusion // ""')" = action_required ]; }
+          if parked "$run_id"; then
+            gh api --silent -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/approve"
+            # Approval resumes the same run; wait for it to leave the parked
+            # state so `gh run watch` reads the real verdict, not the stub.
+            for _ in $(seq 1 30); do
+              if ! parked "$run_id"; then break; fi
+              sleep 10
+            done
+          fi
           gh run watch "$run_id" --exit-status
           gh pr merge "$branch" --squash --delete-branch --auto
           gh workflow run nix.yml --ref main

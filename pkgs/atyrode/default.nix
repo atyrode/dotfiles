@@ -6,6 +6,7 @@
   bitwarden-cli,
   capabilities,
   claude-code,
+  clever-tools,
   codex,
   coreutils,
   curl,
@@ -29,14 +30,34 @@
   openssh,
   openssl,
   omp-configured,
+  python3,
   runtimeShell,
   stdenvNoCC,
   tmux,
   windowsPackages,
+  writeShellApplication,
   zsh,
 }:
 
 let
+  # The provisioning ceremony, wrapped so `atyrode apply` can offer it with no
+  # checkout on disk and pinned to the same revision as the CLI offering it.
+  # babel is deliberately absent from runtimeInputs: a machine with no babel is
+  # not an archiving machine, apply stays silent there, and the CLI would
+  # otherwise carry babel's closure to every host in the fleet.
+  babelStorageConfigure = writeShellApplication {
+    name = "babel-storage-configure";
+    runtimeInputs = [
+      bitwarden-cli
+      clever-tools
+      coreutils
+      python3
+    ];
+    text = ''
+      exec ${runtimeShell} ${../../scripts/babel-storage-configure.sh} "$@"
+    '';
+  };
+
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
   gitAllowedSigners = ../../home/git-allowed-signers;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
@@ -196,6 +217,7 @@ stdenvNoCC.mkDerivation {
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
+      --replace-fail '@babel_storage_configure@' '${lib.getExe babelStorageConfigure}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \

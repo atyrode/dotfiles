@@ -28,11 +28,14 @@ pkgs.runCommand "check-babel-archive" { } ''
   # rclone is gone with the legacy archive; restic is the recovery tool.
   ! grep -Fq 'rclone' "$push"
 
-  # An unconfigured machine is a no-op, not an hourly failure, and it points
-  # at the provisioning ceremony rather than a command that no longer exists.
+  # An unconfigured machine is a no-op, not an hourly failure, and it names the
+  # one command that sets a machine up. It must not name the ceremony script by
+  # path: the operator is not expected to run it, and a checkout may not exist
+  # on the machine reading this message.
   grep -Fq 'babel/storage.json' "$push"
   grep -Fq 'exit 0' "$push"
-  grep -Fq 'babel-storage-configure.sh' "$push"
+  grep -Fq 'atyrode apply' "$push"
+  ! grep -Fq 'babel-storage-configure' "$push"
   ! grep -Fq 'atyrode backup' "$push"
 
   # A repository is never created by the timer: `babel archive init` is a

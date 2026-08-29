@@ -5,6 +5,7 @@ set -euo pipefail
 readonly registry='@registry@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
+readonly babel_storage_configure='@babel_storage_configure@'
 readonly atyrode_runtime='@atyrode_runtime@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
@@ -59,6 +60,7 @@ Usage:
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
   atyrode provision git [--persist] [--yes]
+  atyrode provision babel [--dry-run]
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -2448,7 +2450,7 @@ apply_config() {
       [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
     fi
     review_seed_drift "$json"
-    review_archive_health
+    review_archive_health "$host"
     review_git_identity_health
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
@@ -2503,13 +2505,13 @@ review_git_identity_health() {
 }
 
 # After a successful activation, surface Babel session-archive health from the
-# stamp Babel's push wrapper writes. Unconfigured → name the provisioning
-# ceremony; configured but never successful, or stale → name Babel's own
-# status command. Always non-fatal, never a prompt (the ceremony needs an
-# unlocked vault and activation must not block on one), and never a network
-# call during apply.
+# stamp Babel's push wrapper writes. Unconfigured is the one state worth acting
+# on rather than narrating: activation has just installed an hourly timer, and a
+# timer with no configuration archives nothing while reporting no failure. So
+# offer the ceremony when a human is present, and name it when one is not.
+# Always non-fatal, and never a network call during apply.
 review_archive_health() {
-  local config_file stamp_file last="" last_epoch now
+  local registry_host="${1:-}" config_file stamp_file last="" last_epoch now
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
   stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
   [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true
@@ -2517,7 +2519,7 @@ review_archive_health() {
     if [[ -f "$config_file" ]]; then
       printf 'babel archive has never succeeded here; check with: babel archive status (then: babel archive push)\n' >&2
     else
-      printf 'babel archive not configured; configure with: ~/nix-dotfiles/scripts/babel-storage-configure.sh\n' >&2
+      archive_offer_ceremony "$registry_host"
     fi
     return 0
   fi
@@ -2526,6 +2528,34 @@ review_archive_health() {
   if (( now - last_epoch > 48 * 3600 )); then
     printf 'babel archive stale (last success: %s); check with: babel archive status\n' "$last" >&2
   fi
+  return 0
+}
+
+# The ceremony is offered, never forced: it needs the operator's vault password,
+# so it can only run with a human at the terminal. The identity it configures is
+# the host-registry name, because that is what the fleet already calls this
+# machine and what the shared catalog will show it as. Every path here returns 0
+# -- a machine that declines to configure its archive is still a machine that
+# activated successfully.
+archive_offer_ceremony() {
+  # Every message names the command, never the store path behind it: the
+  # operator's way back in has to be something they can retype.
+  local registry_host="${1:-}" hint='atyrode provision babel'
+  if [[ ! -x "$babel_storage_configure" || -z "$registry_host" ]] || ! interactive; then
+    printf 'babel archive not configured, so this machine archives nothing; configure with: %s\n' "$hint" >&2
+    return 0
+  fi
+  printf 'babel archive not configured: the hourly timer is installed but archives nothing.\n' >&2
+  printf 'Setting it up needs your Bitwarden password once.\n' >&2
+  if [[ "${assume_yes:-0}" != 1 ]] && ! confirm "configure the babel archive for $registry_host now?"; then
+    printf 'skipped; configure later with: %s\n' "$hint" >&2
+    return 0
+  fi
+  if ! "$babel_storage_configure" --host-id "$registry_host"; then
+    printf 'the ceremony did not complete; this machine still archives nothing (retry: %s)\n' "$hint" >&2
+    return 0
+  fi
+  printf 'configured; the hourly timer publishes from here on, or push now with: babel archive push\n' >&2
   return 0
 }
 
@@ -4177,9 +4207,36 @@ provision_git_role() { # role private_path item_name persist yes scratch
   fi
 }
 
+# provision babel configures this machine's session archive. It is the same
+# ceremony `atyrode apply` offers, reachable by name for recovery and for
+# inspection with --dry-run; arguments are forwarded, so the override flags stay
+# usable. The identity is the registry name -- never the kernel hostname, which
+# is the thing a stable archive identity exists to stop mattering -- and it is
+# supplied only for a machine that has never been configured, because the
+# ceremony reuses a configured machine's own identity and refuses to change it.
+provision_babel() {
+  [[ -x "$babel_storage_configure" ]] ||
+    die "$EX_UNAVAILABLE" "the babel provisioning ceremony is unavailable in this build"
+  local config_file host
+  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+  if [[ -f "$config_file" ]]; then
+    exec "$babel_storage_configure" "$@"
+  fi
+  host="$(resolve_host "")"
+  exec "$babel_storage_configure" --host-id "$host" "$@"
+}
+
 cmd_provision() {
   local target="${1:-}" persist=0 yes=0
-  [[ "$target" == git ]] || die "$EX_USAGE" "provision expects git"
+  case "$target" in
+    git) ;;
+    babel)
+      shift
+      provision_babel "$@"
+      return
+      ;;
+    *) die "$EX_USAGE" "provision expects git or babel" ;;
+  esac
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in

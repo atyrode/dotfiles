@@ -34,14 +34,25 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: babel-storage-configure.sh --host-id ID --instance-id ID [flags]
+Usage: babel-storage-configure.sh [flags]
+
+Every value is defaulted or discovered, so the intended invocation carries no
+arguments at all: `atyrode apply` offers this ceremony after activation and
+supplies this machine's identity from the host registry. The flags below exist
+for overrides and recovery, not for routine use.
 
 Flags:
-  --host-id ID          this machine's stable archive identity (required)
-  --instance-id ID      this instance's identity within the deployment (required)
+  --host-id ID          this machine's archive identity (default: the identity
+                        already configured here; required once, on a machine
+                        that has never been configured)
+  --instance-id ID      this instance within the deployment (default: --host-id)
+  --force-host-id       allow changing an already-configured archive identity
   --deployment-id ID    deployment name (default: babel-prod)
-  --catalog-addon ID    Clever Cloud PostgreSQL add-on id (else $BABEL_CATALOG_ADDON)
-  --cellar-addon ID     Clever Cloud Cellar add-on id (else $BABEL_CELLAR_ADDON)
+  --catalog-addon REF   Clever Cloud PostgreSQL add-on, by name or addon_ id
+                        (default: babel-catalog-prod)
+  --cellar-addon REF    Clever Cloud Cellar add-on, by name or addon_ id
+                        (default: session-archive)
+  --clever-org NAME     organisation owning those add-ons (default: Tyrode)
   --bucket NAME         Cellar bucket holding the repository (default: tyrode-babel-archive)
   --prefix PATH         repository prefix inside the bucket (default: babel/v1)
   --vault-item NAME     Bitwarden item holding the repository password
@@ -57,9 +68,15 @@ USAGE
 
 host_id=""
 instance_id=""
+force_host_id=0
 deployment_id="babel-prod"
-catalog_addon="${BABEL_CATALOG_ADDON:-}"
-cellar_addon="${BABEL_CELLAR_ADDON:-}"
+# Add-ons are referenced by name, not by id. An add-on recreated in the console
+# keeps its name and gets a new id, so the name is the stable reference and the
+# id is resolved at run time -- which also means no opaque identifier has to be
+# recorded in this repository or carried by an operator.
+catalog_addon="${BABEL_CATALOG_ADDON:-babel-catalog-prod}"
+cellar_addon="${BABEL_CELLAR_ADDON:-session-archive}"
+clever_org="${BABEL_CLEVER_ORG:-Tyrode}"
 bucket="tyrode-babel-archive"
 prefix="babel/v1"
 vault_item="Babel repository password"
@@ -74,6 +91,14 @@ while [ $# -gt 0 ]; do
       ;;
     --instance-id)
       instance_id="${2:?}"
+      shift 2
+      ;;
+    --force-host-id)
+      force_host_id=1
+      shift
+      ;;
+    --clever-org)
+      clever_org="${2:?}"
       shift 2
       ;;
     --deployment-id)
@@ -125,13 +150,32 @@ die() {
   exit 1
 }
 
-[ -n "$host_id" ] || die "--host-id is required"
-[ -n "$instance_id" ] || die "--instance-id is required"
-[ -n "$catalog_addon" ] || die "--catalog-addon or BABEL_CATALOG_ADDON is required"
-[ -n "$cellar_addon" ] || die "--cellar-addon or BABEL_CELLAR_ADDON is required"
 for tool in bw clever babel python3; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
+
+# Identity is read, not invented. A machine that has already published keeps the
+# identity it published under: host generations and commit ordering are
+# per-host, so renaming a configured machine starts an empty history and
+# abandons the one it already has.
+config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+configured_host=""
+if [ -f "$config_file" ]; then
+  configured_host="$(python3 -c 'import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("host_id") or "")
+except Exception:
+    pass' "$config_file")"
+fi
+if [ -z "$host_id" ]; then
+  host_id="$configured_host"
+  [ -n "$host_id" ] ||
+    die "this machine has never been configured, so there is no identity to reuse: run 'atyrode apply', which supplies it from the host registry"
+elif [ -n "$configured_host" ] && [ "$host_id" != "$configured_host" ] && [ "$force_host_id" -eq 0 ]; then
+  die "this machine already publishes as '$configured_host'; changing it to '$host_id' would fork the archive (pass --force-host-id if that is intended)"
+fi
+# One Babel per machine, so the instance is the host unless told otherwise.
+[ -n "$instance_id" ] || instance_id="$host_id"
 
 # Every secret this script handles lives in shell variables and one mode-0600
 # file. umask covers anything created below.
@@ -199,6 +243,40 @@ else
   created_item=1
 fi
 
+# Add-on names are resolved to ids here rather than recorded anywhere. An
+# explicit addon_ id is honoured as given, so recovery never depends on the
+# lookup succeeding.
+resolve_addon() {
+  case "$1" in
+    addon_*)
+      printf '%s' "$1"
+      return 0
+      ;;
+  esac
+  clever addon list --org "$clever_org" --format json 2>/dev/null |
+    BABEL_ADDON_NAME="$1" python3 -c '
+import json, os, sys
+raw = sys.stdin.read()
+start = min((raw.find(c) for c in "[{" if raw.find(c) >= 0), default=-1)
+if start < 0:
+    sys.exit(1)
+want = os.environ["BABEL_ADDON_NAME"]
+for entry in json.loads(raw[start:]):
+    if entry.get("name") == want:
+        print(entry.get("addonId") or entry.get("id") or "")
+        break
+'
+}
+
+catalog_ref="$catalog_addon"
+cellar_ref="$cellar_addon"
+catalog_addon="$(resolve_addon "$catalog_ref")" || true
+[ -n "$catalog_addon" ] ||
+  die "no Clever Cloud add-on named '$catalog_ref' in organisation $clever_org (is 'clever' logged in?)"
+cellar_addon="$(resolve_addon "$cellar_ref")" || true
+[ -n "$cellar_addon" ] ||
+  die "no Clever Cloud add-on named '$cellar_ref' in organisation $clever_org (is 'clever' logged in?)"
+
 # Provider credentials, read live rather than duplicated into the vault. The
 # deprecation notice clever prints on stdout would corrupt the JSON, so the
 # document is taken from the first brace onward.
@@ -252,6 +330,8 @@ if [ "$dry_run" -eq 1 ]; then
   printf '  deployment     %s\n' "$deployment_id"
   printf '  repository     s3:https://%s/%s/%s\n' "$cellar_host" "$bucket" "$prefix"
   printf '  catalog        %s\n' "$catalog_host"
+  printf '  add-ons        %s -> %s\n' "$catalog_ref" "$catalog_addon"
+  printf '                 %s -> %s\n' "$cellar_ref" "$cellar_addon"
   printf '  password file  %s\n' "$password_file"
   printf '  vault item     %s (present)\n' "$vault_item"
   exit 0

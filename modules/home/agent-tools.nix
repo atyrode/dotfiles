@@ -167,7 +167,7 @@ let
       state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/babel"
 
       if [[ ! -f "$config_file" ]]; then
-        echo "babel-archive-push: not configured; configure this machine with: ~/nix-dotfiles/scripts/babel-storage-configure.sh" >&2
+        echo "babel-archive-push: not configured; run 'atyrode apply' to set this machine up" >&2
         exit 0
       fi
 

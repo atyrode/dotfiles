@@ -51,7 +51,7 @@ pkgs.runCommand "check-windows-control-plane"
 
     jq -e '
       .schemaVersion == 2
-      and (.packages | length) == 3
+      and (.packages | length) == 2
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .source == "winget"
@@ -64,20 +64,6 @@ pkgs.runCommand "check-windows-control-plane"
         and .conflicts == []
         and .versionPolicy == "installed; WinGet owns normal font updates"
         and (.mutableStateOwner | contains("Windows owns the installed font files"))
-      )] | length == 1)
-      and ([.packages[] | select(
-        .id == "raphamorim.rio"
-        and .source == "github-release"
-        and .version == "0.5.25"
-        and (.installer.sha256 | test("^[0-9a-f]{64}$"))
-        and .config.destination == "%LOCALAPPDATA%\\rio\\config.toml"
-        and .graphicsPreference == {
-          executable: "%ProgramFiles%\\Rio\\rio.exe",
-          mode: "high-performance",
-          registryValue: "GpuPreference=2;"
-        }
-        and .versionPolicy == "pinned to the nixpkgs pin"
-        and .mutableStateOwner == "Rio owns its runtime state; Nix owns the config artifact and requested graphics preference"
       )] | length == 1)
     ' ${packageFile} >/dev/null
 

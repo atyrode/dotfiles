@@ -11,7 +11,8 @@ single retained Oh My Zsh `git` plugin. Projects own language environments.
 - `home/shell/startup.zsh` loads only the machine-local
   `~/.config/zsh/local.zsh` hook, and only in an interactive shell.
 - `home/shell/cwd.zsh` emits OSC 7 working-directory metadata at each prompt
-  so Rio's file-path hints resolve relative paths from the authoritative shell.
+  so any OSC-7-aware terminal resolves relative file-path hints from the
+  authoritative shell.
 - `home/zsh.nix` sources `fzf --zsh` only with a TTY. Home Manager's generated
   hook remains disabled until its option restore no longer prints
   `can't change option: zle` in TTY-less interactive shells (#255).

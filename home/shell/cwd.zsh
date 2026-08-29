@@ -1,10 +1,10 @@
 # Terminal working-directory metadata
 ############################################
 
-# Rio's built-in file-path hints resolve relative paths from OSC 7 metadata.
-# Emit it at every prompt for Rio and other terminals that understand the
-# standard sequence. Keep this shell-owned rather than Rio-owned so cwd changes
-# made by zsh remain authoritative through the terminal stack.
+# Any terminal that understands the standard OSC 7 sequence resolves relative
+# file-path hints from this metadata, so emit it at every prompt. Keep the
+# emission shell-owned rather than terminal-owned so cwd changes made by zsh
+# stay authoritative through the terminal stack.
 autoload -Uz add-zsh-hook
 
 _atyrode_report_cwd() {

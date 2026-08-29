@@ -1,6 +1,3 @@
-let
-  rioLock = builtins.fromJSON (builtins.readFile ../inventory/rio-windows.json);
-in
 {
   schemaVersion = 2;
   packages = [
@@ -19,20 +16,6 @@ in
       conflicts = [ ];
       versionPolicy = "installed; WinGet owns normal font updates";
       mutableStateOwner = "Windows owns the installed font files; Nix owns package presence";
-    }
-    {
-      id = "raphamorim.rio";
-      name = "Rio terminal";
-      source = "github-release";
-      inherit (rioLock) version;
-      inherit (rioLock) installer config;
-      graphicsPreference = {
-        executable = "%ProgramFiles%\\Rio\\rio.exe";
-        mode = "high-performance";
-        registryValue = "GpuPreference=2;";
-      };
-      versionPolicy = "pinned to the nixpkgs pin";
-      mutableStateOwner = "Rio owns its runtime state; Nix owns the config artifact and requested graphics preference";
     }
   ];
 }

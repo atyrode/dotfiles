@@ -43,9 +43,9 @@ pkgs.runCommand "check-shell-surface"
     osc_dir="$TMPDIR/osc 7#?"
     mkdir "$osc_dir"
     OSC_DIR="$osc_dir" zsh -dfc \
-      'source ${../home/shell/cwd.zsh}; cd -- "$OSC_DIR"; HOST=rio-test; _atyrode_report_cwd' \
+      'source ${../home/shell/cwd.zsh}; cd -- "$OSC_DIR"; HOST=osc7-test; _atyrode_report_cwd' \
       > "$TMPDIR/osc-actual"
-    printf '\033]7;file://rio-test%s\033\\' \
+    printf '\033]7;file://osc7-test%s\033\\' \
       "''${osc_dir//%/%25}" | sed 's/ /%20/g; s/#/%23/g; s/?/%3F/g' \
       > "$TMPDIR/osc-expected"
     cmp "$TMPDIR/osc-expected" "$TMPDIR/osc-actual"

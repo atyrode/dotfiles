@@ -83,7 +83,7 @@ pkgs.runCommand "check-atyrode-apply"
       grep -qF 'ATYRODE_NIX_STORE is set' "$TMPDIR/prod-guard.err" \
         || { echo "production $prod_cmd refusal must name the offending override" >&2; exit 1; }
     done
-    for override in ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL; do
+    for override in ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL ATYRODE_FETCH; do
       set +e
       env -u ATYRODE_NH -u ATYRODE_NIX_ENV -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
         "$override=/bin/true" ${productionAtyrode}/bin/atyrode apply --plan \
@@ -92,17 +92,6 @@ pkgs.runCommand "check-atyrode-apply"
       set -e
       test "$prod_apply_manager_guard_status" = 64
       grep -qF "$override is set" "$TMPDIR/prod-apply-manager-guard.err"
-    done
-    for override in ATYRODE_FETCH ATYRODE_MSIEXEC ATYRODE_WSLPATH ATYRODE_LOCALAPPDATA ATYRODE_POWERSHELL ATYRODE_SHA256SUM; do
-      set +e
-      env -u ATYRODE_NH -u ATYRODE_NIX_ENV -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
-        "$override=/bin/true" ${productionAtyrode}/bin/atyrode \
-        windows apply alex-x86_64-linux-wsl \
-        > /dev/null 2> "$TMPDIR/prod-windows-guard.err"
-      prod_windows_guard_status="$?"
-      set -e
-      test "$prod_windows_guard_status" = 64
-      grep -qF "$override is set" "$TMPDIR/prod-windows-guard.err"
     done
     # The guard is scoped to mutating verbs: a read-only command with the same
     # override present still runs (production simply ignores the var there).
@@ -344,10 +333,6 @@ pkgs.runCommand "check-atyrode-apply"
           Zen-Team.Zen-Browser.Twilight) [[ -f "$WINGET_STATE/twilight" ]] && exit 0 || exit 20 ;;
           Zen-Team.Zen-Browser) [[ -f "$WINGET_STATE/stable" ]] && exit 0 || exit 20 ;;
           DEVCOM.JetBrainsMonoNerdFont) [[ -f "$WINGET_STATE/jetbrains-nerd-font" ]] && exit 0 || exit 20 ;;
-          raphamorim.rio)
-            [[ -f "$WINGET_STATE/rio-version" ]] || exit 20
-            printf 'Name Id             Version Source\n-----------------------------------\nRio  raphamorim.rio %-7s winget\n' "$(cat "$WINGET_STATE/rio-version")"
-            ;;
           *) exit 64 ;;
         esac
         ;;
@@ -368,68 +353,12 @@ pkgs.runCommand "check-atyrode-apply"
     esac
     EOF
     chmod +x "$TMPDIR/bin/winget.exe"
-    cat > "$TMPDIR/bin/powershell.exe" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    printf '%s\n' "$*" >> "$POWERSHELL_LOG"
-    case "$*" in
-      *Get-ItemProperty*)
-        if [[ -f "$WINGET_STATE/rio-high-performance-gpu" ]]; then
-          printf 'true\r\n'
-        else
-          printf 'false\r\n'
-        fi
-        ;;
-      *New-ItemProperty*)
-        touch "$WINGET_STATE/rio-high-performance-gpu"
-        ;;
-      *) exit 64 ;;
-    esac
-    EOF
-    cat > "$TMPDIR/bin/fetch" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    [[ "$1" == -fsSL && "$3" == -o ]] || exit 64
-    printf '%s\n' "$RIO_FETCH_CONTENT" > "$4"
-    EOF
-    cat > "$TMPDIR/bin/msiexec.exe" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    printf '%s\n' "$*" >> "$MSI_LOG"
-    printf '0.5.25\n' > "$WINGET_STATE/rio-version"
-    EOF
-    cat > "$TMPDIR/bin/wslpath" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    [[ "$1" == -w ]] || exit 64
-    printf 'C:\\mock\\rio-installer-x86_64.msi\n'
-    EOF
-    cat > "$TMPDIR/bin/sha256sum" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    case "$(cat "$1")" in
-      good) printf '%s  %s\n' ${(builtins.fromJSON (builtins.readFile ../inventory/rio-windows.json)).installer.sha256} "$1" ;;
-      *) printf '%064d  %s\n' 0 "$1" ;;
-    esac
-    EOF
-    chmod +x "$TMPDIR/bin/fetch" "$TMPDIR/bin/msiexec.exe" "$TMPDIR/bin/powershell.exe" "$TMPDIR/bin/wslpath" "$TMPDIR/bin/sha256sum"
     export ATYRODE_WINGET="$TMPDIR/bin/winget.exe"
     export WINGET_LOG="$TMPDIR/winget.log"
     export WINGET_STATE="$TMPDIR/winget-state"
     export _ATYRODE_TEST_WSL=1
-    export ATYRODE_FETCH="$TMPDIR/bin/fetch"
-    export ATYRODE_MSIEXEC="$TMPDIR/bin/msiexec.exe"
-    export ATYRODE_WSLPATH="$TMPDIR/bin/wslpath"
-    export ATYRODE_POWERSHELL="$TMPDIR/bin/powershell.exe"
-    export ATYRODE_LOCALAPPDATA="$TMPDIR/windows-localappdata"
-    export ATYRODE_SHA256SUM="$TMPDIR/bin/sha256sum"
-    export MSI_LOG="$TMPDIR/msiexec.log"
-    export POWERSHELL_LOG="$TMPDIR/powershell.log"
-    export RIO_FETCH_CONTENT=good
-    mkdir -p "$ATYRODE_LOCALAPPDATA"
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font" "$WINGET_STATE/rio-high-performance-gpu" "$WINGET_STATE/rio-version"
+    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable" "$WINGET_STATE/jetbrains-nerd-font"
     export _ATYRODE_TEST_HOSTNAME=atyrode-wsl
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/stable"
     : > "$WINGET_LOG"
 
     windows_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
@@ -439,7 +368,8 @@ pkgs.runCommand "check-atyrode-apply"
       and .wingetVersion == "v1.11.510"
       and .ready
       and (.converged | not)
-      and .changes == 3
+      and .changes == 2
+      and (.packages | length) == 2
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .status == "missing"
@@ -452,45 +382,14 @@ pkgs.runCommand "check-atyrode-apply"
         and (.installed | not)
         and .detectedConflicts == []
       )] | length == 1)
-      and ([.packages[] | select(
-        .id == "raphamorim.rio"
-        and .source == "github-release"
-        and .pinnedVersion == "0.5.25"
-        and .installedVersion == null
-        and .installedVersionSource == "absent"
-        and (.configMatches | not)
-        and (.graphicsPreferenceMatches | not)
-        and .status == "missing"
-      )] | length == 1)
       and (.transactional | not)
-      and .mutationBoundary == "WinGet, Rio MSI, Windows graphics preferences, and Rio runtime state are native Windows state; Nix generations and rollback do not cover them"
+      and .mutationBoundary == "WinGet package state is native Windows state; Nix generations and rollback do not cover it"
     ' <<<"$windows_plan" >/dev/null \
       || { echo "Windows plan contract is wrong: $windows_plan" >&2; exit 1; }
     test ! -e "$WINGET_STATE/twilight"
     test ! -e "$WINGET_STATE/jetbrains-nerd-font"
-    test ! -e "$ATYRODE_LOCALAPPDATA/rio"
-    test ! -e "$WINGET_STATE/rio-high-performance-gpu"
     grep -qF 'list --id Zen-Team.Zen-Browser.Twilight --exact --accept-source-agreements --disable-interactivity' \
       "$WINGET_LOG"
-
-    # The downloader must not pass an unverified MSI to Windows or leave a Rio
-    # stamp/config behind. Mark the WinGet packages present so this isolates Rio.
-    touch "$WINGET_STATE/twilight"
-    touch "$WINGET_STATE/jetbrains-nerd-font"
-    RIO_FETCH_CONTENT=wrong
-    set +e
-    atyrode windows apply alex-x86_64-linux-wsl --json \
-      > "$TMPDIR/rio-hash-mismatch.out" 2> "$TMPDIR/rio-hash-mismatch.err"
-    rio_hash_mismatch_status="$?"
-    set -e
-    test "$rio_hash_mismatch_status" = 65
-    grep -qF 'downloaded installer SHA256 does not match the lock' "$TMPDIR/rio-hash-mismatch.err"
-    test ! -e "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version"
-    test ! -e "$ATYRODE_LOCALAPPDATA/rio/config.toml"
-    test ! -s "$MSI_LOG"
-    test ! -e "$WINGET_STATE/rio-high-performance-gpu"
-    rm -f "$WINGET_STATE/twilight" "$WINGET_STATE/jetbrains-nerd-font"
-    RIO_FETCH_CONTENT=good
 
     rm -f "$TMPDIR/nh-args"
     wsl_apply_plan="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --plan --json)"
@@ -515,58 +414,10 @@ pkgs.runCommand "check-atyrode-apply"
       "$WINGET_LOG" >/dev/null
     test -f "$WINGET_STATE/twilight"
     test -f "$WINGET_STATE/jetbrains-nerd-font"
-    test -f "$WINGET_STATE/rio-high-performance-gpu"
     converged_windows="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
     jq -e '.ready and .converged and .changes == 0 and all(.packages[]; .status == "installed")' \
       <<<"$converged_windows" >/dev/null \
       || { echo "Windows plan did not converge after apply: $converged_windows" >&2; exit 1; }
-    grep -Fx -- '/i C:\mock\rio-installer-x86_64.msi /qn /norestart' "$MSI_LOG" >/dev/null
-    cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
-    test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.5.25
-    grep -qF 'New-ItemProperty' "$POWERSHELL_LOG"
-    # Config-only drift is repaired atomically without downloading or invoking
-    # the MSI again.
-    printf 'bad config\n' > "$ATYRODE_LOCALAPPDATA/rio/config.toml"
-    : > "$MSI_LOG"
-    atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
-    test ! -s "$MSI_LOG"
-    cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
-
-    # Graphics-preference drift is repaired without reinstalling Rio or changing
-    # its config. Windows remains the final arbiter when no discrete GPU exists.
-    rm -f "$WINGET_STATE/rio-high-performance-gpu"
-    graphics_drift_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
-    jq -e '[.packages[] | select(
-      .id == "raphamorim.rio"
-      and .status == "graphics-preference-drift"
-      and (.graphicsPreferenceMatches | not)
-      and .graphicsPreference.mode == "high-performance"
-      and .graphicsPreference.registryValue == "GpuPreference=2;"
-    )] | length == 1' <<<"$graphics_drift_plan" >/dev/null
-    : > "$MSI_LOG"
-    atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
-    test -f "$WINGET_STATE/rio-high-performance-gpu"
-    test ! -s "$MSI_LOG"
-    cmp -s ${../home/rio/config.toml} "$ATYRODE_LOCALAPPDATA/rio/config.toml"
-    # Winget/ARP is authoritative: a stale pinned stamp cannot mask an older
-    # external MSI install, which follows the natural MSI upgrade path.
-    printf '0.5.25\n' > "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version"
-    printf '0.4.6\n' > "$WINGET_STATE/rio-version"
-    rio_upgrade_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
-    jq -e '[.packages[] | select(.id == "raphamorim.rio" and .status == "upgrade" and .installedVersion == "0.4.6" and .installedVersionSource == "winget" and .pinnedVersion == "0.5.25")] | length == 1' \
-      <<<"$rio_upgrade_plan" >/dev/null
-    # An uninstall cannot be masked either: winget reporting no installed
-    # Rio (exit 20) is authoritative absence, and a leftover pinned stamp
-    # must never be consulted.
-    rm -f "$WINGET_STATE/rio-version"
-    rio_uninstalled_plan="$(atyrode windows plan alex-x86_64-linux-wsl --json)"
-    jq -e '[.packages[] | select(.id == "raphamorim.rio" and .status == "missing" and .installedVersion == null and .installedVersionSource == "absent")] | length == 1' \
-      <<<"$rio_uninstalled_plan" >/dev/null
-    printf '0.4.6\n' > "$WINGET_STATE/rio-version"
-    : > "$MSI_LOG"
-    atyrode windows apply alex-x86_64-linux-wsl --json >/dev/null
-    grep -Fx -- '/i C:\mock\rio-installer-x86_64.msi /qn /norestart' "$MSI_LOG" >/dev/null
-    test "$(cat "$ATYRODE_LOCALAPPDATA/rio/atyrode-install-version")" = 0.5.25
 
     rm -f "$WINGET_STATE/twilight"
     touch "$WINGET_STATE/stable"

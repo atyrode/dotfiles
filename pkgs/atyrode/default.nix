@@ -56,7 +56,6 @@ let
   windowsPackageInventory = builtins.toFile "atyrode-windows-packages.json" (
     builtins.toJSON windowsPackages
   );
-  rioWindowsConfig = ../../home/rio/config.toml;
   operatorInfra = ../../inventory/operator-infra.json;
   manifoldInventory = ../../inventory/manifold.json;
   systemPolicy = ../../inventory/system-boundary.json;
@@ -211,8 +210,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}' \
-      --replace-fail '@windows_packages@' '${windowsPackageInventory}' \
-      --replace-fail '@rio_windows_config@' '${rioWindowsConfig}'
+      --replace-fail '@windows_packages@' '${windowsPackageInventory}'
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
         lib.makeBinPath [

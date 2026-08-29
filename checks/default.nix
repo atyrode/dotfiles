@@ -197,11 +197,11 @@ let
     };
     bootstrap = import ./bootstrap.nix { inherit pkgs; };
     codex-seed = import ./codex-seed.nix { inherit pkgs; };
-    get-entrypoint = import ./get-sh.nix { inherit pkgs; };
-    rio = import ./rio.nix {
+    desktop-fonts = import ./desktop-fonts.nix {
       inherit lib pkgs;
       hostConfigs = canonicalHomeConfigs;
     };
+    get-entrypoint = import ./get-sh.nix { inherit pkgs; };
     omp-seed = import ./omp-seed.nix { inherit pkgs; };
     omp-secret-obfuscation = import ./omp-secret-obfuscation.nix { inherit pkgs; };
     omp-isolated-writer = import ./omp-isolated-writer.nix { inherit pkgs; };

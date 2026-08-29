@@ -5,7 +5,7 @@ in
 {
   imports = [
     ../linux-desktop.nix
-    ../rio.nix
+    ../fonts.nix
   ];
 
   # Retention of desktop applications reflects operator use, not the agent

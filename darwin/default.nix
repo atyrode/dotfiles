@@ -24,8 +24,8 @@ in
 
   environment.shells = [ pkgs.zsh ];
 
-  # Native macOS applications use CoreText rather than Home Manager's
-  # fontconfig cache, so register Rio's shared Nerd Font system-wide.
+  # Native macOS applications resolve fonts through CoreText, not Home
+  # Manager's fontconfig cache, so the Nerd Font is registered system-wide.
   fonts.packages = [ pkgs.nerd-fonts.jetbrains-mono ];
 
   programs.zsh.enable = true;

@@ -54,23 +54,15 @@ Native Windows has a separate, directly reviewed package declaration in
 [`windows/packages.nix`](../windows/packages.nix). It is exported as
 `lib.windowsPackages` and consumed by the WSL-side `atyrode windows` controller;
 it is intentionally not folded into Nix's evaluated package/cask inventory.
-The inventory carries two source kinds. `winget` packages (Zen Browser
+The inventory carries a single source kind. `winget` packages (Zen Browser
 Twilight and JetBrainsMono Nerd Font) are install-only and exact-ID based:
 WinGet owns installation and each package's normal update channel. An installed
 stable Zen package blocks Twilight installation with an explicit profile-backup
 and manual-uninstall remediation instead of deleting operator state; the font
-has no conflicting package and supplies Rio's shared cross-platform family.
-`github-release` packages (the Rio terminal, #278) are version-pinned: the
-controller downloads the exact installer recorded in
-[`inventory/rio-windows.json`](../inventory/rio-windows.json), refuses to
-install on a SHA256 mismatch, deploys the committed `home/rio/config.toml`
-to `%LOCALAPPDATA%\rio\config.toml`, and requests the high-performance adapter
-for `%ProgramFiles%\Rio\rio.exe` through Windows' per-user graphics preference;
-`checks/rio.nix` keeps the lock at version parity with the nixpkgs `rio` pin.
-The preference is a request—Windows remains the final arbiter when the machine
-has no discrete adapter or the driver cannot honor it. Nix owns the NixOS-WSL
-control plane that invokes both paths, not the resulting Windows package or a
-fictional cross-platform generation. Browser accounts, profiles, cookies,
+has no conflicting package and supplies the Nerd glyph family the operator's
+terminal UIs need. Nix owns the NixOS-WSL control plane that invokes
+reconciliation, not the resulting Windows package or a fictional
+cross-platform generation. Browser accounts, profiles, cookies,
 sessions, update services, and caches remain Zen/Windows-owned and are never
 copied into a derivation.
 

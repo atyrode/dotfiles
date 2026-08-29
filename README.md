@@ -67,8 +67,6 @@ run the same apply command again.
 - **tmux** - Terminal multiplexer
 - **Nix/shell/workflow quality tooling** - nixd, nixfmt, ShellCheck, shfmt, and actionlint
 - **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
-- **Rio** - The pinned cross-platform terminal layer (#278), with one committed
-  `home/rio/config.toml` for macOS, Linux desktop, and native Windows
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
   and native compilers come from committed dev shells, `mise.toml`, or native
@@ -85,7 +83,7 @@ run the same apply command again.
 
 ### macOS Apps
 - **Nix/Home Manager apps** - ChatGPT, Lichess, Obsidian, OrbStack,
-  Postman, Prism Launcher, REAPER, Rio, Signal, Spotify, and VLC
+  Postman, Prism Launcher, REAPER, Signal, Spotify, and VLC
 - **Homebrew casks** - Arduino IDE, Bitwarden, Claude Desktop, Codex Desktop,
   Discord, Display Pilot, Godot, Parsec, PlugData, Sonos, Steam, and Zen Browser
   Twilight, managed through nix-darwin
@@ -94,12 +92,9 @@ run the same apply command again.
   stable public installer or package source.
 
 ### Native Windows Apps
-- **WinGet packages** - Zen Browser Twilight is declared in
-  `windows/packages.nix` and reconciled from the managed NixOS-WSL host.
-- **Pinned releases** - the Rio terminal installs from the exact GitHub
-  release recorded in `inventory/rio-windows.json` (SHA256-verified,
-  version-locked to the nixpkgs pin), and the committed Rio `config.toml`
-  deploys beside it.
+- **WinGet packages** - Zen Browser Twilight and the JetBrainsMono Nerd Font
+  are declared in `windows/packages.nix` and reconciled from the managed
+  NixOS-WSL host.
 - **Application state** - Mozilla sign-in, Zen profiles, cookies, sessions,
   updates, and caches remain owned by Zen/Windows rather than Nix.
 

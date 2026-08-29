@@ -29,7 +29,6 @@
   openssh,
   openssl,
   omp-configured,
-  rclone,
   runtimeShell,
   stdenvNoCC,
   tmux,
@@ -231,7 +230,6 @@ stdenvNoCC.mkDerivation {
           nix
           openssh
           openssl
-          rclone
         ]
       }
   '';

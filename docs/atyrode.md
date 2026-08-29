@@ -100,10 +100,14 @@ from the seeded repository defaults (see
 [Agent tools](agent-tools.md#seeded-plain-omp-defaults)) and, when running on
 a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
 never resolved automatically; skipping the review keeps every local value.
-It also reviews session-backup health: when the machine has no Cellar
-credentials it offers `atyrode backup setup` on a terminal (see
-[Agent tools](agent-tools.md#session-archive)), and it warns when the hourly
-archive has not succeeded within 48 hours.
+It also reviews Babel session-archive health from the stamp Babel's push
+wrapper writes (see [Agent tools](agent-tools.md#session-archive)): an
+unconfigured machine gets the provisioning ceremony's path, a configured
+machine that has never pushed successfully gets `babel archive status` and
+`babel archive push`, and an archive that has not succeeded within 48 hours is
+reported stale. The review never prompts — the ceremony is interactive and
+vault-backed, and activation must not block on it — and never fails the
+activation.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
 selected host and capabilities, installable, source, backend, revision,

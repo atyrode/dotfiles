@@ -4,6 +4,17 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # Babel is the fleet's archival instrument for agent session history
+    # (atyrode/babel SPEC.md 2.3): restic to a Cellar bucket under a stable
+    # host identity, catalogued in a shared PostgreSQL. Pinned as a flake
+    # input rather than re-packaged under pkgs/, because its derivation is a
+    # plain buildGoModule with a fixed vendorHash and is reproducible across
+    # machines - unlike manifold-agent's upstream bun-deps FOD, which is why
+    # that one is a release asset. flake.lock then carries the exact revision
+    # the hourly archive timer executes.
+    babel.url = "github:atyrode/babel";
+    babel.inputs.nixpkgs.follows = "nixpkgs";
+
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -36,6 +47,7 @@
     {
       self,
       nixpkgs,
+      babel,
       home-manager,
       nix-darwin,
       nix-homebrew,
@@ -67,6 +79,7 @@
 
       packagesLib = import ./lib/packages.nix {
         inherit
+          babel
           lib
           nixpkgs
           self

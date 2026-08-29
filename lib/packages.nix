@@ -2,6 +2,7 @@
 # repositoryPkgsFor (registry-aware overlay for this repository's targets)
 # and evaluationPkgsFor (empty-registry overlay for portable evaluations).
 {
+  babel,
   lib,
   nixpkgs,
   self,
@@ -55,6 +56,13 @@ let
     "manifold-agent"
   ];
 
+  # Packages this repository neither builds under pkgs/ nor takes from
+  # nixpkgs: they come from a pinned flake input. The inventory records them
+  # as such rather than claiming nixpkgs provides them.
+  flakeInputPackageNames = [
+    "babel"
+  ];
+
   inventoryRevision = self.rev or self.dirtyRev or "dirty";
 
   mkPackageOverlay =
@@ -86,6 +94,10 @@ let
         # inventory/manifold.json supportedSystems gates consumers to the
         # published asset platforms.
         manifold-agent = final.callPackage ../pkgs/manifold-agent { };
+        # Archival instrument for this machine's agent session history. The
+        # right-hand `babel` is the flake input from the enclosing scope: this
+        # attribute set is not recursive, so there is no self-reference here.
+        babel = babel.packages.${final.stdenv.hostPlatform.system}.default;
         atyrode = final.callPackage ../pkgs/atyrode {
           capabilities = capabilitySummary;
           inherit homebrewCasks;
@@ -160,6 +172,7 @@ in
     agentToolsOverlay
     allowedUnfreePackages
     evaluationPkgsFor
+    flakeInputPackageNames
     homebrewCasks
     inventoryRevision
     mkPackageOverlay

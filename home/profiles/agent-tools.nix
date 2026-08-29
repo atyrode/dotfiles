@@ -22,6 +22,13 @@
 
   home.packages =
     (with pkgs; [
+      # Babel itself (atyrode/babel), pinned by flake.lock. It replaced the
+      # rclone-crypt session-backup job: same trees, but session-aware, with
+      # integrity verification, selective restore, and a shared catalog. The
+      # operator drives it directly as `babel archive status|verify|push`;
+      # the hourly timer in modules/home/agent-tools.nix runs the same binary
+      # from its absolute store path.
+      babel
       # Bun runs agent-generated local review proxies without falling back to
       # an unpinned, network-fetched runtime through `npx -y bun`.
       bun

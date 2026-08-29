@@ -218,27 +218,59 @@ between read and write; rerun to evaluate the new state.
 Every managed machine continuously archives its agent session histories — omp
 (`~/.omp/agent/sessions`, `~/.omp/collab`), codex (`~/.codex/sessions`,
 `history.jsonl`, `session_index.jsonl`, `attachments`), and Claude Code
-(`~/.claude/projects`) — to a Clever Cloud Cellar (S3) bucket under an
-`archive:<hostname>/` prefix. Content is client-side encrypted with rclone
-crypt; every upload is `rclone copy`/`copyto` (never `sync`), so the archive is
-append/update-only and a remote object is never deleted. Sources missing on a
-machine are skipped silently.
+(`~/.claude/projects`) — with [babel](https://github.com/atyrode/babel). Babel
+snapshots those trees into a [restic](https://restic.net) repository on Clever
+Cloud Cellar (S3) under a stable host identity, so every machine's snapshots
+carry the same hostname across reinstalls instead of whatever the kernel
+happens to report. restic is content-addressed and deduplicating: repeated
+snapshots of a slowly growing session tree cost only the new chunks, and a
+snapshot is never rewritten in place. Sources missing on a machine are skipped
+silently.
 
-Connection material (endpoint, bucket, S3 key pair, crypt password/salt) lives
-in one Bitwarden Secure Note, `Agent session archive`, and nowhere in this
-repository. `atyrode backup setup` — offered interactively after `atyrode
-apply` when unconfigured — renders it into a machine-local 0600 env file at
-`~/.config/atyrode/session-backup/env` (crypt secrets stored `rclone
-obscure`d, transferred via pipes only). An hourly systemd user timer (launchd
-agent on macOS) then runs `atyrode-session-backup`; unconfigured machines
-no-op instead of failing the unit. `atyrode backup now` runs the same upload
-in the foreground, `atyrode backup status [--json]` reports configuration,
-last-success age (state in
-`~/.local/state/atyrode/session-backup/last-success`), and remote
-reachability, and `atyrode apply` warns when the archive is unconfigured or
-has not succeeded within 48 hours (`ATYRODE_BACKUP_REVIEW=0` suppresses the
-interactive offer). Browse or restore with rclone directly: source the env
-file, then `rclone lsd archive:$(uname -n)` / `rclone copy archive:… <dest>`.
+Babel keeps a shared PostgreSQL catalog alongside the repository, so
+`babel sessions list` can answer which machine held which session, and when,
+without downloading snapshots.
+
+Provisioning is a one-time ceremony, run by hand on a terminal from a checkout.
+It names the machine's stable archive identity explicitly, because that
+identity — not the reported hostname — is what the snapshots are filed under:
+
+```sh
+~/nix-dotfiles/scripts/babel-storage-configure.sh \
+  --host-id alex-x86_64-linux --instance-id 1 --dry-run
+~/nix-dotfiles/scripts/babel-storage-configure.sh \
+  --host-id alex-x86_64-linux --instance-id 1
+```
+
+`--dry-run` reports the repository locator, catalog host, password file, and
+vault item without writing anything. The real run unlocks the vault (prompting
+if it is locked, or reusing `BW_SESSION`), generates the restic repository
+password on first use or retrieves the stored one afterwards, writes it to the
+mode-0600 file restic reads by path
+(`~/.config/babel/repository-password`), reads the Cellar and PostgreSQL
+credentials live from the Clever Cloud add-ons rather than duplicating them
+into the vault, pipes one document into `babel storage configure --from-json -`,
+and relocks on every exit path (`--keep-unlocked` opts out). Babel validates
+that document and atomically installs it at `~/.config/babel/storage.json`; its
+presence is what "configured" means. Re-running is safe: the vault item is
+created only when absent and the password is never regenerated once stored. No
+connection material lives in this repository.
+
+A `babel-archive` systemd user timer (launchd agent on macOS) then runs the
+`babel-archive-push` wrapper unattended. On a machine with no
+`~/.config/babel/storage.json` the wrapper prints one line and exits 0, so an
+unconfigured machine is a no-op rather than a failing unit; when the machine is
+configured and the push fails — a missing restic repository included — it exits
+nonzero and the failure stays visible. After a successful push the wrapper
+stamps `~/.local/state/babel/last-success` with one ISO-8601 UTC line, and
+`atyrode apply` reads that stamp to warn when the archive is unconfigured, has
+never succeeded here, or has not succeeded within 48 hours.
+
+Operator surfaces are Babel's own: `babel archive push` runs a snapshot in the
+foreground, `babel archive status [--json]` reports repository and stamp health,
+`babel archive verify [--deep]` checks repository integrity (`--deep` reads
+the pack data, not just the index), and `babel sessions list` browses the
+catalog.
 
 ## Skills
 

@@ -2220,7 +2220,12 @@ submit_apply_job() {
     --service-type=exec
     --description="atyrode apply job $job_id"
   )
-  for env_name in XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME \
+  # PATH is forwarded because WSL appends the Windows interop entries to the
+  # session PATH only; the user manager never sees them, so a worker started
+  # from its environment cannot resolve winget.exe even where the submitting
+  # shell resolves it fine. The public wrapper re-prefixes the package's own
+  # tools, so forwarding cannot displace them with caller-supplied binaries.
+  for env_name in PATH XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME \
     ATYRODE_HOST ATYRODE_GIT_AUTH_MODE SSH_AUTH_SOCK; do
     [[ -z "${!env_name:-}" ]] ||
       run_args+=("--setenv=$env_name=${!env_name}")

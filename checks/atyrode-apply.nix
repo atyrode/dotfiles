@@ -25,14 +25,24 @@ pkgs.runCommand "check-atyrode-apply"
     mkdir -p "$TMPDIR/fake-systemd"
     printf '%s\n' "$*" >> "$TMPDIR/fake-systemd/run-args"
     unit=""
+    path_forwarded=0
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --unit=*) unit="''${1#--unit=}"; shift ;;
-        --setenv=*) export "''${1#--setenv=}"; shift ;;
+        --setenv=*)
+          export "''${1#--setenv=}"
+          [[ "''${1#--setenv=}" != PATH=* ]] || path_forwarded=1
+          shift
+          ;;
         --) shift; break ;;
         *) shift ;;
       esac
     done
+    # systemd starts a unit from the user manager's environment, not the
+    # submitter's, so the unit only sees what --setenv forwards. Model that for
+    # PATH: inheriting the caller's PATH here would hide the interop-PATH gap
+    # that makes winget.exe unreachable from the real apply worker on WSL.
+    [[ "$path_forwarded" == 1 ]] || export PATH=/usr/bin:/bin
     [[ -n "$unit" && $# -gt 0 ]] || exit 64
     ${pkgs.util-linux}/bin/setsid "$@" </dev/null >/dev/null 2>&1 &
     printf '%s\n' "$!" > "$TMPDIR/fake-systemd/$unit.pid"
@@ -553,6 +563,35 @@ pkgs.runCommand "check-atyrode-apply"
     wsl_job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
     jq -e '.phase == "failed" and .exitCode == 69' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$wsl_job_id/result.json" >/dev/null
+
+    # Production resolves winget.exe off PATH, and WSL appends the Windows
+    # entries to the session PATH only - the systemd user manager never gets
+    # them. The apply worker therefore has to be handed the submitter's PATH,
+    # or every Windows reconciliation fails with an unavailable winget.exe on a
+    # host where the interactive shell finds it fine.
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    # The blocked-conflict scenario above left the stable Zen package present;
+    # clear it so this scenario turns on interop reachability alone.
+    rm -f "$WINGET_STATE/stable" "$WINGET_STATE/twilight"
+    : > "$WINGET_LOG"
+    set +e
+    env -u ATYRODE_WINGET \
+      _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
+      ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
+      ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
+      atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" \
+      > "$TMPDIR/wsl-path.out" 2> "$TMPDIR/wsl-path.err"
+    wsl_path_status="$?"
+    set -e
+    if grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/wsl-path.out"; then
+      echo 'apply worker lost the interop PATH; winget.exe was unreachable' >&2
+      exit 1
+    fi
+    if [[ "$wsl_path_status" != 0 ]]; then
+      echo "apply through the job worker failed with $wsl_path_status" >&2
+      exit 1
+    fi
+    grep -qF -- '--version' "$WINGET_LOG"
 
     set +e
     WINGET_QUERY_ERROR=1 atyrode windows plan alex-x86_64-linux-wsl --json \

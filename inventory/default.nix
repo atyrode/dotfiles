@@ -2,6 +2,7 @@
   annotations,
   capabilityModules,
   darwinConfigs,
+  flakeInputPackageNames,
   home-manager,
   homeConfigs,
   hosts,
@@ -70,6 +71,11 @@ let
       source =
         if builtins.elem (packageName package) repositoryPackageNames then
           "repository-overlay"
+        else if builtins.elem (packageName package) flakeInputPackageNames then
+          # Built from a flake input this repository pins, not from nixpkgs
+          # and not from pkgs/. flake.lock carries the exact revision, so
+          # claiming either of the other two origins would be a false fact.
+          "pinned-flake-input"
         else
           "pinned-nixpkgs";
       inherit platform system;

@@ -59,9 +59,6 @@ Usage:
   atyrode auth broker setup
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
-  atyrode backup setup
-  atyrode backup status [--json]
-  atyrode backup now
   atyrode provision git [--persist] [--yes]
   atyrode lifecycle [--json]
   atyrode doctor host [HOST] [--json]
@@ -103,11 +100,6 @@ vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
 explicit secret-output boundary. Duplicate names and non-note items are refused.
-backup archives agent session histories (omp, codex, Claude Code) to Cellar
-object storage, client-side encrypted. setup seeds machine-local credentials
-from the 'Agent session archive' vault note (interactive unlock); status is a
-read-only health report; now runs the append-only upload in the foreground
-(the hourly timer runs it unattended).
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
@@ -2630,7 +2622,7 @@ apply_config() {
       [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
     fi
     review_seed_drift "$json"
-    review_backup_health "$json"
+    review_archive_health
     review_git_identity_health
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
@@ -2684,34 +2676,29 @@ review_git_identity_health() {
   return 0
 }
 
-# After a successful activation, surface session-backup health. Unconfigured
-# on a terminal → offer the one-time credential setup (vault unlock included);
-# otherwise point at `atyrode backup setup`. Configured but stale → warn.
-# Always non-fatal, and never a network call during apply.
-review_backup_health() {
-  local json="$1" env_file state_file
-  env_file="${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/session-backup/env"
-  state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/session-backup/last-success"
-  if [[ ! -f "$env_file" ]]; then
-    if [[ "$json" == 0 && "${ATYRODE_BACKUP_REVIEW:-1}" == 1 && -t 0 && -t 1 ]]; then
-      if confirm "Set up session backup to Cellar now?"; then
-        cmd_backup setup || true
-      fi
-    else
-      printf 'session backup not configured; set up with: atyrode backup setup\n' >&2
-    fi
-    return 0
-  fi
-  local last="" last_epoch now
-  [[ ! -f "$state_file" ]] || read -r last <"$state_file" || true
+# After a successful activation, surface Babel session-archive health from the
+# stamp Babel's push wrapper writes. Unconfigured → name the provisioning
+# ceremony; configured but never successful, or stale → name Babel's own
+# status command. Always non-fatal, never a prompt (the ceremony needs an
+# unlocked vault and activation must not block on one), and never a network
+# call during apply.
+review_archive_health() {
+  local config_file stamp_file last="" last_epoch now
+  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
+  [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true
   if [[ -z "$last" ]]; then
-    printf 'session backup stale (last success: never); check with: atyrode backup status\n' >&2
+    if [[ -f "$config_file" ]]; then
+      printf 'babel archive has never succeeded here; check with: babel archive status (then: babel archive push)\n' >&2
+    else
+      printf 'babel archive not configured; configure with: ~/nix-dotfiles/scripts/babel-storage-configure.sh\n' >&2
+    fi
     return 0
   fi
   last_epoch="$(date -u -d "$last" +%s 2>/dev/null)" || return 0
   now="$(date -u +%s)"
   if (( now - last_epoch > 48 * 3600 )); then
-    printf 'session backup stale (last success: %s); check with: atyrode backup status\n' "$last" >&2
+    printf 'babel archive stale (last success: %s); check with: babel archive status\n' "$last" >&2
   fi
   return 0
 }
@@ -3757,142 +3744,6 @@ cmd_auth() {
   esac
 }
 
-rclone_cli() {
-  local command=rclone
-  [[ "$test_hooks" != 1 || -z "${ATYRODE_RCLONE:-}" ]] || command="$ATYRODE_RCLONE"
-  "$command" "$@"
-}
-
-backup_vault_item='Agent session archive'
-
-# backup — continuous agent-session archive to Cellar object storage. setup
-# seeds the machine-local rclone env file from the vault note; status is a
-# read-only health report; now runs the installed sync script in the
-# foreground. The heavy lifting (what gets copied, where) lives in
-# atyrode-session-backup, owned by the agent-tools module.
-cmd_backup() {
-  local action="${1:-}"
-  case "$action" in
-    setup | status | now) shift ;;
-    *) die "$EX_USAGE" "backup expects setup, status, or now" ;;
-  esac
-
-  local cfg_dir env_file state_file
-  cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/session-backup"
-  env_file="$cfg_dir/env"
-  state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/session-backup/last-success"
-
-  case "$action" in
-    setup)
-      [[ $# == 0 ]] || die "$EX_USAGE" "backup setup takes no arguments"
-      guard_production_mutation "backup setup"
-      local tmp note field
-      tmp="$(vault_secure_temp_dir atyrode-backup)"
-      backup_setup_cleanup() {
-        rm -rf -- "${tmp:-}"
-        vault_close_session
-      }
-      trap backup_setup_cleanup EXIT HUP INT TERM
-      note="$tmp/note.json"
-      vault_item_notes "$backup_vault_item" "$tmp" 1 >"$note"
-      jq -e . "$note" >/dev/null 2>&1 ||
-        die "$EX_DATAERR" "vault note '$backup_vault_item' is not valid JSON"
-      for field in endpoint bucket keyId keySecret cryptPassword cryptSalt; do
-        jq -e --arg f "$field" '.[$f] | select(type == "string" and . != "")' "$note" >/dev/null ||
-          die "$EX_DATAERR" "vault note '$backup_vault_item' is missing or has an empty '$field' field"
-      done
-      # The crypt secrets flow jq → rclone obscure over pipes only: plaintext
-      # never enters an argv or the env file (the S3 key pair necessarily does,
-      # at the same trust level as ~/.codex/auth.json — 0600 file, 0700 dir).
-      local endpoint bucket key_id key_secret pw_obscured salt_obscured
-      endpoint="$(jq -er '.endpoint' "$note")"
-      bucket="$(jq -er '.bucket' "$note")"
-      key_id="$(jq -er '.keyId' "$note")"
-      key_secret="$(jq -er '.keySecret' "$note")"
-      pw_obscured="$(jq -jr '.cryptPassword' "$note" | rclone_cli obscure -)" ||
-        die "$EX_UNAVAILABLE" "rclone obscure failed"
-      salt_obscured="$(jq -jr '.cryptSalt' "$note" | rclone_cli obscure -)" ||
-        die "$EX_UNAVAILABLE" "rclone obscure failed"
-      local env_tmp
-      umask 077
-      mkdir -p "$cfg_dir"
-      chmod 0700 "$cfg_dir"
-      env_tmp="$(mktemp "$cfg_dir/.env.XXXXXX")"
-      {
-        printf 'RCLONE_CONFIG_CELLAR_TYPE=s3\n'
-        printf 'RCLONE_CONFIG_CELLAR_PROVIDER=Other\n'
-        printf 'RCLONE_CONFIG_CELLAR_ENDPOINT=%s\n' "$endpoint"
-        printf 'RCLONE_CONFIG_CELLAR_ACCESS_KEY_ID=%s\n' "$key_id"
-        printf 'RCLONE_CONFIG_CELLAR_SECRET_ACCESS_KEY=%s\n' "$key_secret"
-        printf 'RCLONE_CONFIG_ARCHIVE_TYPE=crypt\n'
-        printf 'RCLONE_CONFIG_ARCHIVE_REMOTE=cellar:%s\n' "$bucket"
-        printf 'RCLONE_CONFIG_ARCHIVE_PASSWORD=%s\n' "$pw_obscured"
-        printf 'RCLONE_CONFIG_ARCHIVE_PASSWORD2=%s\n' "$salt_obscured"
-      } >"$env_tmp"
-      mv -f "$env_tmp" "$env_file"
-      backup_setup_cleanup
-      trap - EXIT HUP INT TERM
-      printf 'atyrode: session-backup credentials written to %s\n' "$env_file" >&2
-      printf 'start the first upload with: atyrode backup now (the hourly timer also picks it up)\n' >&2
-      ;;
-    status)
-      local json=0
-      if [[ "${1:-}" == --json ]]; then
-        json=1
-        shift
-      fi
-      [[ $# == 0 ]] || die "$EX_USAGE" "backup status accepts only --json"
-      local configured=false last_json=null age_json=null reachable=null last=""
-      [[ ! -f "$env_file" ]] || configured=true
-      if [[ -f "$state_file" ]]; then
-        read -r last <"$state_file" || true
-      fi
-      if [[ -n "$last" ]]; then
-        last_json="\"$last\""
-        local last_epoch
-        if last_epoch="$(date -u -d "$last" +%s 2>/dev/null)"; then
-          age_json="$(( ($(date -u +%s) - last_epoch) / 3600 ))"
-        fi
-      fi
-      if [[ "$configured" == true ]]; then
-        # shellcheck source=/dev/null
-        if (
-          set -a
-          . "$env_file"
-          set +a
-          rclone_cli lsd archive: --contimeout 10s --timeout 20s
-        ) >/dev/null 2>&1; then
-          reachable=true
-        else
-          reachable=false
-        fi
-      fi
-      if [[ "$json" == 1 ]]; then
-        printf '{"configured":%s,"lastSuccess":%s,"ageHours":%s,"remoteReachable":%s}\n' \
-          "$configured" "$last_json" "$age_json" "$reachable"
-      else
-        printf 'configured: %s\n' "$([[ "$configured" == true ]] && echo yes || echo "no (run: atyrode backup setup)")"
-        if [[ -n "$last" ]]; then
-          printf 'last success: %s (%sh ago)\n' "$last" "${age_json/null/?}"
-        else
-          printf 'last success: never\n'
-        fi
-        case "$reachable" in
-          true) printf 'remote: reachable\n' ;;
-          false) printf 'remote: unreachable\n' ;;
-          null) printf 'remote: not checked (not configured)\n' ;;
-        esac
-      fi
-      ;;
-    now)
-      [[ $# == 0 ]] || die "$EX_USAGE" "backup now takes no arguments"
-      command -v atyrode-session-backup >/dev/null 2>&1 ||
-        die "$EX_UNAVAILABLE" "atyrode-session-backup is not installed; apply the dotfiles first: atyrode apply"
-      exec atyrode-session-backup
-      ;;
-  esac
-}
-
 infra_age_keygen() {
   local command=age-keygen
   [[ "$test_hooks" != 1 || -z "${ATYRODE_AGE_KEYGEN:-}" ]] || command="$ATYRODE_AGE_KEYGEN"
@@ -4573,7 +4424,6 @@ main() {
     infra) cmd_infra "$@" ;;
     vault) cmd_vault "$@" ;;
     auth) cmd_auth "$@" ;;
-    backup) cmd_backup "$@" ;;
     provision) cmd_provision "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)

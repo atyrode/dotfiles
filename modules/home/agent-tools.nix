@@ -127,60 +127,84 @@ let
       --prefer '^(bun|node|chrome|MainThread)$'
   '';
 
-  # Continuous agent-session archive: append-only rclone copy of omp/codex/
-  # Claude transcripts to a Cellar (S3) bucket, client-side encrypted with
-  # rclone crypt. Credentials come from a machine-local env file seeded from
-  # the Bitwarden vault by `atyrode backup setup`; an unconfigured machine is
-  # a silent no-op here (apply/status surface it), never a unit failure.
-  # `copy` (not `sync`) never deletes remote objects, so the archive is
-  # append/update-only; rclone's size+modtime comparison re-uploads sessions
-  # that append under an unchanged filename.
-  sessionBackupSync = pkgs.writeShellApplication {
-    name = "atyrode-session-backup";
+  # Hourly archive of this machine's agent session history through Babel
+  # (atyrode/babel SPEC.md 6.2). Babel replaced an rclone-crypt copy of the
+  # same trees: it archives them with restic under a stable host identity and
+  # catalogues each session in a shared PostgreSQL, so the result is
+  # verifiable and selectively restorable instead of a mirrored directory.
+  #
+  # Babel discovers the source roots itself from its own configuration, so
+  # this wrapper deliberately names no transcript paths. It exists to
+  # distinguish three states that a bare `babel archive push` would blur:
+  #
+  #   no storage.json  this machine is not part of the archive fleet. One
+  #                    line to stderr and exit 0: an unconfigured machine is
+  #                    a no-op, never an hourly unit failure.
+  #   push fails       loud and nonzero. The common cause is a repository
+  #                    that was never created, and that MUST stay visible:
+  #                    `babel archive init` is a deliberate one-time operator
+  #                    act (babel SPEC.md decision 49), never a side effect
+  #                    of a timer, because concurrent creation corrupts a
+  #                    fresh repository and a mistyped locator would silently
+  #                    become a second, empty archive.
+  #   push succeeds    stamp the time so `atyrode apply` can report archive
+  #                    freshness without reaching the network.
+  #
+  # restic is a runtime input rather than an assumed PATH entry: the profile
+  # installs it for interactive use, but a user unit's environment is not the
+  # login shell's, and a timer that fails at 02:00 for a missing binary is a
+  # bad way to learn that.
+  babelArchivePush = pkgs.writeShellApplication {
+    name = "babel-archive-push";
     runtimeInputs = [
-      pkgs.rclone
+      pkgs.babel
+      pkgs.restic
       pkgs.coreutils
+      pkgs.jq
     ];
     text = ''
-      env_file="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/session-backup/env"
-      state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/session-backup"
+      config_file="''${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+      state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/babel"
 
-      if [[ ! -f "$env_file" ]]; then
-        echo "atyrode-session-backup: not configured; run: atyrode backup setup" >&2
+      if [[ ! -f "$config_file" ]]; then
+        echo "babel-archive-push: not configured; configure this machine with: ~/nix-dotfiles/scripts/babel-storage-configure.sh" >&2
         exit 0
       fi
 
-      set -a
-      # shellcheck source=/dev/null
-      source "$env_file"
-      set +a
+      # --json because the stamp has to be earned rather than assumed. A push
+      # legitimately succeeds having archived nothing (a machine that runs no
+      # harness yet, or whose source roots moved), and it fails having
+      # archived only part of the tree. Neither is a fresh archive, and a
+      # stamp that cannot tell the difference reports health that does not
+      # exist.
+      push_status=0
+      result="$(babel archive push --json)" || push_status=$?
 
-      host="$(uname -n)"
-      flags=(--fast-list --transfers 8 --checkers 8 --contimeout 30s --timeout 5m --retries 3 --log-level NOTICE)
-      if [[ -t 2 ]]; then
-        flags+=(--progress)
+      if (( push_status != 0 )); then
+        # Babel has already named the reason on stderr and the journal keeps
+        # it. The common one is a repository that was never created:
+        # `babel archive init` is a deliberate one-time operator act, never a
+        # side effect of this timer.
+        echo "babel-archive-push: push failed (exit $push_status); not recording a successful archive" >&2
+        exit "$push_status"
       fi
 
-      # One tree failing must not block the others; report at the end.
-      fail=0
-      copy_tree() {
-        [[ -d "$1" ]] || return 0
-        rclone copy "''${flags[@]}" "$1" "archive:$host/$2" || fail=1
-      }
-      copy_file() {
-        [[ -f "$1" ]] || return 0
-        rclone copyto "''${flags[@]}" "$1" "archive:$host/$2" || fail=1
-      }
+      snapshot="$(jq -r '.snapshot_id // ""' <<<"$result")"
+      incomplete="$(jq -r '.incomplete // false' <<<"$result")"
+      sessions="$(jq -r '.sessions_published // 0' <<<"$result")"
 
-      copy_tree "$HOME/.omp/agent/sessions" omp/sessions
-      copy_tree "$HOME/.omp/collab" omp/collab
-      copy_tree "$HOME/.codex/sessions" codex/sessions
-      copy_file "$HOME/.codex/history.jsonl" codex/history.jsonl
-      copy_file "$HOME/.codex/session_index.jsonl" codex/session_index.jsonl
-      copy_tree "$HOME/.codex/attachments" codex/attachments
-      copy_tree "$HOME/.claude/projects" claude/projects
+      if [[ -z "$snapshot" ]]; then
+        echo "babel-archive-push: no snapshot created; nothing on this host to archive" >&2
+        exit 0
+      fi
 
-      [[ "$fail" == 0 ]] || exit 1
+      if [[ "$incomplete" != false ]]; then
+        echo "babel-archive-push: snapshot $snapshot is incomplete; not recording a successful archive" >&2
+        exit 1
+      fi
+
+      echo "babel-archive-push: snapshot $snapshot, $sessions session(s) published" >&2
+
       umask 077
       mkdir -p "$state_dir"
       stamp_tmp="$(mktemp "$state_dir/.last-success.XXXXXX")"
@@ -452,30 +476,33 @@ in
       }
 
       {
-        # rclone on PATH for manual browse/restore; the sync script by name so
-        # `atyrode backup now` can exec it.
-        home.packages = [
-          pkgs.rclone
-          sessionBackupSync
-        ];
+        # The wrapper by name so an operator can run one archive by hand.
+        # Babel itself comes from the agent-tools profile; rclone is gone with
+        # the legacy crypt archive, whose objects were the only thing it was
+        # kept on PATH to browse. restic is the recovery tool now, and Babel
+        # SPEC.md 11 exercises restoring with restic alone, no Babel involved.
+        home.packages = [ babelArchivePush ];
 
-        # No Install on the service: the first run can move multiple GB, and a
-        # startup-transaction job that long holds user-manager readiness at
+        # No Install on the service: a first archive can move multiple GB, and
+        # a startup-transaction job that long holds user-manager readiness at
         # "starting" (same rationale as ollama-pull-classifier below). The
         # timer triggers it instead.
-        systemd.user.services.atyrode-session-backup = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+        systemd.user.services.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           Unit = {
-            Description = "Archive agent session histories to Cellar";
+            Description = "Archive agent session histories with Babel";
             After = [ "network.target" ];
           };
           Service = {
             Type = "oneshot";
-            ExecStart = "${sessionBackupSync}/bin/atyrode-session-backup";
+            ExecStart = "${babelArchivePush}/bin/babel-archive-push";
           };
         };
 
-        systemd.user.timers.atyrode-session-backup = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          Unit.Description = "Hourly agent-session archive to Cellar";
+        # Persistent: a machine that was asleep or off at the top of the hour
+        # runs the missed archive once it is back, rather than silently
+        # skipping a window of session history.
+        systemd.user.timers.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+          Unit.Description = "Hourly Babel archive of agent session histories";
           Timer = {
             OnCalendar = "hourly";
             RandomizedDelaySec = "10m";
@@ -484,10 +511,10 @@ in
           Install.WantedBy = [ "timers.target" ];
         };
 
-        launchd.agents.atyrode-session-backup = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
+        launchd.agents.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
           enable = true;
           config = {
-            ProgramArguments = [ "${sessionBackupSync}/bin/atyrode-session-backup" ];
+            ProgramArguments = [ "${babelArchivePush}/bin/babel-archive-push" ];
             StartInterval = 3600;
             RunAtLoad = true;
             ProcessType = "Background";

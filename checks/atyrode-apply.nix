@@ -163,13 +163,38 @@ pkgs.runCommand "check-atyrode-apply"
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
-    # A successful apply with no backup env file surfaces the setup pointer
-    # (non-interactive here, so no prompt) without failing the activation.
-    grep -qF 'session backup not configured; set up with: atyrode backup setup' \
+    # A successful apply with neither Babel's storage document nor a success
+    # stamp names the provisioning ceremony, without failing the activation and
+    # without prompting (the ceremony needs an unlocked vault).
+    grep -qF 'babel archive not configured; configure with: ~/nix-dotfiles/scripts/babel-storage-configure.sh' \
       "$TMPDIR/apply-success.err"
+    ! grep -qiF 'set up session backup' "$TMPDIR/apply-success.err"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
+
+    # Babel's storage document present but no success stamp: the archive has
+    # never run here, so point at Babel's own status and push commands.
+    mkdir -p "$XDG_CONFIG_HOME/babel"
+    printf '%s\n' '{}' > "$XDG_CONFIG_HOME/babel/storage.json"
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-new.err" ||
+      { cat "$TMPDIR/apply-archive-new.err" >&2; exit 1; }
+    grep -qF 'babel archive has never succeeded here; check with: babel archive status (then: babel archive push)' \
+      "$TMPDIR/apply-archive-new.err"
+
+    # A stamp older than the staleness window warns and still activates.
+    mkdir -p "$XDG_STATE_HOME/babel"
+    date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-stale.err" ||
+      { cat "$TMPDIR/apply-archive-stale.err" >&2; exit 1; }
+    grep -qE 'babel archive stale \(last success: [^)]+\); check with: babel archive status' \
+      "$TMPDIR/apply-archive-stale.err"
+
+    # A fresh stamp is silent.
+    date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-fresh.err" ||
+      { cat "$TMPDIR/apply-archive-fresh.err" >&2; exit 1; }
+    ! grep -qF 'babel archive' "$TMPDIR/apply-archive-fresh.err"
 
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export ATYRODE_NH_FAIL=1
@@ -899,9 +924,6 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]' <<<"$help"
     grep -qF 'atyrode vault get NAME' <<<"$help"
     grep -qF 'atyrode vault put NAME' <<<"$help"
-    grep -qF 'atyrode backup setup' <<<"$help"
-    grep -qF 'atyrode backup status [--json]' <<<"$help"
-    grep -qF 'atyrode backup now' <<<"$help"
 
     mkdir "$out"
   ''

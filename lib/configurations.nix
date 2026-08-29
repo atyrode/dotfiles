@@ -31,6 +31,7 @@ let
     agentToolsOverlay
     allowedUnfreePackages
     evaluationPkgsFor
+    flakeInputPackageNames
     inventoryRevision
     mkPackageOverlay
     repositoryPackageNames
@@ -233,6 +234,7 @@ let
     import ../inventory {
       inherit
         capabilityModules
+        flakeInputPackageNames
         home-manager
         hosts
         lib

@@ -168,7 +168,7 @@ let
     omp-agent-references = import ./omp-agent-references.nix { inherit lib pkgs; };
     agent-tools-terminal-viewing = import ./agent-terminal-viewing.nix { inherit pkgs; };
     classifier-schedule = import ./classifier-schedule.nix { inherit lib pkgs; };
-    session-backup = import ./session-backup.nix { inherit lib pkgs; };
+    babel-archive = import ./babel-archive.nix { inherit lib pkgs; };
   }
   // {
     atyrode-apply = import ./atyrode-apply.nix {

@@ -98,6 +98,47 @@ pkgs.runCommand "check-atyrode-apply"
     env ATYRODE_NIX_STORE=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
       || { echo 'production read-only commands must not be blocked by the mutation guard' >&2; exit 1; }
 
+    # ATYRODE_GIT / ATYRODE_NH are tool-substitution seams honoured ONLY under
+    # test hooks. The wrappers below live outside PATH, so they are reachable
+    # exclusively through the env var: a test-hooks build must run them, and a
+    # production build must refuse the command rather than silently driving the
+    # real git/nh against the live store.
+    mkdir -p "$TMPDIR/seam"
+    for seam_tool in git nh; do
+      cat > "$TMPDIR/seam/$seam_tool" <<'EOF'
+    #!${pkgs.runtimeShell}
+    tool="''${0##*/}"
+    printf '%s\n' "$*" >> "$TMPDIR/seam/$tool.used"
+    exec "$TMPDIR/bin/$tool" "$@"
+    EOF
+      chmod +x "$TMPDIR/seam/$seam_tool"
+    done
+    rm -f "$TMPDIR/seam/git.used" "$TMPDIR/seam/nh.used"
+    ATYRODE_GIT="$TMPDIR/seam/git" ATYRODE_NH="$TMPDIR/seam/nh" \
+      atyrode apply --repo "$HOME/nix-dotfiles" --dry-run >/dev/null
+    test -s "$TMPDIR/seam/git.used" \
+      || { echo 'a test-hooks build must resolve git through ATYRODE_GIT' >&2; exit 1; }
+    test -s "$TMPDIR/seam/nh.used" \
+      || { echo 'a test-hooks build must resolve nh through ATYRODE_NH' >&2; exit 1; }
+    for seam in git:ATYRODE_GIT nh:ATYRODE_NH; do
+      seam_tool="''${seam%%:*}"
+      seam_var="''${seam##*:}"
+      rm -f "$TMPDIR/seam/$seam_tool.used"
+      set +e
+      ( unset ATYRODE_GIT ATYRODE_NH ATYRODE_NIX_ENV ATYRODE_NIX_STORE ATYRODE_GEN_PROFILE
+        export "$seam_var=$TMPDIR/seam/$seam_tool"
+        exec ${productionAtyrode}/bin/atyrode apply --plan
+      ) > /dev/null 2> "$TMPDIR/prod-seam.err"
+      seam_status="$?"
+      set -e
+      test "$seam_status" = 64 \
+        || { echo "production apply must refuse $seam_var (exit $seam_status): $(cat "$TMPDIR/prod-seam.err")" >&2; exit 1; }
+      grep -qF "$seam_var is set" "$TMPDIR/prod-seam.err" \
+        || { echo "production refusal must name $seam_var" >&2; exit 1; }
+      test ! -e "$TMPDIR/seam/$seam_tool.used" \
+        || { echo "a production build must never reach the $seam_var stub" >&2; exit 1; }
+    done
+
     # Bare invocation is additive: a TTY enters the cockpit and passes the
     # installed Bash CLI through for shell-outs; the same invocation without a
     # TTY remains the scriptable CLI help surface. makeWrapper renames that Bash
@@ -788,10 +829,50 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'doctor system contains a mutating system probe' >&2
       exit 1
     fi
-    grep -F 'brew bundle check --no-upgrade --file "$homebrew_brewfile" </dev/null' \
-      ${../pkgs/atyrode/atyrode} >/dev/null
-    grep -F 'brew bundle cleanup --file "$homebrew_brewfile" </dev/null' \
-      ${../pkgs/atyrode/atyrode} >/dev/null
+    # The Homebrew drift probe is a READ-ONLY comparison against the immutable,
+    # store-owned Brewfile. The scan above forbids a mutating spelling
+    # structurally; this pins the brew invocation the probe ACTUALLY makes. A
+    # darwin fixture with no .homebrew key falls through to the live branch, so
+    # the PATH stub below is the brew the probe really runs — and a hostile
+    # HOMEBREW_BUNDLE_FILE / HOMEBREW_NO_AUTO_UPDATE in the caller's environment
+    # must not reach it.
+    cat > "$TMPDIR/bin/brew" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/brew-args"
+    printf 'bundle-file=%s auto-update=%s\n' \
+      "''${HOMEBREW_BUNDLE_FILE-unset}" "''${HOMEBREW_NO_AUTO_UPDATE-unset}" \
+      >> "$TMPDIR/brew-env"
+    if IFS= read -r stdin_line; then
+      printf 'stdin=%s\n' "$stdin_line" >> "$TMPDIR/brew-stdin"
+    else
+      printf 'stdin=closed\n' >> "$TMPDIR/brew-stdin"
+    fi
+    EOF
+    chmod +x "$TMPDIR/bin/brew"
+    darwin_live_brew="$TMPDIR/darwin-live-brew.json"
+    jq 'del(.homebrew)' "$darwin_ready" > "$darwin_live_brew"
+    rm -f "$TMPDIR/brew-args" "$TMPDIR/brew-env" "$TMPDIR/brew-stdin"
+    live_brew_result="$(HOMEBREW_BUNDLE_FILE="$TMPDIR/caller-Brewfile" \
+      HOMEBREW_NO_AUTO_UPDATE=0 \
+      _ATYRODE_TEST_SYSTEM=aarch64-darwin _ATYRODE_TEST_USER=alex \
+      _ATYRODE_TEST_SYSTEM_FIXTURE="$darwin_live_brew" \
+      atyrode doctor system alex-aarch64-darwin --json <<<'PROMPT-ANSWER')"
+    jq -e '.checks[] | select(.id == "homebrew-drift")
+      | .status == "ok" and .actual.available and (.actual.drift | not)
+        and (.actual.probeFailed | not)' <<<"$live_brew_result" >/dev/null \
+      || { echo "the live Homebrew probe verdict is wrong: $live_brew_result" >&2; exit 1; }
+    grep -qxE 'bundle check --no-upgrade --file /nix/store/[^ ]+-atyrode-Brewfile' \
+      "$TMPDIR/brew-args" \
+      || { echo "drift probe must check against the immutable Brewfile: $(cat "$TMPDIR/brew-args")" >&2; exit 1; }
+    grep -qxE 'bundle cleanup --file /nix/store/[^ ]+-atyrode-Brewfile' \
+      "$TMPDIR/brew-args" \
+      || { echo "drift probe must run a flagless bundle cleanup: $(cat "$TMPDIR/brew-args")" >&2; exit 1; }
+    test "$(wc -l < "$TMPDIR/brew-args")" = 2 \
+      || { echo "drift probe ran unexpected brew commands: $(cat "$TMPDIR/brew-args")" >&2; exit 1; }
+    test "$(LC_ALL=C sort -u "$TMPDIR/brew-env")" = 'bundle-file=unset auto-update=1' \
+      || { echo "drift probe must drop a caller Brewfile and disable auto-update: $(cat "$TMPDIR/brew-env")" >&2; exit 1; }
+    test "$(LC_ALL=C sort -u "$TMPDIR/brew-stdin")" = stdin=closed \
+      || { echo "drift probe must never read the caller's stdin: $(cat "$TMPDIR/brew-stdin")" >&2; exit 1; }
     help="$(atyrode --help)"
     grep -qF 'then prints preflight metadata without invoking nh; --dry-run invokes the normal' <<<"$help"
     grep -qF 'nh switch backend with --dry; --preview-json runs that dry backend and emits its' <<<"$help"

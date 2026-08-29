@@ -1903,7 +1903,12 @@ probe_homebrew_drift() {
       "Homebrew is not part of the Linux ownership boundary" "" "$expected_json" "$actual_json"
     return
   fi
-  if has_system_fixture; then
+  # A fixture answers only for the keys it declares: a fixture WITHOUT .homebrew
+  # falls through to the live probe below, which is how the check suite reaches
+  # the real brew invocation without letting every other probe read the build
+  # host. Production never evaluates the second conjunct — it has no fixture, so
+  # has_system_fixture is false and the live branch always runs there.
+  if has_system_fixture && jq -e 'has("homebrew")' <<<"$system_fixture" >/dev/null; then
     available="$(jq -r '.homebrew.available // false' <<<"$system_fixture")"
     drift="$(jq -r 'if .homebrew | has("drift") then .homebrew.drift else true end' \
       <<<"$system_fixture")"
@@ -3070,7 +3075,7 @@ cmd_generations() {
       printf '{"generation":%d,"date":"%s %s","current":%s' "$gen" "$d" "$t" "$cur"
       if [[ "$sizes" == 1 ]]; then size="$(gen_size "$profile" "$gen")"; [[ -n "$size" ]] && printf ',"closureSize":"%s"' "$size"; fi
       printf '}'
-    done < <(nix-env -p "$profile" --list-generations 2>/dev/null)
+    done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
     printf ']\n'
   else
     printf 'atyrode: %s generations (%s)\n' "$(gen_platform)" "$profile" >&2
@@ -3082,7 +3087,7 @@ cmd_generations() {
       else
         printf '%s\n' "$line"
       fi
-    done < <(nix-env -p "$profile" --list-generations 2>/dev/null)
+    done < <(nix_env -p "$profile" --list-generations 2>/dev/null)
   fi
 }
 
@@ -3105,7 +3110,10 @@ cmd_rollback() {
   [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $platform generations profile at $profile"
 
   local listing current target
-  listing="$(nix-env -p "$profile" --list-generations 2>/dev/null)"
+  # A failed read must not exit 1 with no diagnostic under `set -e`; the
+  # refusals below are the useful output, so surface an unreadable profile.
+  listing="$(nix_env -p "$profile" --list-generations 2>/dev/null)" ||
+    die "$EX_UNAVAILABLE" "cannot read the $platform generations profile at $profile"
   current="$(awk '/\(current\)/{print $1}' <<<"$listing")"
   [[ -n "$current" ]] || die "$EX_SOFTWARE" "cannot determine the current generation"
   if [[ -n "$to" ]]; then

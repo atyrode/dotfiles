@@ -80,6 +80,38 @@ delivery there is a pin bump in that repository plus `atyrode infra apply`
 (interactive: Bitwarden unlock for the Clan operator identity), not
 `atyrode apply`.
 
+The pin refresh enforces step 1. `scripts/update-pins.sh` carries a
+`guard_manifold` precondition: it reads the hub's `/healthz` protocol version
+and the candidate tag's `PROTOCOL_VERSION`, and holds the bump whenever the
+candidate is newer, or whenever it cannot prove otherwise (unreachable hub,
+unreadable constant). A held bump prints to stderr and to the Actions job
+summary, opens no pull request, and leaves the pin untouched. Clearing it means
+deploying the hub, not overriding the guard.
+
+### Incident 2026-08-30: an unattended bump took a spoke off the canvas
+
+`atyrode/manifold` released `v0.5.0` from work that was not meant to ship. The
+six-hourly pin cron refreshed `0.4.4 -> 0.5.0` (dotfiles #452) with a green
+gate, because no check compared the agent against the deployed hub, and the
+next `atyrode apply` installed it on a spoke. The agent speaks
+protocol 13; the hub (build `59e221b` = `v0.4.4`) accepts `{2,3,4}` and closed
+every dial `4409 protocol version mismatch`.
+
+The failure mode is what makes this worth a heading: **the agent never
+crashed.** It logged the rejection, scheduled a reconnect, and stayed
+`active (running)` forever, so `Restart=always` had nothing to act on and the
+machine looked healthy while being absent from the canvas. A spoke that has
+silently left the hub is diagnosed from the agent's journal, not its unit state:
+
+```sh
+journalctl --user -u manifold-agent -n 20   # welcome = joined; 4409 = locked out
+curl -s https://manifold.tyrode.dev/healthz # hub protocolVersion
+```
+
+Recovery was rolling the pin back and applying from the local checkout
+(`atyrode apply --repo ~/nix-dotfiles`), since plain `atyrode apply` builds the
+published revision and cannot carry an unmerged fix.
+
 ## tyrode-dev-01 cutover (#419)
 
 Done on 2026-08-28. The VPS runs the declared user service against the pinned

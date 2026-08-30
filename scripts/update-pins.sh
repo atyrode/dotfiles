@@ -43,6 +43,52 @@ replace_hash() { # file asset new_hash
   ' "$1" >"$1.bump" && mv "$1.bump" "$1"
 }
 
+# Reports a bump this run declined to make. Cron reruns are unattended, so a
+# hold must be visible where someone will actually see it: the job summary when
+# running in Actions, stderr otherwise. It never lands on stdout, which is the
+# bump manifest the workflow reads to decide whether to open a pull request.
+hold() { # name reason
+  printf 'holding %s bump: %s\n' "$1" "$2" >&2
+  [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] ||
+    printf -- '- holding %s bump: %s\n' "$1" "$2" >>"$GITHUB_STEP_SUMMARY"
+}
+
+# Manifold is the one pin whose upgrade ORDER is load-bearing. The hub accepts
+# older agent protocol versions but can never accept a newer one — it closes the
+# dial 4409 — and that lockout is invisible to systemd: the agent process stays
+# healthy and re-dials forever, so the machine simply vanishes from the canvas.
+# On 2026-08-30 an unattended refresh to 0.5.0 (protocol 13) against a v0.4.4
+# hub (protocol 4) took a spoke off the canvas exactly that way.
+# docs/manifold.md "Upgrades" makes hub-first an operator-timed step; this guard
+# makes the six-hourly cron obey it. Fails closed: anything it cannot prove
+# holds the bump.
+guard_manifold() { # tag version repo
+  local tag="$1" version="$2" repo="$3" master_url hub candidate
+  if ! master_url="$(jq -er .masterUrl "$repo_root/inventory/manifold.json")"; then
+    hold manifold "inventory/manifold.json declares no masterUrl"
+    return 1
+  fi
+  if ! hub="$(curl -fsSL --max-time 20 "$master_url/healthz" | jq -er .protocolVersion)"; then
+    hold manifold "hub $master_url is unreachable, so $version cannot be cleared"
+    return 1
+  fi
+  # Read the candidate's protocol version from its tagged source rather than by
+  # running the asset: the number is a source constant, and a pin refresh must
+  # never execute an unvetted binary to decide whether to pin it.
+  candidate="$(curl -fsSL --max-time 20 \
+    "https://raw.githubusercontent.com/$repo/$tag/packages/protocol/src/version.ts" |
+    sed -nE 's/^export const PROTOCOL_VERSION = ([0-9]+);$/\1/p' | head -n 1)" || candidate=""
+  if [[ ! "$candidate" =~ ^[0-9]+$ ]]; then
+    hold manifold "cannot read PROTOCOL_VERSION from $tag"
+    return 1
+  fi
+  if [[ "$candidate" -gt "$hub" ]]; then
+    hold manifold \
+      "$version speaks protocol $candidate but the hub serves $hub; deploy the hub first (docs/manifold.md)"
+    return 1
+  fi
+}
+
 bump() { # name file repo tag_prefix url_template assets...
   local name="$1" file="$2" repo="$3" tag_prefix="$4" url_template="$5"
   shift 5
@@ -51,6 +97,11 @@ bump() { # name file repo tag_prefix url_template assets...
   tag="$(latest_tag "$repo")"
   version="${tag#"$tag_prefix"}"
   [[ "$version" != "$current" ]] || return 0
+  # A per-target precondition, declared as guard_<name>. Bumps without one are
+  # unordered by construction and stay unconditional.
+  if declare -F "guard_$name" >/dev/null && ! "guard_$name" "$tag" "$version" "$repo"; then
+    return 0
+  fi
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   sed -i "s/version = \"$current\"/version = \"$version\"/" "$file"

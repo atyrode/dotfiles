@@ -186,7 +186,7 @@ umask 077
 # exists to bound.
 relock() {
   if [ "$keep_unlocked" -eq 0 ] && [ -n "${BW_SESSION:-}" ]; then
-    bw lock --session "$BW_SESSION" >/dev/null 2>&1 || true
+    bw lock >/dev/null 2>&1 || true
   fi
 }
 trap relock EXIT
@@ -205,7 +205,19 @@ case "$vault_status" in
 esac
 [ -n "${BW_SESSION:-}" ] || die "no vault session; export BW_SESSION or let this script unlock"
 
-bw sync --session "$BW_SESSION" >/dev/null || die "vault sync failed"
+# One export, and nothing below ever repeats it as an argument. `bw` reads
+# BW_SESSION from the environment on its own, so naming the session on a
+# command line adds nothing except the session itself -- read and write access
+# to every item in the vault for as long as it lasts -- in argv, which any
+# process listing on this host can read. The environment is readable only by
+# this user, which is the whole reason the header above gives for preferring
+# it. Exported unconditionally rather than only on the branch that unlocks, so
+# the guarantee holds without reasoning about which branch ran.
+# checks/babel-archive.nix fails the build if a session argument comes back:
+# a redundant flag is exactly the kind of addition that reads as harmless.
+export BW_SESSION
+
+bw sync >/dev/null || die "vault sync failed"
 
 render_item='
 import json, os
@@ -229,16 +241,16 @@ print((item.get("login") or {}).get("password") or "")
 # not. Generation lives in the vault so the secret is never invented by a script
 # and is in its custodian from birth.
 created_item=0
-if item_json="$(bw get item "$vault_item" --session "$BW_SESSION" 2>/dev/null)"; then
+if item_json="$(bw get item "$vault_item" 2>/dev/null)"; then
   repo_password="$(printf '%s' "$item_json" | python3 -c "$read_password")"
   [ -n "$repo_password" ] || die "vault item '$vault_item' has no password"
 else
   [ "$dry_run" -eq 0 ] || die "vault item '$vault_item' is absent; a real run would create it"
-  repo_password="$(bw generate --length 64 --uppercase --lowercase --number --session "$BW_SESSION")"
+  repo_password="$(bw generate --length 64 --uppercase --lowercase --number)"
   [ -n "$repo_password" ] || die "password generation failed"
   item_body="$(BABEL_REPO_PW="$repo_password" BABEL_ITEM_NAME="$vault_item" python3 -c "$render_item")" ||
     die "rendering the vault item failed"
-  printf '%s' "$item_body" | bw encode | bw create item --session "$BW_SESSION" >/dev/null ||
+  printf '%s' "$item_body" | bw encode | bw create item >/dev/null ||
     die "storing the generated password in the vault failed"
   created_item=1
 fi

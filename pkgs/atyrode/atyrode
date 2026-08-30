@@ -2591,23 +2591,46 @@ review_archive_health() {
 archive_offer_ceremony() {
   # Every message names the command, never the store path behind it: the
   # operator's way back in has to be something they can retype.
-  local registry_host="${1:-}" hint='atyrode provision babel'
+  local registry_host="${1:-}" hint='atyrode provision babel' config_file
+  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
   if [[ ! -x "$babel_storage_configure" || -z "$registry_host" ]] || ! interactive; then
     printf 'babel archive not configured, so this machine archives nothing; configure with: %s\n' "$hint" >&2
+    printf 'the hourly timer stays unarmed until %s exists\n' "$config_file" >&2
     return 0
   fi
   printf 'babel archive not configured: the hourly timer is installed but archives nothing.\n' >&2
   printf 'Setting it up needs your Bitwarden password once.\n' >&2
   if [[ "${assume_yes:-0}" != 1 ]] && ! confirm "configure the babel archive for $registry_host now?"; then
     printf 'skipped; configure later with: %s\n' "$hint" >&2
+    printf 'until then the hourly timer stays unarmed; it waits on %s\n' "$config_file" >&2
     return 0
   fi
   if ! "$babel_storage_configure" --host-id "$registry_host"; then
     printf 'the ceremony did not complete; this machine still archives nothing (retry: %s)\n' "$hint" >&2
     return 0
   fi
+  archive_arm_timer
   printf 'configured; the hourly timer publishes from here on, or push now with: babel archive push\n' >&2
   return 0
+}
+
+# Arm the hourly archive timer, which the storage ceremony has just earned.
+# modules/home/agent-tools.nix gates the timer with a ConditionPathExists on
+# Babel's storage document so that an unconfigured machine never pushes on a
+# schedule (babel SPEC.md 12, gate 728). systemd evaluates that condition when
+# the timer is started, not continuously, so a machine that activated before it
+# was configured leaves the timer inactive until something starts it -- and
+# without this, that something would be the next login. Starting a running
+# timer is a no-op, so this is safe to repeat. A host with no systemd (macOS
+# runs the same wrapper from launchd, which needs no arming) has nothing to do
+# here, and a failure to arm is reported rather than fatal: the archive is
+# configured either way, and the operator is given the one command that fixes
+# it.
+archive_arm_timer() {
+  local systemctl
+  systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" || return 0
+  "$systemctl" --user start babel-archive.timer >/dev/null 2>&1 ||
+    printf 'could not arm the hourly archive timer; arm it with: systemctl --user start babel-archive.timer\n' >&2
 }
 
 # interactive reports whether we can hold a yes/no dialogue with a human (both
@@ -4271,13 +4294,25 @@ provision_git_role() { # role private_path item_name persist yes scratch
 provision_babel() {
   [[ -x "$babel_storage_configure" ]] ||
     die "$EX_UNAVAILABLE" "the babel provisioning ceremony is unavailable in this build"
-  local config_file host
+  local config_file host status=0
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
   if [[ -f "$config_file" ]]; then
-    exec "$babel_storage_configure" "$@"
+    "$babel_storage_configure" "$@" || status=$?
+  else
+    host="$(resolve_host "")"
+    "$babel_storage_configure" --host-id "$host" "$@" || status=$?
   fi
-  host="$(resolve_host "")"
-  exec "$babel_storage_configure" --host-id "$host" "$@"
+  # Run rather than exec, because the ceremony is only half of configuring this
+  # machine: the hourly timer's start condition is the document the ceremony
+  # writes, and systemd tests that condition when the timer starts. Arming it
+  # here is what stops a machine provisioned by hand from archiving nothing
+  # until its next login. Nothing to arm when the ceremony failed or when it
+  # only rehearsed (--dry-run writes no document), and the exit status is the
+  # ceremony's own so a failure stays a failure.
+  if (( status == 0 )) && [[ -f "$config_file" ]]; then
+    archive_arm_timer
+  fi
+  return "$status"
 }
 
 cmd_provision() {

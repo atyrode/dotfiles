@@ -231,14 +231,18 @@ Babel keeps a shared PostgreSQL catalog alongside the repository, so
 `babel sessions list` can answer which machine held which session, and when,
 without downloading snapshots.
 
-Provisioning happens through `atyrode apply`. A machine that installs Babel's
-hourly timer but has no archive configuration is archiving nothing while
-reporting no failure, so apply offers the ceremony after a successful
-activation and configures the machine once you accept. It supplies the archive
-identity from the host registry, because that identity — not the reported
-hostname — is what snapshots are filed under, and the registry is already where
-this fleet names its machines. Declining is honoured; the activation succeeds
-either way.
+Provisioning happens through `atyrode apply`. Home Manager installs Babel's
+hourly timer on every managed machine, but the unit does not arm until an
+archive configuration exists, so between install and provisioning a machine
+holds an installed, inactive timer. That is the intended resting state, not a
+half-configured one: nothing is scheduled to push until there is something to
+push with. Apply offers the ceremony after a successful activation, configures
+the machine once you accept, and arms the timer as soon as the configuration is
+written. It supplies the archive identity from the host registry, because that
+identity — not the reported hostname — is what snapshots are filed under, and
+the registry is already where this fleet names its machines. Declining is
+honoured; the activation succeeds either way, and the timer stays unarmed until
+the ceremony runs.
 
 The one step that cannot be automated is the Bitwarden password: the restic
 repository password lives in the vault, and only the operator can open it. That
@@ -268,12 +272,26 @@ created only when absent and the password is never regenerated once stored. No
 connection material lives in this repository.
 
 A `babel-archive` systemd user timer (launchd agent on macOS) then runs the
-`babel-archive-push` wrapper unattended. On a machine with no
-`~/.config/babel/storage.json` the wrapper prints one line and exits 0, so an
-unconfigured machine is a no-op rather than a failing unit; when the machine is
-configured and the push fails — a missing restic repository included — it exits
-nonzero and the failure stays visible. After a successful push the wrapper
-stamps `~/.local/state/babel/last-success` with one ISO-8601 UTC line, and
+`babel-archive-push` wrapper unattended. The timer's start condition is
+`~/.config/babel/storage.json`, so it arms only on a configured machine —
+storage is configured and verified first, and only then does anything push on a
+schedule. Both `atyrode apply` and `atyrode provision babel` arm it the moment
+the ceremony writes that document, so a machine configured today does not wait
+for its next login; `systemctl --user start babel-archive.timer` arms one by
+hand. To see why a timer is not armed,
+`systemctl --user status babel-archive.timer` reports it inactive and names the
+condition that was not met, `journalctl --user -u babel-archive.timer` keeps the
+same line, and the presence or absence of `~/.config/babel/storage.json` is that
+answer read directly.
+
+macOS has no equivalent condition, so there the wrapper's own check is the whole
+gate. With no `~/.config/babel/storage.json` the wrapper prints one line and
+exits 0 — which is also what a hand-run `babel-archive-push` does on any
+unconfigured machine — so an unconfigured machine is a no-op rather than a
+failing unit; when the machine is configured and the push fails, a missing
+restic repository included, it exits nonzero and the failure stays visible.
+After a successful push the wrapper stamps
+`~/.local/state/babel/last-success` with one ISO-8601 UTC line, and
 `atyrode apply` reads that stamp to warn when the archive is unconfigured, has
 never succeeded here, or has not succeeded within 48 hours.
 

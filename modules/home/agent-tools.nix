@@ -127,6 +127,15 @@ let
       --prefer '^(bun|node|chrome|MainThread)$'
   '';
 
+  # The one document that marks this machine as part of the archive fleet.
+  # `babel storage configure` writes it and nothing else does, which is what
+  # makes it usable as the gate for everything downstream: the push wrapper
+  # below refuses without it, and the hourly timer does not arm without it.
+  # The wrapper resolves the same path at run time from XDG_CONFIG_HOME rather
+  # than baking this one in, because it is also a command an operator runs by
+  # hand and it has to mean the invoking shell's configuration directory.
+  babelStorageDocument = "${config.xdg.configHome}/babel/storage.json";
+
   # Hourly archive of this machine's agent session history through Babel
   # (atyrode/babel SPEC.md 6.2). Babel replaced an rclone-crypt copy of the
   # same trees: it archives them with restic under a stable host identity and
@@ -499,11 +508,35 @@ in
           };
         };
 
+        # ConditionPathExists gates arming on the storage ceremony having
+        # already happened. Babel's SPEC.md 12 orders the rollout the other way
+        # round from an unconditional timer -- activation configures and
+        # verifies storage first, and only then does anything start pushing on
+        # a schedule, which SPEC.md 14 gate 728 restates as "timer enablement
+        # only after shared-storage health passes". A timer armed before the
+        # ceremony is kept from publishing into an unconfigured archive only by
+        # the push failing, and a guarantee made of a failure is no guarantee.
+        #
+        # The condition is the mechanism home/profiles/manifold-node.nix
+        # already uses for an unenrolled machine: systemd leaves the unit
+        # inactive and records the unmet path in the journal instead of failing
+        # it, so an operator asking why nothing archives gets an answer naming
+        # the missing document. Because the condition is evaluated when the
+        # timer starts rather than continuously, `atyrode provision babel`
+        # starts the timer as soon as the ceremony writes the document -- a
+        # machine configured today must not have to wait for its next login.
+        #
+        # launchd has no equivalent condition, so on macOS the wrapper's own
+        # check of the same document is the gate.
+        #
         # Persistent: a machine that was asleep or off at the top of the hour
         # runs the missed archive once it is back, rather than silently
         # skipping a window of session history.
         systemd.user.timers.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          Unit.Description = "Hourly Babel archive of agent session histories";
+          Unit = {
+            Description = "Hourly Babel archive of agent session histories";
+            ConditionPathExists = babelStorageDocument;
+          };
           Timer = {
             OnCalendar = "hourly";
             RandomizedDelaySec = "10m";

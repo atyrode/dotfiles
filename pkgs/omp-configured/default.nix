@@ -1350,8 +1350,15 @@ let
       # exist for scripts and for triaging a machine over a bare `ssh host
       # 'code ls'`, which is exactly when no tty is attached; only the
       # generator below needs one.
+      #
+      # `babel` is here because it is the analysis-worker protocol Babel
+      # supervises over stdin/stdout: there is never a terminal, and Babel
+      # runs it through this launcher rather than the raw binary precisely so
+      # the worker inherits the operator's own generator dials
+      # (CODE_SELECTION_STATE) and broker configuration instead of falling
+      # back to compiled defaults.
       case "''${1:-}" in
-        generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
+        babel | generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
       esac
 
       if [[ ! -t 0 || ! -t 1 ]]; then

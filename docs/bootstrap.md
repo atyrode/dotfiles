@@ -127,10 +127,10 @@ This choice was reviewed on 2026-07-10:
   outside bootstrap hardening.
 
 A partial upstream installer failure remains visible through the
-interrupted-apply marker. Bootstrap does not automatically remove a
-system-wide Nix install: that could destroy a pre-existing or concurrently
-repaired store. To uninstall a bootstrap-created Nix, confirm that Nix was not
-present before the run and follow the official
+interrupted-apply marker. Bootstrap never removes a system-wide Nix install
+and never deletes a store: that could destroy state it cannot reconstruct. To
+uninstall a bootstrap-created Nix, confirm that Nix was not present before the
+run and follow the official
 [multi-user uninstall procedure](https://nix.dev/manual/nix/2.22/installation/uninstall)
 for the current OS. That procedure is destructive and intentionally remains an
 operator action.
@@ -153,6 +153,77 @@ is not worth guessing wrong about on someone's `/etc`, so it is kept as
 discarded. A backup identical to its target is left alone, matching upstream,
 because a completed install legitimately leaves one behind.
 
+## Self-healing repairs
+
+Bootstrap is the only supported deployment path, so a state it can recognise
+is a state it repairs rather than one it reports. Every repair obeys two
+constraints:
+
+- **Idempotent.** Detection is read-only and re-derived each run, so a repeated
+  run converges instead of compounding. A repair whose work is already done is
+  not planned.
+- **Reversible.** No repair may destroy state it cannot reconstruct. Where
+  content would be lost it is archived first, and every repair appends the
+  exact command that undoes it to
+  `${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/repairs/undo.log`.
+
+Detection runs in `preflight`, only when Nix is actually missing. `plan` lists
+each repair, and `apply` performs it with explicit privilege after
+confirmation, immediately before the upstream installer runs.
+
+| State | Repair |
+| --- | --- |
+| A pre-Nix shell rc backup blocks the installer | Restore it; keep any rewritten target as `<target>.nix-install-leftover` |
+| `/etc` links resolve into a store that no longer exists | Remove them; links not owned by this toolchain are left alone |
+| `/etc/fstab` names a `/nix` volume UUID that no longer resolves | Drop the line; archive the file first |
+| An orphaned `Nix Store` volume exists | Rename it so the installer creates a fresh one |
+
+The volume repair renames rather than deletes. The installer finds volumes by
+label, so a rename is enough to route it onto its well-tested fresh-create
+path instead of the in-place encryption path that fails on a pre-existing
+volume — and unlike deletion, it destroys nothing and undoes with one command.
+The orphaned volume keeps its data until the operator reclaims the space.
+
+A volume carrying a live store is in use, not orphaned: a populated store
+database suppresses the repair entirely.
+
+## Failure codes
+
+Every operator-facing failure carries a stable code, the reason, and the next
+action. Unrecognised states are reported as such, with the transcript path,
+rather than surfacing as a bare exit status — a code that does not exist yet
+is the request for the repair that should.
+
+| Code | State |
+| --- | --- |
+| `BOOT-E201` | Installer could not create a shell rc file; `/etc` holds a link into a missing store |
+| `BOOT-E202` | Installer refused to start; a pre-Nix shell rc backup is in the way |
+| `BOOT-E203` | Installer crashed encrypting a pre-existing Nix volume in place |
+| `BOOT-E204` | Installer created the Nix volume but could not mount it |
+| `BOOT-E210` | A dangling `/etc` link could not be removed |
+| `BOOT-E211` | `/etc/fstab` could not be archived or rewritten |
+| `BOOT-E212` | A `Nix Store` volume was found but its device identifier could not be read |
+| `BOOT-E213` | The orphaned volume could not be renamed |
+| `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
+
+`BOOT-E201` through `BOOT-E204` are classified from the upstream installer's
+own output. Each names the repair that already handles it, so the remedy is to
+re-run bootstrap.
+
+## Run logs
+
+`apply` writes a timestamped transcript per run, and the upstream installer's
+own output beside it:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/logs/
+├── 20260831T161500Z-apply.log
+└── 20260831T161500Z-apply-nix-installer.log
+```
+
+Failures print the log path. Logging never fails a run: a machine too broken
+to write state is still allowed to attempt its own repair.
+
 ## Interrupted-apply marker and recovery
 
 Bootstrap state lives under:
@@ -162,7 +233,12 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/
 ├── dotfiles-config
 ├── install-interrupted
 └── bootstrap/
-    └── login-shell.incomplete
+    ├── login-shell.incomplete
+    ├── logs/
+    │   └── <timestamp>-<phase>.log
+    └── repairs/
+        ├── fstab.<timestamp>
+        └── undo.log
 ```
 
 `apply` writes `install-interrupted` immediately before its first mutating
@@ -199,10 +275,13 @@ with the required privilege. A passing verification removes the marker.
 
 `checks/bootstrap.nix` uses temporary homes and repositories, covering the
 read-only plan, fresh and repeated application, source updates, origin and
-revision defenses, installer failures, the pre-Nix shell rc repair, the
-interrupted-apply marker contract, login-shell recovery, unsafe state types,
-production-only test-hook gating, and idempotence. The same check runs
-natively in all three CI jobs.
+revision defenses, installer failures and their classification into codes,
+every self-healing repair and its undo journal, the interrupted-apply marker
+contract, login-shell recovery, unsafe state types, production-only test-hook
+gating, and idempotence. The macOS repairs are covered on every platform: the
+states they fix cannot be built on a Linux runner, so the check forces the
+platform through a test-hook override and stages the volume table behind a
+`diskutil` stand-in. The same check runs natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

@@ -1134,9 +1134,13 @@ pkgs.runCommand "check-bootstrap-${system}"
     unset FAKE_LAUNCHCTL_LOADED
 
     # On Linux the managed environment lives in /nix, so removing it is
-    # destruction rather than recovery, and recovery refuses by name.
+    # destruction rather than recovery, and recovery refuses by name. The
+    # platform is forced rather than inherited from the runner: taking it from
+    # uname would assert nothing on the macOS job, which is the one job where
+    # recovery is reachable.
     new_fixture recover-refuses-on-linux
     export PATH="$managed_tools:$base_path"
+    export BOOTSTRAP_FORCE_SYSTEM=x86_64-linux
     expect_failure "$repo/install.sh" recover --yes --repo "$repo" --config "$host"
     grep -F 'is not a recovery' "$TMPDIR/expected-failure.err" >/dev/null
     mkdir "$out"

@@ -106,8 +106,11 @@ jobs:
           purge-created: 0
           purge-primary-key: never
 
+      # --print-build-logs: without it a failing check prints "run nix log" for
+      # a store path on a runner that no longer exists, so the one job that can
+      # reproduce a platform-specific failure reports it undiagnosably.
       - name: Check flake
-        run: nix flake check --show-trace
+        run: nix flake check --show-trace --print-build-logs
 
   # Docs-only fast path: Markdown is not fully inert — links are linted and
   # docs can leak production facts — so build the two intentional whole-tree

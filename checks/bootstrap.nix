@@ -802,6 +802,24 @@ pkgs.runCommand "check-bootstrap-${system}"
     grep -F "ln -s '/etc/static/ssl/certs/ca-certificates.crt' '$etc/ssl/certs/ca-certificates.crt'" \
       "$undo" >/dev/null
 
+    # The /etc sweep repairs Nix itself, not the installer, so it must run
+    # when Nix is already installed. That is the machine that most needs it:
+    # a dangling CA bundle stops an installed Nix from verifying TLS, and
+    # gating the sweep on Nix being absent leaves it unable to repair itself.
+    darwin_fixture darwin-etc-link-repair-with-nix
+    export PATH="$managed_tools:$base_path"
+    mkdir -p "$etc/ssl/certs"
+    ln -s /nix/store/0000000000000000000000000000000-etc/ca.crt \
+      "$etc/ssl/certs/ca-certificates.crt"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-nix-plan.out"
+    grep -F "$etc/ssl/certs/ca-certificates.crt" "$TMPDIR/etc-nix-plan.out" >/dev/null
+    # The installer is not planned: Nix is present and stays present.
+    grep -F 'Reuse the installed Nix command' "$TMPDIR/etc-nix-plan.out" >/dev/null
+    test -L "$etc/ssl/certs/ca-certificates.crt"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test ! -L "$etc/ssl/certs/ca-certificates.crt"
+    test ! -e "$FAKE_INSTALL_EXECUTED"
+
     # An fstab entry naming a volume that no longer resolves is dropped, and
     # the file it came from is archived first so the edit is reversible.
     darwin_fixture darwin-fstab-repair

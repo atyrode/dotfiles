@@ -701,6 +701,8 @@ preflight() {
   esac
 
   source_nix
+  # These three exist to unblock the upstream installer, so they are only
+  # relevant while Nix is missing and the installer is about to run.
   if ! command_exists nix; then
     command_exists curl || die "curl is required to download the pinned Nix artifact"
     command_exists tar || die "tar is required to unpack the pinned Nix artifact"
@@ -709,9 +711,14 @@ preflight() {
     fi
     detect_orphaned_nix_volume
     detect_shell_profile_backups
-    detect_stale_etc_links
     detect_stale_fstab_entry
   fi
+  # The /etc sweep is different: it repairs Nix itself, not the installer. A
+  # dangling link at /etc/ssl/certs/ca-certificates.crt stops an already
+  # installed Nix from verifying TLS, so gating this on Nix being absent
+  # leaves the one machine that most needs it unable to repair itself. On a
+  # healthy managed host nothing dangles and the sweep finds nothing.
+  detect_stale_etc_links
 
   warn_if_interrupted
 

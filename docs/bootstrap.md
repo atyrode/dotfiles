@@ -167,9 +167,12 @@ constraints:
   exact command that undoes it to
   `${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/repairs/undo.log`.
 
-Detection runs in `preflight`, only when Nix is actually missing. `plan` lists
-each repair, and `apply` performs it with explicit privilege after
-confirmation, immediately before the upstream installer runs.
+Detection runs in `preflight`. `plan` lists each repair, and `apply` performs
+it with explicit privilege after confirmation, immediately before the step it
+unblocks. Three of the four repairs exist to unblock the upstream installer,
+so they are only evaluated while Nix is missing. The `/etc` sweep is not one
+of them: it repairs Nix itself, runs whether or not Nix is installed, and a
+machine whose Nix cannot verify TLS is exactly the machine that needs it.
 
 | State | Repair |
 | --- | --- |

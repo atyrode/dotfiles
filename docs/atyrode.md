@@ -86,28 +86,48 @@ path. A successful real activation records the canonical host atomically;
 failures and dry runs do not update state.
 
 On Linux with an available systemd user manager, a mutating apply runs in a
-transient service rather than as a child of the invoking terminal. The CLI
-prints the durable job ID, waits for completion, replays its output, and exits
-with the activation's status. Closing the terminal does not terminate the
-activation; reconnect with `atyrode apply-status [JOB]`. Job metadata, output,
-and the atomic final result live under
-`$XDG_STATE_HOME/atyrode/apply-jobs` (or `~/.local/state/atyrode/apply-jobs`).
-Read-only plans and dry runs remain terminal-bound. Platforms without a
-systemd user manager retain the direct activation path.
+transient service rather than as a child of the invoking terminal. Job
+metadata, output, and the atomic final result live under
+`$XDG_STATE_HOME/atyrode/apply-jobs` (or `~/.local/state/atyrode/apply-jobs`),
+and the CLI exits with the activation's own status. What the operator gets
+depends on whether there is one:
+
+- Started from a terminal (stdin and stdout both a tty), the job is handed that
+  terminal with `systemd-run --pty`. Activation output streams as `nh` produces
+  it, and whatever the activation or the reviews below ask for — a `sudo`
+  password, the Bitwarden password behind a provisioning offer — is answerable
+  in place. The trade is that the job ends with the terminal instead of
+  outliving it; its log records where the output went rather than a copy of it,
+  so `apply-status` cannot claim a transcript it never captured.
+- Without a terminal (CI, a pipe, a timer), the job is detached: the CLI prints
+  the durable job ID, waits quietly, replays the captured output at the end,
+  and exits. Closing the terminal does not terminate the activation; reconnect
+  with `atyrode apply-status [JOB]`.
+
+Read-only plans and dry runs remain terminal-bound. Platforms without a systemd
+user manager retain the direct activation path, which is live and interactive by
+construction.
 
 After a successful activation, apply reports plain-omp settings that drifted
 from the seeded repository defaults (see
 [Agent tools](agent-tools.md#seeded-plain-omp-defaults)) and, when running on
 a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
 never resolved automatically; skipping the review keeps every local value.
-It also reviews Babel session-archive health from the stamp Babel's push
-wrapper writes (see [Agent tools](agent-tools.md#session-archive)): an
-unconfigured machine gets the provisioning ceremony's path, a configured
-machine that has never pushed successfully gets `babel archive status` and
-`babel archive push`, and an archive that has not succeeded within 48 hours is
-reported stale. The review never prompts — the ceremony is interactive and
-vault-backed, and activation must not block on it — and never fails the
-activation.
+
+apply also reports the provisioning surfaces this machine has left
+unconfigured: Babel session-archive health from the stamp Babel's push wrapper
+writes (see [Agent tools](agent-tools.md#session-archive)), and an incomplete
+Git identity — a `user.signingKey` whose public file is missing, or a reachable
+agent holding no keys. Without a terminal each one prints the command that
+fixes it and nothing else. On a terminal each becomes an offer (`run atyrode
+provision babel for HOST now?`, `run atyrode provision git now?`), and
+accepting runs exactly that command in this terminal — what apply does and what
+the operator would have typed are the same thing, including the timer the
+ceremony arms. Declining prints the reminder unchanged. A configured machine
+that has never pushed successfully gets `babel archive status` and `babel
+archive push`, and an archive that has not succeeded within 48 hours is
+reported stale. None of this can fail the activation: a machine that declines
+to provision is still a machine that activated.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
 selected host and capabilities, installable, source, backend, revision,

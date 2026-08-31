@@ -26,9 +26,11 @@ pkgs.runCommand "check-atyrode-apply"
     printf '%s\n' "$*" >> "$TMPDIR/fake-systemd/run-args"
     unit=""
     path_forwarded=0
+    pty=0
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --unit=*) unit="''${1#--unit=}"; shift ;;
+        --pty) pty=1; shift ;;
         --setenv=*)
           export "''${1#--setenv=}"
           [[ "''${1#--setenv=}" != PATH=* ]] || path_forwarded=1
@@ -44,6 +46,13 @@ pkgs.runCommand "check-atyrode-apply"
     # that makes winget.exe unreachable from the real apply worker on WSL.
     [[ "$path_forwarded" == 1 ]] || export PATH=/usr/bin:/bin
     [[ -n "$unit" && $# -gt 0 ]] || exit 64
+    # --pty connects the unit to the caller's terminal, and systemd-run then
+    # waits for it and reports its exit status. Model exactly that: same stdio,
+    # foreground, same status - a unit that cannot see this stdin cannot be
+    # asked anything, which is the whole point of the flag.
+    if [[ "$pty" == 1 ]]; then
+      exec "$@"
+    fi
     ${pkgs.util-linux}/bin/setsid "$@" </dev/null >/dev/null 2>&1 &
     printf '%s\n' "$!" > "$TMPDIR/fake-systemd/$unit.pid"
     EOF
@@ -239,10 +248,51 @@ pkgs.runCommand "check-atyrode-apply"
     decline_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$decline_out" >&2; exit 1; }
     printf '%s\n' "$decline_out" | grep -qF 'the hourly timer is installed but archives nothing'
-    printf '%s\n' "$decline_out" | grep -qF 'configure the babel archive for alex-x86_64-linux now?'
+    printf '%s\n' "$decline_out" | grep -qF 'run atyrode provision babel for alex-x86_64-linux now?'
     printf '%s\n' "$decline_out" | grep -qF 'skipped; configure later with: atyrode provision babel'
     # Declining must not have configured anything.
     test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
+
+    # A supervised apply an operator is watching keeps that operator's terminal,
+    # and a captured job has none of what follows from that: the job is
+    # submitted with --pty rather than as a detached --service-type=exec unit,
+    # the offer the WORKER raises reaches this stdin and is answered from it,
+    # and the activation output arrives here instead of in a log the CLI
+    # replays once it is all over. The log keeps an account of where the output
+    # went so apply-status cannot claim to hold a transcript it never captured.
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    live_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 \
+      _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
+      ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
+      ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$live_out" >&2; exit 1; }
+    grep -qF -- '--pty' "$TMPDIR/fake-systemd/run-args"
+    if grep -qF -- '--service-type=exec' "$TMPDIR/fake-systemd/run-args"; then
+      echo 'a live apply was submitted as a detached job' >&2
+      exit 1
+    fi
+    printf '%s\n' "$live_out" | grep -qF 'run atyrode provision babel for alex-x86_64-linux now?'
+    printf '%s\n' "$live_out" | grep -qF 'mutation boundary:'
+    if printf '%s\n' "$live_out" | grep -qF 'reconnect with: atyrode apply-status'; then
+      echo 'a live apply pointed the operator at output they were already reading' >&2
+      exit 1
+    fi
+    live_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    jq -e '.live' "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/metadata.json" >/dev/null
+    jq -e '.phase == "succeeded" and .exitCode == 0' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/result.json" >/dev/null
+    grep -qF 'streamed live to the operator terminal' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/output.log"
+    if grep -qF 'mutation boundary:' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/output.log"; then
+      echo 'a live apply captured the transcript it was supposed to stream' >&2
+      exit 1
+    fi
+    # The refusal configured nothing, which is also the state the blocks below
+    # start from.
+    test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
+    rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
 
     # provision names both targets, so a mistyped one cannot be mistaken for a
     # missing feature.
@@ -271,6 +321,40 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-fresh.err" ||
       { cat "$TMPDIR/apply-archive-fresh.err" >&2; exit 1; }
     ! grep -qF 'babel archive' "$TMPDIR/apply-archive-fresh.err"
+
+    # The other provisioning surface apply notices: the signing key the global
+    # Git config names is missing. Without a terminal that stays exactly the
+    # reminder it has always been, and nothing is asked of a machine that
+    # cannot answer.
+    printf '[user]\n\tsigningKey = %s\n' "$HOME/.ssh/absent-signing-key.pub" \
+      > "$HOME/.gitconfig"
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/git-identity-quiet.err" ||
+      { cat "$TMPDIR/git-identity-quiet.err" >&2; exit 1; }
+    grep -qF 'git identity incomplete (signing key missing); provision with: atyrode provision git' \
+      "$TMPDIR/git-identity-quiet.err"
+    if grep -qF 'run atyrode provision git now?' "$TMPDIR/git-identity-quiet.err"; then
+      echo 'a machine with no terminal was asked a question it cannot answer' >&2
+      exit 1
+    fi
+    # With a terminal the reminder is followed by the offer to run the command
+    # it names, and a refusal leaves that command behind.
+    git_decline="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 \
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$git_decline" >&2; exit 1; }
+    printf '%s\n' "$git_decline" | grep -qF 'git identity incomplete (signing key missing)'
+    printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git now?'
+    printf '%s\n' "$git_decline" | grep -qF 'skipped; provision later with: atyrode provision git'
+    # Accepting runs that command for real, in this terminal. It cannot succeed
+    # here (provision git refuses without an ssh-agent), and the refusal has to
+    # stay the provisioning command's own: an apply that already activated does
+    # not fail because the follow-up it offered did.
+    git_accept="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 SSH_AUTH_SOCK= \
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$git_accept" >&2; exit 1; }
+    printf '%s\n' "$git_accept" | grep -qF 'no ssh-agent socket'
+    printf '%s\n' "$git_accept" | grep -qF 'provisioning did not complete'
+    printf '%s\n' "$git_accept" | grep -qF 'retry: atyrode provision git'
+    rm -f "$HOME/.gitconfig"
 
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export ATYRODE_NH_FAIL=1
@@ -364,6 +448,12 @@ pkgs.runCommand "check-atyrode-apply"
     ' --arg job "$job_id" <<<"$apply_status" >/dev/null
     grep -F -- '--collect' "$TMPDIR/fake-systemd/run-args" >/dev/null
     grep -F -- '--service-type=exec' "$TMPDIR/fake-systemd/run-args" >/dev/null
+    if grep -F -- '--pty' "$TMPDIR/fake-systemd/run-args" >/dev/null; then
+      echo 'a detached apply was handed a terminal it has no operator for' >&2
+      exit 1
+    fi
+    jq -e '.live == false' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/metadata.json" >/dev/null
     grep -F -- '/bin/atyrode __apply-job' "$TMPDIR/fake-systemd/run-args" >/dev/null
     if grep -F -- '/bin/.atyrode-wrapped __apply-job' "$TMPDIR/fake-systemd/run-args" >/dev/null; then
       echo 'manager worker bypassed the packaged PATH wrapper' >&2

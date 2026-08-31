@@ -92,10 +92,15 @@ nh switch backend with --dry; --preview-json runs that dry backend and emits its
 normalized package/action preview as JSON.
 apply validates everything before invoking nh, and afterwards reports plain-omp
 settings that drifted from the seeded defaults. Mutating Linux Home Manager
-applies run as manager-owned jobs, so replacing a terminal-hosting service
-cannot terminate the activation; apply-status reconnects to their durable
-result and output. On a terminal, apply offers an interactive keep-or-reset
-review after activation.
+applies run as manager-owned jobs rather than as children of the invoking
+shell. Started from a terminal the job is handed that terminal: activation
+output streams as it happens, every prompt it raises (sudo, the vault) is
+answerable, and the job ends with the terminal. Without one it is detached and
+its output captured, so replacing a terminal-hosting service cannot terminate
+the activation and apply-status reconnects to the durable result. On a terminal
+apply also offers an interactive keep-or-reset review after activation, and
+offers to run the provisioning command for each surface it finds unconfigured
+instead of only naming it.
 inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
@@ -2153,7 +2158,7 @@ cmd_apply_status() {
 run_apply_job_worker() {
   local job_dir="${1:-}"
   shift || true
-  local root job_id metadata unit started_at finished_at status phase result
+  local root job_id metadata unit live started_at finished_at status phase result
   root="$(apply_jobs_root)"
   [[ -n "$job_dir" && "$job_dir" == "$root/"* ]] ||
     die "$EX_USAGE" "invalid private apply job directory"
@@ -2168,6 +2173,8 @@ run_apply_job_worker() {
     die "$EX_DATAERR" "private apply job metadata is invalid"
 
   apply_job_worker=1
+  live=false
+  [[ "$(jq -r '.live' <<<"$metadata")" != true ]] || live=true
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   write_apply_job_json "$job_dir/running.json" \
     "$(jq -nc --arg startedAt "$started_at" '{schemaVersion:1,startedAt:$startedAt}')"
@@ -2179,7 +2186,19 @@ run_apply_job_worker() {
   # down (and reporting the job as succeeded). `|| status=$?` cannot replace
   # this: bash propagates errexit suppression into the callee.
   set +e
-  (set -e; apply_config "$@") >>"$job_dir/output.log" 2>&1
+  if [[ "$live" == true ]]; then
+    # The operator's terminal is this job's stdio, so the activation writes to
+    # it directly: nh renders as it works and anything the activation asks for
+    # (sudo, the vault, the provisioning offers below) reaches the human who
+    # started it. Capturing to the log instead is what made those prompts
+    # unreachable, so the log carries an account of where the output went
+    # rather than a copy of it.
+    printf 'atyrode: apply job %s streamed live to the operator terminal; no transcript was captured here\n' \
+      "$job_id" >>"$job_dir/output.log"
+    (set -e; apply_config "$@")
+  else
+    (set -e; apply_config "$@") >>"$job_dir/output.log" 2>&1
+  fi
   status="$?"
   set -e
   finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -2193,9 +2212,22 @@ run_apply_job_worker() {
   return "$status"
 }
 
+# The public launcher for this CLI. makeWrapper runs the payload as
+# .atyrode-wrapped, so a child re-entered through $0 would inherit the caller's
+# PATH instead of the package's pinned one. Every re-entry - the manager-owned
+# apply worker, an accepted provisioning offer - goes through the wrapper.
+atyrode_self() {
+  local self
+  self="$(readlink -f "$0")"
+  [[ "${self##*/}" != .atyrode-wrapped ]] || self="${self%/*}/atyrode"
+  [[ -x "$self" ]] || return 1
+  printf '%s\n' "$self"
+}
+
 submit_apply_job() {
-  local root job_id job_dir unit created_at metadata latest_temp self public_self systemd_run systemctl env_name probe_status unreachable
-  local -a run_args
+  local root job_id job_dir unit created_at metadata latest_temp self systemd_run systemctl
+  local env_name probe_status unreachable live=false submitted=1 status=0
+  local -a run_args job_argv
   root="$(apply_jobs_root)"
   mkdir -p "$root"
   chmod 700 "$root"
@@ -2206,21 +2238,17 @@ submit_apply_job() {
   : >"$job_dir/output.log"
   chmod 600 "$job_dir/output.log"
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # A supervised apply an operator is watching gets that operator's terminal
+  # (see --pty below), and the worker reads this flag to stream rather than
+  # capture. Anything without a terminal on both ends - CI, a pipe, a timer -
+  # keeps the detached job whose output apply-status replays.
+  ! interactive || live=true
   metadata="$(jq -nc --arg jobId "$job_id" --arg unit "$unit" \
-    --arg createdAt "$created_at" \
-    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt}')"
+    --arg createdAt "$created_at" --argjson live "$live" \
+    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt,live:$live}')"
   write_apply_job_json "$job_dir/metadata.json" "$metadata"
-
-  self="$(readlink -f "$0")"
-  # makeWrapper executes the payload as .atyrode-wrapped. Re-enter through the
-  # public wrapper so the manager-owned worker receives the package's pinned
-  # PATH instead of depending on the user manager's sparse environment.
-  if [[ "${self##*/}" == .atyrode-wrapped ]]; then
-    public_self="${self%/*}/atyrode"
-    [[ -x "$public_self" ]] ||
-      die "$EX_UNAVAILABLE" "atyrode package wrapper is unavailable"
-    self="$public_self"
-  fi
+  self="$(atyrode_self)" ||
+    die "$EX_UNAVAILABLE" "atyrode package wrapper is unavailable"
   systemd_run="$(apply_systemd_run_command)" ||
     die "$EX_UNAVAILABLE" "systemd-run became unavailable while submitting apply"
   systemctl="$(apply_systemctl_command)" ||
@@ -2228,11 +2256,23 @@ submit_apply_job() {
   if "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
     die "$EX_UNAVAILABLE" "another apply job is active; inspect it with: atyrode apply-status"
   fi
-  run_args=(
-    "$systemd_run" --user --unit="$unit" --collect --quiet
-    --service-type=exec
-    --description="atyrode apply job $job_id"
-  )
+  if [[ "$live" == true ]]; then
+    # --pty gives the unit this terminal, so the activation streams as it runs
+    # and every prompt it raises is answerable, while the work still happens in
+    # a manager-owned unit rather than in this shell's own cgroup. systemd-run
+    # waits for the worker and hands back its status, so there is nothing to
+    # poll and nothing to replay: the operator already saw all of it.
+    run_args=(
+      "$systemd_run" --user --unit="$unit" --collect --quiet --pty
+      --description="atyrode apply job $job_id"
+    )
+  else
+    run_args=(
+      "$systemd_run" --user --unit="$unit" --collect --quiet
+      --service-type=exec
+      --description="atyrode apply job $job_id"
+    )
+  fi
   # PATH is forwarded because WSL appends the Windows interop entries to the
   # session PATH only; the user manager never sees them, so a worker started
   # from its environment cannot resolve winget.exe even where the submitting
@@ -2243,16 +2283,41 @@ submit_apply_job() {
     [[ -z "${!env_name:-}" ]] ||
       run_args+=("--setenv=$env_name=${!env_name}")
   done
-  if ! "${run_args[@]}" -- "$self" __apply-job "$job_dir" "$@"; then
+  # Publish the job now that it is about to run: a live job hands its terminal
+  # away and never gets back here in time to name itself, and a job whose
+  # submission fails is exactly the one the operator is told to inspect by id.
+  # Later than this is too late, and earlier would let a submission refused for
+  # overlapping steal the running job's name.
+  latest_temp="$(mktemp "$root/.latest.XXXXXX")"
+  printf '%s\n' "$job_id" >"$latest_temp"
+  mv -f "$latest_temp" "$root/latest"
+  job_argv=("$self" __apply-job "$job_dir" "$@")
+  if [[ "$live" == true ]]; then
+    # A live run returns the activation's own status, so a failure here is not
+    # evidence the job never started; the worker's own files are.
+    "${run_args[@]}" -- "${job_argv[@]}" || status=$?
+    [[ -e "$job_dir/running.json" || -f "$job_dir/result.json" ]] || submitted=0
+  else
+    "${run_args[@]}" -- "${job_argv[@]}" || submitted=0
+  fi
+  if [[ "$submitted" == 0 ]]; then
     write_apply_job_json "$job_dir/result.json" \
       "$(jq -nc --arg createdAt "$created_at" \
         '{schemaVersion:1,phase:"failed",exitCode:69,startedAt:$createdAt,
           finishedAt:$createdAt,error:"systemd-run submission failed"}')"
     die "$EX_UNAVAILABLE" "could not submit apply job $job_id; inspect it with: atyrode apply-status $job_id"
   fi
-  latest_temp="$(mktemp "$root/.latest.XXXXXX")"
-  printf '%s\n' "$job_id" >"$latest_temp"
-  mv -f "$latest_temp" "$root/latest"
+  if [[ "$live" == true ]]; then
+    if [[ -f "$job_dir/result.json" ]]; then
+      return "$(jq -r '.exitCode' "$job_dir/result.json")"
+    fi
+    # The terminal the job was streaming to is gone or the worker died with it,
+    # so there is no transcript to hand back - only the journal has one.
+    printf 'atyrode: apply job %s stopped without publishing a result; inspect: journalctl --user -u %s\n' \
+      "$job_id" "$unit" >&2
+    [[ "$status" != 0 ]] || status="$EX_SOFTWARE"
+    return "$status"
+  fi
   printf 'atyrode: apply job %s submitted; reconnect with: atyrode apply-status %s\n' \
     "$job_id" "$job_id" >&2
 
@@ -2549,22 +2614,40 @@ review_seed_drift() {
   fi
 }
 
+# Run a provisioning command now, in this terminal, as the operator would type
+# it. Re-entering the CLI rather than calling the ceremony in-process is
+# deliberate: provisioning owns a vault session, its own traps, and its own
+# refusals, and none of them may end an apply that has already activated.
+provision_now() { # target
+  local target="$1" self
+  self="$(atyrode_self)" || return "$EX_UNAVAILABLE"
+  "$self" provision "$target"
+}
+
 # Post-apply git-identity nudge (#8): if the agent is reachable but holds no
 # keys, or the configured signing public key is missing, name the provision
-# command. Detection only — apply never prompts for the vault itself.
-# Always non-fatal, no vault, no network.
+# command -- and on a terminal, offer to run it, because the operator who can
+# answer for the vault is the one reading this line. Detection needs no vault
+# and no network. Always non-fatal.
 review_git_identity_health() {
-  local signing_public
+  local signing_public reason=""
   signing_public="$(git config --global --get user.signingKey 2>/dev/null || true)"
   if [[ -n "$signing_public" && ! -r "$(expand_home_path "$signing_public")" ]]; then
-    printf 'git identity incomplete (signing key missing); provision with: atyrode provision git\n' >&2
-    return 0
-  fi
-  if command -v ssh-add >/dev/null 2>&1 &&
+    reason="signing key missing"
+  elif command -v ssh-add >/dev/null 2>&1 &&
     [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] &&
     ! ssh-add -l >/dev/null 2>&1; then
-    printf 'git identity incomplete (agent holds no keys); provision with: atyrode provision git\n' >&2
+    reason="agent holds no keys"
   fi
+  [[ -n "$reason" ]] || return 0
+  printf 'git identity incomplete (%s); provision with: atyrode provision git\n' "$reason" >&2
+  interactive || return 0
+  if ! confirm 'run atyrode provision git now?'; then
+    printf 'skipped; provision later with: atyrode provision git\n' >&2
+    return 0
+  fi
+  provision_now git ||
+    printf 'provisioning did not complete; this machine still has an incomplete git identity (retry: atyrode provision git)\n' >&2
   return 0
 }
 
@@ -2596,11 +2679,16 @@ review_archive_health() {
 }
 
 # The ceremony is offered, never forced: it needs the operator's vault password,
-# so it can only run with a human at the terminal. The identity it configures is
-# the host-registry name, because that is what the fleet already calls this
-# machine and what the shared catalog will show it as. Every path here returns 0
-# -- a machine that declines to configure its archive is still a machine that
-# activated successfully.
+# so it can only run with a human at the terminal. What the offer runs is the
+# command it names -- `atyrode provision babel`, which is also what arms the
+# hourly timer afterwards -- so accepting here and typing it later cannot leave
+# the machine in two different states. The identity it configures is the
+# host-registry name, because that is what the fleet already calls this machine
+# and what the shared catalog will show it as; the child is told that name
+# rather than re-deriving one, so the archive can only be published under the
+# identity apply just activated. Every path here returns 0 -- a machine that
+# declines to configure its archive is still a machine that activated
+# successfully.
 archive_offer_ceremony() {
   # Every message names the command, never the store path behind it: the
   # operator's way back in has to be something they can retype.
@@ -2613,16 +2701,15 @@ archive_offer_ceremony() {
   fi
   printf 'babel archive not configured: the hourly timer is installed but archives nothing.\n' >&2
   printf 'Setting it up needs your Bitwarden password once.\n' >&2
-  if [[ "${assume_yes:-0}" != 1 ]] && ! confirm "configure the babel archive for $registry_host now?"; then
+  if ! confirm "run $hint for $registry_host now?"; then
     printf 'skipped; configure later with: %s\n' "$hint" >&2
     printf 'until then the hourly timer stays unarmed; it waits on %s\n' "$config_file" >&2
     return 0
   fi
-  if ! "$babel_storage_configure" --host-id "$registry_host"; then
+  if ! ATYRODE_HOST="$registry_host" provision_now babel; then
     printf 'the ceremony did not complete; this machine still archives nothing (retry: %s)\n' "$hint" >&2
     return 0
   fi
-  archive_arm_timer
   printf 'configured; the hourly timer publishes from here on, or push now with: babel archive push\n' >&2
   return 0
 }

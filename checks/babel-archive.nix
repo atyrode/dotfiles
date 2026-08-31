@@ -104,22 +104,31 @@ pkgs.runCommand "check-babel-archive"
     # the timer is started, not continuously, so a machine configured after
     # activation would never arm unless the ceremony starts the timer itself --
     # and an operator who waited for an hour that never came would have no way
-    # to tell a gate from a breakage. Both halves are asserted, and the arming
-    # must sit inside the two functions that complete a ceremony rather than
-    # anywhere that merely notices the unit exists.
+    # to tell a gate from a breakage. Both halves are asserted: the arming sits
+    # inside the function that completes a ceremony, and apply's offer runs
+    # that very command rather than the ceremony underneath it, so accepting
+    # the offer and typing the command cannot leave the timer in two different
+    # states.
     arm=${atyrodeSource}
     grep -Fq 'systemctl" --user start babel-archive.timer' "$arm"
-    for owner in archive_offer_ceremony provision_babel; do
-      awk -v owner="$owner" '
-        $0 ~ "^" owner "\\(\\) \\{" { inside = 1; next }
-        inside && /archive_arm_timer/ { hit = 1 }
-        /^\}/ { inside = 0 }
-        END { exit hit ? 0 : 1 }
-      ' "$arm" || {
-        echo "atyrode: $owner completes the storage ceremony without arming the archive timer" >&2
-        exit 1
-      }
-    done
+    awk '
+      $0 ~ "^provision_babel\\(\\) \\{" { inside = 1; next }
+      inside && /archive_arm_timer/ { hit = 1 }
+      /^\}/ { inside = 0 }
+      END { exit hit ? 0 : 1 }
+    ' "$arm" || {
+      echo 'atyrode: provision_babel completes the storage ceremony without arming the archive timer' >&2
+      exit 1
+    }
+    awk '
+      $0 ~ "^archive_offer_ceremony\\(\\) \\{" { inside = 1; next }
+      inside && /provision_now babel/ { hit = 1 }
+      /^\}/ { inside = 0 }
+      END { exit hit ? 0 : 1 }
+    ' "$arm" || {
+      echo "atyrode: apply's archive offer must run the command it names (atyrode provision babel), which is what arms the timer" >&2
+      exit 1
+    }
     # An unconfigured machine is told why nothing archives, on both the path
     # that cannot ask and the path that was told no.
     grep -Fq 'the hourly timer stays unarmed until' "$arm"

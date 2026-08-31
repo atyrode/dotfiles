@@ -174,7 +174,7 @@ confirmation, immediately before the upstream installer runs.
 | State | Repair |
 | --- | --- |
 | A pre-Nix shell rc backup blocks the installer | Restore it; keep any rewritten target as `<target>.nix-install-leftover` |
-| `/etc` links resolve into a store that no longer exists | Remove them; links not owned by this toolchain are left alone |
+| Links anywhere under `/etc` resolve into a store that no longer exists | Remove them; links not owned by this toolchain are left alone |
 | `/etc/fstab` names a `/nix` volume UUID that no longer resolves | Drop the line; archive the file first |
 | An orphaned `Nix Store` volume exists | Rename it so the installer creates a fresh one |
 
@@ -183,6 +183,14 @@ label, so a rename is enough to route it onto its well-tested fresh-create
 path instead of the in-place encryption path that fails on a pre-existing
 volume — and unlike deletion, it destroys nothing and undoes with one command.
 The orphaned volume keeps its data until the operator reclaims the space.
+
+The `/etc` sweep is recursive because nix-darwin owns nested paths the same
+way it owns top-level ones. `/etc/ssl/certs/ca-certificates.crt` is the one
+that matters most: it is where Nix reads its TLS trust anchors, so a
+depth-limited sweep leaves a machine that installs Nix successfully and then
+cannot download anything through it. Ownership, not depth, is what bounds the
+sweep — only links resolving into the Nix store or through `/etc/static` are
+removed, at any depth.
 
 A volume carrying a live store is in use, not orphaned: a populated store
 database suppresses the repair entirely.
@@ -205,10 +213,21 @@ is the request for the repair that should.
 | `BOOT-E212` | A `Nix Store` volume was found but its device identifier could not be read |
 | `BOOT-E213` | The orphaned volume could not be renamed |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
+| `BOOT-E301` | A managed step failed and the CA bundle is a link into a missing store |
+| `BOOT-E302` | A managed step failed and the CA bundle is a dangling link bootstrap does not own |
+| `BOOT-E399` | A managed step failed in a way bootstrap does not recognise yet |
 
-`BOOT-E201` through `BOOT-E204` are classified from the upstream installer's
-own output. Each names the repair that already handles it, so the remedy is to
-re-run bootstrap.
+`BOOT-E2xx` covers Nix installation, `BOOT-E3xx` the managed steps that follow
+it — evaluation, activation, and verification. `BOOT-E201` through `BOOT-E204`
+are classified from the upstream installer's own output, and each names the
+repair that already handles it, so the remedy is to re-run bootstrap.
+
+The `BOOT-E3xx` CA states are re-derived by inspecting the trust-anchor paths
+at failure time rather than parsed out of error prose. Nix picks its CA bundle
+from a fixed list of well-known paths, and a dangling link at one of them
+fails every download with an error that names the path but not the reason.
+The code reports what was observed — the step failed, and the bundle is
+broken — without claiming one caused the other.
 
 ## Run logs
 

@@ -31,6 +31,7 @@ SOURCE_CHANGED=0
 SOURCE_UPDATED=0
 STALE_PROFILE_BACKUPS=()
 STALE_ETC_LINKS=()
+BROKEN_TRUST_ANCHORS=()
 STALE_FSTAB_ENTRY=""
 ORPHANED_NIX_VOLUME=""
 ORPHANED_NIX_VOLUME_UUID=""
@@ -62,6 +63,47 @@ fail() {
 log_event() {
   [[ -n "$RUN_LOG" ]] || return 0
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$RUN_LOG" 2>/dev/null || true
+}
+
+# A machine state that needs a round trip to diagnose costs a release cycle,
+# and the facts that resolve one are cheap to collect while the failure is
+# still on the machine. Every failure records them, so an unrecognised code
+# arrives with its evidence instead of requiring another run to produce it.
+log_diagnostics() {
+  local source path
+
+  [[ -n "$RUN_LOG" ]] || return 0
+  {
+    printf -- '--- diagnostics ---\n'
+    printf 'system: %s\n' "$SYSTEM"
+    printf 'nix: %s\n' "$(command -v nix || printf 'absent')"
+    printf 'PATH: %s\n' "$PATH"
+    printf 'NIX_SSL_CERT_FILE: %s\n' "${NIX_SSL_CERT_FILE:-unset}"
+    printf 'SSL_CERT_FILE: %s\n' "${SSL_CERT_FILE:-unset}"
+    printf 'profile CA bundle: %s\n' "$(stat_path "$(trust_anchor_bundle)")"
+    while IFS=$'\t' read -r source path; do
+      printf 'trust anchor named by %s: %s -> %s\n' "$source" "$path" "$(stat_path "$path")"
+    done < <(trust_anchor_candidates)
+    printf -- '--- end diagnostics ---\n'
+  } >>"$RUN_LOG" 2>/dev/null || true
+}
+
+# Reports what a path is without following it, so a dangling link reads as a
+# dangling link rather than as a missing file.
+stat_path() {
+  local path="$1"
+
+  if [[ -L "$path" ]]; then
+    if [[ -e "$path" ]]; then
+      printf 'link -> %s\n' "$(readlink "$path" 2>/dev/null)"
+    else
+      printf 'dangling link -> %s\n' "$(readlink "$path" 2>/dev/null)"
+    fi
+  elif [[ -e "$path" ]]; then
+    printf 'file\n'
+  else
+    printf 'absent\n'
+  fi
 }
 
 # Only called once the state root has been validated, so this never creates
@@ -424,6 +466,25 @@ nix_store_db() {
   fi
 }
 
+# The CA bundle the upstream installer puts in the default profile: the one
+# trust anchor on a Nix machine whose lifetime is not tied to a nix-darwin
+# generation, and therefore the one a repair can point at.
+trust_anchor_bundle() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"
+  else
+    printf '/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt\n'
+  fi
+}
+
+nix_daemon_plist() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
+  else
+    printf '/Library/LaunchDaemons/org.nixos.nix-daemon.plist\n'
+  fi
+}
+
 # macOS keeps diskutil in /usr/sbin, which a machine with a broken /etc can
 # drop from PATH - precisely the machine these repairs exist for. Prefer the
 # PATH entry so the check harness can substitute a fake; fall back to the
@@ -511,6 +572,108 @@ repair_stale_etc_links() {
         "remove it by hand: sudo rm $entry"
     journal_repair "removed dangling $entry -> $target" "ln -s '$target' '$entry'"
     printf 'Removed dangling %s (pointed into a store that no longer exists)\n' "$entry"
+  done
+}
+
+# Which file Nix trusts is a machine fact, not a constant. A nix-darwin
+# generation names one under /etc, and when that generation's store is gone the
+# name outlives the file: removing the dangling link is not enough, because
+# whatever named it still names it and Nix fails on a path that is now merely
+# absent. Every namer is observable, so bootstrap reads them rather than
+# guessing which one is in force.
+trust_anchor_candidates() {
+  local etc conf plist value path
+
+  etc="$(etc_root)"
+  conf="$etc/nix/nix.conf"
+  plist="$(nix_daemon_plist)"
+
+  # A login shell started under the previous generation keeps exporting the
+  # path it was built with, long after the store behind it is collected.
+  [[ -z "${NIX_SSL_CERT_FILE:-}" ]] || printf 'NIX_SSL_CERT_FILE\t%s\n' "$NIX_SSL_CERT_FILE"
+  [[ -z "${SSL_CERT_FILE:-}" ]] || printf 'SSL_CERT_FILE\t%s\n' "$SSL_CERT_FILE"
+
+  if [[ -f "$conf" ]]; then
+    while IFS= read -r value; do
+      [[ -z "$value" ]] || printf '%s\t%s\n' "$conf" "$value"
+    done < <(sed -n \
+      's/^[[:space:]]*ssl-cert-file[[:space:]]*=[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' \
+      "$conf" 2>/dev/null)
+  fi
+
+  # The daemon, not the client, fetches from the binary cache, so its launchd
+  # environment is what a failing narinfo download actually trusted.
+  if [[ -f "$plist" ]]; then
+    while IFS= read -r value; do
+      case "$value" in
+        *.crt | *.pem) printf '%s\t%s\n' "$plist" "$value" ;;
+      esac
+    done < <(sed -n 's|.*<string>\(/[^<]*\)</string>.*|\1|p' "$plist" 2>/dev/null)
+  fi
+
+  # Nothing has to name a path for Nix to read it: with no setting in force it
+  # probes a fixed list, and a dangling link there counts as a hit.
+  for path in "$etc/ssl/certs/ca-certificates.crt" "$etc/ssl/cert.pem"; do
+    if [[ -L "$path" && ! -e "$path" ]]; then
+      printf 'the path Nix probes by default\t%s\n' "$path"
+    fi
+  done
+}
+
+detect_broken_trust_anchors() {
+  local etc source path seen=""
+
+  BROKEN_TRUST_ANCHORS=()
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  etc="$(etc_root)"
+  while IFS=$'\t' read -r source path; do
+    [[ -n "$path" ]] || continue
+    # Only paths under /etc are bootstrap's to answer for; a trust anchor kept
+    # anywhere else belongs to whoever put it there.
+    case "$path" in "$etc"/*) ;; *) continue ;; esac
+    [[ ! -e "$path" ]] || continue
+    case "$seen" in *"|$path|"*) continue ;; esac
+    seen="$seen|$path|"
+    BROKEN_TRUST_ANCHORS+=("$source"$'\t'"$path")
+  done < <(trust_anchor_candidates)
+}
+
+# The upstream installer puts a real CA bundle in the default profile, which is
+# what makes this repairable at all. Ownership is the same predicate the sweep
+# uses: bootstrap replaces a file it left behind, never one the operator keeps.
+trust_anchor_restorable() {
+  local path="$1" target
+
+  [[ -e "$(trust_anchor_bundle)" ]] || return 1
+  if [[ -L "$path" ]]; then
+    target="$(readlink "$path" 2>/dev/null)" || return 1
+    etc_link_owned "$target" || return 1
+  fi
+  return 0
+}
+
+repair_broken_trust_anchors() {
+  local line source path bundle dir
+
+  [[ "${#BROKEN_TRUST_ANCHORS[@]}" -gt 0 ]] || return 0
+  bundle="$(trust_anchor_bundle)"
+  for line in "${BROKEN_TRUST_ANCHORS[@]}"; do
+    source="${line%%$'\t'*}"
+    path="${line#*$'\t'}"
+    [[ ! -e "$path" ]] || continue
+    trust_anchor_restorable "$path" || continue
+    dir="${path%/*}"
+    if [[ ! -d "$dir" ]]; then
+      run_privileged mkdir -p "$dir" ||
+        fail BOOT-E214 "could not create $dir for the TLS trust anchor" \
+          "create it by hand: sudo mkdir -p $dir"
+    fi
+    run_privileged ln -sfn "$bundle" "$path" ||
+      fail BOOT-E214 "could not restore the TLS trust anchor $path" \
+        "link it by hand: sudo ln -sfn $bundle $path"
+    journal_repair "restored trust anchor $path -> $bundle (named by $source)" \
+      "rm -f '$path'"
+    printf 'Restored %s -> %s (named by %s)\n' "$path" "$bundle" "$source"
   done
 }
 
@@ -637,47 +800,40 @@ report_installer_failure() {
   fi
 }
 
-# Nix selects its trust anchors from a fixed list of well-known paths, and a
-# dangling link at one of them fails every download with a CA error that names
-# the path but not the reason. Re-derived at failure time rather than parsed
-# out of prose, because the state is cheaper to observe than to recognise.
-stale_ca_bundle() {
-  local candidate
-
-  [[ "$SYSTEM" == *-darwin ]] || return 0
-  for candidate in \
-    "$(etc_root)/ssl/certs/ca-certificates.crt" \
-    "$(etc_root)/ssl/cert.pem"; do
-    if [[ -L "$candidate" && ! -e "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-}
-
 # Every managed step runs Nix, so every managed step fails when Nix cannot
 # reach the cache. Without this the operator gets a raw nix error as the last
 # word: no code, no log path, nothing to report.
 report_managed_failure() {
-  local step="$1" ca target
+  local step="$1" line source path remedy=""
 
   log_event "managed step failed: $step"
-  ca="$(stale_ca_bundle)"
-  if [[ -n "$ca" ]]; then
-    target="$(readlink "$ca" 2>/dev/null)" || target=""
-    if etc_link_owned "$target"; then
-      fail BOOT-E301 \
-        "$step failed, and $ca points into a store that no longer exists, so Nix cannot verify TLS" \
-        "re-run bootstrap: it clears that link before Nix is used"
-    else
-      fail BOOT-E302 \
-        "$step failed, and $ca is a dangling link bootstrap does not own, so Nix cannot verify TLS" \
-        "point $ca at a real CA bundle or remove it, then re-run bootstrap"
-    fi
-  else
+  log_diagnostics
+  detect_broken_trust_anchors
+  if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -eq 0 ]]; then
     fail BOOT-E399 \
       "$step failed in a way bootstrap does not recognise yet" \
       "send the log below so this state can get its own code and repair"
+    return 1
+  fi
+  line="${BROKEN_TRUST_ANCHORS[0]}"
+  source="${line%%$'\t'*}"
+  path="${line#*$'\t'}"
+  # Two repairs can reach this state and they carry different promises: with a
+  # profile bundle available the file comes back, and without one a link
+  # bootstrap owns is still removed so Nix stops reading it.
+  if trust_anchor_restorable "$path"; then
+    remedy="re-run bootstrap: it restores that file from the CA bundle in the Nix profile before Nix is used"
+  elif [[ -L "$path" ]] && etc_link_owned "$(readlink "$path" 2>/dev/null)"; then
+    remedy="re-run bootstrap: it clears that link before Nix is used"
+  fi
+  if [[ -n "$remedy" ]]; then
+    fail BOOT-E301 \
+      "$step failed, and the TLS trust anchor $path named by $source does not resolve, so Nix cannot verify TLS" \
+      "$remedy"
+  else
+    fail BOOT-E302 \
+      "$step failed, and the TLS trust anchor $path named by $source does not resolve and is not bootstrap's to replace" \
+      "point $path at a real CA bundle or remove it, then re-run bootstrap"
   fi
 }
 
@@ -716,12 +872,14 @@ preflight() {
     detect_shell_profile_backups
     detect_stale_fstab_entry
   fi
-  # The /etc sweep is different: it repairs Nix itself, not the installer. A
-  # dangling link at /etc/ssl/certs/ca-certificates.crt stops an already
-  # installed Nix from verifying TLS, so gating this on Nix being absent
-  # leaves the one machine that most needs it unable to repair itself. On a
-  # healthy managed host nothing dangles and the sweep finds nothing.
+  # These two are different: they repair Nix itself, not the installer, and a
+  # machine whose Nix cannot verify TLS is exactly the machine that needs them.
+  # The sweep clears links into a store that is gone; the trust-anchor repair
+  # puts a working CA bundle back at the path this machine still names, which
+  # removal alone leaves merely absent. On a healthy host nothing dangles,
+  # every named anchor resolves, and both find nothing.
   detect_stale_etc_links
+  detect_broken_trust_anchors
 
   warn_if_interrupted
 
@@ -733,7 +891,7 @@ preflight() {
 }
 
 print_plan() {
-  local step=1 target
+  local step=1 target line path printed
 
   printf '\nPlan\n'
   if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
@@ -755,6 +913,20 @@ print_plan() {
       printf '       %s\n' "$target"
     done
     step=$((step + 1))
+  fi
+  if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -gt 0 ]]; then
+    printed=0
+    for line in "${BROKEN_TRUST_ANCHORS[@]}"; do
+      path="${line#*$'\t'}"
+      trust_anchor_restorable "$path" || continue
+      if [[ "$printed" -eq 0 ]]; then
+        printf '  %s. Restore the TLS trust anchor Nix reads, from the CA bundle in the Nix profile:\n' \
+          "$step"
+        printed=1
+      fi
+      printf '       %s (named by %s)\n' "$path" "${line%%$'\t'*}"
+    done
+    [[ "$printed" -eq 0 ]] || step=$((step + 1))
   fi
   if [[ -n "$STALE_FSTAB_ENTRY" ]]; then
     printf '  %s. Drop the dead /nix entry from %s, archiving the file first.\n' \
@@ -1169,6 +1341,9 @@ apply_configuration() {
 
   repair_shell_profile_backups
   repair_stale_etc_links
+  # After the sweep, never before it: the sweep removes the dangling anchor and
+  # this puts a working one back at the same path.
+  repair_broken_trust_anchors
   repair_stale_fstab_entry
   repair_orphaned_nix_volume
   ensure_nix

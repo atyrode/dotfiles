@@ -2,13 +2,13 @@
 
 let
   system = pkgs.stdenv.hostPlatform.system;
-  expectedHash =
-    {
-      "aarch64-darwin" = "71e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b";
-      "aarch64-linux" = "f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08";
-      "x86_64-linux" = "eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560e";
-    }
-    .${system};
+  nixHashes = {
+    "aarch64-darwin" = "71e18301c4ea78c667f2753159156b5bdb899993720e8aa7bcca97e8312d3d6b";
+    "aarch64-linux" = "f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08";
+    "x86_64-linux" = "eafe5042404e818505e28c5ca3d0885f3ec45c31f955489a25bb38258f87560e";
+  };
+  expectedHash = nixHashes.${system};
+  darwinHash = nixHashes."aarch64-darwin";
 in
 pkgs.runCommand "check-bootstrap-${system}"
   {
@@ -156,6 +156,10 @@ pkgs.runCommand "check-bootstrap-${system}"
     set -eu
     : > "$FAKE_INSTALL_EXECUTED"
     printf '%s\n' "$*" > "$FAKE_INSTALL_ARGS"
+    if [ -n "''${FAKE_INSTALLER_FAIL_MESSAGE:-}" ]; then
+      printf '%s\n' "$FAKE_INSTALLER_FAIL_MESSAGE"
+      exit 71
+    fi
     if [ "''${FAKE_INSTALLER_FAIL_AFTER_START:-0}" = 1 ]; then
       exit 71
     fi
@@ -234,6 +238,44 @@ pkgs.runCommand "check-bootstrap-${system}"
     esac
     EOF
 
+    # A volume table stands in for diskutil: "name<TAB>device<TAB>uuid" per
+    # line. Only the two subcommands bootstrap uses are implemented, and
+    # rename rewrites the table so a test can prove the volume survived.
+    cat > "$tool_root/diskutil" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    table="''${FAKE_VOLUMES:-}"
+    { [ -n "$table" ] && [ -f "$table" ]; } || exit 1
+    tab="$(printf '\t')"
+    case "''${1:-}" in
+      info)
+        while IFS="$tab" read -r name device uuid; do
+          [ -n "$name" ] || continue
+          if [ "$2" = "$name" ] || [ "$2" = "$device" ] || [ "$2" = "$uuid" ]; then
+            printf '   Device Identifier:         %s\n' "$device"
+            printf '   Volume Name:               %s\n' "$name"
+            printf '   Volume UUID:               %s\n' "$uuid"
+            exit 0
+          fi
+        done < "$table"
+        exit 1
+        ;;
+      rename)
+        : > "$table.next"
+        while IFS="$tab" read -r name device uuid; do
+          [ -n "$name" ] || continue
+          if [ "$2" = "$device" ] || [ "$2" = "$name" ]; then
+            printf '%s\t%s\t%s\n' "$3" "$device" "$uuid" >> "$table.next"
+          else
+            printf '%s\t%s\t%s\n' "$name" "$device" "$uuid" >> "$table.next"
+          fi
+        done < "$table"
+        mv "$table.next" "$table"
+        ;;
+      *) exit 64 ;;
+    esac
+    EOF
+
     chmod +x \
       "$tool_root/git" \
       "$tool_root/curl" \
@@ -243,9 +285,10 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/chsh" \
       "$tool_root/gh" \
       "$tool_root/tar" \
+      "$tool_root/diskutil" \
       "$fake_installer_template" \
       "$fake_nix_template"
-    for tool in git curl sha256sum shasum sudo chsh gh tar; do
+    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil; do
       ln -s "$tool_root/$tool" "$fresh_tools/$tool"
       ln -s "$tool_root/$tool" "$managed_tools/$tool"
     done
@@ -281,6 +324,7 @@ pkgs.runCommand "check-bootstrap-${system}"
       esac
       unset \
         ATYRODE_GIT_AUTH_MODE \
+        BOOTSTRAP_FORCE_SYSTEM \
         BOOTSTRAP_PROFILE_TARGET_ROOT \
         CODER_AGENT_URL \
         CODER_WORKSPACE_NAME \
@@ -292,8 +336,10 @@ pkgs.runCommand "check-bootstrap-${system}"
         FAKE_GIT_FETCH_FAIL \
         FAKE_GIT_UPDATE_REPO \
         FAKE_INSTALLER_FAIL_AFTER_START \
+        FAKE_INSTALLER_FAIL_MESSAGE \
         FAKE_SUDO_FAIL \
-        FAKE_VERIFY_FAIL
+        FAKE_VERIFY_FAIL \
+        FAKE_VOLUMES
       mkdir -p "$HOME" "$repo"
       printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
       printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_SHELLS_FILE"
@@ -311,6 +357,25 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$real_git" -C "$repo" add flake.nix install.sh
       "$real_git" -C "$repo" commit -q -m fixture
       "$real_git" -C "$repo" update-ref refs/remotes/origin/main HEAD
+    }
+
+    # The macOS repairs are the reason bootstrap has a platform override: the
+    # states they fix cannot be built on a Linux runner, but the logic that
+    # fixes them must still be covered by every CI job.
+    darwin_fixture() {
+      new_fixture "$1"
+      export BOOTSTRAP_FORCE_SYSTEM=aarch64-darwin
+      export FAKE_SYSTEM=aarch64-darwin
+      export EXPECTED_NIX_SHA=${darwinHash}
+      export FAKE_EXPECTED_LOGIN_SHELL=/run/current-system/sw/bin/zsh
+      export FAKE_EXPECTED_INSTALL_ARGS="--daemon --yes --no-channel-add --no-modify-profile"
+      export BOOTSTRAP_PROFILE_TARGET_ROOT="$TMPDIR/$1/etcroot"
+      export FAKE_VOLUMES="$TMPDIR/$1/volumes"
+      etc="$BOOTSTRAP_PROFILE_TARGET_ROOT/etc"
+      mkdir -p "$etc"
+      : > "$FAKE_VOLUMES"
+      printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
+      printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_SHELLS_FILE"
     }
 
     expect_failure() {
@@ -697,6 +762,94 @@ pkgs.runCommand "check-bootstrap-${system}"
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
     test ! -e "$marker"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
+
+    # A dead nix-darwin generation leaves /etc links resolving into a store
+    # that no longer exists. They are removed, links this toolchain does not
+    # own are left alone, and the undo journal can put every one of them back.
+    darwin_fixture darwin-etc-link-repair
+    export PATH="$fresh_tools:$base_path"
+    ln -s /nix/store/0000000000000000000000000000000-etc "$etc/static"
+    ln -s /etc/static/bashrc "$etc/bashrc"
+    ln -s /Volumes/MountsLater/thing "$etc/unrelated"
+    printf 'real\n' > "$etc/zshrc"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-link-plan.out"
+    grep -F "$etc/static" "$TMPDIR/etc-link-plan.out" >/dev/null
+    grep -F "$etc/bashrc" "$TMPDIR/etc-link-plan.out" >/dev/null
+    grep -Fq "$etc/unrelated" "$TMPDIR/etc-link-plan.out" && exit 1
+    # plan is read-only: every link is still exactly as it was.
+    test -L "$etc/static"
+    test -L "$etc/bashrc"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test ! -e "$etc/static" && test ! -L "$etc/static"
+    test ! -e "$etc/bashrc" && test ! -L "$etc/bashrc"
+    # A dangling link bootstrap does not own survives untouched, and so does
+    # a real file.
+    test -L "$etc/unrelated"
+    test -f "$etc/zshrc"
+    undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
+    grep -F "ln -s '/etc/static/bashrc' '$etc/bashrc'" "$undo" >/dev/null
+    grep -F "removed dangling $etc/static" "$undo" >/dev/null
+
+    # An fstab entry naming a volume that no longer resolves is dropped, and
+    # the file it came from is archived first so the edit is reversible.
+    darwin_fixture darwin-fstab-repair
+    export PATH="$fresh_tools:$base_path"
+    printf 'Nix Store\tdisk3s7\tLIVE-UUID\n' > "$FAKE_VOLUMES"
+    printf 'UUID=DEAD-UUID /nix apfs rw,noauto,nobrowse,nosuid,noatime,owners\n' \
+      > "$etc/fstab"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fstab-plan.out"
+    grep -F "Drop the dead /nix entry from $etc/fstab" "$TMPDIR/fstab-plan.out" >/dev/null
+    test -f "$etc/fstab"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    # macOS ships without /etc/fstab, so an emptied file is removed outright.
+    test ! -e "$etc/fstab"
+    archive="$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'fstab.*' -print -quit)"
+    grep -F 'UUID=DEAD-UUID /nix apfs' "$archive" >/dev/null
+
+    # An orphaned Nix Store volume is renamed, never deleted: the installer
+    # finds volumes by label, so a rename is enough to route it onto its
+    # fresh-create path, and the data stays on disk.
+    darwin_fixture darwin-orphaned-volume-repair
+    export PATH="$fresh_tools:$base_path"
+    printf 'Nix Store\tdisk3s7\tSTALE-UUID\n' > "$FAKE_VOLUMES"
+    # The fstab line names the volume about to be renamed. A rename keeps the
+    # UUID, so resolvability alone would not catch it; it must still be planned.
+    printf 'UUID=STALE-UUID /nix apfs rw,noauto,nobrowse,nosuid,noatime,owners\n' \
+      > "$etc/fstab"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/volume-plan.out"
+    grep -F 'Rename the orphaned Nix Store volume disk3s7' "$TMPDIR/volume-plan.out" >/dev/null
+    grep -F 'nothing on it is deleted' "$TMPDIR/volume-plan.out" >/dev/null
+    grep -F "Drop the dead /nix entry from $etc/fstab" "$TMPDIR/volume-plan.out" >/dev/null
+    grep -F 'Nix Store	disk3s7' "$FAKE_VOLUMES" >/dev/null
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    # Same device, same UUID, new label: nothing was destroyed.
+    grep -E '^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID$' "$FAKE_VOLUMES" >/dev/null
+    undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
+    grep -F "diskutil rename 'disk3s7' 'Nix Store'" "$undo" >/dev/null
+
+    # A volume carrying a live store is in use, not orphaned, and is never
+    # touched however the rest of the machine looks.
+    darwin_fixture darwin-live-volume-untouched
+    export PATH="$fresh_tools:$base_path"
+    printf 'Nix Store\tdisk3s7\tLIVE-UUID\n' > "$FAKE_VOLUMES"
+    mkdir -p "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db"
+    : > "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db/db.sqlite"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/live-volume-plan.out"
+    grep -Fq 'Rename the orphaned' "$TMPDIR/live-volume-plan.out" && exit 1
+    grep -F 'Nix Store	disk3s7' "$FAKE_VOLUMES" >/dev/null
+
+    # An upstream installer failure is classified into a code that names the
+    # repair, and an unrecognised one reports the transcript instead of a
+    # bare exit status.
+    darwin_fixture darwin-installer-failure-codes
+    export PATH="$fresh_tools:$base_path"
+    FAKE_INSTALLER_FAIL_MESSAGE='touch: /etc/bashrc: No such file or directory' \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E201]' "$TMPDIR/expected-failure.err" >/dev/null
+    FAKE_INSTALLER_FAIL_MESSAGE='something nobody has seen before' \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E299]' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F 'nix-installer.log' "$TMPDIR/expected-failure.err" >/dev/null
 
     mkdir "$out"
   ''

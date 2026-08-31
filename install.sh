@@ -8,6 +8,8 @@ readonly REPO_HTTPS_URL="https://github.com/atyrode/dotfiles.git"
 readonly REPO_SSH_URL="git@github.com:atyrode/dotfiles.git"
 readonly NIX_VERSION="2.34.7"
 readonly PROFILE_BACKUP_SUFFIX=".backup-before-nix"
+readonly NIX_VOLUME_LABEL="Nix Store"
+readonly ISSUE_URL="https://github.com/atyrode/dotfiles/issues/new"
 readonly BOOTSTRAP_TEST_HOOKS=0
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -28,10 +30,75 @@ NIX_SHA256=""
 SOURCE_CHANGED=0
 SOURCE_UPDATED=0
 STALE_PROFILE_BACKUPS=()
+STALE_ETC_LINKS=()
+STALE_FSTAB_ENTRY=""
+ORPHANED_NIX_VOLUME=""
+ORPHANED_NIX_VOLUME_UUID=""
+RUN_LOG=""
 
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
   return 1
+}
+
+# Every state an operator can land in carries a stable code. The code is the
+# handle for improving this script: it names one machine state, it is
+# greppable in docs/bootstrap.md, and an unrecognised one is a request for a
+# new repair rather than a wall of prose and a dead end.
+fail() {
+  local code="$1" message="$2" remedy="${3:-}"
+
+  printf 'bootstrap: [%s] %s\n' "$code" "$message" >&2
+  [[ -z "$remedy" ]] || printf '  next: %s\n' "$remedy" >&2
+  [[ -z "$RUN_LOG" ]] || printf '  log: %s\n' "$RUN_LOG" >&2
+  printf '  unrecognised states belong at %s, with the code and the log.\n' "$ISSUE_URL" >&2
+  log_event "failed $code: $message"
+  return 1
+}
+
+# The terminal shows progress; the log keeps the detail a later diagnosis
+# needs. Logging never fails a run: a machine too broken to write state is
+# still allowed to attempt its own repair.
+log_event() {
+  [[ -n "$RUN_LOG" ]] || return 0
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$RUN_LOG" 2>/dev/null || true
+}
+
+# Only called once the state root has been validated, so this never creates
+# anything through an unsafe path.
+start_run_log() {
+  local dir
+
+  dir="$(bootstrap_state_root)/logs"
+  [[ ! -L "$dir" ]] || return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  RUN_LOG="$dir/$(date -u +%Y%m%dT%H%M%SZ)-${COMMAND:-run}.log"
+  if ! : >"$RUN_LOG" 2>/dev/null; then
+    RUN_LOG=""
+    return 0
+  fi
+  chmod 600 "$RUN_LOG" 2>/dev/null || true
+  log_event "bootstrap $COMMAND for $FLAKE_CONFIG on $SYSTEM at $DOTFILES_DIR"
+}
+
+# Repairs mutate a machine bootstrap did not create, so each records how to
+# put back exactly what it changed. Reversibility is the constraint that
+# decides repair design: nothing here may destroy state it cannot
+# reconstruct, which is why the volume repair renames instead of deleting.
+repair_state_dir() {
+  printf '%s\n' "$(bootstrap_state_root)/repairs"
+}
+
+journal_repair() {
+  local note="$1" undo="$2" dir log
+
+  dir="$(repair_state_dir)"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  log="$dir/undo.log"
+  printf '%s\t%s\tundo: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$note" "$undo" \
+    >>"$log" 2>/dev/null || true
+  chmod 600 "$log" 2>/dev/null || true
+  log_event "repaired: $note (undo: $undo)"
 }
 
 GIT_AUTH_MODE="${ATYRODE_GIT_AUTH_MODE:-ssh}"
@@ -102,6 +169,13 @@ parse_options() {
 }
 
 detect_system() {
+  # The macOS repairs below are unreachable on a Linux runner, so the check
+  # harness forces the platform to exercise them everywhere rather than only
+  # in the one native CI job. Inert in production, like every hook here.
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_FORCE_SYSTEM:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_FORCE_SYSTEM"
+    return 0
+  fi
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64) printf 'aarch64-darwin\n' ;;
     Linux:arm64 | Linux:aarch64) printf 'aarch64-linux\n' ;;
@@ -282,18 +356,16 @@ warn_if_interrupted() {
 # Repairing this is bootstrap's job, not the operator's, so detection is
 # read-only and the restore runs as a confirmed, planned step of apply.
 detect_shell_profile_backups() {
-  local prefix="" target backup
+  local etc target backup
 
   STALE_PROFILE_BACKUPS=()
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
-    prefix="$BOOTSTRAP_PROFILE_TARGET_ROOT"
-  fi
+  etc="$(etc_root)"
   for target in \
-    "$prefix/etc/bashrc" \
-    "$prefix/etc/profile.d/nix.sh" \
-    "$prefix/etc/zshrc" \
-    "$prefix/etc/bash.bashrc" \
-    "$prefix/etc/zsh/zshrc"; do
+    "$etc/bashrc" \
+    "$etc/profile.d/nix.sh" \
+    "$etc/zshrc" \
+    "$etc/bash.bashrc" \
+    "$etc/zsh/zshrc"; do
     backup="$target$PROFILE_BACKUP_SUFFIX"
     [[ -e "$backup" ]] || continue
     # A backup identical to its target is what a completed install leaves
@@ -331,6 +403,227 @@ repair_shell_profile_backups() {
   done
 }
 
+# The /etc bootstrap inspects. Redirected under test so no fixture can reach
+# the real system files.
+etc_root() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/etc"
+  else
+    printf '/etc\n'
+  fi
+}
+
+# A populated store database is the difference between a volume that is
+# orphaned and one that is carrying a live install. Redirected under test so
+# both answers can be staged.
+nix_store_db() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db/db.sqlite"
+  else
+    printf '/nix/var/nix/db/db.sqlite\n'
+  fi
+}
+
+# macOS keeps diskutil in /usr/sbin, which a machine with a broken /etc can
+# drop from PATH - precisely the machine these repairs exist for. Prefer the
+# PATH entry so the check harness can substitute a fake; fall back to the
+# absolute path so a degraded login shell still works.
+diskutil_command() {
+  if command_exists diskutil; then
+    printf 'diskutil\n'
+  else
+    printf '/usr/sbin/diskutil\n'
+  fi
+}
+
+diskutil_field() {
+  local device="$1" field="$2"
+
+  "$(diskutil_command)" info "$device" 2>/dev/null |
+    awk -F: -v want="$field" '
+      {
+        key = $1
+        sub(/^[[:space:]]+/, "", key)
+        sub(/[[:space:]]+$/, "", key)
+      }
+      key == want {
+        sub(/^[^:]*:[[:space:]]*/, "")
+        print
+        exit
+      }
+    '
+}
+
+nix_volume_present() {
+  "$(diskutil_command)" info "$1" >/dev/null 2>&1
+}
+
+# A previous nix-darwin generation owns /etc through a store indirection:
+# /etc/bashrc -> /etc/static/bashrc -> /nix/store/<hash>-etc/bashrc. Lose that
+# store and every one of those links dangles. A dangling link is worse than a
+# missing file: test -e reports it absent, so the upstream installer takes its
+# "create a stub" branch, and touch follows the link to a target whose parent
+# is gone and fails with ENOENT on a path that visibly exists.
+#
+# Only links this toolchain owns are considered - ones resolving into the Nix
+# store or through /etc/static. A dangling link elsewhere may be deliberate,
+# naming a volume that mounts later, and is none of bootstrap's business.
+detect_stale_etc_links() {
+  local etc entry target
+
+  STALE_ETC_LINKS=()
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  etc="$(etc_root)"
+  [[ -d "$etc" ]] || return 0
+  for entry in "$etc"/*; do
+    [[ -L "$entry" && ! -e "$entry" ]] || continue
+    target="$(readlink "$entry" 2>/dev/null)" || continue
+    case "$target" in
+      /nix/store/* | /etc/static | /etc/static/* | */etc/static | */etc/static/*) ;;
+      *) continue ;;
+    esac
+    STALE_ETC_LINKS+=("$entry")
+  done
+}
+
+repair_stale_etc_links() {
+  local entry target
+
+  [[ "${#STALE_ETC_LINKS[@]}" -gt 0 ]] || return 0
+  for entry in "${STALE_ETC_LINKS[@]}"; do
+    [[ -L "$entry" && ! -e "$entry" ]] || continue
+    target="$(readlink "$entry" 2>/dev/null)" || target=""
+    run_privileged rm -f "$entry" ||
+      fail BOOT-E210 "could not remove the dangling link $entry" \
+        "remove it by hand: sudo rm $entry"
+    journal_repair "removed dangling $entry -> $target" "ln -s '$target' '$entry'"
+    printf 'Removed dangling %s (pointed into a store that no longer exists)\n' "$entry"
+  done
+}
+
+# A crashed install leaves /etc/fstab naming a volume UUID that no longer
+# resolves. Upstream only tests whether a /nix line is present, never whether
+# it still means anything, so a dead line survives and the volume created next
+# mounts without the options that line was supposed to supply.
+detect_stale_fstab_entry() {
+  local fstab uuid
+
+  STALE_FSTAB_ENTRY=""
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  fstab="$(etc_root)/fstab"
+  [[ -f "$fstab" && ! -L "$fstab" ]] || return 0
+  uuid="$(awk '$2 == "/nix" && $3 == "apfs" {
+      for (i = 1; i <= NF; i++)
+        if ($i ~ /^UUID=/) {
+          sub(/^UUID=/, "", $i)
+          print $i
+          exit
+        }
+    }' "$fstab")"
+  [[ -n "$uuid" ]] || return 0
+  # A line naming the volume this run is about to rename is stale too: a
+  # rename keeps the UUID, so resolvability alone would not catch it.
+  if [[ -n "$ORPHANED_NIX_VOLUME_UUID" && "$uuid" == "$ORPHANED_NIX_VOLUME_UUID" ]]; then
+    STALE_FSTAB_ENTRY="$fstab"
+    return 0
+  fi
+  nix_volume_present "$uuid" && return 0
+  STALE_FSTAB_ENTRY="$fstab"
+}
+
+repair_stale_fstab_entry() {
+  local fstab archive temporary
+
+  [[ -n "$STALE_FSTAB_ENTRY" ]] || return 0
+  fstab="$STALE_FSTAB_ENTRY"
+  [[ -f "$fstab" ]] || return 0
+  mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+  archive="$(repair_state_dir)/fstab.$(date -u +%Y%m%dT%H%M%SZ)"
+  cp "$fstab" "$archive" ||
+    fail BOOT-E211 "could not archive $fstab before editing it" \
+      "check that $(repair_state_dir) is writable"
+  temporary="$(mktemp "${TMPDIR:-/tmp}/atyrode-fstab.XXXXXX")"
+  awk '!($2 == "/nix" && $3 == "apfs")' "$fstab" >"$temporary"
+  if [[ -s "$temporary" ]]; then
+    run_privileged cp "$temporary" "$fstab" ||
+      fail BOOT-E211 "could not rewrite $fstab" "restore it from $archive"
+  else
+    # macOS ships without /etc/fstab, so an emptied file is not stock state.
+    run_privileged rm -f "$fstab" ||
+      fail BOOT-E211 "could not remove the emptied $fstab" "restore it from $archive"
+  fi
+  rm -f "$temporary"
+  journal_repair "dropped the dead /nix entry from $fstab" "cp '$archive' '$fstab'"
+  printf 'Dropped the stale /nix entry from %s (archived at %s)\n' "$fstab" "$archive"
+}
+
+# An orphaned "Nix Store" volume is what makes the upstream installer take its
+# least-tested path: cure a pre-existing volume, encrypt it in place, carry
+# on. Renaming is enough to sidestep that path, because the installer finds
+# volumes by label - and unlike deleting, it destroys nothing and undoes with
+# a single command.
+detect_orphaned_nix_volume() {
+  ORPHANED_NIX_VOLUME=""
+  ORPHANED_NIX_VOLUME_UUID=""
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  # Only reachable when Nix is absent. A populated store database means
+  # something real is mounted, so the volume is in use, not orphaned.
+  [[ ! -e "$(nix_store_db)" ]] || return 0
+  nix_volume_present "$NIX_VOLUME_LABEL" || return 0
+  ORPHANED_NIX_VOLUME="$(diskutil_field "$NIX_VOLUME_LABEL" 'Device Identifier')"
+  ORPHANED_NIX_VOLUME_UUID="$(diskutil_field "$NIX_VOLUME_LABEL" 'Volume UUID')"
+  [[ -n "$ORPHANED_NIX_VOLUME" ]] ||
+    fail BOOT-E212 \
+      "found a $NIX_VOLUME_LABEL volume but could not read its device identifier" \
+      "run: diskutil info '$NIX_VOLUME_LABEL'"
+}
+
+repair_orphaned_nix_volume() {
+  local renamed
+
+  [[ -n "$ORPHANED_NIX_VOLUME" ]] || return 0
+  renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
+  run_privileged "$(diskutil_command)" rename "$ORPHANED_NIX_VOLUME" "$renamed" ||
+    fail BOOT-E213 "could not rename the orphaned volume $ORPHANED_NIX_VOLUME" \
+      "run: sudo diskutil rename $ORPHANED_NIX_VOLUME '$renamed'"
+  journal_repair "renamed orphaned volume $ORPHANED_NIX_VOLUME to '$renamed'" \
+    "diskutil rename '$ORPHANED_NIX_VOLUME' '$NIX_VOLUME_LABEL'"
+  printf 'Renamed the orphaned volume %s to "%s"\n' "$ORPHANED_NIX_VOLUME" "$renamed"
+  printf '  Nothing on it was deleted. Reclaim the space once the install works:\n'
+  printf '    sudo diskutil apfs deleteVolume %s\n' "$ORPHANED_NIX_VOLUME"
+}
+
+# The upstream installer fails by printing prose and exiting 1. Turning its
+# known failure shapes into codes is what makes this script improvable: a
+# recognised shape names the repair that already fixes it, and an
+# unrecognised one is a concrete, reportable gap.
+report_installer_failure() {
+  local log="$1"
+
+  log_event "upstream installer failed; transcript at $log"
+  if grep -q '^touch: .*No such file or directory' "$log" 2>/dev/null; then
+    fail BOOT-E201 \
+      "the upstream installer could not create a shell rc file, so /etc still holds a link into a store that is gone" \
+      "re-run bootstrap: it clears those links before the installer starts"
+  elif grep -q 'but the latter already exists' "$log" 2>/dev/null; then
+    fail BOOT-E202 \
+      "the upstream installer refused to start because a pre-Nix shell rc backup is in the way" \
+      "re-run bootstrap: it restores those backups before the installer starts"
+  elif grep -q 'Bus error' "$log" 2>/dev/null; then
+    fail BOOT-E203 \
+      "the upstream installer crashed encrypting a pre-existing Nix volume in place" \
+      "re-run bootstrap: it renames an orphaned volume so a fresh one is created"
+  elif grep -q 'failed to mount' "$log" 2>/dev/null; then
+    fail BOOT-E204 \
+      "the upstream installer created the Nix volume but could not mount it" \
+      "re-run bootstrap: it clears a dead /nix entry in /etc/fstab, which is the usual cause"
+  else
+    fail BOOT-E299 \
+      "the upstream Nix installer failed in a way bootstrap does not recognise yet" \
+      "send the transcript at $log so this state can get its own code and repair"
+  fi
+}
+
 preflight() {
   command_exists git || die "git is required"
   command_exists mktemp || die "mktemp is required"
@@ -353,7 +646,10 @@ preflight() {
     if ! command_exists sha256sum && ! command_exists shasum; then
       die "sha256sum or shasum is required to verify the pinned Nix artifact"
     fi
+    detect_orphaned_nix_volume
     detect_shell_profile_backups
+    detect_stale_etc_links
+    detect_stale_fstab_entry
   fi
 
   warn_if_interrupted
@@ -379,6 +675,24 @@ print_plan() {
     for target in "${STALE_PROFILE_BACKUPS[@]}"; do
       printf '       %s\n' "$target"
     done
+    step=$((step + 1))
+  fi
+  if [[ "${#STALE_ETC_LINKS[@]}" -gt 0 ]]; then
+    printf '  %s. Remove links a previous nix-darwin left pointing into a store that is gone:\n' \
+      "$step"
+    for target in "${STALE_ETC_LINKS[@]}"; do
+      printf '       %s\n' "$target"
+    done
+    step=$((step + 1))
+  fi
+  if [[ -n "$STALE_FSTAB_ENTRY" ]]; then
+    printf '  %s. Drop the dead /nix entry from %s, archiving the file first.\n' \
+      "$step" "$STALE_FSTAB_ENTRY"
+    step=$((step + 1))
+  fi
+  if [[ -n "$ORPHANED_NIX_VOLUME" ]]; then
+    printf '  %s. Rename the orphaned %s volume %s so a fresh one can be created; nothing on it is deleted.\n' \
+      "$step" "$NIX_VOLUME_LABEL" "$ORPHANED_NIX_VOLUME"
     step=$((step + 1))
   fi
   if command_exists nix; then
@@ -535,7 +849,7 @@ sha256_file() {
 }
 
 install_pinned_nix() {
-  local temporary archive extracted actual installer_mode
+  local temporary archive extracted actual installer_mode installer_log
 
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/atyrode-nix.XXXXXX")"
   archive="$temporary/nix.tar.xz"
@@ -566,10 +880,21 @@ install_pinned_nix() {
     *-linux) installer_mode=--no-daemon ;;
     *) return 1 ;;
   esac
-  if ! sh "$extracted" "$installer_mode" --yes --no-channel-add --no-modify-profile; then
+  # Keep the installer transcript beside the run log so a failure report is
+  # one path, not two. Without a run log it lives and dies with the scratch
+  # directory, which is still enough for the classifier below.
+  if [[ -n "$RUN_LOG" ]]; then
+    installer_log="${RUN_LOG%.log}-nix-installer.log"
+  else
+    installer_log="$temporary/nix-installer.log"
+  fi
+  if ! sh "$extracted" "$installer_mode" --yes --no-channel-add --no-modify-profile 2>&1 |
+    tee "$installer_log"; then
+    report_installer_failure "$installer_log" || true
     rm -rf "$temporary"
     return 1
   fi
+  log_event "upstream installer completed; transcript at $installer_log"
   rm -rf "$temporary"
   source_nix
   command_exists nix || return 1
@@ -755,9 +1080,13 @@ apply_configuration() {
 
   ensure_safe_state_root "$(bootstrap_state_root)"
   ensure_safe_login_shell_marker
+  start_run_log
   write_interrupted_marker
 
   repair_shell_profile_backups
+  repair_stale_etc_links
+  repair_stale_fstab_entry
+  repair_orphaned_nix_volume
   ensure_nix
   enable_flakes_for_process
 

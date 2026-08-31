@@ -371,8 +371,13 @@ pkgs.runCommand "check-bootstrap-${system}"
       export FAKE_EXPECTED_INSTALL_ARGS="--daemon --yes --no-channel-add --no-modify-profile"
       export BOOTSTRAP_PROFILE_TARGET_ROOT="$TMPDIR/$1/etcroot"
       export FAKE_VOLUMES="$TMPDIR/$1/volumes"
+      # macOS reaches /etc through a symlink to private/etc, and traversal
+      # that refuses to follow the starting point finds nothing at all. A
+      # fixture with a real directory here cannot catch that, so it models
+      # the indirection.
       etc="$BOOTSTRAP_PROFILE_TARGET_ROOT/etc"
-      mkdir -p "$etc"
+      mkdir -p "$BOOTSTRAP_PROFILE_TARGET_ROOT/private/etc"
+      ln -s private/etc "$etc"
       : > "$FAKE_VOLUMES"
       printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
       printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_SHELLS_FILE"

@@ -488,12 +488,15 @@ detect_stale_etc_links() {
   # /etc/ssl/certs/ca-certificates.crt the same way it owns /etc/bashrc, and
   # that is the file Nix reads for TLS trust anchors. A depth-limited sweep
   # leaves a machine that installs Nix and then cannot download through it.
+  # -H follows the operand only: /etc is itself a symlink to private/etc on
+  # macOS, so -P would refuse to descend and find nothing, while links met
+  # during the walk are still reported as links rather than chased.
   while IFS= read -r entry; do
     [[ -L "$entry" && ! -e "$entry" ]] || continue
     target="$(readlink "$entry" 2>/dev/null)" || continue
     etc_link_owned "$target" || continue
     STALE_ETC_LINKS+=("$entry")
-  done < <(find -P "$etc" -type l 2>/dev/null | LC_ALL=C sort)
+  done < <(find -H "$etc" -type l 2>/dev/null | LC_ALL=C sort)
 }
 
 repair_stale_etc_links() {

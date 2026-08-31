@@ -1,0 +1,36 @@
+# Fleet SSH access registry: the reviewed public keys that may be granted
+# inbound SSH access to a machine running `atyrode tunnel`. Public material
+# only; private keys live in the Bitwarden vault (see docs/git-keys.md).
+#
+# A key becomes grantable only through a reviewed commit here, exactly as a
+# signing key becomes trusted only through a reviewed commit in
+# home/git-allowed-signers. Registration is not access: it authorizes nothing
+# by itself. `atyrode tunnel grant NAME` records a local, usually expiring
+# grant on one machine, and `atyrode tunnel` renders that machine's
+# ~/.ssh/authorized_keys from this registry and its grant state. See
+# docs/atyrode.md ("Fleet SSH access").
+#
+# One line per key, whitespace-separated:
+#
+#   NAME  ROLE  KEYTYPE  BASE64-KEY
+#
+# NAME   stable identifier `atyrode tunnel grant|revoke` accepts, and the
+#        comment written into the rendered authorized_keys line.
+# ROLE   `primary` or `revocable`. Exactly one line is `primary`: it is
+#        rendered on every machine with no expiry and `tunnel revoke` refuses
+#        it, so a mistaken revocation can never lock the operator out of a
+#        machine reachable only over SSH. Everything else is `revocable`.
+# KEYTYPE/BASE64-KEY  the first two fields of the key's authorized_keys line.
+#
+# Seeded from the operator's pre-management ~/.ssh/authorized_keys on
+# alex-x86_64-linux. That file held five lines but only three distinct keys:
+# one key had been pasted twice, once split across two lines that sshd
+# silently discarded as malformed. Rendering the file from this registry is
+# what stops that failure mode from recurring.
+
+alex-windows      primary    ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIE46zTCcblt3gILmUZWpus7QtKgfpybAJkL0iH0IabUG
+alex-macbook-air  revocable  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIMRcKLAXoDVuzSVgqi8KokRBFYMAAj10rpoD5aMdO4Bd
+# Carried no comment in the source file, so its owner is not recorded here.
+# Fingerprint SHA256:4ZJea1WdhdmhG+IaaZbOP6VAuW+z1zbtluHDB7X3joI — rename it to
+# its machine in a reviewed commit, or drop the line to retire the key.
+unidentified-1    revocable  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIOG2gDla8zu6J8xeBsssLwx5BL3AyduQtkNeMYV4MjbS

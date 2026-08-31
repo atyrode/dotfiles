@@ -5,23 +5,41 @@ import (
 	"strings"
 
 	clikit "github.com/atyrode/cli-kit"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m model) overviewView(width int) string {
-	rows := make([]string, 0, len(m.nav.Items())*2)
+	items := m.nav.Items()
+	rows := make([]string, 0, len(items)*2)
 	detailed := m.height >= 34
-	for _, item := range m.nav.Items() {
-		rows = append(rows, clikit.StHead.Render(item.Shortcut+"  "+item.Label))
-		if detailed {
-			rows = append(rows, "   "+clikit.StDim.Render(workspacePurpose(item.ID)))
+	compact := m.height < 24
+	if compact {
+		// A window this short cannot list every destination one per row without
+		// outgrowing the terminal, and orientation is this panel's whole job, so
+		// pair them rather than clipping half the cockpit out of view.
+		cell := max(1, clikit.PanelContentWidth(width)/2)
+		for index := 0; index < len(items); index += 2 {
+			line := items[index].Shortcut + "  " + items[index].Label
+			if index+1 < len(items) {
+				line = fmt.Sprintf("%-*s%s", cell, ansi.Truncate(line, cell-1, "…"),
+					ansi.Truncate(items[index+1].Shortcut+"  "+items[index+1].Label, cell, "…"))
+			}
+			rows = append(rows, clikit.StHead.Render(line))
+		}
+	} else {
+		for _, item := range items {
+			rows = append(rows, clikit.StHead.Render(item.Shortcut+"  "+item.Label))
+			if detailed {
+				rows = append(rows, "   "+clikit.StDim.Render(workspacePurpose(item.ID)))
+			}
 		}
 	}
 	spacing := "\n\n"
-	if m.height < 24 {
+	if compact {
 		spacing = "\n"
 	}
 	workspaces := clikit.Panel(width, titleStyle.Render("Workspaces")+spacing+strings.Join(rows, "\n"))
-	if m.height < 24 {
+	if compact {
 		return workspaces
 	}
 
@@ -55,6 +73,8 @@ func workspacePurpose(id clikit.WorkspaceID) string {
 		return "Browse active capabilities and their resolved deliverables."
 	case workspaceRuntime:
 		return "Provision, start, and open machine-local on-demand services."
+	case workspaceTunnel:
+		return "Grant or revoke expiring fleet SSH access to this machine."
 	case workspaceAsk:
 		return "Ask a read-only, command-grounded question about atyrode."
 	default:

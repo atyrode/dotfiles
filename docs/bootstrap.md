@@ -90,6 +90,27 @@ user-owned `nix.conf`. After the Home Manager activation succeeds, bootstrap
 also verifies the system-owned login-shell prerequisite described in [Home
 Manager and system boundary](system-boundary.md).
 
+`recover` is the exit when a state has no repair. Bootstrap converges on the
+states it can name, and a machine that keeps reporting an unrecognised one is
+a machine the operator should be able to reset without hand-running commands
+from someone else's manual. On macOS it resets what a dead nix-darwin
+generation owns — stops the `nix-daemon` and removes its LaunchDaemon,
+removes `/etc/nix`, unmounts and renames the `Nix Store` volume, puts back
+every `/etc` file a previous generation left broken — then installs Nix fresh
+and activates normally. It prints the whole plan and changes nothing without
+confirmation.
+
+Recovery obeys the same two constraints as every repair. Each file it removes
+is archived under
+`${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/repairs/` first, and
+the volume is renamed rather than deleted, so the old store keeps its data
+until the operator reclaims the space. The store itself is the one thing worth
+destroying cheaply — it is a content-addressed cache and every path in it is
+re-fetchable — but a rename is enough to route the installer onto its
+fresh-create path, so bootstrap takes that instead. On Linux the managed
+environment lives in `/nix`, where removing it is destruction rather than
+recovery, and `recover` refuses.
+
 Use `--update` to explicitly fetch the verified origin and fast-forward main.
 If source changes, bootstrap re-enters the fetched `install.sh` before writing
 the interrupted-apply marker. It never pulls implicitly. Because `--update`
@@ -244,6 +265,8 @@ is the request for the repair that should.
 | `BOOT-E212` | A `Nix Store` volume was found but its device identifier could not be read |
 | `BOOT-E213` | The orphaned volume could not be renamed |
 | `BOOT-E214` | A TLS trust anchor could not be restored |
+| `BOOT-E220` | Recovery could not archive or remove the nix-daemon LaunchDaemon |
+| `BOOT-E221` | Recovery could not archive or remove `/etc/nix` |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
 | `BOOT-E301` | A managed step failed and a TLS trust anchor this machine reads is not a usable CA bundle |
 | `BOOT-E302` | The same, but the path is not bootstrap's to replace |
@@ -339,12 +362,16 @@ with the required privilege. A passing verification removes the marker.
 `checks/bootstrap.nix` uses temporary homes and repositories, covering the
 read-only plan, fresh and repeated application, source updates, origin and
 revision defenses, installer failures and their classification into codes,
-every self-healing repair and its undo journal, the interrupted-apply marker
-contract, login-shell recovery, unsafe state types, production-only test-hook
-gating, and idempotence. The macOS repairs are covered on every platform: the
-states they fix cannot be built on a Linux runner, so the check forces the
-platform through a test-hook override and stages the volume table behind a
-`diskutil` stand-in. The same check runs natively in all three CI jobs.
+every self-healing repair and its undo journal, the recovery phase and its
+refusal to act without confirmation, the interrupted-apply marker contract,
+login-shell recovery, unsafe state types, production-only test-hook gating,
+and idempotence. The macOS repairs are covered on every platform: the states
+they fix cannot be built on a Linux runner, so the check forces the platform
+through a test-hook override and stages the machine behind `diskutil`,
+`launchctl`, and `plutil` stand-ins — including a `/etc` that is reached
+through a symlink and a launchd plist that is not readable as text, because a
+fixture that is easier than the platform tests nothing. The same check runs
+natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

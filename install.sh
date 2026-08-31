@@ -155,6 +155,7 @@ Usage:
   ./install.sh preflight [OPTIONS]
   ./install.sh plan [OPTIONS]
   ./install.sh apply [OPTIONS]
+  ./install.sh recover [OPTIONS]
   ./install.sh verify [OPTIONS]
 
 Options:
@@ -163,12 +164,17 @@ Options:
   --update             Fetch origin and fast-forward main before activation.
   --allow-dirty        Intentionally use a checkout with local changes.
   --allow-non-main     Intentionally use a branch or detached revision other than main.
-  --yes                Confirm apply without an interactive prompt.
+  --yes                Confirm apply or recover without an interactive prompt.
   -h, --help           Show this help.
 
 Inside a standard Coder workspace, a no-command invocation selects this
 repository's architecture-specific portable profile. Elsewhere, run `plan`,
 inspect it, then run `apply`.
+
+`recover` is the exit when a state has no repair: on macOS it resets this
+machine's Nix installation - daemon, /etc/nix, and the store volume, each
+archived or renamed rather than deleted - then installs Nix fresh and
+activates normally.
 EOF
 }
 
@@ -1367,32 +1373,95 @@ verify_system_login_shell() {
   fi
 }
 
-apply_configuration() {
-  preflight
-  print_plan
-  confirm_action "Apply this bootstrap plan?"
+# Bootstrap repairs the states it can name. Recovery is the exit for the ones
+# it cannot: reset this machine's Nix installation the way the manual documents
+# an uninstall, then install it fresh and continue normally. Nothing here is a
+# one-way door - the store volume is renamed rather than deleted, and every
+# file removed is archived first - because a store is a re-fetchable cache
+# while an operator's data is not.
+reset_nix_installation() {
+  local plist archive nixconf volume renamed
 
-  if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
-    update_checkout || die "source update failed before the interrupted-apply marker was written"
-    verify_checkout
-    if [[ "$SOURCE_CHANGED" -eq 1 ]]; then
-      restart_after_source_update
-    fi
+  plist="$(nix_daemon_plist)"
+  if [[ -e "$plist" ]]; then
+    # Best effort: an unloaded daemon reports "Boot-out failed", which is the
+    # state being converged on, not an error.
+    run_privileged launchctl bootout system/org.nixos.nix-daemon >/dev/null 2>&1 || true
+    mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+    archive="$(repair_state_dir)/nix-daemon.plist.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp "$plist" "$archive" ||
+      fail BOOT-E220 "could not archive $plist before removing it" \
+        "check that $(repair_state_dir) is writable"
+    run_privileged rm -f "$plist" ||
+      fail BOOT-E220 "could not remove $plist" "remove it by hand: sudo rm $plist"
+    journal_repair "removed the nix-daemon LaunchDaemon $plist" "cp '$archive' '$plist'"
+    printf 'Stopped and removed %s (archived at %s)\n' "$plist" "$archive"
   fi
 
+  # /etc/nix is where a dead generation's ssl-cert-file and substituters live.
+  # The installer writes a fresh one.
+  nixconf="$(etc_root)/nix"
+  if [[ -d "$nixconf" && ! -L "$nixconf" ]]; then
+    mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+    archive="$(repair_state_dir)/etc-nix.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp -R "$nixconf" "$archive" ||
+      fail BOOT-E221 "could not archive $nixconf before removing it" \
+        "check that $(repair_state_dir) is writable"
+    run_privileged rm -rf "$nixconf" ||
+      fail BOOT-E221 "could not remove $nixconf" "remove it by hand: sudo rm -rf $nixconf"
+    journal_repair "removed $nixconf" "cp -R '$archive' '$nixconf'"
+    printf 'Removed %s (archived at %s)\n' "$nixconf" "$archive"
+  fi
+
+  # The installer finds volumes by label, so renaming routes it onto its
+  # fresh-create path. Unmounting first is what frees /nix for the new one.
+  if nix_volume_present "$NIX_VOLUME_LABEL"; then
+    volume="$(diskutil_field "$NIX_VOLUME_LABEL" 'Device Identifier')"
+    [[ -n "$volume" ]] ||
+      fail BOOT-E212 "found a $NIX_VOLUME_LABEL volume but could not read its device identifier" \
+        "inspect it with: diskutil info '$NIX_VOLUME_LABEL'"
+    run_privileged "$(diskutil_command)" unmount force "$volume" >/dev/null 2>&1 || true
+    renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
+    run_privileged "$(diskutil_command)" rename "$volume" "$renamed" ||
+      fail BOOT-E213 "could not rename the $NIX_VOLUME_LABEL volume $volume" \
+        "rename it by hand: sudo diskutil rename '$volume' '$renamed'"
+    journal_repair "renamed $volume from $NIX_VOLUME_LABEL to $renamed" \
+      "diskutil rename '$volume' '$NIX_VOLUME_LABEL'"
+    printf 'Renamed %s to %s and unmounted it; nothing on it was deleted\n' "$volume" "$renamed"
+  fi
+}
+
+print_recovery_plan() {
+  local step=1
+
+  printf '\nRecovery plan\n'
+  printf '  %s. Stop the nix-daemon and remove its LaunchDaemon, archiving it first.\n' "$step"
+  step=$((step + 1))
+  printf '  %s. Remove %s, archiving it first.\n' "$step" "$(etc_root)/nix"
+  step=$((step + 1))
+  printf '  %s. Unmount and rename the %s volume so a fresh one is created; nothing on it is deleted.\n' \
+    "$step" "$NIX_VOLUME_LABEL"
+  step=$((step + 1))
+  printf '  %s. Put back every /etc file a previous generation left broken.\n' "$step"
+  step=$((step + 1))
+  printf '  %s. Install upstream Nix %s for %s and require SHA-256 %s.\n' \
+    "$step" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
+  step=$((step + 1))
+  printf '  %s. Evaluate, activate, and verify %s as a normal run.\n' "$step" "$FLAKE_CONFIG"
+  printf '\nEvery removal is archived under %s and undone by %s/undo.log.\n' \
+    "$(repair_state_dir)" "$(repair_state_dir)"
+  printf 'The old store volume keeps its data until you reclaim the space.\n'
+  printf '\nNo changes were made. recover will not proceed without confirmation.\n'
+}
+
+begin_mutations() {
   ensure_safe_state_root "$(bootstrap_state_root)"
   ensure_safe_login_shell_marker
   start_run_log
   write_interrupted_marker
+}
 
-  repair_shell_profile_backups
-  repair_stale_etc_links
-  # After the sweep, never before it: the sweep removes the dangling anchor and
-  # this puts a working one back at the same path.
-  repair_broken_trust_anchors
-  repair_stale_fstab_entry
-  repair_orphaned_nix_volume
-  ensure_nix
+run_activation_phases() {
   enable_flakes_for_process
 
   run_managed_step evaluation managed_activation_plan
@@ -1424,6 +1493,60 @@ apply_configuration() {
     "$(managed_login_shell)"
 }
 
+apply_configuration() {
+  preflight
+  print_plan
+  confirm_action "Apply this bootstrap plan?"
+
+  if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
+    update_checkout || die "source update failed before the interrupted-apply marker was written"
+    verify_checkout
+    if [[ "$SOURCE_CHANGED" -eq 1 ]]; then
+      restart_after_source_update
+    fi
+  fi
+
+  begin_mutations
+
+  repair_shell_profile_backups
+  repair_stale_etc_links
+  # After the sweep, never before it: the sweep removes the dangling anchor and
+  # this puts a working one back at the same path.
+  repair_broken_trust_anchors
+  repair_stale_fstab_entry
+  repair_orphaned_nix_volume
+  ensure_nix
+  run_activation_phases
+}
+
+recover_configuration() {
+  preflight
+  # On a Linux host the managed environment lives in /nix and removing it is
+  # destruction, not recovery. The states this resolves are macOS system state.
+  [[ "$SYSTEM" == *-darwin ]] ||
+    die "recover resets a macOS Nix installation; on $SYSTEM removing /nix is not a recovery"
+  print_recovery_plan
+  confirm_action "Reset this machine's Nix installation and reinstall?"
+
+  begin_mutations
+  reset_nix_installation
+
+  # Re-derived after the reset rather than reused from preflight: the reset
+  # changed the machine, and a repair planned against the old state would be
+  # answering a question nobody is asking any more.
+  detect_shell_profile_backups
+  detect_stale_etc_links
+  detect_broken_trust_anchors
+  detect_stale_fstab_entry
+
+  repair_shell_profile_backups
+  repair_stale_etc_links
+  repair_broken_trust_anchors
+  repair_stale_fstab_entry
+  install_pinned_nix || die "the pinned Nix installer failed during recovery"
+  run_activation_phases
+}
+
 configure_coder_runtime
 parse_options "$@"
 
@@ -1434,6 +1557,7 @@ case "$COMMAND" in
     print_plan
     ;;
   apply) apply_configuration ;;
+  recover) recover_configuration ;;
   verify)
     preflight
     enable_flakes_for_process

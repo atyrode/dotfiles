@@ -294,6 +294,17 @@ pkgs.runCommand "check-bootstrap-${system}"
     fi
     EOF
 
+    # launchctl records the bootout so a scenario can prove the daemon was
+    # stopped before its plist was removed. An already-unloaded daemon exits
+    # non-zero, which is the state being converged on, not a failure.
+    cat > "$tool_root/launchctl" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    [ "''${1:-}" = bootout ] || exit 64
+    [ -z "''${FAKE_LAUNCHCTL_LOG:-}" ] || printf '%s\n' "$2" >> "$FAKE_LAUNCHCTL_LOG"
+    [ "''${FAKE_LAUNCHCTL_LOADED:-1}" = 1 ] || exit 3
+    EOF
+
     chmod +x \
       "$tool_root/git" \
       "$tool_root/curl" \
@@ -305,9 +316,10 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/tar" \
       "$tool_root/diskutil" \
       "$tool_root/plutil" \
+      "$tool_root/launchctl" \
       "$fake_installer_template" \
       "$fake_nix_template"
-    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil plutil; do
+    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil plutil launchctl; do
       ln -s "$tool_root/$tool" "$fresh_tools/$tool"
       ln -s "$tool_root/$tool" "$managed_tools/$tool"
     done
@@ -1050,12 +1062,82 @@ pkgs.runCommand "check-bootstrap-${system}"
     expect_failure "$repo/install.sh" verify --repo "$repo" --config "$host"
     grep -F '[BOOT-E301]' "$TMPDIR/expected-failure.err" >/dev/null
 
-    # No CA problem: the failure is unrecognised, and says so with the log.
+    # No CA problem: the failure is unrecognised, says so with the log, and
+    # names the exit so an unclassified state is never a dead end.
     rm "$etc/ssl/certs/ca-certificates.crt"
     FAKE_ACTIVATION_FAIL=1 \
       expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     grep -F '[BOOT-E399]' "$TMPDIR/expected-failure.err" >/dev/null
     grep -F '  log: ' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F "./install.sh recover --config $host" "$TMPDIR/expected-failure.err" >/dev/null
 
+    # Recovery is the exit for a state with no repair. It resets what a dead
+    # generation owns - the daemon, /etc/nix, the store volume - and installs
+    # Nix fresh, without deleting anything it cannot put back.
+    darwin_fixture darwin-recover
+    export PATH="$managed_tools:$base_path"
+    export FAKE_LAUNCHCTL_LOG="$TMPDIR/darwin-recover/launchctl.log"
+    plist="$BOOTSTRAP_PROFILE_TARGET_ROOT/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
+    mkdir -p "$(dirname "$plist")" "$etc/nix"
+    printf '<dict><key>Label</key><string>org.nixos.nix-daemon</string></dict>\n' > "$plist"
+    printf 'ssl-cert-file = %s/ssl/certs/ca-certificates.crt\n' "$etc" > "$etc/nix/nix.conf"
+    printf 'Nix Store\tdisk3s7\tLIVE-UUID\n' > "$FAKE_VOLUMES"
+    mkdir -p "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db"
+    : > "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db/db.sqlite"
+    # Recovery is destructive enough to require saying so out loud: it prints
+    # the plan, then refuses to touch anything without an explicit answer.
+    if "$repo/install.sh" recover --repo "$repo" --config "$host" \
+      > "$TMPDIR/recover-plan.out" 2> "$TMPDIR/recover-plan.err"; then
+      echo 'recover proceeded without confirmation' >&2
+      exit 1
+    fi
+    grep -F 'Recovery plan' "$TMPDIR/recover-plan.out" >/dev/null
+    grep -F 'nothing on it is deleted' "$TMPDIR/recover-plan.out" >/dev/null
+    grep -F 'requires an interactive terminal' "$TMPDIR/recover-plan.err" >/dev/null
+    # Nothing moved: a live install is still exactly as it was.
+    test -f "$plist"
+    test -f "$etc/nix/nix.conf"
+    test ! -e "$FAKE_INSTALL_EXECUTED"
+
+    "$repo/install.sh" recover --yes --repo "$repo" --config "$host" >/dev/null
+    grep -Fx 'system/org.nixos.nix-daemon' "$FAKE_LAUNCHCTL_LOG" >/dev/null
+    test ! -e "$plist"
+    test ! -e "$etc/nix"
+    # Renamed, not deleted: same device, same UUID, and the data is still there.
+    grep -E '^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	LIVE-UUID$' "$FAKE_VOLUMES" >/dev/null
+    # Nix was present, and recovery reinstalls it anyway - that is the point.
+    test -e "$FAKE_INSTALL_EXECUTED"
+    # An undo command is only worth the file it restores from, so assert the
+    # archive exists and still holds what was removed.
+    repairs="$XDG_STATE_HOME/atyrode/bootstrap/repairs"
+    undo="$repairs/undo.log"
+    grep -F "cp '$repairs/nix-daemon.plist." "$undo" >/dev/null
+    grep -F 'org.nixos.nix-daemon' \
+      "$(find "$repairs" -name 'nix-daemon.plist.*' -print -quit)" >/dev/null
+    grep -F "removed $etc/nix" "$undo" >/dev/null
+    grep -F 'ssl-cert-file' \
+      "$(find "$repairs" -name 'etc-nix.*' -print -quit)/nix.conf" >/dev/null
+    grep -F "diskutil rename 'disk3s7' 'Nix Store'" "$undo" >/dev/null
+    unset FAKE_LAUNCHCTL_LOG
+
+    # An already-unloaded daemon is the state recovery converges on, so a
+    # non-zero bootout must not fail the run.
+    darwin_fixture darwin-recover-unloaded-daemon
+    export PATH="$managed_tools:$base_path"
+    export FAKE_LAUNCHCTL_LOADED=0
+    plist="$BOOTSTRAP_PROFILE_TARGET_ROOT/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
+    mkdir -p "$(dirname "$plist")"
+    printf '<dict/>\n' > "$plist"
+    : > "$FAKE_VOLUMES"
+    "$repo/install.sh" recover --yes --repo "$repo" --config "$host" >/dev/null
+    test ! -e "$plist"
+    unset FAKE_LAUNCHCTL_LOADED
+
+    # On Linux the managed environment lives in /nix, so removing it is
+    # destruction rather than recovery, and recovery refuses by name.
+    new_fixture recover-refuses-on-linux
+    export PATH="$managed_tools:$base_path"
+    expect_failure "$repo/install.sh" recover --yes --repo "$repo" --config "$host"
+    grep -F 'is not a recovery' "$TMPDIR/expected-failure.err" >/dev/null
     mkdir "$out"
   ''

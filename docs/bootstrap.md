@@ -169,15 +169,17 @@ constraints:
 
 Detection runs in `preflight`. `plan` lists each repair, and `apply` performs
 it with explicit privilege after confirmation, immediately before the step it
-unblocks. Three of the four repairs exist to unblock the upstream installer,
-so they are only evaluated while Nix is missing. The `/etc` sweep is not one
-of them: it repairs Nix itself, runs whether or not Nix is installed, and a
-machine whose Nix cannot verify TLS is exactly the machine that needs it.
+unblocks. Three of the five repairs exist to unblock the upstream installer,
+so they are only evaluated while Nix is missing. The `/etc` sweep and the
+trust-anchor restore are not among them: they repair Nix itself, run whether
+or not Nix is installed, and a machine whose Nix cannot verify TLS is exactly
+the machine that needs them.
 
 | State | Repair |
 | --- | --- |
 | A pre-Nix shell rc backup blocks the installer | Restore it; keep any rewritten target as `<target>.nix-install-leftover` |
 | Links anywhere under `/etc` resolve into a store that no longer exists | Remove them; links not owned by this toolchain are left alone |
+| A TLS trust anchor this machine names does not resolve | Point it at the CA bundle in the Nix profile |
 | `/etc/fstab` names a `/nix` volume UUID that no longer resolves | Drop the line; archive the file first |
 | An orphaned `Nix Store` volume exists | Rename it so the installer creates a fresh one |
 
@@ -194,6 +196,19 @@ depth-limited sweep leaves a machine that installs Nix successfully and then
 cannot download anything through it. Ownership, not depth, is what bounds the
 sweep — only links resolving into the Nix store or through `/etc/static` are
 removed, at any depth.
+
+Removing that link is only half the repair. Which file Nix trusts is a machine
+fact rather than a constant, and a nix-darwin generation leaves its answer
+behind in places the sweep never touches: `NIX_SSL_CERT_FILE` exported by a
+login shell that outlived the generation, `ssl-cert-file` in
+`/etc/nix/nix.conf`, and the `nix-daemon` launchd plist — the daemon, not the
+client, is what fetches from the binary cache. Whatever named the path still
+names it after the link is gone, so the file becomes merely absent and every
+download keeps failing on it. Bootstrap reads each namer, and for a named path
+under `/etc` that does not resolve, points it at
+`/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt` — the one CA bundle
+on a Nix machine whose lifetime is not tied to a nix-darwin generation.
+nix-darwin reclaims the path at the next successful activation.
 
 A volume carrying a live store is in use, not orphaned: a populated store
 database suppresses the repair entirely.
@@ -215,9 +230,10 @@ is the request for the repair that should.
 | `BOOT-E211` | `/etc/fstab` could not be archived or rewritten |
 | `BOOT-E212` | A `Nix Store` volume was found but its device identifier could not be read |
 | `BOOT-E213` | The orphaned volume could not be renamed |
+| `BOOT-E214` | A TLS trust anchor could not be restored |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
-| `BOOT-E301` | A managed step failed and the CA bundle is a link into a missing store |
-| `BOOT-E302` | A managed step failed and the CA bundle is a dangling link bootstrap does not own |
+| `BOOT-E301` | A managed step failed and a TLS trust anchor this machine names does not resolve |
+| `BOOT-E302` | The same, but the path is not bootstrap's to replace |
 | `BOOT-E399` | A managed step failed in a way bootstrap does not recognise yet |
 
 `BOOT-E2xx` covers Nix installation, `BOOT-E3xx` the managed steps that follow
@@ -226,11 +242,16 @@ are classified from the upstream installer's own output, and each names the
 repair that already handles it, so the remedy is to re-run bootstrap.
 
 The `BOOT-E3xx` CA states are re-derived by inspecting the trust-anchor paths
-at failure time rather than parsed out of error prose. Nix picks its CA bundle
-from a fixed list of well-known paths, and a dangling link at one of them
-fails every download with an error that names the path but not the reason.
-The code reports what was observed — the step failed, and the bundle is
-broken — without claiming one caused the other.
+at failure time rather than parsed out of error prose. Bootstrap reads every
+namer — the environment, `/etc/nix/nix.conf`, the daemon plist, and the fixed
+list Nix probes when nothing names one — and reports the first that does not
+resolve, along with which namer produced it. `BOOT-E301` means bootstrap can
+act on it, and its remedy states which repair will run: restoring the file
+when a profile CA bundle is available, removing the link when it is not.
+`BOOT-E302` means the path is a dangling link this toolchain does not own, so
+the next action belongs to the operator. Each code reports what was observed —
+the step failed, and the anchor is broken — without claiming one caused the
+other.
 
 ## Run logs
 
@@ -245,6 +266,13 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/logs/
 
 Failures print the log path. Logging never fails a run: a machine too broken
 to write state is still allowed to attempt its own repair.
+
+Every failure also appends a diagnostics block naming the state a diagnosis
+needs — the resolved `nix`, `PATH`, each TLS trust anchor with the namer that
+produced it, and what each one actually is. A machine state that needs a round
+trip to diagnose costs a release cycle, and these facts are cheap to collect
+while the failure is still on the machine, so an unrecognised code arrives
+with its evidence rather than requiring another run to produce it.
 
 ## Interrupted-apply marker and recovery
 

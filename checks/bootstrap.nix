@@ -824,6 +824,92 @@ pkgs.runCommand "check-bootstrap-${system}"
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
     test ! -L "$etc/ssl/certs/ca-certificates.crt"
     test ! -e "$FAKE_INSTALL_EXECUTED"
+    # No CA bundle in the profile, so removal is the whole repair here: there
+    # is nothing to restore the path from and nothing is invented.
+    test ! -e "$etc/ssl/certs/ca-certificates.crt"
+
+    # Removing the dangling anchor is not the end of it. Whatever named that
+    # path still names it, so the file is merely absent and Nix keeps failing
+    # on it - the state this machine was left in after the sweep worked. Each
+    # namer is covered because each one is a different way to be wrong.
+    trust_anchor_case() {
+      darwin_fixture "$1"
+      export PATH="$managed_tools:$base_path"
+      bundle="$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"
+      mkdir -p "$(dirname "$bundle")" "$etc/ssl/certs"
+      printf 'real anchors\n' > "$bundle"
+      anchor="$etc/ssl/certs/ca-certificates.crt"
+    }
+
+    # Named by the environment: a login shell started under the dead
+    # generation keeps exporting the path long after the store is collected.
+    trust_anchor_case darwin-trust-anchor-env
+    export NIX_SSL_CERT_FILE="$anchor"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-env.out"
+    grep -F "Restore the TLS trust anchor" "$TMPDIR/anchor-env.out" >/dev/null
+    grep -F "$anchor (named by NIX_SSL_CERT_FILE)" "$TMPDIR/anchor-env.out" >/dev/null
+    test ! -e "$anchor"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test -L "$anchor" && test -e "$anchor"
+    test "$(readlink "$anchor")" = "$bundle"
+    grep -F "rm -f '$anchor'" "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
+    # Idempotent: the anchor now resolves, so a second run plans nothing.
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-again.out"
+    grep -Fq 'Restore the TLS trust anchor' "$TMPDIR/anchor-again.out" && exit 1
+    unset NIX_SSL_CERT_FILE
+
+    # Named by /etc/nix/nix.conf, and still a dangling link this toolchain
+    # owns: the sweep removes it and the restore puts a working file back, in
+    # that order, so the machine ends with a resolving anchor.
+    trust_anchor_case darwin-trust-anchor-conf
+    mkdir -p "$etc/nix"
+    printf 'ssl-cert-file = %s\n' "$anchor" > "$etc/nix/nix.conf"
+    ln -s /nix/store/0000000000000000000000000000000-etc/ca.crt "$anchor"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-conf.out"
+    grep -F "Remove links a previous nix-darwin left" "$TMPDIR/anchor-conf.out" >/dev/null
+    grep -F "$anchor (named by $etc/nix/nix.conf)" "$TMPDIR/anchor-conf.out" >/dev/null
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test "$(readlink "$anchor")" = "$bundle"
+
+    # Named by the nix-daemon launchd plist: the daemon, not the client, is
+    # what fetches from the binary cache, so its environment is authoritative
+    # even when the operator's shell says nothing.
+    trust_anchor_case darwin-trust-anchor-plist
+    plist="$BOOTSTRAP_PROFILE_TARGET_ROOT/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
+    mkdir -p "$(dirname "$plist")"
+    printf '<dict><key>NIX_SSL_CERT_FILE</key><string>%s</string></dict>\n' "$anchor" > "$plist"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-plist.out"
+    grep -F "$anchor (named by $plist)" "$TMPDIR/anchor-plist.out" >/dev/null
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test "$(readlink "$anchor")" = "$bundle"
+
+    # Three ways to be none of bootstrap's business: an anchor that resolves,
+    # one kept outside /etc, and a dangling one this toolchain does not own.
+    trust_anchor_case darwin-trust-anchor-untouched
+    printf 'operator anchors\n' > "$anchor"
+    export NIX_SSL_CERT_FILE="$anchor"
+    export SSL_CERT_FILE="$TMPDIR/elsewhere/ca.pem"
+    mkdir -p "$etc/ssl/other"
+    ln -s /opt/elsewhere/foreign.crt "$etc/ssl/other/foreign.crt"
+    mkdir -p "$etc/nix"
+    printf 'ssl-cert-file = %s\n' "$etc/ssl/other/foreign.crt" > "$etc/nix/nix.conf"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-untouched.out"
+    grep -Fq 'Restore the TLS trust anchor' "$TMPDIR/anchor-untouched.out" && exit 1
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test "$(cat "$anchor")" = 'operator anchors'
+    test -L "$etc/ssl/other/foreign.crt"
+    test ! -e "$TMPDIR/elsewhere/ca.pem"
+    unset NIX_SSL_CERT_FILE SSL_CERT_FILE
+
+    # A named anchor that is merely absent is classified, not shrugged at: this
+    # exact state reported BOOT-E399 with a remedy that could never fire.
+    trust_anchor_case darwin-trust-anchor-code
+    export NIX_SSL_CERT_FILE="$anchor"
+    expect_failure "$repo/install.sh" verify --repo "$repo" --config "$host"
+    grep -F '[BOOT-E301]' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F "named by NIX_SSL_CERT_FILE" "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F 'it restores that file' "$TMPDIR/expected-failure.err" >/dev/null
+    unset NIX_SSL_CERT_FILE
 
     # An fstab entry naming a volume that no longer resolves is dropped, and
     # the file it came from is archived first so the edit is reversible.

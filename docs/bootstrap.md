@@ -90,6 +90,27 @@ user-owned `nix.conf`. After the Home Manager activation succeeds, bootstrap
 also verifies the system-owned login-shell prerequisite described in [Home
 Manager and system boundary](system-boundary.md).
 
+`recover` is the exit when a state has no repair. Bootstrap converges on the
+states it can name, and a machine that keeps reporting an unrecognised one is
+a machine the operator should be able to reset without hand-running commands
+from someone else's manual. On macOS it resets what a dead nix-darwin
+generation owns — stops the `nix-daemon` and removes its LaunchDaemon,
+removes `/etc/nix`, unmounts and renames the `Nix Store` volume, puts back
+every `/etc` file a previous generation left broken — then installs Nix fresh
+and activates normally. It prints the whole plan and changes nothing without
+confirmation.
+
+Recovery obeys the same two constraints as every repair. Each file it removes
+is archived under
+`${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/repairs/` first, and
+the volume is renamed rather than deleted, so the old store keeps its data
+until the operator reclaims the space. The store itself is the one thing worth
+destroying cheaply — it is a content-addressed cache and every path in it is
+re-fetchable — but a rename is enough to route the installer onto its
+fresh-create path, so bootstrap takes that instead. On Linux the managed
+environment lives in `/nix`, where removing it is destruction rather than
+recovery, and `recover` refuses.
+
 Use `--update` to explicitly fetch the verified origin and fast-forward main.
 If source changes, bootstrap re-enters the fetched `install.sh` before writing
 the interrupted-apply marker. It never pulls implicitly. Because `--update`
@@ -179,7 +200,7 @@ the machine that needs them.
 | --- | --- |
 | A pre-Nix shell rc backup blocks the installer | Restore it; keep any rewritten target as `<target>.nix-install-leftover` |
 | Links anywhere under `/etc` resolve into a store that no longer exists | Remove them; links not owned by this toolchain are left alone |
-| A TLS trust anchor this machine names does not resolve | Point it at the CA bundle in the Nix profile |
+| A TLS trust anchor this machine reads is not a usable CA bundle | Point it at the CA bundle in the Nix profile; archive the original |
 | `/etc/fstab` names a `/nix` volume UUID that no longer resolves | Drop the line; archive the file first |
 | An orphaned `Nix Store` volume exists | Rename it so the installer creates a fresh one |
 
@@ -202,13 +223,26 @@ fact rather than a constant, and a nix-darwin generation leaves its answer
 behind in places the sweep never touches: `NIX_SSL_CERT_FILE` exported by a
 login shell that outlived the generation, `ssl-cert-file` in
 `/etc/nix/nix.conf`, and the `nix-daemon` launchd plist — the daemon, not the
-client, is what fetches from the binary cache. Whatever named the path still
-names it after the link is gone, so the file becomes merely absent and every
-download keeps failing on it. Bootstrap reads each namer, and for a named path
-under `/etc` that does not resolve, points it at
+client, is what fetches from the binary cache, and that plist is routinely
+stored as binary, so it is decoded with `plutil` rather than grepped. Whatever
+named the path still names it after the link is gone.
+
+The condition is **usable**, not present. Nix does not look for this file, it
+loads it: `getDefaultSSLCertFile` takes the first of
+`/etc/ssl/certs/ca-certificates.crt` and the profile bundle for which
+`pathAccessible` — an `lstat` — succeeds, then hands it to curl. An absent
+path is therefore harmless, because Nix skips it and falls through to the
+profile bundle. A dangling link, an empty file, and a file that is not a
+certificate bundle are all selected and all fail every download with the same
+error naming the same path.
+
+So bootstrap reads each namer plus the paths Nix probes, and for one under
+`/etc` that is not a usable bundle, points it at
 `/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt` — the one CA bundle
-on a Nix machine whose lifetime is not tied to a nix-darwin generation.
-nix-darwin reclaims the path at the next successful activation.
+on a Nix machine whose lifetime is not tied to a nix-darwin generation. A link
+is removed under the ownership rule; a regular file carries no ownership
+signal, so it is archived first and the undo command restores it byte for
+byte. nix-darwin reclaims the path at the next successful activation.
 
 A volume carrying a live store is in use, not orphaned: a populated store
 database suppresses the repair entirely.
@@ -231,8 +265,10 @@ is the request for the repair that should.
 | `BOOT-E212` | A `Nix Store` volume was found but its device identifier could not be read |
 | `BOOT-E213` | The orphaned volume could not be renamed |
 | `BOOT-E214` | A TLS trust anchor could not be restored |
+| `BOOT-E220` | Recovery could not archive or remove the nix-daemon LaunchDaemon |
+| `BOOT-E221` | Recovery could not archive or remove `/etc/nix` |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
-| `BOOT-E301` | A managed step failed and a TLS trust anchor this machine names does not resolve |
+| `BOOT-E301` | A managed step failed and a TLS trust anchor this machine reads is not a usable CA bundle |
 | `BOOT-E302` | The same, but the path is not bootstrap's to replace |
 | `BOOT-E399` | A managed step failed in a way bootstrap does not recognise yet |
 
@@ -244,8 +280,8 @@ repair that already handles it, so the remedy is to re-run bootstrap.
 The `BOOT-E3xx` CA states are re-derived by inspecting the trust-anchor paths
 at failure time rather than parsed out of error prose. Bootstrap reads every
 namer — the environment, `/etc/nix/nix.conf`, the daemon plist, and the fixed
-list Nix probes when nothing names one — and reports the first that does not
-resolve, along with which namer produced it. `BOOT-E301` means bootstrap can
+list Nix probes when nothing names one — and reports the first that is not
+usable, along with which namer produced it. `BOOT-E301` means bootstrap can
 act on it, and its remedy states which repair will run: restoring the file
 when a profile CA bundle is available, removing the link when it is not.
 `BOOT-E302` means the path is a dangling link this toolchain does not own, so
@@ -326,12 +362,16 @@ with the required privilege. A passing verification removes the marker.
 `checks/bootstrap.nix` uses temporary homes and repositories, covering the
 read-only plan, fresh and repeated application, source updates, origin and
 revision defenses, installer failures and their classification into codes,
-every self-healing repair and its undo journal, the interrupted-apply marker
-contract, login-shell recovery, unsafe state types, production-only test-hook
-gating, and idempotence. The macOS repairs are covered on every platform: the
-states they fix cannot be built on a Linux runner, so the check forces the
-platform through a test-hook override and stages the volume table behind a
-`diskutil` stand-in. The same check runs natively in all three CI jobs.
+every self-healing repair and its undo journal, the recovery phase and its
+refusal to act without confirmation, the interrupted-apply marker contract,
+login-shell recovery, unsafe state types, production-only test-hook gating,
+and idempotence. The macOS repairs are covered on every platform: the states
+they fix cannot be built on a Linux runner, so the check forces the platform
+through a test-hook override and stages the machine behind `diskutil`,
+`launchctl`, and `plutil` stand-ins — including a `/etc` that is reached
+through a symlink and a launchd plist that is not readable as text, because a
+fixture that is easier than the platform tests nothing. The same check runs
+natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

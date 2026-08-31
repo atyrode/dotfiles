@@ -29,6 +29,7 @@ let
       printf 'OMP_AUTH_BROKER_TOKEN=%s\n' "''${OMP_AUTH_BROKER_TOKEN-unset}"
       printf 'OMP_AUTH_BROKER_SNAPSHOT_CACHE=%s\n' "''${OMP_AUTH_BROKER_SNAPSHOT_CACHE-unset}"
       printf 'CODE_AUTH_LOGIN_VIA=%s\n' "''${CODE_AUTH_LOGIN_VIA-unset}"
+      printf 'CODE_OMP=%s\n' "''${CODE_OMP-unset}"
       printf 'args=%s\n' "$*"
     } > "''${CODE_ENV_LOG:?}"
   '';
@@ -86,11 +87,15 @@ pkgs.runCommand "check-omp-stack"
     test "$(yq eval '.tools.approval.eval' ${untrustedConfig})" = "deny"
     test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
 
-    # The hand-curated preset launchers were sunset: the managed bin set is
-    # now exactly `code omp omp-managed ompu` (plus the zsh completion). The
-    # omp-passthrough launchers report the pinned version; `code` is the
-    # generator TUI and only answers --help non-interactively.
-    for command in omp omp-managed ompu; do
+    # The hand-curated preset launchers were sunset: the managed bin set is now
+    # exactly `code omp omp-analysis omp-managed ompu` (plus the zsh
+    # completion). The omp-passthrough launchers report the pinned version;
+    # `code` is the generator TUI and only answers --help non-interactively.
+    # Also validate the analysis posture the restricted launcher applies: an
+    # unreadable or malformed layer would take the Babel worker down at launch,
+    # which is exactly the failure this launcher exists to end.
+    "$raw_omp" models --config ${pkgs.omp-configured.analysisConfig} --json >/dev/null
+    for command in omp omp-analysis omp-managed ompu; do
       command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
       test "''${command_version##*/}" = "${ompRuntimeVersion}"
     done
@@ -150,6 +155,7 @@ pkgs.runCommand "check-omp-stack"
       'OMP_AUTH_BROKER_TOKEN=broker-token' \
       "OMP_AUTH_BROKER_SNAPSHOT_CACHE=$TMPDIR/code-broker-cache/atyrode/omp-auth-broker/snapshot.json" \
       'CODE_AUTH_LOGIN_VIA=unset' \
+      "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
       'args=ls' > "$TMPDIR/expected-code-broker-env"
     cmp "$TMPDIR/expected-code-broker-env" "$TMPDIR/code-broker-env"
 
@@ -172,6 +178,7 @@ pkgs.runCommand "check-omp-stack"
       'OMP_AUTH_BROKER_TOKEN=shared-broker-token' \
       "OMP_AUTH_BROKER_SNAPSHOT_CACHE=$TMPDIR/code-broker-cache/atyrode/omp-auth-broker/snapshot.json" \
       'CODE_AUTH_LOGIN_VIA=alex@broker.example' \
+      "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
       'args=ls' > "$TMPDIR/expected-code-shared-broker-env"
     cmp "$TMPDIR/expected-code-shared-broker-env" "$TMPDIR/code-shared-broker-env"
     rm -rf "$TMPDIR/code-broker-config"
@@ -188,15 +195,41 @@ pkgs.runCommand "check-omp-stack"
       'OMP_AUTH_BROKER_TOKEN=unset' \
       'OMP_AUTH_BROKER_SNAPSHOT_CACHE=unset' \
       'CODE_AUTH_LOGIN_VIA=unset' \
+      "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
       'args=ls' > "$TMPDIR/expected-code-no-broker-env"
     cmp "$TMPDIR/expected-code-no-broker-env" "$TMPDIR/code-no-broker-env"
+
+    # `code babel` worker mode is the one launch on this machine that must not
+    # resolve CODE_OMP to the managed launcher: Code's analysis worker drives OMP
+    # with --no-extensions (code/omprpc.go, ompArgv), which omp-managed refuses
+    # because it would disable the Nix-owned settings guard. Worker mode gets the
+    # dedicated restricted launcher instead (atyrode/babel#86), and it gets it
+    # from here rather than from a Code change, so a deployed machine is wired by
+    # activation alone.
+    CODE_ENV_LOG="$TMPDIR/code-babel-worker-env" \
+      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
+      ${configuredCodeStub}/bin/code babel
+    grep -Fxq "CODE_OMP=${lib.getExe configuredCodeStub.ompAnalysis}" \
+      "$TMPDIR/code-babel-worker-env"
+    grep -Fxq 'args=babel' "$TMPDIR/code-babel-worker-env"
+
+    # The configuration ceremony is not worker mode and must keep the managed
+    # launcher: it runs the operator's own dial UI, which probes providers and
+    # reads OMP's version through CODE_OMP. Pointed at the analysis launcher —
+    # whose posture is an isolated state root holding no operator credential —
+    # it would find no provider and refuse the confirmation it exists to take.
+    CODE_ENV_LOG="$TMPDIR/code-babel-ceremony-env" \
+      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
+      ${configuredCodeStub}/bin/code babel --configure --result-file "$TMPDIR/ceremony.json"
+    grep -Fxq "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
+      "$TMPDIR/code-babel-ceremony-env"
     ! grep -Fq 'CODE_AUTH_VAULTS=' ${pkgs.omp-configured}/bin/code
     ! grep -Fq 'CODE_AUTH_PROFILES' ${pkgs.omp-configured}/bin/code
     ! grep -Fq 'code-auth-profiles.json' ${pkgs.omp-configured}/bin/code
     test ! -e ${pkgs.omp-configured}/bin/pi
     test "$(
       find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-    )" = "code,omp,omp-managed,ompu"
+    )" = "code,omp,omp-analysis,omp-managed,ompu"
 
     ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
     test ! -s "$TMPDIR/models.err"

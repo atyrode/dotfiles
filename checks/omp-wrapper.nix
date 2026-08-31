@@ -6,8 +6,11 @@ let
     configuredStub
     stubOmp
     ;
-  untrustedStubOmp =
-    pkgs.runCommand "omp-untrusted-stub"
+  # An omp that reports the environment and argv it was launched with. Both the
+  # untrusted launcher and the restricted analysis launcher are measured by what
+  # they hand the binary, so both sections below read this.
+  envReportStubOmp =
+    pkgs.runCommand "omp-env-report-stub"
       {
         inherit (stubOmp) meta;
       }
@@ -25,6 +28,14 @@ let
         printf 'PI_PROFILE=%s\n' "$PI_PROFILE"
         printf 'PI_JS=%s\n' "$PI_JS"
         printf 'PI_PY=%s\n' "$PI_PY"
+        printf 'OMP_WORKTREE_DIR=%s\n' "''${OMP_WORKTREE_DIR-unset}"
+        printf 'PI_CONFIG_DIR=%s\n' "''${PI_CONFIG_DIR-unset}"
+        printf 'PI_CODING_AGENT_DIR=%s\n' "''${PI_CODING_AGENT_DIR-unset}"
+        printf 'PI_SMOL_MODEL=%s\n' "''${PI_SMOL_MODEL-unset}"
+        printf 'PI_PACKAGE_DIR=%s\n' "''${PI_PACKAGE_DIR-unset}"
+        printf 'OMP_AUTH_BROKER_TOKEN=%s\n' "''${OMP_AUTH_BROKER_TOKEN-unset}"
+        printf 'OMP_AUTH_BROKER_ACCOUNT_POOL_FILE=%s\n' "''${OMP_AUTH_BROKER_ACCOUNT_POOL_FILE-unset}"
+        printf 'ANTHROPIC_API_KEY=%s\n' "''${ANTHROPIC_API_KEY-unset}"
         printf 'OPENAI_API_KEY=%s\n' "''${OPENAI_API_KEY-unset}"
         printf 'GH_TOKEN=%s\n' "''${GH_TOKEN-unset}"
         printf 'SSH_AUTH_SOCK=%s\n' "''${SSH_AUTH_SOCK-unset}"
@@ -33,8 +44,8 @@ let
         chmod +x "$out/bin/omp"
         printf '#compdef omp\n' > "$out/share/zsh/site-functions/_omp"
       '';
-  configuredUntrustedStub = pkgs.callPackage ../pkgs/omp-configured {
-    omp = untrustedStubOmp;
+  configuredEnvReport = pkgs.callPackage ../pkgs/omp-configured {
+    omp = envReportStubOmp;
   };
 in
 pkgs.runCommand "check-omp-wrapper"
@@ -554,10 +565,10 @@ pkgs.runCommand "check-omp-wrapper"
           OPENAI_API_KEY=must-not-cross-boundary \
           GH_TOKEN=must-not-cross-boundary \
           SSH_AUTH_SOCK="$TMPDIR/agent.sock" \
-          ${configuredUntrustedStub}/bin/ompu \
+          ${configuredEnvReport}/bin/ompu \
             --cwd "$untrusted_project" --mode rpc --no-session \
             > "$TMPDIR/untrusted.out"
-        grep -Fx "cwd=${configuredUntrustedStub.neutralRoot}" "$TMPDIR/untrusted.out" >/dev/null
+        grep -Fx "cwd=${configuredEnvReport.neutralRoot}" "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx "HOME=$untrusted_home/.local/state/atyrode/omp-untrusted/home" \
           "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx 'OMP_PROFILE=untrusted' "$TMPDIR/untrusted.out" >/dev/null
@@ -567,10 +578,10 @@ pkgs.runCommand "check-omp-wrapper"
         grep -Fx 'OPENAI_API_KEY=unset' "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx 'GH_TOKEN=unset' "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx 'SSH_AUTH_SOCK=unset' "$TMPDIR/untrusted.out" >/dev/null
-        grep -Fx '${configuredUntrustedStub.untrustedConfig}' "$TMPDIR/untrusted.out" >/dev/null
+        grep -Fx '${configuredEnvReport.untrustedConfig}' "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx "$untrusted_project/.omp/settings.json" "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx "$untrusted_project/.omp/config.yml" "$TMPDIR/untrusted.out" >/dev/null
-        test "$(grep -nFx '${configuredUntrustedStub.untrustedConfig}' "$TMPDIR/untrusted.out" | cut -d: -f1)" \
+        test "$(grep -nFx '${configuredEnvReport.untrustedConfig}' "$TMPDIR/untrusted.out" | cut -d: -f1)" \
           -gt "$(grep -nFx "$untrusted_project/.omp/config.yml" "$TMPDIR/untrusted.out" | cut -d: -f1)"
         grep -Fx -- '--no-lsp' "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx -- '--no-pty' "$TMPDIR/untrusted.out" >/dev/null
@@ -578,7 +589,7 @@ pkgs.runCommand "check-omp-wrapper"
         for unsafe in '--yolo' '--approval-mode yolo' '--config attacker.yml' '--no-extensions'; do
           read -r -a args <<< "$unsafe"
           set +e
-          HOME="$untrusted_home" ${configuredUntrustedStub}/bin/ompu "''${args[@]}" \
+          HOME="$untrusted_home" ${configuredEnvReport}/bin/ompu "''${args[@]}" \
             > "$TMPDIR/untrusted-refused.out" 2> "$TMPDIR/untrusted-refused.err"
           untrusted_refused_status=$?
           set -e
@@ -588,12 +599,142 @@ pkgs.runCommand "check-omp-wrapper"
 
         mkdir -p "$untrusted_project/.omp/extensions"
         set +e
-        HOME="$untrusted_home" ${configuredUntrustedStub}/bin/ompu --cwd "$untrusted_project" \
+        HOME="$untrusted_home" ${configuredEnvReport}/bin/ompu --cwd "$untrusted_project" \
           > "$TMPDIR/untrusted-project.out" 2> "$TMPDIR/untrusted-project.err"
         executable_project_status=$?
         set -e
         test "$executable_project_status" -eq 2
         grep -q 'executable or policy-bearing project state' "$TMPDIR/untrusted-project.err"
+
+        # ── the restricted analysis launcher (atyrode/babel#86) ──────────────
+        #
+        # Code's Babel analysis worker drives OMP with --no-extensions, which
+        # omp-managed refuses (asserted above) and ompu refuses (asserted
+        # above). omp-analysis is the launcher that legitimately serves that
+        # invocation, so the invocation itself is what is measured here —
+        # verbatim from code/omprpc.go's ompArgv.
+        analysis_operator_home="$TMPDIR/analysis-operator-home"
+        analysis_root="$analysis_operator_home/.local/state/atyrode/omp-analysis"
+        mkdir -p "$analysis_operator_home/.omp/agent/sessions" "$TMPDIR/analysis-work"
+        printf 'operator-sentinel\n' \
+          > "$analysis_operator_home/.omp/agent/sessions/operator.jsonl"
+        cat > "$TMPDIR/analysis-profile.yml" <<'EOF'
+    modelRoles:
+      default: profile/model:low
+    EOF
+        HOME="$analysis_operator_home" \
+          ANTHROPIC_API_KEY=must-not-cross-boundary \
+          OPENAI_API_KEY=must-not-cross-boundary \
+          GH_TOKEN=must-not-cross-boundary \
+          SSH_AUTH_SOCK="$TMPDIR/agent.sock" \
+          PI_SMOL_MODEL=ambient/dial \
+          PI_PACKAGE_DIR="$TMPDIR/ambient-packages" \
+          PI_CONFIG_DIR=/ambient/config \
+          PI_CODING_AGENT_DIR="$analysis_operator_home/.omp/agent" \
+          OMP_PROFILE=operator \
+          OMP_AUTH_BROKER_TOKEN=run-scoped-broker-token \
+          OMP_AUTH_BROKER_ACCOUNT_POOL_FILE="$TMPDIR/run-account-pool.json" \
+          ${configuredEnvReport}/bin/omp-analysis \
+            --mode rpc --no-tools --no-lsp --no-session --no-extensions \
+            --no-rules --no-skills --no-title --auto-approve \
+            --config "$TMPDIR/analysis-profile.yml" --cwd "$TMPDIR/analysis-work" \
+            > "$TMPDIR/analysis.out"
+
+        # The worker's argv is forwarded verbatim, with the restricted posture
+        # applied first so the operator-minted profile keeps the last word on
+        # model routing. The launcher names no model, provider or thinking level.
+        sed -n '/^--args--$/,$p' "$TMPDIR/analysis.out" > "$TMPDIR/analysis-args"
+        cat > "$TMPDIR/expected-analysis-args" <<EOF
+    --args--
+    --config
+    ${configuredEnvReport.analysisConfig}
+    --mode
+    rpc
+    --no-tools
+    --no-lsp
+    --no-session
+    --no-extensions
+    --no-rules
+    --no-skills
+    --no-title
+    --auto-approve
+    --config
+    $TMPDIR/analysis-profile.yml
+    --cwd
+    $TMPDIR/analysis-work
+    EOF
+        diff -u "$TMPDIR/expected-analysis-args" "$TMPDIR/analysis-args"
+
+        # OMP resolves its configuration root, its logs and its extracted
+        # natives from HOME, so HOME is the isolation. The two variables that
+        # could name a different root are dropped rather than rewritten: an
+        # ambient PI_CODING_AGENT_DIR is absolute, and the one set here points
+        # straight at the operator's agent state.
+        grep -Fx "HOME=$analysis_root/home" "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'PI_CONFIG_DIR=unset' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'PI_CODING_AGENT_DIR=unset' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "XDG_CONFIG_HOME=$analysis_root/xdg/config" "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "XDG_DATA_HOME=$analysis_root/xdg/data" "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "XDG_STATE_HOME=$analysis_root/xdg/state" "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "XDG_CACHE_HOME=$analysis_root/xdg/cache" "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "OMP_WORKTREE_DIR=$analysis_root/worktrees" "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'OMP_PROFILE=analysis' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'PI_PROFILE=analysis' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "cwd=${configuredEnvReport.neutralRoot}" "$TMPDIR/analysis.out" >/dev/null
+
+        # Nothing under the operator's own OMP state root was read or written.
+        test "$(cat "$analysis_operator_home/.omp/agent/sessions/operator.jsonl")" \
+          = operator-sentinel
+        test "$(
+          find "$analysis_operator_home/.omp" -mindepth 1 | sort | paste -sd, -
+        )" = "$analysis_operator_home/.omp/agent,$analysis_operator_home/.omp/agent/sessions,$analysis_operator_home/.omp/agent/sessions/operator.jsonl"
+
+        # The run's credential is the brokered one Code wired for it, and an
+        # env-resolved dial is not a dial an operator turned.
+        grep -Fx 'OMP_AUTH_BROKER_TOKEN=run-scoped-broker-token' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx "OMP_AUTH_BROKER_ACCOUNT_POOL_FILE=$TMPDIR/run-account-pool.json" \
+          "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'ANTHROPIC_API_KEY=unset' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'OPENAI_API_KEY=unset' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'GH_TOKEN=unset' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'PI_SMOL_MODEL=unset' "$TMPDIR/analysis.out" >/dev/null
+        grep -Fx 'PI_PACKAGE_DIR=unset' "$TMPDIR/analysis.out" >/dev/null
+
+        # The refusals: arguments that would relocate state outside this run,
+        # load executable or policy-bearing material into a session whose
+        # justification is that it loads none, or supply a credential beside the
+        # brokered one. None of them appears in the worker's invocation.
+        for refused in '--profile other' '--session-dir /tmp/elsewhere' \
+          '--resume 0123456789ab' '-r0123456789ab' '--extension /tmp/ext' \
+          '--plugin-dir /tmp/plugins' '--hook /tmp/hook' '--api-key sk-ambient' \
+          '--alias analysis' '--fork abc' '--continue'; do
+          read -r -a args <<< "$refused"
+          set +e
+          HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis "''${args[@]}" \
+            > "$TMPDIR/analysis-refused.out" 2> "$TMPDIR/analysis-refused.err"
+          analysis_refused_status=$?
+          set -e
+          test "$analysis_refused_status" -eq 2
+          grep -q 'omp-analysis refused' "$TMPDIR/analysis-refused.err"
+          grep -q "attributable to the profile an operator confirmed" \
+            "$TMPDIR/analysis-refused.err"
+        done
+
+        # A subcommand is a different program, and this launcher answers none.
+        for subcommand in config update models token setup auth-broker acp; do
+          set +e
+          HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis "$subcommand" \
+            > "$TMPDIR/analysis-sub.out" 2> "$TMPDIR/analysis-sub.err"
+          analysis_sub_status=$?
+          set -e
+          test "$analysis_sub_status" -eq 2
+          grep -q 'a subcommand is a different program' "$TMPDIR/analysis-sub.err"
+        done
+
+        # A path that spells a refused flag is a value, not a flag.
+        HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis \
+          --config --profile --cwd "$TMPDIR/analysis-work" > "$TMPDIR/analysis-value.out"
+        grep -Fx -- '--profile' "$TMPDIR/analysis-value.out" >/dev/null
 
         mkdir "$out"
   ''

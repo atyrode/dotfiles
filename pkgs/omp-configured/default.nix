@@ -21,6 +21,7 @@
 }:
 
 let
+  analysisConfig = ../../omp/analysis.yml;
   defaultsConfig = ../../omp/defaults.yml;
   policyConfig = ../../omp/policy.yml;
   untrustedConfig = ../../omp/untrusted.yml;
@@ -1275,6 +1276,219 @@ let
     '';
   };
 
+  # The runtime a restricted analysis session may reach. It is hermetic on
+  # purpose: the session has no tools (the worker passes --no-tools) and the
+  # posture config denies bash, eval, task, browser, github and debug on top of
+  # that, so anything OMP still shells out to should come from this closure
+  # rather than from whatever the operator happened to have on PATH.
+  analysisPath = lib.makeBinPath [
+    bash
+    coreutils
+    gitMinimal
+  ];
+
+  # omp-analysis: the dedicated restricted launcher for Babel's analysis worker
+  # (atyrode/babel#86). Code's worker resolves the OMP it drives through
+  # CODE_OMP and invokes it as
+  #
+  #   omp --mode rpc --no-tools --no-lsp --no-session --no-extensions \
+  #       --no-rules --no-skills --no-title --auto-approve \
+  #       --config <rendered profile> --cwd <run work dir>
+  #
+  # (code/omprpc.go, ompArgv). Neither existing launcher can legitimately serve
+  # that invocation, and both refuse it for the right reason: omp-managed layers
+  # the Nix-owned defaults, platform extensions and policy that --no-extensions
+  # would silently disable, and ompu owns its own credential, state, tool and
+  # approval policy, which the worker's flags would contradict. Rather than
+  # weaken either, this is a third launcher whose whole posture is the restricted
+  # one, declared here as an intentional operator artifact.
+  #
+  # Why each property holds:
+  #
+  #   Raw omp, no managed layering. It execs the pinned binary directly, so
+  #   there is no settings guard for --no-extensions to disable and no
+  #   contradiction to refuse. What replaces the guard is analysis.yml, applied
+  #   *before* the worker's own --config so an operator-minted profile keeps
+  #   authority over model routing. The launcher names no model, provider or
+  #   thinking level: every model invocation traces to the profile a human
+  #   confirmed in the configuration ceremony, which is the binding principle of
+  #   atyrode/babel#86.
+  #
+  #   Never the operator's OMP state. HOME is replaced with a private home under
+  #   $HOME/.local/state/atyrode/omp-analysis, unconditionally, and that is the
+  #   whole mechanism: OMP resolves its configuration root, its logs and its
+  #   extracted native modules from HOME, and PI_CONFIG_DIR is a HOME-*relative*
+  #   override rather than an absolute one, so anything else would be a second,
+  #   weaker answer to the same question. The inherited PI_CONFIG_DIR and
+  #   PI_CODING_AGENT_DIR are therefore dropped rather than rewritten — the
+  #   latter is absolute and an ambient one pointing at ~/.omp/agent is exactly
+  #   the hazard — and OMP_PROFILE is pinned so an inherited profile name cannot
+  #   select the operator's. The XDG roots and OMP_WORKTREE_DIR are replaced
+  #   alongside. Unconditionally is the load-bearing word: the guarantee is the
+  #   launcher's own rather than something inherited from a caller that happened
+  #   to isolate itself, so $HOME/.omp — the operator's sessions, agent state
+  #   and provider credentials — is unreachable however omp-analysis is reached.
+  #   Under the worker this nests inside the run-private HOME Code makes and
+  #   deletes with the run (code/omprpc.go, ompChildEnv/ompNewRunDir), so
+  #   relocating costs nothing and the property stands on its own.
+  #
+  #   Credentials: the brokered one, and nothing else. Unlike ompu this does not
+  #   run `env -i`. Code's worker has already built the child environment — the
+  #   private home, the job secrets dropped, and the run's own auth-broker
+  #   credential added (withAuthEnv) — and wiping it would delete exactly the
+  #   credential the run legitimately needs. What is removed instead is every
+  #   ambient credential-shaped variable except those four broker keys, so an
+  #   analysis run authenticates through the account pool Babel recorded and
+  #   never through a provider key that happened to be exported. The
+  #   environment-resolved model dials (PI_SMOL_MODEL, PI_SLOW_MODEL,
+  #   PI_PLAN_MODEL) go with them: an env-resolved dial is precisely the silent
+  #   default atyrode/babel#86 forbids.
+  #
+  #   The worker's flags are accepted, not fought. Every argument is forwarded
+  #   verbatim. The refusals are narrow and none of them is in ompArgv: they are
+  #   the arguments that would relocate state outside this run, load executable
+  #   or policy-bearing material into a session whose justification is that it
+  #   loads none, or supply a credential beside the brokered one.
+  ompAnalysis = writeShellApplication {
+    name = "omp-analysis";
+    runtimeInputs = [ coreutils ];
+    text = ''
+      raw_omp=${lib.escapeShellArg (lib.getExe omp)}
+      export PATH=${lib.escapeShellArg analysisPath}
+
+      refuse() {
+        printf '%s\n' "omp-analysis refused '$1': $2" >&2
+        exit 2
+      }
+
+      refuse_flag() {
+        refuse "$1" \
+          "the analysis launcher owns OMP's state root, its executable-resource discovery and its credential, so that a run stays attributable to the profile an operator confirmed."
+      }
+
+      refuse_subcommand() {
+        refuse "$1" \
+          "this launcher exists for one invocation shape — the analysis worker's RPC session — and a subcommand is a different program. Use omp or omp-managed."
+      }
+
+      # OMP's value-taking flags, so a value is never mistaken for a flag: a
+      # --config whose path spelled a refused flag would otherwise be refused.
+      takes_required_value() {
+        case "$1" in
+          --alias|--api-key|--append-system-prompt|--approval-mode|--config|--cwd|--export|--extension|-e|--fork|--hook|--max-time|--mode|--model|--models|--plan|--plugin-dir|--profile|--provider|--provider-session-id|--session-dir|--skills|--slow|--smol|--system-prompt|--thinking|--tools)
+            return 0
+            ;;
+          *)
+            return 1
+            ;;
+        esac
+      }
+
+      # Every OMP subcommand. This launcher answers none of them.
+      is_known_subcommand() {
+        case "$1" in
+          __complete|acp|agents|auth-broker|auth-gateway|bench|commit|completions|config|dry-balance|gallery|gc|grep|grievances|install|join|models|plugin|read|say|search|setup|shell|ssh|stats|tiny-models|token|ttsr|update|usage|worktree)
+            return 0
+            ;;
+          *)
+            return 1
+            ;;
+        esac
+      }
+
+      original_args=( "$@" )
+      i=0
+      while (( i < ''${#original_args[@]} )); do
+        arg="''${original_args[$i]}"
+        # Past `--` every word is the session's prompt, not an argument to read.
+        [[ "$arg" == -- ]] && break
+        case "$arg" in
+          --profile|--session-dir|--session|--resume|-r|--fork|--continue|-c|--provider-session-id|--extension|-e|--plugin-dir|--hook|--api-key|--alias)
+            refuse_flag "$arg"
+            ;;
+          --profile=*|--session-dir=*|--session=*|--resume=*|--fork=*|--provider-session-id=*|--extension=*|-e=*|--plugin-dir=*|--hook=*|--api-key=*|--alias=*)
+            refuse_flag "''${arg%%=*}"
+            ;;
+          -r?*)
+            refuse_flag --resume
+            ;;
+        esac
+        if takes_required_value "$arg"; then
+          i=$((i + 2))
+          continue
+        fi
+        if is_known_subcommand "$arg"; then
+          refuse_subcommand "$arg"
+        fi
+        i=$((i + 1))
+      done
+
+      state_root="$HOME/.local/state/atyrode/omp-analysis"
+      if [[ -L "$state_root" ]]; then
+        printf 'omp-analysis state root must not be a symlink: %s\n' "$state_root" >&2
+        exit 2
+      fi
+      analysis_home="$state_root/home"
+      analysis_worktrees="$state_root/worktrees"
+      analysis_xdg_config="$state_root/xdg/config"
+      analysis_xdg_data="$state_root/xdg/data"
+      analysis_xdg_state="$state_root/xdg/state"
+      analysis_xdg_cache="$state_root/xdg/cache"
+      mkdir -p \
+        "$analysis_home" \
+        "$analysis_worktrees" \
+        "$analysis_xdg_config" \
+        "$analysis_xdg_data" \
+        "$analysis_xdg_state" \
+        "$analysis_xdg_cache"
+      chmod 700 "$state_root" "$analysis_home" "$analysis_worktrees"
+
+      export HOME="$analysis_home"
+      export XDG_CONFIG_HOME="$analysis_xdg_config"
+      export XDG_DATA_HOME="$analysis_xdg_data"
+      export XDG_STATE_HOME="$analysis_xdg_state"
+      export XDG_CACHE_HOME="$analysis_xdg_cache"
+      export OMP_WORKTREE_DIR="$analysis_worktrees"
+      export OMP_PROFILE=analysis
+      export PI_PROFILE=analysis
+
+      # HOME is the whole answer to where OMP keeps state, so the two variables
+      # that could give a different one are dropped: PI_CONFIG_DIR is resolved
+      # relative to HOME and an absolute one produces a doubled path, while
+      # PI_CODING_AGENT_DIR is absolute and an ambient ~/.omp/agent is precisely
+      # the operator state this launcher exists not to touch.
+      unset PI_CONFIG_DIR PI_CODING_AGENT_DIR
+
+      # An env-resolved dial or an overridden package directory would be a model
+      # choice — or an executable-resource choice — that no operator made.
+      unset PI_SMOL_MODEL PI_SLOW_MODEL PI_PLAN_MODEL PI_PACKAGE_DIR
+
+      # The run's credential is the auth-broker one Code wired for it. Every
+      # other credential-shaped variable is dropped by shape rather than by an
+      # enumeration of today's providers, which would go stale the first time OMP
+      # learns another one. Names are read from a NUL-delimited snapshot because
+      # a value may contain a newline and `compgen` is not a builtin every bash
+      # build ships.
+      while IFS= read -r -d "" entry; do
+        name="''${entry%%=*}"
+        case "$name" in
+          OMP_AUTH_BROKER_URL|OMP_AUTH_BROKER_TOKEN|OMP_AUTH_BROKER_SNAPSHOT_CACHE|OMP_AUTH_BROKER_ACCOUNT_POOL_FILE)
+            continue
+            ;;
+          *API_KEY|*APIKEY|*TOKEN|*SECRET|*PASSWORD|*OAUTH|*CREDENTIAL|*CREDENTIALS|*COOKIE|*COOKIES|AWS_PROFILE|AWS_ACCESS_KEY_ID|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION)
+            unset "$name"
+            ;;
+        esac
+      done < <(env -0)
+
+      # Nothing is discovered from the directory Babel happened to be run in.
+      # The session's own directory is the one the worker names with --cwd, which
+      # is a run-private working tree Code creates empty.
+      cd ${neutralRoot}
+      exec "$raw_omp" --config ${analysisConfig} "$@"
+    '';
+  };
+
   codeLauncher = writeShellApplication {
     name = "code";
     runtimeInputs = [ coreutils ];
@@ -1357,8 +1571,34 @@ let
       # the worker inherits the operator's own generator dials
       # (CODE_SELECTION_STATE) and broker configuration instead of falling
       # back to compiled defaults.
+      #
+      # Worker mode is also the one launch on this machine that must not go
+      # through omp-managed: it drives OMP with --no-extensions, which the
+      # managed launcher refuses because it would disable the Nix-owned
+      # settings guard. So worker mode — and only worker mode — resolves
+      # CODE_OMP to the dedicated restricted launcher (atyrode/babel#86).
+      #
+      # The configuration ceremony keeps the managed launcher. `code babel
+      # --configure` runs the operator's own dial UI, which probes providers
+      # and reads OMP's version through CODE_OMP; pointed at the analysis
+      # launcher — whose whole posture is an isolated state root with no
+      # operator credential in it — the ceremony would find no provider and
+      # refuse the confirmation it exists to take.
       case "''${1:-}" in
-        babel | generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
+        babel)
+          babel_configure=false
+          for arg in "$@"; do
+            if [[ "$arg" == --configure ]]; then
+              babel_configure=true
+              break
+            fi
+          done
+          if [[ "$babel_configure" == false ]]; then
+            export CODE_OMP=${lib.getExe ompAnalysis}
+          fi
+          exec ${lib.getExe code} "$@"
+          ;;
+        generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
       esac
 
       if [[ ! -t 0 || ! -t 1 ]]; then
@@ -1382,12 +1622,19 @@ runCommand "omp-configured-${lib.getVersion omp}"
       # checks/omp-managed-keys.nix can prove they still mirror the YAML they
       # gate. Drift there makes `omp config set` silently accept a key Nix
       # overrides.
+      # ompAnalysis/ompManagedDefault are exposed so checks/omp-stack.nix can
+      # name the exact launcher each `code` mode is expected to resolve CODE_OMP
+      # to, against a stub-built package rather than a store path guessed from
+      # the released one.
       inherit
         goplsCommand
+        analysisConfig
         defaultsConfig
         enforcedPolicyPaths
         managedDefaultPaths
         neutralRoot
+        ompAnalysis
+        ompManagedDefault
         platformRoot
         policyConfig
         untrustedConfig
@@ -1404,6 +1651,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     mkdir -p "$out/bin" "$out/share/zsh/site-functions"
     ln -s ${lib.getExe ompDefault} "$out/bin/omp"
     ln -s ${lib.getExe ompManaged} "$out/bin/omp-managed"
+    ln -s ${lib.getExe ompAnalysis} "$out/bin/omp-analysis"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
     ln -s ${lib.getExe codeLauncher} "$out/bin/code"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"

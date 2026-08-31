@@ -1,0 +1,87 @@
+# The restricted posture for Babel's analysis worker (atyrode/babel#86).
+#
+# omp-analysis is the launcher Code's analysis worker starts OMP through. It
+# applies no managed layering — no platform extensions, no defaults, no policy —
+# because the worker's own invocation already removes every mechanism those
+# layers govern (--no-tools --no-extensions --no-rules --no-skills --no-session).
+# This file is the launcher's whole declaration of what such a session may do,
+# and it is applied *before* the worker's own --config so the operator-minted
+# profile keeps authority over model routing. Nothing here names a model, a
+# provider or a thinking level: those come from the profile a human confirmed in
+# the configuration ceremony, and a launcher that could restate them would be a
+# second place a run's attribution comes from.
+#
+# Every switch below is off rather than merely unused. The session is a hosted
+# model reading corpus text over an RPC socket: it has no terminal to approve
+# anything, no repository to change, and no reason to reach the network except
+# the provider endpoint the run declared.
+
+# Defence in depth. The worker passes --no-tools, so no tool is registered at
+# all; a caller that forgot it gets a denial rather than a capability. deny is
+# used rather than prompt on purpose: there is no operator on this session's
+# stdin, so a prompt would be a deadlock and a deadlock is not a boundary.
+# approvalMode is deliberately absent — the worker passes --auto-approve because
+# the only tools Babel's design registers are its own brokered ones, and a
+# config that fought that flag would hang the run instead of restricting it.
+tools:
+  approval:
+    bash: deny
+    eval: deny
+    browser: deny
+    github: deny
+    debug: deny
+    task: deny
+
+# A corpus of agent transcripts is exactly the kind of text that carries a
+# secret someone pasted. Scrubbing stays on.
+secrets:
+  enabled: true
+
+# Nothing executable, discovered or otherwise, enters this session.
+extensions: []
+disabledExtensions: []
+
+mcp:
+  enableProjectConfig: false
+  notifications: false
+
+autolearn:
+  enabled: false
+  autoContinue: false
+
+memory:
+  backend: off
+
+skills:
+  enableSkillCommands: false
+
+commands:
+  enableClaudeUser: false
+  enableClaudeProject: false
+  enableOpencodeUser: false
+  enableOpencodeProject: false
+
+# Egress belongs to the run's declared provider endpoint. A session that could
+# open a browser, call GitHub or run a language server would be reaching off the
+# machine through a route Babel's containment declaration never named.
+browser:
+  enabled: false
+  headless: true
+
+github:
+  enabled: false
+
+lsp:
+  enabled: false
+
+debug:
+  enabled: false
+
+git:
+  enabled: false
+
+eval:
+  py: false
+  js: false
+  rb: false
+  jl: false

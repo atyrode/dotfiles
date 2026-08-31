@@ -34,7 +34,20 @@ flake.
 `get.sh` is deliberately thin: it verifies Git is present, clones the
 repository to `~/nix-dotfiles` (`DOTFILES_DIR` overrides it; an existing
 directory is reused only when its origin is this repository), and hands off to
-the cloned `install.sh`, which owns every mutation. The 2026-07-10 decision to
+the cloned `install.sh`, which owns every mutation.
+
+A reused directory is never trusted at whatever revision it holds. Its
+`install.sh`, host inventory, and `main` can all be stale, and a stale
+`install.sh` would otherwise decide what the freshly fetched entry point
+means. The fetched command means "install current upstream main", so reuse is
+routed through `install.sh --update`, which fast-forwards the verified origin
+and re-enters the updated script. `get.sh` reports the directory it adopted so
+a refusal about a branch or a dirty tree names a checkout the operator can
+find. Passing `--update`, `--allow-dirty`, or `--allow-non-main` is a reviewed
+decision about which revision to activate, and suppresses the implicit update.
+A fresh clone already sits at `origin/main` and is handed off unchanged.
+
+The 2026-07-10 decision to
 support no `curl | shell` path was revised on 2026-07-11 with these
 mitigations: the fetched script is function-wrapped so a truncated download
 executes nothing, the confirmation prompt reads from the terminal and a
@@ -65,9 +78,9 @@ The phases are independently callable:
 raw and Git-resolved origin, branch/revision relationship to cached
 `origin/main`, and required tools, and warns when a previous apply was
 interrupted.
-It rejects staged, tracked, and untracked changes. `plan` adds the ordered Nix,
-activation, and verification actions without creating state, downloading an
-artifact, fetching Git, or moving a file.
+It rejects staged, tracked, and untracked changes. `plan` adds the ordered
+repair, Nix, activation, and verification actions without creating state,
+downloading an artifact, fetching Git, or moving a file.
 
 `apply` repeats both phases and asks for confirmation. Once Nix is available it
 uses the packaged `atyrode apply` plan and activation, so the host registry and
@@ -79,10 +92,15 @@ Manager and system boundary](system-boundary.md).
 
 Use `--update` to explicitly fetch the verified origin and fast-forward main.
 If source changes, bootstrap re-enters the fetched `install.sh` before writing
-the interrupted-apply marker. It never pulls implicitly. `--allow-dirty` and
-`--allow-non-main` are review acknowledgements for intentional local work;
-`--update` cannot be combined with a dirty checkout. A Git `url.*.insteadOf`
-rewrite cannot redirect the accepted GitHub origin unnoticed.
+the interrupted-apply marker. It never pulls implicitly. Because `--update`
+already requires a clean tree, a checkout parked on another branch is returned
+to main as part of the update rather than refused: moving `HEAD` leaves that
+branch and every commit on it intact, and bootstrap prints the `git checkout`
+that goes back. A local main holding commits absent from `origin/main` still
+stops the update. `--allow-dirty` and `--allow-non-main` are review
+acknowledgements for intentional local work; `--update` cannot be combined
+with a dirty checkout. A Git `url.*.insteadOf` rewrite cannot redirect the
+accepted GitHub origin unnoticed.
 
 ## Nix installer decision
 
@@ -116,6 +134,24 @@ present before the run and follow the official
 [multi-user uninstall procedure](https://nix.dev/manual/nix/2.22/installation/uninstall)
 for the current OS. That procedure is destructive and intentionally remains an
 operator action.
+
+The upstream installer also copies every shell rc file it touches to
+`<target>.backup-before-nix` and refuses to start when such a backup already
+exists and no longer matches its target. An interrupted install therefore
+leaves a machine on which every retry fails — late, after the download and the
+macOS volume repair — and the upstream remediation reads like an invitation to
+delete the backup, which destroys the only copy of the original file.
+
+Repairing that is bootstrap's job, not the operator's. `preflight` evaluates
+the same condition upstream does, read-only and only when Nix is actually
+missing; `plan` lists every file it will restore; and `apply` performs the
+restore with explicit privilege, after confirmation, immediately before the
+installer runs. Where the target still exists it is the interrupted install's
+own rewritten file, but proving that byte for byte across installer versions
+is not worth guessing wrong about on someone's `/etc`, so it is kept as
+`<target>.nix-install-leftover` beside the restored original rather than
+discarded. A backup identical to its target is left alone, matching upstream,
+because a completed install legitimately leaves one behind.
 
 ## Interrupted-apply marker and recovery
 
@@ -163,12 +199,15 @@ with the required privilege. A passing verification removes the marker.
 
 `checks/bootstrap.nix` uses temporary homes and repositories, covering the
 read-only plan, fresh and repeated application, source updates, origin and
-revision defenses, installer failures, the interrupted-apply marker contract,
-login-shell recovery, unsafe state types, production-only test-hook gating,
-and idempotence. The same check runs natively in all three CI jobs.
+revision defenses, installer failures, the pre-Nix shell rc repair, the
+interrupted-apply marker contract, login-shell recovery, unsafe state types,
+production-only test-hook gating, and idempotence. The same check runs
+natively in all three CI jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed
 piped-stdin handoff to the cloned `install.sh` with `--yes` and recorded
-arguments, the refusal to proceed without a terminal or `--yes`, and the
-`DOTFILES_DIR` override with forwarded install arguments.
+arguments, the implicit `--update` on a reused checkout and its suppression by
+each explicit source acknowledgement, the refusal to proceed without a
+terminal or `--yes`, and the `DOTFILES_DIR` override with forwarded install
+arguments.

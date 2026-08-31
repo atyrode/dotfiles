@@ -764,31 +764,43 @@ pkgs.runCommand "check-bootstrap-${system}"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
 
     # A dead nix-darwin generation leaves /etc links resolving into a store
-    # that no longer exists. They are removed, links this toolchain does not
-    # own are left alone, and the undo journal can put every one of them back.
+    # that no longer exists, at every depth: the CA bundle Nix reads for its
+    # trust anchors is nested three levels down. They are removed, links this
+    # toolchain does not own are left alone at every depth too, and the undo
+    # journal can put every one of them back.
     darwin_fixture darwin-etc-link-repair
     export PATH="$fresh_tools:$base_path"
     ln -s /nix/store/0000000000000000000000000000000-etc "$etc/static"
     ln -s /etc/static/bashrc "$etc/bashrc"
     ln -s /Volumes/MountsLater/thing "$etc/unrelated"
     printf 'real\n' > "$etc/zshrc"
+    mkdir -p "$etc/ssl/certs"
+    ln -s /etc/static/ssl/certs/ca-certificates.crt "$etc/ssl/certs/ca-certificates.crt"
+    ln -s /opt/elsewhere/foreign.crt "$etc/ssl/certs/foreign.crt"
     "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-link-plan.out"
     grep -F "$etc/static" "$TMPDIR/etc-link-plan.out" >/dev/null
     grep -F "$etc/bashrc" "$TMPDIR/etc-link-plan.out" >/dev/null
+    grep -F "$etc/ssl/certs/ca-certificates.crt" "$TMPDIR/etc-link-plan.out" >/dev/null
     grep -Fq "$etc/unrelated" "$TMPDIR/etc-link-plan.out" && exit 1
+    grep -Fq "$etc/ssl/certs/foreign.crt" "$TMPDIR/etc-link-plan.out" && exit 1
     # plan is read-only: every link is still exactly as it was.
     test -L "$etc/static"
     test -L "$etc/bashrc"
+    test -L "$etc/ssl/certs/ca-certificates.crt"
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
     test ! -e "$etc/static" && test ! -L "$etc/static"
     test ! -e "$etc/bashrc" && test ! -L "$etc/bashrc"
-    # A dangling link bootstrap does not own survives untouched, and so does
-    # a real file.
+    test ! -L "$etc/ssl/certs/ca-certificates.crt"
+    # A dangling link bootstrap does not own survives untouched at any depth,
+    # and so does a real file.
     test -L "$etc/unrelated"
+    test -L "$etc/ssl/certs/foreign.crt"
     test -f "$etc/zshrc"
     undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
     grep -F "ln -s '/etc/static/bashrc' '$etc/bashrc'" "$undo" >/dev/null
     grep -F "removed dangling $etc/static" "$undo" >/dev/null
+    grep -F "ln -s '/etc/static/ssl/certs/ca-certificates.crt' '$etc/ssl/certs/ca-certificates.crt'" \
+      "$undo" >/dev/null
 
     # An fstab entry naming a volume that no longer resolves is dropped, and
     # the file it came from is archived first so the edit is reversible.
@@ -850,6 +862,36 @@ pkgs.runCommand "check-bootstrap-${system}"
       expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     grep -F '[BOOT-E299]' "$TMPDIR/expected-failure.err" >/dev/null
     grep -F 'nix-installer.log' "$TMPDIR/expected-failure.err" >/dev/null
+
+    # A managed step runs Nix, so it fails whenever Nix cannot reach the cache.
+    # A dangling CA bundle is the state that causes it, and it is re-derived at
+    # failure time rather than parsed out of the error prose.
+    darwin_fixture darwin-managed-step-codes
+    export PATH="$managed_tools:$base_path"
+    mkdir -p "$etc/ssl/certs" "$HOME/.nix-profile/bin"
+    # Not owned by this toolchain, so the sweep correctly leaves it in place
+    # and activation is the first thing to trip over it.
+    ln -s /opt/elsewhere/ca.crt "$etc/ssl/certs/ca-certificates.crt"
+    FAKE_ACTIVATION_FAIL=1 \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E302]' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F "$etc/ssl/certs/ca-certificates.crt" "$TMPDIR/expected-failure.err" >/dev/null
+    test -L "$etc/ssl/certs/ca-certificates.crt"
+
+    # The same state, but owned: verify runs no repairs, so it is the phase
+    # that can still meet a stale link and must name it rather than exit bare.
+    rm "$etc/ssl/certs/ca-certificates.crt"
+    ln -s /nix/store/0000000000000000000000000000000-etc/ca.crt \
+      "$etc/ssl/certs/ca-certificates.crt"
+    expect_failure "$repo/install.sh" verify --repo "$repo" --config "$host"
+    grep -F '[BOOT-E301]' "$TMPDIR/expected-failure.err" >/dev/null
+
+    # No CA problem: the failure is unrecognised, and says so with the log.
+    rm "$etc/ssl/certs/ca-certificates.crt"
+    FAKE_ACTIVATION_FAIL=1 \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E399]' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F '  log: ' "$TMPDIR/expected-failure.err" >/dev/null
 
     mkdir "$out"
   ''

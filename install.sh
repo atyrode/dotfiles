@@ -468,6 +468,15 @@ nix_volume_present() {
 # Only links this toolchain owns are considered - ones resolving into the Nix
 # store or through /etc/static. A dangling link elsewhere may be deliberate,
 # naming a volume that mounts later, and is none of bootstrap's business.
+# Ownership is the whole safety argument for removing anything under /etc, so
+# it is one predicate used by both the sweep and the failure classifier.
+etc_link_owned() {
+  case "$1" in
+    /nix/store/* | /etc/static | /etc/static/* | */etc/static | */etc/static/*) return 0 ;;
+  esac
+  return 1
+}
+
 detect_stale_etc_links() {
   local etc entry target
 
@@ -475,15 +484,16 @@ detect_stale_etc_links() {
   [[ "$SYSTEM" == *-darwin ]] || return 0
   etc="$(etc_root)"
   [[ -d "$etc" ]] || return 0
-  for entry in "$etc"/*; do
+  # Nested entries dangle exactly like top-level ones: nix-darwin owns
+  # /etc/ssl/certs/ca-certificates.crt the same way it owns /etc/bashrc, and
+  # that is the file Nix reads for TLS trust anchors. A depth-limited sweep
+  # leaves a machine that installs Nix and then cannot download through it.
+  while IFS= read -r entry; do
     [[ -L "$entry" && ! -e "$entry" ]] || continue
     target="$(readlink "$entry" 2>/dev/null)" || continue
-    case "$target" in
-      /nix/store/* | /etc/static | /etc/static/* | */etc/static | */etc/static/*) ;;
-      *) continue ;;
-    esac
+    etc_link_owned "$target" || continue
     STALE_ETC_LINKS+=("$entry")
-  done
+  done < <(find -P "$etc" -type l 2>/dev/null | LC_ALL=C sort)
 }
 
 repair_stale_etc_links() {
@@ -622,6 +632,57 @@ report_installer_failure() {
       "the upstream Nix installer failed in a way bootstrap does not recognise yet" \
       "send the transcript at $log so this state can get its own code and repair"
   fi
+}
+
+# Nix selects its trust anchors from a fixed list of well-known paths, and a
+# dangling link at one of them fails every download with a CA error that names
+# the path but not the reason. Re-derived at failure time rather than parsed
+# out of prose, because the state is cheaper to observe than to recognise.
+stale_ca_bundle() {
+  local candidate
+
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  for candidate in \
+    "$(etc_root)/ssl/certs/ca-certificates.crt" \
+    "$(etc_root)/ssl/cert.pem"; do
+    if [[ -L "$candidate" && ! -e "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+}
+
+# Every managed step runs Nix, so every managed step fails when Nix cannot
+# reach the cache. Without this the operator gets a raw nix error as the last
+# word: no code, no log path, nothing to report.
+report_managed_failure() {
+  local step="$1" ca target
+
+  log_event "managed step failed: $step"
+  ca="$(stale_ca_bundle)"
+  if [[ -n "$ca" ]]; then
+    target="$(readlink "$ca" 2>/dev/null)" || target=""
+    if etc_link_owned "$target"; then
+      fail BOOT-E301 \
+        "$step failed, and $ca points into a store that no longer exists, so Nix cannot verify TLS" \
+        "re-run bootstrap: it clears that link before Nix is used"
+    else
+      fail BOOT-E302 \
+        "$step failed, and $ca is a dangling link bootstrap does not own, so Nix cannot verify TLS" \
+        "point $ca at a real CA bundle or remove it, then re-run bootstrap"
+    fi
+  else
+    fail BOOT-E399 \
+      "$step failed in a way bootstrap does not recognise yet" \
+      "send the log below so this state can get its own code and repair"
+  fi
+}
+
+run_managed_step() {
+  local label="$1"
+
+  shift
+  "$@" || report_managed_failure "$label"
 }
 
 preflight() {
@@ -932,16 +993,29 @@ activate_configuration() {
   run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --restart-shell
 }
 
+# Callers catch this function's failure, and catching a function suppresses
+# set -e for everything inside it. Every guard therefore returns explicitly
+# rather than leaning on the shell to abort the script for it.
 verify_installation() {
   local state_file
 
   source_nix
-  command_exists nix || die "Nix is not available"
+  command_exists nix || {
+    die "Nix is not available"
+    return 1
+  }
   state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/dotfiles-config"
-  [[ -f "$state_file" && ! -L "$state_file" ]] || die "active host receipt is missing"
+  [[ -f "$state_file" && ! -L "$state_file" ]] ||
+    {
+      die "active host receipt is missing"
+      return 1
+    }
   [[ "$(cat "$state_file")" == "$FLAKE_CONFIG" ]] ||
-    die "active host receipt does not match $FLAKE_CONFIG"
-  run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null
+    {
+      die "active host receipt does not match $FLAKE_CONFIG"
+      return 1
+    }
+  run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null || return 1
   printf 'Verification passed for %s on %s\n' "$FLAKE_CONFIG" "$SYSTEM"
 }
 
@@ -1090,15 +1164,15 @@ apply_configuration() {
   ensure_nix
   enable_flakes_for_process
 
-  managed_activation_plan
+  run_managed_step evaluation managed_activation_plan
 
   if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-activation ]]; then
     printf 'bootstrap: interrupted at test failpoint before-activation\n' >&2
     exit 75
   fi
 
-  activate_configuration
-  verify_installation
+  run_managed_step activation activate_configuration
+  run_managed_step verification verify_installation
   mark_login_shell_incomplete
   clear_interrupted_marker
 
@@ -1132,7 +1206,7 @@ case "$COMMAND" in
   verify)
     preflight
     enable_flakes_for_process
-    verify_installation
+    run_managed_step verification verify_installation
     verify_system_login_shell || die "login-shell system prerequisite is incomplete"
     clear_login_shell_incomplete
     ;;

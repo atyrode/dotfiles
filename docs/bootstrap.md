@@ -179,7 +179,7 @@ the machine that needs them.
 | --- | --- |
 | A pre-Nix shell rc backup blocks the installer | Restore it; keep any rewritten target as `<target>.nix-install-leftover` |
 | Links anywhere under `/etc` resolve into a store that no longer exists | Remove them; links not owned by this toolchain are left alone |
-| A TLS trust anchor this machine names does not resolve | Point it at the CA bundle in the Nix profile |
+| A TLS trust anchor this machine reads is not a usable CA bundle | Point it at the CA bundle in the Nix profile; archive the original |
 | `/etc/fstab` names a `/nix` volume UUID that no longer resolves | Drop the line; archive the file first |
 | An orphaned `Nix Store` volume exists | Rename it so the installer creates a fresh one |
 
@@ -202,13 +202,26 @@ fact rather than a constant, and a nix-darwin generation leaves its answer
 behind in places the sweep never touches: `NIX_SSL_CERT_FILE` exported by a
 login shell that outlived the generation, `ssl-cert-file` in
 `/etc/nix/nix.conf`, and the `nix-daemon` launchd plist — the daemon, not the
-client, is what fetches from the binary cache. Whatever named the path still
-names it after the link is gone, so the file becomes merely absent and every
-download keeps failing on it. Bootstrap reads each namer, and for a named path
-under `/etc` that does not resolve, points it at
+client, is what fetches from the binary cache, and that plist is routinely
+stored as binary, so it is decoded with `plutil` rather than grepped. Whatever
+named the path still names it after the link is gone.
+
+The condition is **usable**, not present. Nix does not look for this file, it
+loads it: `getDefaultSSLCertFile` takes the first of
+`/etc/ssl/certs/ca-certificates.crt` and the profile bundle for which
+`pathAccessible` — an `lstat` — succeeds, then hands it to curl. An absent
+path is therefore harmless, because Nix skips it and falls through to the
+profile bundle. A dangling link, an empty file, and a file that is not a
+certificate bundle are all selected and all fail every download with the same
+error naming the same path.
+
+So bootstrap reads each namer plus the paths Nix probes, and for one under
+`/etc` that is not a usable bundle, points it at
 `/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt` — the one CA bundle
-on a Nix machine whose lifetime is not tied to a nix-darwin generation.
-nix-darwin reclaims the path at the next successful activation.
+on a Nix machine whose lifetime is not tied to a nix-darwin generation. A link
+is removed under the ownership rule; a regular file carries no ownership
+signal, so it is archived first and the undo command restores it byte for
+byte. nix-darwin reclaims the path at the next successful activation.
 
 A volume carrying a live store is in use, not orphaned: a populated store
 database suppresses the repair entirely.
@@ -232,7 +245,7 @@ is the request for the repair that should.
 | `BOOT-E213` | The orphaned volume could not be renamed |
 | `BOOT-E214` | A TLS trust anchor could not be restored |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
-| `BOOT-E301` | A managed step failed and a TLS trust anchor this machine names does not resolve |
+| `BOOT-E301` | A managed step failed and a TLS trust anchor this machine reads is not a usable CA bundle |
 | `BOOT-E302` | The same, but the path is not bootstrap's to replace |
 | `BOOT-E399` | A managed step failed in a way bootstrap does not recognise yet |
 
@@ -244,8 +257,8 @@ repair that already handles it, so the remedy is to re-run bootstrap.
 The `BOOT-E3xx` CA states are re-derived by inspecting the trust-anchor paths
 at failure time rather than parsed out of error prose. Bootstrap reads every
 namer — the environment, `/etc/nix/nix.conf`, the daemon plist, and the fixed
-list Nix probes when nothing names one — and reports the first that does not
-resolve, along with which namer produced it. `BOOT-E301` means bootstrap can
+list Nix probes when nothing names one — and reports the first that is not
+usable, along with which namer produced it. `BOOT-E301` means bootstrap can
 act on it, and its remedy states which repair will run: restoring the file
 when a profile CA bundle is available, removing the link when it is not.
 `BOOT-E302` means the path is a dangling link this toolchain does not own, so

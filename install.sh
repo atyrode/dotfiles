@@ -601,23 +601,48 @@ trust_anchor_candidates() {
       "$conf" 2>/dev/null)
   fi
 
-  # The daemon, not the client, fetches from the binary cache, so its launchd
-  # environment is what a failing narinfo download actually trusted.
+  # launchd plists are routinely stored as binary, where the paths inside are
+  # not greppable text. plutil renders one as XML on stdout without touching
+  # the file on disk.
   if [[ -f "$plist" ]]; then
     while IFS= read -r value; do
       case "$value" in
         *.crt | *.pem) printf '%s\t%s\n' "$plist" "$value" ;;
       esac
-    done < <(sed -n 's|.*<string>\(/[^<]*\)</string>.*|\1|p' "$plist" 2>/dev/null)
+    done < <(plist_strings "$plist")
   fi
 
   # Nothing has to name a path for Nix to read it: with no setting in force it
-  # probes a fixed list, and a dangling link there counts as a hit.
+  # probes a fixed list and takes the first that lstat can see. Absent is not a
+  # problem - Nix skips it and falls through to the profile bundle. Present but
+  # unusable is, and it is indistinguishable in the error message.
   for path in "$etc/ssl/certs/ca-certificates.crt" "$etc/ssl/cert.pem"; do
-    if [[ -L "$path" && ! -e "$path" ]]; then
+    if [[ -e "$path" || -L "$path" ]]; then
       printf 'the path Nix probes by default\t%s\n' "$path"
     fi
   done
+}
+
+plist_strings() {
+  local plist="$1"
+
+  if command_exists plutil; then
+    plutil -convert xml1 -o - "$plist" 2>/dev/null |
+      sed -n 's|.*<string>\(/[^<]*\)</string>.*|\1|p'
+  else
+    sed -n 's|.*<string>\(/[^<]*\)</string>.*|\1|p' "$plist" 2>/dev/null
+  fi
+}
+
+# Nix does not merely look for this file, it loads it. An empty or unparseable
+# bundle fails every download exactly like a missing one and reports the same
+# error naming the same path, so usable - not present - is the condition that
+# matters, and the one the repair converges on.
+trust_anchor_usable() {
+  local path="$1"
+
+  [[ -e "$path" && -s "$path" ]] || return 1
+  grep -q 'BEGIN CERTIFICATE' "$path" 2>/dev/null
 }
 
 detect_broken_trust_anchors() {
@@ -631,7 +656,7 @@ detect_broken_trust_anchors() {
     # Only paths under /etc are bootstrap's to answer for; a trust anchor kept
     # anywhere else belongs to whoever put it there.
     case "$path" in "$etc"/*) ;; *) continue ;; esac
-    [[ ! -e "$path" ]] || continue
+    trust_anchor_usable "$path" && continue
     case "$seen" in *"|$path|"*) continue ;; esac
     seen="$seen|$path|"
     BROKEN_TRUST_ANCHORS+=("$source"$'\t'"$path")
@@ -639,8 +664,10 @@ detect_broken_trust_anchors() {
 }
 
 # The upstream installer puts a real CA bundle in the default profile, which is
-# what makes this repairable at all. Ownership is the same predicate the sweep
-# uses: bootstrap replaces a file it left behind, never one the operator keeps.
+# what makes this repairable at all. For a link, ownership is the same
+# predicate the sweep uses: bootstrap replaces one it left behind, never one
+# the operator keeps. A regular file carries no ownership signal, so the
+# safety is archival - the original is kept and the undo command restores it.
 trust_anchor_restorable() {
   local path="$1" target
 
@@ -653,20 +680,39 @@ trust_anchor_restorable() {
 }
 
 repair_broken_trust_anchors() {
-  local line source path bundle dir
+  local line source path bundle dir target archive
 
   [[ "${#BROKEN_TRUST_ANCHORS[@]}" -gt 0 ]] || return 0
   bundle="$(trust_anchor_bundle)"
   for line in "${BROKEN_TRUST_ANCHORS[@]}"; do
     source="${line%%$'\t'*}"
     path="${line#*$'\t'}"
-    [[ ! -e "$path" ]] || continue
+    trust_anchor_usable "$path" && continue
     trust_anchor_restorable "$path" || continue
     dir="${path%/*}"
     if [[ ! -d "$dir" ]]; then
       run_privileged mkdir -p "$dir" ||
         fail BOOT-E214 "could not create $dir for the TLS trust anchor" \
           "create it by hand: sudo mkdir -p $dir"
+    fi
+    if [[ -L "$path" ]]; then
+      target="$(readlink "$path" 2>/dev/null)" || target=""
+      run_privileged rm -f "$path" ||
+        fail BOOT-E214 "could not remove the unusable trust anchor $path" \
+          "remove it by hand: sudo rm $path"
+      journal_repair "removed unusable trust anchor link $path -> $target" \
+        "ln -s '$target' '$path'"
+    elif [[ -e "$path" ]]; then
+      mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+      archive="$(repair_state_dir)/ca-bundle.$(date -u +%Y%m%dT%H%M%SZ)"
+      cp "$path" "$archive" ||
+        fail BOOT-E214 "could not archive the unusable trust anchor $path" \
+          "check that $(repair_state_dir) is writable"
+      run_privileged rm -f "$path" ||
+        fail BOOT-E214 "could not remove the unusable trust anchor $path" \
+          "remove it by hand: sudo rm $path"
+      journal_repair "archived unusable trust anchor $path" "cp '$archive' '$path'"
+      printf 'Archived unusable %s at %s\n' "$path" "$archive"
     fi
     run_privileged ln -sfn "$bundle" "$path" ||
       fail BOOT-E214 "could not restore the TLS trust anchor $path" \
@@ -812,7 +858,7 @@ report_managed_failure() {
   if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -eq 0 ]]; then
     fail BOOT-E399 \
       "$step failed in a way bootstrap does not recognise yet" \
-      "send the log below so this state can get its own code and repair"
+      "send the log below so this state can get its own code and repair, or reset this machine's Nix installation with: ./install.sh recover --config $FLAKE_CONFIG"
     return 1
   fi
   line="${BROKEN_TRUST_ANCHORS[0]}"
@@ -828,11 +874,11 @@ report_managed_failure() {
   fi
   if [[ -n "$remedy" ]]; then
     fail BOOT-E301 \
-      "$step failed, and the TLS trust anchor $path named by $source does not resolve, so Nix cannot verify TLS" \
+      "$step failed, and the TLS trust anchor $path named by $source is not a usable CA bundle, so Nix cannot verify TLS" \
       "$remedy"
   else
     fail BOOT-E302 \
-      "$step failed, and the TLS trust anchor $path named by $source does not resolve and is not bootstrap's to replace" \
+      "$step failed, and the TLS trust anchor $path named by $source is not a usable CA bundle and is not bootstrap's to replace" \
       "point $path at a real CA bundle or remove it, then re-run bootstrap"
   fi
 }

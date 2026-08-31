@@ -276,6 +276,24 @@ pkgs.runCommand "check-bootstrap-${system}"
     esac
     EOF
 
+    # A launchd plist on macOS is commonly a binary file whose strings are not
+    # greppable. The fixture models one as a marker line plus base64, so a
+    # scenario staging it proves bootstrap decodes rather than greps: raw sed
+    # over this file finds nothing.
+    cat > "$tool_root/plutil" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    # plutil -convert xml1 -o - FILE: the file is the trailing argument.
+    [ "''${1:-}" = -convert ] || exit 64
+    shift 4
+    file="$1"
+    if IFS= read -r marker < "$file" && [ "$marker" = bplist00 ]; then
+      sed 1d "$file" | ${pkgs.coreutils}/bin/base64 -d
+    else
+      cat "$file"
+    fi
+    EOF
+
     chmod +x \
       "$tool_root/git" \
       "$tool_root/curl" \
@@ -286,9 +304,10 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/gh" \
       "$tool_root/tar" \
       "$tool_root/diskutil" \
+      "$tool_root/plutil" \
       "$fake_installer_template" \
       "$fake_nix_template"
-    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil; do
+    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil plutil; do
       ln -s "$tool_root/$tool" "$fresh_tools/$tool"
       ln -s "$tool_root/$tool" "$managed_tools/$tool"
     done
@@ -883,10 +902,11 @@ pkgs.runCommand "check-bootstrap-${system}"
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
     test "$(readlink "$anchor")" = "$bundle"
 
-    # Three ways to be none of bootstrap's business: an anchor that resolves,
-    # one kept outside /etc, and a dangling one this toolchain does not own.
+    # Three ways to be none of bootstrap's business: an anchor that is a usable
+    # bundle, one kept outside /etc, and a dangling one this toolchain does not
+    # own.
     trust_anchor_case darwin-trust-anchor-untouched
-    printf 'operator anchors\n' > "$anchor"
+    printf -- '-----BEGIN CERTIFICATE-----\noperator anchors\n' > "$anchor"
     export NIX_SSL_CERT_FILE="$anchor"
     export SSL_CERT_FILE="$TMPDIR/elsewhere/ca.pem"
     mkdir -p "$etc/ssl/other"
@@ -896,10 +916,45 @@ pkgs.runCommand "check-bootstrap-${system}"
     "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-untouched.out"
     grep -Fq 'Restore the TLS trust anchor' "$TMPDIR/anchor-untouched.out" && exit 1
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-    test "$(cat "$anchor")" = 'operator anchors'
+    grep -F 'operator anchors' "$anchor" >/dev/null
+    test ! -L "$anchor"
     test -L "$etc/ssl/other/foreign.crt"
     test ! -e "$TMPDIR/elsewhere/ca.pem"
     unset NIX_SSL_CERT_FILE SSL_CERT_FILE
+
+    # Nix does not look for this file, it loads it. A present but unparseable
+    # bundle fails every download with the same error naming the same path as a
+    # missing one - and nothing needs to name the path for Nix to read it, so
+    # this state has no namer at all. Reported BOOT-E399 on the real machine
+    # because detection asked whether the path resolved, not whether it worked.
+    trust_anchor_case darwin-trust-anchor-unusable
+    : > "$anchor"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-unusable.out"
+    grep -F "$anchor (named by the path Nix probes by default)" \
+      "$TMPDIR/anchor-unusable.out" >/dev/null
+    test -f "$anchor"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test "$(readlink "$anchor")" = "$bundle"
+    # The unusable original is archived, and the undo journal puts it back.
+    undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
+    grep -F "archived unusable trust anchor $anchor" "$undo" >/dev/null
+    test -n "$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'ca-bundle.*' -print -quit)"
+
+    # A launchd plist is routinely stored as binary, where the path inside is
+    # not greppable text and only plutil can read it out.
+    trust_anchor_case darwin-trust-anchor-binary-plist
+    plist="$BOOTSTRAP_PROFILE_TARGET_ROOT/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
+    mkdir -p "$(dirname "$plist")"
+    { printf 'bplist00\n'
+      printf '<dict><key>NIX_SSL_CERT_FILE</key><string>%s</string></dict>\n' "$anchor" |
+        ${pkgs.coreutils}/bin/base64
+    } > "$plist"
+    # The path is genuinely unreadable as text; only decoding finds it.
+    grep -Fq "$anchor" "$plist" && exit 1
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-bplist.out"
+    grep -F "$anchor (named by $plist)" "$TMPDIR/anchor-bplist.out" >/dev/null
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test "$(readlink "$anchor")" = "$bundle"
 
     # A named anchor that is merely absent is classified, not shrugged at: this
     # exact state reported BOOT-E399 with a remedy that could never fire.

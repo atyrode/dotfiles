@@ -20,6 +20,14 @@
   # on-demand `nix shell` tool for live watching only.
   fonts.fontconfig.enable = true;
 
+  # Babel refuses to guess who is judging: review and reality decisions are
+  # attributed operator decisions (atyrode/babel SPEC.md §4.7), taken from
+  # --operator or $BABEL_OPERATOR. Every managed home already commits as
+  # exactly one person (git.nix), so the same reviewed-commit authorization
+  # names that person as Babel's operator; without this, `babel web` serves
+  # read-only and refuses judgment clicks with a warning at launch.
+  home.sessionVariables.BABEL_OPERATOR = "alex";
+
   home.packages =
     (with pkgs; [
       # Babel itself (atyrode/babel), pinned by flake.lock. It replaced the

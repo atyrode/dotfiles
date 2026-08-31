@@ -16,6 +16,7 @@ const (
 	workspaceDoctor     clikit.WorkspaceID = "doctor"
 	workspaceCapability clikit.WorkspaceID = "capabilities"
 	workspaceRuntime    clikit.WorkspaceID = "runtime"
+	workspaceTunnel     clikit.WorkspaceID = "tunnel"
 	workspaceAsk        clikit.WorkspaceID = "ask"
 )
 
@@ -26,7 +27,8 @@ var cockpitWorkspaceItems = []clikit.WorkspaceItem{
 	{ID: workspaceDoctor, Label: "Doctor", Shortcut: "4"},
 	{ID: workspaceCapability, Label: "Capabilities", Shortcut: "5"},
 	{ID: workspaceRuntime, Label: "Runtime", Shortcut: "6"},
-	{ID: workspaceAsk, Label: "Ask", Shortcut: "7"},
+	{ID: workspaceTunnel, Label: "Tunnel", Shortcut: "7"},
+	{ID: workspaceAsk, Label: "Ask", Shortcut: "8"},
 }
 
 func newCockpitNav() clikit.WorkspaceNav {
@@ -67,6 +69,8 @@ func (m *model) activateWorkspace(id clikit.WorkspaceID) tea.Cmd {
 		}
 	case workspaceRuntime:
 		return m.loadRuntime()
+	case workspaceTunnel:
+		return m.loadTunnel()
 	default:
 		return nil
 	}
@@ -106,7 +110,7 @@ func (m model) workspaceTabs(width int) string {
 	columns := 3
 	switch {
 	case width >= 132:
-		columns = 7
+		columns = 8
 	case width >= 64:
 		columns = 4
 	}
@@ -145,12 +149,12 @@ func (m model) workspaceTabs(width int) string {
 
 func (m model) shellFooter() string {
 	_, width := m.horizontalLayout()
-	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–7 jump  ·  Ctrl+O ask  ·  q quit"
+	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–8 jump  ·  Ctrl+O ask  ·  q quit"
 	switch {
 	case m.width < 60:
-		text = "Tab/⇧Tab navigate  ·  1–7 jump  ·  q"
+		text = "Tab/⇧Tab navigate  ·  1–8 jump  ·  q"
 	case m.width < 112:
-		text = "Tab/Shift+Tab navigate  ·  1–7 jump  ·  ^O ask  ·  q quit"
+		text = "Tab/Shift+Tab navigate  ·  1–8 jump  ·  ^O ask  ·  q quit"
 	}
 	return clikit.ClipLines(clikit.StDim.Render(text), width)
 }

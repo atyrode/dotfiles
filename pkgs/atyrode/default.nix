@@ -60,6 +60,7 @@ let
 
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
   gitAllowedSigners = ../../home/git-allowed-signers;
+  sshFleetKeys = ../../home/ssh-fleet-keys;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
   );
@@ -222,6 +223,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@git_allowed_signers@' '${gitAllowedSigners}' \
+      --replace-fail '@ssh_fleet_keys@' '${sshFleetKeys}' \
       --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \
       --replace-fail '@homebrew_casks@' '${homebrewCaskInventory}' \
       --replace-fail '@shell@' '${runtimeShell}' \

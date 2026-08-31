@@ -21,8 +21,8 @@ Ask grounding, so packaged and checkout-specific behavior remain aligned.
 
 Overview explains the cockpit and lists every workspace without preallocating
 empty panel height. The top navigation is an aligned responsive grid of numbered
-titles (`1. Overview` through `7. Ask`); only the selected cell's background
-moves. `Tab` and `Shift+Tab` cycle persistent workspaces, while `1`–`6` jump
+titles (`1. Overview` through `8. Ask`); only the selected cell's background
+moves. `Tab` and `Shift+Tab` cycle persistent workspaces, while `1`–`8` jump
 directly. Local loading, selection, scroll, preview, and confirmation state
 survives round trips between workspaces. Narrow and medium layouts wrap the
 complete grid and shorten controls without entering the terminal auto-wrap
@@ -99,6 +99,29 @@ or queued requests and that its token counters have remained unchanged, then
 stops the serving container and releases GPU memory. Concurrent sessions are
 independent, crashed-process leases are pruned, direct API activity resets the
 deadline, and opening another managed local session cancels a pending stop.
+
+## Tunnel workspace
+
+Tunnel is a view onto `atyrode tunnel`, never a second implementation of the
+policy. It reads `tunnel list --json` and lists every reviewed fleet key from
+`home/ssh-fleet-keys` with the access it currently has to this machine: always
+granted (the primary key), granted until revoked, granted with the time left on
+its OpenSSH `expiry-time`, expired, accepted-but-not-yet-adopted, or not
+granted.
+
+`Enter` toggles the selected machine. A granted machine is revoked directly; a
+machine without access opens a duration picker over the same set the CLI
+accepts — 1h, 8h, 24h, 7d, and the explicitly unbounded "until revoked" —
+defaulting to a timed grant. `←`/`→` move the selection and `Esc` cancels.
+Grants and revocations run the CLI in the foreground, because the Bitwarden
+unlock that gates every mutation belongs on the real terminal; the panel reloads
+from the CLI afterwards.
+
+The primary fleet key is refused by the panel itself, before any command runs
+and before the vault is consulted: it is the lockout protection for a machine
+reachable only over SSH. Narrow panes degrade in that order too — prose states
+shorten to the remaining time, fingerprints drop, and the picker's labels
+shorten so every duration stays visible rather than clipped.
 
 ## Generations / Clean workspace
 

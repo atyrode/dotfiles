@@ -192,6 +192,10 @@ let
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
+    atyrode-tunnel = import ./atyrode-tunnel.nix {
+      inherit pkgs;
+      atyrode = systemDoctorAtyrode;
+    };
     atyrode-credentials = import ./atyrode-credentials.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;

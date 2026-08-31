@@ -114,6 +114,75 @@ selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.
 Activation shows a generation package diff.
 
+## Fleet SSH access
+
+```sh
+atyrode tunnel list
+atyrode tunnel list --json
+atyrode tunnel grant alex-macbook-air --for 8h
+atyrode tunnel grant alex-macbook-air --for until-revoked
+atyrode tunnel revoke alex-macbook-air
+```
+
+`tunnel` answers one question: which reviewed fleet keys may reach **this**
+machine over SSH. It has two inputs and one output. The input that is fleet
+policy is [`home/ssh-fleet-keys`](../home/ssh-fleet-keys) — public keys only,
+changed exclusively through a reviewed commit, exactly as a signing key becomes
+trusted only through a reviewed commit in `home/git-allowed-signers` (see
+[git-keys](git-keys.md)). The input that is local decision is a grant file under
+`$XDG_STATE_HOME/atyrode/tunnel/grants.json`. The output is
+`~/.ssh/authorized_keys`, which atyrode owns: every mutation re-renders the whole
+file from registry plus grants, atomically, at `0600`, keeping the
+pre-management file once at `~/.ssh/authorized_keys.pre-atyrode`.
+
+Registration is not access. A key in the registry is grantable, nothing more.
+`grant` defaults to a timed grant and `--for` accepts `1h`, `8h`, `24h`, `7d`,
+or the explicitly unbounded `until-revoked`; the cockpit's Tunnel workspace
+offers exactly that set. A timed grant renders OpenSSH's own
+`expiry-time="YYYYMMDDHHMM"` option, so **sshd** refuses the key once the
+deadline passes — no timer, no daemon, and no requirement that this machine or
+atyrode still be running for access to lapse. Because the option carries no `Z`,
+sshd reads it in the system time zone, which is the zone atyrode formats it in.
+Pruning a lapsed row from the grant file is hygiene; the expiry is the
+mechanism.
+
+The first mutation on a machine adopts the keys already in `authorized_keys` as
+unbounded grants, because that is what those lines already meant; without that,
+the first grant would silently revoke every other machine, including the key
+carrying the session doing the granting. A key present in `authorized_keys` but
+absent from the registry blocks the render and is named, rather than being
+dropped: registering it or removing it is the operator's call.
+
+Exactly one registry entry is `primary`. It is rendered on every machine with no
+expiry, `revoke` refuses it before the vault is consulted, and the cockpit
+refuses it without running anything. That is the lockout protection for a host
+reachable only over SSH; moving the role is a reviewed registry change.
+
+### The vault gate is intentionality, not privilege
+
+`grant` and `revoke` open a Bitwarden session first, reusing the unlock
+ceremony of [`scripts/babel-storage-configure.sh`](../scripts/babel-storage-configure.sh)
+and `atyrode provision git`: unlock if locked, relock on every exit path if this
+command opened the session. `list` is read-only and never touches the vault.
+
+That gate exists so a grant is a deliberate operator act — in particular, an
+agent running as this user cannot toggle fleet access unattended. It is
+explicitly **not** a root-compromise boundary and must not be read as one.
+Anything already running as this user can write `~/.ssh/authorized_keys`
+directly, and an already-unlocked vault satisfies the gate with no prompt until
+`atyrode vault lock`. The boundary it does provide is that a mutation cannot
+happen without either an operator at the terminal or a vault the operator chose
+to leave unlocked.
+
+### Grant state is not part of a Nix generation
+
+The registry is in the flake, but the grant file and the rendered
+`authorized_keys` are machine-local mutable state. Applying this configuration
+neither creates nor changes them, and a Nix generation rollback does not restore
+them — the same non-transactional boundary the native Windows package phase
+carries. To undo access, revoke it; to recover the pre-management file, the
+one-time backup is still there.
+
 
 ## Inspection and diagnostics
 

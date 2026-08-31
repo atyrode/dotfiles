@@ -257,10 +257,11 @@ is recorded in this repository or carried by an operator:
 atyrode provision babel --dry-run
 ```
 
-`--dry-run` reports the repository locator, catalog host, password file, and
-vault item without writing anything. The real run unlocks the vault (prompting
-if it is locked, or reusing `BW_SESSION`), generates the restic repository
-password on first use or retrieves the stored one afterwards, writes it to the
+`--dry-run` reports the repository locator, catalog host, password file, vault
+item, and how many payload keys the vault carries, without writing anything. The
+real run unlocks the vault (prompting if it is locked, or reusing `BW_SESSION`),
+generates the restic repository password on first use or retrieves the stored
+one afterwards, writes it to the
 mode-0600 file restic reads by path
 (`~/.config/babel/repository-password`), reads the Cellar and PostgreSQL
 credentials live from the Clever Cloud add-ons rather than duplicating them
@@ -270,6 +271,32 @@ that document and atomically installs it at `~/.config/babel/storage.json`; its
 presence is what "configured" means. Re-running is safe: the vault item is
 created only when absent and the password is never regenerated once stored. No
 connection material lives in this repository.
+
+The same vault item carries Babel's Phase B payload key ring, in a hidden
+`payload_keys` field, and the ceremony hands it to Babel in that same document.
+One custody path for the whole deployment: a machine provisioned here gets its
+locator, its provider credentials and its keys in one act, and Babel installs
+the ring at mode 0600 beside `storage.json` — the ceremony carries it and never
+writes it, never prints it, and never puts it on a command line. Without the
+ring a fleet member still reads every plaintext catalog row and can open no
+record's content, which is a degradation rather than a failure and is exactly
+why it is easy to miss.
+
+The ring is the deployment's whole append-only history, never the newest key
+alone: an object sealed under a retired key still needs that key, so the install
+is a union that adds keys and drops none, and refuses outright when a delivered
+key id names different material than the machine already holds. A vault item
+with no ring — the state of every item created before this existed — is a note
+naming the one-time step rather than a failure:
+
+```sh
+babel-storage-configure --upload-payload-keys   # on the machine that holds the ring
+atyrode provision babel                         # then on every other machine
+```
+
+That uploads this machine's ring into the vault item, merging with whatever is
+already there and reporting key ids and counts, never material. It is also the
+second half of rotation: append a key to the ring, upload, re-provision.
 
 A `babel-archive` systemd user timer (launchd agent on macOS) then runs the
 `babel-archive-push` wrapper unattended. The timer's start condition is

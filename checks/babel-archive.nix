@@ -192,6 +192,60 @@ pkgs.runCommand "check-babel-archive"
     test -n "$first_use"
     test "$export_line" -lt "$first_use"
 
+    # Payload key custody rides in this same ceremony (babel issue 112): the
+    # vault item that holds the repository password carries the Phase B key ring
+    # too, so one custody path serves the whole deployment. Every property below
+    # is about what the script may not do with a ring, which is why they are read
+    # from source rather than from a rendered attribute set.
+    #
+    # The ring reaches python through the environment, on the same terms as the
+    # vault session above: argv is readable from any process listing, the
+    # environment is readable only by this user.
+    grep -Fq 'os.environ["BABEL_PAYLOAD_KEYS_JSON"]' "$ceremony"
+    grep -Fq 'BABEL_PAYLOAD_KEYS_JSON="$vault_ring"' "$ceremony"
+    if grep -nE '(python3|bw|babel)[^|]*\$\{?(vault_ring|merged_item)' "$ceremony"; then
+      echo 'the storage ceremony passes a payload key ring on a command line; it travels in the environment or on stdin' >&2
+      exit 1
+    fi
+
+    # Babel installs the ring; this script only carries it. That file is the one
+    # thing in Babel that is nothing but key material, and it is written
+    # atomically at mode 0600 by the program that owns its format -- never by a
+    # shell redirect here, which would race a concurrent sync and could truncate
+    # a ring whose loss is permanent.
+    if grep -nE '>[[:space:]]*"\$payload_keys_file"' "$ceremony"; then
+      echo 'the storage ceremony writes the payload key document itself; babel storage configure installs it' >&2
+      exit 1
+    fi
+    # And the outcome is verified rather than assumed, because the point of
+    # carrying the ring is that no operator places a key file by hand.
+    grep -Fq 'a payload key ring is 600' "$ceremony"
+    grep -Fq 'predates payload-key delivery' "$ceremony"
+
+    # The union discipline, in the one place this repository can break it. The
+    # upload merges the vault ring with this host's rather than replacing it: a
+    # dropped key orphans every object sealed under it forever, because nothing
+    # in this deployment deletes a remote object. Conflicting material under one
+    # key id refuses, because a key id selects the key that opens a record and
+    # two keys under one id is a fork of the deployment's key space.
+    grep -Fq 'merged, added = dict(vault_keys), []' "$ceremony"
+    grep -Fq 'names different material in the vault than on this host' "$ceremony"
+
+    # A machine whose vault item predates the ring is told the exact one-time
+    # step by name, rather than left to assemble a bw pipeline around key
+    # material by hand.
+    grep -Fq 'carries no payload key ring' "$ceremony"
+    grep -Fq -- 'babel-storage-configure --upload-payload-keys' "$ceremony"
+
+    # An upload is not a provisioning run: with no vault item it must refuse
+    # rather than mint a repository password nobody asked for, so its branch
+    # comes before the branch that generates one.
+    upload_guard="$(grep -n -m1 'elif \[ "\$upload_ring" -eq 1 \]; then' "$ceremony" | cut -d: -f1)"
+    generate_line="$(grep -n -m1 'bw generate' "$ceremony" | cut -d: -f1)"
+    test -n "$upload_guard"
+    test -n "$generate_line"
+    test "$upload_guard" -lt "$generate_line"
+
     # macOS runs the same wrapper hourly via launchd. launchd has no condition
     # to gate on, so there the wrapper's own check of the storage document is
     # the whole gate -- which is why the push must keep it.

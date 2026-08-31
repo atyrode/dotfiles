@@ -12,6 +12,15 @@ set -euo pipefail
 #   permanently unreadable. Bitwarden generates it here on first run, so neither
 #   this script nor Babel ever invents a credential.
 #
+#   That same vault item carries the Phase B payload key ring, in a hidden
+#   `payload_keys` field (babel issue 112). One custody path for the whole
+#   deployment rather than two: `atyrode provision babel` hands a machine its
+#   locator, its provider credentials and its keys in one act. The ring is the
+#   deployment's full append-only history and never the newest key alone,
+#   because a host given only the active key seals correctly and cannot open one
+#   historical record. Babel installs it at mode 0600 beside storage.json; this
+#   script carries it and never prints it.
+#
 #   Clever Cloud holds its own credentials, read live through `clever addon env`.
 #   Copying them into the vault would create a second source of truth that goes
 #   stale the moment either is rotated.
@@ -57,6 +66,10 @@ Flags:
   --prefix PATH         repository prefix inside the bucket (default: babel/v1)
   --vault-item NAME     Bitwarden item holding the repository password
                         (default: Babel repository password)
+  --upload-payload-keys upload this machine's payload key ring into the vault
+                        item and exit, writing nothing else: the one-time step
+                        for a machine whose keys predate this ceremony, and the
+                        step that follows every "babel sync --generate-key"
   --keep-unlocked       do not relock the vault on exit
   --dry-run             report what would be configured; write nothing
   -h, --help            this text
@@ -82,6 +95,10 @@ prefix="babel/v1"
 vault_item="Babel repository password"
 keep_unlocked=0
 dry_run=0
+# An upload carries this machine's payload key ring to the vault and configures
+# nothing. It is a separate act because it is an operator's decision about
+# custody, not part of provisioning a machine.
+upload_ring=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -129,6 +146,10 @@ while [ $# -gt 0 ]; do
       keep_unlocked=1
       shift
       ;;
+    --upload-payload-keys)
+      upload_ring=1
+      shift
+      ;;
     --dry-run)
       dry_run=1
       shift
@@ -159,6 +180,11 @@ done
 # per-host, so renaming a configured machine starts an empty history and
 # abandons the one it already has.
 config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+# The ring Babel reads on this machine. This script never writes it: `babel
+# storage configure` installs it, at the mode 0600 that document has always been
+# written with. The path is here to read an existing ring from and to name in a
+# message.
+payload_keys_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/payload-keys.json"
 configured_host=""
 if [ -f "$config_file" ]; then
   configured_host="$(python3 -c 'import json, sys
@@ -169,7 +195,10 @@ except Exception:
 fi
 if [ -z "$host_id" ]; then
   host_id="$configured_host"
-  [ -n "$host_id" ] ||
+  # An upload configures nothing, so it needs no archive identity: a machine can
+  # hold keys before it holds a configuration, because `babel sync
+  # --generate-key` deliberately does not require one.
+  [ -n "$host_id" ] || [ "$upload_ring" -eq 1 ] ||
     die "this machine has never been configured, so there is no identity to reuse: run 'atyrode apply', which supplies it from the host registry"
 elif [ -n "$configured_host" ] && [ "$host_id" != "$configured_host" ] && [ "$force_host_id" -eq 0 ]; then
   die "this machine already publishes as '$configured_host'; changing it to '$host_id' would fork the archive (pass --force-host-id if that is intended)"
@@ -237,6 +266,113 @@ item = json.load(sys.stdin)
 print((item.get("login") or {}).get("password") or "")
 '
 
+# The ring in custody, and the item id an edit needs. Both are read from the
+# item that already holds the repository password, because one item is the whole
+# custody story for this deployment.
+read_ring='
+import json, sys
+item = json.load(sys.stdin)
+for field in (item.get("fields") or []):
+    if field.get("name") == "payload_keys":
+        print(field.get("value") or "")
+        break
+'
+
+read_item_id='
+import json, sys
+print(json.load(sys.stdin)["id"] or "")
+'
+
+# The upload merge. It is a union on exactly the terms Babel installs one:
+#
+#   A key the vault carries and this host lacks is kept, because every object
+#   ever sealed under it still needs it and nothing in this deployment deletes a
+#   remote object. A key this host carries and the vault lacks is added, which
+#   is the whole reason to run this. Conflicting material under one key id
+#   refuses, because a key id is what selects the key that opens a record: two
+#   keys under one id is a fork of the deployment's key space, and nothing here
+#   can tell which side is authoritative.
+#
+# The active key is this host's, because the host that just generated a key is
+# the one naming what the fleet should seal under next. Every summary line names
+# key ids and counts; the material reaches stdout only inside the item body that
+# is piped to `bw`, and never a terminal.
+upload_ring_py='
+import json, os, sys
+
+
+def fail(message):
+    print("babel-storage-configure: " + message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def ring_keys(ring, where):
+    entries = ring.get("keys") or []
+    if not entries:
+        fail(where + " carries no keys")
+    keys = {}
+    for entry in entries:
+        key_id, material = entry.get("key_id"), entry.get("key")
+        if not key_id or not material:
+            fail(where + " carries an entry with no key id or no material")
+        if keys.get(key_id, material) != material:
+            fail(where + " names key id " + key_id + " twice with different material")
+        keys[key_id] = material
+    active = ring.get("active_key_id")
+    if not active or active not in keys:
+        fail(where + " does not name an active key that it carries")
+    return keys, active
+
+
+item = json.load(sys.stdin)
+with open(os.environ["BABEL_PAYLOAD_KEYS_FILE"], encoding="utf-8") as handle:
+    local = json.load(handle)
+local_keys, active = ring_keys(local, "the ring on this host")
+
+fields = list(item.get("fields") or [])
+vault_keys, schema = {}, int(local.get("key_schema") or 1)
+for field in fields:
+    if field.get("name") == "payload_keys":
+        vault_ring = json.loads(field.get("value") or "{}")
+        vault_keys, _ = ring_keys(vault_ring, "the ring in the vault")
+        schema = max(schema, int(vault_ring.get("key_schema") or 1))
+        break
+
+merged, added = dict(vault_keys), []
+for key_id, material in local_keys.items():
+    if key_id in merged:
+        if merged[key_id] != material:
+            fail("key id " + key_id + " names different material in the vault than on this host; "
+                 "reconcile it by hand, because nothing here can tell which side is authoritative")
+        continue
+    merged[key_id] = material
+    added.append(key_id)
+
+ring = {
+    "key_schema": schema,
+    "active_key_id": active,
+    "keys": [{"key_id": key_id, "key": merged[key_id]} for key_id in sorted(merged)],
+}
+fields = [field for field in fields if field.get("name") != "payload_keys"]
+fields.append({"name": "payload_keys", "value": json.dumps(ring, separators=(",", ":")), "type": 1})
+item["fields"] = fields
+json.dump(item, sys.stdout)
+
+print("ring for the vault: %d key(s), sealing under %s" % (len(merged), active), file=sys.stderr)
+print("adding: " + (", ".join(sorted(added)) if added else "nothing this host holds is new"), file=sys.stderr)
+kept = sorted(set(vault_keys) - set(local_keys))
+if kept:
+    print("kept from the vault and absent from this host: " + ", ".join(kept), file=sys.stderr)
+'
+
+# One line of the dry-run report. Key ids and counts only.
+ring_summary_py='
+import json, os
+ring = json.loads(os.environ["BABEL_PAYLOAD_KEYS_JSON"])
+print("%d key(s) in the vault, sealing under %s" % (
+    len(ring.get("keys") or []), ring.get("active_key_id") or "nothing"))
+'
+
 # Retrieved when the item exists; generated by Bitwarden and stored when it does
 # not. Generation lives in the vault so the secret is never invented by a script
 # and is in its custodian from birth.
@@ -244,6 +380,10 @@ created_item=0
 if item_json="$(bw get item "$vault_item" 2>/dev/null)"; then
   repo_password="$(printf '%s' "$item_json" | python3 -c "$read_password")"
   [ -n "$repo_password" ] || die "vault item '$vault_item' has no password"
+elif [ "$upload_ring" -eq 1 ]; then
+  # An upload is not a provisioning run and must not mint a repository
+  # password: without the item there is nothing to attach a ring to.
+  die "vault item '$vault_item' does not exist yet; run this ceremony without --upload-payload-keys first"
 else
   [ "$dry_run" -eq 0 ] || die "vault item '$vault_item' is absent; a real run would create it"
   repo_password="$(bw generate --length 64 --uppercase --lowercase --number)"
@@ -253,6 +393,55 @@ else
   printf '%s' "$item_body" | bw encode | bw create item >/dev/null ||
     die "storing the generated password in the vault failed"
   created_item=1
+fi
+
+vault_ring=""
+item_id=""
+if [ -n "${item_json:-}" ]; then
+  vault_ring="$(printf '%s' "$item_json" | python3 -c "$read_ring")" ||
+    die "reading the payload key ring from vault item '$vault_item' failed"
+  item_id="$(printf '%s' "$item_json" | python3 -c "$read_item_id")" ||
+    die "reading the id of vault item '$vault_item' failed"
+fi
+
+if [ "$upload_ring" -eq 1 ]; then
+  [ -n "$item_id" ] || die "vault item '$vault_item' has no id, so it cannot be edited"
+  [ -f "$payload_keys_file" ] ||
+    die "no payload key ring at $payload_keys_file: create one with 'babel sync --generate-key ID' first"
+  merged_item="$(printf '%s' "$item_json" |
+    BABEL_PAYLOAD_KEYS_FILE="$payload_keys_file" python3 -c "$upload_ring_py")" ||
+    die "merging this machine's payload key ring with the vault's failed"
+  if [ "$dry_run" -eq 1 ]; then
+    printf 'would upload that ring to vault item "%s"; nothing was written\n' "$vault_item"
+    exit 0
+  fi
+  printf '%s' "$merged_item" | bw encode | bw edit item "$item_id" >/dev/null ||
+    die "storing the payload key ring in vault item '$vault_item' failed"
+  printf 'payload key ring uploaded to vault item "%s"\n' "$vault_item"
+  printf 'every other host installs it on its next provision: atyrode provision babel\n'
+  exit 0
+fi
+
+# A vault item without a ring is the ordinary state of every machine provisioned
+# before this ceremony carried keys, so it is a note and not a failure: the
+# configuration still has to be installed, and a host with no ring stages its
+# Phase B records pending-sync and says so rather than losing them. The note
+# names the exact one-time step, because the operator cannot infer it and
+# because the cost of not taking it is invisible until a disk dies.
+if [ -z "$vault_ring" ]; then
+  if [ -f "$payload_keys_file" ]; then
+    printf 'note: vault item "%s" carries no payload key ring, and this machine holds one at %s\n' \
+      "$vault_item" "$payload_keys_file" >&2
+    printf '      until the vault carries it, no other host can open a single Phase B record this one sealed,\n' >&2
+    printf '      and losing this disk loses every record sealed under it\n' >&2
+    printf '      one time, on this machine: babel-storage-configure --upload-payload-keys\n' >&2
+    printf '      then re-provision the fleet: atyrode provision babel\n' >&2
+  else
+    printf 'note: vault item "%s" carries no payload key ring, so this machine seals no Phase B record yet\n' \
+      "$vault_item" >&2
+    printf '      create one with "babel sync --generate-key ID", then upload it:\n' >&2
+    printf '      babel-storage-configure --upload-payload-keys\n' >&2
+  fi
 fi
 
 # Add-on names are resolved to ids here rather than recorded anywhere. An
@@ -308,7 +497,7 @@ catalog = json.loads(os.environ["BABEL_CATALOG_JSON"])
 cellar = json.loads(os.environ["BABEL_CELLAR_JSON"])
 locator = "s3:https://%s/%s/%s" % (
     cellar["CELLAR_ADDON_HOST"], os.environ["BABEL_BUCKET"], os.environ["BABEL_PREFIX"])
-json.dump({
+document = {
     "config_schema": 2,
     "mode": "shared",
     "repository": locator,
@@ -328,7 +517,14 @@ json.dump({
         "password": catalog["POSTGRESQL_ADDON_PASSWORD"],
         "tls_mode": "require",
     },
-}, sys.stdout)
+}
+# The ring rides in the same document, and only when custody carries one: a
+# document without the field leaves the keys on this machine exactly as they
+# are, which is what every document written before this field existed does.
+ring = os.environ["BABEL_PAYLOAD_KEYS_JSON"]
+if ring:
+    document["payload_keys"] = json.loads(ring)
+json.dump(document, sys.stdout)
 '
 
 if [ "$dry_run" -eq 1 ]; then
@@ -345,6 +541,13 @@ if [ "$dry_run" -eq 1 ]; then
   printf '  add-ons        %s -> %s\n' "$catalog_ref" "$catalog_addon"
   printf '                 %s -> %s\n' "$cellar_ref" "$cellar_addon"
   printf '  password file  %s\n' "$password_file"
+  if [ -n "$vault_ring" ]; then
+    ring_state="$(BABEL_PAYLOAD_KEYS_JSON="$vault_ring" python3 -c "$ring_summary_py")" ||
+      die "reading the payload key ring from vault item '$vault_item' failed"
+  else
+    ring_state="absent from the vault"
+  fi
+  printf '  payload keys   %s\n' "$ring_state"
   printf '  vault item     %s (present)\n' "$vault_item"
   exit 0
 fi
@@ -365,7 +568,32 @@ BABEL_CATALOG_JSON="$catalog_json" \
   BABEL_BUCKET="$bucket" \
   BABEL_PREFIX="$prefix" \
   BABEL_PASSWORD_FILE="$password_file" \
+  BABEL_PAYLOAD_KEYS_JSON="$vault_ring" \
   python3 -c "$render_document" | babel storage configure --from-json -
+
+# Babel installs the delivered ring itself, at the mode 0600 that document has
+# always been written with. This verifies the outcome rather than trusting it,
+# because the whole point of carrying the ring through the ceremony is that no
+# operator places a key file by hand: an absent ring here means this machine's
+# Babel predates payload-key delivery, and a loose mode means every local
+# account can read what the sealing exists to protect.
+#
+# Both are warnings rather than failures. The configuration is already
+# installed, the archive timer's arming hangs off this command's exit status,
+# and neither finding is fixed by refusing to have configured the machine.
+if [ -n "$vault_ring" ]; then
+  if [ ! -f "$payload_keys_file" ]; then
+    printf 'warning: the vault delivered a payload key ring and %s was not written;\n' "$payload_keys_file" >&2
+    printf '         this babel predates payload-key delivery - upgrade it with "atyrode apply"\n' >&2
+  else
+    ring_mode="$(stat -c '%a' "$payload_keys_file" 2>/dev/null ||
+      stat -f '%Lp' "$payload_keys_file" 2>/dev/null || printf unknown)"
+    if [ "$ring_mode" != "600" ]; then
+      printf 'warning: %s is mode %s and a payload key ring is 600: chmod 600 %s\n' \
+        "$payload_keys_file" "$ring_mode" "$payload_keys_file" >&2
+    fi
+  fi
+fi
 
 if [ "$created_item" -eq 1 ]; then
   printf 'created vault item "%s" with a Bitwarden-generated repository password\n' "$vault_item"

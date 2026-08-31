@@ -73,6 +73,18 @@ require_registered_host() {
   die "unknown configuration $quoted; choose one of: ${ids[*]}"
 }
 
+# Explicit source-policy flags are reviewed operator decisions about which
+# revision to activate; this entry point must never silently add another.
+source_policy_given() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --update | --allow-dirty | --allow-non-main) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 main() {
   local host=""
   if [[ $# -ge 1 && "$1" != -* ]]; then
@@ -84,11 +96,13 @@ main() {
     die 'git is required first; install Xcode Command Line Tools (xcode-select --install) on macOS or your distribution git package on Linux'
 
   local dir="${DOTFILES_DIR:-$HOME/nix-dotfiles}"
+  local reused=0
   if [[ -e "$dir" ]]; then
     local existing
     existing="$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)"
     [[ "$existing" == "$origin_https" || "$existing" == "$origin_ssh" ]] ||
       die "$dir exists and is not this repository; move it aside or set DOTFILES_DIR"
+    reused=1
   else
     git clone "$origin_https" "$dir"
   fi
@@ -96,10 +110,22 @@ main() {
   [[ -n "$host" ]] || host="$(pick_host "$dir")"
   require_registered_host "$dir" "$host"
 
+  # A reused checkout is not a fresh one: its install.sh, host inventory, and
+  # revision can all be stale, and a stale install.sh would then decide what
+  # this fetched script means. The entry point means "install current upstream
+  # main", so route reuse through install.sh's reviewed --update path, which
+  # fast-forwards and re-enters the updated script.
+  local -a install_args=(apply --config "$host")
+  if [[ "$reused" == 1 ]] && ! source_policy_given "$@"; then
+    install_args+=(--update)
+    printf 'get.sh: reusing the checkout at %s; it will be updated to origin/main before activation (set DOTFILES_DIR to bootstrap elsewhere)\n' \
+      "$dir" >&2
+  fi
+  install_args+=("$@")
+
   # Under `curl | bash` stdin carries the script itself, so the bootstrap
   # confirmation must read from the terminal. Without one, only an explicit
   # --yes may stand in for the operator.
-  local -a install_args=(apply --config "$host" "$@")
   if { : </dev/tty; } 2>/dev/null; then
     exec "$dir/install.sh" "${install_args[@]}" </dev/tty
   fi

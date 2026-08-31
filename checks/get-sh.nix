@@ -72,14 +72,27 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   test ! -e "$INSTALL_ARGS_FILE"
 
   # Streamed like curl | bash: stdin is the script, no terminal exists, and
-  # --yes hands off to the cloned install.sh with stdin detached.
+  # --yes hands off to the cloned install.sh with stdin detached. A fresh
+  # clone already sits at origin/main, so it needs no source update.
+  rm -rf "$HOME/nix-dotfiles"
   bash -s -- alex-x86_64-linux --yes < ${../get.sh} >/dev/null
   test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config alex-x86_64-linux --yes'
   test ! -s "$INSTALL_STDIN_FILE"
 
-  bash -s -- development-x86_64-linux --yes < ${../get.sh} >/dev/null
-  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config development-x86_64-linux --yes'
+  # A reused checkout is fast-forwarded to origin/main instead of deciding, at
+  # whatever revision it happens to hold, what the fetched script means.
+  bash -s -- development-x86_64-linux --yes < ${../get.sh} >/dev/null 2>"$TMPDIR/reuse-err"
+  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config development-x86_64-linux --update --yes'
   test ! -s "$INSTALL_STDIN_FILE"
+  grep -F 'it will be updated to origin/main before activation' "$TMPDIR/reuse-err" >/dev/null
+  grep -F 'DOTFILES_DIR' "$TMPDIR/reuse-err" >/dev/null
+
+  # An explicit source acknowledgement is a reviewed operator decision about
+  # which revision to activate and is never overridden.
+  for acknowledgement in --update --allow-dirty --allow-non-main; do
+    bash -s -- alex-x86_64-linux --yes "$acknowledgement" < ${../get.sh} >/dev/null
+    test "$(cat "$INSTALL_ARGS_FILE")" = "apply --config alex-x86_64-linux --yes $acknowledgement"
+  done
 
   # The existing correct-origin clone is reused, and without a terminal the
   # confirmation cannot be assumed: no --yes means no install.sh run.

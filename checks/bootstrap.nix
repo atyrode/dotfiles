@@ -239,37 +239,64 @@ pkgs.runCommand "check-bootstrap-${system}"
     EOF
 
     # A volume table stands in for diskutil: "name<TAB>device<TAB>uuid" per
-    # line. Only the two subcommands bootstrap uses are implemented, and
-    # rename rewrites the table so a test can prove the volume survived.
+    # line, with an optional fourth "no" marking it unmounted. Mount state is
+    # modelled because diskutil renames an APFS volume through its mounted
+    # filesystem and refuses an unmounted one - a table that is always mounted
+    # cannot tell a correct rename from one that fails on the real machine.
     cat > "$tool_root/diskutil" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
     table="''${FAKE_VOLUMES:-}"
     { [ -n "$table" ] && [ -f "$table" ]; } || exit 1
     tab="$(printf '\t')"
+    matches() { [ "$1" = "$2" ] || [ "$1" = "$3" ] || [ "$1" = "$4" ]; }
     case "''${1:-}" in
       info)
-        while IFS="$tab" read -r name device uuid; do
+        while IFS="$tab" read -r name device uuid mounted; do
           [ -n "$name" ] || continue
-          if [ "$2" = "$name" ] || [ "$2" = "$device" ] || [ "$2" = "$uuid" ]; then
+          if matches "$2" "$name" "$device" "$uuid"; then
             printf '   Device Identifier:         %s\n' "$device"
             printf '   Volume Name:               %s\n' "$name"
             printf '   Volume UUID:               %s\n' "$uuid"
+            if [ "''${mounted:-yes}" = no ]; then
+              printf '   Mounted:                   No\n'
+            else
+              printf '   Mounted:                   Yes\n'
+            fi
             exit 0
           fi
         done < "$table"
         exit 1
         ;;
-      rename)
+      rename | mount | unmount)
+        action="$1"
+        shift
+        # unmount takes an optional force before the device.
+        [ "''${1:-}" != force ] || shift
+        target="$1"
+        found=0
         : > "$table.next"
-        while IFS="$tab" read -r name device uuid; do
+        while IFS="$tab" read -r name device uuid mounted; do
           [ -n "$name" ] || continue
-          if [ "$2" = "$device" ] || [ "$2" = "$name" ]; then
-            printf '%s\t%s\t%s\n' "$3" "$device" "$uuid" >> "$table.next"
-          else
-            printf '%s\t%s\t%s\n' "$name" "$device" "$uuid" >> "$table.next"
+          mounted="''${mounted:-yes}"
+          if matches "$target" "$name" "$device" "$uuid"; then
+            found=1
+            case "$action" in
+              rename)
+                if [ "$mounted" = no ]; then
+                  echo 'Volume must be mounted' >&2
+                  rm -f "$table.next"
+                  exit 1
+                fi
+                name="$2"
+                ;;
+              mount) mounted=yes ;;
+              unmount) mounted=no ;;
+            esac
           fi
+          printf '%s\t%s\t%s\t%s\n' "$name" "$device" "$uuid" "$mounted" >> "$table.next"
         done < "$table"
+        [ "$found" = 1 ] || { rm -f "$table.next"; exit 1; }
         mv "$table.next" "$table"
         ;;
       *) exit 64 ;;
@@ -1011,9 +1038,20 @@ pkgs.runCommand "check-bootstrap-${system}"
     grep -F 'Nix Store	disk3s7' "$FAKE_VOLUMES" >/dev/null
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
     # Same device, same UUID, new label: nothing was destroyed.
-    grep -E '^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID$' "$FAKE_VOLUMES" >/dev/null
+    grep -E "^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID	" "$FAKE_VOLUMES" >/dev/null
     undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
     grep -F "diskutil rename 'disk3s7' 'Nix Store'" "$undo" >/dev/null
+
+    # An unmounted volume is not a hypothetical: recovery unmounts to free
+    # /nix, so the very next run meets one. diskutil renames through the
+    # mounted filesystem, so the rename must mount it first and leave it
+    # unmounted afterwards - occupying /nix would block the installer.
+    darwin_fixture darwin-unmounted-volume-repair
+    export PATH="$fresh_tools:$base_path"
+    printf 'Nix Store\tdisk3s7\tSTALE-UUID\tno\n' > "$FAKE_VOLUMES"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    grep -E "^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID	no$" "$FAKE_VOLUMES" >/dev/null
+    test -e "$FAKE_INSTALL_EXECUTED"
 
     # A volume carrying a live store is in use, not orphaned, and is never
     # touched however the rest of the machine looks.
@@ -1104,7 +1142,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     test ! -e "$plist"
     test ! -e "$etc/nix"
     # Renamed, not deleted: same device, same UUID, and the data is still there.
-    grep -E '^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	LIVE-UUID$' "$FAKE_VOLUMES" >/dev/null
+    grep -E "^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	LIVE-UUID	" "$FAKE_VOLUMES" >/dev/null
     # Nix was present, and recovery reinstalls it anyway - that is the point.
     test -e "$FAKE_INSTALL_EXECUTED"
     # An undo command is only worth the file it restores from, so assert the

@@ -806,14 +806,36 @@ detect_orphaned_nix_volume() {
       "run: diskutil info '$NIX_VOLUME_LABEL'"
 }
 
+# diskutil renames an APFS volume through its mounted filesystem, so an
+# unmounted one fails with "Volume must be mounted". Recovery unmounts to free
+# /nix for the volume the installer creates, which leaves exactly that state
+# behind for the next run - so mounting is part of renaming, not a caller's
+# problem to remember.
+rename_nix_volume() {
+  local volume="$1" renamed="$2" remount=0
+
+  if [[ "$(diskutil_field "$volume" 'Mounted')" == [Nn]o ]]; then
+    remount=1
+    run_privileged "$(diskutil_command)" mount "$volume" >/dev/null 2>&1 ||
+      fail BOOT-E213 "could not mount $volume to rename it" \
+        "mount it by hand: sudo diskutil mount $volume"
+  fi
+  run_privileged "$(diskutil_command)" rename "$volume" "$renamed" ||
+    fail BOOT-E213 "could not rename the orphaned volume $volume" \
+      "run: sudo diskutil rename $volume '$renamed'"
+  # Leave it as it was found: a volume that was not mounted must not end up
+  # occupying /nix, which is the mount point the installer needs.
+  if [[ "$remount" -eq 1 ]]; then
+    run_privileged "$(diskutil_command)" unmount "$volume" >/dev/null 2>&1 || true
+  fi
+}
+
 repair_orphaned_nix_volume() {
   local renamed
 
   [[ -n "$ORPHANED_NIX_VOLUME" ]] || return 0
   renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
-  run_privileged "$(diskutil_command)" rename "$ORPHANED_NIX_VOLUME" "$renamed" ||
-    fail BOOT-E213 "could not rename the orphaned volume $ORPHANED_NIX_VOLUME" \
-      "run: sudo diskutil rename $ORPHANED_NIX_VOLUME '$renamed'"
+  rename_nix_volume "$ORPHANED_NIX_VOLUME" "$renamed"
   journal_repair "renamed orphaned volume $ORPHANED_NIX_VOLUME to '$renamed'" \
     "diskutil rename '$ORPHANED_NIX_VOLUME' '$NIX_VOLUME_LABEL'"
   printf 'Renamed the orphaned volume %s to "%s"\n' "$ORPHANED_NIX_VOLUME" "$renamed"
@@ -1414,19 +1436,19 @@ reset_nix_installation() {
   fi
 
   # The installer finds volumes by label, so renaming routes it onto its
-  # fresh-create path. Unmounting first is what frees /nix for the new one.
+  # fresh-create path, and unmounting frees /nix for the volume it creates.
+  # Rename first: diskutil renames through the mounted filesystem and refuses
+  # an unmounted volume.
   if nix_volume_present "$NIX_VOLUME_LABEL"; then
     volume="$(diskutil_field "$NIX_VOLUME_LABEL" 'Device Identifier')"
     [[ -n "$volume" ]] ||
       fail BOOT-E212 "found a $NIX_VOLUME_LABEL volume but could not read its device identifier" \
         "inspect it with: diskutil info '$NIX_VOLUME_LABEL'"
-    run_privileged "$(diskutil_command)" unmount force "$volume" >/dev/null 2>&1 || true
     renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
-    run_privileged "$(diskutil_command)" rename "$volume" "$renamed" ||
-      fail BOOT-E213 "could not rename the $NIX_VOLUME_LABEL volume $volume" \
-        "rename it by hand: sudo diskutil rename '$volume' '$renamed'"
+    rename_nix_volume "$volume" "$renamed"
     journal_repair "renamed $volume from $NIX_VOLUME_LABEL to $renamed" \
       "diskutil rename '$volume' '$NIX_VOLUME_LABEL'"
+    run_privileged "$(diskutil_command)" unmount force "$volume" >/dev/null 2>&1 || true
     printf 'Renamed %s to %s and unmounted it; nothing on it was deleted\n' "$volume" "$renamed"
   fi
 }

@@ -210,6 +210,12 @@ path instead of the in-place encryption path that fails on a pre-existing
 volume — and unlike deletion, it destroys nothing and undoes with one command.
 The orphaned volume keeps its data until the operator reclaims the space.
 
+`diskutil` renames an APFS volume through its mounted filesystem and refuses
+an unmounted one with `Volume must be mounted`. Recovery unmounts to free
+`/nix` for the volume the installer creates, so the next run is guaranteed to
+meet an unmounted volume: mounting is part of renaming, and the volume is left
+exactly as it was found.
+
 The `/etc` sweep is recursive because nix-darwin owns nested paths the same
 way it owns top-level ones. `/etc/ssl/certs/ca-certificates.crt` is the one
 that matters most: it is where Nix reads its TLS trust anchors, so a

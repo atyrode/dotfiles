@@ -15,6 +15,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     nativeBuildInputs = [
       pkgs.bash
       pkgs.coreutils
+      pkgs.diffutils
       pkgs.findutils
       pkgs.gawk
       pkgs.git
@@ -280,6 +281,7 @@ pkgs.runCommand "check-bootstrap-${system}"
       esac
       unset \
         ATYRODE_GIT_AUTH_MODE \
+        BOOTSTRAP_PROFILE_TARGET_ROOT \
         CODER_AGENT_URL \
         CODER_WORKSPACE_NAME \
         FAKE_ACTIVATION_FAIL \
@@ -414,6 +416,38 @@ pkgs.runCommand "check-bootstrap-${system}"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
     test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
 
+    # A clean checkout parked on another branch is returned to main by the
+    # same --update path instead of demanding a manual git checkout, and the
+    # branch it left keeps every commit.
+    new_fixture update-branch-return
+    export PATH="$managed_tools:$base_path"
+    upstream="$TMPDIR/update-branch-return/upstream"
+    "$real_git" clone -q "$repo" "$upstream"
+    "$real_git" -C "$upstream" config user.name fixture
+    "$real_git" -C "$upstream" config user.email fixture@example.invalid
+    printf 'updated\n' > "$upstream/update-marker"
+    "$real_git" -C "$upstream" add update-marker
+    "$real_git" -C "$upstream" commit -q -m update
+    updated_revision="$("$real_git" -C "$upstream" rev-parse HEAD)"
+    "$real_git" -C "$repo" checkout -q -b parked
+    "$real_git" -C "$repo" commit -q --allow-empty -m 'local experiment'
+    parked_revision="$("$real_git" -C "$repo" rev-parse HEAD)"
+    export FAKE_GIT_UPDATE_REPO="$upstream"
+
+    # Without --update the refusal still names the branch and moves nothing.
+    expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F 'checkout is on parked, not main' "$TMPDIR/expected-failure.err" >/dev/null
+    test "$("$real_git" -C "$repo" symbolic-ref --short HEAD)" = parked
+
+    "$repo/install.sh" apply --yes --update --repo "$repo" --config "$host" \
+      >/dev/null 2> "$TMPDIR/branch-return.err"
+    grep -F 'moving the checkout from parked to main' "$TMPDIR/branch-return.err" >/dev/null
+    test "$("$real_git" -C "$repo" symbolic-ref --short HEAD)" = main
+    test "$("$real_git" -C "$repo" rev-parse HEAD)" = "$updated_revision"
+    test "$("$real_git" -C "$repo" rev-parse parked)" = "$parked_revision"
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+
     # Download and integrity failures cannot execute the unverified installer.
     new_fixture download-failure
     export PATH="$fresh_tools:$base_path"
@@ -437,6 +471,51 @@ pkgs.runCommand "check-bootstrap-${system}"
     test -e "$FAKE_INSTALL_EXECUTED"
     test ! -e "$HOME/.nix-profile/bin/nix"
     grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
+
+    # An interrupted upstream install leaves `<rc>.backup-before-nix` files
+    # that make every later attempt fail deep inside the installer. Bootstrap
+    # repairs that itself rather than handing the operator instructions.
+    new_fixture profile-backup-repair
+    export PATH="$fresh_tools:$base_path"
+    export BOOTSTRAP_PROFILE_TARGET_ROOT="$TMPDIR/profile-backup-repair/etcroot"
+    etc="$BOOTSTRAP_PROFILE_TARGET_ROOT/etc"
+    mkdir -p "$etc"
+
+    # A backup identical to its target is what a completed install leaves
+    # behind: never planned, never touched.
+    printf 'settled\n' > "$etc/bash.bashrc"
+    cp "$etc/bash.bashrc" "$etc/bash.bashrc.backup-before-nix"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/settled-plan.out"
+    if grep -Fq 'Restore the pre-Nix shell rc file' "$TMPDIR/settled-plan.out"; then
+      echo 'a settled backup was unexpectedly planned for restore' >&2
+      exit 1
+    fi
+
+    # A deleted target and a target the interrupted install rewrote are both
+    # planned, and plan still moves nothing.
+    printf 'stock zshrc\n' > "$etc/zshrc.backup-before-nix"
+    printf 'stock bashrc\n' > "$etc/bashrc.backup-before-nix"
+    printf '# Nix\nstock bashrc\n' > "$etc/bashrc"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/repair-plan.out"
+    grep -F 'Restore the pre-Nix shell rc file' "$TMPDIR/repair-plan.out" >/dev/null
+    grep -F "$etc/zshrc" "$TMPDIR/repair-plan.out" >/dev/null
+    grep -F "$etc/bashrc" "$TMPDIR/repair-plan.out" >/dev/null
+    test -e "$etc/zshrc.backup-before-nix"
+    test ! -e "$etc/zshrc"
+
+    # apply restores both, keeps the rewritten file beside the restored
+    # original instead of discarding it, and proceeds into the installer.
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/repair-apply.out"
+    test "$(cat "$etc/zshrc")" = 'stock zshrc'
+    test ! -e "$etc/zshrc.backup-before-nix"
+    test "$(cat "$etc/bashrc")" = 'stock bashrc'
+    test ! -e "$etc/bashrc.backup-before-nix"
+    grep -Fxq '# Nix' "$etc/bashrc.nix-install-leftover"
+    test "$(cat "$etc/bash.bashrc")" = settled
+    test -e "$etc/bash.bashrc.backup-before-nix"
+    grep -F "Restored $etc/zshrc" "$TMPDIR/repair-apply.out" >/dev/null
+    test -e "$FAKE_INSTALL_EXECUTED"
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
 
     # Fresh installation verifies the artifact, activates, verifies, and remains
     # idempotent on a repeated upgrade-style invocation.

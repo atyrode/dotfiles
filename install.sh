@@ -7,6 +7,7 @@ set -Eeuo pipefail
 readonly REPO_HTTPS_URL="https://github.com/atyrode/dotfiles.git"
 readonly REPO_SSH_URL="git@github.com:atyrode/dotfiles.git"
 readonly NIX_VERSION="2.34.7"
+readonly PROFILE_BACKUP_SUFFIX=".backup-before-nix"
 readonly BOOTSTRAP_TEST_HOOKS=0
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -25,6 +26,8 @@ SYSTEM=""
 NIX_URL=""
 NIX_SHA256=""
 SOURCE_CHANGED=0
+SOURCE_UPDATED=0
+STALE_PROFILE_BACKUPS=()
 
 die() {
   printf 'bootstrap: %s\n' "$*" >&2
@@ -217,13 +220,15 @@ verify_checkout() {
 
   branch="$(git -C "$DOTFILES_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
   if [[ "$branch" != main && "$ALLOW_NON_MAIN" -ne 1 ]]; then
-    if [[ -z "$branch" ]]; then
-      die "checkout is detached; use --allow-non-main only for an intentionally reviewed revision"
+    # An --update run has already proven the tree clean, so returning it to
+    # main only moves HEAD: the branch ref, and every commit on it, survives.
+    # update_checkout does that and announces the way back.
+    if [[ "$UPDATE_SOURCE" -ne 1 || "$SOURCE_UPDATED" -eq 1 ]]; then
+      if [[ -z "$branch" ]]; then
+        die "checkout is detached; use --allow-non-main only for an intentionally reviewed revision"
+      fi
+      die "checkout is on $branch, not main; use --allow-non-main only after reviewing it"
     fi
-    die "checkout is on $branch, not main; use --allow-non-main only after reviewing it"
-  fi
-  if [[ "$UPDATE_SOURCE" -eq 1 && "$branch" != main ]]; then
-    die "--update is only supported on main"
   fi
   if [[ "$branch" == main ]]; then
     if git -C "$DOTFILES_DIR" show-ref --verify --quiet refs/remotes/origin/main; then
@@ -265,6 +270,67 @@ warn_if_interrupted() {
     "${config:-unknown}" "${started:-unknown}" "${config:-$FLAKE_CONFIG}" >&2
 }
 
+# The upstream multi-user installer backs each shell rc file up to
+# `<target>.backup-before-nix` before it appends its own lines, and refuses to
+# start when such a backup already exists and no longer matches its target.
+# An interrupted install therefore leaves a machine that fails every retry,
+# and it fails late: after the artifact download, after the volume repair, and
+# after several minutes of installer prose. Its remediation reads like an
+# invitation to delete the backup, which discards the only copy of the
+# original file.
+#
+# Repairing this is bootstrap's job, not the operator's, so detection is
+# read-only and the restore runs as a confirmed, planned step of apply.
+detect_shell_profile_backups() {
+  local prefix="" target backup
+
+  STALE_PROFILE_BACKUPS=()
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    prefix="$BOOTSTRAP_PROFILE_TARGET_ROOT"
+  fi
+  for target in \
+    "$prefix/etc/bashrc" \
+    "$prefix/etc/profile.d/nix.sh" \
+    "$prefix/etc/zshrc" \
+    "$prefix/etc/bash.bashrc" \
+    "$prefix/etc/zsh/zshrc"; do
+    backup="$target$PROFILE_BACKUP_SUFFIX"
+    [[ -e "$backup" ]] || continue
+    # A backup identical to its target is what a completed install leaves
+    # behind; upstream overwrites it with the same content and proceeds.
+    if [[ -e "$target" ]] && cmp -s "$backup" "$target"; then
+      continue
+    fi
+    if [[ -L "$backup" || -L "$target" ]]; then
+      die "unsafe shell rc state: $backup or $target is a symlink"
+    fi
+    STALE_PROFILE_BACKUPS+=("$target")
+  done
+}
+
+# Restore each backup over its target. The target here is the interrupted
+# install's own derived file, but proving that byte for byte across installer
+# versions is not worth guessing wrong about on someone's /etc: keep it beside
+# the restored original instead of discarding it.
+repair_shell_profile_backups() {
+  local target backup superseded
+
+  [[ "${#STALE_PROFILE_BACKUPS[@]}" -gt 0 ]] || return 0
+  for target in "${STALE_PROFILE_BACKUPS[@]}"; do
+    backup="$target$PROFILE_BACKUP_SUFFIX"
+    [[ -e "$backup" ]] || continue
+    if [[ -e "$target" ]]; then
+      superseded="$target.nix-install-leftover"
+      run_privileged mv -f "$target" "$superseded" ||
+        die "could not set aside $target"
+      printf 'Kept the interrupted install'"'"'s %s as %s\n' "$target" "$superseded"
+    fi
+    run_privileged mv "$backup" "$target" ||
+      die "could not restore $backup to $target"
+    printf 'Restored %s from %s\n' "$target" "$backup"
+  done
+}
+
 preflight() {
   command_exists git || die "git is required"
   command_exists mktemp || die "mktemp is required"
@@ -287,6 +353,7 @@ preflight() {
     if ! command_exists sha256sum && ! command_exists shasum; then
       die "sha256sum or shasum is required to verify the pinned Nix artifact"
     fi
+    detect_shell_profile_backups
   fi
 
   warn_if_interrupted
@@ -299,11 +366,19 @@ preflight() {
 }
 
 print_plan() {
-  local step=1
+  local step=1 target
 
   printf '\nPlan\n'
   if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
     printf '  %s. Fetch the verified origin and fast-forward main.\n' "$step"
+    step=$((step + 1))
+  fi
+  if [[ "${#STALE_PROFILE_BACKUPS[@]}" -gt 0 ]]; then
+    printf '  %s. Restore the pre-Nix shell rc file an interrupted Nix install left backed up:\n' \
+      "$step"
+    for target in "${STALE_PROFILE_BACKUPS[@]}"; do
+      printf '       %s\n' "$target"
+    done
     step=$((step + 1))
   fi
   if command_exists nix; then
@@ -404,10 +479,23 @@ clear_interrupted_marker() {
 }
 
 update_checkout() {
-  local counts local_ahead remote_ahead
+  local branch counts local_ahead remote_ahead
 
   git -C "$DOTFILES_DIR" fetch --prune origin || return 1
   git -C "$DOTFILES_DIR" show-ref --verify --quiet refs/remotes/origin/main || return 1
+
+  branch="$(git -C "$DOTFILES_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [[ "$branch" != main ]]; then
+    printf 'bootstrap: moving the checkout from %s to main; return to it with: git -C %s checkout %s\n' \
+      "${branch:-a detached revision}" "$DOTFILES_DIR" "${branch:--}" >&2
+    if git -C "$DOTFILES_DIR" show-ref --verify --quiet refs/heads/main; then
+      git -C "$DOTFILES_DIR" checkout --quiet main || return 1
+    else
+      git -C "$DOTFILES_DIR" checkout --quiet -b main --track origin/main || return 1
+    fi
+    SOURCE_CHANGED=1
+  fi
+
   counts="$(git -C "$DOTFILES_DIR" rev-list --left-right --count HEAD...origin/main)" || return 1
   local_ahead="${counts%%[[:space:]]*}"
   remote_ahead="${counts##*[[:space:]]}"
@@ -419,6 +507,7 @@ update_checkout() {
     git -C "$DOTFILES_DIR" merge --ff-only origin/main || return 1
     SOURCE_CHANGED=1
   fi
+  SOURCE_UPDATED=1
 }
 
 restart_after_source_update() {
@@ -555,7 +644,7 @@ run_privileged() {
   elif command_exists sudo; then
     sudo -- "$@"
   else
-    printf 'bootstrap: system prerequisite incomplete: sudo is required to configure the Linux login shell\n' >&2
+    printf 'bootstrap: system prerequisite incomplete: sudo is required for a privileged bootstrap step\n' >&2
     return 1
   fi
 }
@@ -668,6 +757,7 @@ apply_configuration() {
   ensure_safe_login_shell_marker
   write_interrupted_marker
 
+  repair_shell_profile_backups
   ensure_nix
   enable_flakes_for_process
 

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "surfaceOrder": [
+    "omp-seed",
+    "git-identity",
+    "babel-archive",
+    "local-qwen",
+    "manifold-agent"
+  ],
+  "surfaces": {
+    "omp-seed": {
+      "label": "omp settings seed",
+      "command": "atyrode-omp-seed resolve",
+      "implies": "Reviews settings this machine kept over the repository defaults. Local only: no secret, no network, nothing downloaded.",
+      "declinable": false
+    },
+    "git-identity": {
+      "label": "Git identity",
+      "command": "atyrode provision git",
+      "implies": "Materialises this machine's SSH auth and signing keys from Bitwarden and loads them into the agent. Needs your vault password once.",
+      "declinable": true
+    },
+    "babel-archive": {
+      "label": "Babel session archive",
+      "command": "atyrode provision babel",
+      "implies": "Configures where sessions are archived and arms the hourly timer that publishes them. Needs your vault password once.",
+      "declinable": true
+    },
+    "local-qwen": {
+      "label": "local-qwen model runtime",
+      "command": "atyrode runtime provision local-qwen",
+      "implies": "Builds a Docker image and downloads about 40 GB of model weights. No secret and no vault, but it is the largest thing this machine will fetch.",
+      "declinable": true
+    },
+    "manifold-agent": {
+      "label": "Manifold fleet agent",
+      "command": "atyrode runtime provision manifold-agent",
+      "implies": "Enrols this machine with the Manifold hub named in inventory/manifold.json and stores the machine token it mints. Needs your vault password once.",
+      "declinable": true
+    }
+  }
+}

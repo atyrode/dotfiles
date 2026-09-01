@@ -16,7 +16,7 @@ Decision record: [ADR-0002](adr/0002-home-manager-primary-authority.md).
 | User packages and dotfiles | Home Manager | Home Manager | Home Manager |
 | Zsh startup, Git, CLI and agent configuration | Home Manager | Home Manager | Home Manager |
 | Home Manager generations | Home Manager | Home Manager inside the Darwin generation | Home Manager inside the NixOS generation |
-| Account and login-shell selection | Bootstrap registers `$HOME/.nix-profile/bin/zsh` in `/etc/shells` and selects it with `chsh` using explicit privilege | nix-darwin registers Zsh and sets the existing primary user's `UserShell` to `/run/current-system/sw/bin/zsh` during activation | The consuming infrastructure enables Zsh and sets `users.users.<name>.shell` |
+| Account and login-shell selection | `atyrode apply` registers `$HOME/.nix-profile/bin/zsh` in `/etc/shells` and selects it with `chsh` using explicit privilege, reconverging after every activation | nix-darwin registers Zsh and sets the existing primary user's `UserShell` to `/run/current-system/sw/bin/zsh` during activation | The consuming infrastructure enables Zsh and sets `users.users.<name>.shell` |
 | `sudo` authentication | Operating system/operator | nix-darwin manages `/etc/pam.d/sudo_local`, enabling Touch ID with password fallback and reattachment for tmux sessions | The consuming infrastructure |
 | Nix daemon, store and service lifecycle | The system-wide Nix installation | nix-darwin | The consuming NixOS infrastructure |
 | Nix trust, cache and optimisation policy | System Nix configuration; never a Home Manager `nix.conf` override | nix-darwin | The consuming NixOS infrastructure |
@@ -152,28 +152,35 @@ check` plus generated `brew bundle cleanup` with standard input closed and
 without `--force` or `--zap`; it reports drift without offering the
 activation-only reconciliation prompt.
 
-## Login-shell activation and recovery
+## Login-shell convergence
 
 Home Manager owns Zsh configuration but not the account's login-shell field.
-The bootstrap closes that prerequisite after a successful Home Manager
-activation:
+Which layer closes that gap is exactly what the `login-shell` row reports as
+its `owner`:
 
-- Linux verifies `$HOME/.nix-profile/bin/zsh`, adds it to `/etc/shells` once,
-  uses explicit root or `sudo` privilege for `chsh`, and then reads the account
-  database back. It never treats the inherited `$SHELL` environment variable
-  as proof.
-- nix-darwin declares the system Zsh path and updates only the already-existing
-  primary user's `UserShell`. Activation refuses to invent a missing user.
-- NixOS consumers own both `programs.zsh.enable` and the user's system shell in
-  their infrastructure configuration.
+- On standalone Linux the owner is `atyrode`. After a successful Home Manager
+  activation, `atyrode apply` verifies `$HOME/.nix-profile/bin/zsh`, registers
+  it in `/etc/shells`, and selects it with `chsh` using explicit root or
+  `sudo` privilege — each step only where the state is actually wrong — then
+  reads the account database back. It never treats the inherited `$SHELL`
+  environment variable as proof.
+- Through nix-darwin the owner is nix-darwin. It declares the system Zsh path
+  and updates only the already-existing primary user's `UserShell`. Activation
+  refuses to invent a missing user.
+- Under NixOS the owner is the consuming infrastructure, which owns both
+  `programs.zsh.enable` and the user's system shell.
 
-If this final prerequisite fails, the already-successful Home Manager
-activation remains complete. Bootstrap returns `69` and writes
-`${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/login-shell.incomplete`
-as a recoverable, non-secret marker; it does not mislabel the activation as
-failed or roll it back. Repair the reported system prerequisite and run
-`./install.sh verify --config <host>`, or rerun `apply` with the needed
-privilege. Successful verification removes the marker.
+The field is re-derived on every apply rather than closed once, so an account
+whose login shell is changed out from under the configuration is corrected by
+the next apply with no separate command and no state to repair first.
+
+Where `atyrode` owns the field and cannot converge it — no `chsh`, no
+privilege to run it, an account database that does not read back — the
+already-successful Home Manager activation stays complete rather than being
+rolled back or relabelled as failed. Apply prints the reason it could not
+converge and exits `69`. Where another layer owns the field, a mismatch is a
+warning instead: rerunning apply cannot fix somebody else's activation, so
+failing on it would only make a correct Home Manager generation look broken.
 
 ## Platform policy details
 

@@ -121,18 +121,22 @@ pkgs.runCommand "check-babel-archive"
       exit 1
     }
     awk '
-      $0 ~ "^archive_offer_ceremony\\(\\) \\{" { inside = 1; next }
-      inside && /provision_now babel/ { hit = 1 }
+      $0 ~ "^provisioning_run\\(\\)" { inside = 1; next }
+      inside && /babel-archive\).*provision_now babel/ { hit = 1 }
       /^\}/ { inside = 0 }
       END { exit hit ? 0 : 1 }
     ' "$arm" || {
       echo "atyrode: apply's archive offer must run the command it names (atyrode provision babel), which is what arms the timer" >&2
       exit 1
     }
-    # An unconfigured machine is told why nothing archives, on both the path
-    # that cannot ask and the path that was told no.
-    grep -Fq 'the hourly timer stays unarmed until' "$arm"
-    grep -Fq 'until then the hourly timer stays unarmed' "$arm"
+    # An unconfigured machine is told why nothing archives. The reason now
+    # comes from one place -- the probe states it and the policy states what
+    # configuring it implies -- so both paths that report it stay in step.
+    grep -Fq 'the hourly timer is installed but archives nothing' "$arm"
+    ${lib.escapeShellArg "${pkgs.jq}/bin/jq"} -e \
+      '.surfaces["babel-archive"].command == "atyrode provision babel"
+       and (.surfaces["babel-archive"].implies | test("hourly timer"))' \
+      ${../inventory/provisioning.json} >/dev/null
     ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
       # The shipped condition, evaluated by systemd rather than read by us.
       # Asserting that the attribute merely exists would pass just as well

@@ -81,6 +81,7 @@ let
   operatorInfra = ../../inventory/operator-infra.json;
   manifoldInventory = ../../inventory/manifold.json;
   systemPolicy = ../../inventory/system-boundary.json;
+  provisioningPolicy = ../../inventory/provisioning.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
       {
@@ -232,6 +233,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@operator_infra@' '${operatorInfra}' \
       --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
+      --replace-fail '@provisioning_policy@' '${provisioningPolicy}' \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}' \
       --replace-fail '@windows_packages@' '${windowsPackageInventory}'

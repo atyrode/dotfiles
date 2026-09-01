@@ -8,6 +8,17 @@
     mkdir -p "$XDG_CONFIG_HOME/atyrode" "$HOME/nix-dotfiles/.git" "$TMPDIR/bin"
     cp ${../../flake.nix} "$HOME/nix-dotfiles/flake.nix"
     printf '%s\n' '{"id":"alex-x86_64-linux"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    # `atyrode apply` converges the account login shell, so every check that
+    # activates now depends on what the account database says. A sandbox has no
+    # login shell and no way to set one, so the default is a machine whose
+    # shell is already right; a check that is actually about convergence
+    # overrides this with a fixture describing the drift it wants.
+    printf '%s\n' '{"loginShell":{"path":"PLACEHOLDER","executable":true,"listed":true}}' \
+      > "$TMPDIR/settled-login-shell.json"
+    ${pkgs.jq}/bin/jq --arg path "$HOME/.nix-profile/bin/zsh" '.loginShell.path = $path' \
+      "$TMPDIR/settled-login-shell.json" > "$TMPDIR/settled-login-shell.json.tmp"
+    mv "$TMPDIR/settled-login-shell.json.tmp" "$TMPDIR/settled-login-shell.json"
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$TMPDIR/settled-login-shell.json"
   '';
 
   gitNh = ''

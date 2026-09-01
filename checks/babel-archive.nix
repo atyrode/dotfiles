@@ -18,7 +18,7 @@ let
   # two properties here are about what these files may not contain, and no
   # rendered attribute set can answer that.
   ceremony = ../scripts/babel-storage-configure.sh;
-  atyrodeSource = ../pkgs/atyrode/atyrode;
+  atyrodeSource = import ./lib/atyrode-source.nix { inherit pkgs; };
 
   # The document `babel storage configure` writes, and nothing else does. It is
   # the timer's start condition, so its exact value is part of the contract.

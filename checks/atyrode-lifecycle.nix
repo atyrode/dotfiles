@@ -60,7 +60,7 @@ pkgs.runCommand "check-atyrode-lifecycle"
     # dispatch are asserted behaviourally below (on nh's actual argv and on the
     # CLI's own output) rather than on the wording of the source.
     if awk '/^apply_config\(\) \{/{f=1} f&&/cmd_clean|cmd_rollback/{print; hit=1} /^\}/{if(f)f=0} END{exit hit?0:1}' \
-      ${../pkgs/atyrode/atyrode}; then
+      ${import ./lib/atyrode-source.nix { inherit pkgs; }}; then
       echo 'apply invokes cleanup/rollback implicitly' >&2
       exit 1
     fi

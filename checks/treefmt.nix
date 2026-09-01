@@ -39,6 +39,13 @@
       # extension; its `# shellcheck shell=bash` directive supplies the dialect
       # that its @shell@ substitution shebang cannot.
       includes = [ "pkgs/atyrode/atyrode" ];
+      # Its modules are sourced, never run, so linting them one at a time asks
+      # each file to justify functions its callers live outside of. `-x` follows
+      # the sources from the entry point instead, which checks the same lines
+      # with the rest of the program in view -- strictly more than the per-file
+      # pass it replaces, so the exclusion below costs no coverage.
+      options = lib.mkAfter [ "-x" ];
+      excludes = [ "pkgs/atyrode/lib/*.sh" ];
     };
   };
 }

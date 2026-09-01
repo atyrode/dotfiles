@@ -17,6 +17,7 @@ readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
 readonly homebrew_cask_inventory='@homebrew_casks@'
 readonly system_policy='@system_policy@'
+readonly provisioning_policy='@provisioning_policy@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
 readonly windows_package_inventory='@windows_packages@'
@@ -72,10 +73,12 @@ Usage:
   atyrode provision git [--persist] [--yes]
   atyrode provision babel [--dry-run]
   atyrode lifecycle [--json]
+  atyrode doctor [HOST] [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
   atyrode doctor git [--json]
   atyrode doctor tools [--json]
+  atyrode doctor provisioning [--json]
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
@@ -1601,7 +1604,10 @@ probe_login_shell() {
     owner=nixos
     expected="$(jq -r '.loginShell.nixosPath' "$system_policy")"
   else
-    owner=bootstrap
+    # No system configuration owns the account database on a home-manager host,
+    # which is why this case exists at all. Apply converges it, so apply is the
+    # owner named here.
+    owner=atyrode
     expected="$HOME/.nix-profile/bin/zsh"
   fi
 
@@ -1641,7 +1647,7 @@ probe_login_shell() {
     elif [[ "$owner" == nixos ]]; then
       remediation="configure programs.zsh and users.users.<name>.shell in the NixOS infrastructure"
     else
-      remediation="rerun install.sh apply with privilege to register and select the managed Zsh path"
+      remediation="run atyrode apply with privilege; it registers and selects the managed Zsh path"
     fi
   fi
   system_check_add login-shell "$owner" true "$status" "$code" "$summary" "$remediation" \
@@ -2365,6 +2371,10 @@ submit_apply_job() {
 }
 apply_config() {
   local requested="" repo="" ref="" git_auth_mode="${ATYRODE_GIT_AUTH_MODE:-}" plan=0 dry=0 json=0 preview_json=0 restart=0
+  # Activation can succeed while a state apply owns is left unconverged. That
+  # is not a clean apply, so it is carried to the exit code rather than being
+  # printed and forgotten.
+  local apply_status=0
   local -a original_args=("$@")
   if [[ $# -gt 0 && "$1" != --* ]]; then requested="$1"; shift; fi
   while [[ $# -gt 0 ]]; do
@@ -2578,9 +2588,12 @@ apply_config() {
       fi
       [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
     fi
-    review_seed_drift "$json"
-    review_archive_health "$host"
-    review_git_identity_health
+    # Declared state first, decisions second. Convergence is not a question:
+    # the login shell is part of what this host says it is, so apply fixes it
+    # rather than reporting it. Only then are the opt-in surfaces raised, so a
+    # machine that is still wrong never gets asked what else it would like.
+    converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
+    review_provisioning "$json" "$host"
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
     if [[ "$json" == 0 && -t 1 ]]; then
@@ -2592,26 +2605,394 @@ apply_config() {
     [[ "$activation" != home-manager ]] || shell_path="$expected_home/.nix-profile/bin/zsh"
     printf 'Activation completed. Restart the current shell with: exec %q -l\n' "$shell_path" >&2
   fi
+  return "$apply_status"
 }
 
-# After a successful activation, surface plain-omp settings that drifted from
-# the seeded repository defaults and, on a terminal, offer to keep or reset
-# each one. The seeder itself never overwrites local edits; this review is the
-# only place a default is restored, and only on explicit request.
-review_seed_drift() {
-  local json="$1" seed_status drift_count
-  command -v atyrode-omp-seed >/dev/null 2>&1 || return 0
-  seed_status="$(atyrode-omp-seed status --json 2>/dev/null)" || return 0
-  drift_count="$(jq -r '.drift | length' <<<"$seed_status" 2>/dev/null)" || return 0
-  [[ "$drift_count" != 0 ]] || return 0
-  jq -r '"omp seed drift: \(.drift | length) setting(s) kept over the repository defaults",
-    (.drift[] | "  ~ \(.key): local \(.live | tojson) / default \(.seed | tojson)")' \
-    <<<"$seed_status" >&2
-  if [[ "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 && -t 0 && -t 1 ]]; then
-    atyrode-omp-seed resolve || true
-  else
-    printf 'review with: atyrode-omp-seed resolve\n' >&2
+# The login shell is declared state: inventory/system-boundary.json names the
+# path this host's Zsh must be, and `doctor system` already reports when the
+# account database disagrees. Reporting was the whole problem -- its
+# remediation used to be "rerun install.sh apply", which is a tool that runs on
+# every machine forever deferring to one that runs once. Apply converges it
+# instead, on every run, so the state heals wherever it drifts.
+#
+# Only the owner apply can answer for is converged here. nix-darwin sets the
+# primary account's UserShell during activation and NixOS sets it from the
+# system closure; if either still disagrees afterwards, the fix belongs in that
+# configuration and saying so is the honest response. The home-manager case has
+# no such owner, which is exactly why the bootstrap grew one.
+converge_login_shell() { # host
+  local host="$1" diagnostics owner status target user shells_file=/etc/shells
+
+  diagnostics="$(doctor_system "$host" --json 2>/dev/null)" || true
+  [[ -n "$diagnostics" ]] || return 0
+  owner="$(jq -r '.checks[]|select(.id=="login-shell")|.owner' <<<"$diagnostics")"
+  status="$(jq -r '.checks[]|select(.id=="login-shell")|.status' <<<"$diagnostics")"
+  [[ "$status" == incomplete ]] || return 0
+  target="$(jq -r '.checks[]|select(.id=="login-shell")|.expected.path' <<<"$diagnostics")"
+
+  if [[ "$owner" != atyrode ]]; then
+    printf 'atyrode: the account login shell is not %s, and %s owns it here\n' \
+      "$target" "$owner" >&2
+    printf 'atyrode: fix it in that configuration; apply cannot answer for it\n' >&2
+    return 0
   fi
+
+  user="$(id -un)"
+  if [[ ! -x "$target" ]]; then
+    printf 'atyrode: the managed Zsh is not executable at %s\n' "$target" >&2
+    return 1
+  fi
+  if [[ ! -f "$shells_file" || -L "$shells_file" ]]; then
+    printf 'atyrode: %s must be a regular file to register a login shell\n' "$shells_file" >&2
+    return 1
+  fi
+  printf 'atyrode: selecting %s as the login shell for %s\n' "$target" "$user" >&2
+  if ! grep -Fqx -- "$target" "$shells_file"; then
+    # shellcheck disable=SC2016 # Positional parameters expand in the privileged shell.
+    run_privileged sh -c 'grep -Fqx -- "$1" "$2" || printf "%s\n" "$1" >> "$2"' \
+      sh "$target" "$shells_file" || {
+      printf 'atyrode: could not register the managed Zsh in %s\n' "$shells_file" >&2
+      return 1
+    }
+  fi
+  command -v chsh >/dev/null 2>&1 || {
+    printf 'atyrode: chsh is unavailable, so the account database cannot be updated\n' >&2
+    return 1
+  }
+  run_privileged chsh -s "$target" "$user" || {
+    printf 'atyrode: chsh could not update the account database\n' >&2
+    return 1
+  }
+  # Ask the same probe again rather than trusting the write: chsh can report
+  # success on a platform that stores the change somewhere the account database
+  # does not read back.
+  diagnostics="$(doctor_system "$host" --json 2>/dev/null)" || true
+  if [[ "$(jq -r '.checks[]|select(.id=="login-shell")|.status' <<<"$diagnostics")" != ok ]]; then
+    printf 'atyrode: the account login shell still is not %s\n' "$target" >&2
+    return 1
+  fi
+}
+
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -- "$@"
+  else
+    printf 'atyrode: sudo is required for this step and is unavailable\n' >&2
+    return 1
+  fi
+}
+
+# --- provisioning surfaces ----------------------------------------------------
+# A machine can be fully activated and still be missing things: an archive it
+# never configured, a fleet it never enrolled with, a model it never fetched.
+# Activation cannot install any of them, because each needs a secret or a
+# decision that only the operator can supply. What activation CAN do is stop
+# them being invisible.
+#
+# So every such surface is declared in inventory/provisioning.json and probed
+# here. `doctor provisioning` reports them and `apply` acts on them; there is
+# one probe set and two consumers, which is what keeps the report and the offer
+# from ever disagreeing. Adding a surface is a policy entry plus a probe --
+# every machine then heals it on the next apply, with no further wiring.
+#
+# These are deliberately NOT part of the system boundary. inventory/
+# system-boundary.json describes state the machine must have to be correct, and
+# `doctor system` fails when it is missing. An unconfigured optional surface is
+# not an incorrect machine, so it lives in its own policy with its own family
+# and never gates that verdict.
+
+provisioning_checks='[]'
+
+# `jq -e` exits non-zero for a false result, which is a legitimate value here,
+# so absence is tested rather than inferred from the exit code.
+provisioning_policy_field() { # id field
+  local value
+  value="$(jq -r --arg id "$1" --arg field "$2" \
+    '.surfaces[$id][$field] | if . == null then "" else tostring end' "$provisioning_policy")"
+  [[ -n "$value" ]] || die "$EX_SOFTWARE" "inventory/provisioning.json lacks $2 for $1"
+  printf '%s\n' "$value"
+}
+
+# One line per declined surface, so the file stays something an operator can
+# read and edit. The timestamp is for them, never parsed back.
+provisioning_ledger() {
+  printf '%s/atyrode/provisioning-declined\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+provisioning_declined() { # id
+  local ledger
+  ledger="$(provisioning_ledger)"
+  [[ -f "$ledger" ]] || return 1
+  cut -f1 <"$ledger" | grep -Fqx -- "$1"
+}
+
+provisioning_record_decline() { # id
+  local ledger temporary
+  ledger="$(provisioning_ledger)"
+  provisioning_declined "$1" && return 0
+  mkdir -p "$(dirname "$ledger")"
+  temporary="$(mktemp "$(dirname "$ledger")/.provisioning-declined.XXXXXX")"
+  [[ ! -f "$ledger" ]] || cat "$ledger" >"$temporary"
+  printf '%s\t%s\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$temporary"
+  mv -f "$temporary" "$ledger"
+}
+
+# Running the command a decline named is itself a reversal, so provisioning
+# clears the record rather than leaving a stale no beside a configured surface.
+provisioning_clear_decline() { # id
+  local ledger temporary
+  ledger="$(provisioning_ledger)"
+  [[ -f "$ledger" ]] || return 0
+  temporary="$(mktemp "$(dirname "$ledger")/.provisioning-declined.XXXXXX")"
+  grep -v "^$1	" <"$ledger" >"$temporary" || true
+  mv -f "$temporary" "$ledger"
+}
+
+# status is one of:
+#   ok             configured and working
+#   degraded       configured, but not doing its job; remediation is a fix
+#   incomplete     applicable and unconfigured; apply offers the ceremony
+#   declined       unconfigured because the operator said no, and it is recorded
+#   not-applicable this machine cannot have it at all
+provisioning_check_add() { # id status code summary remediation
+  local id="$1" status="$2" code="$3" summary="$4" remediation="$5"
+
+  provisioning_checks="$(jq -c \
+    --arg id "$id" \
+    --arg label "$(provisioning_policy_field "$id" label)" \
+    --arg command "$(provisioning_policy_field "$id" command)" \
+    --arg implies "$(provisioning_policy_field "$id" implies)" \
+    --argjson declinable "$(provisioning_policy_field "$id" declinable)" \
+    --arg status "$status" \
+    --arg code "$code" \
+    --arg summary "$summary" \
+    --arg remediation "$remediation" \
+    '. + [{
+      id: $id,
+      label: $label,
+      command: $command,
+      implies: $implies,
+      declinable: $declinable,
+      status: $status,
+      code: (if $code == "" then null else $code end),
+      summary: $summary,
+      remediation: (if $remediation == "" then null else $remediation end)
+    }]' <<<"$provisioning_checks")"
+}
+
+# A declined surface reports its decline rather than its absence: the operator
+# already answered, and repeating the question as a finding is how a diagnostic
+# becomes noise. It is still listed, because "what is missing here" has to
+# include the things missing on purpose.
+provisioning_unconfigured() { # id summary
+  if provisioning_declined "$1"; then
+    provisioning_check_add "$1" declined declined-by-operator \
+      "$2" "reconsider by running the command; that clears the decline"
+  else
+    provisioning_check_add "$1" incomplete not-configured "$2" ""
+  fi
+}
+
+probe_omp_seed() {
+  local seed_status drift_count
+
+  if ! command -v atyrode-omp-seed >/dev/null 2>&1; then
+    provisioning_check_add omp-seed not-applicable capability-not-selected \
+      "the omp seeder is not installed on this machine" ""
+    return 0
+  fi
+  if ! seed_status="$(atyrode-omp-seed status --json 2>/dev/null)" ||
+    ! drift_count="$(jq -er '.drift | length' <<<"$seed_status" 2>/dev/null)"; then
+    provisioning_check_add omp-seed degraded seed-status-unreadable \
+      "the omp seeder is installed but its status could not be read" \
+      "atyrode-omp-seed status"
+    return 0
+  fi
+  if [[ "$drift_count" == 0 ]]; then
+    provisioning_check_add omp-seed ok "" "omp settings match the repository defaults" ""
+  else
+    provisioning_check_add omp-seed degraded seed-drift \
+      "$drift_count omp setting(s) kept over the repository defaults" \
+      "atyrode-omp-seed resolve"
+  fi
+}
+
+# Detection needs no vault and no network: a diagnostic that opens a vault
+# session would cost a password to answer a question about a password.
+probe_git_identity() {
+  local signing_public reason=""
+
+  signing_public="$(git config --global --get user.signingKey 2>/dev/null || true)"
+  if [[ -n "$signing_public" && ! -r "$(expand_home_path "$signing_public")" ]]; then
+    reason="the configured signing key is missing"
+  elif command -v ssh-add >/dev/null 2>&1 &&
+    [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] &&
+    ! ssh-add -l >/dev/null 2>&1; then
+    reason="the agent holds no keys"
+  fi
+  if [[ -z "$reason" ]]; then
+    provisioning_check_add git-identity ok "" "this machine has a usable Git identity" ""
+  else
+    provisioning_unconfigured git-identity "Git identity incomplete: $reason"
+  fi
+}
+
+probe_babel_archive() {
+  local config_file stamp_file last="" last_epoch now
+
+  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
+  if [[ ! -x "$babel_storage_configure" ]]; then
+    provisioning_check_add babel-archive not-applicable capability-not-selected \
+      "the babel archive ceremony is not part of this build" ""
+    return 0
+  fi
+  if [[ ! -f "$config_file" ]]; then
+    provisioning_unconfigured babel-archive \
+      "the hourly timer is installed but archives nothing until this is configured"
+    return 0
+  fi
+  [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true
+  if [[ -z "$last" ]]; then
+    provisioning_check_add babel-archive degraded never-succeeded \
+      "babel is configured here but has never archived successfully" \
+      "babel archive status (then: babel archive push)"
+    return 0
+  fi
+  if last_epoch="$(date -u -d "$last" +%s 2>/dev/null)"; then
+    now="$(date -u +%s)"
+    if ((now - last_epoch > 48 * 3600)); then
+      provisioning_check_add babel-archive degraded archive-stale \
+        "the last successful babel archive was $last" "babel archive status"
+      return 0
+    fi
+  fi
+  provisioning_check_add babel-archive ok "" "babel archived successfully at $last" ""
+}
+
+# Applicability and provisioned-ness both come from the runtime's own status,
+# never re-derived here: the WSL and CUDA predicate belongs to the capability
+# that needs it, and a second copy would be a second answer.
+probe_local_qwen() {
+  local status
+
+  if ! status="$("$atyrode_runtime" status local-qwen --json 2>/dev/null)"; then
+    provisioning_check_add local-qwen not-applicable capability-not-selected \
+      "the local-qwen runtime is not available on this machine" ""
+    return 0
+  fi
+  if [[ "$(jq -r '.applicable' <<<"$status")" != true ]]; then
+    provisioning_check_add local-qwen not-applicable capability-not-selected \
+      "$(jq -r '.reason' <<<"$status")" ""
+  elif [[ "$(jq -r '.provisioned' <<<"$status")" == true ]]; then
+    provisioning_check_add local-qwen ok "" \
+      "local-qwen is provisioned at $(jq -r '.dataDir' <<<"$status")" ""
+  else
+    provisioning_unconfigured local-qwen \
+      "this machine can host the model runtime but has not fetched it"
+  fi
+}
+
+probe_manifold_agent() {
+  if ! manifold_applicable; then
+    provisioning_check_add manifold-agent not-applicable capability-not-selected \
+      "requires a Linux host with the manifold-node capability installed" ""
+  elif manifold_enrolled; then
+    provisioning_check_add manifold-agent ok "" \
+      "this machine is enrolled with the manifold hub" ""
+  else
+    provisioning_unconfigured manifold-agent \
+      "the agent is installed but this machine is not enrolled with any hub"
+  fi
+}
+
+collect_provisioning_checks() {
+  provisioning_checks='[]'
+  jq -e '.schemaVersion == 1' "$provisioning_policy" >/dev/null ||
+    die "$EX_SOFTWARE" "unsupported provisioning policy schema"
+  probe_omp_seed
+  probe_git_identity
+  probe_babel_archive
+  probe_local_qwen
+  probe_manifold_agent
+  jq -e --argjson expected "$(jq -c '.surfaceOrder' "$provisioning_policy")" \
+    'map(.id) == $expected' <<<"$provisioning_checks" >/dev/null ||
+    die "$EX_SOFTWARE" "provisioning diagnostics do not match the policy order"
+}
+
+# Never fails: an unconfigured optional surface is a to-do, not a fault, and a
+# diagnostic that exits non-zero for one would make "this machine is fine"
+# unsayable on any machine that declined something.
+doctor_provisioning() {
+  local json=0 result
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      *) die "$EX_USAGE" "unknown doctor provisioning option: $1" ;;
+    esac
+  done
+  collect_provisioning_checks
+  result="$(jq -nc --argjson surfaces "$provisioning_checks" \
+    '{schemaVersion:1,command:"doctor provisioning",
+      pending:([$surfaces[]|select(.status=="incomplete")]|length),
+      surfaces:$surfaces,mutationBoundary:"read-only probes"}')"
+  if [[ "$json" == 1 ]]; then
+    printf '%s\n' "$result"
+  else
+    jq -r '.surfaces[] | "\(.id): \(.status) — \(.summary)"' <<<"$result"
+    jq -r '.surfaces[] | select(.remediation) | "  \(.id): \(.remediation)"' <<<"$result"
+  fi
+}
+
+# The question an operator has is "what is missing on this machine", and until
+# now answering it meant knowing which four families to run and in which order.
+# The aggregate runs them all and keeps each one's own verdict: a required
+# family that fails makes the whole run fail, while an unconfigured optional
+# surface is reported and changes nothing -- otherwise every machine that
+# declined a 40 GB model would report itself broken forever.
+doctor_all() {
+  local requested="" json=0 status=0 section
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --*) die "$EX_USAGE" "unknown doctor option: $1" ;;
+      *)
+        [[ -z "$requested" ]] || die "$EX_USAGE" "doctor accepts at most one host"
+        requested="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ "$json" == 1 ]]; then
+    jq -nc \
+      --argjson host "$(doctor_host "$requested" 1 || printf 'null')" \
+      --argjson system "$(doctor_system "$requested" --json || printf 'null')" \
+      --argjson git "$(doctor_git --json || printf 'null')" \
+      --argjson tools "$(doctor_tools --json || printf 'null')" \
+      --argjson provisioning "$(doctor_provisioning --json)" \
+      '{schemaVersion:1,command:"doctor",
+        ok:([$host,$system,$git,$tools]|all(. != null and (.ok != false))),
+        host:$host,system:$system,git:$git,tools:$tools,
+        provisioning:$provisioning}'
+    return
+  fi
+
+  for section in host system git tools provisioning; do
+    printf '\n%s\n' "$section"
+    case "$section" in
+      host) doctor_host "$requested" 0 || status=$? ;;
+      system) doctor_system "$requested" || status=$? ;;
+      git) doctor_git || status=$? ;;
+      tools) doctor_tools || status=$? ;;
+      provisioning) doctor_provisioning ;;
+    esac
+  done
+  return "$status"
 }
 
 # Run a provisioning command now, in this terminal, as the operator would type
@@ -2624,94 +3005,103 @@ provision_now() { # target
   "$self" provision "$target"
 }
 
-# Post-apply git-identity nudge (#8): if the agent is reachable but holds no
-# keys, or the configured signing public key is missing, name the provision
-# command -- and on a terminal, offer to run it, because the operator who can
-# answer for the vault is the one reading this line. Detection needs no vault
-# and no network. Always non-fatal.
-review_git_identity_health() {
-  local signing_public reason=""
-  signing_public="$(git config --global --get user.signingKey 2>/dev/null || true)"
-  if [[ -n "$signing_public" && ! -r "$(expand_home_path "$signing_public")" ]]; then
-    reason="signing key missing"
-  elif command -v ssh-add >/dev/null 2>&1 &&
-    [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] &&
-    ! ssh-add -l >/dev/null 2>&1; then
-    reason="agent holds no keys"
-  fi
-  [[ -n "$reason" ]] || return 0
-  printf 'git identity incomplete (%s); provision with: atyrode provision git\n' "$reason" >&2
-  interactive || return 0
-  if ! confirm 'run atyrode provision git now?'; then
-    printf 'skipped; provision later with: atyrode provision git\n' >&2
-    return 0
-  fi
-  provision_now git ||
-    printf 'provisioning did not complete; this machine still has an incomplete git identity (retry: atyrode provision git)\n' >&2
+# What apply does with each surface, and why the three answers differ:
+#
+#   incomplete  ask, because the machine is missing something the operator can
+#               supply and has not yet been asked about on this machine
+#   degraded    tell, because it is configured and broken -- there is no yes/no
+#               to offer, only a fix to name
+#   declined    say nothing; they already answered
+#
+# Always non-fatal. A machine that declines every surface is still a machine
+# that activated successfully, and apply must not imply otherwise.
+review_provisioning() { # json host
+  local json="$1" host="$2" count index status
+
+  collect_provisioning_checks
+  count="$(jq -r 'length' <<<"$provisioning_checks")"
+  index=0
+  while ((index < count)); do
+    status="$(jq -r ".[$index].status" <<<"$provisioning_checks")"
+    case "$status" in
+      degraded) review_degraded_surface "$json" "$index" ;;
+      incomplete) review_incomplete_surface "$index" "$host" ;;
+    esac
+    index=$((index + 1))
+  done
   return 0
 }
 
-# After a successful activation, surface Babel session-archive health from the
-# stamp Babel's push wrapper writes. Unconfigured is the one state worth acting
-# on rather than narrating: activation has just installed an hourly timer, and a
-# timer with no configuration archives nothing while reporting no failure. So
-# offer the ceremony when a human is present, and name it when one is not.
-# Always non-fatal, and never a network call during apply.
-review_archive_health() {
-  local registry_host="${1:-}" config_file stamp_file last="" last_epoch now
-  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
-  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
-  [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true
-  if [[ -z "$last" ]]; then
-    if [[ -f "$config_file" ]]; then
-      printf 'babel archive has never succeeded here; check with: babel archive status (then: babel archive push)\n' >&2
+review_degraded_surface() { # json index
+  local json="$1" id summary remediation
+
+  id="$(jq -r ".[$2].id" <<<"$provisioning_checks")"
+  summary="$(jq -r ".[$2].summary" <<<"$provisioning_checks")"
+  remediation="$(jq -r ".[$2].remediation // empty" <<<"$provisioning_checks")"
+  printf '%s: %s\n' "$id" "$summary" >&2
+  # Seed drift is the one surface whose remediation is itself a review: running
+  # it asks the questions rather than answering them, so on a terminal it runs
+  # instead of being quoted. Every other fix is a command to type.
+  if [[ "$id" == omp-seed && "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 ]] && interactive; then
+    atyrode-omp-seed resolve || true
+    return 0
+  fi
+  [[ -z "$remediation" ]] || printf '  fix with: %s\n' "$remediation" >&2
+}
+
+# The offer names the command it runs, so accepting here and typing it later
+# cannot leave the machine in two different states. Off a terminal the same
+# facts are printed without a question, because there is nobody to answer it.
+review_incomplete_surface() { # index host
+  local id label surface_command implies declinable summary
+
+  id="$(jq -r ".[$1].id" <<<"$provisioning_checks")"
+  label="$(jq -r ".[$1].label" <<<"$provisioning_checks")"
+  surface_command="$(jq -r ".[$1].command" <<<"$provisioning_checks")"
+  implies="$(jq -r ".[$1].implies" <<<"$provisioning_checks")"
+  declinable="$(jq -r ".[$1].declinable" <<<"$provisioning_checks")"
+  summary="$(jq -r ".[$1].summary" <<<"$provisioning_checks")"
+
+  printf '%s is not configured: %s\n' "$label" "$summary" >&2
+  printf '  %s\n' "$implies" >&2
+  if ! interactive; then
+    printf '  configure with: %s\n' "$surface_command" >&2
+    return 0
+  fi
+  # The prompt names the machine, not just the command: these ceremonies write
+  # a per-machine identity, and an operator with several hosts open should
+  # never have to infer which one is asking.
+  if ! confirm "run $surface_command for $2 now?"; then
+    if [[ "$declinable" == true ]]; then
+      provisioning_record_decline "$id"
+      printf '  noted; this machine will not be asked again. Run %s to reconsider.\n' \
+        "$surface_command" >&2
     else
-      archive_offer_ceremony "$registry_host"
+      printf '  skipped; run %s when you want to.\n' "$surface_command" >&2
     fi
     return 0
   fi
-  last_epoch="$(date -u -d "$last" +%s 2>/dev/null)" || return 0
-  now="$(date -u +%s)"
-  if (( now - last_epoch > 48 * 3600 )); then
-    printf 'babel archive stale (last success: %s); check with: babel archive status\n' "$last" >&2
+  if ! provisioning_run "$id" "$2"; then
+    printf '  that did not complete; %s is still unconfigured (retry: %s)\n' \
+      "$label" "$surface_command" >&2
+    return 0
   fi
-  return 0
+  provisioning_clear_decline "$id"
 }
 
-# The ceremony is offered, never forced: it needs the operator's vault password,
-# so it can only run with a human at the terminal. What the offer runs is the
-# command it names -- `atyrode provision babel`, which is also what arms the
-# hourly timer afterwards -- so accepting here and typing it later cannot leave
-# the machine in two different states. The identity it configures is the
-# host-registry name, because that is what the fleet already calls this machine
-# and what the shared catalog will show it as; the child is told that name
-# rather than re-deriving one, so the archive can only be published under the
-# identity apply just activated. Every path here returns 0 -- a machine that
-# declines to configure its archive is still a machine that activated
-# successfully.
-archive_offer_ceremony() {
-  # Every message names the command, never the store path behind it: the
-  # operator's way back in has to be something they can retype.
-  local registry_host="${1:-}" hint='atyrode provision babel' config_file
-  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
-  if [[ ! -x "$babel_storage_configure" || -z "$registry_host" ]] || ! interactive; then
-    printf 'babel archive not configured, so this machine archives nothing; configure with: %s\n' "$hint" >&2
-    printf 'the hourly timer stays unarmed until %s exists\n' "$config_file" >&2
-    return 0
-  fi
-  printf 'babel archive not configured: the hourly timer is installed but archives nothing.\n' >&2
-  printf 'Setting it up needs your Bitwarden password once.\n' >&2
-  if ! confirm "run $hint for $registry_host now?"; then
-    printf 'skipped; configure later with: %s\n' "$hint" >&2
-    printf 'until then the hourly timer stays unarmed; it waits on %s\n' "$config_file" >&2
-    return 0
-  fi
-  if ! ATYRODE_HOST="$registry_host" provision_now babel; then
-    printf 'the ceremony did not complete; this machine still archives nothing (retry: %s)\n' "$hint" >&2
-    return 0
-  fi
-  printf 'configured; the hourly timer publishes from here on, or push now with: babel archive push\n' >&2
-  return 0
+# Each ceremony is reached by the command the offer just named. The mapping is
+# explicit rather than derived from the command string: a surface whose
+# provisioning moves belongs to one line here, not to a parser.
+provisioning_run() { # id host
+  case "$1" in
+    git-identity) provision_now git ;;
+    # The registry name, never a re-derived one: the archive can then only be
+    # published under the identity apply just activated.
+    babel-archive) ATYRODE_HOST="$2" provision_now babel ;;
+    local-qwen) "$atyrode_runtime" provision local-qwen ;;
+    manifold-agent) cmd_runtime_manifold provision ;;
+    *) die "$EX_SOFTWARE" "no provisioning ceremony is wired for $1" ;;
+  esac
 }
 
 # Arm the hourly archive timer, which the storage ceremony has just earned.
@@ -4943,7 +5333,12 @@ main() {
         system) shift; doctor_system "$@" ;;
         git) shift; doctor_git "$@" ;;
         tools) shift; doctor_tools "$@" ;;
-        *) die "$EX_USAGE" "doctor expects host, system, git, or tools" ;;
+        provisioning) shift; doctor_provisioning "$@" ;;
+        # No subcommand asks the whole question -- "what is missing on this
+        # machine" -- which is the one an operator actually has. Anything that
+        # is not a family name is a host for the aggregate; resolve_host names
+        # the valid ones, so a mistyped family lands on a useful error.
+        *) doctor_all "$@" ;;
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;

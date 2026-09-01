@@ -148,7 +148,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     cat > "$tool_root/sudo" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
-    [ "''${FAKE_SUDO_FAIL:-0}" != 1 ] || exit 77
     if [ "''${1:-}" = -- ]; then
       shift
     fi
@@ -160,24 +159,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     #!${pkgs.runtimeShell}
     [ "$#" -eq 2 ] && [ "$1" = auth ] && [ "$2" = status ] || exit 64
     [ "''${FAKE_GH_AUTH:-0}" = 1 ]
-    EOF
-
-    cat > "$tool_root/chsh" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    [ "''${FAKE_CHSH_FAIL:-0}" != 1 ] || exit 78
-    target=""
-    while [ "$#" -gt 0 ]; do
-      case "$1" in
-        -s)
-          target="$2"
-          shift 2
-          ;;
-        *) shift ;;
-      esac
-    done
-    [ -n "$target" ] || exit 64
-    printf '%s\n' "$target" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
     EOF
 
     cat > "$fake_installer_template" <<'EOF'
@@ -269,18 +250,10 @@ pkgs.runCommand "check-bootstrap-${system}"
         mkdir -p "$HOME/.nix-profile/bin"
         ln -sf ${pkgs.zsh}/bin/zsh "$HOME/.nix-profile/bin/zsh"
         ;;
-      *" -- doctor host "*)
+      # Bootstrap's verification step invokes the aggregate `atyrode doctor
+      # <host>` with no family subcommand, so one branch answers for it.
+      *" -- doctor "*)
         [ "''${FAKE_VERIFY_FAIL:-0}" != 1 ]
-        ;;
-      *" -- doctor system "*)
-        current="$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE" 2>/dev/null || true)"
-        if [ "$current" = "$FAKE_EXPECTED_LOGIN_SHELL" ] &&
-          grep -Fqx -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE"; then
-          printf 'login-shell: ok — fixture account database matches managed Zsh\n'
-          exit 0
-        fi
-        printf 'login-shell: incomplete — fixture account database or shell registry differs\n'
-        exit 69
         ;;
       *) exit 64 ;;
     esac
@@ -431,7 +404,6 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/sha256sum" \
       "$tool_root/shasum" \
       "$tool_root/sudo" \
-      "$tool_root/chsh" \
       "$tool_root/gh" \
       "$tool_root/tar" \
       "$tool_root/diskutil" \
@@ -440,7 +412,7 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/security" \
       "$fake_installer_template" \
       "$fake_nix_template"
-    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil plutil launchctl security; do
+    for tool in git curl sha256sum shasum sudo gh tar diskutil plutil launchctl security; do
       ln -s "$tool_root/$tool" "$fresh_tools/$tool"
       ln -s "$tool_root/$tool" "$managed_tools/$tool"
     done
@@ -461,8 +433,6 @@ pkgs.runCommand "check-bootstrap-${system}"
       export REAL_SHA256SUM=${pkgs.coreutils}/bin/sha256sum
       export FAKE_SYSTEM=${system}
       export EXPECTED_NIX_SHA=${expectedHash}
-      export BOOTSTRAP_ACCOUNT_SHELL_FILE="$TMPDIR/$fixture_name/account-shell"
-      export BOOTSTRAP_SHELLS_FILE="$TMPDIR/$fixture_name/shells"
       case "$FAKE_SYSTEM" in
         *-linux)
           export FAKE_EXPECTED_LOGIN_SHELL="$HOME/.nix-profile/bin/zsh"
@@ -484,7 +454,6 @@ pkgs.runCommand "check-bootstrap-${system}"
         CODER_WORKSPACE_NAME \
         FAKE_ACTIVATION_FAIL \
         FAKE_BAD_SHA \
-        FAKE_CHSH_FAIL \
         FAKE_CURL_FAIL \
         FAKE_ETC_CONFLICTS \
         FAKE_GH_AUTH \
@@ -492,12 +461,9 @@ pkgs.runCommand "check-bootstrap-${system}"
         FAKE_GIT_UPDATE_REPO \
         FAKE_INSTALLER_FAIL_AFTER_START \
         FAKE_INSTALLER_FAIL_MESSAGE \
-        FAKE_SUDO_FAIL \
         FAKE_VERIFY_FAIL \
         FAKE_VOLUMES
       mkdir -p "$HOME" "$repo"
-      printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
-      printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_SHELLS_FILE"
       cp "$bootstrap" "$repo/install.sh"
       substituteInPlace "$repo/install.sh" \
         --replace-fail 'readonly BOOTSTRAP_TEST_HOOKS=0' \
@@ -534,8 +500,6 @@ pkgs.runCommand "check-bootstrap-${system}"
       mkdir -p "$BOOTSTRAP_PROFILE_TARGET_ROOT/private/etc"
       ln -s private/etc "$etc"
       : > "$FAKE_VOLUMES"
-      printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
-      printf '%s\n' "$FAKE_EXPECTED_LOGIN_SHELL" > "$BOOTSTRAP_SHELLS_FILE"
     }
 
     expect_failure() {
@@ -544,20 +508,6 @@ pkgs.runCommand "check-bootstrap-${system}"
         exit 1
       fi
     }
-
-    # Runs a command whose non-zero exit is the assertion rather than a fault.
-    # Bash does not inherit an ERR trap into a function body, so calling through
-    # here is also what keeps the reporter quiet about an expected failure.
-    status_of() {
-      local status=0
-
-      set +e
-      "$@"
-      status=$?
-      set -e
-      return "$status"
-    }
-
 
     # A clean plan is read-only and never invokes Nix, downloads, or creates receipts.
     new_fixture plan
@@ -581,21 +531,23 @@ pkgs.runCommand "check-bootstrap-${system}"
       bash "$bootstrap" plan --repo "$repo" --config "$host" >/dev/null
     test ! -e "$BOOTSTRAP_POISON_MARKER"
 
-    # Production bootstrap also ignores the login-shell fixture hooks: with
-    # the fixture files exported, a production Linux apply must consult the
-    # real /etc/shells (absent in the sandbox) and report the system
-    # prerequisite instead of consuming the fixtures the hooked script uses.
+    # Rewritten rather than deleted. What this scenario actually proved was
+    # hook gating on the mutating path - the poison-profile check above only
+    # covers read-only `plan` - and its old evidence, a 69 exit naming the real
+    # /etc/shells, was a side effect of bootstrap owning the login shell.
+    # atyrode apply owns that now, so assert the property that survives: a
+    # production apply ignores BOOTSTRAP_NIX_PROFILE_SCRIPT and runs to
+    # completion. Linux only, because a production darwin apply would ignore
+    # BOOTSTRAP_PROFILE_TARGET_ROOT too and repair the builder's real /etc.
     if [[ "$FAKE_SYSTEM" == *-linux ]]; then
       new_fixture production-hook-gating
       export PATH="$managed_tools:$base_path"
-      production_status=0
-      status_of bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
-        > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err" ||
-        production_status="$?"
-      test "$production_status" = 69
-      grep -q '/etc/shells' "$TMPDIR/production-hooks.err"
+      BOOTSTRAP_NIX_PROFILE_SCRIPT="$TMPDIR/poison-profile" \
+        bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
+        > "$TMPDIR/production-hooks.out"
+      test ! -e "$BOOTSTRAP_POISON_MARKER"
+      test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
       test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
-      test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
     fi
 
     # Repository identity, every class of dirt, and revision state are conservative.
@@ -758,11 +710,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     # idempotent on a repeated upgrade-style invocation.
     new_fixture fresh-success
     export PATH="$fresh_tools:$base_path"
-    if [[ "$FAKE_SYSTEM" == *-linux ]]; then
-      printf '/bin/bash\n' > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
-      : > "$BOOTSTRAP_SHELLS_FILE"
-      export SHELL="$FAKE_EXPECTED_LOGIN_SHELL"
-    fi
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fresh.out"
     grep -F "exec $FAKE_EXPECTED_LOGIN_SHELL -l" "$TMPDIR/fresh.out" >/dev/null
     if grep -F 'exec zsh -l' "$TMPDIR/fresh.out" >/dev/null; then
@@ -782,86 +729,6 @@ pkgs.runCommand "check-bootstrap-${system}"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "development-${system}"
     grep -F -- "--git-auth-mode https-gh" "$FAKE_LOG" >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
-    test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = "$FAKE_EXPECTED_LOGIN_SHELL"
-    test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
-    unset SHELL
-
-    # The conservative prerequisite marker is published before the
-    # interrupted-apply marker clears. An interruption after that point
-    # cannot make an unverified login-shell transition look ready.
-    new_fixture login-shell-receipt-interruption
-    export PATH="$managed_tools:$base_path"
-    if BOOTSTRAP_FAILPOINT=after-login-shell-receipt \
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null 2>&1; then
-      echo 'login-shell receipt failpoint unexpectedly succeeded' >&2
-      exit 1
-    fi
-    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
-    test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-    "$repo/install.sh" verify --repo "$repo" --config "$host" >/dev/null
-    test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-
-    # Unsafe marker types are rejected before any managed evaluation or
-    # activation can begin.
-    new_fixture login-shell-marker-link
-    export PATH="$managed_tools:$base_path"
-    mkdir -p "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap"
-    ln -s "$HOME/redirect" "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-    expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
-    test ! -e "$FAKE_LOG"
-
-    new_fixture login-shell-marker-directory
-    export PATH="$managed_tools:$base_path"
-    mkdir -p "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-    expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
-    test ! -e "$FAKE_LOG"
-
-    # Linux login-shell ownership is a separate, recoverable prerequisite. A
-    # privilege failure cannot roll back a completed Home Manager activation or
-    # masquerade as a successful system-boundary transition.
-    if [[ "$FAKE_SYSTEM" == *-linux ]]; then
-      new_fixture login-shell-privilege-failure
-      export PATH="$managed_tools:$base_path"
-      printf '/bin/bash\n' > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
-      : > "$BOOTSTRAP_SHELLS_FILE"
-      export FAKE_SUDO_FAIL=1
-      login_shell_status=0
-      status_of "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
-        > "$TMPDIR/login-shell-privilege.out" \
-        2> "$TMPDIR/login-shell-privilege.err" ||
-        login_shell_status="$?"
-      test "$login_shell_status" = 69
-      test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
-      test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
-      test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-      test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = /bin/bash
-      unset FAKE_SUDO_FAIL
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-      test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-      test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = "$FAKE_EXPECTED_LOGIN_SHELL"
-      test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
-
-      # A chsh-specific failure has the same recovery contract after the shell
-      # has already been registered in /etc/shells.
-      new_fixture login-shell-chsh-failure
-      export PATH="$managed_tools:$base_path"
-      printf '/bin/bash\n' > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
-      export FAKE_CHSH_FAIL=1
-      login_shell_status=0
-      status_of "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
-        > "$TMPDIR/login-shell-chsh.out" \
-        2> "$TMPDIR/login-shell-chsh.err" ||
-        login_shell_status="$?"
-      test "$login_shell_status" = 69
-      test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-      test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = /bin/bash
-      unset FAKE_CHSH_FAIL
-      "$repo/install.sh" verify --repo "$repo" --config "$host" >/dev/null 2>&1 && exit 1
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-      test ! -e "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
-      test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = "$FAKE_EXPECTED_LOGIN_SHELL"
-      test "$(grep -Fxc -- "$FAKE_EXPECTED_LOGIN_SHELL" "$BOOTSTRAP_SHELLS_FILE")" = 1
-    fi
 
     # A failed activation leaves the interrupted-apply marker naming the
     # attempted configuration; the prior host state is untouched.

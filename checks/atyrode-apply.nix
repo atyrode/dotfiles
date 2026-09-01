@@ -20,6 +20,11 @@ pkgs.runCommand "check-atyrode-apply"
     ${fixtures.base}
     ${fixtures.gitNh}
     ${fixtures.identity}
+
+    # Assertions here are bare `test` and `grep`, so without this a failure
+    # exits silently and the build log ends mid-scenario with nothing to read.
+    # Name the line and the command instead.
+    trap 'echo "check failed at line $LINENO: $BASH_COMMAND" >&2' ERR
     cat > "$TMPDIR/bin/fake-systemd-run" <<'EOF'
     #!${pkgs.runtimeShell}
     mkdir -p "$TMPDIR/fake-systemd"
@@ -226,11 +231,14 @@ pkgs.runCommand "check-atyrode-apply"
     # A successful apply with neither Babel's storage document nor a success
     # stamp names the provisioning ceremony without failing the activation.
     # This harness has no terminal, so the non-interactive path must name the
-    # ceremony rather than offer it -- and it must carry the identity from the
-    # host registry, because a ceremony that has to be told who this machine is
-    # puts the operator back in the business of remembering.
-    grep -qF 'babel archive not configured, so this machine archives nothing; configure with: atyrode provision babel' \
-      "$TMPDIR/apply-success.err"
+    # ceremony rather than offer it -- and it must still state what configuring
+    # it implies, because a machine that only says "not configured" leaves the
+    # operator to go and find out what they would be agreeing to.
+    grep -qF 'Babel session archive is not configured' "$TMPDIR/apply-success.err"
+    grep -qF 'arms the hourly timer that publishes them' "$TMPDIR/apply-success.err"
+    grep -qF 'configure with: atyrode provision babel' "$TMPDIR/apply-success.err"
+    # No question is asked where nothing can answer it.
+    ! grep -qF 'now?' "$TMPDIR/apply-success.err"
     # No prompt without a terminal, and nothing an operator cannot retype: not a
     # checkout path, and not the store path the ceremony actually lives at.
     ! grep -qiF 'bitwarden password' "$TMPDIR/apply-success.err"
@@ -249,9 +257,28 @@ pkgs.runCommand "check-atyrode-apply"
       { printf '%s\n' "$decline_out" >&2; exit 1; }
     printf '%s\n' "$decline_out" | grep -qF 'the hourly timer is installed but archives nothing'
     printf '%s\n' "$decline_out" | grep -qF 'run atyrode provision babel for alex-x86_64-linux now?'
-    printf '%s\n' "$decline_out" | grep -qF 'skipped; configure later with: atyrode provision babel'
+    printf '%s\n' "$decline_out" | grep -qF 'this machine will not be asked again'
     # Declining must not have configured anything.
     test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
+
+    # A decline is a per-machine answer, not a per-run one: the whole point of
+    # recording it is that the next apply does not re-ask a question already
+    # answered. Same state, same terminal, and this time no question at all.
+    ledger="$XDG_STATE_HOME/atyrode/provisioning-declined"
+    grep -q '^babel-archive	' "$ledger"
+    again_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$again_out" >&2; exit 1; }
+    if printf '%s\n' "$again_out" | grep -qF 'run atyrode provision babel'; then
+      echo 'atyrode: a recorded decline was re-asked on the next apply' >&2
+      exit 1
+    fi
+    # Still reported, though: declined is not the same as absent, and "what is
+    # missing here" has to include what is missing on purpose.
+    atyrode doctor provisioning --json |
+      jq -e '.pending == 0
+        and (.surfaces[] | select(.id == "babel-archive")
+             | .status == "declined" and .code == "declined-by-operator")' >/dev/null
+    rm -f "$ledger"
 
     # A supervised apply an operator is watching keeps that operator's terminal,
     # and a captured job has none of what follows from that: the job is
@@ -300,21 +327,25 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'provision expects git or babel' "$TMPDIR/provision-usage.err"
 
     # Babel's storage document present but no success stamp: the archive has
-    # never run here, so point at Babel's own status and push commands.
+    # never run here. That is configured-but-not-working, so it is told, never
+    # offered -- there is no yes/no in "your archive is broken", only a fix.
     mkdir -p "$XDG_CONFIG_HOME/babel"
     printf '%s\n' '{}' > "$XDG_CONFIG_HOME/babel/storage.json"
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-new.err" ||
       { cat "$TMPDIR/apply-archive-new.err" >&2; exit 1; }
-    grep -qF 'babel archive has never succeeded here; check with: babel archive status (then: babel archive push)' \
+    grep -qF 'has never archived successfully' "$TMPDIR/apply-archive-new.err"
+    grep -qF 'fix with: babel archive status (then: babel archive push)' \
       "$TMPDIR/apply-archive-new.err"
+    ! grep -qF 'now?' "$TMPDIR/apply-archive-new.err"
 
     # A stamp older than the staleness window warns and still activates.
     mkdir -p "$XDG_STATE_HOME/babel"
     date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-stale.err" ||
       { cat "$TMPDIR/apply-archive-stale.err" >&2; exit 1; }
-    grep -qE 'babel archive stale \(last success: [^)]+\); check with: babel archive status' \
+    grep -qE 'the last successful babel archive was [0-9]' \
       "$TMPDIR/apply-archive-stale.err"
+    grep -qF 'fix with: babel archive status' "$TMPDIR/apply-archive-stale.err"
 
     # A fresh stamp is silent.
     date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
@@ -330,20 +361,23 @@ pkgs.runCommand "check-atyrode-apply"
       > "$HOME/.gitconfig"
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/git-identity-quiet.err" ||
       { cat "$TMPDIR/git-identity-quiet.err" >&2; exit 1; }
-    grep -qF 'git identity incomplete (signing key missing); provision with: atyrode provision git' \
+    grep -qF 'Git identity is not configured: Git identity incomplete: the configured signing key is missing' \
       "$TMPDIR/git-identity-quiet.err"
-    if grep -qF 'run atyrode provision git now?' "$TMPDIR/git-identity-quiet.err"; then
+    grep -qF 'configure with: atyrode provision git' "$TMPDIR/git-identity-quiet.err"
+    if grep -qF 'run atyrode provision git' "$TMPDIR/git-identity-quiet.err" &&
+      grep -qF 'now?' "$TMPDIR/git-identity-quiet.err"; then
       echo 'a machine with no terminal was asked a question it cannot answer' >&2
       exit 1
     fi
     # With a terminal the reminder is followed by the offer to run the command
-    # it names, and a refusal leaves that command behind.
+    # it names, and a refusal is recorded so it is not asked twice.
     git_decline="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 \
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$git_decline" >&2; exit 1; }
-    printf '%s\n' "$git_decline" | grep -qF 'git identity incomplete (signing key missing)'
-    printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git now?'
-    printf '%s\n' "$git_decline" | grep -qF 'skipped; provision later with: atyrode provision git'
+    printf '%s\n' "$git_decline" | grep -qF 'the configured signing key is missing'
+    printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git for alex-x86_64-linux now?'
+    printf '%s\n' "$git_decline" | grep -qF 'this machine will not be asked again'
+    rm -f "$XDG_STATE_HOME/atyrode/provisioning-declined"
     # Accepting runs that command for real, in this terminal. It cannot succeed
     # here (provision git refuses without an ssh-agent), and the refusal has to
     # stay the provisioning command's own: an apply that already activated does
@@ -352,7 +386,7 @@ pkgs.runCommand "check-atyrode-apply"
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$git_accept" >&2; exit 1; }
     printf '%s\n' "$git_accept" | grep -qF 'no ssh-agent socket'
-    printf '%s\n' "$git_accept" | grep -qF 'provisioning did not complete'
+    printf '%s\n' "$git_accept" | grep -qF 'that did not complete; Git identity is still unconfigured'
     printf '%s\n' "$git_accept" | grep -qF 'retry: atyrode provision git'
     rm -f "$HOME/.gitconfig"
 
@@ -1057,11 +1091,33 @@ pkgs.runCommand "check-atyrode-apply"
       test "$?" -eq 65
     fi
 
+    # Diagnostics observe; only apply mutates. The scan used to cover the whole
+    # file, which worked only while nothing in the CLI ever changed system
+    # state. Apply converges the login shell now, so the rule is stated where it
+    # actually applies: no probe and no doctor family may contain a mutating
+    # command, whatever else the file does.
+    awk '
+      /^[a-z_]+\(\)/ {
+        inside = ($0 ~ "^(probe_|doctor_|collect_provisioning_checks)")
+      }
+      inside { print }
+    ' ${../pkgs/atyrode/atyrode} > "$TMPDIR/diagnostic-bodies.sh"
+    test -s "$TMPDIR/diagnostic-bodies.sh"
     if grep -Eq 'brew bundle cleanup .*--(force|zap)|(^|[[:space:]])(sudo|chsh|usermod|freshclam)([[:space:]]|$)|adb[[:space:]]+devices' \
-      ${../pkgs/atyrode/atyrode}; then
+      "$TMPDIR/diagnostic-bodies.sh"; then
       echo 'doctor system contains a mutating system probe' >&2
       exit 1
     fi
+    # And the converse, so the mutation cannot quietly reappear somewhere else:
+    # chsh belongs to exactly one function, the one that owns the convergence.
+    awk '
+      /^[a-z_]+\(\)/ { inside = ($0 ~ "^converge_login_shell") }
+      !inside && /(^|[[:space:]])chsh([[:space:]]|$)/ { hit = 1 }
+      END { exit hit ? 1 : 0 }
+    ' ${../pkgs/atyrode/atyrode} || {
+      echo 'chsh appears outside converge_login_shell, which owns login-shell state' >&2
+      exit 1
+    }
     # The Homebrew drift probe is a READ-ONLY comparison against the immutable,
     # store-owned Brewfile. The scan above forbids a mutating spelling
     # structurally; this pins the brew invocation the probe ACTUALLY makes. A

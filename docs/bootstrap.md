@@ -4,6 +4,38 @@ The bootstrap is the only supported path from an unmanaged machine to a
 registered dotfiles host. It is conservative because it runs before the
 managed environment is known to work.
 
+## Bootstrap once, apply forever
+
+Bootstrap's job is to get a bare machine to the point where `atyrode apply`
+can run: Git, the pinned Nix, the repository at a reviewed revision, and the
+pre-Nix repairs an installer would otherwise crash on. Then it relays. The
+activation step is `atyrode apply` itself rather than a bootstrap
+reimplementation of it, and every durable surface of the machine is that
+command's to converge.
+
+The split is not a preference about where code lives. Bootstrap runs once per
+machine; `atyrode apply` runs every time anything changes. Anything placed in
+bootstrap after the handoff is therefore a one-shot — correct on the day it
+ran and never re-derived afterwards — so state a machine can drift out of
+belongs on the side that runs forever, and only what has to precede
+`atyrode apply` belongs here.
+
+The login shell is the case that proved it. Bootstrap used to register the
+managed Zsh in `/etc/shells` and select it with `chsh`, and the remediation
+`atyrode doctor system` printed for that state read "rerun install.sh apply
+with privilege to register and select the managed Zsh path" — a convergence
+tool deferring to a one-shot script. Doctor detected the drift correctly and
+then had nothing of its own that could act on it. `atyrode apply` now
+converges the login shell on every run, so there is no `login-shell.incomplete`
+marker any more: a marker only records that one run fell short, and retrying
+the convergence on every apply is strictly stronger than a record that one
+particular `install.sh verify` could erase.
+
+The division reduces to two contracts. Whatever a bare machine is missing
+before `atyrode apply` can run is bootstrap's. Whatever a machine can be
+missing afterwards is detected by `atyrode doctor` and acted on by
+`atyrode apply`.
+
 ## Fresh-machine command
 
 Run one command and choose from the registered presets compatible with the
@@ -86,9 +118,11 @@ downloading an artifact, fetching Git, or moving a file.
 uses the packaged `atyrode apply` plan and activation, so the host registry and
 the `nh` backend remain the only activation contract. Flakes are enabled only
 through the process-scoped `NIX_CONFIG`; bootstrap does not append to a
-user-owned `nix.conf`. After the Home Manager activation succeeds, bootstrap
-also verifies the system-owned login-shell prerequisite described in [Home
-Manager and system boundary](system-boundary.md).
+user-owned `nix.conf`. `verify` re-runs the verification step apply already
+ran: the recorded host receipt, then `atyrode doctor`, the aggregate over the
+host, system, git, tools, and provisioning families. It reports what a machine
+is missing; converging any of it is `atyrode apply`'s job, not another
+bootstrap phase.
 
 `recover` is the exit when a state has no repair. Bootstrap converges on the
 states it can name, and a machine that keeps reporting an unrecognised one is
@@ -387,19 +421,48 @@ with its evidence rather than requiring another run to produce it.
 ## What bootstrap does not do itself
 
 Activation installs the machine's declared state. What it cannot install is
-anything that needs a secret or a decision: the vault-backed Git keys, the
-Babel archive's storage document. Those are the CLI's provisioning ceremonies,
-and `atyrode apply` already finds each unconfigured surface after activating
-and offers to run its ceremony there and then.
+anything that needs a secret or a decision — a vault password, forty gigabytes
+of disk, enrollment with a service. Those are the CLI's provisioning
+ceremonies, and `atyrode apply` reviews every one of them after activating.
 
 Bootstrap's part is to not get in the way of that. It runs each managed step
 on the operator's own stdio so the offers reach a human who can answer them,
 and it names no provisioning command of its own — one prompt from one place,
 rather than two layers asking the same question with different wording.
 
-A ceremony that is declined is not a failed run. The machine activated; it is
-simply not archiving or signing yet, and the command that changes that is
-named on the way out and offered again on the next apply.
+## Provisioning surfaces
+
+The surfaces below are the ones a managed machine may have and does not have
+to. None is implied by activation, because each one costs the machine
+something it cannot take back silently:
+
+| Surface | What accepting commits this machine to |
+| --- | --- |
+| Babel session archive (`atyrode provision babel`) | The vault password once, after which the hourly timer publishes this machine's session archives |
+| Git identity (`atyrode provision git`) | The vault password, plus an ed25519 authentication and signing keypair materialised on disk and loaded into the agent |
+| omp seed drift (`atyrode-omp-seed resolve`) | Nothing beyond the local plain-omp settings file: repository defaults are restored over local edits, with no secret and no network call |
+| local-qwen (`atyrode runtime provision local-qwen`) | Roughly forty gigabytes of downloads and a built container image serving a model from the local GPU |
+| manifold-agent (`atyrode runtime provision manifold-agent`) | Enrollment with the self-hosted manifold hub: an owner key read from the vault, one call to the master, and a machine token stored on disk |
+
+Three rules govern all of them, so that a surface is data rather than a
+dialogue somebody has to design again:
+
+- **On a terminal each is an offer.** The implication is stated, the question
+  is a `y/N` defaulting to no, and accepting runs exactly the command the
+  offer names in that terminal — so what apply does and what the operator
+  would have typed are the same thing.
+- **Off a terminal each is a name.** The surface and the command that
+  configures it are printed and nothing runs. A stream with nobody on it
+  cannot consent to a vault password or forty gigabytes.
+- **A decline is recorded.** The record is per machine and per surface, so a
+  surface refused once is not offered again on the next apply. Asking a second
+  time is how a prompt becomes noise, and noise is answered without reading.
+
+A declined surface is not a failed run. The machine activated; it is simply
+not archiving, signing, serving, or enrolled yet. The way back in is the
+command the offer named: it is the same command the day of the decline and a
+year later, it does not require finding and editing the record, and running it
+clears the record as a side effect of the surface becoming configured.
 
 ## Colour
 
@@ -423,7 +486,6 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/
 ├── dotfiles-config
 ├── install-interrupted
 └── bootstrap/
-    ├── login-shell.incomplete
     ├── logs/
     │   └── <timestamp>-<phase>.log
     └── repairs/
@@ -446,21 +508,6 @@ Bootstrap never rolls back a successfully activated generation. Use the
 standard `home-manager generations` (or nix-darwin) rollback when a previous
 generation is needed.
 
-The login shell is deliberately outside the Home Manager activation. On
-standalone Linux, bootstrap verifies the managed Zsh executable, registers it
-once in `/etc/shells` with explicit privilege, selects it with `chsh`, and
-reads the account database back. On macOS, nix-darwin owns the equivalent
-`UserShell` activation and bootstrap verifies its result. `$SHELL` is never
-accepted as proof because an inherited environment can be stale or forged.
-
-If this post-activation prerequisite cannot be completed, bootstrap returns
-`69` but leaves the successful Home Manager activation intact. It atomically
-publishes `login-shell.incomplete` before clearing the interrupted-apply
-marker, and clears it only after account-database verification, so
-an interruption cannot look like a fully ready machine. Fix the system
-prerequisite and run `./install.sh verify --config <host>`, or rerun `apply`
-with the required privilege. A passing verification removes the marker.
-
 ## Verification coverage
 
 `checks/bootstrap.nix` uses temporary homes and repositories, covering the
@@ -468,8 +515,8 @@ read-only plan, fresh and repeated application, source updates, origin and
 revision defenses, installer failures and their classification into codes,
 every self-healing repair and its undo journal, the recovery phase and its
 refusal to act without confirmation, the interrupted-apply marker contract,
-login-shell recovery, unsafe state types, production-only test-hook gating,
-whether a managed step is captured or handed the operator's own stdio, the
+unsafe state types, production-only test-hook gating, whether a managed step
+is captured or handed the operator's own stdio, the
 colour gate in both directions, and idempotence. The macOS repairs are covered
 on every platform: the states
 they fix cannot be built on a Linux runner, so the check forces the platform
@@ -479,6 +526,12 @@ reached through a symlink, a keychain that refuses an unprivileged read, and a
 launchd plist that is not readable as text, because a fixture that is easier
 than the platform tests nothing. The same check runs natively in all three CI
 jobs.
+
+The login-shell contract is no longer among them. It is covered in
+`checks/atyrode-apply.nix`, against the real CLI that now converges it.
+Bootstrap's harness could only ever drive a stand-in for `atyrode`, so what a
+login-shell scenario proved there was the stand-in's behaviour rather than the
+contract's.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

@@ -1270,13 +1270,12 @@ print_plan() {
   step=$((step + 1))
   printf '  %s. Activate %s through atyrode/nh.\n' "$(paint 1 "$step")" "$FLAKE_CONFIG"
   step=$((step + 1))
-  printf '  %s. Verify host state and clear the interrupted-apply marker.\n' "$(paint 1 "$step")"
+  printf '  %s. Verify the machine with atyrode doctor and clear the interrupted-apply marker.\n' "$(paint 1 "$step")"
   step=$((step + 1))
-  if [[ "$SYSTEM" == *-darwin ]]; then
-    printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$(paint 1 "$step")"
-  else
-    printf '  %s. Register and select the managed Zsh login shell with explicit privilege, then verify the account database.\n' "$(paint 1 "$step")"
-  fi
+  printf '  %s. Hand every durable surface to %s, which owns them from here:\n' \
+    "$(paint 1 "$step")" "$(paint 36 'atyrode apply')"
+  printf '       the login shell, provisioning, and the rest of this machine are\n'
+  printf '       converged by it on this run and on every later one.\n'
   printf '\n%s\n' \
     "$(paint 2 'No changes were made. apply will show this plan again before confirmation.')"
 }
@@ -1312,19 +1311,6 @@ ensure_safe_state_root() {
     mkdir -p "$root"
   fi
   chmod 700 "$root"
-}
-
-ensure_safe_login_shell_marker() {
-  local marker
-
-  marker="$(bootstrap_state_root)/login-shell.incomplete"
-  if [[ -L "$marker" ]]; then
-    die "unsafe login-shell prerequisite marker"
-  elif [[ -f "$marker" || ! -e "$marker" ]]; then
-    return
-  else
-    die "login-shell prerequisite marker has an unsupported type"
-  fi
 }
 
 write_interrupted_marker() {
@@ -1519,27 +1505,12 @@ verify_installation() {
       die "active host receipt does not match $FLAKE_CONFIG"
       return 1
     }
-  run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null || return 1
+  # Bare doctor is the aggregate over every family - host, system, git, tools,
+  # provisioning - so bootstrap verifies the machine rather than the host
+  # alone, and the report reaches the operator instead of /dev/null.
+  run_atyrode doctor "$FLAKE_CONFIG" || return 1
   printf '%s %s %s\n' "$(paint '1;32' 'Verification passed for')" \
     "$(paint 36 "$FLAKE_CONFIG")" "$(paint 2 "on $SYSTEM")"
-}
-
-account_login_shell() {
-  local user="$1"
-  local fixture=""
-
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_ACCOUNT_SHELL_FILE:-}" ]]; then
-    fixture="$BOOTSTRAP_ACCOUNT_SHELL_FILE"
-  fi
-
-  if [[ -n "$fixture" ]]; then
-    [[ -f "$fixture" && ! -L "$fixture" ]] || return 1
-    cat "$fixture"
-  elif command_exists getent; then
-    getent passwd "$user" 2>/dev/null | awk -F: 'NR == 1 { print $7 }'
-  else
-    return 1
-  fi
 }
 
 run_privileged() {
@@ -1548,99 +1519,9 @@ run_privileged() {
   elif command_exists sudo; then
     sudo -- "$@"
   else
-    printf 'bootstrap: system prerequisite incomplete: sudo is required for a privileged bootstrap step\n' >&2
-    return 1
-  fi
-}
-
-managed_login_shell() {
-  if [[ "$SYSTEM" == *-linux ]]; then
-    printf '%s\n' "$HOME/.nix-profile/bin/zsh"
-  else
-    printf '%s\n' /run/current-system/sw/bin/zsh
-  fi
-}
-
-configure_linux_login_shell() {
-  local user target shells_file current
-
-  [[ "$SYSTEM" == *-linux ]] || return 0
-  user="$(id -un)"
-  target="$(managed_login_shell)"
-  shells_file=/etc/shells
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_SHELLS_FILE:-}" ]]; then
-    shells_file="$BOOTSTRAP_SHELLS_FILE"
-  fi
-  [[ -x "$target" ]] || {
-    printf 'bootstrap: system prerequisite incomplete: managed Zsh is not executable at %s\n' "$target" >&2
-    return 1
-  }
-  [[ -f "$shells_file" && ! -L "$shells_file" ]] || {
-    printf 'bootstrap: system prerequisite incomplete: %s must be a regular file\n' "$shells_file" >&2
-    return 1
-  }
-  if ! grep -Fqx -- "$target" "$shells_file"; then
-    # shellcheck disable=SC2016 # Positional parameters expand in the privileged shell.
-    run_privileged sh -c \
-      'grep -Fqx -- "$1" "$2" || printf "%s\n" "$1" >> "$2"' \
-      sh "$target" "$shells_file" || {
-      printf 'bootstrap: system prerequisite incomplete: could not register managed Zsh in %s\n' \
-        "$shells_file" >&2
-      return 1
-    }
-  fi
-  current="$(account_login_shell "$user" || true)"
-  if [[ "$current" != "$target" ]]; then
-    command_exists chsh || {
-      printf 'bootstrap: system prerequisite incomplete: chsh is unavailable\n' >&2
-      return 1
-    }
-    run_privileged chsh -s "$target" "$user" || {
-      printf 'bootstrap: system prerequisite incomplete: chsh could not update the account database\n' >&2
-      return 1
-    }
-  fi
-  current="$(account_login_shell "$user" || true)"
-  [[ "$current" == "$target" ]] || {
-    printf 'bootstrap: system prerequisite incomplete: account login shell remains %s\n' \
-      "${current:-unknown}" >&2
-    return 1
-  }
-}
-
-mark_login_shell_incomplete() {
-  local root temporary marker
-
-  root="$(bootstrap_state_root)"
-  marker="$root/login-shell.incomplete"
-  ensure_safe_login_shell_marker
-  temporary="$(mktemp "$root/.login-shell.incomplete.XXXXXX")"
-  {
-    printf 'version\t1\n'
-    printf 'status\tincomplete\n'
-    printf 'owner\tsystem-prerequisite\n'
-  } >"$temporary"
-  chmod 600 "$temporary"
-  mv "$temporary" "$marker"
-}
-
-clear_login_shell_incomplete() {
-  local marker
-
-  marker="$(bootstrap_state_root)/login-shell.incomplete"
-  ensure_safe_login_shell_marker
-  if [[ -f "$marker" ]]; then
-    rm "$marker"
-  fi
-}
-
-verify_system_login_shell() {
-  local diagnostics
-
-  diagnostics="$(run_atyrode doctor system "$FLAKE_CONFIG" 2>/dev/null || true)"
-  if ! grep -q '^login-shell: ok ' <<<"$diagnostics"; then
-    printf 'bootstrap: system prerequisite incomplete: atyrode could not verify the real account login shell\n' >&2
-    return 1
+    # Every remaining caller is a repair - /etc files, trust anchors, the
+    # daemon plist, the store volume - so the message names that.
+    die "sudo is required for a privileged repair step"
   fi
 }
 
@@ -1724,12 +1605,13 @@ print_recovery_plan() {
 
 begin_mutations() {
   ensure_safe_state_root "$(bootstrap_state_root)"
-  ensure_safe_login_shell_marker
   start_run_log
   write_interrupted_marker
 }
 
 run_activation_phases() {
+  local handoff
+
   enable_flakes_for_process
 
   run_managed_step evaluation managed_activation_plan
@@ -1741,26 +1623,21 @@ run_activation_phases() {
 
   run_managed_step activation activate_configuration
   run_managed_step verification verify_installation
-  mark_login_shell_incomplete
   clear_interrupted_marker
 
-  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == after-login-shell-receipt ]]; then
-    printf 'bootstrap: interrupted at test failpoint after-login-shell-receipt\n' >&2
-    exit 75
+  # The login shell is atyrode apply's to converge now, so bootstrap derives
+  # this path for one purpose only: naming the shell to exec. It stays a
+  # literal rather than a helper because this single message is its only
+  # reader, and it stays absolute because the operator's terminal is still the
+  # pre-activation one, where a bare `zsh` re-execs whatever was there before.
+  if [[ "$SYSTEM" == *-linux ]]; then
+    handoff="$HOME/.nix-profile/bin/zsh"
+  else
+    handoff=/run/current-system/sw/bin/zsh
   fi
-
-  if ! configure_linux_login_shell || ! verify_system_login_shell; then
-    printf '%s\n' "$(paint_err 33 \
-      'Home Manager activation completed, but the login-shell system prerequisite is incomplete.')" >&2
-    printf 'Fix the reported system boundary and run %s\n' \
-      "$(paint_err '1;36' "./install.sh verify --config $FLAKE_CONFIG")" >&2
-    return 69
-  fi
-  clear_login_shell_incomplete
-
   printf '\n%s Open a new terminal or run: %s\n' \
     "$(paint '1;32' 'Bootstrap complete.')" \
-    "$(paint '1;36' "$(printf 'exec %q -l' "$(managed_login_shell)")")"
+    "$(paint '1;36' "$(printf 'exec %q -l' "$handoff")")"
 }
 
 apply_configuration() {
@@ -1842,8 +1719,6 @@ case "$COMMAND" in
     preflight
     enable_flakes_for_process
     run_managed_step verification verify_installation
-    verify_system_login_shell || die "login-shell system prerequisite is incomplete"
-    clear_login_shell_incomplete
     ;;
   -h | --help | help) usage ;;
   '')

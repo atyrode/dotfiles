@@ -128,7 +128,7 @@ models:
     id: claude-fable-5
     pool: A
     tier: 4
-    bucket: claude-fable
+    bucket: claude-main
     cost_in: 10
     cost_out: 50
     # speed/ttft: retained from the previous historical sample because Fable's
@@ -139,8 +139,10 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Most capable, and its own scarce bucket. A deliberate elite lead only
-      (smart judgment and long-context plan roles) — never an automatic fallback net.
+      Most capable Anthropic rung, and the top of pool A's ladder (tier 4). The
+      `elite` notch on the model dial leads with it; at `smart` the deliberative
+      bump already reaches it for the plan/judgment roles. Anthropic retired its
+      separate 7-day window, so it now draws the ordinary claude-main quota.
   flash:
     id: deepseek-v4-flash
     pool: D

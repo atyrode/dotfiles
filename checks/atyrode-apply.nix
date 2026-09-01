@@ -7,6 +7,7 @@
 
 let
   fixtures = import ./lib/atyrode-fixtures.nix { inherit pkgs; };
+  atyrodeSource = import ./lib/atyrode-source.nix { inherit pkgs; };
 in
 pkgs.runCommand "check-atyrode-apply"
   {
@@ -1101,7 +1102,7 @@ pkgs.runCommand "check-atyrode-apply"
         inside = ($0 ~ "^(probe_|doctor_|collect_provisioning_checks)")
       }
       inside { print }
-    ' ${../pkgs/atyrode/atyrode} > "$TMPDIR/diagnostic-bodies.sh"
+    ' ${atyrodeSource} > "$TMPDIR/diagnostic-bodies.sh"
     test -s "$TMPDIR/diagnostic-bodies.sh"
     if grep -Eq 'brew bundle cleanup .*--(force|zap)|(^|[[:space:]])(sudo|chsh|usermod|freshclam)([[:space:]]|$)|adb[[:space:]]+devices' \
       "$TMPDIR/diagnostic-bodies.sh"; then
@@ -1114,7 +1115,7 @@ pkgs.runCommand "check-atyrode-apply"
       /^[a-z_]+\(\)/ { inside = ($0 ~ "^converge_login_shell") }
       !inside && /(^|[[:space:]])chsh([[:space:]]|$)/ { hit = 1 }
       END { exit hit ? 1 : 0 }
-    ' ${../pkgs/atyrode/atyrode} || {
+    ' ${atyrodeSource} || {
       echo 'chsh appears outside converge_login_shell, which owns login-shell state' >&2
       exit 1
     }

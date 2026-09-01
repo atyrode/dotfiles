@@ -206,12 +206,15 @@ stdenvNoCC.mkDerivation {
   pname = "atyrode";
   version = "0.1.0";
   src = ./atyrode;
+  libSrc = ./lib;
   runtimeSrc = ./runtime;
   nativeBuildInputs = [ makeWrapper ];
 
   dontUnpack = true;
   installPhase = ''
     install -D -m755 "$src" "$out/bin/atyrode"
+    install -d -m755 "$out/libexec/atyrode/lib"
+    install -m644 "$libSrc"/*.sh "$out/libexec/atyrode/lib/"
     install -D -m755 "$runtimeSrc" "$out/libexec/atyrode-runtime"
     substituteInPlace "$out/libexec/atyrode-runtime" \
       --replace-fail '@shell@' '${runtimeShell}' \
@@ -234,6 +237,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@provisioning_policy@' '${provisioningPolicy}' \
+      --replace-fail '@lib_dir@' "$out/libexec/atyrode/lib" \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}' \
       --replace-fail '@windows_packages@' '${windowsPackageInventory}'

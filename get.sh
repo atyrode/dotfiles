@@ -29,7 +29,9 @@ die() {
 show_command() {
   local quoted
   printf -v quoted ' %q' "$@"
-  printf '  $%s\n' "$quoted" >&2
+  # Flush left, matching install.sh: these two announcements sit in the same
+  # transcript, and an indent that means "inside a step" here means nothing.
+  printf '$%s\n' "$quoted" >&2
 }
 
 pick_host() {

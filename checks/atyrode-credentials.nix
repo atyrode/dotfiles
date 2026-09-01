@@ -272,10 +272,17 @@ pkgs.runCommand "check-atyrode-credentials"
       test "$git_doctor_status" = 64
     )
     vault_test_env=(env ATYRODE_BW="$TMPDIR/bin/bw")
-    vault_status="$("''${vault_test_env[@]}" atyrode vault status --json)"
-    jq -e '.status == "unlocked"' <<<"$vault_status" >/dev/null
-    vault_get="$("''${vault_test_env[@]}" atyrode vault get vault-existing)"
+    # Reading the vault says nothing: a status probe is not a mutation, and an
+    # operator wants the four commands that act, not the forty that look.
+    "''${vault_test_env[@]}" atyrode vault status --json \
+      >"$TMPDIR/vault-status-out" 2>"$TMPDIR/vault-status-err"
+    jq -e '.status == "unlocked"' "$TMPDIR/vault-status-out" >/dev/null
+    test ! -s "$TMPDIR/vault-status-err"
+    vault_get="$("''${vault_test_env[@]}" atyrode vault get vault-existing \
+      2>"$TMPDIR/vault-get-err")"
     test "$vault_get" = VAULT-OLD-SECRET
+    # A sync pulls the vault over the network, so it is shown even on a read.
+    grep -qE '^\$ .*bw sync$' "$TMPDIR/vault-get-err"
 
     printf '%s' VAULT-NEW-SECRET |
       "''${vault_test_env[@]}" atyrode vault put vault-new \
@@ -287,6 +294,13 @@ pkgs.runCommand "check-atyrode-credentials"
     ! grep -qF 'VAULT-NEW-SECRET' "$TMPDIR/bw-args"
     ! grep -qF 'VAULT-WRITE-RESPONSE-MUST-NOT-PRINT' \
       "$TMPDIR/vault-put-out" "$TMPDIR/vault-put-err"
+    # Writing to the operator's live Bitwarden account is a mutation like any
+    # other, so it is announced -- and announcing means printing argv next to a
+    # secret, which is exactly why the printed line is checked for it. The note
+    # body reaches bw on stdin, so the announcement carries a verb and an id.
+    grep -qE '^\$ .*bw sync$' "$TMPDIR/vault-put-err"
+    grep -qE '^\$ .*bw create item$' "$TMPDIR/vault-put-err"
+    ! grep -qF 'VAULT-NEW-SECRET' "$TMPDIR/vault-put-err"
 
     printf '%s' VAULT-UPDATED-SECRET |
       "''${vault_test_env[@]}" atyrode vault put vault-existing \

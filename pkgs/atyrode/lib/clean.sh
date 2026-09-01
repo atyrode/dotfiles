@@ -50,6 +50,11 @@ collect_garbage() {
     gc=("$ATYRODE_NIX_STORE" --gc)
   fi
 
+  # Announced once for both paths below: the spinner carries no command text and
+  # the collector's own output names nothing, so nothing else on screen says what
+  # is deleting store paths.
+  show_command "${gc[@]}"
+
   if ! stderr_is_tty; then # non-interactive: stream the collector's own output
     printf 'atyrode: collecting garbage…\n' >&2
     "${gc[@]}" >&2 || printf 'atyrode: garbage collection reported an error\n' >&2
@@ -332,6 +337,10 @@ cmd_clean() {
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   local skipped_file
   skipped_file="$(mktemp)"
+  # fold_nh_clean_noise drops nh's own plan, so without this the removal of
+  # generations and gcroots scrolls past with nothing naming the command that
+  # did it.
+  show_command "${nh_args[@]}"
   "${nh_args[@]}" 2>&1 | fold_nh_clean_noise "$skipped_file" "$verbose" >&2 || die "$EX_SOFTWARE" "nh clean failed"
   # fold_nh_clean_noise writes "<skipped> <reaped>"; default both to 0 if unread.
   local skipped=0 reaped=0
@@ -528,11 +537,14 @@ cmd_rollback() {
   fi
   [[ "$assume_yes" == 1 ]] || confirm "activate generation $target now?" || return 0
 
+  # Activating a generation is the same class of change `apply` makes, and apply
+  # shows its argv: the confirm above answered "may I", the commands below answer
+  # "with what".
   if [[ "$platform" == nix-darwin ]]; then
     command -v darwin-rebuild >/dev/null || die "$EX_UNAVAILABLE" "darwin-rebuild is unavailable"
     # darwin-rebuild owns its own privilege elevation (as nh does for apply);
     # atyrode never self-elevates. Run `sudo atyrode rollback` if a setup needs it.
-    darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
+    run_visible darwin-rebuild --switch-generation "$target" || die "$EX_SOFTWARE" "rollback failed"
   elif [[ "$platform" == nixos ]]; then
     [[ "$(effective_uid)" == 0 ]] ||
       die "$EX_UNAVAILABLE" "NixOS rollback requires root; rerun this exact command with sudo"
@@ -541,15 +553,20 @@ cmd_rollback() {
       die "$EX_DATAERR" "cannot resolve generation $target"
     [[ -x "$genpath/bin/switch-to-configuration" ]] ||
       die "$EX_DATAERR" "generation $target has no NixOS switch-to-configuration program"
-    nix_env -p "$profile" --switch-generation "$target" ||
+    # Resolved rather than run through core's nix_env wrapper: an announced
+    # command has to be one an operator can paste back, and a shell function name
+    # is not a program.
+    local nix_env_command=nix-env
+    [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX_ENV:-}" ]] || nix_env_command="$ATYRODE_NIX_ENV"
+    run_visible "$nix_env_command" -p "$profile" --switch-generation "$target" ||
       die "$EX_SOFTWARE" "could not select NixOS generation $target"
-    "$profile/bin/switch-to-configuration" switch ||
+    run_visible "$profile/bin/switch-to-configuration" switch ||
       die "$EX_SOFTWARE" "NixOS rollback activation failed"
   else
     local genpath
     genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" || die "$EX_DATAERR" "cannot resolve generation $target"
     [[ -x "$genpath/activate" ]] || die "$EX_DATAERR" "generation $target has no activate script"
-    "$genpath/activate" || die "$EX_SOFTWARE" "rollback activation failed"
+    run_visible "$genpath/activate" || die "$EX_SOFTWARE" "rollback activation failed"
   fi
   printf 'atyrode: now on generation %s\n' "$target" >&2
 }

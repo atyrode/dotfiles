@@ -4,29 +4,31 @@
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
-infra_age_keygen() {
-  local command=age-keygen
-  [[ "$test_hooks" != 1 || -z "${ATYRODE_AGE_KEYGEN:-}" ]] || command="$ATYRODE_AGE_KEYGEN"
-  "$command" "$@"
+# Under test each program below is a stub, so every call resolves its override
+# here instead of naming the binary inline.
+#
+# Visibility belongs to the call site rather than the program: `git rev-parse`
+# only looks while `git clone` acts, and announcing from inside one wrapper
+# would bury the handful of commands that change something under the dozen that
+# ask a question. The `_visible` suffix is a warning as much as a convenience --
+# what it is handed reaches the terminal and the run log, so it may carry the
+# path to a secret but never a secret itself.
+infra_exec() { # quiet|visible override_variable program argv...
+  local visibility="$1" override="$2" program="$3"
+  shift 3
+  [[ "$test_hooks" != 1 || -z "${!override:-}" ]] || program="${!override}"
+  if [[ "$visibility" == visible ]]; then
+    run_visible "$program" "$@"
+  else
+    "$program" "$@"
+  fi
 }
 
-infra_nix() {
-  local command=nix
-  [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX:-}" ]] || command="$ATYRODE_NIX"
-  "$command" "$@"
-}
-
-infra_ssh() {
-  local command=ssh
-  [[ "$test_hooks" != 1 || -z "${ATYRODE_SSH:-}" ]] || command="$ATYRODE_SSH"
-  "$command" "$@"
-}
-
-infra_git() {
-  local command=git
-  [[ "$test_hooks" != 1 || -z "${ATYRODE_GIT:-}" ]] || command="$ATYRODE_GIT"
-  "$command" "$@"
-}
+infra_age_keygen() { infra_exec quiet ATYRODE_AGE_KEYGEN age-keygen "$@"; }
+infra_nix_visible() { infra_exec visible ATYRODE_NIX nix "$@"; }
+infra_ssh_visible() { infra_exec visible ATYRODE_SSH ssh "$@"; }
+infra_git() { infra_exec quiet ATYRODE_GIT git "$@"; }
+infra_git_visible() { infra_exec visible ATYRODE_GIT git "$@"; }
 
 infra_synchronize_apply_checkout() {
   local repo="$1" branch head remote_head merge_base updated_head
@@ -36,7 +38,10 @@ infra_synchronize_apply_checkout() {
     die "$EX_DATAERR" "infra apply requires the main branch, not a detached checkout"
   [[ "$branch" == main ]] ||
     die "$EX_DATAERR" "infra apply requires the main branch; current branch is $branch"
-  infra_git -C "$repo" fetch --quiet origin \
+  # This fetch and the fast-forward below choose the revision the deployment
+  # will build, and either can stall on a network that is gone, so both are
+  # named rather than left as an unexplained pause before a new revision.
+  infra_git_visible -C "$repo" fetch --quiet origin \
     refs/heads/main:refs/remotes/origin/main ||
     die "$EX_UNAVAILABLE" "could not refresh origin/main before infra apply"
   head="$(infra_git -C "$repo" rev-parse HEAD)" ||
@@ -53,7 +58,7 @@ infra_synchronize_apply_checkout() {
     die "$EX_DATAERR" "infra checkout has local commits or diverged from origin/main; reconcile $repo before apply"
   infra_sync_commits="$(infra_git -C "$repo" log --oneline --no-decorate "$head..$remote_head")" ||
     die "$EX_DATAERR" "could not summarize incoming infra commits"
-  infra_git -C "$repo" merge --ff-only "$remote_head" >/dev/null ||
+  infra_git_visible -C "$repo" merge --ff-only "$remote_head" >/dev/null ||
     die "$EX_SOFTWARE" "could not fast-forward the infra checkout to origin/main"
   updated_head="$(infra_git -C "$repo" rev-parse HEAD)" ||
     die "$EX_DATAERR" "could not verify the updated infra checkout revision"
@@ -105,6 +110,9 @@ infra_ensure_recipient() {
   }
   mv -- "$rendered" "$clan_file" ||
     die "$EX_SOFTWARE" "could not install the Clan recipient update"
+  # `mv` is bookkeeping, but the file it rewrites is Git state, so the path is
+  # named -- on stderr, because this function's stdout is the caller's answer.
+  printf 'atyrode: added the operator recipient for %s to %s\n' "$machine" "$clan_file" >&2
   printf 'true\n'
 }
 
@@ -147,7 +155,7 @@ cmd_infra() {
     [[ "$action" == setup ]] ||
       die "$EX_NOINPUT" "infra checkout is missing at $repo; run 'atyrode infra setup'"
     mkdir -p "$(dirname "$repo")"
-    infra_git clone "$repository" "$repo" ||
+    infra_git_visible clone "$repository" "$repo" ||
       die "$EX_UNAVAILABLE" "could not clone $repository"
   fi
   [[ -f "$repo/flake.nix" && -f "$repo/clan.nix" ]] ||
@@ -198,12 +206,12 @@ cmd_infra() {
     guard_production_mutation "infra setup"
     local source_changed
     source_changed="$(infra_ensure_recipient "$repo" "$machine" "$expected_recipient")"
-    infra_nix develop "$repo" --command nixfmt "$repo/clan.nix" ||
+    infra_nix_visible develop "$repo" --command nixfmt "$repo/clan.nix" ||
       die "$EX_SOFTWARE" "could not format the Clan recipient update"
-    infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+    infra_nix_visible develop "$repo" --command env "AGE_KEYFILE=$key" \
       clan vars fix "$machine" --flake "$repo" ||
       die "$EX_SOFTWARE" "Clan recipient enrollment failed"
-    infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+    infra_nix_visible develop "$repo" --command env "AGE_KEYFILE=$key" \
       clan vars check "$machine" --flake "$repo" ||
       die "$EX_SOFTWARE" "Clan Vars check failed after enrollment"
     if [[ "$json" == 1 ]]; then
@@ -220,14 +228,14 @@ cmd_infra() {
   else
     [[ "$action" != plan || -z "$(infra_git -C "$repo" status --porcelain)" ]] ||
       die "$EX_DATAERR" "infra checkout is dirty; review and commit it before plan"
-    infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+    infra_nix_visible develop "$repo" --command env "AGE_KEYFILE=$key" \
       clan vars check "$machine" --flake "$repo" ||
       die "$EX_SOFTWARE" "Clan Vars check failed"
-    infra_ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+    infra_ssh_visible -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
       "$target" true ||
       die "$EX_UNAVAILABLE" "strict SSH preflight failed for $target"
     local drv_path
-    drv_path="$(infra_nix eval --raw \
+    drv_path="$(infra_nix_visible eval --raw \
       "$repo#nixosConfigurations.$machine.config.system.build.toplevel.drvPath")" ||
       die "$EX_SOFTWARE" "NixOS target evaluation failed"
 
@@ -252,12 +260,17 @@ cmd_infra() {
           return 0
         }
       fi
-      infra_nix develop "$repo" --command env "AGE_KEYFILE=$key" \
+      # Activating a production host over the network is the most consequential
+      # thing this CLI does, and a confirmation prompt says what is about to
+      # happen while only the argv says how to retry it. AGE_KEYFILE carries the
+      # path to the operator identity rather than the identity, so nothing
+      # secret reaches the terminal or the run log.
+      infra_nix_visible develop "$repo" --command env "AGE_KEYFILE=$key" \
         clan machines update "$machine" --flake "$repo" \
         --target-host "$target" --build-host localhost --upload-inputs \
         --host-key-check strict ||
         die "$EX_SOFTWARE" "Clan deployment failed"
-      infra_ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
+      infra_ssh_visible -o BatchMode=yes -o StrictHostKeyChecking=yes "$target" \
         atyrode doctor host --json |
         jq -e --arg machine "$machine" \
           '.ok == true and .host == $machine and .registered.activation == "nixos"' >/dev/null ||

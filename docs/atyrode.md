@@ -85,11 +85,11 @@ revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
 path. A successful real activation records the canonical host atomically;
 failures and dry runs do not update state.
 
-### What apply shows while it runs
+### What the CLI shows while it runs
 
-Apply is a machine-changing command an operator waits on, so it narrates
-itself rather than going quiet between builds. Four things are on the terminal
-every run.
+Every verb that changes this machine is a command an operator waits on, so it
+narrates itself rather than going quiet between builds. Five things reach the
+terminal.
 
 **A plan first.** The steps that will change this machine, numbered, before any
 of them run. `--plan` prints exactly that list and stops:
@@ -104,12 +104,39 @@ Plan
 
 **The argv of anything that acts.** Every command that changes the machine,
 reaches the network, prompts, or takes real time is printed before it runs,
-shell-quoted so the line can be pasted back to repeat that step by hand — the
-`nh` switch, the `git ls-remote` that resolves a ref, the `systemd-run` that
-hands the apply to a manager-owned unit, `chsh` and the `/etc/shells` edit,
-each provisioning ceremony, and the interactive seed dialogue. Read-only
-probing stays silent: printing every `command -v` would bury the handful of
-commands that act.
+shell-quoted so the line can be pasted back to repeat that step by hand. The
+contract covers every mutating verb, not just `apply`: the `nh` switch, the
+`git ls-remote` that resolves a ref, the `systemd-run` that hands the apply to
+a manager-owned unit, `chsh` and the `/etc/shells` edit, each provisioning
+ceremony and the interactive seed dialogue, every Bitwarden call that logs in,
+unlocks, syncs or writes an item, `nix-store --gc` and `nh clean`, every
+rollback that re-runs activation, the Clan deployment that activates a remote
+host, and the `curl` that enrolls this machine with a fleet master.
+
+Read-only probing stays silent: printing every `command -v` and `bw status`
+would bury the handful of commands that act. So does the shell's own
+bookkeeping — a `mkdir`, a `chmod`, the `mv` that installs a rendered file
+atomically. Where one of those writes something persistent, the path is named
+in prose instead, which is what an operator actually needs:
+`rendered ~/.ssh/authorized_keys with 4 granted key(s)`.
+
+Two commands are deliberately described rather than quoted. `systemd-run`
+carries the machine's whole forwarded `PATH`, so its argv would bury the run it
+introduces; the terminal gets the unit name and the log gets the argv. And no
+announcement may print a secret: a Bitwarden note body travels on stdin, a
+broker credential in a file, a bearer token in a mode-600 `curl` config, so
+what reaches the terminal is a verb, an id, and a path.
+
+**Whose password prompt it is.** nix-darwin and NixOS activate as root, and the
+backend elevates for that itself. Unannounced, `sudo` interrupts the build from
+inside someone else's output and reads as the dotfiles asking for root out of
+nowhere, so the step says so first:
+
+```
+1/4 Rebuild and switch alex-aarch64-darwin through nh-darwin
+  activation writes system state, so nh elevates: the sudo prompt below is its own
+  $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
+```
 
 **A verdict per step**, with the declaration or diagnosis that made it
 necessary. A step never ends in silence, because a silent step is
@@ -186,6 +213,19 @@ that has never pushed successfully gets `babel archive status` and `babel
 archive push`, and an archive that has not succeeded within 48 hours is
 reported stale. None of this can fail the activation: a machine that declines
 to provision is still a machine that activated.
+
+An offer states the prerequisites it knows about before asking, because the
+question is only fair if the answer can work. The Babel ceremony ends at a
+master-password prompt, so a machine whose Bitwarden CLI is not logged in is
+told that first, and told the command that fixes it — `atyrode vault login`,
+which pins this fleet's EU server before logging in. A bare `bw login` reaches
+the US default and fails a first login with a misleading "invalid master
+password", so it is never the advice given.
+
+When an accepted ceremony stops anyway, the reason is the ceremony's own and
+the follow-up says so: `clear what it reported above, then: atyrode provision
+babel`. Naming the same command as a retry would send an operator to collect
+the identical failure.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
 selected host and capabilities, installable, source, backend, revision,

@@ -183,6 +183,11 @@ tunnel_expiry_option() { # epoch
   date -d "@$1" +%Y%m%d%H%M
 }
 
+# Adoption writes the grant file once per key it takes over, so the path is
+# named on the first write only: repeating it would bury the lines that say
+# what actually changed.
+tunnel_state_announced=0
+
 # mode(grant|revoke) name expiresAt(JSON null or epoch) -- upsert or delete, and
 # drop every lapsed row while the file is open.
 tunnel_state_apply() {
@@ -209,6 +214,13 @@ tunnel_state_apply() {
   printf '%s\n' "$next" >"$temp"
   chmod 600 "$temp"
   mv -f "$temp" "$file"
+  # The atomic install is bookkeeping; which file now decides who may reach
+  # this machine is not, so the path is named in prose rather than shown as an
+  # mv of a temp name the operator could never retype.
+  if [[ "$tunnel_state_announced" == 0 ]]; then
+    tunnel_state_announced=1
+    printf 'atyrode: updated the grant state in %s\n' "$file" >&2
+  fi
 }
 
 # One-time adoption. Before this machine has any grant state, the keys already

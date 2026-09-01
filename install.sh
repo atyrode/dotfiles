@@ -31,9 +31,13 @@ SOURCE_CHANGED=0
 SOURCE_UPDATED=0
 STALE_PROFILE_BACKUPS=()
 STALE_ETC_LINKS=()
+UNRECOGNISED_ETC_PROFILES=()
+ETC_ACTIVATION_CONFLICTS=()
+BROKEN_TRUST_ANCHORS=()
 STALE_FSTAB_ENTRY=""
 ORPHANED_NIX_VOLUME=""
 ORPHANED_NIX_VOLUME_UUID=""
+MOUNT_FAILURE=""
 RUN_LOG=""
 
 die() {
@@ -62,6 +66,47 @@ fail() {
 log_event() {
   [[ -n "$RUN_LOG" ]] || return 0
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$RUN_LOG" 2>/dev/null || true
+}
+
+# A machine state that needs a round trip to diagnose costs a release cycle,
+# and the facts that resolve one are cheap to collect while the failure is
+# still on the machine. Every failure records them, so an unrecognised code
+# arrives with its evidence instead of requiring another run to produce it.
+log_diagnostics() {
+  local source path
+
+  [[ -n "$RUN_LOG" ]] || return 0
+  {
+    printf -- '--- diagnostics ---\n'
+    printf 'system: %s\n' "$SYSTEM"
+    printf 'nix: %s\n' "$(command -v nix || printf 'absent')"
+    printf 'PATH: %s\n' "$PATH"
+    printf 'NIX_SSL_CERT_FILE: %s\n' "${NIX_SSL_CERT_FILE:-unset}"
+    printf 'SSL_CERT_FILE: %s\n' "${SSL_CERT_FILE:-unset}"
+    printf 'profile CA bundle: %s\n' "$(stat_path "$(trust_anchor_bundle)")"
+    while IFS=$'\t' read -r source path; do
+      printf 'trust anchor named by %s: %s -> %s\n' "$source" "$path" "$(stat_path "$path")"
+    done < <(trust_anchor_candidates)
+    printf -- '--- end diagnostics ---\n'
+  } >>"$RUN_LOG" 2>/dev/null || true
+}
+
+# Reports what a path is without following it, so a dangling link reads as a
+# dangling link rather than as a missing file.
+stat_path() {
+  local path="$1"
+
+  if [[ -L "$path" ]]; then
+    if [[ -e "$path" ]]; then
+      printf 'link -> %s\n' "$(readlink "$path" 2>/dev/null)"
+    else
+      printf 'dangling link -> %s\n' "$(readlink "$path" 2>/dev/null)"
+    fi
+  elif [[ -e "$path" ]]; then
+    printf 'file\n'
+  else
+    printf 'absent\n'
+  fi
 }
 
 # Only called once the state root has been validated, so this never creates
@@ -113,6 +158,7 @@ Usage:
   ./install.sh preflight [OPTIONS]
   ./install.sh plan [OPTIONS]
   ./install.sh apply [OPTIONS]
+  ./install.sh recover [OPTIONS]
   ./install.sh verify [OPTIONS]
 
 Options:
@@ -121,12 +167,17 @@ Options:
   --update             Fetch origin and fast-forward main before activation.
   --allow-dirty        Intentionally use a checkout with local changes.
   --allow-non-main     Intentionally use a branch or detached revision other than main.
-  --yes                Confirm apply without an interactive prompt.
+  --yes                Confirm apply or recover without an interactive prompt.
   -h, --help           Show this help.
 
 Inside a standard Coder workspace, a no-command invocation selects this
 repository's architecture-specific portable profile. Elsewhere, run `plan`,
 inspect it, then run `apply`.
+
+`recover` is the exit when a state has no repair: on macOS it resets this
+machine's Nix installation - daemon, /etc/nix, and the store volume, each
+archived or renamed rather than deleted - then installs Nix fresh and
+activates normally.
 EOF
 }
 
@@ -403,6 +454,70 @@ repair_shell_profile_backups() {
   done
 }
 
+# nix-darwin refuses to activate when an /etc file it manages holds content it
+# does not recognise, and the content it will not recognise here is the block
+# the upstream Nix installer appends to the shell rc files nix-darwin also
+# owns. The refusal is a review gate, not a disagreement about the outcome:
+# nix-darwin's own etc activation moves any conflicting file to
+# <file>.before-nix-darwin one step later. This performs that same move
+# before activation, so the review happens in the plan instead of as an abort
+# 30 minutes into a build.
+detect_unrecognised_etc_profiles() {
+  local etc target
+
+  UNRECOGNISED_ETC_PROFILES=()
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  etc="$(etc_root)"
+  for target in \
+    "$etc/bashrc" \
+    "$etc/zshrc" \
+    "$etc/bash.bashrc" \
+    "$etc/zsh/zshrc"; do
+    # A link is either nix-darwin's own path into /etc/static or someone
+    # else's redirection; neither is a file bootstrap wrote, and neither is
+    # bootstrap's to move. A regular file carrying the installer's marker is.
+    [[ -f "$target" && ! -L "$target" ]] || continue
+    grep -q '^# End Nix$' "$target" 2>/dev/null || continue
+    UNRECOGNISED_ETC_PROFILES+=("$target")
+  done
+}
+
+# Renaming is what nix-darwin does to the same file, so the end state matches
+# a successful activation exactly. A backup that is already there is the one
+# an earlier nix-darwin generation made, and it holds the pre-nix-darwin
+# original: that copy is worth more than this one, so the installer's file is
+# archived under the repairs directory rather than written over it.
+repair_unrecognised_etc_profiles() {
+  local target moved archive
+
+  [[ "${#UNRECOGNISED_ETC_PROFILES[@]}" -gt 0 ]] || return 0
+  for target in "${UNRECOGNISED_ETC_PROFILES[@]}"; do
+    [[ -f "$target" && ! -L "$target" ]] || continue
+    moved="$target.before-nix-darwin"
+    if [[ -e "$moved" || -L "$moved" ]]; then
+      mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+      archive="$(repair_state_dir)/${target##*/}.$(date -u +%Y%m%dT%H%M%SZ)"
+      cp "$target" "$archive" ||
+        fail BOOT-E216 "could not archive $target before removing it" \
+          "check that $(repair_state_dir) is writable"
+      run_privileged rm -f "$target" ||
+        fail BOOT-E216 "could not remove $target" "restore it from $archive"
+      journal_repair "archived $target; $moved already held the pre-nix-darwin original" \
+        "cp '$archive' '$target'"
+      printf 'Archived %s at %s: %s already holds the original.\n' \
+        "$target" "$archive" "$moved"
+    else
+      run_privileged mv "$target" "$moved" ||
+        fail BOOT-E216 "could not move $target aside for nix-darwin" \
+          "move it by hand: sudo mv $target $moved"
+      journal_repair "moved $target to $moved so nix-darwin can manage the path" \
+        "mv '$moved' '$target'"
+      printf 'Moved %s to %s: nix-darwin manages that path and refuses to\n' "$target" "$moved"
+      printf '  overwrite a file it does not recognise. Nothing was deleted.\n'
+    fi
+  done
+}
+
 # The /etc bootstrap inspects. Redirected under test so no fixture can reach
 # the real system files.
 etc_root() {
@@ -421,6 +536,25 @@ nix_store_db() {
     printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db/db.sqlite"
   else
     printf '/nix/var/nix/db/db.sqlite\n'
+  fi
+}
+
+# The CA bundle the upstream installer puts in the default profile: the one
+# trust anchor on a Nix machine whose lifetime is not tied to a nix-darwin
+# generation, and therefore the one a repair can point at.
+trust_anchor_bundle() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"
+  else
+    printf '/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt\n'
+  fi
+}
+
+nix_daemon_plist() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_PROFILE_TARGET_ROOT:-}" ]]; then
+    printf '%s\n' "$BOOTSTRAP_PROFILE_TARGET_ROOT/Library/LaunchDaemons/org.nixos.nix-daemon.plist"
+  else
+    printf '/Library/LaunchDaemons/org.nixos.nix-daemon.plist\n'
   fi
 }
 
@@ -468,6 +602,15 @@ nix_volume_present() {
 # Only links this toolchain owns are considered - ones resolving into the Nix
 # store or through /etc/static. A dangling link elsewhere may be deliberate,
 # naming a volume that mounts later, and is none of bootstrap's business.
+# Ownership is the whole safety argument for removing anything under /etc, so
+# it is one predicate used by both the sweep and the failure classifier.
+etc_link_owned() {
+  case "$1" in
+    /nix/store/* | /etc/static | /etc/static/* | */etc/static | */etc/static/*) return 0 ;;
+  esac
+  return 1
+}
+
 detect_stale_etc_links() {
   local etc entry target
 
@@ -475,15 +618,19 @@ detect_stale_etc_links() {
   [[ "$SYSTEM" == *-darwin ]] || return 0
   etc="$(etc_root)"
   [[ -d "$etc" ]] || return 0
-  for entry in "$etc"/*; do
+  # Nested entries dangle exactly like top-level ones: nix-darwin owns
+  # /etc/ssl/certs/ca-certificates.crt the same way it owns /etc/bashrc, and
+  # that is the file Nix reads for TLS trust anchors. A depth-limited sweep
+  # leaves a machine that installs Nix and then cannot download through it.
+  # -H follows the operand only: /etc is itself a symlink to private/etc on
+  # macOS, so -P would refuse to descend and find nothing, while links met
+  # during the walk are still reported as links rather than chased.
+  while IFS= read -r entry; do
     [[ -L "$entry" && ! -e "$entry" ]] || continue
     target="$(readlink "$entry" 2>/dev/null)" || continue
-    case "$target" in
-      /nix/store/* | /etc/static | /etc/static/* | */etc/static | */etc/static/*) ;;
-      *) continue ;;
-    esac
+    etc_link_owned "$target" || continue
     STALE_ETC_LINKS+=("$entry")
-  done
+  done < <(find -H "$etc" -type l 2>/dev/null | LC_ALL=C sort)
 }
 
 repair_stale_etc_links() {
@@ -498,6 +645,154 @@ repair_stale_etc_links() {
         "remove it by hand: sudo rm $entry"
     journal_repair "removed dangling $entry -> $target" "ln -s '$target' '$entry'"
     printf 'Removed dangling %s (pointed into a store that no longer exists)\n' "$entry"
+  done
+}
+
+# Which file Nix trusts is a machine fact, not a constant. A nix-darwin
+# generation names one under /etc, and when that generation's store is gone the
+# name outlives the file: removing the dangling link is not enough, because
+# whatever named it still names it and Nix fails on a path that is now merely
+# absent. Every namer is observable, so bootstrap reads them rather than
+# guessing which one is in force.
+trust_anchor_candidates() {
+  local etc conf plist value path
+
+  etc="$(etc_root)"
+  conf="$etc/nix/nix.conf"
+  plist="$(nix_daemon_plist)"
+
+  # A login shell started under the previous generation keeps exporting the
+  # path it was built with, long after the store behind it is collected.
+  [[ -z "${NIX_SSL_CERT_FILE:-}" ]] || printf 'NIX_SSL_CERT_FILE\t%s\n' "$NIX_SSL_CERT_FILE"
+  [[ -z "${SSL_CERT_FILE:-}" ]] || printf 'SSL_CERT_FILE\t%s\n' "$SSL_CERT_FILE"
+
+  if [[ -f "$conf" ]]; then
+    while IFS= read -r value; do
+      [[ -z "$value" ]] || printf '%s\t%s\n' "$conf" "$value"
+    done < <(sed -n \
+      's/^[[:space:]]*ssl-cert-file[[:space:]]*=[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' \
+      "$conf" 2>/dev/null)
+  fi
+
+  # launchd plists are routinely stored as binary, where the paths inside are
+  # not greppable text. plutil renders one as XML on stdout without touching
+  # the file on disk.
+  if [[ -f "$plist" ]]; then
+    while IFS= read -r value; do
+      case "$value" in
+        *.crt | *.pem) printf '%s\t%s\n' "$plist" "$value" ;;
+      esac
+    done < <(plist_strings "$plist")
+  fi
+
+  # Nothing has to name a path for Nix to read it: with no setting in force it
+  # probes a fixed list and takes the first that lstat can see. Absent is not a
+  # problem - Nix skips it and falls through to the profile bundle. Present but
+  # unusable is, and it is indistinguishable in the error message.
+  for path in "$etc/ssl/certs/ca-certificates.crt" "$etc/ssl/cert.pem"; do
+    if [[ -e "$path" || -L "$path" ]]; then
+      printf 'the path Nix probes by default\t%s\n' "$path"
+    fi
+  done
+}
+
+plist_strings() {
+  local plist="$1"
+
+  if command_exists plutil; then
+    plutil -convert xml1 -o - "$plist" 2>/dev/null |
+      sed -n 's|.*<string>\(/[^<]*\)</string>.*|\1|p'
+  else
+    sed -n 's|.*<string>\(/[^<]*\)</string>.*|\1|p' "$plist" 2>/dev/null
+  fi
+}
+
+# Nix does not merely look for this file, it loads it. An empty or unparseable
+# bundle fails every download exactly like a missing one and reports the same
+# error naming the same path, so usable - not present - is the condition that
+# matters, and the one the repair converges on.
+trust_anchor_usable() {
+  local path="$1"
+
+  [[ -e "$path" && -s "$path" ]] || return 1
+  grep -q 'BEGIN CERTIFICATE' "$path" 2>/dev/null
+}
+
+detect_broken_trust_anchors() {
+  local etc source path seen=""
+
+  BROKEN_TRUST_ANCHORS=()
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  etc="$(etc_root)"
+  while IFS=$'\t' read -r source path; do
+    [[ -n "$path" ]] || continue
+    # Only paths under /etc are bootstrap's to answer for; a trust anchor kept
+    # anywhere else belongs to whoever put it there.
+    case "$path" in "$etc"/*) ;; *) continue ;; esac
+    trust_anchor_usable "$path" && continue
+    case "$seen" in *"|$path|"*) continue ;; esac
+    seen="$seen|$path|"
+    BROKEN_TRUST_ANCHORS+=("$source"$'\t'"$path")
+  done < <(trust_anchor_candidates)
+}
+
+# The upstream installer puts a real CA bundle in the default profile, which is
+# what makes this repairable at all. For a link, ownership is the same
+# predicate the sweep uses: bootstrap replaces one it left behind, never one
+# the operator keeps. A regular file carries no ownership signal, so the
+# safety is archival - the original is kept and the undo command restores it.
+trust_anchor_restorable() {
+  local path="$1" target
+
+  [[ -e "$(trust_anchor_bundle)" ]] || return 1
+  if [[ -L "$path" ]]; then
+    target="$(readlink "$path" 2>/dev/null)" || return 1
+    etc_link_owned "$target" || return 1
+  fi
+  return 0
+}
+
+repair_broken_trust_anchors() {
+  local line source path bundle dir target archive
+
+  [[ "${#BROKEN_TRUST_ANCHORS[@]}" -gt 0 ]] || return 0
+  bundle="$(trust_anchor_bundle)"
+  for line in "${BROKEN_TRUST_ANCHORS[@]}"; do
+    source="${line%%$'\t'*}"
+    path="${line#*$'\t'}"
+    trust_anchor_usable "$path" && continue
+    trust_anchor_restorable "$path" || continue
+    dir="${path%/*}"
+    if [[ ! -d "$dir" ]]; then
+      run_privileged mkdir -p "$dir" ||
+        fail BOOT-E214 "could not create $dir for the TLS trust anchor" \
+          "create it by hand: sudo mkdir -p $dir"
+    fi
+    if [[ -L "$path" ]]; then
+      target="$(readlink "$path" 2>/dev/null)" || target=""
+      run_privileged rm -f "$path" ||
+        fail BOOT-E214 "could not remove the unusable trust anchor $path" \
+          "remove it by hand: sudo rm $path"
+      journal_repair "removed unusable trust anchor link $path -> $target" \
+        "ln -s '$target' '$path'"
+    elif [[ -e "$path" ]]; then
+      mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+      archive="$(repair_state_dir)/ca-bundle.$(date -u +%Y%m%dT%H%M%SZ)"
+      cp "$path" "$archive" ||
+        fail BOOT-E214 "could not archive the unusable trust anchor $path" \
+          "check that $(repair_state_dir) is writable"
+      run_privileged rm -f "$path" ||
+        fail BOOT-E214 "could not remove the unusable trust anchor $path" \
+          "remove it by hand: sudo rm $path"
+      journal_repair "archived unusable trust anchor $path" "cp '$archive' '$path'"
+      printf 'Archived unusable %s at %s\n' "$path" "$archive"
+    fi
+    run_privileged ln -sfn "$bundle" "$path" ||
+      fail BOOT-E214 "could not restore the TLS trust anchor $path" \
+        "link it by hand: sudo ln -sfn $bundle $path"
+    journal_repair "restored trust anchor $path -> $bundle (named by $source)" \
+      "rm -f '$path'"
+    printf 'Restored %s -> %s (named by %s)\n' "$path" "$bundle" "$source"
   done
 }
 
@@ -578,19 +873,86 @@ detect_orphaned_nix_volume() {
       "run: diskutil info '$NIX_VOLUME_LABEL'"
 }
 
-repair_orphaned_nix_volume() {
-  local renamed
+# The installer stores an encrypted Nix volume's passphrase in the System
+# keychain under the volume UUID, and reading that keychain needs privilege.
+# This is the lookup upstream's create-darwin-volume.sh performs, verbatim:
+# `security find-generic-password -s "$volume_uuid" -w` under sudo. Running it
+# unprivileged finds nothing, which would look exactly like a volume whose key
+# is gone and quietly escalate a rename into a delete.
+nix_volume_passphrase() {
+  local uuid="$1"
 
-  [[ -n "$ORPHANED_NIX_VOLUME" ]] || return 0
-  renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
-  run_privileged "$(diskutil_command)" rename "$ORPHANED_NIX_VOLUME" "$renamed" ||
-    fail BOOT-E213 "could not rename the orphaned volume $ORPHANED_NIX_VOLUME" \
-      "run: sudo diskutil rename $ORPHANED_NIX_VOLUME '$renamed'"
-  journal_repair "renamed orphaned volume $ORPHANED_NIX_VOLUME to '$renamed'" \
-    "diskutil rename '$ORPHANED_NIX_VOLUME' '$NIX_VOLUME_LABEL'"
-  printf 'Renamed the orphaned volume %s to "%s"\n' "$ORPHANED_NIX_VOLUME" "$renamed"
+  command_exists security || return 1
+  run_privileged security find-generic-password -s "$uuid" -w 2>/dev/null
+}
+
+mount_nix_volume() {
+  local volume="$1" uuid passphrase
+
+  MOUNT_FAILURE=""
+  MOUNT_FAILURE="$(run_privileged "$(diskutil_command)" mount "$volume" 2>&1)" && return 0
+  # A locked encrypted volume refuses a plain mount, so unlock it with the
+  # passphrase the installer left in the keychain.
+  uuid="$(diskutil_field "$volume" 'Volume UUID')"
+  if [[ -n "$uuid" ]]; then
+    passphrase="$(nix_volume_passphrase "$uuid")" || passphrase=""
+    if [[ -n "$passphrase" ]]; then
+      MOUNT_FAILURE="$(printf '%s' "$passphrase" |
+        run_privileged "$(diskutil_command)" apfs unlockVolume "$volume" -stdinpassphrase 2>&1)" &&
+        return 0
+    else
+      MOUNT_FAILURE="no passphrase for $uuid in the System keychain; $MOUNT_FAILURE"
+    fi
+  fi
+  return 1
+}
+
+# Renaming is the reversible way to stop the installer finding a volume by
+# label, and diskutil renames through the mounted filesystem - so an unmounted
+# volume must be mounted first, and recovery unmounts to free /nix, which
+# guarantees the next run meets one. An encrypted volume whose key is gone
+# cannot be mounted and therefore cannot be renamed; leaving it labelled
+# "Nix Store" routes the installer onto the path that crashes. That volume is
+# deleted instead: the store-database check proved it carries no live install,
+# and every path in a Nix store is re-fetchable from the binary cache.
+retire_nix_volume() {
+  local volume="$1" renamed="$2" remount=0
+
+  if [[ "$(diskutil_field "$volume" 'Mounted')" == [Nn]o ]]; then
+    if mount_nix_volume "$volume"; then
+      remount=1
+    else
+      run_privileged "$(diskutil_command)" apfs deleteVolume "$volume" ||
+        fail BOOT-E215 "$volume could not be mounted to rename it, and could not be deleted either" \
+          "delete it by hand: sudo diskutil apfs deleteVolume $volume"
+      journal_repair \
+        "deleted the locked $NIX_VOLUME_LABEL volume $volume; its store is re-fetchable" \
+        "none: a locked volume cannot be renamed, and a Nix store re-fetches from the cache"
+      printf 'Deleted %s: it could not be mounted, and a volume that cannot be\n' "$volume"
+      printf '  mounted cannot be renamed. Reason: %s\n' "${MOUNT_FAILURE:-unknown}"
+      printf '  Nothing else was on it. A Nix store is a cache; every path re-downloads.\n'
+      return 0
+    fi
+  fi
+  run_privileged "$(diskutil_command)" rename "$volume" "$renamed" ||
+    fail BOOT-E213 "could not rename the orphaned volume $volume" \
+      "run: sudo diskutil rename $volume '$renamed'"
+  journal_repair "renamed orphaned volume $volume to '$renamed'" \
+    "diskutil rename '$volume' '$NIX_VOLUME_LABEL'"
+  printf 'Renamed the orphaned volume %s to "%s"\n' "$volume" "$renamed"
   printf '  Nothing on it was deleted. Reclaim the space once the install works:\n'
-  printf '    sudo diskutil apfs deleteVolume %s\n' "$ORPHANED_NIX_VOLUME"
+  printf '    sudo diskutil apfs deleteVolume %s\n' "$volume"
+  # Leave it as it was found: a volume that was not mounted must not end up
+  # occupying /nix, which is the mount point the installer needs.
+  if [[ "$remount" -eq 1 ]]; then
+    run_privileged "$(diskutil_command)" unmount "$volume" >/dev/null 2>&1 || true
+  fi
+}
+
+repair_orphaned_nix_volume() {
+  [[ -n "$ORPHANED_NIX_VOLUME" ]] || return 0
+  retire_nix_volume "$ORPHANED_NIX_VOLUME" \
+    "$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
 }
 
 # The upstream installer fails by printing prose and exiting 1. Turning its
@@ -624,6 +986,96 @@ report_installer_failure() {
   fi
 }
 
+# nix-darwin prints the paths it refused to overwrite one per line under a
+# fixed header, and nh reprints that block indented under its own error. Read
+# the list, not the prose around it, and keep only paths that are still there
+# to be moved - a name in a transcript is a claim until the machine agrees.
+detect_etc_activation_conflicts() {
+  local log="$1" path
+
+  ETC_ACTIVATION_CONFLICTS=()
+  [[ -n "$log" && -f "$log" ]] || return 0
+  while IFS= read -r path; do
+    [[ -e "$path" ]] || continue
+    ETC_ACTIVATION_CONFLICTS+=("$path")
+  done < <(awk '
+    /have unrecognized content/ { block = 1; next }
+    block {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (line !~ /^\//) { block = 0; next }
+      print line
+    }
+  ' "$log")
+}
+
+# Every managed step runs Nix, so every managed step fails when Nix cannot
+# reach the cache. Without this the operator gets a raw nix error as the last
+# word: no code, no log path, nothing to report.
+report_managed_failure() {
+  local step="$1" log="${2:-}" line source path remedy=""
+
+  log_event "managed step failed: $step"
+  log_diagnostics
+  # nix-darwin names the files it refused to overwrite. Every file bootstrap
+  # moves is already moved by the time activation runs, so a name that
+  # survives to here is one bootstrap does not own - which is why the remedy
+  # is the operator's command and not another run.
+  detect_etc_activation_conflicts "$log"
+  if [[ "${#ETC_ACTIVATION_CONFLICTS[@]}" -gt 0 ]]; then
+    path="${ETC_ACTIVATION_CONFLICTS[0]}"
+    fail BOOT-E303 \
+      "$step failed: nix-darwin refused to overwrite $path, and its content is not bootstrap's to move" \
+      "keep whatever matters in it, then move it aside and re-run bootstrap: sudo mv $path $path.before-nix-darwin"
+    return 1
+  fi
+  detect_broken_trust_anchors
+  if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -eq 0 ]]; then
+    fail BOOT-E399 \
+      "$step failed in a way bootstrap does not recognise yet" \
+      "send the log below so this state can get its own code and repair, or reset this machine's Nix installation with: ./install.sh recover --config $FLAKE_CONFIG"
+    return 1
+  fi
+  line="${BROKEN_TRUST_ANCHORS[0]}"
+  source="${line%%$'\t'*}"
+  path="${line#*$'\t'}"
+  # Two repairs can reach this state and they carry different promises: with a
+  # profile bundle available the file comes back, and without one a link
+  # bootstrap owns is still removed so Nix stops reading it.
+  if trust_anchor_restorable "$path"; then
+    remedy="re-run bootstrap: it restores that file from the CA bundle in the Nix profile before Nix is used"
+  elif [[ -L "$path" ]] && etc_link_owned "$(readlink "$path" 2>/dev/null)"; then
+    remedy="re-run bootstrap: it clears that link before Nix is used"
+  fi
+  if [[ -n "$remedy" ]]; then
+    fail BOOT-E301 \
+      "$step failed, and the TLS trust anchor $path named by $source is not a usable CA bundle, so Nix cannot verify TLS" \
+      "$remedy"
+  else
+    fail BOOT-E302 \
+      "$step failed, and the TLS trust anchor $path named by $source is not a usable CA bundle and is not bootstrap's to replace" \
+      "point $path at a real CA bundle or remove it, then re-run bootstrap"
+  fi
+}
+
+# The step's own output is the only place some states are ever stated - and
+# it is the log the operator is asked to send, so keeping it beside the run
+# log costs one file and saves a round trip. Same shape as the installer
+# transcript, for the same reason.
+run_managed_step() {
+  local label="$1" transcript
+
+  shift
+  if [[ -n "$RUN_LOG" ]]; then
+    transcript="${RUN_LOG%.log}-$label.log"
+  else
+    transcript="$(mktemp "${TMPDIR:-/tmp}/atyrode-$label.XXXXXX")"
+  fi
+  "$@" 2>&1 | tee "$transcript" || report_managed_failure "$label" "$transcript"
+}
+
 preflight() {
   command_exists git || die "git is required"
   command_exists mktemp || die "mktemp is required"
@@ -640,6 +1092,8 @@ preflight() {
   esac
 
   source_nix
+  # These three exist to unblock the upstream installer, so they are only
+  # relevant while Nix is missing and the installer is about to run.
   if ! command_exists nix; then
     command_exists curl || die "curl is required to download the pinned Nix artifact"
     command_exists tar || die "tar is required to unpack the pinned Nix artifact"
@@ -648,9 +1102,19 @@ preflight() {
     fi
     detect_orphaned_nix_volume
     detect_shell_profile_backups
-    detect_stale_etc_links
     detect_stale_fstab_entry
   fi
+  # These two are different: they repair Nix itself, not the installer, and a
+  # machine whose Nix cannot verify TLS is exactly the machine that needs them.
+  # The sweep clears links into a store that is gone; the trust-anchor repair
+  # puts a working CA bundle back at the path this machine still names, which
+  # removal alone leaves merely absent. On a healthy host nothing dangles,
+  # every named anchor resolves, and both find nothing.
+  detect_stale_etc_links
+  detect_broken_trust_anchors
+  # Different again: this one unblocks nix-darwin rather than Nix, so it is
+  # relevant exactly when Nix is present and activation is what comes next.
+  detect_unrecognised_etc_profiles
 
   warn_if_interrupted
 
@@ -662,7 +1126,7 @@ preflight() {
 }
 
 print_plan() {
-  local step=1 target
+  local step=1 target line path printed
 
   printf '\nPlan\n'
   if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
@@ -685,14 +1149,40 @@ print_plan() {
     done
     step=$((step + 1))
   fi
+  if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -gt 0 ]]; then
+    printed=0
+    for line in "${BROKEN_TRUST_ANCHORS[@]}"; do
+      path="${line#*$'\t'}"
+      trust_anchor_restorable "$path" || continue
+      if [[ "$printed" -eq 0 ]]; then
+        printf '  %s. Restore the TLS trust anchor Nix reads, from the CA bundle in the Nix profile:\n' \
+          "$step"
+        printed=1
+      fi
+      printf '       %s (named by %s)\n' "$path" "${line%%$'\t'*}"
+    done
+    [[ "$printed" -eq 0 ]] || step=$((step + 1))
+  fi
   if [[ -n "$STALE_FSTAB_ENTRY" ]]; then
     printf '  %s. Drop the dead /nix entry from %s, archiving the file first.\n' \
       "$step" "$STALE_FSTAB_ENTRY"
     step=$((step + 1))
   fi
   if [[ -n "$ORPHANED_NIX_VOLUME" ]]; then
-    printf '  %s. Rename the orphaned %s volume %s so a fresh one can be created; nothing on it is deleted.\n' \
+    printf '  %s. Retire the orphaned %s volume %s so a fresh one can be created.\n' \
       "$step" "$NIX_VOLUME_LABEL" "$ORPHANED_NIX_VOLUME"
+    printf '       It is renamed and nothing on it is deleted. If it is encrypted and\n'
+    printf '       cannot be unlocked, it cannot be renamed, and it is deleted instead:\n'
+    printf '       it carries no live store and every Nix path re-downloads.\n'
+    step=$((step + 1))
+  fi
+  if [[ "${#UNRECOGNISED_ETC_PROFILES[@]}" -gt 0 ]]; then
+    printf '  %s. Move aside the shell rc files the Nix installer wrote, which nix-darwin\n' "$step"
+    printf '       manages and refuses to overwrite. Each keeps its content at\n'
+    printf '       <file>.before-nix-darwin, which is where nix-darwin puts it too:\n'
+    for target in "${UNRECOGNISED_ETC_PROFILES[@]}"; do
+      printf '       %s\n' "$target"
+    done
     step=$((step + 1))
   fi
   if command_exists nix; then
@@ -700,6 +1190,9 @@ print_plan() {
   else
     printf '  %s. Download upstream Nix %s for %s and require SHA-256 %s.\n' \
       "$step" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
+    printf '       It adds its own block to the shell rc files nix-darwin manages. Those\n'
+    printf '       are moved to <file>.before-nix-darwin before activation, which is where\n'
+    printf '       nix-darwin puts them too; nothing is deleted.\n'
   fi
   step=$((step + 1))
   printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$step"
@@ -932,16 +1425,29 @@ activate_configuration() {
   run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --restart-shell
 }
 
+# Callers catch this function's failure, and catching a function suppresses
+# set -e for everything inside it. Every guard therefore returns explicitly
+# rather than leaning on the shell to abort the script for it.
 verify_installation() {
   local state_file
 
   source_nix
-  command_exists nix || die "Nix is not available"
+  command_exists nix || {
+    die "Nix is not available"
+    return 1
+  }
   state_file="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/dotfiles-config"
-  [[ -f "$state_file" && ! -L "$state_file" ]] || die "active host receipt is missing"
+  [[ -f "$state_file" && ! -L "$state_file" ]] ||
+    {
+      die "active host receipt is missing"
+      return 1
+    }
   [[ "$(cat "$state_file")" == "$FLAKE_CONFIG" ]] ||
-    die "active host receipt does not match $FLAKE_CONFIG"
-  run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null
+    {
+      die "active host receipt does not match $FLAKE_CONFIG"
+      return 1
+    }
+  run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null || return 1
   printf 'Verification passed for %s on %s\n' "$FLAKE_CONFIG" "$SYSTEM"
 }
 
@@ -1065,40 +1571,103 @@ verify_system_login_shell() {
   fi
 }
 
-apply_configuration() {
-  preflight
-  print_plan
-  confirm_action "Apply this bootstrap plan?"
+# Bootstrap repairs the states it can name. Recovery is the exit for the ones
+# it cannot: reset this machine's Nix installation the way the manual documents
+# an uninstall, then install it fresh and continue normally. Nothing here is a
+# one-way door - the store volume is renamed rather than deleted, and every
+# file removed is archived first - because a store is a re-fetchable cache
+# while an operator's data is not.
+reset_nix_installation() {
+  local plist archive nixconf volume
 
-  if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
-    update_checkout || die "source update failed before the interrupted-apply marker was written"
-    verify_checkout
-    if [[ "$SOURCE_CHANGED" -eq 1 ]]; then
-      restart_after_source_update
-    fi
+  plist="$(nix_daemon_plist)"
+  if [[ -e "$plist" ]]; then
+    # Best effort: an unloaded daemon reports "Boot-out failed", which is the
+    # state being converged on, not an error.
+    run_privileged launchctl bootout system/org.nixos.nix-daemon >/dev/null 2>&1 || true
+    mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+    archive="$(repair_state_dir)/nix-daemon.plist.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp "$plist" "$archive" ||
+      fail BOOT-E220 "could not archive $plist before removing it" \
+        "check that $(repair_state_dir) is writable"
+    run_privileged rm -f "$plist" ||
+      fail BOOT-E220 "could not remove $plist" "remove it by hand: sudo rm $plist"
+    journal_repair "removed the nix-daemon LaunchDaemon $plist" "cp '$archive' '$plist'"
+    printf 'Stopped and removed %s (archived at %s)\n' "$plist" "$archive"
   fi
 
+  # /etc/nix is where a dead generation's ssl-cert-file and substituters live.
+  # The installer writes a fresh one.
+  nixconf="$(etc_root)/nix"
+  if [[ -d "$nixconf" && ! -L "$nixconf" ]]; then
+    mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+    archive="$(repair_state_dir)/etc-nix.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp -R "$nixconf" "$archive" ||
+      fail BOOT-E221 "could not archive $nixconf before removing it" \
+        "check that $(repair_state_dir) is writable"
+    run_privileged rm -rf "$nixconf" ||
+      fail BOOT-E221 "could not remove $nixconf" "remove it by hand: sudo rm -rf $nixconf"
+    journal_repair "removed $nixconf" "cp -R '$archive' '$nixconf'"
+    printf 'Removed %s (archived at %s)\n' "$nixconf" "$archive"
+  fi
+
+  # Retiring the volume is what routes the installer onto its fresh-create
+  # path, and unmounting after frees /nix for the volume it creates.
+  if nix_volume_present "$NIX_VOLUME_LABEL"; then
+    volume="$(diskutil_field "$NIX_VOLUME_LABEL" 'Device Identifier')"
+    [[ -n "$volume" ]] ||
+      fail BOOT-E212 "found a $NIX_VOLUME_LABEL volume but could not read its device identifier" \
+        "inspect it with: diskutil info '$NIX_VOLUME_LABEL'"
+    retire_nix_volume "$volume" "$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
+    run_privileged "$(diskutil_command)" unmount force "$volume" >/dev/null 2>&1 || true
+  fi
+}
+
+print_recovery_plan() {
+  local step=1
+
+  printf '\nRecovery plan\n'
+  printf '  %s. Stop the nix-daemon and remove its LaunchDaemon, archiving it first.\n' "$step"
+  step=$((step + 1))
+  printf '  %s. Remove %s, archiving it first.\n' "$step" "$(etc_root)/nix"
+  step=$((step + 1))
+  printf '  %s. Retire the %s volume so a fresh one is created, and unmount it.\n' \
+    "$step" "$NIX_VOLUME_LABEL"
+  printf '       It is renamed and nothing on it is deleted. If it is encrypted and\n'
+  printf '       cannot be unlocked, it cannot be renamed, and it is deleted instead:\n'
+  printf '       it carries no live store and every Nix path re-downloads.\n'
+  step=$((step + 1))
+  printf '  %s. Put back every /etc file a previous generation left broken.\n' "$step"
+  step=$((step + 1))
+  printf '  %s. Install upstream Nix %s for %s and require SHA-256 %s.\n' \
+    "$step" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
+  step=$((step + 1))
+  printf '  %s. Evaluate, activate, and verify %s as a normal run.\n' "$step" "$FLAKE_CONFIG"
+  printf '\nEvery removal is archived under %s and undone by %s/undo.log.\n' \
+    "$(repair_state_dir)" "$(repair_state_dir)"
+  printf 'The old store volume keeps its data until you reclaim the space.\n'
+  printf '\nNo changes were made. recover will not proceed without confirmation.\n'
+}
+
+begin_mutations() {
   ensure_safe_state_root "$(bootstrap_state_root)"
   ensure_safe_login_shell_marker
   start_run_log
   write_interrupted_marker
+}
 
-  repair_shell_profile_backups
-  repair_stale_etc_links
-  repair_stale_fstab_entry
-  repair_orphaned_nix_volume
-  ensure_nix
+run_activation_phases() {
   enable_flakes_for_process
 
-  managed_activation_plan
+  run_managed_step evaluation managed_activation_plan
 
   if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && "${BOOTSTRAP_FAILPOINT:-}" == before-activation ]]; then
     printf 'bootstrap: interrupted at test failpoint before-activation\n' >&2
     exit 75
   fi
 
-  activate_configuration
-  verify_installation
+  run_managed_step activation activate_configuration
+  run_managed_step verification verify_installation
   mark_login_shell_incomplete
   clear_interrupted_marker
 
@@ -1119,6 +1688,69 @@ apply_configuration() {
     "$(managed_login_shell)"
 }
 
+apply_configuration() {
+  preflight
+  print_plan
+  confirm_action "Apply this bootstrap plan?"
+
+  if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
+    update_checkout || die "source update failed before the interrupted-apply marker was written"
+    verify_checkout
+    if [[ "$SOURCE_CHANGED" -eq 1 ]]; then
+      restart_after_source_update
+    fi
+  fi
+
+  begin_mutations
+
+  repair_shell_profile_backups
+  repair_stale_etc_links
+  # After the sweep, never before it: the sweep removes the dangling anchor and
+  # this puts a working one back at the same path.
+  repair_broken_trust_anchors
+  repair_stale_fstab_entry
+  repair_orphaned_nix_volume
+  ensure_nix
+  # Re-derived after the installer rather than reused from preflight: writing
+  # its block into those rc files is the installer's own documented step, so
+  # on a fresh machine this state does not exist until Nix is installed.
+  detect_unrecognised_etc_profiles
+  repair_unrecognised_etc_profiles
+  run_activation_phases
+}
+
+recover_configuration() {
+  preflight
+  # On a Linux host the managed environment lives in /nix and removing it is
+  # destruction, not recovery. The states this resolves are macOS system state.
+  [[ "$SYSTEM" == *-darwin ]] ||
+    die "recover resets a macOS Nix installation; on $SYSTEM removing /nix is not a recovery"
+  print_recovery_plan
+  confirm_action "Reset this machine's Nix installation and reinstall?"
+
+  begin_mutations
+  reset_nix_installation
+
+  # Re-derived after the reset rather than reused from preflight: the reset
+  # changed the machine, and a repair planned against the old state would be
+  # answering a question nobody is asking any more.
+  detect_shell_profile_backups
+  detect_stale_etc_links
+  detect_broken_trust_anchors
+  detect_stale_fstab_entry
+
+  repair_shell_profile_backups
+  repair_stale_etc_links
+  repair_broken_trust_anchors
+  repair_stale_fstab_entry
+  install_pinned_nix || die "the pinned Nix installer failed during recovery"
+  # Derived after the installer for the same reason apply does it there: the
+  # rc files it writes are what nix-darwin then refuses to overwrite.
+  detect_unrecognised_etc_profiles
+  repair_unrecognised_etc_profiles
+  run_activation_phases
+}
+
 configure_coder_runtime
 parse_options "$@"
 
@@ -1129,10 +1761,11 @@ case "$COMMAND" in
     print_plan
     ;;
   apply) apply_configuration ;;
+  recover) recover_configuration ;;
   verify)
     preflight
     enable_flakes_for_process
-    verify_installation
+    run_managed_step verification verify_installation
     verify_system_login_shell || die "login-shell system prerequisite is incomplete"
     clear_login_shell_incomplete
     ;;

@@ -254,6 +254,11 @@ apply_config() {
     trap - EXIT
     return 0
   fi
+  # The single command that rebuilds and switches this machine. Rendered as an
+  # `env` invocation so the locale it needs travels with the copy an operator
+  # pastes back, and printed before it runs so the thousand lines of nh and Nix
+  # output that follow are unmistakably theirs rather than ours.
+  show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
   LC_ALL="$nh_locale" "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
   [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
   trap - EXIT
@@ -366,11 +371,14 @@ converge_login_shell() { # host
   fi
 }
 
+# Shown before it runs: these are the commands that edit /etc/shells and the
+# account database, and they are the ones prompting for a password. An operator
+# asked for their password deserves to read the argv it buys.
 run_privileged() {
   if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
+    run_visible "$@"
   elif command -v sudo >/dev/null 2>&1; then
-    sudo -- "$@"
+    run_visible sudo -- "$@"
   else
     printf 'atyrode: sudo is required for this step and is unavailable\n' >&2
     return 1

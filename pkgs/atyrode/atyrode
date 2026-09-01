@@ -188,6 +188,10 @@ EOF
 }
 
 main() {
+  # Before anything reads or drives this machine. Every subcommand asks
+  # questions about the programs the machine declares, so none of them should
+  # depend on whether the caller's shell has been restarted since activation.
+  adopt_activated_path
   if [[ $# == 0 ]] && interactive; then
     export ATYRODE_CLI="$0"
     exec "$atyrode_tui"

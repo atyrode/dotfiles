@@ -39,6 +39,10 @@ ORPHANED_NIX_VOLUME=""
 ORPHANED_NIX_VOLUME_UUID=""
 MOUNT_FAILURE=""
 RUN_LOG=""
+# Set when `atyrode doctor` completed the machine but still named work. Read by
+# the completion notice, which prints on the operator's terminal rather than
+# inside a captured step.
+DOCTOR_FINDINGS=0
 
 # Colour is a reading aid, never data. It is on only where the stream is a
 # terminal and the environment permits it, so pipes, redirects, and the check
@@ -85,6 +89,26 @@ paint_err() {
   else
     printf '%s' "$*"
   fi
+}
+
+# Every command that changes this machine, reaches the network, or takes real
+# time is printed before it runs. An operator watching a bootstrap should never
+# have to guess which program produced the next thousand lines of output, and
+# the transcript it leaves should be enough to repeat any step by hand. The
+# rendering is shell-quoted for exactly that reason: what is shown is what can
+# be pasted back. Silent steps are the reason a failure ever looks inexplicable.
+show_command() {
+  local rendered="" part
+
+  for part in "$@"; do
+    rendered="$rendered${rendered:+ }$(printf '%q' "$part")"
+  done
+  printf '%s\n' "$(paint_err 2 "\$ $rendered")" >&2
+}
+
+run_visible() {
+  show_command "$@"
+  "$@"
 }
 
 die() {
@@ -1122,7 +1146,7 @@ report_managed_failure() {
 # of it; a step that fails there is classified from machine state, which is
 # what the trust-anchor and volume codes were already derived from.
 run_managed_step() {
-  local label="$1" transcript
+  local label="$1" transcript status=0
 
   shift
   if step_can_converse; then
@@ -1135,7 +1159,14 @@ run_managed_step() {
   else
     transcript="$(mktemp "${TMPDIR:-/tmp}/atyrode-$label.XXXXXX")"
   fi
-  "$@" 2>&1 | tee "$transcript" || report_managed_failure "$label" "$transcript"
+  # Redirect and replay rather than pipe through tee. A pipeline runs the step
+  # in a subshell, so anything it records about the machine dies with that
+  # subshell -- and only on this path, which made bootstrap behave one way on
+  # an operator's terminal and another in CI. There is no one watching a
+  # captured step by definition, so nothing is lost by replaying it whole.
+  "$@" >"$transcript" 2>&1 || status=$?
+  cat "$transcript"
+  [[ "$status" -eq 0 ]] || report_managed_failure "$label" "$transcript"
 }
 
 # The same predicate the CLI applies to decide whether it may hold a dialogue,
@@ -1346,7 +1377,10 @@ clear_interrupted_marker() {
 update_checkout() {
   local branch counts local_ahead remote_ahead
 
-  git -C "$DOTFILES_DIR" fetch --prune origin || return 1
+  # Reaches the network and rewrites refs. The read-only queries below stay
+  # silent on purpose: showing every `show-ref` would bury the four commands
+  # that actually change something.
+  run_visible git -C "$DOTFILES_DIR" fetch --prune origin || return 1
   git -C "$DOTFILES_DIR" show-ref --verify --quiet refs/remotes/origin/main || return 1
 
   branch="$(git -C "$DOTFILES_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
@@ -1354,9 +1388,9 @@ update_checkout() {
     printf 'bootstrap: moving the checkout from %s to main; return to it with: git -C %s checkout %s\n' \
       "${branch:-a detached revision}" "$DOTFILES_DIR" "${branch:--}" >&2
     if git -C "$DOTFILES_DIR" show-ref --verify --quiet refs/heads/main; then
-      git -C "$DOTFILES_DIR" checkout --quiet main || return 1
+      run_visible git -C "$DOTFILES_DIR" checkout --quiet main || return 1
     else
-      git -C "$DOTFILES_DIR" checkout --quiet -b main --track origin/main || return 1
+      run_visible git -C "$DOTFILES_DIR" checkout --quiet -b main --track origin/main || return 1
     fi
     SOURCE_CHANGED=1
   fi
@@ -1369,7 +1403,7 @@ update_checkout() {
     return 1
   }
   if [[ "$remote_ahead" != 0 ]]; then
-    git -C "$DOTFILES_DIR" merge --ff-only origin/main || return 1
+    run_visible git -C "$DOTFILES_DIR" merge --ff-only origin/main || return 1
     SOURCE_CHANGED=1
   fi
   SOURCE_UPDATED=1
@@ -1405,7 +1439,7 @@ install_pinned_nix() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/atyrode-nix.XXXXXX")"
   archive="$temporary/nix.tar.xz"
   printf 'Downloading pinned upstream Nix %s from releases.nixos.org...\n' "$NIX_VERSION"
-  if ! curl --fail --location --proto '=https' --tlsv1.2 --output "$archive" "$NIX_URL"; then
+  if ! run_visible curl --fail --location --proto '=https' --tlsv1.2 --output "$archive" "$NIX_URL"; then
     rm -rf "$temporary"
     return 1
   fi
@@ -1439,6 +1473,10 @@ install_pinned_nix() {
   else
     installer_log="$temporary/nix-installer.log"
   fi
+  # A pipeline cannot go through run_visible, and this is the single command an
+  # operator most needs to recognise: everything upstream prints after this
+  # line belongs to the Nix installer, not to bootstrap.
+  show_command sh "$extracted" "$installer_mode" --yes --no-channel-add --no-modify-profile
   if ! sh "$extracted" "$installer_mode" --yes --no-channel-add --no-modify-profile 2>&1 |
     tee "$installer_log"; then
     report_installer_failure "$installer_log" || true
@@ -1472,7 +1510,7 @@ $feature"
 }
 
 run_atyrode() {
-  nix run "$DOTFILES_DIR#atyrode" -- "$@"
+  run_visible nix run "$DOTFILES_DIR#atyrode" -- "$@"
 }
 
 managed_activation_plan() {
@@ -1508,16 +1546,44 @@ verify_installation() {
   # Bare doctor is the aggregate over every family - host, system, git, tools,
   # provisioning - so bootstrap verifies the machine rather than the host
   # alone, and the report reaches the operator instead of /dev/null.
-  run_atyrode doctor "$FLAKE_CONFIG" || return 1
+  #
+  # Its 69 is a finished bootstrap with findings, not a bootstrap that failed.
+  # The machine activated, the receipt matches, and everything doctor still
+  # names is either converged by a later `atyrode apply` or is a decision only
+  # the operator can make. Treating 69 as a failure sent operators to the issue
+  # tracker under [BOOT-E399] and offered to reset a Nix installation that was
+  # perfectly healthy, because `gh` was not configured yet. Worse, the marker
+  # below never cleared, so the next run opened by warning about an apply that
+  # had in fact completed.
+  #
+  # The finding is recorded rather than announced here. A managed step's output
+  # is captured to a transcript whenever there is no terminal to stream it to,
+  # so a call to action printed inside the step reaches a log file and nobody
+  # else. Doctor's report belongs in the step; what the operator should do next
+  # belongs to bootstrap, which still owns the terminal.
+  local doctor_status=0
+  run_atyrode doctor "$FLAKE_CONFIG" || doctor_status=$?
+  case "$doctor_status" in
+    0) ;;
+    69)
+      DOCTOR_FINDINGS=1
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
   printf '%s %s %s\n' "$(paint '1;32' 'Verification passed for')" \
     "$(paint 36 "$FLAKE_CONFIG")" "$(paint 2 "on $SYSTEM")"
 }
 
+# Privilege is the one place an operator most deserves to see the argv: these
+# are the commands that touch /etc, the trust anchors, the daemon plist, and
+# the store volume, and they are exactly the ones a reader wants to audit
+# before typing a password.
 run_privileged() {
   if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
+    run_visible "$@"
   elif command_exists sudo; then
-    sudo -- "$@"
+    run_visible sudo -- "$@"
   else
     # Every remaining caller is a repair - /etc files, trust anchors, the
     # daemon plist, the store volume - so the message names that.
@@ -1634,6 +1700,19 @@ run_activation_phases() {
     handoff="$HOME/.nix-profile/bin/zsh"
   else
     handoff=/run/current-system/sw/bin/zsh
+  fi
+  if [[ "$DOCTOR_FINDINGS" -eq 1 ]]; then
+    printf '\n%s %s\n' \
+      "$(paint '1;33' 'Bootstrap complete, with findings for')" \
+      "$(paint 36 "$FLAKE_CONFIG")"
+    printf '  %s\n' \
+      'The machine is the registered host; these are not bootstrap failures.' \
+      "$(printf 'Re-read them any time with: %s' "$(paint '1;36' 'atyrode doctor')")" \
+      "$(printf 'Converge what apply owns:   %s' "$(paint '1;36' 'atyrode apply')")"
+    printf '\n%s Open a new terminal or run: %s\n' \
+      "$(paint 1 'Bootstrap complete.')" \
+      "$(paint '1;36' "$(printf 'exec %q -l' "$handoff")")"
+    return 0
   fi
   printf '\n%s Open a new terminal or run: %s\n' \
     "$(paint '1;32' 'Bootstrap complete.')" \

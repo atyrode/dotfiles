@@ -368,10 +368,10 @@ provision_babel() {
   local config_file host status=0
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
   if [[ -f "$config_file" ]]; then
-    "$babel_storage_configure" "$@" || status=$?
+    run_visible "$babel_storage_configure" "$@" || status=$?
   else
     host="$(resolve_host "")"
-    "$babel_storage_configure" --host-id "$host" "$@" || status=$?
+    run_visible "$babel_storage_configure" --host-id "$host" "$@" || status=$?
   fi
   # Run rather than exec, because the ceremony is only half of configuring this
   # machine: the hourly timer's start condition is the document the ceremony

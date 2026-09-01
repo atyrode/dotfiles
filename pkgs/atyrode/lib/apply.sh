@@ -278,6 +278,18 @@ apply_config() {
 
   step_begin "Rebuild and switch $host through $backend"
   [[ "$dry" == 0 ]] || step_why 'a dry run builds the closure and reports the diff without switching'
+  # nix-darwin and NixOS activate as root, and the backend elevates for that
+  # itself rather than atyrode -- so the password prompt that interrupts the
+  # build belongs to sudo, called by the command below, for the one part of
+  # this machine a user cannot write. Unannounced it reads as the dotfiles
+  # asking for root out of nowhere, mid-build, with nothing on screen to say
+  # which of the thousand lines above wanted it.
+  case "$activation" in
+    nix-darwin | nixos-wsl)
+      [[ "$dry" == 1 ]] ||
+        step_detail 'activation writes system state, so nh elevates: the sudo prompt below is its own'
+      ;;
+  esac
   # Rendered as an `env` invocation so the locale it needs travels with the copy
   # an operator pastes back, and printed before it runs so the thousand lines of
   # nh and Nix output that follow are unmistakably theirs rather than ours.

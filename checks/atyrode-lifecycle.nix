@@ -97,6 +97,13 @@ pkgs.runCommand "check-atyrode-lifecycle"
       || { echo "bare clean must ask nh for the default retention window: $(cat "$TMPDIR/nh-args")" >&2; exit 1; }
     grep -qF 'keeping 5 generation(s) + everything newer than 30d' <<<"$default_retention" \
       || { echo "bare clean must state the default retention window: $default_retention" >&2; exit 1; }
+    # The retention nh is asked for is also the retention an operator can read.
+    # A confirm answers "may I"; only the argv answers "with what", and this is
+    # the command that removes generations.
+    grep -qF '$ ' <<<"$default_retention" \
+      || { echo "clean must show the command it runs: $default_retention" >&2; exit 1; }
+    grep -qE '^\$ .*clean user --keep 5 --keep-since 30d --no-gc$' <<<"$default_retention" \
+      || { echo "clean must announce nh's full argv: $default_retention" >&2; exit 1; }
 
     # rollback refuses the generation that is already current (#3 in the stub
     # listing), so the running configuration can't be rolled onto itself.
@@ -120,6 +127,29 @@ pkgs.runCommand "check-atyrode-lifecycle"
       || { echo "rollback must default to the previous generation: $rollback_previous" >&2; exit 1; }
     grep -qF 'dry run — nothing activated' <<<"$rollback_previous" \
       || { echo "rollback --dry-run must not activate anything: $rollback_previous" >&2; exit 1; }
+
+    # A real rollback re-runs activation, which is the same class of change
+    # apply makes -- and apply shows its argv. The dry run above deliberately
+    # activates nothing, so it can prove the refusal but never this.
+    #
+    # Linux only, because the generation profile a rollback activates is chosen
+    # from the real `uname`: this fixture pins the profile path but not the
+    # platform, and on Darwin the same command correctly resolves to
+    # darwin-rebuild and refuses without one. The branch it does exercise is
+    # the one standalone Linux actually rolls back through.
+    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+      mkdir -p "$ATYRODE_GEN_PROFILE-2-link"
+      {
+        printf '#!%s\n' "${pkgs.runtimeShell}"
+        printf 'printf %s\n' "'rolled back'"
+      } > "$ATYRODE_GEN_PROFILE-2-link/activate"
+      chmod +x "$ATYRODE_GEN_PROFILE-2-link/activate"
+      rollback_real="$(atyrode rollback --to 2 --yes 2>&1 >/dev/null)"
+      grep -qE '^\$ .*/home-manager-2-link/activate$' <<<"$rollback_real" \
+        || { echo "rollback must announce the activation it runs: $rollback_real" >&2; exit 1; }
+      grep -qF 'now on generation 2' <<<"$rollback_real" \
+        || { echo "rollback must confirm the generation it landed on: $rollback_real" >&2; exit 1; }
+    ''}
 
     # clean --json emits a machine-readable reclaim summary on stdout; nh's own
     # chatter must go to stderr. With 3 generations (current #3) and --keep 2, the

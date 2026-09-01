@@ -284,6 +284,43 @@ pkgs.runCommand "check-atyrode-apply"
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
 
+    # The babel ceremony ends at a master-password prompt, so a vault that is
+    # not even logged in is an earlier blocker than the one the offer is about,
+    # and an operator who is not told answers yes to a program that cannot
+    # start. Both readings are driven through the CLI's own bw seam: the
+    # wrapper prefixes the real bw onto PATH and adopt_activated_path only
+    # appends, so a stub anywhere on PATH could never win.
+    mkdir -p "$TMPDIR/vaultbin"
+    {
+      printf '#!%s\n' "${pkgs.runtimeShell}"
+      printf 'cat %s\n' "$TMPDIR/bw-status.json"
+    } > "$TMPDIR/vaultbin/bw"
+    chmod +x "$TMPDIR/vaultbin/bw"
+    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
+    ATYRODE_BW="$TMPDIR/vaultbin/bw" atyrode apply --repo "$HOME/nix-dotfiles" \
+      >/dev/null 2>"$TMPDIR/apply-vault-out.err" ||
+      { cat "$TMPDIR/apply-vault-out.err" >&2; exit 1; }
+    grep -qF 'so the ceremony cannot start until: atyrode vault login' \
+      "$TMPDIR/apply-vault-out.err"
+    # Never a bare `bw login`: this fleet's account is on the EU cloud, where
+    # the bw default fails a first login with a misleading "invalid master
+    # password" -- the obvious advice is the advice that wastes an evening.
+    if grep -qF 'bw login' "$TMPDIR/apply-vault-out.err"; then
+      echo 'the vault remedy pointed at the login that fails on this fleet' >&2
+      exit 1
+    fi
+    # The claim is a reading, not a constant: a reachable vault stops the offer
+    # from mentioning login at all.
+    printf '%s\n' '{"status":"unlocked"}' > "$TMPDIR/bw-status.json"
+    ATYRODE_BW="$TMPDIR/vaultbin/bw" atyrode apply --repo "$HOME/nix-dotfiles" \
+      >/dev/null 2>"$TMPDIR/apply-vault-in.err" ||
+      { cat "$TMPDIR/apply-vault-in.err" >&2; exit 1; }
+    grep -qF 'Babel session archive is not configured' "$TMPDIR/apply-vault-in.err"
+    if grep -qF 'is not logged in here' "$TMPDIR/apply-vault-in.err"; then
+      echo 'the babel offer reported a login blocker against a reachable vault' >&2
+      exit 1
+    fi
+
     # Transparency is a contract, not a courtesy. An operator watching an apply
     # has to be able to see what it will do, what it is doing and why, and
     # whether each part worked -- and read all of it again once the scrollback
@@ -293,6 +330,12 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qE '^2/4 Record alex-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
     grep -qE '^3/4 Converge the account login shell$' "$TMPDIR/apply-success.err"
     grep -qE '^4/4 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
+    # ... and a home-manager apply writes nothing this user could not write, so
+    # it must not warn about a password prompt that will never arrive.
+    if grep -qF 'nh elevates' "$TMPDIR/apply-success.err"; then
+      echo 'a home-manager apply warned about an elevation it never performs' >&2
+      exit 1
+    fi
     # Four steps, four verdicts: no step may end without one.
     test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 4
     # And the reason a step is running, in the vocabulary of what decided it.
@@ -462,7 +505,14 @@ pkgs.runCommand "check-atyrode-apply"
       { printf '%s\n' "$git_accept" >&2; exit 1; }
     printf '%s\n' "$git_accept" | grep -qF 'no ssh-agent socket'
     printf '%s\n' "$git_accept" | grep -qF 'that did not complete; Git identity is still unconfigured'
-    printf '%s\n' "$git_accept" | grep -qF 'retry: atyrode provision git'
+    # The child said what is wrong. Naming the same argv as "retry" would send
+    # the operator to collect the identical failure, so the surface command is
+    # offered as the thing to run afterwards, and the reason stays the child's.
+    printf '%s\n' "$git_accept" | grep -qF 'clear what it reported above, then: atyrode provision git'
+    if printf '%s\n' "$git_accept" | grep -qF 'retry: atyrode provision git'; then
+      echo 'a failed ceremony advised rerunning the command that just failed' >&2
+      exit 1
+    fi
     # Accepting spawns a whole second program, so the boundary is named: every
     # line after it belongs to that child, and it is the argv an operator
     # repeats to retry the ceremony on its own.
@@ -783,8 +833,14 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$WINGET_STATE/twilight"
 
-    wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json)"
+    wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json \
+      2>"$TMPDIR/wsl-apply.err")"
     jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
+    # NixOS and nix-darwin activate as root, and the backend elevates for that
+    # itself. Unannounced, the password prompt arrives mid-build from inside
+    # someone else's output, and reads as the dotfiles asking for root out of
+    # nowhere -- so the step names whose prompt it is before it can appear.
+    grep -qF 'so nh elevates: the sudo prompt below is its own' "$TMPDIR/wsl-apply.err"
     grep -Fx -- "os switch $HOME/nix-dotfiles#alex-x86_64-linux-wsl --diff always" \
       "$TMPDIR/nh-args" >/dev/null
     grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \

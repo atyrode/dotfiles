@@ -222,7 +222,11 @@ trap relock EXIT
 
 vault_status="$(bw status 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null || echo unknown)"
 case "$vault_status" in
-  unauthenticated) die "Bitwarden is not logged in: run 'bw login' first" ;;
+  # Not `bw login`. This fleet's account lives on the EU cloud and the bw CLI
+  # defaults to the US one, where a first login fails with a misleading
+  # "invalid master password" -- so the obvious advice is the advice that
+  # wastes an evening. `atyrode vault login` pins the server before logging in.
+  unauthenticated) die "Bitwarden is not logged in: run 'atyrode vault login' first" ;;
   unlocked) : ;;
   locked)
     # Prompts on the terminal. The master password is never an argument and

@@ -28,9 +28,11 @@ auth_broker_require_safe_token() {
 
 auth_broker_restart_service() {
   local systemctl launchctl label
+  # Cutting a live tunnel is the operator's business even when it comes back a
+  # second later; the unit probes that decide which platform to use are not.
   if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
     if "$systemctl" --user cat atyrode-omp-auth-brokers.service >/dev/null 2>&1; then
-      "$systemctl" --user restart atyrode-omp-auth-brokers.service ||
+      run_visible "$systemctl" --user restart atyrode-omp-auth-brokers.service ||
         die "$EX_UNAVAILABLE" "could not restart the OMP auth broker tunnel"
       return
     fi
@@ -39,7 +41,7 @@ auth_broker_restart_service() {
   if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
     label="gui/$(id -u)/org.nix-community.home.atyrode-omp-auth-brokers"
     if "$launchctl" print "$label" >/dev/null 2>&1; then
-      "$launchctl" kickstart -k "$label" ||
+      run_visible "$launchctl" kickstart -k "$label" ||
         die "$EX_UNAVAILABLE" "could not restart the OMP auth broker tunnel"
       return
     fi
@@ -95,7 +97,9 @@ auth_broker_write_client_config() {
   } >"$tmp"
   chmod 600 "$tmp"
   mv -f "$tmp" "$config_file"
-  printf 'atyrode: configured shared OMP broker through %s\n' "$ssh_host" >&2
+  # The file holds the bearer token, so the path is what gets printed: it tells
+  # the operator what to inspect or delete without spilling what is in it.
+  printf 'atyrode: configured shared OMP broker through %s (%s)\n' "$ssh_host" "$config_file" >&2
 }
 
 auth_broker_publish() {
@@ -215,7 +219,10 @@ auth_broker_add_api_key() {
   response="$scratch/response.json"
   fetch="$(optional_host_command ATYRODE_FETCH curl)" ||
     die "$EX_UNAVAILABLE" "curl is required to add an OMP API key"
-  "$fetch" -fsS --config "$curl_cfg" -X POST \
+  # Safe to print verbatim: the bearer token stays in the 0600 curl config and
+  # the key itself in the payload file, so this argv carries only two paths and
+  # the fixed tunnel URL.
+  run_visible "$fetch" -fsS --config "$curl_cfg" -X POST \
     -H 'content-type: application/json' --data-binary "@$payload" \
     -o "$response" "$OMP_AUTH_BROKER_URL/v1/credential" ||
     die "$EX_UNAVAILABLE" "could not upload the $provider API key to the OMP broker"

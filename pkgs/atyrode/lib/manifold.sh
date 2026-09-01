@@ -149,7 +149,10 @@ manifold_provision() {
   payload="$(jq -nc --arg name "$machine_name" --argjson rotate "$([[ "$rotate" == 1 ]] && printf true || printf false)" \
     '{name:$name} + (if $rotate then {rotateToken:true} else {} end)')"
   response="$scratch/response.json"
-  "$fetch" -fsSL --config "$scratch/curl.cfg" -X POST \
+  # Safe to print verbatim: the owner key stays in the 0600 curl config written
+  # above and the minted token lands in $response, so this argv carries a path,
+  # this machine's name, and the committed master URL.
+  run_visible "$fetch" -fsSL --config "$scratch/curl.cfg" -X POST \
     -H 'content-type: application/json' -d "$payload" \
     -o "$response" "$master_url/api/machines" ||
     die "$EX_UNAVAILABLE" "could not enroll with the manifold master at $master_url"
@@ -166,7 +169,10 @@ manifold_provision() {
   chmod 700 "$(dirname "$token_path")"
   (umask 077 && printf '%s\n' "$token" >"$token_path.tmp")
   mv -f "$token_path.tmp" "$token_path"
-  printf 'atyrode: enrolled %s with %s\n' "$machine_name" "$master_url" >&2
+  # The unit gates on the token file existing, so its path is the fact worth
+  # printing; the umask-and-rename that installed it is not.
+  printf 'atyrode: enrolled %s with %s (token at %s)\n' \
+    "$machine_name" "$master_url" "$token_path" >&2
   printf 'atyrode: start the agent with: systemctl --user start manifold-agent\n' >&2
   manifold_render_status
 }
@@ -175,7 +181,7 @@ manifold_service() {
   local verb="$1" systemctl
   systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" ||
     die "$EX_UNAVAILABLE" "systemctl is unavailable; manifold-agent service control requires systemd"
-  "$systemctl" --user "$verb" manifold-agent.service
+  run_visible "$systemctl" --user "$verb" manifold-agent.service
 }
 
 cmd_runtime_manifold() {

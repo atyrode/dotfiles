@@ -1095,7 +1095,7 @@ probe_git_identity() {
 }
 
 probe_babel_archive() {
-  local config_file stamp_file last="" last_epoch now
+  local config_file stamp_file last="" last_epoch now blocked=""
 
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
   stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
@@ -1105,8 +1105,15 @@ probe_babel_archive() {
     return 0
   fi
   if [[ ! -f "$config_file" ]]; then
+    # The offer this raises ends at a master-password prompt, so a machine
+    # whose vault is not logged in at all has an earlier blocker than the one
+    # the ceremony is about, and an operator who is not told answers yes to a
+    # program that cannot start. Read softly: no vault, no bw, no opinion.
+    if [[ "$(bw_cli status 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)" == unauthenticated ]]; then
+      blocked="; Bitwarden is not logged in here, so the ceremony cannot start until: atyrode vault login"
+    fi
     provisioning_unconfigured babel-archive \
-      "the hourly timer is installed but archives nothing until this is configured"
+      "the hourly timer is installed but archives nothing until this is configured$blocked"
     return 0
   fi
   [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true

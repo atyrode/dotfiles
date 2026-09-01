@@ -69,15 +69,32 @@ in
     fi
     # nix-darwin does not unload launch agents when their declaring module is
     # removed. Retire the window-management agents removed in #421.
+    #
+    # This script runs as root inside `> Activating configuration`, where
+    # nothing it does is visible unless it says so. Everything below therefore
+    # announces itself, and only when it actually acts: a converged machine
+    # stays quiet, and a machine that just had its login shell rewritten from
+    # under it says which shell and what it was before.
     user_uid="$(/usr/bin/id -u "$shell_user")"
     for retired_agent in org.nixos.sketchybar org.nixos.yabai org.nixos.skhd; do
+      retired_plist="$shell_record/Library/LaunchAgents/$retired_agent.plist"
+      if [ -e "$retired_plist" ]; then
+        echo "atyrode: retiring launch agent $retired_agent, removing $retired_plist" >&2
+      fi
       /bin/launchctl bootout "gui/$user_uid/$retired_agent" 2>/dev/null || true
-      /bin/rm -f "$shell_record/Library/LaunchAgents/$retired_agent.plist"
+      /bin/rm -f "$retired_plist"
     done
 
+    # The writer that actually converges the login shell on this platform: it
+    # holds root here, where `atyrode apply` would need a password. That is why
+    # apply's own login-shell step reports "already" on a healthy Mac -- it is
+    # verifying this, one step later, not doing it.
     current_shell="$(/usr/bin/dscl . -read "$shell_record" UserShell 2>/dev/null \
       | /usr/bin/awk '{ print $2 }')"
     if [ "$current_shell" != "$expected_shell" ]; then
+      previous_shell="$current_shell"
+      [ -n "$previous_shell" ] || previous_shell=unset
+      echo "atyrode: login shell for $shell_user: $previous_shell -> $expected_shell" >&2
       /usr/bin/dscl . -create "$shell_record" UserShell "$expected_shell"
     fi
     current_shell="$(/usr/bin/dscl . -read "$shell_record" UserShell 2>/dev/null \

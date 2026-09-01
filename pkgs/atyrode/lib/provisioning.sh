@@ -247,9 +247,13 @@ review_incomplete_surface() { # index host
     fi
     return 0
   fi
+  # The ceremony printed why it stopped, and that reason is the fix. Naming the
+  # same argv as "retry" invites an operator to run the identical command and
+  # collect the identical failure, so it is named as what it actually is: the
+  # command for afterwards, once the blocker the child reported is gone.
   if ! provisioning_run "$id" "$2"; then
-    printf '  that did not complete; %s is still unconfigured (retry: %s)\n' \
-      "$label" "$surface_command" >&2
+    printf '  that did not complete; %s is still unconfigured.\n' "$label" >&2
+    printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
     return 0
   fi
   provisioning_clear_decline "$id"

@@ -6,6 +6,15 @@ set -euo pipefail
 # the file is fully user-owned. A pre-existing config is timestamp-backed-up
 # before the first install.
 
+# The voice this seed shares with the CLI and the other ceremonies. Home
+# Manager runs it unattended during activation, where the few lines it prints
+# are the operator's only account of a config file appearing in their home
+# directory; they should sound like the rest of the machine rather than like a
+# stray script that got loose.
+# shellcheck source=/dev/null
+. "${ATYRODE_NARRATE:?the narration library was not provided}"
+NARRATE_NAME=codex-seed
+
 seed_file="${CODEX_SEED_FILE:?CODEX_SEED_FILE must point at the seed config.toml}"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 target="$codex_home/config.toml"
@@ -14,7 +23,7 @@ marker="$state_root/seeded"
 dry_run="${AGENT_TOOLS_DRY_RUN:-0}"
 
 fail() {
-  printf 'codex-seed: %s\n' "$1" >&2
+  refuse "$NARRATE_NAME" "$1"
   exit 1
 }
 
@@ -33,16 +42,16 @@ cmd_apply() {
   # Read-only checks first so a dry run (and an already-seeded machine) touch
   # nothing on disk — not even the state dir or lock.
   if [[ -e "$marker" ]]; then
-    printf 'codex-seed: already seeded; leaving %s untouched\n' "$target" >&2
+    say "$NARRATE_NAME: already seeded; leaving $target untouched"
     return 0
   fi
   [[ -f "$seed_file" ]] || fail "seed file missing: $seed_file"
 
   if [[ "$dry_run" == 1 ]]; then
     if [[ -e "$target" || -L "$target" ]]; then
-      printf 'codex-seed: DRY RUN — would back up %s and install the curated defaults\n' "$target" >&2
+      say "$NARRATE_NAME: DRY RUN — would back up $target and install the curated defaults"
     else
-      printf 'codex-seed: DRY RUN — would install the curated defaults at %s\n' "$target" >&2
+      say "$NARRATE_NAME: DRY RUN — would install the curated defaults at $target"
     fi
     return 0
   fi
@@ -50,7 +59,7 @@ cmd_apply() {
   acquire_lock
   # Re-check under the lock in case a concurrent run seeded first.
   if [[ -e "$marker" ]]; then
-    printf 'codex-seed: already seeded; leaving %s untouched\n' "$target" >&2
+    say "$NARRATE_NAME: already seeded; leaving $target untouched"
     return 0
   fi
 
@@ -59,12 +68,13 @@ cmd_apply() {
   if [[ -e "$target" || -L "$target" ]]; then
     local backup
     backup="$target.pre-seed.$(date +%Y%m%d-%H%M%S)"
-    mv -f -- "$target" "$backup"
-    printf 'codex-seed: backed up existing config to %s\n' "$backup" >&2
+    run_visible mv -f -- "$target" "$backup"
+    say "$NARRATE_NAME: backed up existing config to $backup"
   fi
-  install -m 600 -- "$seed_file" "$target"
+  run_visible install -m 600 -- "$seed_file" "$target"
   printf 'seeded %s from %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$seed_file" >"$marker"
-  printf 'codex-seed: installed curated Codex defaults at %s\n' "$target" >&2
+  say "$NARRATE_NAME: installed curated Codex defaults at $target"
+  say "$NARRATE_NAME: recorded the one-time marker at $marker"
 }
 
 cmd_status() {

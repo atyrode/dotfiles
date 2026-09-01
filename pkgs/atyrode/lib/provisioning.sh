@@ -37,6 +37,37 @@ provisioning_policy_field() { # id field
   printf '%s\n' "$value"
 }
 
+# A prerequisite is a session or a login some surface cannot start without.
+# They are declared once in the policy and shared: both vault-backed ceremonies
+# want the same Bitwarden session, so satisfying it for one settles it for the
+# next. Order matters and is the declared order -- logging into Clever Cloud
+# before the vault would just be a second thing to redo.
+prerequisite_field() { # id field
+  jq -r --arg id "$1" --arg field "$2" \
+    '.prerequisites[$id][$field] // ""' "$provisioning_policy"
+}
+
+# Whether the machine already satisfies one. Mapped by name rather than derived
+# from the command string, for the same reason the ceremonies are: a policy
+# that can be executed is not a policy. Every probe reads softly, because it is
+# deciding whether to offer something, not diagnosing a fault.
+prerequisite_met() { # id
+  case "$1" in
+    bitwarden-session) ! vault_logged_out ;;
+    clever-session) ! clever_logged_out ;;
+    *) die "$EX_SOFTWARE" "no probe is wired for prerequisite $1" ;;
+  esac
+}
+
+# The unmet prerequisites of a surface, in declared order, one id per line.
+prerequisites_unmet() { # id
+  local requirement
+  while IFS= read -r requirement; do
+    [[ -n "$requirement" ]] || continue
+    prerequisite_met "$requirement" || printf '%s\n' "$requirement"
+  done < <(jq -r --arg id "$1" '.surfaces[$id].prerequisites // [] | .[]' "$provisioning_policy")
+}
+
 # One line per declined surface, so the file stays something an operator can
 # read and edit. The timestamp is for them, never parsed back.
 provisioning_ledger() {
@@ -78,12 +109,21 @@ provisioning_clear_decline() { # id
 #   incomplete     applicable and unconfigured; apply offers the ceremony
 #   declined       unconfigured because the operator said no, and it is recorded
 #   not-applicable this machine cannot have it at all
-# The blocker is a prerequisite command this surface cannot start without. It
-# travels as data rather than only as prose because the two readers want
-# different things from it: doctor states it, and apply offers to run it.
-provisioning_check_add() { # id status code summary remediation [blocker]
-  local id="$1" status="$2" code="$3" summary="$4" remediation="$5" blocker="${6:-}"
+# The unmet prerequisites travel with the record rather than only as prose,
+# because the two readers want different things from them: doctor can only
+# state what is in the way, and apply can offer to clear it.
+provisioning_check_add() { # id status code summary remediation [unmet-id...]
+  local id="$1" status="$2" code="$3" summary="$4" remediation="$5"
+  shift 5
+  local unmet='[]' requirement
 
+  for requirement in "$@"; do
+    unmet="$(jq -c --arg id "$requirement" \
+      --arg label "$(prerequisite_field "$requirement" label)" \
+      --arg command "$(prerequisite_field "$requirement" command)" \
+      --arg without "$(prerequisite_field "$requirement" without)" \
+      '. + [{id: $id, label: $label, command: $command, without: $without}]' <<<"$unmet")"
+  done
   provisioning_checks="$(jq -c \
     --arg id "$id" \
     --arg label "$(provisioning_policy_field "$id" label)" \
@@ -94,7 +134,7 @@ provisioning_check_add() { # id status code summary remediation [blocker]
     --arg code "$code" \
     --arg summary "$summary" \
     --arg remediation "$remediation" \
-    --arg blocker "$blocker" \
+    --argjson unmet "$unmet" \
     '. + [{
       id: $id,
       label: $label,
@@ -105,7 +145,7 @@ provisioning_check_add() { # id status code summary remediation [blocker]
       code: (if $code == "" then null else $code end),
       summary: $summary,
       remediation: (if $remediation == "" then null else $remediation end),
-      blocker: (if $blocker == "" then null else $blocker end)
+      unmet: $unmet
     }]' <<<"$provisioning_checks")"
 }
 
@@ -113,13 +153,26 @@ provisioning_check_add() { # id status code summary remediation [blocker]
 # already answered, and repeating the question as a finding is how a diagnostic
 # becomes noise. It is still listed, because "what is missing here" has to
 # include the things missing on purpose.
-provisioning_unconfigured() { # id summary [blocker]
+#
+# An unconfigured one resolves its prerequisites here, once, so every renderer
+# agrees about what is actually in the way. The sentence appended to the
+# summary is for the readers that can only tell: doctor, and any apply without
+# a terminal to ask at.
+provisioning_unconfigured() { # id summary
+  local -a unmet=()
+  local requirement suffix=""
+
   if provisioning_declined "$1"; then
     provisioning_check_add "$1" declined declined-by-operator \
       "$2" "reconsider by running the command; that clears the decline"
-  else
-    provisioning_check_add "$1" incomplete not-configured "$2" "" "${3:-}"
+    return 0
   fi
+  while IFS= read -r requirement; do
+    [[ -n "$requirement" ]] || continue
+    unmet+=("$requirement")
+    suffix="$suffix; it needs $(prerequisite_field "$requirement" label) first: $(prerequisite_field "$requirement" command)"
+  done < <(prerequisites_unmet "$1")
+  provisioning_check_add "$1" incomplete not-configured "$2$suffix" "" "${unmet[@]+"${unmet[@]}"}"
 }
 
 collect_provisioning_checks() {
@@ -160,14 +213,72 @@ provision_now() { # target
   run_self_visible provision "$1"
 }
 
+# Where clever comes from. A workstation rarely carries clever-tools itself --
+# the ceremony brings its own copy precisely so the machine does not have to --
+# so the CLI reaches the copy already in its closure rather than trusting PATH.
+# A probe that only looked at PATH would report "no opinion" on exactly the
+# machines that need the offer most, and the ceremony would then fail on the
+# very session the offer exists to acquire. The seam is for checks, which
+# cannot log into a real provider.
+clever_program() {
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_CLEVER:-}" ]]; then
+    printf '%s\n' "$ATYRODE_CLEVER"
+  elif command -v clever >/dev/null 2>&1; then
+    printf 'clever\n'
+  else
+    printf '%s\n' "$babel_clever"
+  fi
+}
+
+# Whether Clever Cloud has no session here. `clever profile` is the cheapest
+# question that needs one. A copy that cannot run at all is not a logged-out
+# provider and gets no opinion, so a broken build never offers a login that
+# would fail.
+clever_logged_out() {
+  local program
+  program="$(clever_program)"
+  command -v "$program" >/dev/null 2>&1 || return 1
+  ! "$program" profile >/dev/null 2>&1
+}
+
 # A prerequisite is reached by name, exactly as the ceremonies are: deriving
 # argv by splitting the policy string would make the inventory executable, and
-# an inventory that can run anything is not an inventory.
-provisioning_run_blocker() { # blocker
+# an inventory that can run anything is not an inventory. clever is announced
+# by the name the offer used; the resolved copy goes to the log.
+prerequisite_run() { # id
+  local program
   case "$1" in
-    'atyrode vault login') run_self_visible vault login ;;
-    *) die "$EX_SOFTWARE" "no prerequisite is wired for $1" ;;
+    bitwarden-session) vault_login_child ;;
+    clever-session)
+      program="$(clever_program)"
+      show_command clever login
+      log_event "clever resolved to $program"
+      "$program" login
+      ;;
+    *) die "$EX_SOFTWARE" "no runner is wired for prerequisite $1" ;;
   esac
+}
+
+# The login runs as its own process, for the same reasons a ceremony does, so
+# the session it opens would die with it and the very next command would ask
+# for the master password again. A private file carries the key back instead:
+# this side creates it, the child writes it, this side adopts it into the
+# environment every later child inherits, and it is removed immediately. The
+# key is never announced, never logged, and never an argument.
+vault_login_child() {
+  local dir file status=0
+
+  dir="$(vault_secure_temp_dir atyrode-session)"
+  file="$dir/session"
+  : >"$file"
+  chmod 600 "$file"
+  ATYRODE_VAULT_SESSION_OUT="$file" run_self_visible vault login || status=$?
+  if [[ "$status" == 0 && -s "$file" ]]; then
+    BW_SESSION="$(<"$file")"
+    export BW_SESSION
+  fi
+  rm -rf -- "$dir"
+  return "$status"
 }
 
 # What apply does with each surface, and why the three answers differ:
@@ -244,7 +355,8 @@ review_degraded_surface() { # json index
 # cannot leave the machine in two different states. Off a terminal the same
 # facts are printed without a question, because there is nobody to answer it.
 review_incomplete_surface() { # index host
-  local id label surface_command implies declinable summary blocker
+  local id label surface_command implies declinable summary
+  local unmet_count index requirement requirement_command requirement_label without
 
   id="$(jq -r ".[$1].id" <<<"$provisioning_checks")"
   label="$(jq -r ".[$1].label" <<<"$provisioning_checks")"
@@ -252,7 +364,7 @@ review_incomplete_surface() { # index host
   implies="$(jq -r ".[$1].implies" <<<"$provisioning_checks")"
   declinable="$(jq -r ".[$1].declinable" <<<"$provisioning_checks")"
   summary="$(jq -r ".[$1].summary" <<<"$provisioning_checks")"
-  blocker="$(jq -r ".[$1].blocker // empty" <<<"$provisioning_checks")"
+  unmet_count="$(jq -r ".[$1].unmet | length" <<<"$provisioning_checks")"
 
   printf '%s is not configured: %s\n' "$label" "$summary" >&2
   printf '  %s\n' "$implies" >&2
@@ -263,20 +375,34 @@ review_incomplete_surface() { # index host
   # A prerequisite is something to offer, not homework to set. Telling an
   # operator at a terminal to go and type a command this CLI owns wastes the
   # one moment they are here to answer, and the ceremony would only fail on it
-  # again. Asked separately from the surface because declining it makes the
-  # surface question moot, and because two surfaces can share one prerequisite:
-  # answering yes once settles it for whatever asks next.
-  if [[ -n "$blocker" ]]; then
-    if ! confirm "$label needs $blocker first; run it now?"; then
-      printf '  skipped; %s stays unconfigured until %s runs.\n' "$label" "$blocker" >&2
+  # again -- one step further in, having already spent a password.
+  #
+  # The whole chain is walked here rather than discovered one failure at a
+  # time, and each link is asked for separately: declining one makes every
+  # question after it moot, and a decline is worth more when the operator was
+  # told what it costs. Shared links are settled once -- both vault-backed
+  # ceremonies want the same session, so the second one stops asking.
+  index=0
+  while ((index < unmet_count)); do
+    requirement="$(jq -r ".[$1].unmet[$index].id" <<<"$provisioning_checks")"
+    requirement_label="$(jq -r ".[$1].unmet[$index].label" <<<"$provisioning_checks")"
+    requirement_command="$(jq -r ".[$1].unmet[$index].command" <<<"$provisioning_checks")"
+    without="$(jq -r ".[$1].unmet[$index].without" <<<"$provisioning_checks")"
+    index=$((index + 1))
+    # Re-probed rather than trusted: an earlier link in this run, or in another
+    # surface's chain, may already have settled it.
+    prerequisite_met "$requirement" && continue
+    printf '  %s needs %s, and without it %s\n' "$label" "$requirement_label" "$without" >&2
+    if ! confirm "run $requirement_command now?"; then
+      printf '  skipped; %s stays unconfigured until %s runs.\n' "$label" "$requirement_command" >&2
       return 0
     fi
-    if ! provisioning_run_blocker "$blocker"; then
+    if ! prerequisite_run "$requirement"; then
       printf '  that did not complete; %s stays unconfigured.\n' "$label" >&2
       printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
       return 0
     fi
-  fi
+  done
   # The prompt names the machine, not just the command: these ceremonies write
   # a per-machine identity, and an operator with several hosts open should
   # never have to infer which one is asking.

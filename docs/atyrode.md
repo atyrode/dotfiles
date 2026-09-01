@@ -232,25 +232,43 @@ reported stale. None of this can fail the activation: a machine that declines
 to provision is still a machine that activated.
 
 An offer resolves the prerequisites it knows about before asking about the
-surface, because a question is only fair if the answer can work. The Babel and
-Git ceremonies both read Bitwarden, so a machine whose vault has no session at
-all has an earlier blocker than the one being offered. On a terminal that
-blocker becomes its own offer rather than an instruction:
+surface, because a question is only fair if the answer can work. Prerequisites
+are declared once in `inventory/provisioning.json` as an ordered chain per
+surface -- Babel needs a Bitwarden session and then a Clever Cloud session; the
+Git identity needs only the vault -- and each carries what is lost without it.
+On a terminal every unmet link becomes its own offer, in declared order:
 
 ```
-atyrode: Babel session archive needs atyrode vault login first; run it now? [y/N]
+Babel session archive is not configured: ...
+  Babel session archive needs a Bitwarden session, and without it no secret can be read on this machine, so nothing the vault holds can be configured
+atyrode: run atyrode vault login now? [y/N] y
+  $ atyrode vault login
+  Babel session archive needs a Clever Cloud session, and without it the archive add-ons cannot be looked up, so this machine cannot learn where to publish
+atyrode: run clever login now? [y/N] y
+  $ clever login
+atyrode: run atyrode provision babel for alex-aarch64-darwin now? [y/N]
 ```
 
 Telling an operator who is sitting at the prompt to go and type a command this
 CLI owns wastes the one moment they are there to answer, and the ceremony would
-only fail on it again. It is asked separately from the surface's own offer
-because declining makes that question moot, and because two surfaces can share
-one prerequisite: answering yes once settles it for whatever asks next. Off a
-terminal the blocker is stated instead, since there is nobody to answer.
+only fail on it again, one link further in and a password poorer. Each link is
+asked for separately because declining one makes every question after it moot,
+and because links are shared: both vault-backed ceremonies want the same
+Bitwarden session, so once it holds the second one stops asking. Off a terminal
+the chain is stated instead, since there is nobody to answer.
 
-The command is `atyrode vault login`, which pins this fleet's EU server before
-logging in. A bare `bw login` reaches the US default and fails a first login
-with a misleading "invalid master password", so it is never the advice given.
+The session a link opens survives the rest of the run. `atyrode vault login`
+runs as its own process, so it hands its session key back through a private
+file the parent created and removes; the ceremony that follows inherits it and
+never asks for the master password a second time. The key itself is captured
+with `bw login --raw` and never displayed: a plain `bw login` ends by printing
+the key it minted as copy-paste advice, onto the terminal and into any
+transcript the operator shares.
+
+The vault command is `atyrode vault login`, which pins this fleet's EU server
+before logging in. A bare `bw login` reaches the US default and fails a first
+login with a misleading "invalid master password", so it is never the advice
+given.
 
 When an accepted ceremony stops anyway, the reason is the ceremony's own and
 the follow-up says so: `clear what it reported above, then: atyrode provision

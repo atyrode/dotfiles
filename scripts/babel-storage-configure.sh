@@ -166,14 +166,32 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# The narration this ceremony shares with the CLI that offers it. Sourced
+# rather than reimplemented: the operator is watching one machine, and a
+# ceremony that invents its own plain-white dialect is how a careful apply
+# turns into an unexplained password prompt halfway down the screen.
+# shellcheck source=/dev/null
+. "${ATYRODE_NARRATE:?the narration library was not provided}"
+# Read by confirm() in the library above, and by the refusal below, so every
+# question and every failure says which program is speaking.
+NARRATE_NAME=babel-storage-configure
+
 die() {
-  printf 'babel-storage-configure: %s\n' "$1" >&2
+  refuse "$NARRATE_NAME" "$1"
   exit 1
 }
 
 for tool in bw clever babel python3; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
+
+# Both providers are asked for a session before anything is read from either.
+# Discovering a logged-out Clever Cloud only at the add-on lookup meant
+# reporting it as "no add-on named X (is clever logged in?)" -- a guess, made
+# after the operator had already spent a master password on the vault. The
+# lookup below can then mean what it says: the add-on is genuinely not there.
+clever profile >/dev/null 2>&1 ||
+  die "Clever Cloud has no session on this machine: run 'clever login' first"
 
 # Identity is read, not invented. A machine that has already published keeps the
 # identity it published under: host generations and commit ordering are
@@ -230,7 +248,10 @@ case "$vault_status" in
   unlocked) : ;;
   locked)
     # Prompts on the terminal. The master password is never an argument and
-    # never an environment variable this script sets.
+    # never an environment variable this script sets -- and the argv goes out
+    # ahead of it, because a password prompt whose provenance an operator
+    # cannot establish is indistinguishable from one a hostile script raised.
+    show_command bw unlock --raw
     BW_SESSION="$(bw unlock --raw)" || die "vault unlock failed"
     export BW_SESSION
     ;;
@@ -250,7 +271,7 @@ esac
 # a redundant flag is exactly the kind of addition that reads as harmless.
 export BW_SESSION
 
-bw sync >/dev/null || die "vault sync failed"
+run_visible bw sync >/dev/null || die "vault sync failed"
 
 render_item='
 import json, os
@@ -477,10 +498,10 @@ catalog_ref="$catalog_addon"
 cellar_ref="$cellar_addon"
 catalog_addon="$(resolve_addon "$catalog_ref")" || true
 [ -n "$catalog_addon" ] ||
-  die "no Clever Cloud add-on named '$catalog_ref' in organisation $clever_org (is 'clever' logged in?)"
+  die "no Clever Cloud add-on named '$catalog_ref' in organisation $clever_org"
 cellar_addon="$(resolve_addon "$cellar_ref")" || true
 [ -n "$cellar_addon" ] ||
-  die "no Clever Cloud add-on named '$cellar_ref' in organisation $clever_org (is 'clever' logged in?)"
+  die "no Clever Cloud add-on named '$cellar_ref' in organisation $clever_org"
 
 # Provider credentials, read live rather than duplicated into the vault. The
 # deprecation notice clever prints on stdout would corrupt the JSON, so the
@@ -564,6 +585,10 @@ chmod 600 "$password_file"
 
 # One document, on stdin, never a file. Babel validates it and atomically
 # replaces its own mode-0600 configuration.
+# The one command in this ceremony that changes the machine. The environment
+# in front of it carries the provider credentials, so it is described rather
+# than quoted: an argv line here would print the secrets it exists to deliver.
+say 'writing the babel storage ring: babel storage configure --from-json -'
 BABEL_CATALOG_JSON="$catalog_json" \
   BABEL_CELLAR_JSON="$cellar_json" \
   BABEL_HOST_ID="$host_id" \

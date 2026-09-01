@@ -301,11 +301,24 @@ pkgs.runCommand "check-atyrode-apply"
       printf 'esac\n'
     } > "$TMPDIR/vaultbin/bw"
     chmod +x "$TMPDIR/vaultbin/bw"
+    # The second link of the babel chain. A sandbox can neither hold nor
+    # acquire a real Clever Cloud session, so the stub keeps its own: `profile`
+    # succeeds once `login` has run.
+    {
+      printf '#!%s\n' "${pkgs.runtimeShell}"
+      printf 'case "$1" in\n'
+      printf '  profile) test -e %s ;;\n' "$TMPDIR/clever-session"
+      printf '  login) touch %s ;;\n' "$TMPDIR/clever-session"
+      printf '  *) exit 1 ;;\n'
+      printf 'esac\n'
+    } > "$TMPDIR/vaultbin/clever"
+    chmod +x "$TMPDIR/vaultbin/clever"
+    touch "$TMPDIR/clever-session"
     printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
     ATYRODE_BW="$TMPDIR/vaultbin/bw" atyrode apply --repo "$HOME/nix-dotfiles" \
       >/dev/null 2>"$TMPDIR/apply-vault-out.err" ||
       { cat "$TMPDIR/apply-vault-out.err" >&2; exit 1; }
-    grep -qF 'so the ceremony cannot start until: atyrode vault login' \
+    grep -qF 'it needs a Bitwarden session first: atyrode vault login' \
       "$TMPDIR/apply-vault-out.err"
     # Never a bare `bw login`: this fleet's account is on the EU cloud, where
     # the bw default fails a first login with a misleading "invalid master
@@ -321,7 +334,7 @@ pkgs.runCommand "check-atyrode-apply"
       >/dev/null 2>"$TMPDIR/apply-vault-in.err" ||
       { cat "$TMPDIR/apply-vault-in.err" >&2; exit 1; }
     grep -qF 'Babel session archive is not configured' "$TMPDIR/apply-vault-in.err"
-    if grep -qF 'is not logged in here' "$TMPDIR/apply-vault-in.err"; then
+    if grep -qF 'needs a Bitwarden session' "$TMPDIR/apply-vault-in.err"; then
       echo 'the babel offer reported a login blocker against a reachable vault' >&2
       exit 1
     fi
@@ -331,9 +344,11 @@ pkgs.runCommand "check-atyrode-apply"
     # cannot finish; the offer is separate from the surface's own because
     # answering no here makes that question moot.
     printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
-    blocker_no="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" \
+    blocker_no="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" ATYRODE_CLEVER="$TMPDIR/vaultbin/clever" \
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
-    grep -qF 'Babel session archive needs atyrode vault login first; run it now?' <<<"$blocker_no" \
+    grep -qF 'Babel session archive needs a Bitwarden session, and without it' <<<"$blocker_no" \
+      || { echo "a blocker must say what declining costs: $blocker_no" >&2; exit 1; }
+    grep -qF 'run atyrode vault login now?' <<<"$blocker_no" \
       || { echo "a blocker must be offered, not recited: $blocker_no" >&2; exit 1; }
     grep -qF 'stays unconfigured until atyrode vault login runs' <<<"$blocker_no" \
       || { echo 'declining a prerequisite must say what it leaves behind' >&2; exit 1; }
@@ -346,7 +361,7 @@ pkgs.runCommand "check-atyrode-apply"
     # the resolved store path: the operator was asked about `atyrode vault
     # login`, so that is what the transcript has to show starting.
     printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
-    blocker_yes="$(printf 'y\ny\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" \
+    blocker_yes="$(printf 'y\ny\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" ATYRODE_CLEVER="$TMPDIR/vaultbin/clever" \
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
     grep -qE '^  \$ atyrode vault login$' <<<"$blocker_yes" \
       || { echo "the prerequisite must be announced as it was offered: $blocker_yes" >&2; exit 1; }
@@ -354,6 +369,31 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'the announcement must not disagree with the question above it' >&2
       exit 1
     fi
+    # Prerequisites waterfall in declared order, each offered on its own with
+    # what declining costs, and the surface only asked about once every link
+    # holds. Both links are settled here, then the surface itself is declined,
+    # which proves the chain never runs a ceremony the operator did not accept.
+    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
+    rm -f "$TMPDIR/clever-session"
+    chain_out="$(printf 'y\ny\nn\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" \
+      ATYRODE_CLEVER="$TMPDIR/vaultbin/clever" atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
+    grep -qF 'needs a Clever Cloud session, and without it the archive add-ons cannot be looked up' <<<"$chain_out" \
+      || { echo "the second link must be offered with its cost: $chain_out" >&2; exit 1; }
+    grep -qE '^  \$ clever login$' <<<"$chain_out" \
+      || { echo "the clever login must be announced as offered: $chain_out" >&2; exit 1; }
+    test -e "$TMPDIR/clever-session" \
+      || { echo 'accepting the clever link must actually run the login' >&2; exit 1; }
+    vault_line="$(grep -nF '$ atyrode vault login' <<<"$chain_out" | head -1 | cut -d: -f1)"
+    clever_line="$(grep -nF '$ clever login' <<<"$chain_out" | head -1 | cut -d: -f1)"
+    test "$vault_line" -lt "$clever_line" \
+      || { echo 'links must be offered in declared order' >&2; exit 1; }
+    grep -qF 'run atyrode provision babel for alex-x86_64-linux now?' <<<"$chain_out" \
+      || { echo 'once every link holds the surface itself is offered' >&2; exit 1; }
+    if grep -qF 'babel-storage-configure' <<<"$chain_out"; then
+      echo 'declining the surface must not run the ceremony' >&2
+      exit 1
+    fi
+    touch "$TMPDIR/clever-session"
     rm -f "$XDG_CONFIG_HOME/babel/storage.json" \
       "$XDG_STATE_HOME/atyrode/provisioning-declined"
 
@@ -364,6 +404,7 @@ pkgs.runCommand "check-atyrode-apply"
     # stops being a free variable here.
     printf '%s\n' '{"status":"unlocked"}' > "$TMPDIR/bw-status.json"
     export ATYRODE_BW="$TMPDIR/vaultbin/bw"
+    export ATYRODE_CLEVER="$TMPDIR/vaultbin/clever"
 
     # Transparency is a contract, not a courtesy. An operator watching an apply
     # has to be able to see what it will do, what it is doing and why, and

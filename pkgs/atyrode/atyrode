@@ -15,6 +15,7 @@ readonly registry='@registry@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly babel_storage_configure='@babel_storage_configure@'
+readonly babel_clever='@babel_clever@'
 readonly atyrode_runtime='@atyrode_runtime@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
@@ -47,6 +48,11 @@ apply_job_worker=0
 # checks worse. ShellCheck cannot follow a computed source, so it would see
 # every global above as unused and every function below as undefined, which is
 # the entire class of mistake it is here to catch.
+# narrate.sh first: it is the one module the ceremonies also source, so the CLI
+# and every program it hands the terminal to speak in the same voice. core.sh
+# then points its log hook at the run log.
+# shellcheck source=lib/narrate.sh
+. "$lib_dir/narrate.sh"
 # shellcheck source=lib/core.sh
 . "$lib_dir/core.sh"
 # shellcheck source=lib/hosts.sh

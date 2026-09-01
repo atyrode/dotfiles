@@ -59,7 +59,20 @@ vault_open_session() {
   if [[ "$status" == unauthenticated && "$allow_login" == 1 ]]; then
     interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
     vault_ensure_server
-    bw_visible login >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden login failed"
+    # --raw, because a plain `bw login` ends by printing the session key it
+    # just minted, three times, as copy-paste advice -- onto the terminal, into
+    # the scrollback, and into any transcript the operator shares. It is the
+    # one secret this whole flow exists to protect. --raw emits it on stdout
+    # and nothing else, so it is captured here and never displayed, and the
+    # vault it leaves open is the session the rest of the run uses rather than
+    # a second master-password prompt.
+    vault_session="$(bw_visible login --raw)" ||
+      die "$EX_UNAVAILABLE" "Bitwarden login failed"
+    if [[ -n "$vault_session" ]]; then
+      export BW_SESSION="$vault_session"
+      vault_unlocked_here=1
+      return 0
+    fi
     status="$(vault_status_value)"
   fi
   case "$status" in
@@ -212,10 +225,27 @@ cmd_vault() {
       if [[ "$status" == unauthenticated ]]; then
         interactive || die "$EX_UNAVAILABLE" "Bitwarden login requires an interactive terminal"
         vault_ensure_server
-        bw_visible login || die "$EX_UNAVAILABLE" "Bitwarden login failed"
+        vault_session="$(bw_visible login --raw)" ||
+          die "$EX_UNAVAILABLE" "Bitwarden login failed"
+        printf 'atyrode: Bitwarden logged in and unlocked\n'
+      elif [[ "$status" == locked ]]; then
+        vault_session="$(bw_visible unlock --raw)" ||
+          die "$EX_UNAVAILABLE" "Bitwarden unlock failed"
+        printf 'atyrode: Bitwarden vault unlocked\n'
       else
         printf 'atyrode: Bitwarden is already %s\n' "$status"
       fi
+      # A session key dies with the process that minted it, so a caller that
+      # spawned this one would have to ask for the master password all over
+      # again for the very next command. When it named a file to receive the
+      # key, hand it over there: a private file the caller created and deletes,
+      # never a pipe, an argument, or a line on this terminal.
+      if [[ -n "${ATYRODE_VAULT_SESSION_OUT:-}" && -n "$vault_session" ]]; then
+        [[ -f "$ATYRODE_VAULT_SESSION_OUT" && ! -L "$ATYRODE_VAULT_SESSION_OUT" ]] ||
+          die "$EX_SOFTWARE" "session handoff path is not a private regular file"
+        printf '%s' "$vault_session" >"$ATYRODE_VAULT_SESSION_OUT"
+      fi
+      vault_session=""
       ;;
     lock)
       [[ $# == 0 ]] || die "$EX_USAGE" "vault lock takes no arguments"

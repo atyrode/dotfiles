@@ -18,6 +18,7 @@ in
   # The seed ships from the Nix store but stays overridable so the check can
   # exercise it against a fixture file.
   text = ''
+    export ATYRODE_NARRATE=${../../pkgs/atyrode/lib/narrate.sh}
     : "''${CODEX_SEED_FILE:=${seedConfig}}"
     export CODEX_SEED_FILE
   ''

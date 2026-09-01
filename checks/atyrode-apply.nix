@@ -293,7 +293,12 @@ pkgs.runCommand "check-atyrode-apply"
     mkdir -p "$TMPDIR/vaultbin"
     {
       printf '#!%s\n' "${pkgs.runtimeShell}"
-      printf 'cat %s\n' "$TMPDIR/bw-status.json"
+      printf 'case "$1" in\n'
+      printf '  status) cat %s ;;\n' "$TMPDIR/bw-status.json"
+      printf '  config) printf %s ;;\n' "'https://vault.bitwarden.eu'"
+      printf '  login) printf %s > %s ;;\n' "'{\"status\":\"unlocked\"}'" "$TMPDIR/bw-status.json"
+      printf '  *) exit 1 ;;\n'
+      printf 'esac\n'
     } > "$TMPDIR/vaultbin/bw"
     chmod +x "$TMPDIR/vaultbin/bw"
     printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
@@ -320,6 +325,45 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'the babel offer reported a login blocker against a reachable vault' >&2
       exit 1
     fi
+
+    # A prerequisite this CLI owns is something to offer, not homework to set.
+    # Declining leaves the surface alone and never starts a ceremony that
+    # cannot finish; the offer is separate from the surface's own because
+    # answering no here makes that question moot.
+    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
+    blocker_no="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" \
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
+    grep -qF 'Babel session archive needs atyrode vault login first; run it now?' <<<"$blocker_no" \
+      || { echo "a blocker must be offered, not recited: $blocker_no" >&2; exit 1; }
+    grep -qF 'stays unconfigured until atyrode vault login runs' <<<"$blocker_no" \
+      || { echo 'declining a prerequisite must say what it leaves behind' >&2; exit 1; }
+    if grep -qF 'babel-storage-configure' <<<"$blocker_no"; then
+      echo 'declining the prerequisite must not start the ceremony anyway' >&2
+      exit 1
+    fi
+
+    # Accepting runs it here, announced by the name the offer used rather than
+    # the resolved store path: the operator was asked about `atyrode vault
+    # login`, so that is what the transcript has to show starting.
+    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
+    blocker_yes="$(printf 'y\ny\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" \
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
+    grep -qE '^  \$ atyrode vault login$' <<<"$blocker_yes" \
+      || { echo "the prerequisite must be announced as it was offered: $blocker_yes" >&2; exit 1; }
+    if grep -qE '^  \$ /nix/store/[a-z0-9]{32}-atyrode' <<<"$blocker_yes"; then
+      echo 'the announcement must not disagree with the question above it' >&2
+      exit 1
+    fi
+    rm -f "$XDG_CONFIG_HOME/babel/storage.json" \
+      "$XDG_STATE_HOME/atyrode/provisioning-declined"
+
+    # The CLI carries its own bw, and a sandbox has no session, so every
+    # vault-backed surface below would otherwise be offered its login first.
+    # That is the right behaviour and it is asserted directly above; the
+    # scenarios that follow are about the surfaces themselves, so the vault
+    # stops being a free variable here.
+    printf '%s\n' '{"status":"unlocked"}' > "$TMPDIR/bw-status.json"
+    export ATYRODE_BW="$TMPDIR/vaultbin/bw"
 
     # Transparency is a contract, not a courtesy. An operator watching an apply
     # has to be able to see what it will do, what it is doing and why, and

@@ -231,13 +231,26 @@ archive push`, and an archive that has not succeeded within 48 hours is
 reported stale. None of this can fail the activation: a machine that declines
 to provision is still a machine that activated.
 
-An offer states the prerequisites it knows about before asking, because the
-question is only fair if the answer can work. The Babel ceremony ends at a
-master-password prompt, so a machine whose Bitwarden CLI is not logged in is
-told that first, and told the command that fixes it — `atyrode vault login`,
-which pins this fleet's EU server before logging in. A bare `bw login` reaches
-the US default and fails a first login with a misleading "invalid master
-password", so it is never the advice given.
+An offer resolves the prerequisites it knows about before asking about the
+surface, because a question is only fair if the answer can work. The Babel and
+Git ceremonies both read Bitwarden, so a machine whose vault has no session at
+all has an earlier blocker than the one being offered. On a terminal that
+blocker becomes its own offer rather than an instruction:
+
+```
+atyrode: Babel session archive needs atyrode vault login first; run it now? [y/N]
+```
+
+Telling an operator who is sitting at the prompt to go and type a command this
+CLI owns wastes the one moment they are there to answer, and the ceremony would
+only fail on it again. It is asked separately from the surface's own offer
+because declining makes that question moot, and because two surfaces can share
+one prerequisite: answering yes once settles it for whatever asks next. Off a
+terminal the blocker is stated instead, since there is nobody to answer.
+
+The command is `atyrode vault login`, which pins this fleet's EU server before
+logging in. A bare `bw login` reaches the US default and fails a first login
+with a misleading "invalid master password", so it is never the advice given.
 
 When an accepted ceremony stops anyway, the reason is the ceremony's own and
 the follow-up says so: `clear what it reported above, then: atyrode provision

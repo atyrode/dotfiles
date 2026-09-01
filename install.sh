@@ -1131,6 +1131,12 @@ report_managed_failure() {
     # After the trust-anchor check and never before it: a machine that cannot
     # verify TLS also fails to build, and that one is repairable here.
     if detect_configuration_build_failure "$log"; then
+      # The marker exists to warn that a run stopped somewhere between the
+      # first mutation and the last. This run made none, so leaving it behind
+      # opens every later bootstrap with a warning about a machine that was
+      # never touched -- and tells the operator to re-run the very command
+      # they are running.
+      clear_interrupted_marker
       fail BOOT-E304 \
         "$step failed because the configuration did not build${FAILED_DERIVATION:+, at $FAILED_DERIVATION}, so nothing was activated and this machine is unchanged" \
         "the same build fails on every machine, so resetting Nix here cannot help: report the build error in the log below, and re-run bootstrap once the configuration builds"

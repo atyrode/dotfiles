@@ -20,6 +20,16 @@ bw_cli() { "$(bw_program)" "$@"; }
 bw_show() { show_command "$(bw_program)" "$@"; }
 bw_visible() { run_visible "$(bw_program)" "$@"; }
 
+# Whether this machine has no Bitwarden session at all. A locked vault is not
+# this state: a ceremony can unlock that by asking for the master password, but
+# it cannot log in for the first time, because that needs the server and the
+# account settled before any prompt makes sense. Read softly -- no vault, no
+# bw, no opinion -- since every caller is deciding whether to offer something,
+# not diagnosing a fault.
+vault_logged_out() {
+  [[ "$(bw_cli status 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)" == unauthenticated ]]
+}
+
 # The operator's Bitwarden account lives on the EU cloud. The bw CLI defaults
 # to vault.bitwarden.com and then fails a first login on a fresh machine with
 # a misleading "invalid master password", so pin the server before any login.

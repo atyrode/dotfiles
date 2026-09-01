@@ -78,8 +78,11 @@ provisioning_clear_decline() { # id
 #   incomplete     applicable and unconfigured; apply offers the ceremony
 #   declined       unconfigured because the operator said no, and it is recorded
 #   not-applicable this machine cannot have it at all
-provisioning_check_add() { # id status code summary remediation
-  local id="$1" status="$2" code="$3" summary="$4" remediation="$5"
+# The blocker is a prerequisite command this surface cannot start without. It
+# travels as data rather than only as prose because the two readers want
+# different things from it: doctor states it, and apply offers to run it.
+provisioning_check_add() { # id status code summary remediation [blocker]
+  local id="$1" status="$2" code="$3" summary="$4" remediation="$5" blocker="${6:-}"
 
   provisioning_checks="$(jq -c \
     --arg id "$id" \
@@ -91,6 +94,7 @@ provisioning_check_add() { # id status code summary remediation
     --arg code "$code" \
     --arg summary "$summary" \
     --arg remediation "$remediation" \
+    --arg blocker "$blocker" \
     '. + [{
       id: $id,
       label: $label,
@@ -100,7 +104,8 @@ provisioning_check_add() { # id status code summary remediation
       status: $status,
       code: (if $code == "" then null else $code end),
       summary: $summary,
-      remediation: (if $remediation == "" then null else $remediation end)
+      remediation: (if $remediation == "" then null else $remediation end),
+      blocker: (if $blocker == "" then null else $blocker end)
     }]' <<<"$provisioning_checks")"
 }
 
@@ -108,12 +113,12 @@ provisioning_check_add() { # id status code summary remediation
 # already answered, and repeating the question as a finding is how a diagnostic
 # becomes noise. It is still listed, because "what is missing here" has to
 # include the things missing on purpose.
-provisioning_unconfigured() { # id summary
+provisioning_unconfigured() { # id summary [blocker]
   if provisioning_declined "$1"; then
     provisioning_check_add "$1" declined declined-by-operator \
       "$2" "reconsider by running the command; that clears the decline"
   else
-    provisioning_check_add "$1" incomplete not-configured "$2" ""
+    provisioning_check_add "$1" incomplete not-configured "$2" "" "${3:-}"
   fi
 }
 
@@ -137,12 +142,32 @@ collect_provisioning_checks() {
 # refusals, and none of them may end an apply that has already activated.
 #
 # Shown, because it is a whole second program: everything printed after this
-# line belongs to that child process, and an operator who wants to retry the
-# ceremony alone needs exactly this argv.
-provision_now() { # target
-  local target="$1" self
+# line belongs to that child process, and an operator who wants to run it alone
+# needs exactly this argv. Announced by the name the offer just used rather
+# than the resolved store path: both start the same program, but only one is
+# what an operator types, and a line that disagrees with the question above it
+# is worse than no line at all. The resolution goes to the log, which is where
+# the exact binary matters.
+run_self_visible() { # argv...
+  local self
   self="$(atyrode_self)" || return "$EX_UNAVAILABLE"
-  run_visible "$self" provision "$target"
+  show_command atyrode "$@"
+  log_event "atyrode resolved to $self"
+  "$self" "$@"
+}
+
+provision_now() { # target
+  run_self_visible provision "$1"
+}
+
+# A prerequisite is reached by name, exactly as the ceremonies are: deriving
+# argv by splitting the policy string would make the inventory executable, and
+# an inventory that can run anything is not an inventory.
+provisioning_run_blocker() { # blocker
+  case "$1" in
+    'atyrode vault login') run_self_visible vault login ;;
+    *) die "$EX_SOFTWARE" "no prerequisite is wired for $1" ;;
+  esac
 }
 
 # What apply does with each surface, and why the three answers differ:
@@ -219,7 +244,7 @@ review_degraded_surface() { # json index
 # cannot leave the machine in two different states. Off a terminal the same
 # facts are printed without a question, because there is nobody to answer it.
 review_incomplete_surface() { # index host
-  local id label surface_command implies declinable summary
+  local id label surface_command implies declinable summary blocker
 
   id="$(jq -r ".[$1].id" <<<"$provisioning_checks")"
   label="$(jq -r ".[$1].label" <<<"$provisioning_checks")"
@@ -227,12 +252,30 @@ review_incomplete_surface() { # index host
   implies="$(jq -r ".[$1].implies" <<<"$provisioning_checks")"
   declinable="$(jq -r ".[$1].declinable" <<<"$provisioning_checks")"
   summary="$(jq -r ".[$1].summary" <<<"$provisioning_checks")"
+  blocker="$(jq -r ".[$1].blocker // empty" <<<"$provisioning_checks")"
 
   printf '%s is not configured: %s\n' "$label" "$summary" >&2
   printf '  %s\n' "$implies" >&2
   if ! interactive; then
     printf '  configure with: %s\n' "$surface_command" >&2
     return 0
+  fi
+  # A prerequisite is something to offer, not homework to set. Telling an
+  # operator at a terminal to go and type a command this CLI owns wastes the
+  # one moment they are here to answer, and the ceremony would only fail on it
+  # again. Asked separately from the surface because declining it makes the
+  # surface question moot, and because two surfaces can share one prerequisite:
+  # answering yes once settles it for whatever asks next.
+  if [[ -n "$blocker" ]]; then
+    if ! confirm "$label needs $blocker first; run it now?"; then
+      printf '  skipped; %s stays unconfigured until %s runs.\n' "$label" "$blocker" >&2
+      return 0
+    fi
+    if ! provisioning_run_blocker "$blocker"; then
+      printf '  that did not complete; %s stays unconfigured.\n' "$label" >&2
+      printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
+      return 0
+    fi
   fi
   # The prompt names the machine, not just the command: these ceremonies write
   # a per-machine identity, and an operator with several hosts open should

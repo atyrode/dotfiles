@@ -190,11 +190,18 @@ constraints:
 
 Detection runs in `preflight`. `plan` lists each repair, and `apply` performs
 it with explicit privilege after confirmation, immediately before the step it
-unblocks. Three of the five repairs exist to unblock the upstream installer,
+unblocks. Three of the six repairs exist to unblock the upstream installer,
 so they are only evaluated while Nix is missing. The `/etc` sweep and the
 trust-anchor restore are not among them: they repair Nix itself, run whether
 or not Nix is installed, and a machine whose Nix cannot verify TLS is exactly
 the machine that needs them.
+
+The sixth is the other way around: it unblocks nix-darwin, and the state it
+repairs is one the Nix installer creates. On a machine that has no Nix yet it
+does not exist at preflight, so it is re-derived after the installer runs and
+the plan states it as part of the install step. Repairs are re-derived, never
+carried, precisely so a step that changes the machine cannot leave a plan
+describing the machine as it used to be.
 
 | State | Repair |
 | --- | --- |
@@ -203,6 +210,7 @@ the machine that needs them.
 | A TLS trust anchor this machine reads is not a usable CA bundle | Point it at the CA bundle in the Nix profile; archive the original |
 | `/etc/fstab` names a `/nix` volume UUID that no longer resolves | Drop the line; archive the file first |
 | An orphaned `Nix Store` volume exists | Rename it so the installer creates a fresh one |
+| A shell rc file nix-darwin manages holds the Nix installer's block | Move it to `<file>.before-nix-darwin`, where nix-darwin puts it too |
 
 The volume repair renames rather than deletes. The installer finds volumes by
 label, so a rename is enough to route it onto its well-tested fresh-create
@@ -227,6 +235,32 @@ crashes. It is deleted instead — the store-database check has already proved
 no live install is on it, and every path in a Nix store re-downloads. Deletion
 is the one irreversible repair, so the run prints the reason it could not
 mount rather than only what it did.
+
+nix-darwin refuses to activate when an `/etc` file it manages holds content it
+does not recognise, and prints the paths it refused. The Nix installer creates
+exactly that state: it appends its block to the shell rc files nix-darwin also
+owns. The refusal is a review gate rather than a disagreement about the
+outcome — nix-darwin's own `/etc` activation moves any conflicting file to
+`<file>.before-nix-darwin` one step later. Bootstrap performs that same move
+before activation, so the end state matches a successful activation exactly
+and the review happens in the plan instead of as an abort half an hour into a
+build.
+
+Only a regular file carrying the installer's `# End Nix` marker is moved. A
+link is either nix-darwin's own path into `/etc/static` or someone else's
+redirection, and neither is a file bootstrap wrote. Where
+`<file>.before-nix-darwin` already exists it holds the pre-nix-darwin
+original, which is worth more than the installer's copy: that copy is archived
+under the repairs directory and the original is left where it is.
+
+A file bootstrap did not write is not bootstrap's to move, so activation can
+still refuse. That refusal is read from the transcript of the step that
+reported it — the list nix-darwin prints is generated from its own managed
+set, which is a fact no inspection here could establish — and each named path
+is checked to be still present before it is reported. Every file bootstrap
+does move is already moved by then, so a name that survives to that point is
+one the operator owns, and the remedy is their command rather than another
+run.
 
 The `/etc` sweep is recursive because nix-darwin owns nested paths the same
 way it owns top-level ones. `/etc/ssl/certs/ca-certificates.crt` is the one
@@ -284,11 +318,13 @@ is the request for the repair that should.
 | `BOOT-E213` | The orphaned volume could not be renamed |
 | `BOOT-E214` | A TLS trust anchor could not be restored |
 | `BOOT-E215` | The orphaned volume could neither be mounted to rename nor deleted |
+| `BOOT-E216` | A shell rc file could not be moved aside for nix-darwin |
 | `BOOT-E220` | Recovery could not archive or remove the nix-daemon LaunchDaemon |
 | `BOOT-E221` | Recovery could not archive or remove `/etc/nix` |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |
 | `BOOT-E301` | A managed step failed and a TLS trust anchor this machine reads is not a usable CA bundle |
 | `BOOT-E302` | The same, but the path is not bootstrap's to replace |
+| `BOOT-E303` | nix-darwin refused to overwrite an `/etc` file whose content is not bootstrap's to move |
 | `BOOT-E399` | A managed step failed in a way bootstrap does not recognise yet |
 
 `BOOT-E2xx` covers Nix installation, `BOOT-E3xx` the managed steps that follow
@@ -310,14 +346,22 @@ other.
 
 ## Run logs
 
-`apply` writes a timestamped transcript per run, and the upstream installer's
-own output beside it:
+`apply` writes a timestamped transcript per run, the upstream installer's own
+output beside it, and one per managed step:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/logs/
 ├── 20260831T161500Z-apply.log
-└── 20260831T161500Z-apply-nix-installer.log
+├── 20260831T161500Z-apply-nix-installer.log
+├── 20260831T161500Z-apply-evaluation.log
+├── 20260831T161500Z-apply-activation.log
+└── 20260831T161500Z-apply-verification.log
 ```
+
+A managed step's own output is the only place some states are ever stated —
+the paths nix-darwin refuses to overwrite are printed by nix-darwin and
+nowhere else — so the step that fails is also the step whose transcript the
+classifier reads. It is the same file the operator is asked to send.
 
 Failures print the log path. Logging never fails a run: a machine too broken
 to write state is still allowed to attempt its own repair.
@@ -387,10 +431,11 @@ login-shell recovery, unsafe state types, production-only test-hook gating,
 and idempotence. The macOS repairs are covered on every platform: the states
 they fix cannot be built on a Linux runner, so the check forces the platform
 through a test-hook override and stages the machine behind `diskutil`,
-`launchctl`, and `plutil` stand-ins — including a `/etc` that is reached
-through a symlink and a launchd plist that is not readable as text, because a
-fixture that is easier than the platform tests nothing. The same check runs
-natively in all three CI jobs.
+`launchctl`, `security`, and `plutil` stand-ins — including a `/etc` that is
+reached through a symlink, a keychain that refuses an unprivileged read, and a
+launchd plist that is not readable as text, because a fixture that is easier
+than the platform tests nothing. The same check runs natively in all three CI
+jobs.
 
 `checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed

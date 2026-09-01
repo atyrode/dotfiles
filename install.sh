@@ -40,8 +40,55 @@ ORPHANED_NIX_VOLUME_UUID=""
 MOUNT_FAILURE=""
 RUN_LOG=""
 
+# Colour is a reading aid, never data. It is on only where the stream is a
+# terminal and the environment permits it, so pipes, redirects, and the check
+# harness receive exactly the bytes they assert on. Same gate and same palette
+# as the atyrode CLI, so one machine speaks with one voice: 1 bold, 2 dim,
+# 33 warning, 36 a value or a path, 1;36 a command to type, 1;31 a failure,
+# 1;32 a success.
+COLOR_OUT=0
+COLOR_ERR=0
+init_color() {
+  if [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_TEST_COLOR:-}" ]]; then
+    if [[ "$BOOTSTRAP_TEST_COLOR" == 1 ]]; then
+      COLOR_OUT=1
+      COLOR_ERR=1
+    fi
+    return 0
+  fi
+  [[ -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]] || return 0
+  [[ ! -t 1 ]] || COLOR_OUT=1
+  [[ ! -t 2 ]] || COLOR_ERR=1
+  return 0
+}
+
+# Two painters rather than one, because the two streams are decided separately:
+# `plan | less` must stay plain while a failure on the terminal beside it stays
+# red. Both degrade to bare text, so no message depends on colour to be read.
+paint() {
+  local code="$1"
+
+  shift
+  if [[ "$COLOR_OUT" == 1 ]]; then
+    printf '\033[%sm%s\033[0m' "$code" "$*"
+  else
+    printf '%s' "$*"
+  fi
+}
+
+paint_err() {
+  local code="$1"
+
+  shift
+  if [[ "$COLOR_ERR" == 1 ]]; then
+    printf '\033[%sm%s\033[0m' "$code" "$*"
+  else
+    printf '%s' "$*"
+  fi
+}
+
 die() {
-  printf 'bootstrap: %s\n' "$*" >&2
+  printf '%s %s\n' "$(paint_err '1;31' 'bootstrap:')" "$*" >&2
   return 1
 }
 
@@ -52,10 +99,12 @@ die() {
 fail() {
   local code="$1" message="$2" remedy="${3:-}"
 
-  printf 'bootstrap: [%s] %s\n' "$code" "$message" >&2
-  [[ -z "$remedy" ]] || printf '  next: %s\n' "$remedy" >&2
-  [[ -z "$RUN_LOG" ]] || printf '  log: %s\n' "$RUN_LOG" >&2
-  printf '  unrecognised states belong at %s, with the code and the log.\n' "$ISSUE_URL" >&2
+  printf '%s %s %s\n' "$(paint_err '1;31' 'bootstrap:')" \
+    "$(paint_err '1;31' "[$code]")" "$message" >&2
+  [[ -z "$remedy" ]] || printf '  %s %s\n' "$(paint_err 1 'next:')" "$remedy" >&2
+  [[ -z "$RUN_LOG" ]] || printf '  %s %s\n' "$(paint_err 2 'log:')" "$(paint_err 36 "$RUN_LOG")" >&2
+  printf '  %s\n' \
+    "$(paint_err 2 "unrecognised states belong at $ISSUE_URL, with the code and the log.")" >&2
   log_event "failed $code: $message"
   return 1
 }
@@ -391,8 +440,10 @@ warn_if_interrupted() {
       started=*) started="${line#started=}" ;;
     esac
   done <"$marker"
-  printf 'bootstrap: warning: previous apply of %s (started %s) was interrupted; state is safe — re-run: ./install.sh apply --config %s\n' \
-    "${config:-unknown}" "${started:-unknown}" "${config:-$FLAKE_CONFIG}" >&2
+  printf '%s %s %s\n' "$(paint_err 33 'bootstrap: warning:')" \
+    "$(printf 'previous apply of %s (started %s) was interrupted; state is safe — re-run:' \
+      "${config:-unknown}" "${started:-unknown}")" \
+    "$(paint_err '1;36' "./install.sh apply --config ${config:-$FLAKE_CONFIG}")" >&2
 }
 
 # The upstream multi-user installer backs each shell rc file up to
@@ -446,11 +497,12 @@ repair_shell_profile_backups() {
       superseded="$target.nix-install-leftover"
       run_privileged mv -f "$target" "$superseded" ||
         die "could not set aside $target"
-      printf 'Kept the interrupted install'"'"'s %s as %s\n' "$target" "$superseded"
+      printf '%s the interrupted install'"'"'s %s as %s\n' "$(paint 32 'Kept')" \
+        "$target" "$superseded"
     fi
     run_privileged mv "$backup" "$target" ||
       die "could not restore $backup to $target"
-    printf 'Restored %s from %s\n' "$target" "$backup"
+    printf '%s %s from %s\n' "$(paint 32 'Restored')" "$target" "$backup"
   done
 }
 
@@ -504,7 +556,7 @@ repair_unrecognised_etc_profiles() {
         fail BOOT-E216 "could not remove $target" "restore it from $archive"
       journal_repair "archived $target; $moved already held the pre-nix-darwin original" \
         "cp '$archive' '$target'"
-      printf 'Archived %s at %s: %s already holds the original.\n' \
+      printf '%s %s at %s: %s already holds the original.\n' "$(paint 32 'Archived')" \
         "$target" "$archive" "$moved"
     else
       run_privileged mv "$target" "$moved" ||
@@ -512,7 +564,7 @@ repair_unrecognised_etc_profiles() {
           "move it by hand: sudo mv $target $moved"
       journal_repair "moved $target to $moved so nix-darwin can manage the path" \
         "mv '$moved' '$target'"
-      printf 'Moved %s to %s: nix-darwin manages that path and refuses to\n' "$target" "$moved"
+      printf '%s %s to %s: nix-darwin manages that path and refuses to\n' "$(paint 32 'Moved')" "$target" "$moved"
       printf '  overwrite a file it does not recognise. Nothing was deleted.\n'
     fi
   done
@@ -644,7 +696,7 @@ repair_stale_etc_links() {
       fail BOOT-E210 "could not remove the dangling link $entry" \
         "remove it by hand: sudo rm $entry"
     journal_repair "removed dangling $entry -> $target" "ln -s '$target' '$entry'"
-    printf 'Removed dangling %s (pointed into a store that no longer exists)\n' "$entry"
+    printf '%s dangling %s (pointed into a store that no longer exists)\n' "$(paint 32 'Removed')" "$entry"
   done
 }
 
@@ -785,14 +837,14 @@ repair_broken_trust_anchors() {
         fail BOOT-E214 "could not remove the unusable trust anchor $path" \
           "remove it by hand: sudo rm $path"
       journal_repair "archived unusable trust anchor $path" "cp '$archive' '$path'"
-      printf 'Archived unusable %s at %s\n' "$path" "$archive"
+      printf '%s unusable %s at %s\n' "$(paint 32 'Archived')" "$path" "$archive"
     fi
     run_privileged ln -sfn "$bundle" "$path" ||
       fail BOOT-E214 "could not restore the TLS trust anchor $path" \
         "link it by hand: sudo ln -sfn $bundle $path"
     journal_repair "restored trust anchor $path -> $bundle (named by $source)" \
       "rm -f '$path'"
-    printf 'Restored %s -> %s (named by %s)\n' "$path" "$bundle" "$source"
+    printf '%s %s -> %s (named by %s)\n' "$(paint 32 'Restored')" "$path" "$bundle" "$source"
   done
 }
 
@@ -849,7 +901,7 @@ repair_stale_fstab_entry() {
   fi
   rm -f "$temporary"
   journal_repair "dropped the dead /nix entry from $fstab" "cp '$archive' '$fstab'"
-  printf 'Dropped the stale /nix entry from %s (archived at %s)\n' "$fstab" "$archive"
+  printf '%s the stale /nix entry from %s (archived at %s)\n' "$(paint 32 'Dropped')" "$fstab" "$archive"
 }
 
 # An orphaned "Nix Store" volume is what makes the upstream installer take its
@@ -939,7 +991,7 @@ retire_nix_volume() {
       "run: sudo diskutil rename $volume '$renamed'"
   journal_repair "renamed orphaned volume $volume to '$renamed'" \
     "diskutil rename '$volume' '$NIX_VOLUME_LABEL'"
-  printf 'Renamed the orphaned volume %s to "%s"\n' "$volume" "$renamed"
+  printf '%s the orphaned volume %s to "%s"\n' "$(paint 32 'Renamed')" "$volume" "$renamed"
   printf '  Nothing on it was deleted. Reclaim the space once the install works:\n'
   printf '    sudo diskutil apfs deleteVolume %s\n' "$volume"
   # Leave it as it was found: a volume that was not mounted must not end up
@@ -1060,20 +1112,37 @@ report_managed_failure() {
   fi
 }
 
-# The step's own output is the only place some states are ever stated - and
-# it is the log the operator is asked to send, so keeping it beside the run
-# log costs one file and saves a round trip. Same shape as the installer
-# transcript, for the same reason.
+# A managed step's output is evidence, and its stdio is also a conversation:
+# activation asks for sudo, for the vault password, and whether to provision
+# each surface it found unconfigured. Capturing the stream costs every one of
+# those, because a pipe is not a terminal and the CLI gates its prompts on
+# having one. So capture only when there is no terminal to lose - which is
+# exactly when there is nobody to ask. On a terminal the operator is the
+# transcript, and the run log records where the output went instead of a copy
+# of it; a step that fails there is classified from machine state, which is
+# what the trust-anchor and volume codes were already derived from.
 run_managed_step() {
   local label="$1" transcript
 
   shift
+  if step_can_converse; then
+    log_event "$label streamed to the operator terminal; no transcript was captured"
+    "$@" || report_managed_failure "$label"
+    return
+  fi
   if [[ -n "$RUN_LOG" ]]; then
     transcript="${RUN_LOG%.log}-$label.log"
   else
     transcript="$(mktemp "${TMPDIR:-/tmp}/atyrode-$label.XXXXXX")"
   fi
   "$@" 2>&1 | tee "$transcript" || report_managed_failure "$label" "$transcript"
+}
+
+# The same predicate the CLI applies to decide whether it may hold a dialogue,
+# asked here so bootstrap does not hand it a stream that makes the answer no.
+step_can_converse() {
+  [[ "$BOOTSTRAP_TEST_HOOKS" == 1 && -n "${BOOTSTRAP_TEST_TTY:-}" ]] && return 0
+  [[ -t 0 && -t 1 ]]
 }
 
 preflight() {
@@ -1118,34 +1187,35 @@ preflight() {
 
   warn_if_interrupted
 
-  printf 'Preflight passed\n'
-  printf '  system: %s\n' "$SYSTEM"
-  printf '  configuration: %s\n' "$FLAKE_CONFIG"
-  printf '  repository: %s\n' "$DOTFILES_DIR"
-  printf '  revision: %s\n' "$(git -C "$DOTFILES_DIR" rev-parse --short=12 HEAD)"
+  printf '%s\n' "$(paint '1;32' 'Preflight passed')"
+  printf '  %s %s\n' "$(paint 2 'system:')" "$(paint 36 "$SYSTEM")"
+  printf '  %s %s\n' "$(paint 2 'configuration:')" "$(paint 36 "$FLAKE_CONFIG")"
+  printf '  %s %s\n' "$(paint 2 'repository:')" "$(paint 36 "$DOTFILES_DIR")"
+  printf '  %s %s\n' "$(paint 2 'revision:')" \
+    "$(paint 36 "$(git -C "$DOTFILES_DIR" rev-parse --short=12 HEAD)")"
 }
 
 print_plan() {
   local step=1 target line path printed
 
-  printf '\nPlan\n'
+  printf '\n%s\n' "$(paint 1 'Plan')"
   if [[ "$UPDATE_SOURCE" -eq 1 ]]; then
-    printf '  %s. Fetch the verified origin and fast-forward main.\n' "$step"
+    printf '  %s. Fetch the verified origin and fast-forward main.\n' "$(paint 1 "$step")"
     step=$((step + 1))
   fi
   if [[ "${#STALE_PROFILE_BACKUPS[@]}" -gt 0 ]]; then
     printf '  %s. Restore the pre-Nix shell rc file an interrupted Nix install left backed up:\n' \
-      "$step"
+      "$(paint 1 "$step")"
     for target in "${STALE_PROFILE_BACKUPS[@]}"; do
-      printf '       %s\n' "$target"
+      printf '       %s\n' "$(paint 36 "$target")"
     done
     step=$((step + 1))
   fi
   if [[ "${#STALE_ETC_LINKS[@]}" -gt 0 ]]; then
     printf '  %s. Remove links a previous nix-darwin left pointing into a store that is gone:\n' \
-      "$step"
+      "$(paint 1 "$step")"
     for target in "${STALE_ETC_LINKS[@]}"; do
-      printf '       %s\n' "$target"
+      printf '       %s\n' "$(paint 36 "$target")"
     done
     step=$((step + 1))
   fi
@@ -1156,57 +1226,59 @@ print_plan() {
       trust_anchor_restorable "$path" || continue
       if [[ "$printed" -eq 0 ]]; then
         printf '  %s. Restore the TLS trust anchor Nix reads, from the CA bundle in the Nix profile:\n' \
-          "$step"
+          "$(paint 1 "$step")"
         printed=1
       fi
-      printf '       %s (named by %s)\n' "$path" "${line%%$'\t'*}"
+      printf '       %s %s\n' "$(paint 36 "$path")" \
+        "$(paint 2 "(named by ${line%%$'\t'*})")"
     done
     [[ "$printed" -eq 0 ]] || step=$((step + 1))
   fi
   if [[ -n "$STALE_FSTAB_ENTRY" ]]; then
     printf '  %s. Drop the dead /nix entry from %s, archiving the file first.\n' \
-      "$step" "$STALE_FSTAB_ENTRY"
+      "$(paint 1 "$step")" "$STALE_FSTAB_ENTRY"
     step=$((step + 1))
   fi
   if [[ -n "$ORPHANED_NIX_VOLUME" ]]; then
     printf '  %s. Retire the orphaned %s volume %s so a fresh one can be created.\n' \
-      "$step" "$NIX_VOLUME_LABEL" "$ORPHANED_NIX_VOLUME"
+      "$(paint 1 "$step")" "$NIX_VOLUME_LABEL" "$ORPHANED_NIX_VOLUME"
     printf '       It is renamed and nothing on it is deleted. If it is encrypted and\n'
     printf '       cannot be unlocked, it cannot be renamed, and it is deleted instead:\n'
     printf '       it carries no live store and every Nix path re-downloads.\n'
     step=$((step + 1))
   fi
   if [[ "${#UNRECOGNISED_ETC_PROFILES[@]}" -gt 0 ]]; then
-    printf '  %s. Move aside the shell rc files the Nix installer wrote, which nix-darwin\n' "$step"
+    printf '  %s. Move aside the shell rc files the Nix installer wrote, which nix-darwin\n' "$(paint 1 "$step")"
     printf '       manages and refuses to overwrite. Each keeps its content at\n'
     printf '       <file>.before-nix-darwin, which is where nix-darwin puts it too:\n'
     for target in "${UNRECOGNISED_ETC_PROFILES[@]}"; do
-      printf '       %s\n' "$target"
+      printf '       %s\n' "$(paint 36 "$target")"
     done
     step=$((step + 1))
   fi
   if command_exists nix; then
-    printf '  %s. Reuse the installed Nix command; do not reinstall it.\n' "$step"
+    printf '  %s. Reuse the installed Nix command; do not reinstall it.\n' "$(paint 1 "$step")"
   else
     printf '  %s. Download upstream Nix %s for %s and require SHA-256 %s.\n' \
-      "$step" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
+      "$(paint 1 "$step")" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
     printf '       It adds its own block to the shell rc files nix-darwin manages. Those\n'
     printf '       are moved to <file>.before-nix-darwin before activation, which is where\n'
     printf '       nix-darwin puts them too; nothing is deleted.\n'
   fi
   step=$((step + 1))
-  printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$step"
+  printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$(paint 1 "$step")"
   step=$((step + 1))
-  printf '  %s. Activate %s through atyrode/nh.\n' "$step" "$FLAKE_CONFIG"
+  printf '  %s. Activate %s through atyrode/nh.\n' "$(paint 1 "$step")" "$FLAKE_CONFIG"
   step=$((step + 1))
-  printf '  %s. Verify host state and clear the interrupted-apply marker.\n' "$step"
+  printf '  %s. Verify host state and clear the interrupted-apply marker.\n' "$(paint 1 "$step")"
   step=$((step + 1))
   if [[ "$SYSTEM" == *-darwin ]]; then
-    printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$step"
+    printf '  %s. Verify nix-darwin configured the real account login shell.\n' "$(paint 1 "$step")"
   else
-    printf '  %s. Register and select the managed Zsh login shell with explicit privilege, then verify the account database.\n' "$step"
+    printf '  %s. Register and select the managed Zsh login shell with explicit privilege, then verify the account database.\n' "$(paint 1 "$step")"
   fi
-  printf '\nNo changes were made. apply will show this plan again before confirmation.\n'
+  printf '\n%s\n' \
+    "$(paint 2 'No changes were made. apply will show this plan again before confirmation.')"
 }
 
 confirm_action() {
@@ -1217,7 +1289,7 @@ confirm_action() {
     return
   fi
   [[ -t 0 ]] || die "$prompt requires an interactive terminal or --yes"
-  printf '%s [y/N] ' "$prompt" >&2
+  printf '%s %s ' "$(paint_err 1 "$prompt")" "$(paint_err 2 '[y/N]')" >&2
   IFS= read -r answer
   case "$answer" in
     y | Y | yes | YES) ;;
@@ -1448,7 +1520,8 @@ verify_installation() {
       return 1
     }
   run_atyrode doctor host "$FLAKE_CONFIG" >/dev/null || return 1
-  printf 'Verification passed for %s on %s\n' "$FLAKE_CONFIG" "$SYSTEM"
+  printf '%s %s %s\n' "$(paint '1;32' 'Verification passed for')" \
+    "$(paint 36 "$FLAKE_CONFIG")" "$(paint 2 "on $SYSTEM")"
 }
 
 account_login_shell() {
@@ -1593,7 +1666,7 @@ reset_nix_installation() {
     run_privileged rm -f "$plist" ||
       fail BOOT-E220 "could not remove $plist" "remove it by hand: sudo rm $plist"
     journal_repair "removed the nix-daemon LaunchDaemon $plist" "cp '$archive' '$plist'"
-    printf 'Stopped and removed %s (archived at %s)\n' "$plist" "$archive"
+    printf '%s and removed %s (archived at %s)\n' "$(paint 32 'Stopped')" "$plist" "$archive"
   fi
 
   # /etc/nix is where a dead generation's ssl-cert-file and substituters live.
@@ -1608,7 +1681,7 @@ reset_nix_installation() {
     run_privileged rm -rf "$nixconf" ||
       fail BOOT-E221 "could not remove $nixconf" "remove it by hand: sudo rm -rf $nixconf"
     journal_repair "removed $nixconf" "cp -R '$archive' '$nixconf'"
-    printf 'Removed %s (archived at %s)\n' "$nixconf" "$archive"
+    printf '%s %s (archived at %s)\n' "$(paint 32 'Removed')" "$nixconf" "$archive"
   fi
 
   # Retiring the volume is what routes the installer onto its fresh-create
@@ -1626,23 +1699,23 @@ reset_nix_installation() {
 print_recovery_plan() {
   local step=1
 
-  printf '\nRecovery plan\n'
-  printf '  %s. Stop the nix-daemon and remove its LaunchDaemon, archiving it first.\n' "$step"
+  printf '\n%s\n' "$(paint 1 'Recovery plan')"
+  printf '  %s. Stop the nix-daemon and remove its LaunchDaemon, archiving it first.\n' "$(paint 1 "$step")"
   step=$((step + 1))
-  printf '  %s. Remove %s, archiving it first.\n' "$step" "$(etc_root)/nix"
+  printf '  %s. Remove %s, archiving it first.\n' "$(paint 1 "$step")" "$(etc_root)/nix"
   step=$((step + 1))
   printf '  %s. Retire the %s volume so a fresh one is created, and unmount it.\n' \
-    "$step" "$NIX_VOLUME_LABEL"
+    "$(paint 1 "$step")" "$NIX_VOLUME_LABEL"
   printf '       It is renamed and nothing on it is deleted. If it is encrypted and\n'
   printf '       cannot be unlocked, it cannot be renamed, and it is deleted instead:\n'
   printf '       it carries no live store and every Nix path re-downloads.\n'
   step=$((step + 1))
-  printf '  %s. Put back every /etc file a previous generation left broken.\n' "$step"
+  printf '  %s. Put back every /etc file a previous generation left broken.\n' "$(paint 1 "$step")"
   step=$((step + 1))
   printf '  %s. Install upstream Nix %s for %s and require SHA-256 %s.\n' \
-    "$step" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
+    "$(paint 1 "$step")" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
   step=$((step + 1))
-  printf '  %s. Evaluate, activate, and verify %s as a normal run.\n' "$step" "$FLAKE_CONFIG"
+  printf '  %s. Evaluate, activate, and verify %s as a normal run.\n' "$(paint 1 "$step")" "$FLAKE_CONFIG"
   printf '\nEvery removal is archived under %s and undone by %s/undo.log.\n' \
     "$(repair_state_dir)" "$(repair_state_dir)"
   printf 'The old store volume keeps its data until you reclaim the space.\n'
@@ -1677,15 +1750,17 @@ run_activation_phases() {
   fi
 
   if ! configure_linux_login_shell || ! verify_system_login_shell; then
-    printf 'Home Manager activation completed, but the login-shell system prerequisite is incomplete.\n' >&2
-    printf 'Fix the reported system boundary and run ./install.sh verify --config %s.\n' \
-      "$FLAKE_CONFIG" >&2
+    printf '%s\n' "$(paint_err 33 \
+      'Home Manager activation completed, but the login-shell system prerequisite is incomplete.')" >&2
+    printf 'Fix the reported system boundary and run %s\n' \
+      "$(paint_err '1;36' "./install.sh verify --config $FLAKE_CONFIG")" >&2
     return 69
   fi
   clear_login_shell_incomplete
 
-  printf '\nBootstrap complete. Open a new terminal or run: exec %q -l\n' \
-    "$(managed_login_shell)"
+  printf '\n%s Open a new terminal or run: %s\n' \
+    "$(paint '1;32' 'Bootstrap complete.')" \
+    "$(paint '1;36' "$(printf 'exec %q -l' "$(managed_login_shell)")")"
 }
 
 apply_configuration() {
@@ -1751,6 +1826,7 @@ recover_configuration() {
   run_activation_phases
 }
 
+init_color
 configure_coder_runtime
 parse_options "$@"
 

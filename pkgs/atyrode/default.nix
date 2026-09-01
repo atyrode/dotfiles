@@ -54,7 +54,24 @@ let
       python3
     ];
     text = ''
+      # The ceremony speaks in the CLI's voice: same command announcements,
+      # same verdicts, same colour. An operator does not experience two
+      # programs, they experience one machine that must not go quiet halfway.
+      export ATYRODE_NARRATE=${../../pkgs/atyrode/lib/narrate.sh}
       exec ${runtimeShell} ${../../scripts/babel-storage-configure.sh} "$@"
+    '';
+  };
+
+  # The apply process needs to ask Clever Cloud one question -- is there a
+  # session here -- and offer the login when there is not. clever-tools already
+  # travels in this closure inside the ceremony above; this exposes the same
+  # copy to the CLI, so the probe costs no closure weight and the offer can
+  # actually run what it offers on a machine that has no clever of its own.
+  babelClever = writeShellApplication {
+    name = "babel-clever";
+    runtimeInputs = [ clever-tools ];
+    text = ''
+      exec clever "$@"
     '';
   };
 
@@ -223,6 +240,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
       --replace-fail '@babel_storage_configure@' '${lib.getExe babelStorageConfigure}' \
+      --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \

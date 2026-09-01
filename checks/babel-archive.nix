@@ -188,7 +188,7 @@ pkgs.runCommand "check-babel-archive"
       echo 'the storage ceremony no longer exports the vault session unconditionally' >&2
       exit 1
     }
-    first_use="$(grep -n -m1 '^bw sync' "$ceremony" | cut -d: -f1)" || {
+    first_use="$(grep -n -m1 -E '^(run_visible )?bw sync' "$ceremony" | cut -d: -f1)" || {
       echo 'the storage ceremony no longer syncs the vault; re-point this ordering check' >&2
       exit 1
     }

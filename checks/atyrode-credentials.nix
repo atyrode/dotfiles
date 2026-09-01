@@ -19,7 +19,7 @@ pkgs.runCommand "check-atyrode-credentials"
     printf '%s\n' "$*" >> "$TMPDIR/bw-args"
     case "$*" in
       status) printf '{"status":"%s"}\n' "''${ATYRODE_TEST_BW_STATUS:-unlocked}" ;;
-      login|sync|lock) ;;
+      login|'login --raw'|sync|lock) ;;
       'config server') printf '%s\n' 'https://vault.bitwarden.com' ;;
       'config server '*) ;;
       'list items --search vault-existing')
@@ -331,7 +331,11 @@ pkgs.runCommand "check-atyrode-credentials"
     "''${vault_test_env[@]}" ATYRODE_TEST_BW_STATUS=unauthenticated _ATYRODE_TEST_TTY=1 \
       atyrode vault login >/dev/null
     grep -qxF 'config server https://vault.bitwarden.eu' "$TMPDIR/bw-args"
-    grep -qxF login "$TMPDIR/bw-args"
+    # --raw and nothing else: a plain login ends by printing the session key it
+    # minted as copy-paste advice, and that key was found in a transcript the
+    # operator had shared. The raw form emits only the key, on stdout, where it
+    # is captured and never shown.
+    grep -qxF 'login --raw' "$TMPDIR/bw-args"
 
     infra_test_env=(
       env

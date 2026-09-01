@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# `atyrode apply` hands this seeder the terminal mid-run and the resolve
+# dialogue then questions the operator directly, so it borrows the CLI's voice
+# rather than inventing a plain-white one nothing on screen accounts for.
+# shellcheck source=/dev/null
+. "${ATYRODE_NARRATE:?the narration library was not provided}"
+NARRATE_NAME=omp-seed
+
 # Seed curated plain-omp defaults into the writable machine configuration
 # with three-way-merge drift semantics. For every leaf path in the seed:
 #
@@ -39,7 +46,7 @@ cleanup() {
 trap cleanup EXIT
 
 fail() {
-  printf 'omp-seed: %s\n' "$1" >&2
+  refuse "$NARRATE_NAME" "$1"
   exit 1
 }
 
@@ -63,7 +70,12 @@ ensure_state_root() {
 acquire_lock() {
   ensure_state_root
   exec 9>"$state_root/.lock"
-  flock -w 15 9 || fail "another omp-seed run holds the lock"
+  # Taking a free lock is bookkeeping and stays silent; waiting on one another
+  # run holds is indistinguishable from a hang unless the wait announces itself.
+  if ! flock -n 9; then
+    say "$NARRATE_NAME: another run already holds $state_root/.lock; waiting up to 15s"
+    flock -w 15 9 || fail "another omp-seed run holds the lock"
+  fi
 }
 
 yaml_to_json() {
@@ -155,6 +167,10 @@ write_yaml_atomically() {
     fail "$target changed while omp-seed was running; rerun to pick up the new state"
   fi
   mv -f -- "$temp" "$real"
+  # Every other file this run writes is scratch or private state; this is the
+  # one the operator opens and edits, so its path is named even though the mv
+  # that installs it stays silent.
+  say "$NARRATE_NAME: wrote $real"
 }
 
 write_report() {
@@ -282,7 +298,8 @@ cmd_resolve() {
       answer=k
     else
       printf '%s\n  local:   %s\n  default: %s\n' "$key" "$live_value" "$seed_value"
-      printf '  [k]eep local / [r]eset to default / keep [a]ll / [q]uit: '
+      printf '%s %s ' "$(paint 1 "$NARRATE_NAME:")" \
+        "$(paint 2 '[k]eep local / [r]eset to default / keep [a]ll / [q]uit:')"
       read -r -u 4 answer || answer=q
       printf '\n'
     fi
@@ -347,6 +364,7 @@ case "${1:-}" in
     ;;
   -h | --help | help | '') usage ;;
   *)
+    refuse "$NARRATE_NAME" "unknown command: $1"
     usage >&2
     exit 64
     ;;

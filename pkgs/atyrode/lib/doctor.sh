@@ -1085,7 +1085,7 @@ probe_omp_seed() {
 # Detection needs no vault and no network: a diagnostic that opens a vault
 # session would cost a password to answer a question about a password.
 probe_git_identity() {
-  local signing_public reason="" blocked="" blocker=""
+  local signing_public reason=""
 
   signing_public="$(git config --global --get user.signingKey 2>/dev/null || true)"
   if [[ -n "$signing_public" && ! -r "$(expand_home_path "$signing_public")" ]]; then
@@ -1097,20 +1097,13 @@ probe_git_identity() {
   fi
   if [[ -z "$reason" ]]; then
     provisioning_check_add git-identity ok "" "this machine has a usable Git identity" ""
-    return 0
+  else
+    provisioning_unconfigured git-identity "Git identity incomplete: $reason"
   fi
-  # This ceremony materialises keys out of Bitwarden, so it has the same
-  # earlier blocker the babel one does, and the same claim on being offered
-  # rather than recited.
-  if vault_logged_out; then
-    blocked="; Bitwarden is not logged in here, so the ceremony cannot start until: atyrode vault login"
-    blocker='atyrode vault login'
-  fi
-  provisioning_unconfigured git-identity "Git identity incomplete: $reason$blocked" "$blocker"
 }
 
 probe_babel_archive() {
-  local config_file stamp_file last="" last_epoch now blocked="" blocker=""
+  local config_file stamp_file last="" last_epoch now
 
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
   stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
@@ -1120,18 +1113,11 @@ probe_babel_archive() {
     return 0
   fi
   if [[ ! -f "$config_file" ]]; then
-    # The offer this raises ends at a master-password prompt, so a machine
-    # whose vault is not logged in at all has an earlier blocker than the one
-    # the ceremony is about, and an operator who is not told answers yes to a
-    # program that cannot start. Carried as a command as well as a sentence:
-    # doctor can only state it, but apply offers to run it.
-    if vault_logged_out; then
-      blocked="; Bitwarden is not logged in here, so the ceremony cannot start until: atyrode vault login"
-      blocker='atyrode vault login'
-    fi
+    # The prerequisites this ceremony needs are declared in the policy and
+    # resolved centrally, so the probe states the surface's own condition and
+    # nothing about the sessions it happens to depend on.
     provisioning_unconfigured babel-archive \
-      "the hourly timer is installed but archives nothing until this is configured$blocked" \
-      "$blocker"
+      "the hourly timer is installed but archives nothing until this is configured"
     return 0
   fi
   [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true

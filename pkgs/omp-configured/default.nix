@@ -1054,13 +1054,16 @@ let
   ompManaged = mkOmpCommand "omp-managed";
 
   # First-principles facet grid: `code generate` renders a routing block for
-  # every valid (lane, model-tier, thinking, spark, fable, fable-as-main)
-  # combination from the model catalog, baked at build time so the generator
-  # view stays immutable and reviewable. The binary that browses the grid also
-  # renders it — the second implementation this replaced had drifted from it.
-  # The pinned release predates the scout/vision roles and the quota-bucket
-  # column, so today's output is unchanged and the new rows arrive with the
-  # next version bump.
+  # every valid (lane, model-tier, thinking, spark) combination from the model
+  # catalog, baked at build time so the generator view stays immutable and
+  # reviewable. The binary that browses the grid also renders it — the second
+  # implementation this replaced had drifted from it, which is also why the two
+  # can never disagree about the combo-id format across a version bump.
+  #
+  # The model-tier dial carries a fourth notch, `elite`, on lanes whose lead
+  # pool ladders to tier 4 (Anthropic today). The `fable` and `fable-as-main`
+  # toggles this comment used to name are gone: Anthropic retired that model's
+  # separate quota window, so it is now simply pool A's top rung.
   generatedProfiles = runCommand "omp-generated-profiles" { } ''
     mkdir -p "$out/share/omp"
     ${lib.getExe code} generate \

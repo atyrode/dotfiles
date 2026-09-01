@@ -134,7 +134,7 @@ nowhere, so the step says so first:
 
 ```
 1/4 Rebuild and switch alex-aarch64-darwin through nh-darwin
-  activation writes system state, so nh elevates: the sudo prompt below is its own
+  activation writes system state, so nh elevates: a sudo prompt below is its own
   $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
 ```
 
@@ -151,6 +151,23 @@ indistinguishable from a hung one:
   why inventory/provisioning.json declares 5 surfaces for this machine
   ok 3 ok, 1 not-applicable, 1 incomplete -- still to configure: babel-archive
 ```
+
+A run that aborts still owes a verdict on the steps it promised. Without one,
+a failure at step 1 of 4 leaves steps 2 through 4 missing from the terminal,
+which reads as though they ran and said nothing:
+
+```
+1/4 Rebuild and switch alex-aarch64-darwin through nh-darwin
+  $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
+  failed nh-darwin did not complete, and nothing was activated: this machine is unchanged
+
+2/4 Record alex-aarch64-darwin as the activated host
+  not attempted
+```
+
+That verdict is read rather than guessed. The backend builds the closure
+before it switches, so most failures there never reached the machine at all;
+the profile link says which happened, and an exit code cannot.
 
 **A durable log.** Every run of a mutating verb — `apply`, `provision`,
 `clean`, `rollback` — writes a timestamped, mode-600 transcript of the same

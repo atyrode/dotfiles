@@ -9,6 +9,9 @@
 die() {
   local code="$1"
   shift
+  # Before the error itself, so the plan closes out in order: the step that
+  # failed, the steps that never started, then why the run stopped.
+  step_abandon_plan
   log_event "failed $code: $*"
   printf 'atyrode: %s\n' "$*" >&2
   [[ -z "$RUN_LOG" ]] || printf '  %s %s\n' "$(paint 2 'log:')" "$(paint 36 "$RUN_LOG")" >&2
@@ -117,21 +120,42 @@ run_visible() {
 STEP_INDENT=''
 STEP_TOTAL=0
 STEP_INDEX=0
+STEP_PLAN=()
 _step_started=0
 
 # The plan is the same list the steps then walk, printed up front so an
 # operator knows the shape of the run before the first build scrolls past.
+# The labels are kept, not just the count, because an aborted run still owes a
+# verdict on the steps it promised.
 plan_steps() { # label...
   local index=0 label
 
   STEP_TOTAL=$#
   STEP_INDEX=0
+  STEP_PLAN=("$@")
   printf '\n%s\n' "$(paint 1 'Plan')" >&2
   for label in "$@"; do
     index=$((index + 1))
     printf '  %d. %s\n' "$index" "$label" >&2
     log_event "plan $index/$STEP_TOTAL: $label"
   done
+}
+
+# A plan is a promise about what this run will do, so an abort owes the
+# operator the rest of it. Without this a failure at step 1 of 4 leaves steps 2
+# through 4 simply missing from the terminal, which reads as though they ran
+# and said nothing rather than never having started.
+step_abandon_plan() {
+  local index
+
+  [[ "$STEP_TOTAL" -gt 0 && "$STEP_INDEX" -lt "$STEP_TOTAL" ]] || return 0
+  for ((index = STEP_INDEX + 1; index <= STEP_TOTAL; index++)); do
+    printf '\n%s %s\n  %s\n' \
+      "$(paint '1;36' "$index/$STEP_TOTAL")" "$(paint 1 "${STEP_PLAN[index - 1]}")" \
+      "$(paint 2 'not attempted')" >&2
+    log_event "step $index/$STEP_TOTAL not attempted: ${STEP_PLAN[index - 1]}"
+  done
+  STEP_INDEX="$STEP_TOTAL"
 }
 
 step_begin() { # label

@@ -92,9 +92,7 @@ in
     current_shell="$(/usr/bin/dscl . -read "$shell_record" UserShell 2>/dev/null \
       | /usr/bin/awk '{ print $2 }')"
     if [ "$current_shell" != "$expected_shell" ]; then
-      previous_shell="$current_shell"
-      [ -n "$previous_shell" ] || previous_shell=unset
-      echo "atyrode: login shell for $shell_user: $previous_shell -> $expected_shell" >&2
+      echo "atyrode: login shell for $shell_user: ''${current_shell:-unset} -> $expected_shell" >&2
       /usr/bin/dscl . -create "$shell_record" UserShell "$expected_shell"
     fi
     current_shell="$(/usr/bin/dscl . -read "$shell_record" UserShell 2>/dev/null \

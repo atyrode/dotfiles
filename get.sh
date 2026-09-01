@@ -22,6 +22,16 @@ die() {
   exit 1
 }
 
+# This script is piped in from the network, so the two things it does before
+# control passes to the inspectable checkout -- writing the clone, and handing
+# off to it -- are the two an operator most needs to see spelled out. git clone
+# names its destination but never says where it is cloning from.
+show_command() {
+  local quoted
+  printf -v quoted ' %q' "$@"
+  printf '  $%s\n' "$quoted" >&2
+}
+
 pick_host() {
   local dir="$1" inventory="$1/inventory/hosts.tsv" system
   [[ -r "$inventory" ]] || die 'host inventory missing from the clone; pass a registered host explicitly'
@@ -104,6 +114,7 @@ main() {
       die "$dir exists and is not this repository; move it aside or set DOTFILES_DIR"
     reused=1
   else
+    show_command git clone "$origin_https" "$dir"
     git clone "$origin_https" "$dir"
   fi
 
@@ -122,6 +133,7 @@ main() {
       "$dir" >&2
   fi
   install_args+=("$@")
+  show_command "$dir/install.sh" "${install_args[@]}"
 
   # Under `curl | bash` stdin carries the script itself, so the bootstrap
   # confirmation must read from the terminal. Without one, only an explicit

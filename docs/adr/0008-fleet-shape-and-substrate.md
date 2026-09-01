@@ -83,13 +83,13 @@ Everything else is decommissioned or becomes a template:
   The operator's *identity* on such a machine is the portable
   `development-*` profile, which already exists.
 
-**Open — workshop and services on one box.** The workshop is the machine the
-operator wants to build and break things on; it also hosts `manifold`'s hub.
-Decided: one box, two systemd slices (`services.slice` with a memory floor,
+**Workshop and services on one box — decided.** The workshop is the machine
+the operator wants to build and break things on; it also hosts `manifold`'s
+hub. One box, two systemd slices (`services.slice` with a memory floor,
 `workshop.slice` with a memory ceiling), so a development build can never
 starve a service — the failure that originally drove the fleet to two boxes.
-Open: whether any service's uptime matters to *other people* enough to earn a
-separate small box later. Until it does, one box.
+A separate small services box is earned only if a service's uptime ever
+matters to *other people*; until then, one box.
 
 ### The substrate
 
@@ -102,7 +102,7 @@ Applications stop inventing cross-machine glue because the fleet provides it:
 | Identity and reachability | plain WireGuard, hub-and-spoke through the workshop, keys in sops, peers in Nix | SSH key distribution, per-app auth protocols |
 | Built artifacts | CI builds every host closure and pushes to a **Cellar** bucket (already paid for, S3 to write, plain HTTPS to read, no server) | every machine rebuilding what CI already built |
 | Agent context | a **generated** `AGENTS.md` deployed by this repository to every machine (see below) | telling every agent on every machine what is authenticated where |
-| Data | restic to two targets, declared as a NixOS service | a per-project backup story |
+| Data | restic to two targets, declared as a NixOS service: Cellar continuously, and a **disk at home** on a routine the fleet enforces (below) | a per-project backup story |
 
 **Sessions are values.** Most "logins" (`clever`, `gh`, Cellar keys) produce a
 token that is a string; captured once, it is a secret with an audience like any
@@ -110,12 +110,12 @@ other. The only device-bound session in the fleet is Bitwarden's, and it leaves
 the daily path: Bitwarden becomes the break-glass copy of the operator's age
 identity, the role it already plays for infra today.
 
-**Publishing ciphertext is accepted.** `secrets/*.yaml` is age-encrypted to
+**Publishing ciphertext is decided.** `secrets/*.yaml` is age-encrypted to
 named recipients; a reader of the public repository learns the *names* of
 secrets and *which machines* may read them, never the values. A leaked machine
 key means rotating the values that key could read, exactly as a leaked vault
-session would. If publishing ciphertext ever becomes uncomfortable, a private
-`atyrode/secrets` flake input is the hedge, at the cost of one more repository.
+session would. A private `atyrode/secrets` flake input remains the hedge if that ever
+changes, at the cost of one more repository.
 
 **Clever Cloud is the hosting fallback while the fleet matures.** The operator
 would rather self-host everything, and will, once the fleet can provision a
@@ -129,6 +129,20 @@ in inventory, so leaving a provider is a configuration change; and every such
 service has a NixOS equivalent the workshop can run. The exit test, checked by
 `doctor`: *can the fleet stand up the self-hosted equivalent in one apply, and
 is the data restorable from a backup that does not live with the provider?*
+
+### Backups that survive the operator's attention
+
+The first target is Cellar, continuous and unattended. The second is a disk
+at home, chosen because it is truly independent of every provider — and it
+cannot be unattended, because a disk has to be plugged in. So the routine is
+designed around the one human step instead of hoping for a habit: the machine
+that sees the disk **starts the backup itself** the moment it is attached
+(udev on Linux, a launchd watcher on the Mac), records the completion in a
+stamp the fleet can read, and `doctor` turns an overdue stamp into a loud,
+persistent, specific nag — in the login shell, in `manifold`, and as a
+desktop notification — that says exactly which disk to plug into which
+machine. The only thing the operator ever has to do is plug it in; the fleet
+does the remembering, the starting, and the nagging.
 
 ### The flow
 
@@ -162,8 +176,7 @@ propagation is its job and must be kept true.
 ### Naming
 
 One name per machine, used everywhere: host registry key, hostname, overlay
-name, `manifold` label, `doctor` output. **Open:** the scheme. Proposed:
-servers keep infra's cattle form `tyrode-<role>-NN`; personal devices take
+name, `manifold` label, `doctor` output. **Decided:** servers keep infra's cattle form `tyrode-<role>-NN`; personal devices take
 `alex-<form>` (`alex-air`, `alex-desk`); architecture and platform stay fields
 in the registry, never part of a name.
 
@@ -265,14 +278,11 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
 7. **Front door.** Bootstrap enters the cockpit; plan/receipt/recap land as
    `--json`; the shell engine keeps shrinking behind it.
 
-## Open questions for the operator
+## Questions put to the operator, and his answers
 
-1. Workshop and services on one box with two slices — accepted, or do you want
-   a separate small services box from the start?
-2. Naming scheme: `tyrode-<role>-NN` for servers and `alex-<form>` for
-   devices, or something you would rather type every day?
-3. Ciphertext in the public repository, or a private secrets input?
-4. Backup targets: Cellar plus which second, provider-independent target
-   (an object store at a second provider, or a disk at home)?
-5. May step 0's read-only inventory of the old development machine begin? It changes
-   nothing and answers the fear.
+1. One box with two slices — **yes**.
+2. Naming — **`tyrode-<role>-NN` for servers, `alex-<form>` for devices**.
+3. Ciphertext — **in this repository, encrypted**.
+4. Second backup target — **a disk at home**, with the routine designed so the
+   fleet starts and nags and the operator only plugs in.
+5. Step 0's inventory — **begun** the same day, read-only, manifest for review.

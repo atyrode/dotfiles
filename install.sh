@@ -35,6 +35,7 @@ BROKEN_TRUST_ANCHORS=()
 STALE_FSTAB_ENTRY=""
 ORPHANED_NIX_VOLUME=""
 ORPHANED_NIX_VOLUME_UUID=""
+MOUNT_FAILURE=""
 RUN_LOG=""
 
 die() {
@@ -806,23 +807,75 @@ detect_orphaned_nix_volume() {
       "run: diskutil info '$NIX_VOLUME_LABEL'"
 }
 
-# diskutil renames an APFS volume through its mounted filesystem, so an
-# unmounted one fails with "Volume must be mounted". Recovery unmounts to free
-# /nix for the volume the installer creates, which leaves exactly that state
-# behind for the next run - so mounting is part of renaming, not a caller's
-# problem to remember.
-rename_nix_volume() {
+# The installer stores an encrypted Nix volume's passphrase in the System
+# keychain under the volume UUID, and reading that keychain needs privilege.
+# This is the lookup upstream's create-darwin-volume.sh performs, verbatim:
+# `security find-generic-password -s "$volume_uuid" -w` under sudo. Running it
+# unprivileged finds nothing, which would look exactly like a volume whose key
+# is gone and quietly escalate a rename into a delete.
+nix_volume_passphrase() {
+  local uuid="$1"
+
+  command_exists security || return 1
+  run_privileged security find-generic-password -s "$uuid" -w 2>/dev/null
+}
+
+mount_nix_volume() {
+  local volume="$1" uuid passphrase
+
+  MOUNT_FAILURE=""
+  MOUNT_FAILURE="$(run_privileged "$(diskutil_command)" mount "$volume" 2>&1)" && return 0
+  # A locked encrypted volume refuses a plain mount, so unlock it with the
+  # passphrase the installer left in the keychain.
+  uuid="$(diskutil_field "$volume" 'Volume UUID')"
+  if [[ -n "$uuid" ]]; then
+    passphrase="$(nix_volume_passphrase "$uuid")" || passphrase=""
+    if [[ -n "$passphrase" ]]; then
+      MOUNT_FAILURE="$(printf '%s' "$passphrase" |
+        run_privileged "$(diskutil_command)" apfs unlockVolume "$volume" -stdinpassphrase 2>&1)" &&
+        return 0
+    else
+      MOUNT_FAILURE="no passphrase for $uuid in the System keychain; $MOUNT_FAILURE"
+    fi
+  fi
+  return 1
+}
+
+# Renaming is the reversible way to stop the installer finding a volume by
+# label, and diskutil renames through the mounted filesystem - so an unmounted
+# volume must be mounted first, and recovery unmounts to free /nix, which
+# guarantees the next run meets one. An encrypted volume whose key is gone
+# cannot be mounted and therefore cannot be renamed; leaving it labelled
+# "Nix Store" routes the installer onto the path that crashes. That volume is
+# deleted instead: the store-database check proved it carries no live install,
+# and every path in a Nix store is re-fetchable from the binary cache.
+retire_nix_volume() {
   local volume="$1" renamed="$2" remount=0
 
   if [[ "$(diskutil_field "$volume" 'Mounted')" == [Nn]o ]]; then
-    remount=1
-    run_privileged "$(diskutil_command)" mount "$volume" >/dev/null 2>&1 ||
-      fail BOOT-E213 "could not mount $volume to rename it" \
-        "mount it by hand: sudo diskutil mount $volume"
+    if mount_nix_volume "$volume"; then
+      remount=1
+    else
+      run_privileged "$(diskutil_command)" apfs deleteVolume "$volume" ||
+        fail BOOT-E215 "$volume could not be mounted to rename it, and could not be deleted either" \
+          "delete it by hand: sudo diskutil apfs deleteVolume $volume"
+      journal_repair \
+        "deleted the locked $NIX_VOLUME_LABEL volume $volume; its store is re-fetchable" \
+        "none: a locked volume cannot be renamed, and a Nix store re-fetches from the cache"
+      printf 'Deleted %s: it could not be mounted, and a volume that cannot be\n' "$volume"
+      printf '  mounted cannot be renamed. Reason: %s\n' "${MOUNT_FAILURE:-unknown}"
+      printf '  Nothing else was on it. A Nix store is a cache; every path re-downloads.\n'
+      return 0
+    fi
   fi
   run_privileged "$(diskutil_command)" rename "$volume" "$renamed" ||
     fail BOOT-E213 "could not rename the orphaned volume $volume" \
       "run: sudo diskutil rename $volume '$renamed'"
+  journal_repair "renamed orphaned volume $volume to '$renamed'" \
+    "diskutil rename '$volume' '$NIX_VOLUME_LABEL'"
+  printf 'Renamed the orphaned volume %s to "%s"\n' "$volume" "$renamed"
+  printf '  Nothing on it was deleted. Reclaim the space once the install works:\n'
+  printf '    sudo diskutil apfs deleteVolume %s\n' "$volume"
   # Leave it as it was found: a volume that was not mounted must not end up
   # occupying /nix, which is the mount point the installer needs.
   if [[ "$remount" -eq 1 ]]; then
@@ -831,16 +884,9 @@ rename_nix_volume() {
 }
 
 repair_orphaned_nix_volume() {
-  local renamed
-
   [[ -n "$ORPHANED_NIX_VOLUME" ]] || return 0
-  renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
-  rename_nix_volume "$ORPHANED_NIX_VOLUME" "$renamed"
-  journal_repair "renamed orphaned volume $ORPHANED_NIX_VOLUME to '$renamed'" \
-    "diskutil rename '$ORPHANED_NIX_VOLUME' '$NIX_VOLUME_LABEL'"
-  printf 'Renamed the orphaned volume %s to "%s"\n' "$ORPHANED_NIX_VOLUME" "$renamed"
-  printf '  Nothing on it was deleted. Reclaim the space once the install works:\n'
-  printf '    sudo diskutil apfs deleteVolume %s\n' "$ORPHANED_NIX_VOLUME"
+  retire_nix_volume "$ORPHANED_NIX_VOLUME" \
+    "$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
 }
 
 # The upstream installer fails by printing prose and exiting 1. Turning its
@@ -1008,8 +1054,11 @@ print_plan() {
     step=$((step + 1))
   fi
   if [[ -n "$ORPHANED_NIX_VOLUME" ]]; then
-    printf '  %s. Rename the orphaned %s volume %s so a fresh one can be created; nothing on it is deleted.\n' \
+    printf '  %s. Retire the orphaned %s volume %s so a fresh one can be created.\n' \
       "$step" "$NIX_VOLUME_LABEL" "$ORPHANED_NIX_VOLUME"
+    printf '       It is renamed and nothing on it is deleted. If it is encrypted and\n'
+    printf '       cannot be unlocked, it cannot be renamed, and it is deleted instead:\n'
+    printf '       it carries no live store and every Nix path re-downloads.\n'
     step=$((step + 1))
   fi
   if command_exists nix; then
@@ -1402,7 +1451,7 @@ verify_system_login_shell() {
 # file removed is archived first - because a store is a re-fetchable cache
 # while an operator's data is not.
 reset_nix_installation() {
-  local plist archive nixconf volume renamed
+  local plist archive nixconf volume
 
   plist="$(nix_daemon_plist)"
   if [[ -e "$plist" ]]; then
@@ -1435,21 +1484,15 @@ reset_nix_installation() {
     printf 'Removed %s (archived at %s)\n' "$nixconf" "$archive"
   fi
 
-  # The installer finds volumes by label, so renaming routes it onto its
-  # fresh-create path, and unmounting frees /nix for the volume it creates.
-  # Rename first: diskutil renames through the mounted filesystem and refuses
-  # an unmounted volume.
+  # Retiring the volume is what routes the installer onto its fresh-create
+  # path, and unmounting after frees /nix for the volume it creates.
   if nix_volume_present "$NIX_VOLUME_LABEL"; then
     volume="$(diskutil_field "$NIX_VOLUME_LABEL" 'Device Identifier')"
     [[ -n "$volume" ]] ||
       fail BOOT-E212 "found a $NIX_VOLUME_LABEL volume but could not read its device identifier" \
         "inspect it with: diskutil info '$NIX_VOLUME_LABEL'"
-    renamed="$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
-    rename_nix_volume "$volume" "$renamed"
-    journal_repair "renamed $volume from $NIX_VOLUME_LABEL to $renamed" \
-      "diskutil rename '$volume' '$NIX_VOLUME_LABEL'"
+    retire_nix_volume "$volume" "$NIX_VOLUME_LABEL (orphaned $(date -u +%Y%m%dT%H%M%SZ))"
     run_privileged "$(diskutil_command)" unmount force "$volume" >/dev/null 2>&1 || true
-    printf 'Renamed %s to %s and unmounted it; nothing on it was deleted\n' "$volume" "$renamed"
   fi
 }
 
@@ -1461,8 +1504,11 @@ print_recovery_plan() {
   step=$((step + 1))
   printf '  %s. Remove %s, archiving it first.\n' "$step" "$(etc_root)/nix"
   step=$((step + 1))
-  printf '  %s. Unmount and rename the %s volume so a fresh one is created; nothing on it is deleted.\n' \
+  printf '  %s. Retire the %s volume so a fresh one is created, and unmount it.\n' \
     "$step" "$NIX_VOLUME_LABEL"
+  printf '       It is renamed and nothing on it is deleted. If it is encrypted and\n'
+  printf '       cannot be unlocked, it cannot be renamed, and it is deleted instead:\n'
+  printf '       it carries no live store and every Nix path re-downloads.\n'
   step=$((step + 1))
   printf '  %s. Put back every /etc file a previous generation left broken.\n' "$step"
   step=$((step + 1))

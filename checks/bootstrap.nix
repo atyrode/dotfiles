@@ -26,6 +26,15 @@ pkgs.runCommand "check-bootstrap-${system}"
   }
   ''
     set -euo pipefail
+    # Assertions here are bare `test` and `grep`, so a failure exits silently
+    # and the build log ends mid-scenario with nothing to read. Name the
+    # command and the scenario it belongs to instead. Paths where a failure is
+    # itself the assertion detach the trap, so this only ever names a fault.
+    fixture_name=""
+    report_check_failure() {
+      echo "check failed in fixture '$fixture_name': $BASH_COMMAND" >&2
+    }
+    trap 'report_check_failure' ERR
 
     bootstrap=${../install.sh}
     real_git=${pkgs.git}/bin/git
@@ -117,6 +126,10 @@ pkgs.runCommand "check-bootstrap-${system}"
     exec "$FAKE_SHA256SUM" "$@"
     EOF
 
+    # Marks the environment as privileged so a stand-in for a tool that really
+    # needs root - reading the System keychain - can tell the difference. An
+    # unprivileged keychain read finds nothing and looks exactly like a volume
+    # whose key is gone, which is a rename quietly escalating into a delete.
     cat > "$tool_root/sudo" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
@@ -124,6 +137,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     if [ "''${1:-}" = -- ]; then
       shift
     fi
+    export FAKE_PRIVILEGED=1
     exec "$@"
     EOF
 
@@ -239,10 +253,12 @@ pkgs.runCommand "check-bootstrap-${system}"
     EOF
 
     # A volume table stands in for diskutil: "name<TAB>device<TAB>uuid" per
-    # line, with an optional fourth "no" marking it unmounted. Mount state is
-    # modelled because diskutil renames an APFS volume through its mounted
-    # filesystem and refuses an unmounted one - a table that is always mounted
-    # cannot tell a correct rename from one that fails on the real machine.
+    # line, with an optional fourth field of "no" for unmounted and an optional
+    # fifth of "locked" for an encrypted volume whose key is needed to mount.
+    # Both are modelled because both decide which operations are legal: a
+    # rename goes through the mounted filesystem, and a locked volume refuses
+    # to mount at all. A table that is always mounted and never encrypted
+    # cannot tell a correct retirement from one that fails on the real machine.
     cat > "$tool_root/diskutil" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
@@ -250,57 +266,100 @@ pkgs.runCommand "check-bootstrap-${system}"
     { [ -n "$table" ] && [ -f "$table" ]; } || exit 1
     tab="$(printf '\t')"
     matches() { [ "$1" = "$2" ] || [ "$1" = "$3" ] || [ "$1" = "$4" ]; }
-    case "''${1:-}" in
-      info)
-        while IFS="$tab" read -r name device uuid mounted; do
-          [ -n "$name" ] || continue
-          if matches "$2" "$name" "$device" "$uuid"; then
+
+    action="''${1:-}"
+    shift || true
+    passphrase=""
+    if [ "$action" = apfs ]; then
+      action="''${1:-}"
+      shift || true
+      case "$action" in
+        deleteVolume) action=delete ;;
+        unlockVolume) action=unlock ;;
+        *) exit 64 ;;
+      esac
+    fi
+    case "$action" in
+      info | rename | mount | unmount | delete | unlock) ;;
+      *) exit 64 ;;
+    esac
+    # unmount takes an optional force before the device.
+    [ "''${1:-}" != force ] || shift
+    target="''${1:-}"
+    [ -n "$target" ] || exit 64
+    if [ "$action" = unlock ]; then
+      [ "''${2:-}" = -stdinpassphrase ] || exit 64
+      passphrase="$(cat)"
+    fi
+
+    found=0
+    : > "$table.next"
+    while IFS="$tab" read -r name device uuid mounted locked; do
+      [ -n "$name" ] || continue
+      mounted="''${mounted:-yes}"
+      locked="''${locked:-}"
+      if matches "$target" "$name" "$device" "$uuid"; then
+        found=1
+        case "$action" in
+          info)
             printf '   Device Identifier:         %s\n' "$device"
             printf '   Volume Name:               %s\n' "$name"
             printf '   Volume UUID:               %s\n' "$uuid"
-            if [ "''${mounted:-yes}" = no ]; then
+            if [ "$mounted" = no ]; then
               printf '   Mounted:                   No\n'
             else
               printf '   Mounted:                   Yes\n'
             fi
+            rm -f "$table.next"
             exit 0
-          fi
-        done < "$table"
-        exit 1
-        ;;
-      rename | mount | unmount)
-        action="$1"
-        shift
-        # unmount takes an optional force before the device.
-        [ "''${1:-}" != force ] || shift
-        target="$1"
-        found=0
-        : > "$table.next"
-        while IFS="$tab" read -r name device uuid mounted; do
-          [ -n "$name" ] || continue
-          mounted="''${mounted:-yes}"
-          if matches "$target" "$name" "$device" "$uuid"; then
-            found=1
-            case "$action" in
-              rename)
-                if [ "$mounted" = no ]; then
-                  echo 'Volume must be mounted' >&2
-                  rm -f "$table.next"
-                  exit 1
-                fi
-                name="$2"
-                ;;
-              mount) mounted=yes ;;
-              unmount) mounted=no ;;
-            esac
-          fi
-          printf '%s\t%s\t%s\t%s\n' "$name" "$device" "$uuid" "$mounted" >> "$table.next"
-        done < "$table"
-        [ "$found" = 1 ] || { rm -f "$table.next"; exit 1; }
-        mv "$table.next" "$table"
-        ;;
-      *) exit 64 ;;
-    esac
+            ;;
+          rename)
+            if [ "$mounted" = no ]; then
+              echo 'Volume must be mounted' >&2
+              rm -f "$table.next"
+              exit 1
+            fi
+            name="$2"
+            ;;
+          mount)
+            if [ "$locked" = locked ]; then
+              echo 'Volume is locked' >&2
+              rm -f "$table.next"
+              exit 1
+            fi
+            mounted=yes
+            ;;
+          unlock)
+            if [ "$passphrase" != "''${FAKE_VOLUME_PASSPHRASE:-}" ] || [ -z "$passphrase" ]; then
+              echo 'Incorrect passphrase' >&2
+              rm -f "$table.next"
+              exit 1
+            fi
+            locked=""
+            mounted=yes
+            ;;
+          unmount) mounted=no ;;
+          delete) continue ;;
+        esac
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$device" "$uuid" "$mounted" "$locked" >> "$table.next"
+    done < "$table"
+    [ "$found" = 1 ] || { rm -f "$table.next"; exit 1; }
+    mv "$table.next" "$table"
+    EOF
+
+    # The installer keeps an encrypted volume's passphrase in the System
+    # keychain under the volume UUID, and bootstrap reads it the same way
+    # upstream does. No entry means a volume that cannot be unlocked.
+    cat > "$tool_root/security" <<'EOF'
+    #!${pkgs.runtimeShell}
+    set -eu
+    [ "''${1:-}" = find-generic-password ] || exit 64
+    # The System keychain is root-only, so an unprivileged read finds nothing.
+    [ "''${FAKE_PRIVILEGED:-0}" = 1 ] || exit 44
+    [ -n "''${FAKE_VOLUME_PASSPHRASE:-}" ] || exit 44
+    [ "''${FAKE_KEYCHAIN_UUID:-}" = "''${3:-}" ] || exit 44
+    printf '%s\n' "$FAKE_VOLUME_PASSPHRASE"
     EOF
 
     # A launchd plist on macOS is commonly a binary file whose strings are not
@@ -344,9 +403,10 @@ pkgs.runCommand "check-bootstrap-${system}"
       "$tool_root/diskutil" \
       "$tool_root/plutil" \
       "$tool_root/launchctl" \
+      "$tool_root/security" \
       "$fake_installer_template" \
       "$fake_nix_template"
-    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil plutil launchctl; do
+    for tool in git curl sha256sum shasum sudo chsh gh tar diskutil plutil launchctl security; do
       ln -s "$tool_root/$tool" "$fresh_tools/$tool"
       ln -s "$tool_root/$tool" "$managed_tools/$tool"
     done
@@ -448,6 +508,19 @@ pkgs.runCommand "check-bootstrap-${system}"
       fi
     }
 
+    # Runs a command whose non-zero exit is the assertion rather than a fault.
+    # Bash does not inherit an ERR trap into a function body, so calling through
+    # here is also what keeps the reporter quiet about an expected failure.
+    status_of() {
+      local status=0
+
+      set +e
+      "$@"
+      status=$?
+      set -e
+      return "$status"
+    }
+
 
     # A clean plan is read-only and never invokes Nix, downloads, or creates receipts.
     new_fixture plan
@@ -478,11 +551,10 @@ pkgs.runCommand "check-bootstrap-${system}"
     if [[ "$FAKE_SYSTEM" == *-linux ]]; then
       new_fixture production-hook-gating
       export PATH="$managed_tools:$base_path"
-      set +e
-      bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
-        > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err"
-      production_status="$?"
-      set -e
+      production_status=0
+      status_of bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
+        > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err" ||
+        production_status="$?"
       test "$production_status" = 69
       grep -q '/etc/shells' "$TMPDIR/production-hooks.err"
       test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
@@ -716,12 +788,11 @@ pkgs.runCommand "check-bootstrap-${system}"
       printf '/bin/bash\n' > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
       : > "$BOOTSTRAP_SHELLS_FILE"
       export FAKE_SUDO_FAIL=1
-      set +e
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
+      login_shell_status=0
+      status_of "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
         > "$TMPDIR/login-shell-privilege.out" \
-        2> "$TMPDIR/login-shell-privilege.err"
-      login_shell_status="$?"
-      set -e
+        2> "$TMPDIR/login-shell-privilege.err" ||
+        login_shell_status="$?"
       test "$login_shell_status" = 69
       test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
       test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
@@ -739,12 +810,11 @@ pkgs.runCommand "check-bootstrap-${system}"
       export PATH="$managed_tools:$base_path"
       printf '/bin/bash\n' > "$BOOTSTRAP_ACCOUNT_SHELL_FILE"
       export FAKE_CHSH_FAIL=1
-      set +e
-      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
+      login_shell_status=0
+      status_of "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
         > "$TMPDIR/login-shell-chsh.out" \
-        2> "$TMPDIR/login-shell-chsh.err"
-      login_shell_status="$?"
-      set -e
+        2> "$TMPDIR/login-shell-chsh.err" ||
+        login_shell_status="$?"
       test "$login_shell_status" = 69
       test -f "$XDG_STATE_HOME/atyrode/bootstrap/login-shell.incomplete"
       test "$(cat "$BOOTSTRAP_ACCOUNT_SHELL_FILE")" = /bin/bash
@@ -1032,7 +1102,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     printf 'UUID=STALE-UUID /nix apfs rw,noauto,nobrowse,nosuid,noatime,owners\n' \
       > "$etc/fstab"
     "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/volume-plan.out"
-    grep -F 'Rename the orphaned Nix Store volume disk3s7' "$TMPDIR/volume-plan.out" >/dev/null
+    grep -F 'Retire the orphaned Nix Store volume disk3s7' "$TMPDIR/volume-plan.out" >/dev/null
     grep -F 'nothing on it is deleted' "$TMPDIR/volume-plan.out" >/dev/null
     grep -F "Drop the dead /nix entry from $etc/fstab" "$TMPDIR/volume-plan.out" >/dev/null
     grep -F 'Nix Store	disk3s7' "$FAKE_VOLUMES" >/dev/null
@@ -1050,8 +1120,46 @@ pkgs.runCommand "check-bootstrap-${system}"
     export PATH="$fresh_tools:$base_path"
     printf 'Nix Store\tdisk3s7\tSTALE-UUID\tno\n' > "$FAKE_VOLUMES"
     "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-    grep -E "^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID	no$" "$FAKE_VOLUMES" >/dev/null
+    grep -E "^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID	no	$" "$FAKE_VOLUMES" >/dev/null
     test -e "$FAKE_INSTALL_EXECUTED"
+
+    # The installer encrypts the volume it creates and keeps the passphrase in
+    # the System keychain, so an unmounted one is also locked. Unlocking with
+    # that passphrase is what keeps this repair non-destructive.
+    darwin_fixture darwin-locked-volume-repair
+    export PATH="$fresh_tools:$base_path"
+    export FAKE_VOLUME_PASSPHRASE=correct-horse
+    export FAKE_KEYCHAIN_UUID=STALE-UUID
+    printf 'Nix Store\tdisk3s7\tSTALE-UUID\tno\tlocked\n' > "$FAKE_VOLUMES"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    grep -E "^Nix Store \(orphaned [0-9TZ]+\)	disk3s7	STALE-UUID	no	$" "$FAKE_VOLUMES" >/dev/null
+    test -e "$FAKE_INSTALL_EXECUTED"
+    grep -F "diskutil rename 'disk3s7' 'Nix Store'" \
+      "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
+    unset FAKE_VOLUME_PASSPHRASE FAKE_KEYCHAIN_UUID
+
+    # No key means no mount, and no mount means no rename. Leaving it labelled
+    # Nix Store routes the installer onto the path that crashes, so it is
+    # deleted - the store-database check already proved no live install is on
+    # it, and a Nix store re-downloads. The journal records that this one does
+    # not undo.
+    darwin_fixture darwin-locked-volume-no-key
+    export PATH="$fresh_tools:$base_path"
+    printf 'Nix Store\tdisk3s7\tSTALE-UUID\tno\tlocked\n' > "$FAKE_VOLUMES"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/locked-plan.out"
+    grep -F 'it is deleted instead' "$TMPDIR/locked-plan.out" >/dev/null
+    # Deleting a volume is the one irreversible repair, so the run must say
+    # what it observed rather than only that it deleted something.
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
+      > "$TMPDIR/locked-apply.out"
+    grep -F 'Reason:' "$TMPDIR/locked-apply.out" >/dev/null
+    grep -F 'no passphrase for STALE-UUID in the System keychain' \
+      "$TMPDIR/locked-apply.out" >/dev/null
+    test ! -s "$FAKE_VOLUMES"
+    test -e "$FAKE_INSTALL_EXECUTED"
+    undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
+    grep -F 'deleted the locked Nix Store volume disk3s7' "$undo" >/dev/null
+    grep -F 'undo: none:' "$undo" >/dev/null
 
     # A volume carrying a live store is in use, not orphaned, and is never
     # touched however the rest of the machine looks.

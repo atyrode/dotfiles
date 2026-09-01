@@ -216,6 +216,18 @@ an unmounted one with `Volume must be mounted`. Recovery unmounts to free
 meet an unmounted volume: mounting is part of renaming, and the volume is left
 exactly as it was found.
 
+An encrypted volume is locked when it is unmounted, and mounting it needs the
+passphrase the installer stored in the System keychain under the volume UUID.
+That keychain is root-only, so the lookup runs with the same privilege
+upstream's `create-darwin-volume.sh` uses; reading it unprivileged finds
+nothing and is indistinguishable from a volume whose key is gone. When the key
+really is gone the volume cannot be mounted, therefore cannot be renamed, and
+leaving it labelled `Nix Store` routes the installer back onto the path that
+crashes. It is deleted instead — the store-database check has already proved
+no live install is on it, and every path in a Nix store re-downloads. Deletion
+is the one irreversible repair, so the run prints the reason it could not
+mount rather than only what it did.
+
 The `/etc` sweep is recursive because nix-darwin owns nested paths the same
 way it owns top-level ones. `/etc/ssl/certs/ca-certificates.crt` is the one
 that matters most: it is where Nix reads its TLS trust anchors, so a
@@ -271,6 +283,7 @@ is the request for the repair that should.
 | `BOOT-E212` | A `Nix Store` volume was found but its device identifier could not be read |
 | `BOOT-E213` | The orphaned volume could not be renamed |
 | `BOOT-E214` | A TLS trust anchor could not be restored |
+| `BOOT-E215` | The orphaned volume could neither be mounted to rename nor deleted |
 | `BOOT-E220` | Recovery could not archive or remove the nix-daemon LaunchDaemon |
 | `BOOT-E221` | Recovery could not archive or remove `/etc/nix` |
 | `BOOT-E299` | The upstream installer failed in a way bootstrap does not recognise yet |

@@ -217,6 +217,27 @@ pkgs.runCommand "check-atyrode-apply"
       and all(.[]; .status != "missing" or (.remediation | contains("do not install globally")))
     ' <<< "$tools" >/dev/null
 
+    # The CLI reads and drives this machine, so it must see the machine's own
+    # programs no matter what PATH the caller had. A bootstrap that has just
+    # activated still holds the PATH it started with: on a real Darwin run that
+    # made every managed tool report missing, `gh` unavailable, and the babel
+    # ceremony unable to find babel -- a healthy machine reported as broken.
+    #
+    # `nix-locate` is a declared tool, so doctor has an opinion about it. Here
+    # it exists only inside the activated profile and nowhere on the PATH the
+    # caller supplies, which is exactly the post-activation shape.
+    mkdir -p "$HOME/.nix-profile/bin"
+    printf '#!${pkgs.runtimeShell}\nexit 0\n' > "$HOME/.nix-profile/bin/nix-locate"
+    chmod +x "$HOME/.nix-profile/bin/nix-locate"
+    stripped="${pkgs.coreutils}/bin:${pkgs.jq}/bin"
+    ! PATH="$stripped" command -v nix-locate >/dev/null
+    # Non-zero because the stripped PATH leaves other declared tools missing;
+    # the assertion is about the one that must be found regardless.
+    env PATH="$stripped" "$(command -v atyrode)" doctor tools --json > "$TMPDIR/adopted.json" || true
+    jq -e --arg profile "$HOME/.nix-profile/bin/nix-locate" '
+      any(.[]; .name == "nix-index" and .status == "ok" and .path == $profile)
+    ' "$TMPDIR/adopted.json" >/dev/null
+
     atyrode apply --repo "$HOME/nix-dotfiles" --plan --json | jq -e '
       .host == "alex-x86_64-linux"
       and .backend == "nh-home"

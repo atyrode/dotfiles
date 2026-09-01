@@ -157,6 +157,27 @@ acknowledgements for intentional local work; `--update` cannot be combined
 with a dirty checkout. A Git `url.*.insteadOf` rewrite cannot redirect the
 accepted GitHub origin unnoticed.
 
+## Every command is shown before it runs
+
+Bootstrap and `atyrode apply` print the argv of anything that changes this
+machine, reaches the network, or takes real time, on the line before running
+it:
+
+```
+$ nix run /Users/alex/nix-dotfiles#atyrode -- apply alex-aarch64-darwin --repo /Users/alex/nix-dotfiles --git-auth-mode ssh --restart-shell
+$ sudo -- chsh -s /run/current-system/sw/bin/zsh alex
+$ sh /tmp/atyrode-nix.XXXX/nix-2.34.7-aarch64-darwin/install --daemon --yes --no-channel-add --no-modify-profile
+```
+
+The rendering is shell-quoted, so a line can be pasted back verbatim to repeat
+that step by hand. This covers the Nix download and installer, the checkout
+fetch and fast-forward, every `atyrode` invocation, every privileged repair,
+the `nh` activation itself, and each provisioning ceremony.
+
+Read-only probing stays silent by design. Printing every `command -v` and
+`show-ref` would bury the handful of commands that actually act, which is the
+opposite of being able to follow what is happening.
+
 ## Nix installer decision
 
 Fresh machines install upstream Nix 2.34.7 from the official
@@ -365,6 +386,21 @@ is the request for the repair that should.
 it — evaluation, activation, and verification. `BOOT-E201` through `BOOT-E204`
 are classified from the upstream installer's own output, and each names the
 repair that already handles it, so the remedy is to re-run bootstrap.
+
+### Findings are not failures
+
+`atyrode doctor` exits `69` when a family it checks is incomplete. Bootstrap
+treats that as a **completed** bootstrap that still has work to name: the
+machine activated, the host receipt matches, and everything doctor reports is
+either converged by a later `atyrode apply` or is a decision only the operator
+can make. Bootstrap clears the interrupted-apply marker, exits `0`, and prints
+what was found along with the two commands that act on it.
+
+Collapsing that state into a failure is what once reported a healthy Apple
+Silicon machine as `BOOT-E399` — sending the operator to the issue tracker and
+offering to reset a Nix installation that was fine — because `gh` had not been
+configured yet. Any other non-zero status from the verification step remains a
+real failure and is classified normally.
 
 The `BOOT-E3xx` CA states are re-derived by inspecting the trust-anchor paths
 at failure time rather than parsed out of error prose. Bootstrap reads every

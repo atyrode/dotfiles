@@ -251,8 +251,16 @@ pkgs.runCommand "check-bootstrap-${system}"
         ln -sf ${pkgs.zsh}/bin/zsh "$HOME/.nix-profile/bin/zsh"
         ;;
       # Bootstrap's verification step invokes the aggregate `atyrode doctor
-      # <host>` with no family subcommand, so one branch answers for it.
+      # <host>` with no family subcommand, so one branch answers for it. Its
+      # two failure shapes are deliberately distinct: 69 is doctor's own "a
+      # family is incomplete", which is a finished bootstrap with findings,
+      # and anything else is a verification that genuinely broke. Collapsing
+      # them is what reported a healthy Mac as [BOOT-E399].
       *" -- doctor "*)
+        if [ "''${FAKE_DOCTOR_FINDINGS:-0}" = 1 ]; then
+          printf 'container-engine: incomplete\n'
+          exit 69
+        fi
         [ "''${FAKE_VERIFY_FAIL:-0}" != 1 ]
         ;;
       *) exit 64 ;;
@@ -461,6 +469,7 @@ pkgs.runCommand "check-bootstrap-${system}"
         FAKE_GIT_UPDATE_REPO \
         FAKE_INSTALLER_FAIL_AFTER_START \
         FAKE_INSTALLER_FAIL_MESSAGE \
+        FAKE_DOCTOR_FINDINGS \
         FAKE_VERIFY_FAIL \
         FAKE_VOLUMES
       mkdir -p "$HOME" "$repo"
@@ -750,6 +759,44 @@ pkgs.runCommand "check-bootstrap-${system}"
     export FAKE_VERIFY_FAIL=1
     expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
     grep -Fxq "config=$host" "$XDG_STATE_HOME/atyrode/install-interrupted"
+
+    # Doctor's 69 is the opposite of the scenario above, and telling them apart
+    # is the whole point: the machine activated, the receipt matches, and what
+    # remains is drift that a later `atyrode apply` converges or that only the
+    # operator can decide. Bootstrap therefore completes -- marker cleared, exit
+    # zero -- and says what was found. Reported as a failure it became
+    # [BOOT-E399], which sends the operator to the issue tracker and offers to
+    # reset a Nix installation that was never broken.
+    new_fixture doctor-findings-finish-the-bootstrap
+    export PATH="$managed_tools:$base_path"
+    export FAKE_DOCTOR_FINDINGS=1
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
+      > "$TMPDIR/findings.out" 2> "$TMPDIR/findings.err"
+    # On the operator's own stream, not inside the captured verification step:
+    # a call to action that only a transcript ever sees is not a call to action.
+    grep -qF 'Bootstrap complete, with findings for' "$TMPDIR/findings.out"
+    grep -qF 'atyrode doctor' "$TMPDIR/findings.out"
+    grep -qF 'exec ' "$TMPDIR/findings.out"
+    # The two states this scenario exists to keep apart.
+    ! grep -qF 'BOOT-E399' "$TMPDIR/findings.out" "$TMPDIR/findings.err"
+    ! grep -qF 'recover --config' "$TMPDIR/findings.out" "$TMPDIR/findings.err"
+    # An apply that finished must not look interrupted to the next run.
+    test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+    unset FAKE_DOCTOR_FINDINGS
+
+    # Every command that changes the machine is printed before it runs. A
+    # bootstrap that mutates a machine silently is one an operator cannot audit
+    # while it happens or reproduce afterwards, and the argv is shell-quoted so
+    # the line can be pasted back verbatim.
+    new_fixture bootstrap-shows-the-commands-it-runs
+    export PATH="$managed_tools:$base_path"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" \
+      > "$TMPDIR/visible.out" 2> "$TMPDIR/visible.err"
+    # Either stream: a captured step replays its transcript on stdout, a
+    # streamed one writes straight to stderr, and the operator reads both.
+    cat "$TMPDIR/visible.out" "$TMPDIR/visible.err" > "$TMPDIR/visible.all"
+    grep -qF "\$ nix run $repo#atyrode -- apply $host" "$TMPDIR/visible.all"
+    grep -qF "\$ nix run $repo#atyrode -- doctor $host" "$TMPDIR/visible.all"
 
     # State and marker namespaces may not redirect writes through symlinks.
     new_fixture state-root-link

@@ -12,6 +12,55 @@ die() {
   exit "$code"
 }
 
+# The programs a machine declares live in the profiles activation writes, and
+# nothing guarantees the caller's PATH names them. A bootstrap that has just
+# activated still holds the PATH it started with, so everything downstream
+# inspects the machine that existed a minute ago: `doctor tools` reports every
+# managed program missing, the git family calls `gh` unavailable, and the babel
+# ceremony -- which deliberately takes babel from the machine rather than
+# carrying its closure into this CLI -- cannot find it. That is what turned a
+# successful Darwin bootstrap into an unrecognised failure and an offer to
+# reset a healthy Nix installation.
+#
+# Appended, never prepended. This CLI's own tools are prefixed onto PATH by its
+# wrapper and must keep winning, and a directory already present keeps the
+# position the caller gave it. The effect is strictly additive: programs that
+# were invisible become findable, and nothing that already resolved moves.
+adopt_activated_path() {
+  local candidate user
+
+  user="$(id -un 2>/dev/null || true)"
+  for candidate in \
+    /run/current-system/sw/bin \
+    ${user:+"/etc/profiles/per-user/$user/bin"} \
+    "${HOME:-}/.nix-profile/bin"; do
+    [[ -d "$candidate" ]] || continue
+    case ":$PATH:" in
+      *":$candidate:"*) continue ;;
+    esac
+    PATH="$PATH:$candidate"
+  done
+  export PATH
+}
+
+# Anything that changes this machine or takes real time is printed before it
+# runs, shell-quoted so what is shown can be pasted back. Read-only probing
+# stays silent: an operator wants to see the four commands that act, not the
+# forty that look.
+show_command() {
+  local rendered="" part
+
+  for part in "$@"; do
+    rendered="$rendered${rendered:+ }$(printf '%q' "$part")"
+  done
+  printf '%s\n' "$(paint 2 "\$ $rendered")" >&2
+}
+
+run_visible() {
+  show_command "$@"
+  "$@"
+}
+
 is_wsl() {
   if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_WSL:-}" ]]; then
     [[ "$_ATYRODE_TEST_WSL" == 1 ]]

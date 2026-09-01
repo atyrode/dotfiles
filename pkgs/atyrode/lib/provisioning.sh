@@ -135,10 +135,14 @@ collect_provisioning_checks() {
 # it. Re-entering the CLI rather than calling the ceremony in-process is
 # deliberate: provisioning owns a vault session, its own traps, and its own
 # refusals, and none of them may end an apply that has already activated.
+#
+# Shown, because it is a whole second program: everything printed after this
+# line belongs to that child process, and an operator who wants to retry the
+# ceremony alone needs exactly this argv.
 provision_now() { # target
   local target="$1" self
   self="$(atyrode_self)" || return "$EX_UNAVAILABLE"
-  "$self" provision "$target"
+  run_visible "$self" provision "$target"
 }
 
 # What apply does with each surface, and why the three answers differ:
@@ -152,19 +156,41 @@ provision_now() { # target
 # Always non-fatal. A machine that declines every surface is still a machine
 # that activated successfully, and apply must not imply otherwise.
 review_provisioning() { # json host
-  local json="$1" host="$2" count index status
+  local json="$1" host="$2" count index status acted=0 tally leftovers
 
   collect_provisioning_checks
   count="$(jq -r 'length' <<<"$provisioning_checks")"
+  step_why "inventory/provisioning.json declares $count surfaces for this machine"
   index=0
   while ((index < count)); do
     status="$(jq -r ".[$index].status" <<<"$provisioning_checks")"
     case "$status" in
-      degraded) review_degraded_surface "$json" "$index" ;;
-      incomplete) review_incomplete_surface "$index" "$host" ;;
+      degraded)
+        review_degraded_surface "$json" "$index"
+        acted=1
+        ;;
+      incomplete)
+        review_incomplete_surface "$index" "$host"
+        acted=1
+        ;;
     esac
     index=$((index + 1))
   done
+  # Re-probe rather than assume: the verdict has to describe the machine as it
+  # is now, not as it was before a ceremony ran. Only worth the second pass when
+  # something actually acted -- an untouched machine already has its answer.
+  [[ "$acted" == 0 ]] || collect_provisioning_checks
+  # Settled first, outstanding last, so the tail of the line is the part that
+  # still wants an operator. Alphabetical order would bury it in the middle.
+  tally="$(jq -r '
+    ["ok","not-applicable","declined","degraded","incomplete"]
+    | map(. as $status | {$status, n: ([$provisioning[] | select(.status == $status)] | length)})
+    | map(select(.n > 0) | "\(.n) \(.status)") | join(", ")
+  ' --argjson provisioning "$provisioning_checks" -n)"
+  leftovers="$(jq -r '
+    map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
+  ' <<<"$provisioning_checks")"
+  step_ok "$tally${leftovers:+ -- still to configure: $leftovers}"
   return 0
 }
 
@@ -178,8 +204,12 @@ review_degraded_surface() { # json index
   # Seed drift is the one surface whose remediation is itself a review: running
   # it asks the questions rather than answering them, so on a terminal it runs
   # instead of being quoted. Every other fix is a command to type.
+  #
+  # Shown before it runs for the same reason as any other: the next thing on
+  # this terminal is an interactive dialogue from another program, and an
+  # operator should never be prompted by something they did not see start.
   if [[ "$id" == omp-seed && "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 ]] && interactive; then
-    atyrode-omp-seed resolve || true
+    run_visible atyrode-omp-seed resolve || true
     return 0
   fi
   [[ -z "$remediation" ]] || printf '  fix with: %s\n' "$remediation" >&2
@@ -254,8 +284,13 @@ provisioning_run() { # id host
 # it.
 archive_arm_timer() {
   local systemctl
+  local -a arm
   systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" || return 0
-  "$systemctl" --user start babel-archive.timer >/dev/null 2>&1 ||
+  arm=("$systemctl" --user start babel-archive.timer)
+  # Announced, then silenced: the argv is what an operator repeats, while
+  # systemd's own failure text is replaced below by the line that names the fix.
+  show_command "${arm[@]}"
+  "${arm[@]}" >/dev/null 2>&1 ||
     printf 'could not arm the hourly archive timer; arm it with: systemctl --user start babel-archive.timer\n' >&2
 }
 
@@ -337,7 +372,7 @@ provision_git_role() { # role private_path item_name persist yes scratch
     confirm "Generate a new $role key for this machine and store it in Secure Note '$item_name'?" ||
       die "$EX_USAGE" "provision git needs the $role key decision"
   fi
-  "$provision_ssh_keygen" -t ed25519 -N "" \
+  run_visible "$provision_ssh_keygen" -t ed25519 -N "" \
     -C "$(actual_user)@$(manifold_machine_name) git-$role" -f "$material" -q
   vault_store_note "$item_name" "$material" "$scratch"
   install -m 644 "$material.pub" "$public_path"
@@ -348,7 +383,8 @@ provision_git_role() { # role private_path item_name persist yes scratch
     die "$EX_UNAVAILABLE" "could not load the new $role key into the ssh-agent"
   local gh_cli register=(ssh-key add "$public_path" --title "$(manifold_machine_name) git-$role")
   [[ "$role" != signing ]] || register+=(--type signing)
-  if gh_cli="$(optional_host_command ATYRODE_GH gh)" && "$gh_cli" "${register[@]}" >/dev/null 2>&1; then
+  if gh_cli="$(optional_host_command ATYRODE_GH gh)" && show_command "$gh_cli" "${register[@]}" &&
+    "$gh_cli" "${register[@]}" >/dev/null 2>&1; then
     printf 'atyrode: registered the %s public key with GitHub\n' "$role" >&2
   else
     printf 'atyrode: register the %s key yourself: gh %s\n' "$role" "${register[*]}" >&2

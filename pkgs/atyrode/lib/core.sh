@@ -1,15 +1,51 @@
 # shellcheck shell=bash
 #
-# Primitives every other module leans on: exit, colour, capability and
-# terminal predicates, and the small host-command helpers.
+# Primitives every other module leans on: exit, colour, the run log and step
+# narration, capability and terminal predicates, and the small host-command
+# helpers.
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
 die() {
   local code="$1"
   shift
+  log_event "failed $code: $*"
   printf 'atyrode: %s\n' "$*" >&2
+  [[ -z "$RUN_LOG" ]] || printf '  %s %s\n' "$(paint 2 'log:')" "$(paint 36 "$RUN_LOG")" >&2
   exit "$code"
+}
+
+# --- the run log --------------------------------------------------------------
+#
+# The terminal carries the story while an operator is watching; the log keeps
+# the detail a later diagnosis needs, after the scrollback is gone and the
+# question is "what did apply actually do to this machine, and when".
+#
+# Same contract as the bootstrap's log, because they narrate the same machine
+# and an operator should not have to learn two: one file per invocation, UTC
+# timestamps, mode 600, and logging that never fails a run. A machine too
+# broken to write state is still allowed to try to converge itself.
+RUN_LOG=""
+
+start_run_log() { # command
+  local dir
+
+  dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/logs"
+  [[ ! -L "$dir" ]] || return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  chmod 700 "$dir" 2>/dev/null || true
+  RUN_LOG="$dir/$(date -u +%Y%m%dT%H%M%SZ)-$1.log"
+  if ! : >"$RUN_LOG" 2>/dev/null; then
+    RUN_LOG=""
+    return 0
+  fi
+  chmod 600 "$RUN_LOG" 2>/dev/null || true
+  log_event "atyrode $1 on $(uname -s) as $(id -un 2>/dev/null || printf unknown)"
+}
+
+log_event() {
+  [[ -n "$RUN_LOG" ]] || return 0
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$RUN_LOG" 2>/dev/null || true
 }
 
 # The programs a machine declares live in the profiles activation writes, and
@@ -53,12 +89,112 @@ show_command() {
   for part in "$@"; do
     rendered="$rendered${rendered:+ }$(printf '%q' "$part")"
   done
-  printf '%s\n' "$(paint 2 "\$ $rendered")" >&2
+  log_event "run: $rendered"
+  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $rendered")" >&2
 }
 
 run_visible() {
+  local status=0
   show_command "$@"
-  "$@"
+  "$@" || status=$?
+  [[ "$status" -eq 0 ]] || log_event "exit $status: $1"
+  return "$status"
+}
+
+# --- steps --------------------------------------------------------------------
+#
+# A command an operator can read is half of it. The other half is why it ran
+# and whether it worked: a transcript of argv with no outcomes leaves someone
+# scrolling back to guess which of six things failed, and a machine that says
+# nothing while converging looks identical to one that is stuck.
+#
+# So work an operator waits on is a step: it announces itself, may state the
+# declaration or diagnosis that makes it necessary, and always closes with a
+# verdict. Steps do not nest -- a nested one is a step of its own or a detail
+# line of this one -- so the indent below is set on entry and cleared on the
+# verdict rather than kept on a stack. Outside a step it is empty, so a bare
+# `atyrode provision babel` still prints its commands flush left.
+STEP_INDENT=''
+STEP_TOTAL=0
+STEP_INDEX=0
+_step_started=0
+
+# The plan is the same list the steps then walk, printed up front so an
+# operator knows the shape of the run before the first build scrolls past.
+plan_steps() { # label...
+  local index=0 label
+
+  STEP_TOTAL=$#
+  STEP_INDEX=0
+  printf '\n%s\n' "$(paint 1 'Plan')" >&2
+  for label in "$@"; do
+    index=$((index + 1))
+    printf '  %d. %s\n' "$index" "$label" >&2
+    log_event "plan $index/$STEP_TOTAL: $label"
+  done
+}
+
+step_begin() { # label
+  STEP_INDEX=$((STEP_INDEX + 1))
+  _step_started="$(date +%s)"
+  STEP_INDENT='  '
+  printf '\n%s %s\n' \
+    "$(paint '1;36' "$STEP_INDEX/$STEP_TOTAL")" "$(paint 1 "$1")" >&2
+  log_event "step $STEP_INDEX/$STEP_TOTAL: $1"
+}
+
+# Why this step exists, in the vocabulary of the thing that decided it: a
+# declaration this machine has to match, or a diagnosis that was just made.
+# Printed only where the answer is not already in the label.
+step_why() { # text
+  printf '  %s %s\n' "$(paint 2 'why')" "$1" >&2
+  log_event "  why: $1"
+}
+
+# A fact the step established or a file it wrote -- the detail that makes the
+# verdict checkable rather than merely reassuring.
+step_detail() { # text
+  printf '  %s\n' "$(paint 2 "$1")" >&2
+  log_event "  $1"
+}
+
+# Elapsed time is a diagnostic, not a stopwatch: printed only once a step took
+# long enough that an operator wondered, so the fast ones stay quiet.
+_step_elapsed() {
+  local seconds
+  [[ "$_step_started" != 0 ]] || return 0
+  seconds=$(($(date +%s) - _step_started))
+  ((seconds >= 2)) || return 0
+  printf ' %s' "$(paint 2 "${seconds}s")"
+}
+
+_step_end() { # painted-verdict detail
+  printf '  %s%s%s\n' "$1" "${2:+ $2}" "$(_step_elapsed)" >&2
+  STEP_INDENT=''
+  _step_started=0
+}
+
+# The detail is optional: a step whose label already says everything closes on
+# a bare `ok` rather than restating itself.
+step_ok() { # [detail]
+  local detail="${1:-}"
+  log_event "  ok${detail:+ $detail}"
+  _step_end "$(paint '1;32' 'ok')" "$detail"
+}
+
+# Not every step has work to do, and a step that had none must say so rather
+# than leaving a silence an operator has to interpret.
+step_skip() { # reason
+  log_event "  skip $1"
+  _step_end "$(paint 2 'skip')" "$(paint 2 "$1")"
+}
+
+# A step can fail without ending the apply -- activation has already happened
+# and the remaining surfaces still deserve their turn -- so this reports and
+# returns rather than exiting. The caller decides what a failure is worth.
+step_fail() { # detail
+  log_event "  failed $1"
+  _step_end "$(paint '1;31' 'failed')" "$1"
 }
 
 is_wsl() {
@@ -141,11 +277,19 @@ paint() {
 }
 
 # Ask a yes/no question; default no, and no on a non-interactive stream.
+#
+# A terminal echoes the operator's Enter and ends the prompt line for us. A
+# piped answer echoes nothing, so without this the next thing printed -- the
+# command the answer just authorised -- lands on the prompt's own line.
 confirm() {
   local reply
   interactive || return 1
   printf 'atyrode: %s %s ' "$(paint 1 "$1")" "$(paint 2 '[y/N]')" >&2
-  read -r reply || return 1
+  read -r reply || {
+    [[ -t 0 ]] || printf '\n' >&2
+    return 1
+  }
+  [[ -t 0 ]] || printf '\n' >&2
   [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]]
 }
 

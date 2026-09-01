@@ -153,6 +153,9 @@ apply_config() {
     if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
       rev="$ref"
     else
+      # A network call, and the first thing that hangs when the forge is
+      # unreachable, so it is named rather than left as an unexplained pause.
+      show_command "$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref"
       rev="$("$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref" | head -n 1 | cut -f 1)" || true
       [[ -n "$rev" ]] || die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
     fi
@@ -199,7 +202,25 @@ apply_config() {
   if [[ "$activation" == nixos-wsl ]] && ! jq -e '.ready' <<<"$windows_preflight" >/dev/null; then
     return "$EX_UNAVAILABLE"
   fi
-  [[ "$plan" == 0 ]] || return 0
+  # The plan is a list of what will change, not a dump of what was resolved.
+  # `--plan` stops right after printing it, so the same list an operator reads
+  # before committing is the one the run then walks step by step. A preview is
+  # a machine interface and plans nothing, so it stays out of this.
+  if [[ "$preview_json" == 0 ]]; then
+    local -a planned=("Rebuild and switch $host through $backend.")
+    if [[ "$dry" == 0 ]]; then
+      planned+=("Record $host as the activated host.")
+      [[ "$activation" != nixos-wsl ]] ||
+        planned+=("Reconcile native Windows packages through WinGet.")
+      planned+=("Converge the account login shell.")
+      planned+=("Review the provisioning surfaces this machine declares.")
+    fi
+    plan_steps "${planned[@]}"
+  fi
+  [[ "$plan" == 0 ]] || {
+    printf '\n%s\n' "$(paint 2 'No changes were made. Drop --plan to run this.')" >&2
+    return 0
+  }
 
   local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source"
   if [[ "$identity_mode" == runtime ]]; then
@@ -254,22 +275,34 @@ apply_config() {
     trap - EXIT
     return 0
   fi
-  # The single command that rebuilds and switches this machine. Rendered as an
-  # `env` invocation so the locale it needs travels with the copy an operator
-  # pastes back, and printed before it runs so the thousand lines of nh and Nix
-  # output that follow are unmistakably theirs rather than ours.
+
+  step_begin "Rebuild and switch $host through $backend"
+  [[ "$dry" == 0 ]] || step_why 'a dry run builds the closure and reports the diff without switching'
+  # Rendered as an `env` invocation so the locale it needs travels with the copy
+  # an operator pastes back, and printed before it runs so the thousand lines of
+  # nh and Nix output that follow are unmistakably theirs rather than ours.
   show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
-  LC_ALL="$nh_locale" "${nh_args[@]}" || die "$EX_SOFTWARE" "$backend activation failed"
+  LC_ALL="$nh_locale" "${nh_args[@]}" || {
+    step_fail "$backend could not activate this machine"
+    die "$EX_SOFTWARE" "$backend activation failed"
+  }
+  step_ok
   [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
   trap - EXIT
   if [[ "$dry" == 0 ]]; then
     local state_dir state_file temp
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
     state_file="$state_dir/dotfiles-config"
+    step_begin "Record $host as the activated host"
+    # These files are read back by the next apply, by doctor, and by the
+    # bootstrap's verification step. A silent write is the reason "why did this
+    # apply pick https-gh" has no answer three weeks later.
+    step_why 'later runs read this receipt to know which host this machine is'
     mkdir -p "$state_dir"
     temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
     printf '%s\n' "$host" >"$temp"
     mv -f "$temp" "$state_file"
+    step_detail "wrote $state_file"
     if [[ "$identity_mode" == runtime ]]; then
       local git_auth_mode_file="$state_dir/git-auth-mode"
       [[ ! -L "$git_auth_mode_file" ]] ||
@@ -278,32 +311,63 @@ apply_config() {
       printf '%s\n' "$git_auth_mode" >"$temp"
       chmod 600 "$temp"
       mv -f "$temp" "$git_auth_mode_file"
+      step_detail "wrote $git_auth_mode_file ($git_auth_mode)"
     fi
+    step_ok
     if [[ "$activation" == nixos-wsl ]]; then
       local windows_result
+      step_begin 'Reconcile native Windows packages through WinGet'
+      step_why 'WinGet state is native Windows state; no Nix generation covers it'
       if ! windows_result="$(windows_reconcile apply "$host" 1)"; then
+        step_fail 'the non-transactional Windows phase did not complete'
         die "$EX_SOFTWARE" "NixOS activation succeeded, but the non-transactional Windows phase failed; rerun 'atyrode windows apply'"
       fi
+      step_ok
       [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
     fi
     # Declared state first, decisions second. Convergence is not a question:
     # the login shell is part of what this host says it is, so apply fixes it
     # rather than reporting it. Only then are the opt-in surfaces raised, so a
     # machine that is still wrong never gets asked what else it would like.
+    step_begin 'Converge the account login shell'
     converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
+    step_begin 'Review the provisioning surfaces this machine declares'
     review_provisioning "$json" "$host"
+  fi
+  apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host"
+  return "$apply_status"
+}
+
+# The last thing an operator reads should answer "did that work, and what is
+# left". At most three lines: what remains theirs to run, how to pick up the
+# shell this apply just declared, and where the detail went when the scrollback
+# is gone. All of it on stderr: stdout is the data, this is the story.
+apply_epilogue() { # dry restart activation home host
+  local dry="$1" restart="$2" activation="$3" home="$4" host="$5" shell_path
+
+  log_event "apply finished for $host"
+  if [[ "$dry" == 1 ]]; then
+    printf '\n%s %s\n' "$(paint '1;33' 'Dry run complete for')" "$(paint 36 "$host")" >&2
+    summary_line '' 'nothing was switched; drop --dry-run to activate'
+  else
+    printf '\n%s %s\n' "$(paint '1;32' 'Apply complete for')" "$(paint 36 "$host")" >&2
     # apply owns removing packages from the environment, not reclaiming their
     # residue; surface the follow-up so dropped apps don't linger on disk.
-    if [[ "$json" == 0 && -t 1 ]]; then
-      printf 'atyrode: reclaim old generations + dropped-app residue with: atyrode clean\n' >&2
-    fi
+    [[ ! -t 1 ]] ||
+      summary_line reclaim 'old generations + dropped-app residue with: atyrode clean'
   fi
   if [[ "$restart" == 1 ]]; then
-    local shell_path=/run/current-system/sw/bin/zsh
-    [[ "$activation" != home-manager ]] || shell_path="$expected_home/.nix-profile/bin/zsh"
-    printf 'Activation completed. Restart the current shell with: exec %q -l\n' "$shell_path" >&2
+    shell_path=/run/current-system/sw/bin/zsh
+    [[ "$activation" != home-manager ]] || shell_path="$home/.nix-profile/bin/zsh"
+    summary_line restart "$(printf 'exec %q -l' "$shell_path")"
   fi
-  return "$apply_status"
+  [[ -z "$RUN_LOG" ]] || summary_line log "$(paint 36 "$RUN_LOG")"
+}
+
+# Padded before it is painted, because the escape bytes would otherwise be
+# counted into the field width and the column would not line up.
+summary_line() { # label text
+  printf '  %s %s\n' "$(paint 2 "$(printf '%-7s' "$1")")" "$2" >&2
 }
 
 # The login shell is declared state: inventory/system-boundary.json names the
@@ -322,43 +386,51 @@ converge_login_shell() { # host
   local host="$1" diagnostics owner status target user shells_file=/etc/shells
 
   diagnostics="$(doctor_system "$host" --json 2>/dev/null)" || true
-  [[ -n "$diagnostics" ]] || return 0
+  [[ -n "$diagnostics" ]] || {
+    step_skip 'this platform reports no login-shell state'
+    return 0
+  }
   owner="$(jq -r '.checks[]|select(.id=="login-shell")|.owner' <<<"$diagnostics")"
   status="$(jq -r '.checks[]|select(.id=="login-shell")|.status' <<<"$diagnostics")"
-  [[ "$status" == incomplete ]] || return 0
   target="$(jq -r '.checks[]|select(.id=="login-shell")|.expected.path' <<<"$diagnostics")"
+  step_why "inventory/system-boundary.json declares $target"
+  [[ "$status" == incomplete ]] || {
+    step_ok 'already the account login shell'
+    return 0
+  }
 
   if [[ "$owner" != atyrode ]]; then
     printf 'atyrode: the account login shell is not %s, and %s owns it here\n' \
       "$target" "$owner" >&2
     printf 'atyrode: fix it in that configuration; apply cannot answer for it\n' >&2
+    step_skip "$owner owns the account database on this host"
     return 0
   fi
 
   user="$(id -un)"
   if [[ ! -x "$target" ]]; then
-    printf 'atyrode: the managed Zsh is not executable at %s\n' "$target" >&2
+    step_fail "the managed Zsh is not executable at $target"
     return 1
   fi
   if [[ ! -f "$shells_file" || -L "$shells_file" ]]; then
-    printf 'atyrode: %s must be a regular file to register a login shell\n' "$shells_file" >&2
+    step_fail "$shells_file must be a regular file to register a login shell"
     return 1
   fi
-  printf 'atyrode: selecting %s as the login shell for %s\n' "$target" "$user" >&2
+  step_detail "selecting $target as the login shell for $user"
   if ! grep -Fqx -- "$target" "$shells_file"; then
     # shellcheck disable=SC2016 # Positional parameters expand in the privileged shell.
     run_privileged sh -c 'grep -Fqx -- "$1" "$2" || printf "%s\n" "$1" >> "$2"' \
       sh "$target" "$shells_file" || {
-      printf 'atyrode: could not register the managed Zsh in %s\n' "$shells_file" >&2
+      step_fail "could not register the managed Zsh in $shells_file"
       return 1
     }
   fi
   command -v chsh >/dev/null 2>&1 || {
-    printf 'atyrode: chsh is unavailable, so the account database cannot be updated\n' >&2
+    step_fail 'chsh is unavailable, so the account database cannot be updated'
     return 1
   }
   run_privileged chsh -s "$target" "$user" || {
-    printf 'atyrode: chsh could not update the account database\n' >&2
+    step_fail 'chsh could not update the account database'
     return 1
   }
   # Ask the same probe again rather than trusting the write: chsh can report
@@ -366,9 +438,10 @@ converge_login_shell() { # host
   # does not read back.
   diagnostics="$(doctor_system "$host" --json 2>/dev/null)" || true
   if [[ "$(jq -r '.checks[]|select(.id=="login-shell")|.status' <<<"$diagnostics")" != ok ]]; then
-    printf 'atyrode: the account login shell still is not %s\n' "$target" >&2
+    step_fail "the account login shell still is not $target"
     return 1
   fi
+  step_ok "changed to $target"
 }
 
 # Shown before it runs: these are the commands that edit /etc/shells and the

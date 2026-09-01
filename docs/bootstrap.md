@@ -380,6 +380,7 @@ is the request for the repair that should.
 | `BOOT-E301` | A managed step failed and a TLS trust anchor this machine reads is not a usable CA bundle |
 | `BOOT-E302` | The same, but the path is not bootstrap's to replace |
 | `BOOT-E303` | nix-darwin refused to overwrite an `/etc` file whose content is not bootstrap's to move |
+| `BOOT-E304` | The configuration did not build, so nothing was activated and the machine is unchanged |
 | `BOOT-E399` | A managed step failed in a way bootstrap does not recognise yet |
 
 `BOOT-E2xx` covers Nix installation, `BOOT-E3xx` the managed steps that follow
@@ -413,6 +414,16 @@ when a profile CA bundle is available, removing the link when it is not.
 the next action belongs to the operator. Each code reports what was observed —
 the step failed, and the anchor is broken — without claiming one caused the
 other.
+
+A configuration that fails to build reached that same wrong ending by another
+route. The backend builds the closure before it switches, so a build error
+never touches the machine: nothing is activated, and the Nix installation
+bootstrap offered to reset was working correctly the whole time. `BOOT-E304`
+names that state, reports which derivation failed, and says the machine is
+unchanged. Its remedy is the only one that can work, because the same build
+fails on every machine: read the build error and fix the configuration. The
+classifier runs after the CA checks and never before them, since a machine that
+cannot verify TLS also fails to build, and that failure is repairable here.
 
 ## Run logs
 

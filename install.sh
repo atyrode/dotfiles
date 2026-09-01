@@ -1087,6 +1087,25 @@ detect_etc_activation_conflicts() {
   ' "$log")
 }
 
+# A derivation whose builder ran and exited non-zero, as opposed to a machine
+# that cannot build. The distinction decides the remedy: this failure travels
+# with the configuration, reproduces on every machine, and leaves this one
+# untouched because the backend builds before it activates. The derivation name
+# comes back with it so the report can say which one, since a bootstrap
+# transcript is thousands of lines and the operator should not have to hunt.
+FAILED_DERIVATION=""
+detect_configuration_build_failure() {
+  local log="$1"
+
+  FAILED_DERIVATION=""
+  [[ -n "$log" && -f "$log" ]] || return 1
+  grep -qE "builder failed with exit code|builder for '/nix/store/[^']+' failed|Failed to build .+ configuration" "$log" || return 1
+  # Both the current "Cannot build" and the older "builder for" wording name the
+  # drv path; the hash in front of the name is noise to everyone but Nix.
+  FAILED_DERIVATION="$(sed -nE "s|.*build(er for)? '/nix/store/[a-z0-9]{32}-(.+)\.drv'.*|\2|p" "$log" | head -1)"
+  return 0
+}
+
 # Every managed step runs Nix, so every managed step fails when Nix cannot
 # reach the cache. Without this the operator gets a raw nix error as the last
 # word: no code, no log path, nothing to report.
@@ -1109,6 +1128,14 @@ report_managed_failure() {
   fi
   detect_broken_trust_anchors
   if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -eq 0 ]]; then
+    # After the trust-anchor check and never before it: a machine that cannot
+    # verify TLS also fails to build, and that one is repairable here.
+    if detect_configuration_build_failure "$log"; then
+      fail BOOT-E304 \
+        "$step failed because the configuration did not build${FAILED_DERIVATION:+, at $FAILED_DERIVATION}, so nothing was activated and this machine is unchanged" \
+        "the same build fails on every machine, so resetting Nix here cannot help: report the build error in the log below, and re-run bootstrap once the configuration builds"
+      return 1
+    fi
     fail BOOT-E399 \
       "$step failed in a way bootstrap does not recognise yet" \
       "send the log below so this state can get its own code and repair, or reset this machine's Nix installation with: ./install.sh recover --config $FLAKE_CONFIG"
@@ -1409,6 +1436,12 @@ update_checkout() {
   SOURCE_UPDATED=1
 }
 
+# The fast-forward above may have rewritten this very script, so the run has to
+# continue under the new one rather than finish under the code the operator
+# fetched a minute ago. That replacement is invisible from the terminal: the
+# plan and its confirmation simply appear a second time, and the second plan is
+# a different length because the update step is already done. Say so, or the
+# operator answers the same question twice with no idea why it was asked.
 restart_after_source_update() {
   local args=(apply --repo "$DOTFILES_DIR" --config "$FLAKE_CONFIG")
 
@@ -1418,6 +1451,9 @@ restart_after_source_update() {
   if [[ "$ALLOW_NON_MAIN" -eq 1 ]]; then
     args+=(--allow-non-main)
   fi
+  printf '\n%s\n' "$(paint 1 'Restarting bootstrap under the updated source')" >&2
+  printf '%s\n' "$(paint 2 "the fast-forward changed install.sh itself, so the rest of this run belongs to $(git -C "$DOTFILES_DIR" rev-parse --short HEAD 2>/dev/null || echo 'the new revision'); it prints its plan and asks again")" >&2
+  show_command bash "$DOTFILES_DIR/install.sh" "${args[@]}"
   exec bash "$DOTFILES_DIR/install.sh" "${args[@]}"
 }
 

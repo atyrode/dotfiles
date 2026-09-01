@@ -287,16 +287,29 @@ apply_config() {
   case "$activation" in
     nix-darwin | nixos-wsl)
       [[ "$dry" == 1 ]] ||
-        step_detail 'activation writes system state, so nh elevates: the sudo prompt below is its own'
+        step_detail 'activation writes system state, so nh elevates: a sudo prompt below is its own'
       ;;
   esac
+  # nh builds the closure before it switches, so most failures here never
+  # reached this machine at all. Claiming activation failed sends an operator
+  # to repair a machine that is fine, and sent this one at a build error that
+  # reproduces everywhere. The profile link is the evidence for which happened,
+  # read rather than inferred from an exit code that cannot tell them apart.
+  local profile_link profile_before profile_after
+  profile_link="$(gen_profile)"
+  profile_before="$(readlink "$profile_link" 2>/dev/null || true)"
   # Rendered as an `env` invocation so the locale it needs travels with the copy
   # an operator pastes back, and printed before it runs so the thousand lines of
   # nh and Nix output that follow are unmistakably theirs rather than ours.
   show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
   LC_ALL="$nh_locale" "${nh_args[@]}" || {
-    step_fail "$backend could not activate this machine"
-    die "$EX_SOFTWARE" "$backend activation failed"
+    profile_after="$(readlink "$profile_link" 2>/dev/null || true)"
+    if [[ "$profile_before" == "$profile_after" ]]; then
+      step_fail "$backend did not complete, and nothing was activated: this machine is unchanged"
+      die "$EX_SOFTWARE" "$backend failed before it switched $host"
+    fi
+    step_fail "$backend did not complete after switching $profile_link to $profile_after"
+    die "$EX_SOFTWARE" "$backend failed while activating $host"
   }
   step_ok
   [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"

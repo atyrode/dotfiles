@@ -549,11 +549,24 @@ pkgs.runCommand "check-atyrode-apply"
 
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export ATYRODE_NH_FAIL=1
-    if atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>&1; then
+    if atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/nh-fail.err"; then
       echo 'failed activation unexpectedly succeeded' >&2
       exit 1
     fi
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+    # nh builds before it switches, so a failure here usually never reached the
+    # machine. Reporting it as a failed activation sent an operator to repair a
+    # machine that was fine, and bootstrap then offered to reset its Nix.
+    grep -qF 'nothing was activated: this machine is unchanged' "$TMPDIR/nh-fail.err" \
+      || { echo "a failure that changed nothing must say so: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
+    ! grep -qF 'could not activate this machine' "$TMPDIR/nh-fail.err" \
+      || { echo 'a build failure must not be reported as a failed activation' >&2; exit 1; }
+    # The plan promised four steps and one of them failed; the other three must
+    # not simply vanish from the terminal, which reads as though they ran.
+    test "$(grep -cF 'not attempted' "$TMPDIR/nh-fail.err")" = 3 \
+      || { echo "every unreached planned step owes a verdict: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
+    grep -qF 'Converge the account login shell' "$TMPDIR/nh-fail.err" \
+      || { echo 'an abandoned step must be named, not just counted' >&2; exit 1; }
     unset ATYRODE_NH_FAIL
 
     atyrode apply --repo "$HOME/nix-dotfiles" --dry-run >/dev/null
@@ -840,7 +853,7 @@ pkgs.runCommand "check-atyrode-apply"
     # itself. Unannounced, the password prompt arrives mid-build from inside
     # someone else's output, and reads as the dotfiles asking for root out of
     # nowhere -- so the step names whose prompt it is before it can appear.
-    grep -qF 'so nh elevates: the sudo prompt below is its own' "$TMPDIR/wsl-apply.err"
+    grep -qF 'so nh elevates: a sudo prompt below is its own' "$TMPDIR/wsl-apply.err"
     grep -Fx -- "os switch $HOME/nix-dotfiles#alex-x86_64-linux-wsl --diff always" \
       "$TMPDIR/nh-args" >/dev/null
     grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \

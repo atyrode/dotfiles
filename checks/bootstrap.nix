@@ -227,6 +227,16 @@ pkgs.runCommand "check-bootstrap-${system}"
           } >&2
           exit 2
         fi
+        # nh builds the closure before it switches, so this failure never
+        # reached the machine. The wording is nix's own, because the classifier
+        # reads the transcript rather than an exit code.
+        if [ "''${FAKE_BUILD_FAIL:-0}" = 1 ]; then
+          {
+            printf "error: Cannot build '/nix/store/00000000000000000000000000000000-darwin-system-26.11.drv'.\n"
+            printf '       Reason: builder failed with exit code 1.\n'
+          } >&2
+          exit 1
+        fi
         if [ "''${FAKE_ACTIVATION_FAIL:-0}" = 1 ]; then
           exit 70
         fi
@@ -461,6 +471,7 @@ pkgs.runCommand "check-bootstrap-${system}"
         CODER_AGENT_URL \
         CODER_WORKSPACE_NAME \
         FAKE_ACTIVATION_FAIL \
+        FAKE_BUILD_FAIL \
         FAKE_BAD_SHA \
         FAKE_CURL_FAIL \
         FAKE_ETC_CONFLICTS \
@@ -645,6 +656,13 @@ pkgs.runCommand "check-bootstrap-${system}"
     test "$("$real_git" -C "$repo" rev-parse parked)" = "$parked_revision"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
     test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+    # The fast-forward may have rewritten install.sh, so the run continues under
+    # the new copy. Silently, that reads as the plan and its confirmation simply
+    # appearing twice, and the operator answers the same question with no idea
+    # why it was asked again.
+    grep -F 'Restarting bootstrap under the updated source' "$TMPDIR/branch-return.err" >/dev/null
+    grep -F 'it prints its plan and asks again' "$TMPDIR/branch-return.err" >/dev/null
+    grep -E '^\$ bash .*install\.sh apply --repo .* --config ' "$TMPDIR/branch-return.err" >/dev/null
 
     # Download and integrity failures cannot execute the unverified installer.
     new_fixture download-failure
@@ -1248,6 +1266,17 @@ pkgs.runCommand "check-bootstrap-${system}"
     grep -F '[BOOT-E399]' "$TMPDIR/expected-failure.err" >/dev/null
     grep -F '  log: ' "$TMPDIR/expected-failure.err" >/dev/null
     grep -F "./install.sh recover --config $host" "$TMPDIR/expected-failure.err" >/dev/null
+
+    # A configuration that fails to build is not a broken machine. This landed
+    # in the unrecognised bucket and offered to reset a perfectly healthy Nix
+    # installation -- the same wrong remedy the doctor-69 case above already
+    # had to be taught once, reached by a different route.
+    FAKE_BUILD_FAIL=1 \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E304]' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F 'darwin-system-26.11' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F 'this machine is unchanged' "$TMPDIR/expected-failure.err" >/dev/null
+    ! grep -qF './install.sh recover' "$TMPDIR/expected-failure.err"
 
     # Recovery is the exit for a state with no repair. It resets what a dead
     # generation owns - the daemon, /etc/nix, the store volume - and installs

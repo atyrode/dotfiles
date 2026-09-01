@@ -75,9 +75,14 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   # --yes hands off to the cloned install.sh with stdin detached. A fresh
   # clone already sits at origin/main, so it needs no source update.
   rm -rf "$HOME/nix-dotfiles"
-  bash -s -- alex-x86_64-linux --yes < ${../get.sh} >/dev/null
+  bash -s -- alex-x86_64-linux --yes < ${../get.sh} >/dev/null 2>"$TMPDIR/clone-err"
   test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config alex-x86_64-linux --yes'
   test ! -s "$INSTALL_STDIN_FILE"
+  # The two things a piped-in script does before an inspectable checkout takes
+  # over: write the clone, and hand control to it. git clone names where it
+  # writes but never where it reads from.
+  grep -F '$ git clone https://github.com/atyrode/dotfiles.git' "$TMPDIR/clone-err" >/dev/null
+  grep -F "$ $HOME/nix-dotfiles/install.sh apply --config alex-x86_64-linux --yes" "$TMPDIR/clone-err" >/dev/null
 
   # A reused checkout is fast-forwarded to origin/main instead of deciding, at
   # whatever revision it happens to hold, what the fetched script means.

@@ -650,12 +650,31 @@ submit_apply_job() {
   printf '%s\n' "$job_id" >"$latest_temp"
   mv -f "$latest_temp" "$root/latest"
   job_argv=("$self" __apply-job "$job_dir" "$@")
+  # Everything after this line runs in a manager-owned unit rather than in this
+  # shell's cgroup, so a closed terminal or a dropped SSH session cannot kill a
+  # half-finished activation. On a terminal the unit borrows this terminal
+  # (--pty), so what follows still looks and answers exactly like a local run --
+  # which is precisely why the handoff has to be announced rather than inferred
+  # from a prompt arriving from somewhere the operator cannot see.
+  #
+  # Announced in prose, not as argv. This one command carries the machine's
+  # whole forwarded PATH: thousands of characters nobody would retype, and a
+  # snapshot of an environment a later operator would not want anyway. It is
+  # the one place where printing the command would hide what happened instead
+  # of showing it. The terminal gets the fact that matters -- which unit owns
+  # this apply now -- and the log gets the argv, where length costs nothing and
+  # a diagnosis wants every byte.
+  log_event "handoff: $(printf '%q ' "${run_args[@]}" -- "${job_argv[@]}")"
   if [[ "$live" == true ]]; then
+    printf '%s\n' "$(paint 2 \
+      "atyrode: this apply runs in $unit, holding this terminal; it outlives the terminal, not the other way round")" >&2
     # A live run returns the activation's own status, so a failure here is not
     # evidence the job never started; the worker's own files are.
     "${run_args[@]}" -- "${job_argv[@]}" || status=$?
     [[ -e "$job_dir/running.json" || -f "$job_dir/result.json" ]] || submitted=0
   else
+    printf '%s\n' "$(paint 2 \
+      "atyrode: this apply runs detached in $unit; its output is captured, not streamed")" >&2
     "${run_args[@]}" -- "${job_argv[@]}" || submitted=0
   fi
   if [[ "$submitted" == 0 ]]; then

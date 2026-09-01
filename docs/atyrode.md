@@ -85,6 +85,64 @@ revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
 path. A successful real activation records the canonical host atomically;
 failures and dry runs do not update state.
 
+### What apply shows while it runs
+
+Apply is a machine-changing command an operator waits on, so it narrates
+itself rather than going quiet between builds. Four things are on the terminal
+every run.
+
+**A plan first.** The steps that will change this machine, numbered, before any
+of them run. `--plan` prints exactly that list and stops:
+
+```
+Plan
+  1. Rebuild and switch alex-aarch64-darwin through nh-darwin.
+  2. Record alex-aarch64-darwin as the activated host.
+  3. Converge the account login shell.
+  4. Review the provisioning surfaces this machine declares.
+```
+
+**The argv of anything that acts.** Every command that changes the machine,
+reaches the network, prompts, or takes real time is printed before it runs,
+shell-quoted so the line can be pasted back to repeat that step by hand — the
+`nh` switch, the `git ls-remote` that resolves a ref, the `systemd-run` that
+hands the apply to a manager-owned unit, `chsh` and the `/etc/shells` edit,
+each provisioning ceremony, and the interactive seed dialogue. Read-only
+probing stays silent: printing every `command -v` would bury the handful of
+commands that act.
+
+**A verdict per step**, with the declaration or diagnosis that made it
+necessary. A step never ends in silence, because a silent step is
+indistinguishable from a hung one:
+
+```
+3/4 Converge the account login shell
+  why inventory/system-boundary.json declares /run/current-system/sw/bin/zsh
+  ok already the account login shell
+
+4/4 Review the provisioning surfaces this machine declares
+  why inventory/provisioning.json declares 5 surfaces for this machine
+  ok 3 ok, 1 not-applicable, 1 incomplete -- still to configure: babel-archive
+```
+
+**A durable log.** Every run of a mutating verb — `apply`, `provision`,
+`clean`, `rollback` — writes a timestamped, mode-600 transcript of the same
+story to `$XDG_STATE_HOME/atyrode/logs/<UTC>-<verb>.log`, named in the closing
+summary and again on any failure. The terminal is for the operator watching;
+the log is for the diagnosis three weeks later. It is the same contract, and
+the same file layout, as the bootstrap's own run log (see
+[bootstrap.md](bootstrap.md)), because the two narrate the same machine.
+
+A supervised apply (below) writes two, and the pair is the chain: the
+submitting shell's `-apply.log` records the handoff, including the full
+`systemd-run` argv that is deliberately kept off the terminal, and the
+worker's `-apply-job.log` records the run itself. The summary names the one
+that holds the story.
+
+Narration is on stderr and the data is on stdout, so `--json` and
+`--preview-json` stay machine-readable while the story still reaches a
+terminal beside them.
+
 On Linux with an available systemd user manager, a mutating apply runs in a
 transient service rather than as a child of the invoking terminal. Job
 metadata, output, and the atomic final result live under

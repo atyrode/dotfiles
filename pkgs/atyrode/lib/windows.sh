@@ -115,7 +115,10 @@ windows_reconcile() {
     status="$(jq -r '.status' <<<"$package")"
     if [[ "$source" == winget && "$status" == missing ]]; then
       id="$(jq -r '.id' <<<"$package")"
-      printf 'atyrode: installing %s through WinGet\n' "$id" >&2
+      # Native Windows state, fetched over the network and outside every Nix
+      # generation, so the argv that changes it is the operator's to see.
+      show_command "$winget" install --id "$id" --exact --source winget \
+        --accept-package-agreements --accept-source-agreements --disable-interactivity
       "$winget" install --id "$id" --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity </dev/null >&2 ||
         return "$EX_SOFTWARE"
     fi

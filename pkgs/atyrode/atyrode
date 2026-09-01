@@ -203,6 +203,13 @@ main() {
   case "$subcommand" in
     apply | clean | rollback | provision) guard_production_mutation "$subcommand" ;;
   esac
+  # A durable record for the commands that change this machine, and only those:
+  # a log per `doctor` would bury the runs anyone ever needs to read. The worker
+  # keeps its own, because the unit it runs in outlives the shell that asked.
+  case "$subcommand" in
+    apply | clean | rollback | provision) start_run_log "$subcommand" ;;
+    __apply-job) start_run_log apply-job ;;
+  esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
     apply-status) cmd_apply_status "$@" ;;

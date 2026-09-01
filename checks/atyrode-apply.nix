@@ -248,6 +248,19 @@ pkgs.runCommand "check-atyrode-apply"
     ' >/dev/null
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
+    # A plan is a list of what will change, not a dump of what was resolved,
+    # and printing one changes nothing. This is the output an operator reads
+    # before committing, so it has to name the same steps the run then walks.
+    rm -f "$TMPDIR/nh-args"
+    atyrode apply --repo "$HOME/nix-dotfiles" --plan >/dev/null 2>"$TMPDIR/plan.err"
+    grep -qE '^  1\. Rebuild and switch alex-x86_64-linux through nh-home\.$' "$TMPDIR/plan.err"
+    grep -qE '^  2\. Record alex-x86_64-linux as the activated host\.$' "$TMPDIR/plan.err"
+    grep -qE '^  3\. Converge the account login shell\.$' "$TMPDIR/plan.err"
+    grep -qE '^  4\. Review the provisioning surfaces' "$TMPDIR/plan.err"
+    grep -qF 'No changes were made. Drop --plan to run this.' "$TMPDIR/plan.err"
+    test ! -e "$TMPDIR/nh-args"
+    test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
+
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
     # A successful apply with neither Babel's storage document nor a success
@@ -270,6 +283,33 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = alex-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
+
+    # Transparency is a contract, not a courtesy. An operator watching an apply
+    # has to be able to see what it will do, what it is doing and why, and
+    # whether each part worked -- and read all of it again once the scrollback
+    # is gone. A step that announces itself and then goes quiet is the shape
+    # this replaces: it is indistinguishable from a step that hung.
+    grep -qE '^1/4 Rebuild and switch alex-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
+    grep -qE '^2/4 Record alex-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
+    grep -qE '^3/4 Converge the account login shell$' "$TMPDIR/apply-success.err"
+    grep -qE '^4/4 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
+    # Four steps, four verdicts: no step may end without one.
+    test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 4
+    # And the reason a step is running, in the vocabulary of what decided it.
+    grep -qF 'why inventory/system-boundary.json declares' "$TMPDIR/apply-success.err"
+    grep -qF 'why inventory/provisioning.json declares 5 surfaces' "$TMPDIR/apply-success.err"
+    grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
+    grep -qF 'Apply complete for alex-x86_64-linux' "$TMPDIR/apply-success.err"
+
+    # The durable half. A terminal scrolls; this is what a diagnosis reads
+    # three weeks later, so it records the same story with timestamps and is
+    # readable only by its owner.
+    run_log="$(find "$XDG_STATE_HOME/atyrode/logs" -name '*-apply.log' | sort | tail -1)"
+    test -n "$run_log"
+    test -n "$(find "$run_log" -perm 600 -print -quit)"
+    grep -qE 'run: env LC_ALL=C\.UTF-8 .*nh home switch' "$run_log"
+    grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/4: Rebuild and switch' "$run_log"
+    grep -qF 'apply finished for alex-x86_64-linux' "$run_log"
 
     # With a terminal, the same state offers the ceremony instead of narrating
     # it. This is the path a real machine takes, so it must ask before doing
@@ -327,6 +367,19 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'a live apply pointed the operator at output they were already reading' >&2
       exit 1
     fi
+    # An apply that silently becomes someone else's process is the definition
+    # of opaque, so the handoff names the unit that now owns it. In prose, not
+    # as argv: this one command carries the whole forwarded PATH, and printing
+    # it would bury the run it introduces under kilobytes of store paths. The
+    # log takes the argv instead, which is where a diagnosis looks anyway.
+    printf '%s\n' "$live_out" | grep -qF 'this apply runs in atyrode-apply.service, holding this terminal'
+    if printf '%s\n' "$live_out" | grep -qF -- '--setenv=PATH='; then
+      echo 'the systemd handoff printed its forwarded environment to the terminal' >&2
+      exit 1
+    fi
+    submit_log="$(find "$XDG_STATE_HOME/atyrode/logs" -name '*-apply.log' | sort | tail -1)"
+    grep -qF 'handoff: ' "$submit_log"
+    grep -qF -- '--pty' "$submit_log"
     live_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
     jq -e '.live' "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/metadata.json" >/dev/null
     jq -e '.phase == "succeeded" and .exitCode == 0' \
@@ -410,7 +463,39 @@ pkgs.runCommand "check-atyrode-apply"
     printf '%s\n' "$git_accept" | grep -qF 'no ssh-agent socket'
     printf '%s\n' "$git_accept" | grep -qF 'that did not complete; Git identity is still unconfigured'
     printf '%s\n' "$git_accept" | grep -qF 'retry: atyrode provision git'
+    # Accepting spawns a whole second program, so the boundary is named: every
+    # line after it belongs to that child, and it is the argv an operator
+    # repeats to retry the ceremony on its own.
+    printf '%s\n' "$git_accept" | grep -qE '^  \$ .*atyrode provision git$'
     rm -f "$HOME/.gitconfig"
+
+    # A degraded surface whose remedy is itself a dialogue. The seeder asks the
+    # questions rather than answering them, so apply runs it instead of quoting
+    # it -- which is exactly what makes announcing it non-negotiable: the next
+    # thing on this terminal is a prompt from another program, and an operator
+    # must never be questioned by something they did not see start.
+    {
+      printf '#!${pkgs.runtimeShell}\n'
+      printf 'case "$1" in\n'
+      printf '  status) printf %s ;;\n' \
+        "'"'{"drift":[{"key":"recap.enabled"},{"key":"extendedContext"}]}\n'"'"
+      printf '  resolve) printf %s ;;\n' "'"'seeder: reviewing 2 kept settings\n'"'"
+      printf 'esac\n'
+    } > "$TMPDIR/bin/atyrode-omp-seed"
+    chmod +x "$TMPDIR/bin/atyrode-omp-seed"
+    # Decline what can be declined first, so the only surface still acting on
+    # the next run is the degraded one under test.
+    printf 'n\nn\nn\n' | _ATYRODE_TEST_TTY=1 \
+      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>&1 || true
+    seed_out="$(_ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$seed_out" >&2; exit 1; }
+    printf '%s\n' "$seed_out" | grep -qF 'omp-seed: 2 omp setting(s) kept over the repository defaults'
+    printf '%s\n' "$seed_out" | grep -qE '^  \$ atyrode-omp-seed resolve$'
+    # The dialogue's own output follows the line that named it, in that order.
+    printf '%s\n' "$seed_out" | grep -qF 'seeder: reviewing 2 kept settings'
+    test "$(printf '%s\n' "$seed_out" | grep -n 'atyrode-omp-seed resolve' | head -1 | cut -d: -f1)" \
+      -lt "$(printf '%s\n' "$seed_out" | grep -n 'seeder: reviewing' | head -1 | cut -d: -f1)"
+    rm -f "$TMPDIR/bin/atyrode-omp-seed" "$XDG_STATE_HOME/atyrode/provisioning-declined"
 
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export ATYRODE_NH_FAIL=1

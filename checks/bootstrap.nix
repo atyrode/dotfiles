@@ -30,9 +30,24 @@ pkgs.runCommand "check-bootstrap-${system}"
     # and the build log ends mid-scenario with nothing to read. Name the
     # command and the scenario it belongs to instead. Paths where a failure is
     # itself the assertion detach the trap, so this only ever names a fault.
+    #
+    # The run under test writes a log and a transcript per managed step, and a
+    # scenario that discards stdout leaves them as the only account of what
+    # happened. Print them here: a failure that reproduces once in ten runs is
+    # the one that must not need a second run to be readable. The trap fires
+    # again as the failure propagates out through stdenv, so dump only once.
     fixture_name=""
+    reported=0
     report_check_failure() {
       echo "check failed in fixture '$fixture_name': $BASH_COMMAND" >&2
+      [ "$reported" = 0 ] || return 0
+      reported=1
+      local log
+      for log in "''${XDG_STATE_HOME:-}"/atyrode/bootstrap/logs/*; do
+        [ -f "$log" ] || continue
+        echo "--- $log" >&2
+        cat "$log" >&2
+      done
     }
     trap 'report_check_failure' ERR
 
@@ -212,6 +227,25 @@ pkgs.runCommand "check-bootstrap-${system}"
         case " $* " in
           *" --plan "*) exit 0 ;;
         esac
+        # nix-darwin's own refusal, reprinted the way nh reprints it: the
+        # block arrives indented under nh's error, so a parser that only
+        # matches column zero passes the check and fails on a real machine.
+        if [ -n "''${FAKE_ETC_CONFLICTS:-}" ]; then
+          {
+            printf 'Error: \n'
+            printf '   0: Darwin activation failed\n'
+            printf '      stderr:\n'
+            printf '      error: Unexpected files in /etc, aborting activation\n'
+            printf '      The following files have unrecognized content and would be overwritten:\n'
+            printf '\n'
+            for conflict in ''${FAKE_ETC_CONFLICTS}; do
+              printf '        %s\n' "$conflict"
+            done
+            printf '\n'
+            printf '      Please check there is nothing critical in these files, rename them by adding .before-nix-darwin to the end, and then try again.\n'
+          } >&2
+          exit 2
+        fi
         if [ "''${FAKE_ACTIVATION_FAIL:-0}" = 1 ]; then
           exit 70
         fi
@@ -450,6 +484,7 @@ pkgs.runCommand "check-bootstrap-${system}"
         FAKE_BAD_SHA \
         FAKE_CHSH_FAIL \
         FAKE_CURL_FAIL \
+        FAKE_ETC_CONFLICTS \
         FAKE_GH_AUTH \
         FAKE_GIT_FETCH_FAIL \
         FAKE_GIT_UPDATE_REPO \
@@ -1171,6 +1206,87 @@ pkgs.runCommand "check-bootstrap-${system}"
     "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/live-volume-plan.out"
     grep -Fq 'Rename the orphaned' "$TMPDIR/live-volume-plan.out" && exit 1
     grep -F 'Nix Store	disk3s7' "$FAKE_VOLUMES" >/dev/null
+
+    # The upstream installer appends its block to shell rc files nix-darwin
+    # manages, and nix-darwin aborts activation rather than overwrite content
+    # it does not recognise. Moving them aside is what nix-darwin's own etc
+    # activation does to a conflicting file, so the end state is the one a
+    # successful activation produces - reached before the abort, not after it.
+    darwin_fixture darwin-etc-profile-conflict
+    export PATH="$managed_tools:$base_path"
+    # The block the upstream installer appends, marker line and all.
+    nix_block='# Nix\nif [ -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]; then\n  . "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"\nfi\n# End Nix\n'
+    printf "stock zshrc\n$nix_block" > "$etc/zshrc"
+    printf "stock bashrc\n$nix_block" > "$etc/bashrc"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-profile-plan.out"
+    grep -F "$etc/zshrc" "$TMPDIR/etc-profile-plan.out" >/dev/null
+    grep -F 'before-nix-darwin' "$TMPDIR/etc-profile-plan.out" >/dev/null
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test ! -e "$etc/zshrc"
+    test ! -e "$etc/bashrc"
+    # Moved, not rewritten: the content is the file the installer left.
+    grep -F 'stock zshrc' "$etc/zshrc.before-nix-darwin" >/dev/null
+    grep -F '# End Nix' "$etc/zshrc.before-nix-darwin" >/dev/null
+    undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
+    grep -F "mv '$etc/zshrc.before-nix-darwin' '$etc/zshrc'" "$undo" >/dev/null
+
+    # A path nix-darwin already owns resolves into /etc/static and is left
+    # alone, and a file this toolchain did not write is not bootstrap's to
+    # move however much it looks like a shell rc file.
+    darwin_fixture darwin-etc-profile-untouched
+    export PATH="$managed_tools:$base_path"
+    mkdir -p "$etc/static"
+    printf 'managed\n# End Nix\n' > "$etc/static/zshrc"
+    ln -s "$etc/static/zshrc" "$etc/zshrc"
+    printf 'hand written, no marker\n' > "$etc/bashrc"
+    "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-untouched-plan.out"
+    grep -Fq 'before-nix-darwin' "$TMPDIR/etc-untouched-plan.out" && exit 1
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test -L "$etc/zshrc"
+    test ! -e "$etc/zshrc.before-nix-darwin"
+    test "$(cat "$etc/bashrc")" = 'hand written, no marker'
+    test ! -e "$etc/bashrc.before-nix-darwin"
+
+    # A backup already at that name is the one an earlier nix-darwin generation
+    # made, and it holds the pre-nix-darwin original. Writing over it would
+    # discard the older copy to keep the newer one, so the installer's file is
+    # archived instead and the original stays where it is.
+    darwin_fixture darwin-etc-profile-backup-collision
+    export PATH="$managed_tools:$base_path"
+    printf 'the real original\n' > "$etc/zshrc.before-nix-darwin"
+    printf 'installer wrote this\n# End Nix\n' > "$etc/zshrc"
+    "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+    test ! -e "$etc/zshrc"
+    test "$(cat "$etc/zshrc.before-nix-darwin")" = 'the real original'
+    archive="$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'zshrc.*' -print -quit)"
+    grep -F 'installer wrote this' "$archive" >/dev/null
+    grep -F "cp '$archive' '$etc/zshrc'" \
+      "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
+
+    # A file bootstrap did not write is not bootstrap's to move, so activation
+    # still refuses - and the refusal names the file and the exact command
+    # that clears it, rather than costing a round trip as an unclassified
+    # code. The transcript arrives indented under nh's error, which is the
+    # shape the parser has to survive.
+    darwin_fixture darwin-etc-conflict-not-ours
+    export PATH="$managed_tools:$base_path"
+    printf 'a file the operator wrote\n' > "$etc/zshrc"
+    FAKE_ETC_CONFLICTS="$etc/zshrc" \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E303]' "$TMPDIR/expected-failure.err" >/dev/null
+    grep -F "sudo mv $etc/zshrc $etc/zshrc.before-nix-darwin" \
+      "$TMPDIR/expected-failure.err" >/dev/null
+    # Refusing is not repairing: the file it named is still exactly there.
+    test "$(cat "$etc/zshrc")" = 'a file the operator wrote'
+
+    # A path named in a transcript is a claim; a path that is gone is not a
+    # state, and reporting it as one sends the operator after a file that is
+    # not there.
+    darwin_fixture darwin-etc-conflict-absent
+    export PATH="$managed_tools:$base_path"
+    FAKE_ETC_CONFLICTS="$etc/zshrc" \
+      expect_failure "$repo/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F '[BOOT-E399]' "$TMPDIR/expected-failure.err" >/dev/null
 
     # An upstream installer failure is classified into a code that names the
     # repair, and an unrecognised one reports the transcript instead of a

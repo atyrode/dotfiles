@@ -31,6 +31,8 @@ SOURCE_CHANGED=0
 SOURCE_UPDATED=0
 STALE_PROFILE_BACKUPS=()
 STALE_ETC_LINKS=()
+UNRECOGNISED_ETC_PROFILES=()
+ETC_ACTIVATION_CONFLICTS=()
 BROKEN_TRUST_ANCHORS=()
 STALE_FSTAB_ENTRY=""
 ORPHANED_NIX_VOLUME=""
@@ -449,6 +451,70 @@ repair_shell_profile_backups() {
     run_privileged mv "$backup" "$target" ||
       die "could not restore $backup to $target"
     printf 'Restored %s from %s\n' "$target" "$backup"
+  done
+}
+
+# nix-darwin refuses to activate when an /etc file it manages holds content it
+# does not recognise, and the content it will not recognise here is the block
+# the upstream Nix installer appends to the shell rc files nix-darwin also
+# owns. The refusal is a review gate, not a disagreement about the outcome:
+# nix-darwin's own etc activation moves any conflicting file to
+# <file>.before-nix-darwin one step later. This performs that same move
+# before activation, so the review happens in the plan instead of as an abort
+# 30 minutes into a build.
+detect_unrecognised_etc_profiles() {
+  local etc target
+
+  UNRECOGNISED_ETC_PROFILES=()
+  [[ "$SYSTEM" == *-darwin ]] || return 0
+  etc="$(etc_root)"
+  for target in \
+    "$etc/bashrc" \
+    "$etc/zshrc" \
+    "$etc/bash.bashrc" \
+    "$etc/zsh/zshrc"; do
+    # A link is either nix-darwin's own path into /etc/static or someone
+    # else's redirection; neither is a file bootstrap wrote, and neither is
+    # bootstrap's to move. A regular file carrying the installer's marker is.
+    [[ -f "$target" && ! -L "$target" ]] || continue
+    grep -q '^# End Nix$' "$target" 2>/dev/null || continue
+    UNRECOGNISED_ETC_PROFILES+=("$target")
+  done
+}
+
+# Renaming is what nix-darwin does to the same file, so the end state matches
+# a successful activation exactly. A backup that is already there is the one
+# an earlier nix-darwin generation made, and it holds the pre-nix-darwin
+# original: that copy is worth more than this one, so the installer's file is
+# archived under the repairs directory rather than written over it.
+repair_unrecognised_etc_profiles() {
+  local target moved archive
+
+  [[ "${#UNRECOGNISED_ETC_PROFILES[@]}" -gt 0 ]] || return 0
+  for target in "${UNRECOGNISED_ETC_PROFILES[@]}"; do
+    [[ -f "$target" && ! -L "$target" ]] || continue
+    moved="$target.before-nix-darwin"
+    if [[ -e "$moved" || -L "$moved" ]]; then
+      mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+      archive="$(repair_state_dir)/${target##*/}.$(date -u +%Y%m%dT%H%M%SZ)"
+      cp "$target" "$archive" ||
+        fail BOOT-E216 "could not archive $target before removing it" \
+          "check that $(repair_state_dir) is writable"
+      run_privileged rm -f "$target" ||
+        fail BOOT-E216 "could not remove $target" "restore it from $archive"
+      journal_repair "archived $target; $moved already held the pre-nix-darwin original" \
+        "cp '$archive' '$target'"
+      printf 'Archived %s at %s: %s already holds the original.\n' \
+        "$target" "$archive" "$moved"
+    else
+      run_privileged mv "$target" "$moved" ||
+        fail BOOT-E216 "could not move $target aside for nix-darwin" \
+          "move it by hand: sudo mv $target $moved"
+      journal_repair "moved $target to $moved so nix-darwin can manage the path" \
+        "mv '$moved' '$target'"
+      printf 'Moved %s to %s: nix-darwin manages that path and refuses to\n' "$target" "$moved"
+      printf '  overwrite a file it does not recognise. Nothing was deleted.\n'
+    fi
   done
 }
 
@@ -920,14 +986,51 @@ report_installer_failure() {
   fi
 }
 
+# nix-darwin prints the paths it refused to overwrite one per line under a
+# fixed header, and nh reprints that block indented under its own error. Read
+# the list, not the prose around it, and keep only paths that are still there
+# to be moved - a name in a transcript is a claim until the machine agrees.
+detect_etc_activation_conflicts() {
+  local log="$1" path
+
+  ETC_ACTIVATION_CONFLICTS=()
+  [[ -n "$log" && -f "$log" ]] || return 0
+  while IFS= read -r path; do
+    [[ -e "$path" ]] || continue
+    ETC_ACTIVATION_CONFLICTS+=("$path")
+  done < <(awk '
+    /have unrecognized content/ { block = 1; next }
+    block {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (line !~ /^\//) { block = 0; next }
+      print line
+    }
+  ' "$log")
+}
+
 # Every managed step runs Nix, so every managed step fails when Nix cannot
 # reach the cache. Without this the operator gets a raw nix error as the last
 # word: no code, no log path, nothing to report.
 report_managed_failure() {
-  local step="$1" line source path remedy=""
+  local step="$1" log="${2:-}" line source path remedy=""
 
   log_event "managed step failed: $step"
   log_diagnostics
+  # nix-darwin names the files it refused to overwrite. Every file bootstrap
+  # moves is already moved by the time activation runs, so a name that
+  # survives to here is one bootstrap does not own - which is why the remedy
+  # is the operator's command and not another run.
+  detect_etc_activation_conflicts "$log"
+  if [[ "${#ETC_ACTIVATION_CONFLICTS[@]}" -gt 0 ]]; then
+    path="${ETC_ACTIVATION_CONFLICTS[0]}"
+    fail BOOT-E303 \
+      "$step failed: nix-darwin refused to overwrite $path, and its content is not bootstrap's to move" \
+      "keep whatever matters in it, then move it aside and re-run bootstrap: sudo mv $path $path.before-nix-darwin"
+    return 1
+  fi
   detect_broken_trust_anchors
   if [[ "${#BROKEN_TRUST_ANCHORS[@]}" -eq 0 ]]; then
     fail BOOT-E399 \
@@ -957,11 +1060,20 @@ report_managed_failure() {
   fi
 }
 
+# The step's own output is the only place some states are ever stated - and
+# it is the log the operator is asked to send, so keeping it beside the run
+# log costs one file and saves a round trip. Same shape as the installer
+# transcript, for the same reason.
 run_managed_step() {
-  local label="$1"
+  local label="$1" transcript
 
   shift
-  "$@" || report_managed_failure "$label"
+  if [[ -n "$RUN_LOG" ]]; then
+    transcript="${RUN_LOG%.log}-$label.log"
+  else
+    transcript="$(mktemp "${TMPDIR:-/tmp}/atyrode-$label.XXXXXX")"
+  fi
+  "$@" 2>&1 | tee "$transcript" || report_managed_failure "$label" "$transcript"
 }
 
 preflight() {
@@ -1000,6 +1112,9 @@ preflight() {
   # every named anchor resolves, and both find nothing.
   detect_stale_etc_links
   detect_broken_trust_anchors
+  # Different again: this one unblocks nix-darwin rather than Nix, so it is
+  # relevant exactly when Nix is present and activation is what comes next.
+  detect_unrecognised_etc_profiles
 
   warn_if_interrupted
 
@@ -1061,11 +1176,23 @@ print_plan() {
     printf '       it carries no live store and every Nix path re-downloads.\n'
     step=$((step + 1))
   fi
+  if [[ "${#UNRECOGNISED_ETC_PROFILES[@]}" -gt 0 ]]; then
+    printf '  %s. Move aside the shell rc files the Nix installer wrote, which nix-darwin\n' "$step"
+    printf '       manages and refuses to overwrite. Each keeps its content at\n'
+    printf '       <file>.before-nix-darwin, which is where nix-darwin puts it too:\n'
+    for target in "${UNRECOGNISED_ETC_PROFILES[@]}"; do
+      printf '       %s\n' "$target"
+    done
+    step=$((step + 1))
+  fi
   if command_exists nix; then
     printf '  %s. Reuse the installed Nix command; do not reinstall it.\n' "$step"
   else
     printf '  %s. Download upstream Nix %s for %s and require SHA-256 %s.\n' \
       "$step" "$NIX_VERSION" "$SYSTEM" "$NIX_SHA256"
+    printf '       It adds its own block to the shell rc files nix-darwin manages. Those\n'
+    printf '       are moved to <file>.before-nix-darwin before activation, which is where\n'
+    printf '       nix-darwin puts them too; nothing is deleted.\n'
   fi
   step=$((step + 1))
   printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$step"
@@ -1584,6 +1711,11 @@ apply_configuration() {
   repair_stale_fstab_entry
   repair_orphaned_nix_volume
   ensure_nix
+  # Re-derived after the installer rather than reused from preflight: writing
+  # its block into those rc files is the installer's own documented step, so
+  # on a fresh machine this state does not exist until Nix is installed.
+  detect_unrecognised_etc_profiles
+  repair_unrecognised_etc_profiles
   run_activation_phases
 }
 
@@ -1612,6 +1744,10 @@ recover_configuration() {
   repair_broken_trust_anchors
   repair_stale_fstab_entry
   install_pinned_nix || die "the pinned Nix installer failed during recovery"
+  # Derived after the installer for the same reason apply does it there: the
+  # rc files it writes are what nix-darwin then refuses to overwrite.
+  detect_unrecognised_etc_profiles
+  repair_unrecognised_etc_profiles
   run_activation_phases
 }
 

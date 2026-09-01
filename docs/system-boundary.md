@@ -19,7 +19,7 @@ Decision record: [ADR-0002](adr/0002-home-manager-primary-authority.md).
 | Account and login-shell selection | `atyrode apply` registers `$HOME/.nix-profile/bin/zsh` in `/etc/shells` and selects it with `chsh` using explicit privilege, reconverging after every activation | nix-darwin registers Zsh and sets the existing primary user's `UserShell` to `/run/current-system/sw/bin/zsh` during activation | The consuming infrastructure enables Zsh and sets `users.users.<name>.shell` |
 | `sudo` authentication | Operating system/operator | nix-darwin manages `/etc/pam.d/sudo_local`, enabling Touch ID with password fallback and reattachment for tmux sessions | The consuming infrastructure |
 | Nix daemon, store and service lifecycle | The system-wide Nix installation | nix-darwin | The consuming NixOS infrastructure |
-| Nix trust, cache and optimisation policy | System Nix configuration; never a Home Manager `nix.conf` override | nix-darwin | The consuming NixOS infrastructure |
+| Nix trust, cache and optimisation policy | System Nix configuration; never a Home Manager `nix.conf` override. Bootstrap enrols the fleet cache in `/etc/nix/nix.conf` once; `doctor` names the line when it is missing | nix-darwin | The consuming NixOS infrastructure |
 | Container engine and privileged access | System/operator, using a rootless per-user engine | OrbStack runtime state, outside Home Manager | The consuming infrastructure |
 | Android device access | System-owned udev policy | macOS per-device USB authorization | The consuming infrastructure's udev policy |
 | Antivirus signatures and scanning | Unmanaged; ClamAV is intentionally absent | Unmanaged; ClamAV is intentionally absent | An infrastructure concern if the host elects to provide it |
@@ -120,7 +120,7 @@ The checks always appear in this order:
 |---|---|
 | `login-shell` | The real account database selects the expected executable Zsh path and that path is listed as an allowed shell. |
 | `nix-daemon` | The system-owned daemon store is reachable. |
-| `nix-policy` | Trusted users match the exact host contract (`root` for standalone hosts; the declared list for integrated NixOS), only the official signed cache and key are configured, signatures are required, and the nix-darwin optimiser is scheduled on macOS. |
+| `nix-policy` | Trusted users match the exact host contract (`root` for standalone hosts; the declared list for integrated NixOS), the substituters are exactly the official cache followed by the fleet cache with exactly their two signing keys trusted, signatures are required, and the nix-darwin optimiser is scheduled on macOS. |
 | `container-engine` | The selected container engine is reachable without Docker-group membership, or the capability is not selected. |
 | `antivirus-data` | Verifies ClamAV binaries are absent while no host owns signatures/scanning; an unmanaged binary is drift. |
 | `device-permissions` | Android access policy is ready, or the `mobile` capability is not selected. |
@@ -186,12 +186,42 @@ failing on it would only make a correct Home Manager generation look broken.
 
 The reviewed Nix policy is deliberately narrow: the daemon store is
 system-owned, standalone hosts trust exactly `root`, integrated NixOS hosts
-trust exactly their declared non-secret `nixTrustedUsers`, the official Nix
-cache and its signing key are the only configured binary cache, and signatures
-are required. nix-darwin also schedules store optimisation. Linux Home Manager
-does not pretend to own those settings; standalone Linux repairs belong to the
-system Nix installation, and NixOS repairs belong to the consuming
-infrastructure.
+trust exactly their declared non-secret `nixTrustedUsers`, the configured
+binary caches are exactly the official Nix cache followed by the fleet cache
+with their two signing keys, and signatures are required. nix-darwin also
+schedules store optimisation. Linux Home Manager does not pretend to own
+those settings; standalone Linux repairs belong to the system Nix
+installation, and NixOS repairs belong to the consuming infrastructure.
+
+### The fleet cache
+
+CI is the fleet's only builder: every host closure is built on push, signed,
+and copied to a binary cache that every machine reads second, after the
+official cache, so an apply anywhere is a download of what CI already
+verified. `inventory/system-boundary.json` is the one place the cache's read
+URL and public signing key are written; `modules/binary-caches.nix` derives
+the two ordered lists from it for nix-darwin and NixOS-WSL, and the
+system-boundary check and `doctor` assert the same lists from the same file,
+so none of the four can drift from the others.
+
+The cache is public-read on purpose. This flake is public and nothing secret
+ever enters the Nix store, so a closure in the cache reveals nothing a clone
+of the repository does not; the read path carries no credential, which is
+what lets an unattended machine — or a fork's CI — fetch from it without
+holding one. Integrity does not rest on the transport: the private signing
+key exists only in CI, every machine requires signatures, and a path signed
+by neither trusted key is rejected wherever it came from. Write access is a
+separate credential held only by CI.
+
+Who writes the setting follows the ownership matrix. nix-darwin and
+NixOS-WSL declare both caches in their system configuration. Standalone Linux
+has no such layer: its daemon trusts only `root`, so a key in a user
+`nix.conf` is a restricted setting the daemon ignores, and the fleet key has
+to be in `/etc/nix/nix.conf`, the file the daemon reads. Bootstrap appends
+it there on a new machine, and on an existing one `doctor`'s `nix-policy`
+remediation is the exact privileged line that does the same — two `extra-`
+settings, so the official entries are never restated, followed by the daemon
+restart it needs to read them.
 
 On macOS, nix-darwin owns the immutable list of Homebrew taps and casks.
 Activation runs Homebrew Bundle with forced cleanup and zap: undeclared taps,

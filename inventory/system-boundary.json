@@ -25,6 +25,10 @@
     "trustedUsers": ["root"],
     "substituter": "https://cache.nixos.org/",
     "trustedPublicKey": "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+    "fleetCache": {
+      "substituter": "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com",
+      "trustedPublicKey": "atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0="
+    },
     "darwinOptimiserLabel": "org.nixos.nix-optimise"
   },
   "containers": {

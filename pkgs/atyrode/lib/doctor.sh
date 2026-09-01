@@ -674,30 +674,62 @@ probe_nix_daemon() {
     "$expected_json" "$actual_json"
 }
 
+# The daemon configuration lines that enrol a standalone Linux host in the
+# fleet cache. `extra-` appends to Nix's built-in defaults, so the file never
+# has to restate the official cache and the result is exactly the reviewed
+# order: official first, fleet second. Bootstrap writes these on a new machine;
+# doctor quotes them when an existing machine lacks them.
+fleet_cache_conf_lines() {
+  jq -r '"extra-substituters = \(.nix.fleetCache.substituter)",
+    "extra-trusted-public-keys = \(.nix.fleetCache.trustedPublicKey)"' "$system_policy"
+}
+
+# The one privileged line that enrols a standalone Linux daemon in the fleet
+# cache, shell-quoted so it can be pasted back verbatim. The daemon trusts
+# only root, so a user nix.conf cannot add a key - the daemon ignores
+# restricted settings from an untrusted client - and the file the daemon
+# reads is the one place the fix can go; it reads that file at start only, so
+# the restart is part of the same line. It lives outside the probe because
+# probes only observe: this is text handed to the operator, never run here.
+fleet_cache_enrolment_command() {
+  local line quoted=""
+
+  while IFS= read -r line; do
+    quoted+=" '${line//\'/\'\\\'\'}'"
+  done < <(fleet_cache_conf_lines)
+  printf '%s%s%s\n' "printf '%s\\n'" "$quoted" \
+    " | sudo tee -a /etc/nix/nix.conf >/dev/null && sudo systemctl restart nix-daemon"
+}
+
 probe_nix_policy() {
   local data="$1" platform="$2" owner config_json='{}'
-  local trusted_exact=false official_cache=false official_key=false signatures=false optimiser=false
+  local trusted_exact=false substituters_exact=false keys_exact=false signatures=false optimiser=false
   local status code summary remediation expected_json actual_json expected_users
+  local expected_substituters expected_keys
 
   owner="$(nix_system_owner "$data" "$platform")"
   expected_users="$(jq -c 'select(.nixTrustedUsers != null) | .nixTrustedUsers | sort' <<<"$data")"
   if [[ -z "$expected_users" ]]; then
     expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
   fi
+  # Order matters and is part of the contract: Nix asks substituters in the
+  # listed order, and the official cache answers for almost every path.
+  expected_substituters="$(jq -c '[.nix.substituter, .nix.fleetCache.substituter]' "$system_policy")"
+  expected_keys="$(jq -c '[.nix.trustedPublicKey, .nix.fleetCache.trustedPublicKey]' "$system_policy")"
   if has_system_fixture; then
     trusted_exact="$(jq -r '.nix.trustedUsersExact // false' <<<"$system_fixture")"
-    official_cache="$(jq -r '.nix.officialCacheOnly // false' <<<"$system_fixture")"
-    official_key="$(jq -r '.nix.officialKeyOnly // false' <<<"$system_fixture")"
+    substituters_exact="$(jq -r '.nix.substitutersExact // false' <<<"$system_fixture")"
+    keys_exact="$(jq -r '.nix.trustedKeysExact // false' <<<"$system_fixture")"
     signatures="$(jq -r '.nix.signaturesRequired // false' <<<"$system_fixture")"
     optimiser="$(jq -r '.nix.optimiserScheduled // false' <<<"$system_fixture")"
   else
     config_json="$(nix config show --json 2>/dev/null || printf '{}')"
     jq -e --argjson expected "$expected_users" \
       '.["trusted-users"].value | sort == $expected' <<<"$config_json" >/dev/null && trusted_exact=true
-    jq -e --arg expected "$(jq -r '.nix.substituter' "$system_policy")" \
-      '.["substituters"].value == [$expected]' <<<"$config_json" >/dev/null && official_cache=true
-    jq -e --arg expected "$(jq -r '.nix.trustedPublicKey' "$system_policy")" \
-      '.["trusted-public-keys"].value == [$expected]' <<<"$config_json" >/dev/null && official_key=true
+    jq -e --argjson expected "$expected_substituters" \
+      '.["substituters"].value == $expected' <<<"$config_json" >/dev/null && substituters_exact=true
+    jq -e --argjson expected "$expected_keys" \
+      '.["trusted-public-keys"].value == $expected' <<<"$config_json" >/dev/null && keys_exact=true
     jq -e '.["require-sigs"].value == true' <<<"$config_json" >/dev/null && signatures=true
     if [[ "$platform" == darwin ]] && /bin/launchctl print \
       "system/$(jq -r '.nix.darwinOptimiserLabel' "$system_policy")" >/dev/null 2>&1; then
@@ -705,26 +737,38 @@ probe_nix_policy() {
     fi
   fi
 
+  # Expected carries the reviewed public strings from the inventory; actual
+  # stays boolean so a machine's raw substituter list, which may hold a
+  # credentialed URL, never reaches the diagnostic.
   expected_json="$(jq -nc --argjson trustedUsers "$expected_users" \
+    --argjson substituters "$expected_substituters" --argjson trustedPublicKeys "$expected_keys" \
     --argjson scheduled "$([[ "$platform" == darwin ]] && echo true || echo false)" \
-    '{trustedUsers:$trustedUsers,officialSignedCacheOnly:true,signaturesRequired:true,optimiserScheduled:$scheduled}')"
+    '{trustedUsers:$trustedUsers,substituters:$substituters,trustedPublicKeys:$trustedPublicKeys,
+      signaturesRequired:true,optimiserScheduled:$scheduled}')"
   actual_json="$(jq -nc --argjson trustedUsersExact "$trusted_exact" \
-    --argjson officialCacheOnly "$official_cache" --argjson officialKeyOnly "$official_key" \
+    --argjson substitutersExact "$substituters_exact" --argjson trustedKeysExact "$keys_exact" \
     --argjson signaturesRequired "$signatures" --argjson optimiserScheduled "$optimiser" \
-    '{trustedUsersExact:$trustedUsersExact,officialCacheOnly:$officialCacheOnly,
-      officialKeyOnly:$officialKeyOnly,signaturesRequired:$signaturesRequired,
+    '{trustedUsersExact:$trustedUsersExact,substitutersExact:$substitutersExact,
+      trustedKeysExact:$trustedKeysExact,signaturesRequired:$signaturesRequired,
       optimiserScheduled:$optimiserScheduled}')"
-  if [[ "$trusted_exact" == true && "$official_cache" == true && "$official_key" == true &&
+  if [[ "$trusted_exact" == true && "$substituters_exact" == true && "$keys_exact" == true &&
     "$signatures" == true && ("$platform" != darwin || "$optimiser" == true) ]]; then
     status=ok
     code=""
-    summary="Nix trust, signed cache, and optimisation ownership match policy"
+    summary="Nix trust, signed caches, and optimisation ownership match policy"
     remediation=""
   else
     status=incomplete
     code="nix-policy-drift"
     summary="effective Nix daemon policy differs from the reviewed system boundary"
-    remediation="repair the owning nix-darwin or NixOS/Nix-daemon configuration; do not use a user nix.conf override"
+    if [[ "$owner" == system && "$trusted_exact" == true && "$signatures" == true ]]; then
+      # Only the cache lists drift, on a host where no Nix configuration layer
+      # owns the daemon's file, so the remediation is the exact line rather
+      # than a pointer to a configuration nobody has.
+      remediation="the daemon does not list the fleet cache; enrol it with: $(fleet_cache_enrolment_command)"
+    else
+      remediation="repair the owning nix-darwin or NixOS/Nix-daemon configuration; do not use a user nix.conf override"
+    fi
   fi
   system_check_add nix-policy "$owner" true "$status" "$code" "$summary" "$remediation" \
     "$expected_json" "$actual_json"
@@ -1202,6 +1246,19 @@ doctor_provisioning() {
   fi
 }
 
+# One family's JSON for the aggregate. Findings are exit 69 with complete
+# output and are kept; only a family that could not report at all becomes
+# null, so the aggregate stays valid JSON and `ok` still reads false.
+doctor_family_json() { # function argv...
+  local out status=0
+  out="$("$@")" || status=$?
+  if [[ -n "$out" && ("$status" == 0 || "$status" == "$EX_UNAVAILABLE") ]]; then
+    printf '%s' "$out"
+  else
+    printf 'null'
+  fi
+}
+
 # The question an operator has is "what is missing on this machine", and until
 # now answering it meant knowing which four families to run and in which order.
 # The aggregate runs them all and keeps each one's own verdict: a required
@@ -1227,12 +1284,17 @@ doctor_all() {
   done
 
   if [[ "$json" == 1 ]]; then
+    # A family exits 69 when it has findings and its JSON is complete; that is
+    # the common case on a real machine, not an error. Appending `null` to
+    # output that was already printed produced `{...}null`, which is what made
+    # `doctor --json` -- and the cockpit that reads it -- fail on every host
+    # with a single finding while passing on the pristine fixtures.
     jq -nc \
-      --argjson host "$(doctor_host "$requested" 1 || printf 'null')" \
-      --argjson system "$(doctor_system "$requested" --json || printf 'null')" \
-      --argjson git "$(doctor_git --json || printf 'null')" \
-      --argjson tools "$(doctor_tools --json || printf 'null')" \
-      --argjson provisioning "$(doctor_provisioning --json)" \
+      --argjson host "$(doctor_family_json doctor_host "$requested" 1)" \
+      --argjson system "$(doctor_family_json doctor_system "$requested" --json)" \
+      --argjson git "$(doctor_family_json doctor_git --json)" \
+      --argjson tools "$(doctor_family_json doctor_tools --json)" \
+      --argjson provisioning "$(doctor_family_json doctor_provisioning --json)" \
       '{schemaVersion:1,command:"doctor",
         ok:([$host,$system,$git,$tools]|all(. != null and (.ok != false))),
         host:$host,system:$system,git:$git,tools:$tools,

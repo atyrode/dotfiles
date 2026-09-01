@@ -346,8 +346,9 @@ other.
 
 ## Run logs
 
-`apply` writes a timestamped transcript per run, the upstream installer's own
-output beside it, and one per managed step:
+`apply` writes a timestamped transcript per run and the upstream installer's
+own output beside it. Off a terminal it also captures one file per managed
+step:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/logs/
@@ -358,10 +359,20 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/logs/
 └── 20260831T161500Z-apply-verification.log
 ```
 
-A managed step's own output is the only place some states are ever stated —
-the paths nix-darwin refuses to overwrite are printed by nix-darwin and
-nowhere else — so the step that fails is also the step whose transcript the
-classifier reads. It is the same file the operator is asked to send.
+A managed step's output is evidence, and its stdio is also a conversation.
+Activation asks for sudo, for the vault password, and whether to provision
+each surface it found unconfigured; the CLI gates every one of those on stdin
+and stdout both being a terminal. Capturing the stream answers no to all of
+them, so bootstrap captures only where there is no terminal to lose — which is
+exactly where there is nobody to ask. On a terminal the run log records that
+the step streamed to the operator rather than a copy of what it said.
+
+That is why the classifier reads a transcript when one exists and machine
+state otherwise. The trust-anchor and volume codes were always re-derived from
+the machine; only `BOOT-E303` needs the step's own words, because the paths
+nix-darwin refuses to overwrite are printed by nix-darwin and nowhere else. On
+a terminal those words are on the operator's screen, which is the one place a
+transcript was never needed.
 
 Failures print the log path. Logging never fails a run: a machine too broken
 to write state is still allowed to attempt its own repair.
@@ -372,6 +383,36 @@ produced it, and what each one actually is. A machine state that needs a round
 trip to diagnose costs a release cycle, and these facts are cheap to collect
 while the failure is still on the machine, so an unrecognised code arrives
 with its evidence rather than requiring another run to produce it.
+
+## What bootstrap does not do itself
+
+Activation installs the machine's declared state. What it cannot install is
+anything that needs a secret or a decision: the vault-backed Git keys, the
+Babel archive's storage document. Those are the CLI's provisioning ceremonies,
+and `atyrode apply` already finds each unconfigured surface after activating
+and offers to run its ceremony there and then.
+
+Bootstrap's part is to not get in the way of that. It runs each managed step
+on the operator's own stdio so the offers reach a human who can answer them,
+and it names no provisioning command of its own — one prompt from one place,
+rather than two layers asking the same question with different wording.
+
+A ceremony that is declined is not a failed run. The machine activated; it is
+simply not archiving or signing yet, and the command that changes that is
+named on the way out and offered again on the next apply.
+
+## Colour
+
+Colour is a reading aid, never data. It is on only where the stream is a
+terminal and the environment permits it — `NO_COLOR` honoured, `TERM=dumb`
+excluded — so a redirected run, a pipe, and the check harness all receive
+plain bytes. Each stream is decided separately, so `plan | less` stays plain
+while a failure printed beside it stays red.
+
+The palette is the CLI's, because one machine should speak with one voice:
+bold for headings and step numbers, dim for labels and asides, cyan for a path
+or a value, bold cyan for a command meant to be retyped, yellow for a warning,
+green for a repair that succeeded, red for a failure.
 
 ## Interrupted-apply marker and recovery
 
@@ -428,7 +469,9 @@ revision defenses, installer failures and their classification into codes,
 every self-healing repair and its undo journal, the recovery phase and its
 refusal to act without confirmation, the interrupted-apply marker contract,
 login-shell recovery, unsafe state types, production-only test-hook gating,
-and idempotence. The macOS repairs are covered on every platform: the states
+whether a managed step is captured or handed the operator's own stdio, the
+colour gate in both directions, and idempotence. The macOS repairs are covered
+on every platform: the states
 they fix cannot be built on a Linux runner, so the check forces the platform
 through a test-hook override and stages the machine behind `diskutil`,
 `launchctl`, `security`, and `plutil` stand-ins — including a `/etc` that is

@@ -9,23 +9,23 @@
 # bumped by scripts/update-pins.sh. The archives carry static Go builds (CGO
 # disabled), so no loader fixup is needed on any platform.
 let
-  version = "0.11.0";
+  version = "0.12.0";
   sources = {
     "x86_64-linux" = {
       asset = "code-linux-amd64";
-      hash = "sha256-9qH05i8ZM9SRhKA5Qj2scAbEe0KPgwwLqq4+2hZh9HI=";
+      hash = "sha256-Tay6A68oOjXqlvrdT8EugwRW3iK9aCZKGnJ2yJ65k7I=";
     };
     "aarch64-linux" = {
       asset = "code-linux-arm64";
-      hash = "sha256-KXosWtZzeY772lDCex65GLyXIPfnslHvrYe2RTuvrGo=";
+      hash = "sha256-cMY2uN7YooMmZ6voj38EQA4JBBoiKLAB2yoAmB3dcl0=";
     };
     "x86_64-darwin" = {
       asset = "code-darwin-amd64";
-      hash = "sha256-6AqpHn+MVTw5QsdewmzKy7edLovLyPjFssRPT8nlo04=";
+      hash = "sha256-ajpCajw4VXode3gAmXStWdRl2Yax/mfgBhkxY1H2SBs=";
     };
     "aarch64-darwin" = {
       asset = "code-darwin-arm64";
-      hash = "sha256-awqpVZQ/6UuczKtI33FNuxiEAIe+0REqxbmw2sF1PdA=";
+      hash = "sha256-/Mq5dUsNLvoGuO42bLJ9RYsjBX8ByMn4s88Z/0l1uAY=";
     };
   };
   source =

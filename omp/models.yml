@@ -125,16 +125,16 @@ models:
       Top Opus tier. Leads the smart Claude judgment roles; the main-plan
       deliberative sibling across the maps.
   fable:
-    id: claude-fable-5
+    id: claude-fable-5-1
     pool: A
     tier: 4
     bucket: claude-main
     cost_in: 10
     cost_out: 50
-    # speed/ttft: retained from the previous historical sample because Fable's
-    # bucket was maxed during the last live benchmark. Re-run the refresh once
-    # the bucket is available to replace these with a clean benchmark.
-    speed: 54
+    # speed from a clean 3-run bench on omp 18.1.2 (65.2 tok/s); ttft carried
+    # over from the last full refresh, which omp 18's bench no longer reports
+    # for this model.
+    speed: 65.2
     ttft: 6.9
     context: 1000000
     thinking: low→max
@@ -143,6 +143,8 @@ models:
       `elite` notch on the model dial leads with it; at `smart` the deliberative
       bump already reaches it for the plan/judgment roles. Anthropic retired its
       separate 7-day window, so it now draws the ordinary claude-main quota.
+      Needs omp >= 18.1.2: earlier clients are refused by Anthropic's
+      client-version gate.
   flash:
     id: deepseek-v4-flash
     pool: D

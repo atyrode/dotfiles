@@ -112,6 +112,109 @@ jobs:
       - name: Check flake
         run: nix flake check --show-trace --print-build-logs
 
+  # Every host closure this system can realise, built as the fleet's only
+  # builder and, on Linux, published for the fleet to download instead of
+  # rebuild. Deliberately a separate job with no store cache: the closures are
+  # several gigabytes each, and saving a store that holds them would blow the
+  # repository's 10 GiB Actions cache quota and evict the check caches every
+  # run. With nothing to restore, the job substitutes from cache.nixos.org and
+  # from the fleet cache itself, so once a revision's own derivations have been
+  # pushed the next run is almost entirely downloads.
+  #
+  # Darwin is built and never pushed. There is one Mac, so a cached Darwin
+  # closure would have exactly one consumer -- the machine that would build it
+  # anyway. Building it here is the gate that was missing: the class of failure
+  # that once reached the Mac only surfaces inside this derivation.
+  closures:
+    name: closures ${{ matrix.system }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      # Forks and pull-request branches have no repository secrets, so they
+      # build every closure and simply never push. Evaluated at the job level
+      # because secrets cannot be read from a step's `if` directly.
+      HAVE_CACHE: ${{ secrets.CELLAR_ADDON_KEY_ID != '' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      # The standard macOS runner offers about 14 GB for a closure that is
+      # already 10 GiB. Most of its disk is taken by toolchains this job never
+      # touches: several Xcode versions, the Android SDK, .NET, simulator
+      # runtimes. Removing them is what people do instead of paying for a
+      # larger runner; the sizes are printed so the log shows the margin.
+      - name: Free runner disk
+        if: runner.os == 'macOS'
+        run: |
+          df -h / | tail -1
+          keep="$(xcode-select -p | sed 's|/Contents/Developer||')"
+          for xcode in /Applications/Xcode_*.app; do
+            [ "$xcode" = "$keep" ] || sudo rm -rf "$xcode"
+          done
+          sudo rm -rf /Library/Android /usr/local/share/dotnet /usr/local/.ghcup \
+            ~/Library/Developer/CoreSimulator/Caches ~/.dotnet 2>/dev/null || true
+          df -h / | tail -1
+
+      # Nix >= 2.33 is required for the push: the S3 store moved from the AWS
+      # SDK to native curl SigV4, which is what makes Cellar (Ceph RGW,
+      # path-style, no checksum negotiation) a reliable target. The action's
+      # default only moves forward; do not pass an older nix_version. The
+      # fleet cache is a substituter here too, so a revision whose own
+      # derivations are already published is not rebuilt.
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
+            extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
+
+      # The dry run is the diagnostic. It lists every derivation this system
+      # would compile rather than download, so when the build below runs out
+      # of its budget the culprit is already named in the step above it. A
+      # package that shows up here is a source build on every fresh machine
+      # too: Signal Desktop on aarch64-darwin was a multi-hour Electron compile
+      # that looked like a hung job, because the one Mac had paid it once and
+      # nobody else ever had.
+      - name: Preview fleet closure work
+        run: nix build .#fleet-closures --dry-run
+
+      # Twenty minutes is generous for downloading a closure and building the
+      # handful of derivations that are ours; anything longer is compiling a
+      # package that belongs in a cache or a vendor release, and the job fails
+      # with that name in the log instead of timing out in silence.
+      - name: Build fleet closures
+        timeout-minutes: 20
+        run: nix build .#fleet-closures --print-build-logs --min-free 2G --max-free 6G
+
+      # Only green main is published: machines converge to what CI built from
+      # main and nothing else. The signing key exists on disk for the length
+      # of this step, mode 600 under the runner's private temp directory, and
+      # is removed on every exit path. zstd with parallel compression keeps a
+      # multi-gigabyte first push inside the job timeout; xz would take an hour.
+      - name: Push fleet closures to the cache
+        if: runner.os == 'Linux' && github.ref == 'refs/heads/main' && env.HAVE_CACHE == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLAR_ADDON_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLAR_ADDON_KEY_SECRET }}
+          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          key="$RUNNER_TEMP/nix-cache-signing-key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$NIX_CACHE_SIGNING_KEY" > "$key")
+          nix copy \
+            --to "s3://atyrode-nix-cache?endpoint=cellar-c2.services.clever-cloud.com&region=us-east-1&scheme=https&compression=zstd&parallel-compression=true&secret-key=$key" \
+            ./result
+
   # Docs-only fast path: Markdown is not fully inert — links are linted and
   # docs can leak production facts — so build the two intentional whole-tree
   # lints when the matrix is skipped, then guard the fast-path invariant
@@ -155,7 +258,7 @@ jobs:
   # (matrix or docs-links) ran.
   ci-gate:
     name: ci-gate
-    needs: [changes, check, docs-links]
+    needs: [changes, check, closures, docs-links]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -168,5 +271,5 @@ jobs:
           jq -e '
             (.changes.result == "success")
             and ([.[] | .result] | all(. == "success" or . == "skipped"))
-            and ((.check.result == "success") or (.["docs-links"].result == "success"))
+            and ((.check.result == "success" and .closures.result == "success") or (.["docs-links"].result == "success"))
           ' <<<"$NEEDS" >/dev/null

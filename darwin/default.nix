@@ -12,6 +12,7 @@
 
 let
   casks = import ./casks.nix;
+  binaryCaches = import ../modules/binary-caches.nix;
 in
 {
   system = {
@@ -49,10 +50,10 @@ in
       "flakes"
     ];
     require-sigs = true;
-    substituters = lib.mkForce [ "https://cache.nixos.org/" ];
-    trusted-public-keys = lib.mkForce [
-      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-    ];
+    # Forced rather than merged: nix-darwin and its inputs may add substituters
+    # of their own, and the reviewed boundary is an exact list, not a floor.
+    substituters = lib.mkForce binaryCaches.substituters;
+    trusted-public-keys = lib.mkForce binaryCaches.trusted-public-keys;
     trusted-users = lib.mkForce [ "root" ];
   };
 

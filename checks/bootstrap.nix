@@ -9,6 +9,8 @@ let
   };
   expectedHash = nixHashes.${system};
   darwinHash = nixHashes."aarch64-darwin";
+  fleetCache =
+    (builtins.fromJSON (builtins.readFile ../inventory/system-boundary.json)).nix.fleetCache;
 in
 pkgs.runCommand "check-bootstrap-${system}"
   {
@@ -52,6 +54,7 @@ pkgs.runCommand "check-bootstrap-${system}"
     trap 'report_check_failure' ERR
 
     bootstrap=${../install.sh}
+    system_policy=${../inventory/system-boundary.json}
     real_git=${pkgs.git}/bin/git
     base_path="$PATH"
     host="alex-${system}"
@@ -491,11 +494,15 @@ pkgs.runCommand "check-bootstrap-${system}"
       chmod +x "$repo/install.sh"
       patchShebangs "$repo/install.sh"
       printf '{ outputs = _: {}; }\n' > "$repo/flake.nix"
+      # Bootstrap reads the fleet cache from the inventory, so the fixture
+      # checkout carries the real file rather than a stand-in.
+      mkdir -p "$repo/inventory"
+      cp "$system_policy" "$repo/inventory/system-boundary.json"
       "$real_git" -C "$repo" init -q -b main
       "$real_git" -C "$repo" config user.name fixture
       "$real_git" -C "$repo" config user.email fixture@example.invalid
       "$real_git" -C "$repo" remote add origin https://github.com/atyrode/dotfiles.git
-      "$real_git" -C "$repo" add flake.nix install.sh
+      "$real_git" -C "$repo" add flake.nix install.sh inventory
       "$real_git" -C "$repo" commit -q -m fixture
       "$real_git" -C "$repo" update-ref refs/remotes/origin/main HEAD
     }
@@ -564,10 +571,14 @@ pkgs.runCommand "check-bootstrap-${system}"
       export PATH="$managed_tools:$base_path"
       BOOTSTRAP_NIX_PROFILE_SCRIPT="$TMPDIR/poison-profile" \
         bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
-        > "$TMPDIR/production-hooks.out"
+        > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err"
       test ! -e "$BOOTSTRAP_POISON_MARKER"
       test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
       test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+      # The same run proves the fleet cache is never load-bearing: the
+      # sandbox's /etc is read-only, the enrolment is refused, and the apply
+      # still converges with a warning that hands the line to doctor.
+      grep -F 'could not write /etc/nix/nix.conf' "$TMPDIR/production-hooks.err" >/dev/null
     fi
 
     # Repository identity, every class of dirt, and revision state are conservative.
@@ -732,6 +743,43 @@ pkgs.runCommand "check-bootstrap-${system}"
     grep -F "Restored $etc/zshrc" "$TMPDIR/repair-apply.out" >/dev/null
     test -e "$FAKE_INSTALL_EXECUTED"
     test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+
+    # Standalone Linux is the one platform where no Nix layer owns the daemon's
+    # nix.conf, so bootstrap enrols the fleet cache there itself: planned while
+    # the file lacks it, appended below whatever the installer wrote, readable
+    # by the unprivileged client, and settled - never planned again - once
+    # present. Darwin never plans it because nix-darwin declares both caches.
+    if [[ "$FAKE_SYSTEM" == *-linux ]]; then
+      new_fixture fleet-cache-enrolment
+      export PATH="$managed_tools:$base_path"
+      export BOOTSTRAP_PROFILE_TARGET_ROOT="$TMPDIR/fleet-cache-enrolment/etcroot"
+      etc="$BOOTSTRAP_PROFILE_TARGET_ROOT/etc"
+      mkdir -p "$etc/nix"
+      printf 'build-users-group = nixbld\n' > "$etc/nix/nix.conf"
+      "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-plan.out"
+      grep -F 'Enrol the Nix daemon in the fleet binary cache' "$TMPDIR/fleet-cache-plan.out" >/dev/null
+      grep -F '${fleetCache.substituter}' "$TMPDIR/fleet-cache-plan.out" >/dev/null
+      test "$(cat "$etc/nix/nix.conf")" = 'build-users-group = nixbld'
+      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-apply.out"
+      grep -F "Enrolled the fleet binary cache in $etc/nix/nix.conf" "$TMPDIR/fleet-cache-apply.out" >/dev/null
+      test "$(sed -n 1p "$etc/nix/nix.conf")" = 'build-users-group = nixbld'
+      grep -Fxq 'extra-substituters = ${fleetCache.substituter}' "$etc/nix/nix.conf"
+      grep -Fxq 'extra-trusted-public-keys = ${fleetCache.trustedPublicKey}' "$etc/nix/nix.conf"
+      test "$(stat -c %a "$etc/nix/nix.conf")" = 644
+      test "$(wc -l < "$etc/nix/nix.conf")" -eq 3
+      grep -F 'enrolled the fleet cache' "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
+      "$repo/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-settled.out"
+      if grep -Fq 'Enrol the Nix daemon' "$TMPDIR/fleet-cache-settled.out"; then
+        echo 'an enrolled daemon was unexpectedly planned for enrolment again' >&2
+        exit 1
+      fi
+      # A fresh single-user machine has no /etc/nix at all; bootstrap creates
+      # it rather than treating the absence as somebody else's.
+      rm -rf "$etc/nix"
+      "$repo/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
+      test "$(wc -l < "$etc/nix/nix.conf")" -eq 2
+      grep -Fxq 'extra-substituters = ${fleetCache.substituter}' "$etc/nix/nix.conf"
+    fi
 
     # Fresh installation verifies the artifact, activates, verifies, and remains
     # idempotent on a repeated upgrade-style invocation.

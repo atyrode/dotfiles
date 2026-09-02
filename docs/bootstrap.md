@@ -118,11 +118,19 @@ downloading an artifact, fetching Git, or moving a file.
 uses the packaged `atyrode apply` plan and activation, so the host registry and
 the `nh` backend remain the only activation contract. Flakes are enabled only
 through the process-scoped `NIX_CONFIG`; bootstrap does not append to a
-user-owned `nix.conf`. `verify` re-runs the verification step apply already
-ran: the recorded host receipt, then `atyrode doctor`, the aggregate over the
-host, system, git, tools, and provisioning families. It reports what a machine
-is missing; converging any of it is `atyrode apply`'s job, not another
-bootstrap phase.
+user-owned `nix.conf`. On standalone Linux it does write the daemon-owned
+`/etc/nix/nix.conf`, once, to enrol the machine in the fleet binary cache
+declared in `inventory/system-boundary.json`: two `extra-` lines appended
+below whatever the installer wrote, installed with explicit `sudo` and
+announced first. The daemon trusts only `root`, so a user file cannot carry
+the cache's signing key; the daemon's own file is the one place it can live.
+A refused write is a warning, never a failed bootstrap — the machine
+converges either way and `atyrode doctor` keeps naming the exact line. macOS
+is never touched: nix-darwin declares both caches. `verify` re-runs the
+verification step apply already ran: the recorded host receipt, then
+`atyrode doctor`, the aggregate over the host, system, git, tools, and
+provisioning families. It reports what a machine is missing; converging any
+of it is `atyrode apply`'s job, not another bootstrap phase.
 
 `recover` is the exit when a state has no repair. Bootstrap converges on the
 states it can name, and a machine that keeps reporting an unrecognised one is

@@ -11,6 +11,7 @@
 
 let
   boundary = builtins.fromJSON (builtins.readFile ../inventory/system-boundary.json);
+  binaryCaches = import ../modules/binary-caches.nix;
   darwinCasks = import ../darwin/casks.nix;
   knownCapabilities = builtins.attrNames (import ../home/profiles);
 
@@ -94,6 +95,15 @@ let
   ];
   officialCache = "https://cache.nixos.org/";
   officialKey = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+  # The fleet cache is a public-read bucket CI signs into; its identity is
+  # reviewed here once by shape, and every consumer reads the value from the
+  # inventory, so the check pins the shape rather than restating the strings.
+  fleetCache = boundary.nix.fleetCache;
+  fleetCacheWellFormed =
+    lib.hasPrefix "https://" fleetCache.substituter
+    && !(lib.hasInfix "@" fleetCache.substituter)
+    && lib.hasPrefix "atyrode-cache-" fleetCache.trustedPublicKey
+    && builtins.match "[^:]+:[A-Za-z0-9+/]{43}=" fleetCache.trustedPublicKey != null;
 
   darwinPolicyMatches =
     config:
@@ -114,8 +124,8 @@ let
     && config.users.users.${config.system.primaryUser}.shell == null
     && !(builtins.elem config.system.primaryUser config.users.knownUsers)
     && config.nix.settings.trusted-users == [ "root" ]
-    && config.nix.settings.substituters == [ officialCache ]
-    && config.nix.settings.trusted-public-keys == [ officialKey ]
+    && config.nix.settings.substituters == binaryCaches.substituters
+    && config.nix.settings.trusted-public-keys == binaryCaches.trusted-public-keys
     && config.nix.settings.require-sigs
     && config.nix.optimise.automatic
     && config.launchd.daemons."nix-optimise".serviceConfig.Label == boundary.nix.darwinOptimiserLabel
@@ -158,6 +168,19 @@ assert lib.assertMsg (
   && boundary.nix.substituter == officialCache
   && boundary.nix.trustedPublicKey == officialKey
 ) "Nix daemon, trust, or cache ownership differs from the reviewed boundary";
+assert lib.assertMsg fleetCacheWellFormed
+  "the fleet cache must be a credential-free HTTPS substituter with an atyrode-cache signing key";
+assert lib.assertMsg (
+  binaryCaches.substituters == [
+    officialCache
+    fleetCache.substituter
+  ]
+  &&
+    binaryCaches.trusted-public-keys == [
+      officialKey
+      fleetCache.trustedPublicKey
+    ]
+) "the shared cache list must be the official cache first and the fleet cache second";
 assert lib.assertMsg (
   boundary.containers.linux.requiredSecurityOption == "rootless"
   && boundary.containers.linux.forbiddenGroups == [ "docker" ]

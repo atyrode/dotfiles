@@ -113,6 +113,7 @@
         canonicalNixosWslConfigs
         darwinModule
         dotfilesHomeNixosModule
+        fleetClosuresFor
         inventoryBySystem
         mkPortableHomeConfiguration
         serverProfileManifests
@@ -200,6 +201,12 @@
             omp-configured
             omp-seed
             ;
+          # One root per system for the fleet binary cache: CI builds this
+          # and copies its closure, so every host below activates from a
+          # download. Members are named by host id for inspection.
+          fleet-closures = pkgs.linkFarm "fleet-closures-${system}" (
+            lib.mapAttrsToList (name: path: { inherit name path; }) (fleetClosuresFor system)
+          );
         }
         // lib.optionalAttrs (lib.hasSuffix "-linux" system) {
           server-profile-manifest = serverProfileManifests.${system};

@@ -38,6 +38,7 @@ STALE_FSTAB_ENTRY=""
 ORPHANED_NIX_VOLUME=""
 ORPHANED_NIX_VOLUME_UUID=""
 MOUNT_FAILURE=""
+FLEET_CACHE_ENROL=0
 RUN_LOG=""
 # Set when `atyrode doctor` completed the machine but still named work. Read by
 # the completion notice, which prints on the operator's terminal rather than
@@ -928,6 +929,95 @@ repair_stale_fstab_entry() {
   printf '%s the stale /nix entry from %s (archived at %s)\n' "$(paint 32 'Dropped')" "$fstab" "$archive"
 }
 
+# The fleet binary cache is declared once, in inventory/system-boundary.json,
+# and every consumer reads it from there. Bootstrap runs before jq exists, so
+# it reads the two fields with sed: the file is formatter-owned (one key per
+# line) and the system-boundary check reviews the values' shape, which is what
+# makes a textual read safe here.
+fleet_cache_setting() {
+  local key="$1"
+
+  sed -n '/"fleetCache"[[:space:]]*:/,/}/ s/^[[:space:]]*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*$/\1/p' \
+    "$DOTFILES_DIR/inventory/system-boundary.json" 2>/dev/null
+}
+
+# `extra-` appends to Nix's built-in defaults, so the file never restates the
+# official cache and the effective lists come out in the reviewed order:
+# official first, fleet second. Doctor quotes these same lines when a machine
+# lacks them.
+fleet_cache_conf_lines() {
+  printf 'extra-substituters = %s\nextra-trusted-public-keys = %s\n' \
+    "$(fleet_cache_setting substituter)" "$(fleet_cache_setting trustedPublicKey)"
+}
+
+# On macOS nix-darwin owns /etc/nix/nix.conf and declares both caches itself,
+# and NixOS hosts never run bootstrap. That leaves standalone Linux, where no
+# Nix layer owns the daemon's file. The daemon trusts only root, so a signing
+# key in a user nix.conf is ignored as a restricted setting from an untrusted
+# client; the file the daemon reads is the one place the key can live, and it
+# is read by a single-user Nix just the same. Detection is textual on
+# purpose: `nix config show` needs Nix, which on a fresh machine this run is
+# about to install.
+detect_fleet_cache_enrolment() {
+  local conf substituter
+
+  FLEET_CACHE_ENROL=0
+  [[ "$SYSTEM" == *-linux ]] || return 0
+  substituter="$(fleet_cache_setting substituter)"
+  [[ -n "$substituter" ]] || die "inventory/system-boundary.json names no fleet cache substituter"
+  conf="$(etc_root)/nix/nix.conf"
+  if [[ -f "$conf" ]] && grep -Fq "$substituter" "$conf"; then
+    return 0
+  fi
+  FLEET_CACHE_ENROL=1
+}
+
+# Not a repair and never fatal: a machine without the cache still converges,
+# it just builds what it could have downloaded. So a refusal here - no sudo,
+# a read-only /etc - is reported and the run goes on; doctor keeps naming the
+# exact line until the daemon is enrolled.
+enrol_fleet_cache() {
+  local dir conf archive temporary
+
+  [[ "$FLEET_CACHE_ENROL" -eq 1 ]] || return 0
+  dir="$(etc_root)/nix"
+  conf="$dir/nix.conf"
+  temporary="$(mktemp "${TMPDIR:-/tmp}/atyrode-nix-conf.XXXXXX")"
+  # Rendered whole and installed in one step: the file may not exist yet on a
+  # single-user machine, and whatever is already there - the installer's
+  # build-users-group, an operator's own lines - is kept verbatim above the
+  # two appended lines.
+  if [[ -f "$conf" ]]; then
+    mkdir -p "$(repair_state_dir)" 2>/dev/null || true
+    archive="$(repair_state_dir)/nix.conf.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp "$conf" "$archive" 2>/dev/null || archive=""
+    cat "$conf" >"$temporary"
+  fi
+  fleet_cache_conf_lines >>"$temporary"
+  # install rather than cp: a root cp of a mode-600 scratch file would leave
+  # a nix.conf the unprivileged Nix client cannot read.
+  if { [[ -d "$dir" ]] || run_privileged mkdir -p "$dir"; } &&
+    run_privileged install -m 0644 "$temporary" "$conf"; then
+    rm -f "$temporary"
+    if [[ -n "${archive:-}" ]]; then
+      journal_repair "enrolled the fleet cache in $conf" "cp '$archive' '$conf'"
+    fi
+    printf '%s the fleet binary cache in %s\n' "$(paint 32 'Enrolled')" "$conf"
+    # The daemon reads its file at start only; a single-user machine has no
+    # unit and skips this.
+    if command_exists systemctl && systemctl is-active --quiet nix-daemon.service 2>/dev/null; then
+      run_privileged systemctl restart nix-daemon.service ||
+        printf '%s %s\n' "$(paint_err 33 'bootstrap: warning:')" \
+          "the nix-daemon did not restart; run: sudo systemctl restart nix-daemon" >&2
+    fi
+  else
+    rm -f "$temporary"
+    printf '%s %s\n' "$(paint_err 33 'bootstrap: warning:')" \
+      "could not write $conf; this machine builds what it could have downloaded until it is enrolled, and atyrode doctor names the line that does it" >&2
+    log_event "fleet cache enrolment in $conf was refused; left for doctor"
+  fi
+}
+
 # An orphaned "Nix Store" volume is what makes the upstream installer take its
 # least-tested path: cure a pre-existing volume, encrypt it in place, carry
 # on. Renaming is enough to sidestep that path, because the installer finds
@@ -1248,6 +1338,9 @@ preflight() {
   # Different again: this one unblocks nix-darwin rather than Nix, so it is
   # relevant exactly when Nix is present and activation is what comes next.
   detect_unrecognised_etc_profiles
+  # Neither a repair nor an installer prerequisite: the daemon's cache list
+  # is state this repository declares and the machine must carry.
+  detect_fleet_cache_enrolment
 
   warn_if_interrupted
 
@@ -1330,6 +1423,14 @@ print_plan() {
     printf '       nix-darwin puts them too; nothing is deleted.\n'
   fi
   step=$((step + 1))
+  if [[ "$FLEET_CACHE_ENROL" -eq 1 ]]; then
+    printf '  %s. Enrol the Nix daemon in the fleet binary cache by appending to %s:\n' \
+      "$(paint 1 "$step")" "$(etc_root)/nix/nix.conf"
+    printf '       %s\n' "$(paint 36 "$(fleet_cache_setting substituter)")"
+    printf '       CI signs every host closure into it; the daemon downloads what CI\n'
+    printf '       built instead of rebuilding it here. The existing file is kept verbatim.\n'
+    step=$((step + 1))
+  fi
   printf '  %s. Evaluate the registered host through the packaged atyrode CLI.\n' "$(paint 1 "$step")"
   step=$((step + 1))
   printf '  %s. Activate %s through atyrode/nh.\n' "$(paint 1 "$step")" "$FLAKE_CONFIG"
@@ -1784,6 +1885,10 @@ apply_configuration() {
   repair_stale_fstab_entry
   repair_orphaned_nix_volume
   ensure_nix
+  # After the installer and before activation: a fresh machine's daemon file
+  # does not exist until Nix does, and the activation that follows is the
+  # first download the cache can serve.
+  enrol_fleet_cache
   # Re-derived after the installer rather than reused from preflight: writing
   # its block into those rc files is the installer's own documented step, so
   # on a fresh machine this state does not exist until Nix is installed.

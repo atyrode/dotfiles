@@ -229,6 +229,7 @@ let
   canonicalDarwinConfigs = lib.mapAttrs mkDarwinConfig darwinHosts;
   nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
   canonicalNixosWslConfigs = lib.mapAttrs mkNixosWslConfig nixosWslHosts;
+
   inventoryBySystem = forAllSystems (
     system:
     import ../inventory {
@@ -250,6 +251,25 @@ let
       ) canonicalDarwinConfigs;
     }
   );
+
+  # Every host closure a given system can realise, keyed by host id, as the
+  # artifact `atyrode apply` activates on that host: the standalone Home
+  # Manager activation package for home-manager hosts, and the system
+  # toplevel for the nix-darwin and NixOS-WSL hosts, whose Home Manager
+  # profile is embedded in the toplevel rather than activated on its own. CI
+  # builds this set per system and pushes it to the fleet binary cache, so a
+  # host missing here is a host whose apply rebuilds from source.
+  fleetClosuresFor =
+    system:
+    let
+      onSystem = lib.filterAttrs (name: _config: hosts.${name}.system == system);
+    in
+    lib.mapAttrs (_name: config: config.activationPackage) (onSystem standaloneHomeConfigs)
+    // lib.mapAttrs (_name: config: config.system) (onSystem canonicalDarwinConfigs)
+    // lib.mapAttrs (_name: config: config.config.system.build.toplevel) (
+      onSystem canonicalNixosWslConfigs
+    );
+
 in
 {
   inherit
@@ -259,6 +279,7 @@ in
     darwinHosts
     darwinModule
     dotfilesHomeNixosModule
+    fleetClosuresFor
     inventoryBySystem
     mkPortableHomeConfiguration
     mkServerHomeConfig

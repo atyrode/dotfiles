@@ -10,6 +10,7 @@
 
 let
   inherit (host) username;
+  binaryCaches = import ../modules/binary-caches.nix;
 in
 {
   assertions = [
@@ -44,10 +45,19 @@ in
 
   networking.hostName = host.hostname;
 
-  nix.settings.experimental-features = [
-    "nix-command"
-    "flakes"
-  ];
+  nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
+    # The same two caches nix-darwin declares, so a WSL apply downloads the
+    # closure CI built instead of rebuilding it on the Windows machine. Forced
+    # because the NixOS module and NixOS-WSL each contribute the official
+    # entries as well, and merging would list them twice; doctor asserts the
+    # exact reviewed list.
+    substituters = lib.mkForce binaryCaches.substituters;
+    trusted-public-keys = lib.mkForce binaryCaches.trusted-public-keys;
+  };
 
   # Local CUDA runtime capabilities run in Docker. NVIDIA is supplied by
   # Windows through WSL and exposed to containers through CDI; model data and

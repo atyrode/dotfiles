@@ -1073,8 +1073,8 @@ pkgs.runCommand "check-atyrode-apply"
       nix: {
         daemonReachable:true,
         trustedUsersExact:true,
-        officialCacheOnly:true,
-        officialKeyOnly:true,
+        substitutersExact:true,
+        trustedKeysExact:true,
         signaturesRequired:true,
         optimiserScheduled:false,
         rawSubstituter:"https://super-secret@example.invalid/cache?token=super-secret"
@@ -1102,11 +1102,36 @@ pkgs.runCommand "check-atyrode-apply"
       and (.checks[] | select(.id == "container-engine") | .actual.mode) == "rootless"
       and (.checks[] | select(.id == "antivirus-data") | .code) == "not-configured"
       and (.checks[] | select(.id == "homebrew-drift") | .status) == "not-applicable"
+      and (.checks[] | select(.id == "nix-policy") | .expected.substituters) == [
+        "https://cache.nixos.org/",
+        "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com"
+      ]
+      and (.checks[] | select(.id == "nix-policy") | .expected.trustedPublicKeys | length) == 2
     ' <<< "$system_result" >/dev/null
     if grep -q 'super-secret' <<< "$system_result"; then
       echo 'system diagnostics exposed raw Nix configuration' >&2
       exit 1
     fi
+
+    # A standalone Linux host whose daemon predates the fleet cache: trust and
+    # signatures are right, only the cache lists lag. No Nix layer owns
+    # /etc/nix/nix.conf there, so the remediation must be the exact privileged
+    # line that enrols the daemon, not a pointer to a configuration nobody has.
+    linux_stale_cache="$TMPDIR/linux-stale-cache.json"
+    jq '.nix.substitutersExact = false | .nix.trustedKeysExact = false' "$linux_ready" > "$linux_stale_cache"
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_stale_cache"
+    if atyrode doctor system alex-x86_64-linux-desktop --json > "$TMPDIR/linux-stale-cache.out"; then
+      echo 'a daemon without the fleet cache unexpectedly passed diagnostics' >&2
+      exit 1
+    else
+      test "$?" -eq 69
+    fi
+    jq -e '
+      (.checks[] | select(.id == "nix-policy") | .code) == "nix-policy-drift"
+      and (.checks[] | select(.id == "nix-policy") | .remediation
+        | test("^the daemon does not list the fleet cache; enrol it with: printf .%s\\\\n. .extra-substituters = https://atyrode-nix-cache[^ ]*. .extra-trusted-public-keys = atyrode-cache-1:[^ ]*. \\| sudo tee -a /etc/nix/nix.conf >/dev/null && sudo systemctl restart nix-daemon$"))
+    ' "$TMPDIR/linux-stale-cache.out" >/dev/null
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_ready"
 
     minimal_result="$(atyrode doctor system alex-x86_64-linux --json)"
     # alex-x86_64-linux carries the containers capability but not mobile, so
@@ -1179,8 +1204,8 @@ pkgs.runCommand "check-atyrode-apply"
       nix: {
         daemonReachable:false,
         trustedUsersExact:false,
-        officialCacheOnly:false,
-        officialKeyOnly:false,
+        substitutersExact:false,
+        trustedKeysExact:false,
         signaturesRequired:false,
         optimiserScheduled:false
       },
@@ -1269,8 +1294,8 @@ pkgs.runCommand "check-atyrode-apply"
       nix: {
         daemonReachable:true,
         trustedUsersExact:true,
-        officialCacheOnly:true,
-        officialKeyOnly:true,
+        substitutersExact:true,
+        trustedKeysExact:true,
         signaturesRequired:true,
         optimiserScheduled:true
       },

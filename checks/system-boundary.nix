@@ -67,6 +67,14 @@ let
         "docker"
         "docker-compose"
       ];
+  # sops edits and inspects the fleet's secrets everywhere; the Secure Enclave
+  # plugin only where the enclave is (home/profiles/security.nix says why).
+  expectedSecurityPackages = [
+    "nmap"
+    "socat"
+    "sops"
+  ]
+  ++ lib.optional (lib.hasSuffix "-darwin" system) "age-plugin-se";
   forbiddenContainerPackages =
     if lib.hasSuffix "-darwin" system then
       [
@@ -213,12 +221,8 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   packagesFor "containers" == sort expectedContainerPackages
 ) "container clients are not assigned coherently";
-assert lib.assertMsg (
-  packagesFor "security" == [
-    "nmap"
-    "socat"
-  ]
-) "the security capability must contain only the reviewed network diagnostics";
+assert lib.assertMsg (packagesFor "security" == sort expectedSecurityPackages)
+  "the security capability must contain only the reviewed network diagnostics and the secrets editor";
 assert lib.assertMsg (
   !(builtins.elem "clamav" inventoryPackages)
 ) "ClamAV must remain absent until signature updates and scanning have a system owner";

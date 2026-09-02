@@ -3,6 +3,7 @@
   "surfaceOrder": [
     "omp-seed",
     "machine-identity",
+    "operator-identity",
     "agent-context",
     "git-identity",
     "babel-archive",
@@ -21,6 +22,13 @@
       "label": "machine identity",
       "command": "atyrode identity init",
       "implies": "Generates this machine's own age key, the one activation decrypts secrets with, and prints the public line to register in .sops.yaml. Local only: no secret is read, nothing is uploaded, and the private half never leaves the file.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "operator-identity": {
+      "label": "operator identity",
+      "command": "atyrode operator init",
+      "implies": "Mints the operator's own age key inside this Mac's Secure Enclave and prints the public line to register in .sops.yaml. Local only: Touch ID is asked once, no secret is read, nothing is uploaded, and the private half never leaves the Secure Enclave.",
       "declinable": false,
       "prerequisites": []
     },

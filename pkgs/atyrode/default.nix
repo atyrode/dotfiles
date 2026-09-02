@@ -1,5 +1,6 @@
 {
   age,
+  age-plugin-se,
   atyrode-tui,
   atyrodeTuiPackage ? atyrode-tui,
   bubblewrap,
@@ -268,22 +269,28 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@windows_packages@' '${windowsPackageInventory}'
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
-        lib.makeBinPath [
-          coreutils
-          age
-          bitwarden-cli
-          curl
-          findutils
-          gawk
-          gitMinimal
-          gnugrep
-          hostname
-          jq
-          nh
-          nix
-          openssh
-          openssl
-        ]
+        lib.makeBinPath (
+          [
+            coreutils
+            age
+            bitwarden-cli
+            curl
+            findutils
+            gawk
+            gitMinimal
+            gnugrep
+            hostname
+            jq
+            nh
+            nix
+            openssh
+            openssl
+          ]
+          # The operator ceremony runs only where the Secure Enclave is, and
+          # the plugin's Linux closure is a Swift runtime no Linux host needs
+          # (home/profiles/security.nix says why).
+          ++ lib.optional stdenvNoCC.hostPlatform.isDarwin age-plugin-se
+        )
       }
   '';
 

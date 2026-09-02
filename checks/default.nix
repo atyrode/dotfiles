@@ -59,13 +59,16 @@ let
   cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
     printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
   '';
-  # The committed audience file names no machine yet, so the registered state
-  # of the identity probe is unreachable through it. The check CLI reads this
-  # one instead: the fixture host registered with the recipient the stubbed
-  # age-keygen mints, in exactly the shape the ceremony prints.
+  # The committed audience file names no machine yet and its Secure Enclave
+  # slot is empty, so the registered state of either identity probe is
+  # unreachable through it. The check CLI reads this one instead: the fixture
+  # host registered with the recipient the stubbed age-keygen mints and the
+  # operator slot filled with the one the stubbed age-plugin-se mints, in
+  # exactly the shape each ceremony prints.
   fixtureAudience = pkgs.writeText "fixture-sops.yaml" ''
     keys:
-      - &alex age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm
+      - &alex age1se1fixtureoperator00000000000000000000000000000000000000000000
+      - &alex-recovery age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm
       - &alex-x86_64-linux age1fixturemachine0000000000000000000000000000000000000000000000
       # - &alex-aarch64-darwin age1...
     creation_rules:
@@ -73,6 +76,7 @@ let
         key_groups:
           - age:
               - *alex
+              - *alex-recovery
               - *alex-x86_64-linux
   '';
   systemDoctorAtyrode = pkgs.atyrode.override {
@@ -172,11 +176,15 @@ let
           exit 1
         fi
         # The audience file is the registry's projection for secrets: the
-        # operator anchor, and one slot per fixed host -- filled or still
-        # commented out -- so `atyrode identity init` always has a named place
+        # operator's two anchors -- the Secure Enclave slot, commented out
+        # until `atyrode operator init` has run on the Mac, and the active
+        # recovery recipient -- and one slot per fixed host, filled or still
+        # commented out, so `atyrode identity init` always has a named place
         # for the line it prints. Portable profiles are not fleet members.
-        grep -qE '^  - &alex age1[0-9a-z]+$' ${../.sops.yaml} ||
-          { echo '.sops.yaml must name the operator recipient as &alex' >&2; exit 1; }
+        grep -qE '^  (# )?- &alex age1se1' ${../.sops.yaml} ||
+          { echo '.sops.yaml must carry the Secure Enclave slot &alex' >&2; exit 1; }
+        grep -qE '^  - &alex-recovery age1[0-9a-z]+$' ${../.sops.yaml} ||
+          { echo '.sops.yaml must name the recovery recipient as &alex-recovery' >&2; exit 1; }
         for host in ${lib.concatStringsSep " " (builtins.attrNames hosts)}; do
           grep -qE "^  (# )?- &$host age1" ${../.sops.yaml} ||
             { echo ".sops.yaml has no slot for registered host $host" >&2; exit 1; }

@@ -33,8 +33,11 @@ points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-stat
 - `media`: audio/video conversion and inspection.
 - `containers`: container clients and inspection tools; the daemon is
   system-owned.
-- `security`: network diagnostics. ClamAV is intentionally absent because no
-  registered host owns signature updates or a scanning workflow.
+- `security`: network diagnostics and `sops`, the editor and reader of the
+  fleet's secrets; the Mac additionally carries `age-plugin-se`, which holds
+  the operator's daily identity in its Secure Enclave ([secrets.md](secrets.md)).
+  ClamAV is intentionally absent because no registered host owns signature
+  updates or a scanning workflow.
 - `server`: marks a Linux-only headless composition. The reviewed portable
   server selection combines it with `base` and `agent-tools`.
 

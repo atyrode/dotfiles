@@ -57,10 +57,27 @@ stderr_is_tty() {
 # stays silent: an operator wants to see the four commands that act, not the
 # forty that look.
 show_command() {
-  local rendered="" part
+  local rendered
+  rendered="$(render_argv "$@")"
+  narrate_log "run: $rendered"
+  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $rendered")" >&2
+}
 
+render_argv() {
+  local rendered="" part
   for part in "$@"; do
     rendered="$rendered${rendered:+ }$(printf '%q' "$part")"
+  done
+  printf '%s' "$rendered"
+}
+
+# A pipeline is one command to the operator: what is announced is what can be
+# pasted back. Each argument is one already-rendered argv (render_argv), so
+# the pipe between them stays a pipe instead of a quoted character.
+show_pipeline() { # rendered-argv...
+  local rendered="" stage
+  for stage in "$@"; do
+    rendered="$rendered${rendered:+ | }$stage"
   done
   narrate_log "run: $rendered"
   printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $rendered")" >&2

@@ -60,28 +60,36 @@ let
   cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
     printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
   '';
-  # The committed sops tree registers the recovery recipient alone, so the
-  # registered state of either identity probe is unreachable through it. The
-  # check CLI reads this one instead: the fixture host registered with the
-  # recipient the stubbed age-keygen mints and the operator registered with
-  # the one the stubbed age-plugin-se mints, in exactly the shape
-  # `clan secrets ... add` writes.
-  fixtureRecipient = name: recipient: {
-    inherit name;
-    path = pkgs.writeText "${name}-key.json" (
-      builtins.toJSON [
-        {
-          publickey = recipient;
-          type = "age";
-        }
-      ]
-    );
-  };
-  fixtureSopsDirectory = pkgs.linkFarm "fixture-sops" [
-    (fixtureRecipient "users/alex/key.json" "age1se1fixtureoperator00000000000000000000000000000000000000000000")
-    (fixtureRecipient "users/alex-recovery/key.json" "age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm")
-    (fixtureRecipient "machines/fixture-nixos/key.json" "age1fixturemachine0000000000000000000000000000000000000000000000")
-  ];
+  # The committed sops tree registers this development machine and the
+  # recovery recipient alone, so the registered state of the operator probe
+  # on any fixture host is unreachable through it. The check CLI reads this
+  # tree instead: every fixture device registered with the recipient its
+  # stubbed generator mints, in exactly the shape `clan secrets users add`
+  # and `clan secrets groups add-user` write -- a key.json per user and a
+  # relative symlink per group member.
+  fixtureDeviceRecipient = "age1fixturedevice00000000000000000000000000000000000000000000000";
+  fixtureEnclaveRecipient = "age1se1fixtureoperator00000000000000000000000000000000000000000000";
+  fixtureSopsDirectory =
+    pkgs.runCommand "fixture-sops"
+      {
+        users = builtins.toJSON {
+          alex-fixture-nixos = fixtureDeviceRecipient;
+          alex-x86_64-linux = fixtureDeviceRecipient;
+          alex-x86_64-linux-wsl = fixtureDeviceRecipient;
+          alex-aarch64-darwin = fixtureEnclaveRecipient;
+          alex-recovery = "age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm";
+        };
+        nativeBuildInputs = [ pkgs.jq ];
+      }
+      ''
+        mkdir -p "$out/groups/admins/users"
+        jq -r 'to_entries[] | "\(.key) \(.value)"' <<<"$users" | while read -r user recipient; do
+          mkdir -p "$out/users/$user"
+          jq -n --arg recipient "$recipient" '[{publickey: $recipient, type: "age"}]' \
+            > "$out/users/$user/key.json"
+          ln -s "../../../users/$user" "$out/groups/admins/users/$user"
+        done
+      '';
   systemDoctorAtyrode = pkgs.atyrode.override {
     enableTestHooks = true;
     atyrode-tui = cockpitStub;
@@ -159,12 +167,15 @@ let
   clanMachineConfigs =
     lib.mapAttrsToList (_name: config: config.config) canonicalDarwinConfigs
     ++ lib.mapAttrsToList (_name: config: config.config) canonicalNixosWslConfigs;
-  # Every clan machine decrypts with the key `atyrode identity init` writes
-  # (pkgs/atyrode/lib/identity.sh names the same path), and no generator is
-  # declared yet: the first one is a reviewed change, not a side effect.
+  # Every clan machine decrypts with the key `atyrode apply` places
+  # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
+  # to the admins group, and no generator is declared yet: the first one is a
+  # reviewed change, not a side effect.
   clanMachineSecretsAgree = lib.all (
     config:
-    config.sops.age.keyFile == "/var/lib/sops-nix/key.txt" && config.clan.core.vars.generators == { }
+    config.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
+    && config.clan.core.sops.defaultGroups == [ "admins" ]
+    && config.clan.core.vars.generators == { }
   ) clanMachineConfigs;
   registryCheck =
     assert lib.assertMsg (
@@ -203,11 +214,13 @@ let
           echo 'fleet/hosts.tsv is out of date with fleet/hosts.nix and fleet/bootstrap-profiles.nix' >&2
           exit 1
         fi
-        # The recovery recipient is registered from day one, so the tree has
-        # a break-glass reader before the first value exists; the operator's
-        # daily identity and every machine register through their ceremonies.
+        # The recovery recipient is registered and in the group from day one,
+        # so the tree has a break-glass reader before the first value exists;
+        # every device and machine registers through its ceremony.
         jq -e 'any(.[]; .publickey | startswith("age1"))' ${../sops/users/alex-recovery/key.json} >/dev/null ||
           { echo 'sops/users/alex-recovery/key.json must register the recovery recipient' >&2; exit 1; }
+        test -e ${../sops}/groups/admins/users/alex-recovery/key.json ||
+          { echo 'sops/groups/admins must hold the recovery recipient' >&2; exit 1; }
         mkdir "$out"
       '';
   ciInventory = builtins.fromJSON (builtins.readFile ../ci/ci.json);

@@ -14,122 +14,118 @@ Clan keeps the audience as files, one public recipient per identity:
 
 - `sops/users/<name>/key.json` — a user: someone who edits, and who can read
   every value.
+- `sops/groups/admins/users/<name>` — membership of the one group every value
+  is encrypted to. Clan records it as a symlink to the user.
 - `sops/machines/<host>/key.json` — a machine: it reads the values generated
   for it and the shared ones it is given, nothing else.
+- `sops/secrets/<host>-age.key/` — a machine's own private key, encrypted to
+  the group, so that any operator device can place it on the machine.
 
 A generator declares what a machine needs (`clan.core.vars.generators` in the
-host's Nix configuration); `clan vars generate <host>` runs it on the Mac and
-writes each secret output under `vars/`, encrypted to that machine and to
-every user. A reader of the repository learns which values exist and which
-machines may read them; never a value. Registering a machine is one command
-and one commit; removing it and running `clan vars fix` means the next
-revision is unreadable to it.
+host's Nix configuration); `clan vars generate <host>` runs it on an operator
+device and writes each secret output under `vars/`, encrypted to that machine
+and to the group. A reader of the repository learns which values exist and
+which machines may read them; never a value. Registering a device or a
+machine is one or two commands and the commit clan makes; removing one
+re-encrypts everything it could read, so the next revision is unreadable to
+it.
 
 The fleet's clan machines are exactly the nix-darwin and NixOS hosts of
 [`fleet/hosts.nix`](../fleet/hosts.nix); `atyrode` is the front door and
 `clan` is called by name for the ceremonies below. Standalone Home Manager
-hosts are not clan machines: they read no secret and have no identity.
+hosts are not clan machines: they read no secret and hold no machine key,
+but they are operator devices like any other fixed host.
 
-## Two identities
+## Operator devices
 
-**The operator identity** is two clan users, and the only keys that ever
-edit.
+**The operator identity** is one clan user per device the operator works
+from -- `alex-<host>`, the registry id -- plus one recovery user, all members
+of the `admins` group. No device is special: a key is minted where it is used
+and never copied, and every member holds exactly the same authority, so the
+only thing losing a device costs is removing one user from the group.
 
-- `alex` is the daily identity. It is minted by
+- On a Mac the key is minted by
   [`age-plugin-se`](https://github.com/remko/age-plugin-se) inside the Secure
-  Enclave of the registered Mac (`atyrode operator init`), and every
-  decryption -- so every `clan vars` run -- asks for Touch ID or the login
-  passcode. `~/.config/sops/age/keys.txt` holds a handle the enclave
-  understands, not key material: the private half cannot be extracted,
-  copied, or backed up, which is exactly why there is a second user.
-- `alex-recovery` is the software key that used to be the only operator key.
-  Its only copy is the break-glass note in Bitwarden; it is not on any disk,
-  and nothing in this repository or the CLI reads it. It is registered from
-  day one, so that losing the Mac costs one `clan vars fix` and nothing more.
+  Enclave, and every decryption -- so every `clan vars` run -- asks for Touch
+  ID or the login passcode. `~/.config/sops/age/keys.txt` holds a handle the
+  enclave understands, not key material: the private half cannot be
+  extracted, copied, or backed up. That hardware exists there, which is the
+  whole reason to use it; it grants nothing the other devices lack.
+- Anywhere else the key is a plain age identity written by `age-keygen` at
+  the same path, mode 0600, protected by the account alone.
+- `alex-recovery` is the software key whose only copy is the break-glass
+  note in Bitwarden; it is not on any disk, and nothing in this repository or
+  the CLI reads it. It is a member of the group from day one, so that losing
+  every device at once costs one recovery and nothing more.
 
-The `security` capability installs `sops` on every fleet member, the plugin
-on the Mac alone, and the `clan` CLI on every clan machine; it points
-`SOPS_AGE_KEY_FILE` at `~/.config/sops/age/keys.txt` so sops reads the file
-the ceremony writes on every platform (macOS would otherwise look under
-`~/Library`). The plugin does build on Linux, but its closure there is a 2
-GiB Swift runtime, and a Linux host has no identity to decrypt with as the
-operator anyway: **every edit happens on the Mac**, and the plugin is found on
-its `PATH` rather than declared to clan, which would make the Linux machines
-build it. A Linux machine with `sops` can inspect what activation decrypted
-for it with its own key and nothing else.
+The `security` capability installs `sops` and `age` on every fleet member,
+the plugin on the Mac alone, and the `clan` CLI on every clan machine; it
+points `SOPS_AGE_KEY_FILE` at `~/.config/sops/age/keys.txt` so sops and clan
+read the file the ceremony writes on every platform (macOS would otherwise
+look under `~/Library`). Clan is told about the plugin
+(`secrets.age.plugins` in [`lib/configurations.nix`](../lib/configurations.nix))
+so its own `sops` calls can decrypt with the Mac's key; the plugin does build
+on Linux, but a Linux device never needs it, since it decrypts with its own
+key.
 
-**A machine identity** is the age key one machine decrypts with at
-activation, generated on that machine and never copied anywhere. On both
-classes it is `/var/lib/sops-nix/key.txt`, root's, mode 0600 under a mode-0700
-directory; its public recipient is published at `/etc/atyrode/machine.pub`
-so `doctor` can read it without elevating.
-[`modules/shared/clan-machine.nix`](../modules/shared/clan-machine.nix) is
-where sops-nix is told that path, once for both classes; clan would only set
-it for a key it had generated itself, and this fleet never lets it. SSH host
-keys are not used either: an explicit key is simpler to name, to reason
-about, and to revoke.
+**A machine key** is the age key one machine decrypts with at activation.
+It is clan's: `clan vars generate <host>` mints it on whichever operator
+device runs first, keeps the private half in the repository under
+`sops/secrets/<host>-age.key` encrypted to the group, and records the public
+half under `sops/machines/<host>/key.json`. On the machine it lives at
+`/var/lib/sops-nix/key.txt`, root's, mode 0600 under a mode-0700 directory:
+`atyrode apply` places it there on the machine the operator sits on, and
+`clan machines update` places it on a machine reached over SSH.
+[`modules/shared/clan-machine.nix`](../modules/shared/clan-machine.nix)
+states that path to sops-nix so the three agree. SSH host keys are not used:
+an explicit key is simpler to name, to reason about, and to revoke.
 
-## Enrolling the operator (the Mac, once)
+## Enrolling an operator device
 
-The ceremony runs on the Mac with the operator's finger and nowhere else;
-`atyrode operator` refuses on every other host, and `doctor provisioning`
-reports the `operator-identity` surface as `not-applicable` there.
+Every fixed host is a device; `doctor provisioning` reports the
+`operator-identity` surface on each, and `atyrode apply` offers the ceremony
+where it is missing.
 
-1. `atyrode apply`, so the `security` capability has installed `sops`,
-   `age-plugin-se` and `clan`. If `~/.config/sops/age/keys.txt` still holds
-   the software key, move it aside first (the Bitwarden note is its copy of
-   record); `operator init` refuses to overwrite any existing file and says
-   so.
-2. `atyrode identity init`: the Mac's own machine identity, root-owned as on
-   every clan machine.
-3. `atyrode operator init`: says that Touch ID will prompt, runs the one
-   announced `age-plugin-se keygen --access-control=any-biometry-or-passcode`,
-   asserts the modes, and prints `clan secrets users add alex age1se1...`.
-4. In a checkout: run that command and the machine's
-   (`clan secrets machines add alex-aarch64-darwin age1...`). Each writes one
-   `key.json` under `sops/`. Nothing has to be re-encrypted: no value exists
-   yet, and one generated afterwards is encrypted to them from the start.
-5. Commit and push. From here every value is made by `clan vars generate`
-   on the Mac, with Touch ID.
+1. `atyrode apply`, so the `security` capability has installed `sops`, `age`
+   (and `age-plugin-se` on a Mac) and `clan`. If `~/.config/sops/age/keys.txt`
+   already holds a key, `operator init` keeps it: the file is never
+   overwritten, and one without a `# public key:` line is refused with the
+   way out said rather than taken.
+2. `atyrode operator init`: on a Mac it says that Touch ID will prompt and
+   runs the one announced `age-plugin-se keygen`; elsewhere it says there is
+   no enclave and runs `age-keygen`. Either way it asserts the modes and
+   prints the two commands that register the device.
+3. In any checkout: run them --
+   `clan secrets users add alex-<host> age1...` and
+   `clan secrets groups add-user admins alex-<host>`. The first writes
+   `sops/users/alex-<host>/key.json`, the second the group link, and clan
+   re-encrypts every existing value to the new member and commits.
+4. Push. From here this device can edit any value and place any machine key.
 
 `atyrode operator show` prints the recipient and whether clan registers it.
-Neither verb ever reads past the `# public key:` comment the plugin writes:
-the identity line is never printed, and `age-keygen -y` could not read it
-anyway.
-
-**A lost or replaced Mac** costs no rotation. The private half was never
-extractable, so nothing leaked with the machine; the enclave key is simply
-gone. Recover the software key from the Bitwarden note to a temporary
-`SOPS_AGE_KEY_FILE`, run the ceremony above on the new Mac,
-`clan secrets users add --force alex <new recipient>`, `clan vars fix` for
-every machine, and delete the temporary file. The one thing that would force
-a rotation of every value is the recovery key itself leaking, which is why it
-lives in exactly one place.
+Neither verb ever reads past the `# public key:` comment the generator
+writes: the identity line is never printed.
 
 ## Enrolling a machine
 
-1. On the machine: `atyrode identity init`. It generates the key if absent,
-   announcing each `sudo` step, publishes the public half, and prints the one
-   command that registers it: `clan secrets machines add <host> age1...`.
-   `atyrode apply` offers this on a clan machine that has no key yet, and
-   `atyrode doctor provisioning` reports the `machine-identity` surface: not
-   applicable on a standalone Home Manager host, no key, a key clan does not
-   register (with that exact command), or registered.
-2. In a checkout on the Mac: run the command, which writes
-   `sops/machines/<host>/key.json`; then `clan vars generate <host>` once a
-   generator is declared for it.
-3. Commit and push; the machine reads its values on the next apply.
-
-`atyrode identity show` prints the recipient and whether it is registered;
-`--json` is the same record as data. Neither ever prints the private half, and
-neither does `init`: `age-keygen` writes the key and only its public half is
-read back, with `age-keygen -y`.
+1. On any operator device, in a checkout: `clan vars generate <host>`. It
+   mints the machine key if absent and every var its generators declare,
+   encrypts them, and commits. `atyrode provision machine-key` is the same
+   thing run from the machine itself when it is an operator device, which is
+   what `atyrode apply` offers; `atyrode doctor provisioning` reports the
+   `machine-key` surface: not applicable on a standalone Home Manager host,
+   not yet in the repository, in the repository but not placed, or placed.
+2. Push, and on the machine `atyrode apply`: its first step places the key at
+   `/var/lib/sops-nix/key.txt` -- announced as the one pipeline it is, the
+   key travelling through it and never through argv -- and the activation
+   that follows decrypts the machine's vars. A machine reached over SSH gets
+   the same from `clan machines update <host>`.
 
 ## Declaring a secret
 
 A secret is an output of a `clan.core.vars.generators.<name>` entry in the
 host's Nix configuration: a script, its inputs, and the files it produces,
-each marked secret or not. `clan vars generate` runs it on the Mac and
+each marked secret or not. `clan vars generate` runs it on an operator device and
 commits the result under `vars/`; sops-nix places each secret at a mode-0600
 path under `/run/secrets` at activation and never in the Nix store. With no
 generator declared, sops-nix does nothing at activation, which is why an empty
@@ -138,25 +134,31 @@ this is still the state until the first generator is a reviewed change.
 
 ## Revocation and rotation
 
-Two different things happen when a key is gone.
+Three different things happen when a key is gone.
+
+**A device is lost** (stolen, wiped, replaced):
+`clan secrets groups remove-user admins alex-<host>` then
+`clan secrets users remove alex-<host>`. Clan re-encrypts every value the
+group could read without it and commits, so from that revision on the device
+can decrypt nothing new. Enrol the replacement as above. A Mac's enclave key
+had no exportable form, so nothing leaked with it; a plain key on any other
+device did, and everything it could read is rotated as below.
 
 **A machine leaves the fleet** (decommissioned, or its key lost):
-`clan secrets machines remove <host>`, then `clan vars fix` so every value it
-could read is re-encrypted without it. From that revision on, the machine
-cannot decrypt anything new.
+`clan secrets machines remove <host>` and delete `sops/secrets/<host>-age.key`,
+then `clan vars fix` so every value it could read is re-encrypted without it.
 
-**A machine key leaks**: revoke as above, then **rotate every value that key
-could read** -- regenerate them (`clan vars generate --regenerate`), not just
-the audience. Ciphertext history is permanent: every revision of `vars/` ever
+**A key leaks**: revoke as above, then **rotate every value that key could
+read** -- regenerate them (`clan vars generate --regenerate`), not just the
+audience. Ciphertext history is permanent: every revision of `vars/` ever
 pushed stays in Git, and a leaked key decrypts every past revision it was a
 recipient of. Re-encrypting protects the future; only new values protect what
-was already published. The same is true of the recovery key, for every value.
-The Secure Enclave key is the one recipient this cannot happen to: it has no
-exportable form, so a lost Mac is the first case above, never this one.
+was already published. The same is true of the recovery key, for every value,
+which is why it lives in exactly one place.
 
 This is the price of publishing ciphertext, and it was decided with it (ADR
-0008): a leaked machine key costs exactly what a leaked vault session would,
-and it is the reason a machine only ever reads the values it needs.
+0008): a leaked key costs exactly what a leaked vault session would, and it
+is the reason a machine only ever reads the values it needs.
 
 ## Plaintext never reaches a remote
 

@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 ```
 
 `get.sh` lists each preset with its description and capability breakdown from
-`inventory/hosts.tsv`, then prompts for an explicit choice on the terminal.
+`fleet/hosts.tsv`, then prompts for an explicit choice on the terminal.
 For non-interactive Linux automation, pass the architecture-specific portable
 profile and confirm the printed plan explicitly:
 
@@ -88,7 +88,7 @@ still executes only from cloned, inspectable code. The
 clone-first command remains supported and equivalent:
 
 ```sh
-git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/install.sh" apply --config development-x86_64-linux
+git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/bootstrap/install.sh" apply --config development-x86_64-linux
 ```
 
 The unmanaged prerequisites are Git and Bash. `curl` is needed only when `nix`
@@ -100,10 +100,10 @@ install.
 The phases are independently callable:
 
 ```sh
-./install.sh preflight --config development-x86_64-linux
-./install.sh plan --config development-x86_64-linux
-./install.sh apply --config development-x86_64-linux
-./install.sh verify --config development-x86_64-linux
+./bootstrap/install.sh preflight --config development-x86_64-linux
+./bootstrap/install.sh plan --config development-x86_64-linux
+./bootstrap/install.sh apply --config development-x86_64-linux
+./bootstrap/install.sh verify --config development-x86_64-linux
 ```
 
 `preflight` verifies the platform, explicit host selection, repository root,
@@ -120,7 +120,7 @@ the `nh` backend remain the only activation contract. Flakes are enabled only
 through the process-scoped `NIX_CONFIG`; bootstrap does not append to a
 user-owned `nix.conf`. On standalone Linux it does write the daemon-owned
 `/etc/nix/nix.conf`, once, to enrol the machine in the fleet binary cache
-declared in `inventory/system-boundary.json`: two `extra-` lines appended
+declared in `fleet/system-boundary.json`: two `extra-` lines appended
 below whatever the installer wrote, installed with explicit `sudo` and
 announced first. The daemon trusts only `root`, so a user file cannot carry
 the cache's signing key; the daemon's own file is the one place it can live.
@@ -557,7 +557,7 @@ UTC>`, and is removed only after verification succeeds. While it exists,
 interruption — recover by re-running:
 
 ```sh
-./install.sh apply --config <host>
+./bootstrap/install.sh apply --config <host>
 ```
 
 Bootstrap never rolls back a successfully activated generation. Use the
@@ -566,7 +566,7 @@ generation is needed.
 
 ## Verification coverage
 
-`checks/bootstrap.nix` uses temporary homes and repositories, covering the
+`checks/atyrode/bootstrap.nix` uses temporary homes and repositories, covering the
 read-only plan, fresh and repeated application, source updates, origin and
 revision defenses, installer failures and their classification into codes,
 every self-healing repair and its undo journal, the recovery phase and its
@@ -584,12 +584,12 @@ than the platform tests nothing. The same check runs natively in all three CI
 jobs.
 
 The login-shell contract is no longer among them. It is covered in
-`checks/atyrode-apply.nix`, against the real CLI that now converges it.
+`checks/atyrode/atyrode-apply.nix`, against the real CLI that now converges it.
 Bootstrap's harness could only ever drive a stand-in for `atyrode`, so what a
 login-shell scenario proved there was the stand-in's behaviour rather than the
 contract's.
 
-`checks/get-sh.nix` covers the fetched entry point: the usage and missing-Git
+`checks/atyrode/get-sh.nix` covers the fetched entry point: the usage and missing-Git
 failures, refusal to reuse a foreign target directory, the streamed
 piped-stdin handoff to the cloned `install.sh` with `--yes` and recorded
 arguments, the implicit `--update` on a reused checkout and its suppression by

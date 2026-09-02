@@ -1,0 +1,176 @@
+# Model catalog for the routing tooling: the curated fields (short key, pool,
+# tier, quota bucket, role note) plus a cache of the factual fields omp measures.
+#
+# The factual fields are NOT hand-maintained — omp is the authority for all of
+# them, and `pkgs/omp-configured/config/refresh-model-facts.py` (run: `nix run .#refresh-model-facts`)
+# re-pulls them, rewriting only these fields in place:
+#   cost_in / cost_out ($ per 1M tokens), context, thinking  <- `omp models --json`
+#   speed (output tok/s), ttft (time-to-first-token, seconds) <- `omp bench --json`
+# They live here only because the Nix build sandbox has no network, creds, or
+# ~/.omp and so cannot reach omp itself; this file is that committed cache. Do not
+# edit the factual fields by hand — re-run the refresh instead. (speed/ttft are a
+# live benchmark, so they drift with load; re-run when you want fresh figures.)
+#
+#   pool:   O = openai-codex   ·   A = anthropic   ·   D = deepseek (optional)
+#   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
+#           Tiers 1..3 form the per-pool fallback ladder; 0 and 4 are special
+#           leads (spark drains an idle bucket; fable is a scarce elite lead).
+#   bucket: the quota window a model draws (a separate rate bucket per provider).
+#
+# Consumed by `code generate` to render the facet grid the `code` generator
+# browses (cost/model catalog + routing).
+refreshed: '2026-08-22'
+# probed: `code generate` refuses a catalog that is not marked verified, because
+# omp lists models an account cannot actually call and nothing in their metadata
+# says so. This file is a curated committed cache rather than a live scaffold, so
+# the mark is an operator attestation: every id below is one that these accounts
+# call. It describes the ids as written — change or add an `id` and re-confirm it
+# (`code generate init --refresh` probes for you) rather than leaving this true.
+probed: true
+models:
+  luna:
+    id: gpt-5.6-luna
+    pool: O
+    tier: 1
+    bucket: codex-main
+    cost_in: 0.2
+    cost_out: 1.2
+    speed: 52.3
+    ttft: 1.18
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
+      tier; the cheap rung and same-bucket sibling everywhere.
+  terra:
+    id: gpt-5.6-terra
+    pool: O
+    tier: 2
+    bucket: codex-main
+    cost_in: 2
+    cost_out: 12
+    speed: 51.8
+    ttft: 1.74
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Balanced workhorse. Leads the regular GPT tier and the mixed
+      workers. Sonnet's price-twin.
+  sol:
+    id: gpt-5.6-sol
+    pool: O
+    tier: 3
+    bucket: codex-main
+    cost_in: 5
+    cost_out: 30
+    speed: 31.5
+    ttft: 4.59
+    context: 1000000
+    thinking: low→max
+    role: Flagship. Leads the smart GPT tier.
+  spark:
+    id: gpt-5.3-codex-spark
+    pool: O
+    tier: 0
+    bucket: codex-spark
+    cost_in: 1.75
+    cost_out: 14
+    speed: 286.7
+    ttft: 5.56
+    context: 128000
+    thinking: low→xhigh
+    role: >-
+      Coding-tuned and fast. Draws a separate, usually-idle Codex bucket, so the
+      fast-execution and background roles lead on it to drain it.
+  haiku:
+    id: claude-haiku-4-5
+    pool: A
+    tier: 1
+    bucket: claude-main
+    cost_in: 1
+    cost_out: 5
+    speed: 48.9
+    ttft: 1.7
+    context: 200000
+    thinking: minimal→xhigh
+    role: >-
+      Fastest/cheapest Anthropic tier. Leads the speed Claude tier; the
+      Anthropic cheap rung and background hum.
+  sonnet:
+    id: claude-sonnet-5
+    pool: A
+    tier: 2
+    bucket: claude-main
+    cost_in: 2
+    cost_out: 10
+    speed: 35.2
+    ttft: 3.84
+    context: 1000000
+    thinking: low→max
+    role: >-
+      The value pick — near-Opus quality at a fraction of the cost. Leads the
+      regular Claude tier and the mixed judgment roles.
+  opus:
+    id: claude-opus-5
+    pool: A
+    tier: 3
+    bucket: claude-main
+    cost_in: 5
+    cost_out: 25
+    speed: 46.6
+    ttft: 1.77
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Top Opus tier. Leads the smart Claude judgment roles; the main-plan
+      deliberative sibling across the maps.
+  fable:
+    id: claude-fable-5-1
+    pool: A
+    tier: 4
+    bucket: claude-main
+    cost_in: 10
+    cost_out: 50
+    # speed from a clean 3-run bench on omp 18.1.2 (65.2 tok/s); ttft carried
+    # over from the last full refresh, which omp 18's bench no longer reports
+    # for this model.
+    speed: 65.2
+    ttft: 6.9
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Most capable Anthropic rung, and the top of pool A's ladder (tier 4). The
+      `elite` notch on the model dial leads with it; at `smart` the deliberative
+      bump already reaches it for the plan/judgment roles. Anthropic retired its
+      separate 7-day window, so it now draws the ordinary claude-main quota.
+      Needs omp >= 18.1.2: earlier clients are refused by Anthropic's
+      client-version gate.
+  flash:
+    id: deepseek-v4-flash
+    pool: D
+    tier: 1
+    bucket: deepseek-main
+    cost_in: 0.14
+    cost_out: 0.28
+    speed: 33.6
+    ttft: 0.92
+    context: 1000000
+    thinking: low,high,max
+    role: >-
+      Pay-as-you-go cheap rung. Leads the fast ds tier and hosts the
+      high-volume background on the ds lanes.
+  pro:
+    id: deepseek-v4-pro
+    pool: D
+    tier: 2
+    bucket: deepseek-main
+    cost_in: 0.435
+    cost_out: 0.87
+    speed: 23.2
+    ttft: 0.83
+    context: 1000000
+    thinking: low,high,max
+    role: >-
+      Pay-as-you-go workhorse. Leads the regular ds tier and is the relief
+      tail the metered-led lanes spill into; the smart tier borrows it (the
+      D ladder fills missing tiers from the nearest rung).

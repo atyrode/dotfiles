@@ -6,8 +6,8 @@
 }:
 
 let
-  seedConfig = ../../codex/config.toml;
-  script = builtins.readFile ../../scripts/codex-seed.sh;
+  seedConfig = ../../modules/home/codex/config.toml;
+  script = builtins.readFile ./codex-seed.sh;
 in
 (writeShellApplication {
   name = "atyrode-codex-seed";

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 #
 # Diagnostics. Every family here observes and none of them mutate; that
-# rule is asserted structurally in checks/atyrode-apply.nix.
+# rule is asserted structurally in checks/atyrode/atyrode-apply.nix.
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 

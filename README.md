@@ -8,8 +8,8 @@ Reproducible, agent-first personal operating environment for [Alex Tyrode](https
 
 ```bash
 cd ~/nix-dotfiles
-./install.sh plan --config alex-x86_64-linux
-./install.sh apply --config alex-x86_64-linux
+./bootstrap/install.sh plan --config alex-x86_64-linux
+./bootstrap/install.sh apply --config alex-x86_64-linux
 ```
 
 **Supported fresh-machine command:**
@@ -22,8 +22,8 @@ The fetched `get.sh` clones the repository, lists the registered presets for
 the detected platform, and asks which one to install before handing off to the
 cloned `install.sh`. Each choice describes what it installs;
 `atyrode capabilities list` shows the same descriptions per capability later.
-Cloning first and running `./install.sh apply --config <host>` yourself remains
-equivalent.
+Cloning first and running `./bootstrap/install.sh apply --config <host>`
+yourself remains equivalent.
 
 For portable Linux automation, pass the generic profile for the detected
 architecture, for example `bash -s -- development-x86_64-linux --yes`.
@@ -93,7 +93,7 @@ run the same apply command again.
 
 ### Native Windows Apps
 - **WinGet packages** - Zen Browser Twilight and the JetBrainsMono Nerd Font
-  are declared in `windows/packages.nix` and reconciled from the managed
+  are declared in `fleet/windows-packages.nix` and reconciled from the managed
   NixOS-WSL host.
 - **Application state** - Mozilla sign-in, Zen profiles, cookies, sessions,
   updates, and caches remain owned by Zen/Windows rather than Nix.
@@ -127,7 +127,7 @@ facets through `omp-managed` — the untouched default combo is a profile like
 any other. The `m` key runs `omp-managed` on the managed defaults with no
 overlay, the `u` key opens the `ompu` sandbox, and plain `omp` is reached by
 typing `omp` directly. The model catalog lives in
-[`omp/models.yml`](omp/models.yml).
+[`pkgs/omp-configured/config/models.yml`](pkgs/omp-configured/config/models.yml).
 
 OMP, shared skills, and mise are installed by `atyrode apply` with the rest of
 the Home Manager profile. See [Agent tools](docs/agent-tools.md) for ownership,
@@ -170,25 +170,28 @@ Pinned OMP updates have additional hash and integration checks documented in
 dotfiles/
 ├── .agents/                 # Repository-local agent skills (bump-omp)
 ├── .github/                 # Native Linux/macOS flake-check workflows
-├── agents/                  # Generic cross-project agent skills
-├── checks/                  # Nix check registry, suites, and fixtures
-├── codex/                   # Codex guidance layer and templates
-├── darwin/                  # nix-darwin and Homebrew configuration
+├── bootstrap/               # Phased bootstrap with interrupted-apply marker
+├── checks/                  # Nix check registry; suites grouped by subject
+│   ├── atyrode/             #   the CLI, bootstrap, and the entry points
+│   ├── fleet/               #   host, profile, and platform contracts
+│   ├── lints/               #   whole-tree lints and CI plumbing
+│   ├── omp/                 #   the managed OMP stack
+│   ├── fixtures/            #   shared fixtures
+│   └── lib/                 #   shared fixture builders
+├── ci/                      # Path classifier, drift guard, pin refresh, CI constants
 ├── docs/                    # Architecture and maintenance guides
-├── home/                    # Home Manager modules and capability profiles
-├── hosts/                   # Host and portable-profile registries
-├── inventory/               # Checked inventories (hosts, packages, CI)
+├── fleet/                   # Every place a machine is named: registries and inventories
 ├── lib/                     # Flake library: targets, packages, configurations
-├── modules/                 # Reusable Home Manager modules
-├── nixos/                   # Repository-owned NixOS-WSL system module
-├── omp/                     # Managed OMP config, model catalog, and rules
-├── pkgs/                    # Pinned custom derivations and wrappers
-├── scripts/                 # CI, update, and seeding utilities
-├── windows/                 # Native WinGet package declarations
+├── modules/
+│   ├── darwin/              #   nix-darwin and Homebrew configuration
+│   ├── home/                #   Home Manager modules, one directory per tool, and capability profiles
+│   ├── nixos/               #   Repository-owned NixOS-WSL system module
+│   └── shared/              #   Modules every activation kind imports
+├── pkgs/                    # Pinned derivations and wrappers, each with what it deploys
+├── secrets/                 # sops-encrypted secrets, one file per audience
 ├── flake.nix                # Inputs and output assembly
 ├── get.ps1                  # Plan-first native Windows/NixOS-WSL bootstrap
-├── get.sh                   # Fresh macOS/Linux bootstrap entrypoint
-└── install.sh               # Phased bootstrap with interrupted-apply marker
+└── get.sh                   # Fresh macOS/Linux bootstrap entrypoint
 ```
 
 ---
@@ -249,24 +252,24 @@ HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x
 
 You can also set `ATYRODE_HOST=alex-x86_64-linux-desktop` before running
 `atyrode apply` on a Linux desktop. Successful `atyrode apply` and
-`install.sh apply` runs record the active configuration so helper commands only
-show what applies to the current setup.
+`bootstrap/install.sh apply` runs record the active configuration so helper
+commands only show what applies to the current setup.
 
 ### Account identity
 
 Portable Linux bootstrap profiles resolve the invoking user and canonical home
 at activation time; no repository edit is needed when the login name changes.
-Fixed machine identities remain in `hosts/default.nix` and deliberately require
+Fixed machine identities remain in `fleet/hosts.nix` and deliberately require
 their declared user and home. See [Hosts and capabilities](docs/hosts.md).
 
 ### Add Packages
 
-Add the package to its owning module under `home/profiles/`, update the checked
+Add the package to its owning module under `modules/home/profiles/`, update the checked
 package inventory, then run `atyrode apply`.
 
 ### Add macOS Homebrew Apps
 
-Edit `darwin/casks.nix`, then run `atyrode apply` on macOS. nix-darwin
+Edit `modules/darwin/casks.nix`, then run `atyrode apply` on macOS. nix-darwin
 generates the matching Brewfile; Homebrew Bundle shows any undeclared state and
 asks before removing it during activation.
 

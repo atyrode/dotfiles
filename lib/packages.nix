@@ -39,8 +39,8 @@ let
     "steamcmd"
     "vital"
   ];
-  homebrewCasks = import ../darwin/casks.nix;
-  windowsPackageInventory = import ../windows/packages.nix;
+  homebrewCasks = import ../modules/darwin/casks.nix;
+  windowsPackageInventory = import ../fleet/windows-packages.nix;
 
   repositoryPackageNames = [
     "atyrode"
@@ -90,7 +90,7 @@ let
         # Fleet agent for the self-hosted manifold hub (#418), pinned as a
         # release asset (atyrode/manifold#52): the upstream flake's bun-deps
         # FOD is not reproducible across machines (atyrode/manifold#51).
-        # inventory/manifold.json supportedSystems gates consumers to the
+        # fleet/manifold.json supportedSystems gates consumers to the
         # published asset platforms.
         manifold-agent = final.callPackage ../pkgs/manifold-agent { };
         # Archival instrument for this machine's agent session history. The

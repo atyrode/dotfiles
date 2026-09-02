@@ -10,11 +10,11 @@ let
     "x86_64-linux"
   ];
 
-  rawCapabilityModules = import ../home/profiles;
+  rawCapabilityModules = import ../modules/home/profiles;
 
   mkCapabilityModule = name: module: {
     imports = [
-      ../modules/home/capability-contract.nix
+      ../modules/shared/capability-contract.nix
       module
     ];
 
@@ -24,7 +24,7 @@ let
   capabilityModules = lib.mapAttrs mkCapabilityModule rawCapabilityModules // {
     base = {
       imports = [
-        ../modules/home/capability-contract.nix
+        ../modules/shared/capability-contract.nix
         rawCapabilityModules.base
         nix-index-database.homeModules.default
       ];
@@ -35,7 +35,7 @@ let
     };
   };
   knownCapabilities = builtins.attrNames capabilityModules;
-  inventoryAnnotations = import ../inventory/annotations.nix;
+  inventoryAnnotations = import ../fleet/annotations.nix;
   capabilityDescriptions = lib.mapAttrs (
     _: annotation: annotation.purpose
   ) inventoryAnnotations.capabilities;
@@ -47,10 +47,10 @@ let
       inherit name;
       description = capabilityDescriptions.${name};
     }) knownCapabilities;
-  serverPolicy = builtins.fromJSON (builtins.readFile ../inventory/server-profile.json);
+  serverPolicy = builtins.fromJSON (builtins.readFile ../fleet/server-profile.json);
   serverCapabilities = serverPolicy.capabilities;
-  rawHosts = import ../hosts;
-  rawBootstrapProfiles = import ../hosts/bootstrap.nix;
+  rawHosts = import ../fleet/hosts.nix;
+  rawBootstrapProfiles = import ../fleet/bootstrap-profiles.nix;
 
   validateCapabilities =
     {

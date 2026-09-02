@@ -174,7 +174,7 @@ vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
 explicit secret-output boundary. Duplicate names and non-note items are refused.
-tunnel decides which reviewed fleet keys (home/ssh-fleet-keys) may reach THIS
+tunnel decides which reviewed fleet keys (modules/home/ssh/fleet-keys) may reach THIS
 machine over SSH. It owns ~/.ssh/authorized_keys: every mutation re-renders the
 file from the registry plus local grant state, keeping the pre-management file
 once. Grants default to a timed grant whose deadline is an OpenSSH expiry-time
@@ -190,7 +190,7 @@ doctor git is a read-only audit of SSH authentication, SSH signing, forge
 remotes, Git credential helpers, and GitHub CLI credential storage. It reports
 classifications only and never prints keys, tokens, helper arguments, or remotes.
 context renders this machine's agent context: the operator policy from
-home/agents/AGENTS.md with a generated "This machine" section (host, fleet,
+modules/home/agents/AGENTS.md with a generated "This machine" section (host, fleet,
 which CLIs are authenticated and as whom, readable secrets by name, the fleet
 cache, the clone root). render writes ${XDG_CONFIG_HOME:-~/.config}/agents/AGENTS.md,
 which the tool files (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md,

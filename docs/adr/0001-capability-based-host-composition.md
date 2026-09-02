@@ -14,10 +14,10 @@ server? a desktop?) is the real axis of variation, not its hostname.
 
 ## Decision
 
-Hosts are entries in a **registry** ([`hosts/default.nix`](../../hosts/default.nix))
+Hosts are entries in a **registry** ([`fleet/hosts.nix`](../../fleet/hosts.nix))
 that declares each machine's identity, platform, and **capabilities** rather than
 its packages or modules directly. Configuration is composed from capability and
-profile modules ([`home/profiles/`](../../home/profiles/)); a host turns on the
+profile modules ([`modules/home/profiles/`](../../modules/home/profiles/)); a host turns on the
 capabilities it needs (e.g. `agent-tools`, `desktop`, `server`) and inherits the
 modules and packages those capabilities own. The registry is the single source
 of host truth, and a public projection of it is committed so bootstrap can read

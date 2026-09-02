@@ -30,7 +30,7 @@ profile from a prompt (or a few dials) and launches it, with a per-provider usag
   restricted tools/approvals, sanitized state).
 
 The generator's model catalog and cost figures live in
-[`../../omp/models.yml`](../../omp/models.yml) (synced from `omp models`).
+[`config/models.yml`](config/models.yml) (synced from `omp models`).
 Use the pinned binary's `omp --help` and `omp <command> --help` for upstream
 behavior; this README remains authoritative for the four repository wrappers.
 
@@ -73,6 +73,6 @@ dotfiles and reapply; to change the bare `omp`, edit `~/.omp`.
 ## In these dotfiles
 
 Normally consumed via the Home-Manager module in
-[`../../modules/home/agent-tools.nix`](../../modules/home/agent-tools.nix), which installs the
+[`../../modules/home/agent-tools/contract.nix`](../../modules/home/agent-tools/contract.nix), which installs the
 launchers and wires the supporting config. The standalone `nix profile install` path above is
 for sharing the toolkit with others without adopting the whole dotfiles.

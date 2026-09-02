@@ -16,8 +16,8 @@ public signing key at `~/.ssh/id_ed25519_git_signing.pub`.
 
 The repository owns:
 
-- `home/git.nix`: Git and GitHub CLI policy;
-- [`../home/git-allowed-signers`](../home/git-allowed-signers): reviewed public
+- `modules/home/git/default.nix`: Git and GitHub CLI policy;
+- [`../modules/home/git/allowed-signers`](../modules/home/git/allowed-signers): reviewed public
   signing keys, with `alex@tyrode.dev` as the allowed principal; and
 - the Home Manager link at `$XDG_CONFIG_HOME/git/allowed_signers`.
 
@@ -46,7 +46,7 @@ unlock→fetch→lock discipline as `atyrode auth broker setup`:
   mismatch always fails loudly and is never resolved silently.
 
 The reviewed signer set stays git-owned: a new signing key enters
-[`../home/git-allowed-signers`](../home/git-allowed-signers) only through a
+[`../modules/home/git/allowed-signers`](../modules/home/git/allowed-signers) only through a
 reviewed commit, and provisioning reminds you when that step is pending.
 On Linux, Home Manager supervises the user `ssh-agent`
 (`services.ssh-agent`), so agent sessions and headless logins inherit
@@ -134,7 +134,7 @@ running `ssh-add` on a private file. Confirm `SSH_AUTH_SOCK` names a live socket
 and `ssh-add -l` lists the machine's keys.
 
 Before applying the configuration, add the new signing public key to
-[`../home/git-allowed-signers`](../home/git-allowed-signers) in a reviewed PR:
+[`../modules/home/git/allowed-signers`](../modules/home/git/allowed-signers) in a reviewed PR:
 
 ```text
 alex@tyrode.dev ssh-ed25519 <public-key-body>
@@ -230,7 +230,7 @@ The signature must identify `alex@tyrode.dev` through the managed
 1. Generate a new machine-specific key; keep the old private key in its current
    agent during the overlap.
 2. Add the new public authentication/signing registrations to the forges.
-3. Add the new public signing key to `home/git-allowed-signers`, review, apply,
+3. Add the new public signing key to `modules/home/git/allowed-signers`, review, apply,
    and confirm a new signed commit verifies.
 4. Switch the agent and `user.signingKey` public file to the new key.
 5. Remove the old authentication and signing registrations from every forge,
@@ -250,7 +250,7 @@ For a lost or compromised machine, do not use an overlap period:
 
 1. Remove that machine's authentication and signing keys from GitHub, GitLab,
    deploy-key settings, and any other forge.
-2. Remove the public key from `home/git-allowed-signers`, review, and apply the
+2. Remove the public key from `modules/home/git/allowed-signers`, review, and apply the
    change on surviving hosts.
 3. Unload the key from reachable agents and delete or revoke its private secret
    in the owning keychain/password manager.

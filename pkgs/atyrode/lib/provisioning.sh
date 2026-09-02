@@ -13,7 +13,7 @@
 # decision that only the operator can supply. What activation CAN do is stop
 # them being invisible.
 #
-# So every such surface is declared in inventory/provisioning.json and probed
+# So every such surface is declared in fleet/provisioning.json and probed
 # here. `doctor provisioning` reports them and `apply` acts on them; there is
 # one probe set and two consumers, which is what keeps the report and the offer
 # from ever disagreeing. Adding a surface is a policy entry plus a probe --
@@ -27,7 +27,7 @@
 # Touch ID, and each key is the one thing on the machine a rebuild cannot
 # recreate, so the operator sees it happen once.
 #
-# These are deliberately NOT part of the system boundary. inventory/
+# These are deliberately NOT part of the system boundary. fleet/
 # system-boundary.json describes state the machine must have to be correct, and
 # `doctor system` fails when it is missing. An unconfigured optional surface is
 # not an incorrect machine, so it lives in its own policy with its own family
@@ -41,7 +41,7 @@ provisioning_policy_field() { # id field
   local value
   value="$(jq -r --arg id "$1" --arg field "$2" \
     '.surfaces[$id][$field] | if . == null then "" else tostring end' "$provisioning_policy")"
-  [[ -n "$value" ]] || die "$EX_SOFTWARE" "inventory/provisioning.json lacks $2 for $1"
+  [[ -n "$value" ]] || die "$EX_SOFTWARE" "fleet/provisioning.json lacks $2 for $1"
   printf '%s\n' "$value"
 }
 
@@ -307,7 +307,7 @@ review_provisioning() { # json host
 
   collect_provisioning_checks
   count="$(jq -r 'length' <<<"$provisioning_checks")"
-  step_why "inventory/provisioning.json declares $count surfaces for this machine"
+  step_why "fleet/provisioning.json declares $count surfaces for this machine"
   index=0
   while ((index < count)); do
     status="$(jq -r ".[$index].status" <<<"$provisioning_checks")"
@@ -458,7 +458,7 @@ provisioning_run() { # id host
 }
 
 # Arm the hourly archive timer, which the storage ceremony has just earned.
-# modules/home/agent-tools.nix gates the timer with a ConditionPathExists on
+# modules/home/agent-tools/contract.nix gates the timer with a ConditionPathExists on
 # Babel's storage document so that an unconfigured machine never pushes on a
 # schedule (babel SPEC.md 12, gate 728). systemd evaluates that condition when
 # the timer is started, not continuously, so a machine that activated before it
@@ -661,7 +661,7 @@ cmd_provision() {
   local signing_public="$ssh_home/id_ed25519_git_signing.pub" key_blob=""
   key_blob="$(awk '{print $2}' "$signing_public" 2>/dev/null || true)"
   if [[ -n "$key_blob" ]] && ! grep -qF "$key_blob" "$managed_git_allowed_signers"; then
-    printf 'atyrode: the signing key is not yet in home/git-allowed-signers; add it through a reviewed commit, then apply\n' >&2
+    printf 'atyrode: the signing key is not yet in modules/home/git/allowed-signers; add it through a reviewed commit, then apply\n' >&2
   fi
   printf 'atyrode: verify with: atyrode doctor git\n' >&2
 }

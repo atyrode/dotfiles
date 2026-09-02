@@ -6,7 +6,7 @@
 
 # --- fleet SSH access (tunnel) ------------------------------------------------
 # Which reviewed fleet keys may reach THIS machine over SSH. Two inputs, one
-# output: the git-owned registry (home/ssh-fleet-keys, public keys only, changed
+# output: the git-owned registry (modules/home/ssh/fleet-keys, public keys only, changed
 # only by a reviewed commit) and a machine-local grant file holding this host's
 # own decisions. ~/.ssh/authorized_keys is rendered from both and owned here, so
 # a hand-edited or half-pasted line cannot silently grant or lose access.
@@ -53,26 +53,26 @@ tunnel_registry_json() {
       | map(select(length > 0))) as $lines
     | ($lines | map(
         if length != 4 then
-          error("home/ssh-fleet-keys expects `NAME ROLE KEYTYPE KEY`, got: \(join(" "))")
+          error("modules/home/ssh/fleet-keys expects `NAME ROLE KEYTYPE KEY`, got: \(join(" "))")
         elif (.[0] | test("^[a-z0-9][a-z0-9-]*$") | not) then
-          error("home/ssh-fleet-keys name is not a lowercase identifier: \(.[0])")
+          error("modules/home/ssh/fleet-keys name is not a lowercase identifier: \(.[0])")
         elif (.[1] | IN("primary", "revocable") | not) then
-          error("home/ssh-fleet-keys role must be primary or revocable, got: \(.[1])")
+          error("modules/home/ssh/fleet-keys role must be primary or revocable, got: \(.[1])")
         elif (.[2] | test("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\\.com|sk-ecdsa-sha2-nistp256@openssh\\.com)$") | not) then
-          error("home/ssh-fleet-keys key type is unsupported: \(.[2])")
+          error("modules/home/ssh/fleet-keys key type is unsupported: \(.[2])")
         elif (.[3] | test("^AAAA[A-Za-z0-9+/]+={0,3}$") | not) then
-          error("home/ssh-fleet-keys key material is not base64 for: \(.[0])")
+          error("modules/home/ssh/fleet-keys key material is not base64 for: \(.[0])")
         else
           { name: .[0], role: .[1], primary: (.[1] == "primary"), keytype: .[2], key: .[3] }
         end)) as $entries
     | if ($entries | length) == 0 then
-        error("home/ssh-fleet-keys registers no keys")
+        error("modules/home/ssh/fleet-keys registers no keys")
       elif ($entries | map(.name) | unique | length) != ($entries | length) then
-        error("home/ssh-fleet-keys registers a duplicate machine name")
+        error("modules/home/ssh/fleet-keys registers a duplicate machine name")
       elif ($entries | map(.key) | unique | length) != ($entries | length) then
-        error("home/ssh-fleet-keys registers the same key twice")
+        error("modules/home/ssh/fleet-keys registers the same key twice")
       elif ($entries | map(select(.primary)) | length) != 1 then
-        error("home/ssh-fleet-keys must mark exactly one key primary, found \($entries | map(select(.primary)) | length)")
+        error("modules/home/ssh/fleet-keys must mark exactly one key primary, found \($entries | map(select(.primary)) | length)")
       else $entries end
   ' || die "$EX_DATAERR" "the fleet key registry is unusable"
 }
@@ -122,7 +122,7 @@ tunnel_fingerprints_json() { # fleet
     fingerprint="$(printf '%s %s %s\n' "$keytype" "$key" "$name" |
       ssh-keygen -lf - 2>/dev/null | gawk '{print $2}')" || fingerprint=""
     [[ -n "$fingerprint" ]] ||
-      die "$EX_DATAERR" "home/ssh-fleet-keys holds a key openssh cannot parse: $name"
+      die "$EX_DATAERR" "modules/home/ssh/fleet-keys holds a key openssh cannot parse: $name"
     fingerprints="$(jq -c --arg name "$name" --arg fingerprint "$fingerprint" \
       '.[$name] = $fingerprint' <<<"$fingerprints")"
   done < <(jq -r '.[] | [.name, .keytype, .key] | @tsv' <<<"$fleet")
@@ -267,7 +267,7 @@ tunnel_refuse_unknown_keys() { # fleet
     [[ -n "$blob" ]] || continue
     printf 'atyrode: %s holds an unregistered key ending %s\n' "$file" "${blob: -12}" >&2
   done <<<"$unknown"
-  die "$EX_DATAERR" "register those keys in home/ssh-fleet-keys through a reviewed commit (or remove them by hand) before atyrode renders $file"
+  die "$EX_DATAERR" "register those keys in modules/home/ssh/fleet-keys through a reviewed commit (or remove them by hand) before atyrode renders $file"
 }
 
 # The rendered file is the only thing sshd reads, so it is written whole,
@@ -409,7 +409,7 @@ cmd_tunnel() {
   local fleet primary=0
   fleet="$(tunnel_registry_json)"
   jq -e --arg name "$name" 'any(.[]; .name == $name)' <<<"$fleet" >/dev/null ||
-    die "$EX_NOINPUT" "$name is not in home/ssh-fleet-keys; register it through a reviewed commit first"
+    die "$EX_NOINPUT" "$name is not in modules/home/ssh/fleet-keys; register it through a reviewed commit first"
   ! jq -e --arg name "$name" 'any(.[]; .name == $name and .primary)' <<<"$fleet" >/dev/null ||
     primary=1
 
@@ -417,7 +417,7 @@ cmd_tunnel() {
   # machine reachable only over SSH cannot be locked out by one keystroke, and
   # an unlock prompt would suggest the refusal is negotiable.
   if [[ "$action" == revoke && "$primary" == 1 ]]; then
-    die "$EX_USAGE" "$name is the primary fleet key and can never be revoked here; move the primary role in home/ssh-fleet-keys through a reviewed commit instead"
+    die "$EX_USAGE" "$name is the primary fleet key and can never be revoked here; move the primary role in modules/home/ssh/fleet-keys through a reviewed commit instead"
   fi
 
   local seconds now expires report

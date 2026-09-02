@@ -21,12 +21,12 @@
 }:
 
 let
-  analysisConfig = ../../omp/analysis.yml;
-  defaultsConfig = ../../omp/defaults.yml;
-  policyConfig = ../../omp/policy.yml;
-  untrustedConfig = ../../omp/untrusted.yml;
-  untrustedPrompt = builtins.readFile ../../omp/untrusted-system-prompt.md;
-  yoloConfig = ../../omp/yolo-session.yml;
+  analysisConfig = ./config/analysis.yml;
+  defaultsConfig = ./config/defaults.yml;
+  policyConfig = ./config/policy.yml;
+  untrustedConfig = ./config/untrusted.yml;
+  untrustedPrompt = builtins.readFile ./config/untrusted-system-prompt.md;
+  yoloConfig = ./config/yolo-session.yml;
   neutralRoot = runCommand "omp-untrusted-neutral-root" { } ''
     mkdir "$out"
   '';
@@ -43,10 +43,10 @@ let
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
-    cp ${../../omp/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
-    cp ${../../omp/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
-    cp ${../../omp/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
-    cp ${../../omp/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
+    cp ${./config/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
+    cp ${./config/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
+    cp ${./config/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
+    cp ${./config/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
     cat > "$out/package.json" <<'EOF'
     {
       "name": "atyrode-managed-omp-platform",
@@ -1067,7 +1067,7 @@ let
   generatedProfiles = runCommand "omp-generated-profiles" { } ''
     mkdir -p "$out/share/omp"
     ${lib.getExe code} generate \
-      --models-file ${../../omp/models.yml} \
+      --models-file ${./config/models.yml} \
       --out "$out/share/omp/generated.plain"
   '';
   trustedUntrustedPath = lib.makeBinPath [
@@ -1622,10 +1622,10 @@ runCommand "omp-configured-${lib.getVersion omp}"
     passthru = {
       rawOmp = omp;
       # managedDefaultPaths/enforcedPolicyPaths are exposed so
-      # checks/omp-managed-keys.nix can prove they still mirror the YAML they
+      # checks/omp/omp-managed-keys.nix can prove they still mirror the YAML they
       # gate. Drift there makes `omp config set` silently accept a key Nix
       # overrides.
-      # ompAnalysis/ompManagedDefault are exposed so checks/omp-stack.nix can
+      # ompAnalysis/ompManagedDefault are exposed so checks/omp/omp-stack.nix can
       # name the exact launcher each `code` mode is expected to resolve CODE_OMP
       # to, against a stub-built package rather than a store path guessed from
       # the released one.

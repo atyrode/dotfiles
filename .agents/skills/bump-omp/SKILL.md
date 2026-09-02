@@ -12,7 +12,7 @@ Bumps consume upstream `can1357/oh-my-pi` release binaries directly.
 1. Read `pkgs/omp/default.nix` for the current pin.
 2. Query the latest non-draft, non-prerelease release from `can1357/oh-my-pi`.
 3. Require a clean dotfiles worktree.
-4. Run `./scripts/update-pins.sh omp`.
+4. Run `./ci/update-pins.sh omp`.
 5. Require all of the following:
    - `pkgs/omp/default.nix` is the only pin changed.
    - Its version equals the upstream tag without leading `v`.
@@ -25,7 +25,7 @@ Bumps consume upstream `can1357/oh-my-pi` release binaries directly.
      omp-darwin-arm64
      ```
 
-6. Review every upstream release note between the old and new pin. `omp/defaults.yml`, `omp/models.yml`, and `omp/plain-seed.yml` MUST remain valid for the release; update them only for real upstream contract changes (settings keys, model ids, agent names) — SDK and tool wire-schema changes do not qualify.
+6. Review every upstream release note between the old and new pin. `pkgs/omp-configured/config/defaults.yml`, `pkgs/omp-configured/config/models.yml`, and `pkgs/omp-configured/config/plain-seed.yml` MUST remain valid for the release; update them only for real upstream contract changes (settings keys, model ids, agent names) — SDK and tool wire-schema changes do not qualify.
 7. Verify the package and managed configuration:
 
    ```console

@@ -37,7 +37,7 @@ let
     ;
 
   isLinux = lib.hasSuffix "-linux" system;
-  hostBudgets = (lib.importJSON ../inventory/host-budgets.json).budgets;
+  hostBudgets = (lib.importJSON ../fleet/host-budgets.json).budgets;
   serverHomeConfig = if isLinux then serverHomeConfigs.${system} else null;
   alternateServerHomeConfig =
     if isLinux then
@@ -171,8 +171,8 @@ let
             ))
           and ([.[].capabilities[]] | index("server") | not)
         ' ${registryFile} >/dev/null
-        if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${../inventory/hosts.tsv}; then
-          echo 'inventory/hosts.tsv is out of date with hosts/default.nix and hosts/bootstrap.nix' >&2
+        if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${../fleet/hosts.tsv}; then
+          echo 'fleet/hosts.tsv is out of date with fleet/hosts.nix and fleet/bootstrap-profiles.nix' >&2
           exit 1
         fi
         # The audience file is the registry's projection for secrets: the
@@ -193,23 +193,23 @@ let
         done
         mkdir "$out"
       '';
-  ciInventory = builtins.fromJSON (builtins.readFile ../inventory/ci.json);
+  ciInventory = builtins.fromJSON (builtins.readFile ../ci/ci.json);
 
   # The registry imports the shared CI constants (also read by
-  # scripts/docs-drift-guard.sh and mirrored by the static matrix in
-  # .github/workflows/nix.yml) so a drifting inventory/ci.json fails
+  # ci/docs-drift-guard.sh and mirrored by the static matrix in
+  # .github/workflows/nix.yml) so a drifting ci/ci.json fails
   # evaluation instead of silently desynchronizing.
   checksForSystem = {
-    omp-auth-broker = import ./omp-auth-broker.nix { inherit lib pkgs; };
-    omp-stack = import ./omp-stack.nix { inherit lib pkgs; };
-    omp-wrapper = import ./omp-wrapper.nix { inherit lib pkgs; };
-    omp-agent-references = import ./omp-agent-references.nix { inherit lib pkgs; };
-    agent-tools-terminal-viewing = import ./agent-terminal-viewing.nix { inherit pkgs; };
-    classifier-schedule = import ./classifier-schedule.nix { inherit lib pkgs; };
-    babel-archive = import ./babel-archive.nix { inherit lib pkgs; };
+    omp-auth-broker = import ./omp/omp-auth-broker.nix { inherit lib pkgs; };
+    omp-stack = import ./omp/omp-stack.nix { inherit lib pkgs; };
+    omp-wrapper = import ./omp/omp-wrapper.nix { inherit lib pkgs; };
+    omp-agent-references = import ./omp/omp-agent-references.nix { inherit lib pkgs; };
+    agent-tools-terminal-viewing = import ./atyrode/agent-terminal-viewing.nix { inherit pkgs; };
+    classifier-schedule = import ./lints/classifier-schedule.nix { inherit lib pkgs; };
+    babel-archive = import ./atyrode/babel-archive.nix { inherit lib pkgs; };
   }
   // {
-    atyrode-apply = import ./atyrode-apply.nix {
+    atyrode-apply = import ./atyrode/atyrode-apply.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
       productionAtyrode = pkgs.atyrode;
@@ -221,43 +221,43 @@ let
         }
         .${system};
     };
-    atyrode-lifecycle = import ./atyrode-lifecycle.nix {
+    atyrode-lifecycle = import ./atyrode/atyrode-lifecycle.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
-    atyrode-runtime = import ./atyrode-runtime.nix {
+    atyrode-runtime = import ./atyrode/atyrode-runtime.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
-    atyrode-tunnel = import ./atyrode-tunnel.nix {
+    atyrode-tunnel = import ./atyrode/atyrode-tunnel.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
-    atyrode-credentials = import ./atyrode-credentials.nix {
+    atyrode-credentials = import ./atyrode/atyrode-credentials.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
-    bootstrap = import ./bootstrap.nix { inherit pkgs; };
-    codex-seed = import ./codex-seed.nix { inherit pkgs; };
-    desktop-fonts = import ./desktop-fonts.nix {
+    bootstrap = import ./atyrode/bootstrap.nix { inherit pkgs; };
+    codex-seed = import ./omp/codex-seed.nix { inherit pkgs; };
+    desktop-fonts = import ./fleet/desktop-fonts.nix {
       inherit lib pkgs;
       hostConfigs = canonicalHomeConfigs;
     };
-    get-entrypoint = import ./get-sh.nix { inherit pkgs; };
-    omp-seed = import ./omp-seed.nix { inherit pkgs; };
-    omp-secret-obfuscation = import ./omp-secret-obfuscation.nix { inherit pkgs; };
-    omp-isolated-writer = import ./omp-isolated-writer.nix { inherit pkgs; };
+    get-entrypoint = import ./atyrode/get-sh.nix { inherit pkgs; };
+    omp-seed = import ./omp/omp-seed.nix { inherit pkgs; };
+    omp-secret-obfuscation = import ./omp/omp-secret-obfuscation.nix { inherit pkgs; };
+    omp-isolated-writer = import ./omp/omp-isolated-writer.nix { inherit pkgs; };
     home-evaluation = homeEvaluation;
     host-registry = registryCheck;
-    package-ownership = import ./package-ownership.nix {
+    package-ownership = import ./fleet/package-ownership.nix {
       inherit pkgs;
       inventory = inventoryBySystem.${system};
     };
-    shell-surface = import ./shell-surface.nix {
+    shell-surface = import ./fleet/shell-surface.nix {
       inherit lib pkgs;
       hostConfigs = canonicalHomeConfigs;
     };
-    system-boundary = import ./system-boundary.nix {
+    system-boundary = import ./fleet/system-boundary.nix {
       inherit lib pkgs system;
       inventory = inventoryBySystem.${system};
       homeConfigs = systemHomeConfigs;
@@ -274,19 +274,19 @@ let
     # work three times in CI. Keep them on one leg only (#169).
     # docs-links, production-facts, and secret-shapes scan the whole tree
     # (docs included); they are the intentional exceptions the docs-only
-    # fast path builds directly and scripts/docs-drift-guard.sh excludes.
-    docs-links = import ./docs-links.nix { inherit lib pkgs; };
-    docs-drift-guard = import ./docs-drift-guard.nix { inherit pkgs; };
-    classify-ci-paths = import ./classify-ci-paths.nix { inherit pkgs; };
-    production-facts = import ./production-facts.nix { inherit pkgs; };
-    secret-shapes = import ./secret-shapes.nix { inherit lib pkgs; };
-    git-hooks = import ./git-hooks.nix { inherit lib pkgs; };
-    darwin-activation = import ./darwin-activation.nix {
+    # fast path builds directly and ci/docs-drift-guard.sh excludes.
+    docs-links = import ./lints/docs-links.nix { inherit lib pkgs; };
+    docs-drift-guard = import ./lints/docs-drift-guard.nix { inherit pkgs; };
+    classify-ci-paths = import ./lints/classify-ci-paths.nix { inherit pkgs; };
+    production-facts = import ./lints/production-facts.nix { inherit pkgs; };
+    secret-shapes = import ./lints/secret-shapes.nix { inherit lib pkgs; };
+    git-hooks = import ./lints/git-hooks.nix { inherit lib pkgs; };
+    darwin-activation = import ./fleet/darwin-activation.nix {
       inherit lib pkgs;
       darwinConfigs = canonicalDarwinConfigs;
     };
     treefmt = treefmtCheck;
-    omp-managed-keys = import ./omp-managed-keys.nix {
+    omp-managed-keys = import ./omp/omp-managed-keys.nix {
       inherit lib pkgs;
       ompConfigured = pkgs.omp-configured;
     };
@@ -295,7 +295,7 @@ let
     # winget.exe and drives pwsh, which makes it the heaviest check in the
     # registry. It sits on this leg because its subject host,
     # alex-x86_64-linux-wsl, only exists on x86_64-linux.
-    windows = import ./windows.nix {
+    windows = import ./fleet/windows.nix {
       inherit lib pkgs;
       nixosConfig = canonicalNixosWslConfigs.alex-x86_64-linux-wsl;
       windowsPackages = windowsPackageInventory;
@@ -304,12 +304,12 @@ let
   // lib.optionalAttrs isLinux {
     # The resource guard evaluates the Linux module branch (earlyoom is a
     # Linux-only package), so it exists on Linux systems only.
-    resource-guard = import ./agent-resource-guard.nix { inherit lib pkgs; };
-    manifold-node = import ./manifold-node.nix {
+    resource-guard = import ./atyrode/agent-resource-guard.nix { inherit lib pkgs; };
+    manifold-node = import ./atyrode/manifold-node.nix {
       inherit lib pkgs system;
       serverConfig = serverHomeConfig.config;
     };
-    portable-profile-contract = import ./portable-profile-contract.nix {
+    portable-profile-contract = import ./fleet/portable-profile-contract.nix {
       inherit lib mkPortableHomeConfiguration pkgs;
       profileName = "development-${system}";
       fixedHomeConfig =
@@ -321,7 +321,7 @@ let
           .${system}
         };
     };
-    portable-profiles = import ./portable-profiles.nix {
+    portable-profiles = import ./fleet/portable-profiles.nix {
       inherit
         alternateServerHomeConfig
         lib
@@ -335,7 +335,7 @@ let
       serverProfileManifest = serverProfileManifests.${system};
     };
     server-profile = serverProfileManifests.${system};
-    host-closure = import ./host-closure.nix {
+    host-closure = import ./fleet/host-closure.nix {
       inherit lib pkgs system;
       budgets = hostBudgets;
       hostConfigs = systemHomeConfigs;
@@ -345,7 +345,7 @@ let
     {
       darwin-evaluation = darwinEvaluation;
     }
-    // import ./app-signatures.nix {
+    // import ./fleet/app-signatures.nix {
       inherit pkgs;
       apps = [
         {
@@ -374,9 +374,9 @@ let
   );
 in
 assert lib.assertMsg (builtins.elem system ciInventory.systems)
-  "inventory/ci.json systems must cover ${system}";
+  "ci/ci.json systems must cover ${system}";
 assert lib.assertMsg (
   system != "x86_64-linux"
   || lib.all (name: builtins.hasAttr name checksForSystem) ciInventory.docsOnlyChecks
-) "inventory/ci.json docsOnlyChecks must name existing x86_64-linux checks";
+) "ci/ci.json docsOnlyChecks must name existing x86_64-linux checks";
 checksForSystem

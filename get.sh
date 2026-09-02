@@ -35,7 +35,7 @@ show_command() {
 }
 
 pick_host() {
-  local dir="$1" inventory="$1/inventory/hosts.tsv" system
+  local dir="$1" inventory="$1/fleet/hosts.tsv" system
   [[ -r "$inventory" ]] || die 'host inventory missing from the clone; pass a registered host explicitly'
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64) system='aarch64-darwin' ;;
@@ -70,7 +70,7 @@ pick_host() {
 }
 
 require_registered_host() {
-  local dir="$1" requested="$2" inventory="$1/inventory/hosts.tsv"
+  local dir="$1" requested="$2" inventory="$1/fleet/hosts.tsv"
   [[ -r "$inventory" ]] || die 'host inventory missing from the clone'
 
   local -a ids=()
@@ -135,18 +135,18 @@ main() {
       "$dir" >&2
   fi
   install_args+=("$@")
-  show_command "$dir/install.sh" "${install_args[@]}"
+  show_command "$dir/bootstrap/install.sh" "${install_args[@]}"
 
   # Under `curl | bash` stdin carries the script itself, so the bootstrap
   # confirmation must read from the terminal. Without one, only an explicit
   # --yes may stand in for the operator.
   if { : </dev/tty; } 2>/dev/null; then
-    exec "$dir/install.sh" "${install_args[@]}" </dev/tty
+    exec "$dir/bootstrap/install.sh" "${install_args[@]}" </dev/tty
   fi
   local arg
   for arg in "$@"; do
     if [[ "$arg" == --yes ]]; then
-      exec "$dir/install.sh" "${install_args[@]}" </dev/null
+      exec "$dir/bootstrap/install.sh" "${install_args[@]}" </dev/null
     fi
   done
   die 'no interactive terminal for the confirmation prompt; append --yes to accept the printed plan'

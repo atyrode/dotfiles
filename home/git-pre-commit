@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Runs on every commit in every repository on this machine, because
+# core.hooksPath is global. A credential in a staged diff is refused here,
+# before it exists in any history; the whole-tree lint in CI is the backstop
+# for a commit that skipped this hook. gitleaks is a store path rather than a
+# PATH lookup so the hook holds from any client, not only a shell that has the
+# profile on PATH.
+set -euo pipefail
+
+gitleaks=@gitleaks@
+
+status=0
+"$gitleaks" git --staged --redact --verbose --no-banner --log-level warn --exit-code 3 || status=$?
+case "$status" in
+  0) ;;
+  3)
+    printf >&2 'Commit refused: the staged changes contain credential-shaped text (above).\n'
+    printf >&2 'Move the value to the secret store it belongs to. A deliberate exception is: git commit --no-verify\n'
+    exit 1
+    ;;
+  *)
+    printf >&2 'Commit refused: the credential scan could not run (gitleaks exited %s).\n' "$status"
+    exit 1
+    ;;
+esac
+
+# A global hooks path hides the repository's own hooks from git, so this hook
+# runs the local one itself when a project installs one.
+local_hook="$(git rev-parse --git-dir)/hooks/pre-commit"
+if [[ -x "$local_hook" ]]; then
+  exec "$local_hook" "$@"
+fi

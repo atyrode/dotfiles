@@ -95,3 +95,25 @@ same is true of the operator key, for every file.
 This is the price of publishing ciphertext, and it was decided with it (ADR
 0008): a leaked machine key costs exactly what a leaked vault session would,
 and it is the reason a machine only ever reads the files it needs.
+
+## Plaintext never reaches a remote
+
+Encryption covers what goes through sops. The mistake it cannot cover is a
+value pasted by hand: a token in a config file, a key in a doc. Two scans
+catch that, with the same scanner ([gitleaks](https://github.com/gitleaks/gitleaks))
+so they agree on what a credential looks like.
+
+The first is a `pre-commit` hook that Home Manager installs on every machine
+([`home/git-pre-commit`](../home/git-pre-commit)). Git's hooks path is global
+here, so it runs in **every repository you commit to**, not only this one: a
+credential-shaped stage is refused before it exists in any history, with the
+file, the line, and the rule named and the value redacted. A deliberate
+exception is `git commit --no-verify`. The hook then hands over to the
+repository's own `pre-commit`, which a global hooks path would otherwise hide
+from git; the `pre-push` hook does the same for a repository's own `pre-push`.
+
+The second is the `secret-shapes` check in CI, which scans the whole tree on
+every push (the docs-only fast path included) and is the backstop for a commit
+that skipped the hook or came from a machine without it. It is also the one
+place that knows what a sops file must look like: anything under `secrets/`
+that lacks a `sops:` block or `ENC[...]` values fails the build.

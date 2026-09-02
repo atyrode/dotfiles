@@ -1,4 +1,4 @@
 {
   "systems": ["x86_64-linux", "aarch64-linux", "aarch64-darwin"],
-  "docsOnlyChecks": ["docs-links", "production-facts"]
+  "docsOnlyChecks": ["docs-links", "production-facts", "secret-shapes"]
 }

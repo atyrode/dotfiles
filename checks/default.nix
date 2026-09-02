@@ -264,13 +264,15 @@ let
     # Platform-independent lints: their output is a pure function of the
     # source tree, so emitting them on every system just re-runs the same
     # work three times in CI. Keep them on one leg only (#169).
-    # docs-links and production-facts scan the whole tree (docs
-    # included); they are the two intentional exceptions the docs-only
+    # docs-links, production-facts, and secret-shapes scan the whole tree
+    # (docs included); they are the intentional exceptions the docs-only
     # fast path builds directly and scripts/docs-drift-guard.sh excludes.
     docs-links = import ./docs-links.nix { inherit lib pkgs; };
     docs-drift-guard = import ./docs-drift-guard.nix { inherit pkgs; };
     classify-ci-paths = import ./classify-ci-paths.nix { inherit pkgs; };
     production-facts = import ./production-facts.nix { inherit pkgs; };
+    secret-shapes = import ./secret-shapes.nix { inherit lib pkgs; };
+    git-hooks = import ./git-hooks.nix { inherit lib pkgs; };
     darwin-activation = import ./darwin-activation.nix {
       inherit lib pkgs;
       darwinConfigs = canonicalDarwinConfigs;

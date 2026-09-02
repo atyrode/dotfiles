@@ -119,7 +119,10 @@ machine-local and outside the Nix store. Unsupported hosts remain hosted-only.
 
 ## Security boundaries
 
-Decision record: [ADR-0005](adr/0005-no-declarative-secret-manager.md).
+Decision records: [ADR-0004](adr/0004-agent-trust-tiers.md) for the trust
+tiers; tool credentials stay owned by their tools, and fleet secrets travel
+through sops-nix ([secrets.md](secrets.md)) since ADR 0008 superseded
+[ADR-0005](adr/0005-no-declarative-secret-manager.md).
 
 The enforced policy fixes trusted-machine approvals, secret obfuscation, and
 automatic task isolation with patch merging. Writable machine, project, and

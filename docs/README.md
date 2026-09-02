@@ -16,6 +16,7 @@ not in a checklist.
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
 | [git-keys.md](git-keys.md) | SSH-first Git authentication/signing, public allowed signers, and machine-key lifecycle |
+| [secrets.md](secrets.md) | Secrets and their audience: sops-nix, the operator and machine identities, enrolment and revocation |
 | [manifold.md](manifold.md) | The `manifold-node` fleet spoke: enrollment, operator-timed agent upgrades, and master migration |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
 | [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |

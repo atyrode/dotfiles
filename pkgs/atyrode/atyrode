@@ -30,6 +30,7 @@ readonly windows_package_inventory='@windows_packages@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly managed_ssh_fleet_keys='@ssh_fleet_keys@'
 readonly operator_infra='@operator_infra@'
+readonly sops_audience='@sops_audience@'
 readonly manifold_inventory='@manifold_inventory@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
@@ -84,6 +85,8 @@ apply_job_worker=0
 . "$lib_dir/infra.sh"
 # shellcheck source=lib/context.sh
 . "$lib_dir/context.sh"
+# shellcheck source=lib/identity.sh
+. "$lib_dir/identity.sh"
 
 usage() {
   cat <<'EOF'
@@ -119,6 +122,8 @@ Usage:
   atyrode lifecycle [--json]
   atyrode context [show] [--json]
   atyrode context render
+  atyrode identity show [--json]
+  atyrode identity init
   atyrode doctor [HOST] [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -187,6 +192,12 @@ cache, the clone root). render writes ${XDG_CONFIG_HOME:-~/.config}/agents/AGENT
 which the tool files (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md,
 ~/.omp/agent/AGENTS.md) link to; show prints it; --json emits the machine
 section. It never prints a secret value. apply renders it after activation.
+identity is this machine's own age key, the one sops-nix decrypts with at
+activation (never the operator's). show prints its public recipient and whether
+.sops.yaml registers it; init generates it if absent -- as root on nix-darwin
+and NixOS, announcing each sudo step -- and prints the one line to add to
+.sops.yaml plus the sops updatekeys commands that re-encrypt for it. The
+private half never reaches the terminal, argv, or the log.
 generations lists the activation profile's generations (nix-darwin or NixOS
 system profile, otherwise standalone Home Manager); rollback activates an earlier
 one (previous by default, or --to N) after confirming.
@@ -227,6 +238,7 @@ main() {
   case "$subcommand" in
     apply | clean | rollback | provision) start_run_log "$subcommand" ;;
     __apply-job) start_run_log apply-job ;;
+    identity) [[ "${1:-}" != init ]] || start_run_log identity ;;
   esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
@@ -248,6 +260,7 @@ main() {
     auth) cmd_auth "$@" ;;
     provision) cmd_provision "$@" ;;
     context) cmd_context "$@" ;;
+    identity) [[ "${1:-}" != init ]] || guard_production_mutation "identity init"; cmd_identity "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

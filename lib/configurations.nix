@@ -8,6 +8,7 @@
   nix-darwin,
   nix-homebrew,
   nixos-wsl,
+  sops-nix,
   homebrew-core,
   homebrew-cask,
   targets,
@@ -41,6 +42,29 @@ let
   forAllSystems = lib.genAttrs systems;
 
   darwinModule = ../darwin;
+  secretsModule = import ../modules/secrets.nix;
+
+  # Each machine decrypts with its own identity. Standalone Home Manager keeps
+  # it in the user's configuration directory, deliberately apart from the
+  # `keys.txt` sops itself reads, because on the operator's workstation that
+  # file is the operator identity and must never be an activation key. The
+  # system-owned kinds keep it where root can hold it at mode 0600.
+  homeSecretsModule = name: [
+    sops-nix.homeManagerModules.sops
+    (
+      { config, ... }:
+      secretsModule {
+        hostId = name;
+        keyFile = "${config.xdg.configHome}/sops/age/machine.txt";
+      }
+    )
+  ];
+  systemSecretsModule = name: [
+    (secretsModule {
+      hostId = name;
+      keyFile = "/var/lib/sops-nix/machine.txt";
+    })
+  ];
 
   dotfilesHomeNixosModule =
     { config, lib, ... }:
@@ -110,12 +134,15 @@ let
     home-manager.lib.homeManagerConfiguration {
       pkgs = repositoryPkgsFor host.system;
 
-      modules = modulesForHost name host ++ [
-        {
-          home.username = host.username;
-          home.homeDirectory = host.homeDirectory;
-        }
-      ];
+      modules =
+        modulesForHost name host
+        ++ lib.optionals (host.activation == "home-manager") (homeSecretsModule name)
+        ++ [
+          {
+            home.username = host.username;
+            home.homeDirectory = host.homeDirectory;
+          }
+        ];
     };
 
   mkPortableHomeConfiguration =
@@ -195,6 +222,7 @@ let
       modules = [
         home-manager.darwinModules.home-manager
         nix-homebrew.darwinModules.nix-homebrew
+        sops-nix.darwinModules.sops
         darwinModule
         {
           nixpkgs.hostPlatform = host.system;
@@ -202,7 +230,8 @@ let
           nixpkgs.config.allowUnfreePredicate =
             package: builtins.elem (lib.getName package) allowedUnfreePackages;
         }
-      ];
+      ]
+      ++ systemSecretsModule name;
     };
 
   mkNixosWslConfig =
@@ -217,9 +246,11 @@ let
       };
       modules = [
         nixos-wsl.nixosModules.default
+        sops-nix.nixosModules.sops
         dotfilesHomeNixosModule
         ../nixos/wsl.nix
-      ];
+      ]
+      ++ systemSecretsModule name;
     };
 
   canonicalHomeConfigs = lib.mapAttrs mkHomeConfig hosts;

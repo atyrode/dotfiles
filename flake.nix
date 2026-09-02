@@ -29,6 +29,13 @@
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
 
+    # The secrets substrate (ADR 0008): age-encrypted secrets/*.yaml committed
+    # here, decrypted at activation by each machine's own age identity. One
+    # module covers all three activation kinds, so the audience file is the
+    # only place a secret's readers are ever written down.
+    sops-nix.url = "github:Mic92/sops-nix";
+    sops-nix.inputs.nixpkgs.follows = "nixpkgs";
+
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -53,6 +60,7 @@
       nix-homebrew,
       nixos-wsl,
       nix-index-database,
+      sops-nix,
       treefmt-nix,
       homebrew-core,
       homebrew-cask,
@@ -102,6 +110,7 @@
           nix-darwin
           nix-homebrew
           nixos-wsl
+          sops-nix
           homebrew-core
           homebrew-cask
           targets

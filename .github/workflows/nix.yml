@@ -178,9 +178,22 @@ jobs:
             extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
             extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
 
-      # min-free and max-free let Nix reclaim unrooted paths mid-build if the
-      # disk still runs short, instead of dying on a full volume.
+      # The dry run is the diagnostic. It lists every derivation this system
+      # would compile rather than download, so when the build below runs out
+      # of its budget the culprit is already named in the step above it. A
+      # package that shows up here is a source build on every fresh machine
+      # too: Signal Desktop on aarch64-darwin was a multi-hour Electron compile
+      # that looked like a hung job, because the one Mac had paid it once and
+      # nobody else ever had.
+      - name: Preview fleet closure work
+        run: nix build .#fleet-closures --dry-run
+
+      # Twenty minutes is generous for downloading a closure and building the
+      # handful of derivations that are ours; anything longer is compiling a
+      # package that belongs in a cache or a vendor release, and the job fails
+      # with that name in the log instead of timing out in silence.
       - name: Build fleet closures
+        timeout-minutes: 20
         run: nix build .#fleet-closures --print-build-logs --min-free 2G --max-free 6G
 
       # Only green main is published: machines converge to what CI built from

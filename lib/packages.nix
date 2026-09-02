@@ -32,7 +32,6 @@ let
     "parsec-bin"
     "postman"
     "reaper"
-    "signal-desktop"
     "spotify"
     "steam"
     "steam-original"

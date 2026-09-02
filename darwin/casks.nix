@@ -10,6 +10,7 @@
   "godot"
   "parsec"
   "plugdata"
+  "signal"
   "sonos"
   "steam"
   "zen@twilight"

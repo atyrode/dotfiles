@@ -11,7 +11,7 @@ let
   # The reviewed portable server capability set, not a hand copy: the fixture
   # exists to prove the NixOS-imported composition matches the standalone
   # profile, so its selection must follow the same source of truth.
-  inherit ((builtins.fromJSON (builtins.readFile ../../inventory/server-profile.json))) capabilities;
+  inherit ((builtins.fromJSON (builtins.readFile ../../fleet/server-profile.json))) capabilities;
   host = {
     inherit
       capabilities

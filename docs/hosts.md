@@ -1,6 +1,6 @@
 # Hosts and capabilities
 
-`hosts/default.nix` is the authoritative registry for fixed machine identities.
+`fleet/hosts.nix` is the authoritative registry for fixed machine identities.
 A host entry contains stable, non-secret facts: its canonical configuration ID,
 description, system, platform, activation owner, user, home directory, optional
 hostname, selected capabilities, and optional declared Nix trusted-user
@@ -8,11 +8,11 @@ boundary.
 
 Decision record: [ADR-0001](adr/0001-capability-based-host-composition.md).
 
-`hosts/bootstrap.nix` defines account-portable Linux bootstrap profiles.
+`fleet/bootstrap-profiles.nix` defines account-portable Linux bootstrap profiles.
 These contain system, platform, activation, description, and capabilities, but
 never a username or home directory. `atyrode` validates the invoking non-root
 account and materializes those identity fields locally for Home Manager.
-`inventory/hosts.tsv` projects both bootstrap target kinds for `get.sh` before
+`fleet/hosts.tsv` projects both bootstrap target kinds for `get.sh` before
 Nix exists. Infrastructure-owned NixOS and repository-owned NixOS-WSL identities
 remain excluded from that Unix picker; the registry check keeps the projection
 honest.
@@ -42,7 +42,7 @@ points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-stat
   server selection combines it with `base` and `agent-tools`.
 
 The same descriptions are semantic annotations in
-`inventory/annotations.nix` (checked to cover the capability set exactly),
+`fleet/annotations.nix` (checked to cover the capability set exactly),
 surface in `atyrode capabilities list` — which marks the resolved host's active
 capabilities — and in `atyrode capabilities show`, and export to flake consumers
 as `lib.capabilityDescriptions`. Evaluated package membership is available
@@ -81,7 +81,7 @@ model is documented in [Home Manager and system boundary](system-boundary.md).
 
 For a fixed machine identity:
 
-1. Add one canonical entry to `hosts/default.nix`.
+1. Add one canonical entry to `fleet/hosts.nix`.
 2. Declare a supported `system`, matching `platform`, supported `activation`
    owner, non-empty `username`, absolute `homeDirectory`, a non-empty one-line
    `description`, and at least one valid capability. A `nixos-wsl` host also
@@ -90,12 +90,12 @@ For a fixed machine identity:
 
 For a portable Linux bootstrap profile:
 
-1. Add an architecture-specific entry to `hosts/bootstrap.nix`.
+1. Add an architecture-specific entry to `fleet/bootstrap-profiles.nix`.
 2. Declare Linux, Home Manager activation, a description, and capabilities.
    Do not declare account or machine identity.
 
-Then add or reuse capability modules under `home/profiles/`; do not put
-target-specific packages in either registry. Regenerate `inventory/hosts.tsv`
+Then add or reuse capability modules under `modules/home/profiles/`; do not put
+target-specific packages in either registry. Regenerate `fleet/hosts.tsv`
 for bootstrap-eligible entries, then run
 `nix flake check --all-systems --no-build --show-trace`. The aggregate checks
 evaluate fixed targets and instantiate every portable profile for multiple

@@ -10,9 +10,9 @@ Decision record: [ADR-0006](adr/0006-managed-layering-over-profiles.md).
 
 | Path | Owner | Behavior |
 |---|---|---|
-| `~/.codex/config.toml` | seeded once, then user | On first activation the curated defaults (`codex/config.toml`) are installed. Any pre-existing file is timestamp-backed-up to `config.toml.pre-seed.<ts>` first (never merged). After that the file is yours — repository changes do not re-apply and your edits, including Codex's machine-local `[projects]` trust, are never touched again. |
-| `~/.codex/AGENTS.md` | generated, repository-rendered | Home Manager out-of-store symlink to `~/.config/agents/AGENTS.md`, the agent context `atyrode context render` writes from `home/agents/AGENTS.md` plus this machine's facts (see [Agent context](atyrode.md#agent-context)). |
-| `~/.codex/templates` | portable, repository-managed | Home Manager recursive symlink to `codex/templates`. |
+| `~/.codex/config.toml` | seeded once, then user | On first activation the curated defaults (`modules/home/codex/config.toml`) are installed. Any pre-existing file is timestamp-backed-up to `config.toml.pre-seed.<ts>` first (never merged). After that the file is yours — repository changes do not re-apply and your edits, including Codex's machine-local `[projects]` trust, are never touched again. |
+| `~/.codex/AGENTS.md` | generated, repository-rendered | Home Manager out-of-store symlink to `~/.config/agents/AGENTS.md`, the agent context `atyrode context render` writes from `modules/home/agents/AGENTS.md` plus this machine's facts (see [Agent context](atyrode.md#agent-context)). |
+| `~/.codex/templates` | portable, repository-managed | Home Manager recursive symlink to `modules/home/codex/templates`. |
 | `auth.json` and provider credentials | secret, Codex-owned | Never read, copied into derivations, or moved. Log in with `codex login`. |
 | history, sessions, rollouts, plugins, caches, logs, and `config.toml` after the seed | mutable, Codex-owned | Never entered into the Nix store or rewritten by the dotfiles. |
 

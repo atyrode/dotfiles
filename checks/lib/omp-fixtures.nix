@@ -1,10 +1,10 @@
 { lib, pkgs }:
 
 let
-  defaultsConfig = ../../omp/defaults.yml;
-  policyConfig = ../../omp/policy.yml;
-  untrustedConfig = ../../omp/untrusted.yml;
-  yoloConfig = ../../omp/yolo-session.yml;
+  defaultsConfig = ../../pkgs/omp-configured/config/defaults.yml;
+  policyConfig = ../../pkgs/omp-configured/config/policy.yml;
+  untrustedConfig = ../../pkgs/omp-configured/config/untrusted.yml;
+  yoloConfig = ../../pkgs/omp-configured/config/yolo-session.yml;
   stubOmp =
     pkgs.runCommand "omp-stub"
       {
@@ -119,7 +119,7 @@ let
             };
           }
         )
-        ../../modules/home/agent-tools.nix
+        ../../modules/home/agent-tools/contract.nix
       ];
     }).config;
   linuxAgentTools = evalAgentTools (

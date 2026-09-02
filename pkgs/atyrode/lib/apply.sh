@@ -407,7 +407,7 @@ summary_line() { # label text
   printf '  %s %s\n' "$(paint 2 "$(printf '%-7s' "$1")")" "$2" >&2
 }
 
-# The login shell is declared state: inventory/system-boundary.json names the
+# The login shell is declared state: fleet/system-boundary.json names the
 # path this host's Zsh must be, and `doctor system` already reports when the
 # account database disagrees. Reporting was the whole problem -- its
 # remediation used to be "rerun install.sh apply", which is a tool that runs on
@@ -430,7 +430,7 @@ converge_login_shell() { # host
   owner="$(jq -r '.checks[]|select(.id=="login-shell")|.owner' <<<"$diagnostics")"
   status="$(jq -r '.checks[]|select(.id=="login-shell")|.status' <<<"$diagnostics")"
   target="$(jq -r '.checks[]|select(.id=="login-shell")|.expected.path' <<<"$diagnostics")"
-  step_why "inventory/system-boundary.json declares $target"
+  step_why "fleet/system-boundary.json declares $target"
   [[ "$status" == incomplete ]] || {
     step_ok 'already the account login shell'
     return 0

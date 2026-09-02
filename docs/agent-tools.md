@@ -15,7 +15,7 @@ Nix owns:
   guard;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator;
-- the operator policy every agent reads: `home/agents/AGENTS.md`, rendered by
+- the operator policy every agent reads: `modules/home/agents/AGENTS.md`, rendered by
   `atyrode context render` into `~/.config/agents/AGENTS.md` with this
   machine's facts appended, which `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
   and `~/.omp/agent/AGENTS.md` link to (see
@@ -40,7 +40,7 @@ directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the
 same platform assets without sharing authentication, sessions, or caches.
 
 Reusable package derivations live in `pkgs/`, Home Manager deployment lives in
-`modules/home/agent-tools.nix`, and the package overlay is assembled by
+`modules/home/agent-tools/contract.nix`, and the package overlay is assembled by
 `lib/packages.nix`. On Linux, the OMP package preserves upstream's binary and
 launches it through Nix's dynamic loader instead of rewriting the Bun executable
 with `patchelf`.
@@ -193,7 +193,7 @@ sessions, MCP state, or caches.
 
 ## Seeded plain-omp defaults
 
-`omp/plain-seed.yml` holds the agreed defaults for plain `omp`: trusted-machine
+`pkgs/omp-configured/config/plain-seed.yml` holds the agreed defaults for plain `omp`: trusted-machine
 guardrails, the bundled-role model map and fallback chains, and interface
 preferences. It is deliberately not a managed launch layer. During activation,
 `atyrode-omp-seed apply` three-way merges it into OMP's selected writable
@@ -336,7 +336,7 @@ catalog.
 
 ## Skills
 
-Generic cross-project skills belong in `agents/skills/`, which Home Manager
+Generic cross-project skills belong in `modules/home/agents/skills/`, which Home Manager
 links to `~/.agents/skills`. OMP discovers `.agent/skills` and
 `.agents/skills` from the home directory and while walking up a project tree.
 Project-specific skills and other project instructions belong in the owning
@@ -355,7 +355,7 @@ Project-specific auto-learned skills under
 one into its owning repository after removing machine-specific assumptions.
 The repository-specific `.agents/skills/bump-omp` skill owns OMP pin updates;
 generic skills such as `ts-react-dead-code-sweep` remain under
-`agents/skills/`.
+`modules/home/agents/skills/`.
 
 ### Installed skills
 
@@ -364,8 +364,8 @@ instead of leaving a stale list.
 
 | Skill | Tree | Origin |
 |---|---|---|
-| [`ts-react-dead-code-sweep`](../agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
-| [`tui-visual-verification`](../agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
+| [`ts-react-dead-code-sweep`](../modules/home/agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
+| [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
 | [`bump-omp`](../.agents/skills/bump-omp/SKILL.md) | this repository | repository-authored |
 
 `ts-react-dead-code-sweep` has no surface in this repository — it is a
@@ -388,17 +388,17 @@ switch, and `--skills=<comma-separated globs>` narrows one launch. Bare
 `--no-skills` disables them for one launch. `ompu` refuses `--skills`, so an
 untrusted session cannot widen its skill set.
 
-Put a durable mutable-machine choice in `omp/plain-seed.yml`; put a
-managed-session choice in `omp/defaults.yml`. A skill that should never fire
+Put a durable mutable-machine choice in `pkgs/omp-configured/config/plain-seed.yml`; put a
+managed-session choice in `pkgs/omp-configured/config/defaults.yml`. A skill that should never fire
 unprompted should set `disable-model-invocation: true`, leaving
 `/skill:<name>` as its explicit entry point.
 
 ## Updating
 
 The `update-pins` workflow refreshes repository-owned binary pins every six
-hours. `scripts/update-pins.sh` updates versions and hashes, a bot pull request
+hours. `ci/update-pins.sh` updates versions and hashes, a bot pull request
 runs dispatched CI, and a green run merges itself. Pass package names to narrow
-a manual refresh; for example, `scripts/update-pins.sh omp` changes only OMP.
+a manual refresh; for example, `ci/update-pins.sh omp` changes only OMP.
 A red run remains open for curation when upstream bundled content changes.
 
 Manual OMP updates MUST follow

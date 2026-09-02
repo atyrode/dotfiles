@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "surfaceOrder": [
+    "omp-seed",
+    "machine-identity",
+    "operator-identity",
+    "agent-context",
+    "git-identity",
+    "babel-archive",
+    "local-qwen",
+    "manifold-agent"
+  ],
+  "surfaces": {
+    "omp-seed": {
+      "label": "omp settings seed",
+      "command": "atyrode-omp-seed resolve",
+      "implies": "Reviews settings this machine kept over the repository defaults. Local only: no secret, no network, nothing downloaded.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "machine-identity": {
+      "label": "machine identity",
+      "command": "atyrode identity init",
+      "implies": "Generates this machine's own age key, the one activation decrypts secrets with, and prints the public line to register in .sops.yaml. Local only: no secret is read, nothing is uploaded, and the private half never leaves the file.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "operator-identity": {
+      "label": "operator identity",
+      "command": "atyrode operator init",
+      "implies": "Mints the operator's own age key inside this Mac's Secure Enclave and prints the public line to register in .sops.yaml. Local only: Touch ID is asked once, no secret is read, nothing is uploaded, and the private half never leaves the Secure Enclave.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "agent-context": {
+      "label": "generated agent context",
+      "command": "atyrode context render",
+      "implies": "Writes this machine's facts under the operator policy to ~/.config/agents/AGENTS.md, which every agent tool here reads. Asks gh and clever for their session state, stores no secret, downloads nothing.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "git-identity": {
+      "label": "Git identity",
+      "command": "atyrode provision git",
+      "implies": "Materialises this machine's SSH auth and signing keys from Bitwarden and loads them into the agent. Needs your vault password once.",
+      "declinable": true,
+      "prerequisites": [
+        "bitwarden-session"
+      ]
+    },
+    "babel-archive": {
+      "label": "Babel session archive",
+      "command": "atyrode provision babel",
+      "implies": "Configures where sessions are archived and arms the hourly timer that publishes them. Needs your vault password once.",
+      "declinable": true,
+      "prerequisites": [
+        "bitwarden-session",
+        "clever-session"
+      ]
+    },
+    "local-qwen": {
+      "label": "local-qwen model runtime",
+      "command": "atyrode runtime provision local-qwen",
+      "implies": "Builds a Docker image and downloads about 40 GB of model weights. No secret and no vault, but it is the largest thing this machine will fetch.",
+      "declinable": true,
+      "prerequisites": []
+    },
+    "manifold-agent": {
+      "label": "Manifold fleet agent",
+      "command": "atyrode runtime provision manifold-agent",
+      "implies": "Enrols this machine with the Manifold hub named in fleet/manifold.json and stores the machine token it mints. Needs your vault password once.",
+      "declinable": true,
+      "prerequisites": []
+    }
+  },
+  "prerequisites": {
+    "bitwarden-session": {
+      "label": "a Bitwarden session",
+      "command": "atyrode vault login",
+      "without": "no secret can be read on this machine, so nothing the vault holds can be configured"
+    },
+    "clever-session": {
+      "label": "a Clever Cloud session",
+      "command": "clever login",
+      "without": "the archive add-ons cannot be looked up, so this machine cannot learn where to publish"
+    }
+  }
+}

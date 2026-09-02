@@ -63,7 +63,7 @@ let
       # same verdicts, same colour. An operator does not experience two
       # programs, they experience one machine that must not go quiet halfway.
       export ATYRODE_NARRATE=${../../pkgs/atyrode/lib/narrate.sh}
-      exec ${runtimeShell} ${../../scripts/babel-storage-configure.sh} "$@"
+      exec ${runtimeShell} ${./ceremonies/babel-storage-configure.sh} "$@"
     '';
   };
 
@@ -81,9 +81,9 @@ let
   };
 
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
-  gitAllowedSigners = ../../home/git-allowed-signers;
-  sshFleetKeys = ../../home/ssh-fleet-keys;
-  agentsPolicy = ../../home/agents/AGENTS.md;
+  gitAllowedSigners = ../../modules/home/git/allowed-signers;
+  sshFleetKeys = ../../modules/home/ssh/fleet-keys;
+  agentsPolicy = ../../modules/home/agents/AGENTS.md;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
   );
@@ -101,10 +101,10 @@ let
   windowsPackageInventory = builtins.toFile "atyrode-windows-packages.json" (
     builtins.toJSON windowsPackages
   );
-  operatorInfra = ../../inventory/operator-infra.json;
-  manifoldInventory = ../../inventory/manifold.json;
-  systemPolicy = ../../inventory/system-boundary.json;
-  provisioningPolicy = ../../inventory/provisioning.json;
+  operatorInfra = ../../fleet/operator-infra.json;
+  manifoldInventory = ../../fleet/manifold.json;
+  systemPolicy = ../../fleet/system-boundary.json;
+  provisioningPolicy = ../../fleet/provisioning.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
       {
@@ -288,7 +288,7 @@ stdenvNoCC.mkDerivation {
           ]
           # The operator ceremony runs only where the Secure Enclave is, and
           # the plugin's Linux closure is a Swift runtime no Linux host needs
-          # (home/profiles/security.nix says why).
+          # (modules/home/profiles/security.nix says why).
           ++ lib.optional stdenvNoCC.hostPlatform.isDarwin age-plugin-se
         )
       }

@@ -64,7 +64,7 @@ The Home Manager path is deliberately not `keys.txt`: on the Mac that file
 is the operator identity, and an activation must never be able to decrypt as
 the operator. SSH host keys are not used either; an
 explicit key is simpler to name, to reason about, and to revoke.
-[`modules/secrets.nix`](../modules/secrets.nix) is where sops-nix is told these
+[`modules/shared/secrets.nix`](../modules/shared/secrets.nix) is where sops-nix is told these
 paths, once for all three activation kinds.
 
 ## Enrolling the operator (the Mac, once)
@@ -165,7 +165,7 @@ catch that, with the same scanner ([gitleaks](https://github.com/gitleaks/gitlea
 so they agree on what a credential looks like.
 
 The first is a `pre-commit` hook that Home Manager installs on every machine
-([`home/git-pre-commit`](../home/git-pre-commit)). Git's hooks path is global
+([`modules/home/git/pre-commit`](../modules/home/git/pre-commit)). Git's hooks path is global
 here, so it runs in **every repository you commit to**, not only this one: a
 credential-shaped stage is refused before it exists in any history, with the
 file, the line, and the rule named and the value redacted. A deliberate

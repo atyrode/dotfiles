@@ -104,7 +104,7 @@ deadline, and opening another managed local session cancels a pending stop.
 
 Tunnel is a view onto `atyrode tunnel`, never a second implementation of the
 policy. It reads `tunnel list --json` and lists every reviewed fleet key from
-`home/ssh-fleet-keys` with the access it currently has to this machine: always
+`modules/home/ssh/fleet-keys` with the access it currently has to this machine: always
 granted (the primary key), granted until revoked, granted with the time left on
 its OpenSSH `expiry-time`, expired, accepted-but-not-yet-adopted, or not
 granted.

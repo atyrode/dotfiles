@@ -41,8 +41,8 @@ let
 
   forAllSystems = lib.genAttrs systems;
 
-  darwinModule = ../darwin;
-  secretsModule = import ../modules/secrets.nix;
+  darwinModule = ../modules/darwin;
+  secretsModule = import ../modules/shared/secrets.nix;
 
   # Each machine decrypts with its own identity. Standalone Home Manager keeps
   # it in the user's configuration directory, deliberately apart from the
@@ -118,7 +118,7 @@ let
 
   serverProfileManifests = lib.mapAttrs (
     system: serverHomeConfig:
-    import ../checks/server-profile.nix {
+    import ../checks/fleet/server-profile.nix {
       inherit
         lib
         serverHomeConfig
@@ -248,7 +248,7 @@ let
         nixos-wsl.nixosModules.default
         sops-nix.nixosModules.sops
         dotfilesHomeNixosModule
-        ../nixos/wsl.nix
+        ../modules/nixos/wsl.nix
       ]
       ++ systemSecretsModule name;
     };
@@ -263,7 +263,7 @@ let
 
   inventoryBySystem = forAllSystems (
     system:
-    import ../inventory {
+    import ../fleet {
       inherit
         capabilityModules
         flakeInputPackageNames

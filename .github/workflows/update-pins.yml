@@ -38,7 +38,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          summary="$(./scripts/update-pins.sh)"
+          summary="$(./ci/update-pins.sh)"
           {
             printf 'summary<<SUMMARY_EOF\n%s\nSUMMARY_EOF\n' "$summary"
             if [ -n "$summary" ]; then printf 'changed=true\n'; fi

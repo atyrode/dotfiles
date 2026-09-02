@@ -47,12 +47,12 @@ jobs:
           if [ -n "$PR_NUMBER" ]; then
             if files="$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" \
               --paginate --jq '.[].filename')" && [ -n "$files" ]; then
-              classification="$(printf '%s\n' "$files" | ./scripts/classify-ci-paths.sh)"
+              classification="$(printf '%s\n' "$files" | ./ci/classify-ci-paths.sh)"
               code="$(printf '%s\n' "$classification" | sed -n 's/^code=//p')"
               darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"
             fi
           fi
-          # The system set is centralized in inventory/ci.json; keep this
+          # The system set is centralized in ci/ci.json; keep this
           # static matrix in sync with it.
           if "$darwin"; then
             matrix='{"include":[{"system":"x86_64-linux","runner":"ubuntu-24.04"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"},{"system":"aarch64-darwin","runner":"macos-15"}]}'
@@ -99,7 +99,7 @@ jobs:
       - name: Restore Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-${{ matrix.system }}-${{ hashFiles('flake.lock', '**/*.nix', 'checks/**', 'darwin/**', 'home/**', 'hosts/**', 'inventory/**', 'modules/**', 'pkgs/**', 'scripts/**', 'install.sh') }}
+          primary-key: nix-${{ matrix.system }}-${{ hashFiles('flake.lock', '**/*.nix', 'bootstrap/**', 'checks/**', 'ci/**', 'fleet/**', 'modules/**', 'pkgs/**') }}
           restore-prefixes-first-match: nix-${{ matrix.system }}-
           purge: true
           purge-prefixes: nix-${{ matrix.system }}-
@@ -243,12 +243,22 @@ jobs:
       - name: Check documentation links and production facts
         run: nix build .#checks.x86_64-linux.docs-links .#checks.x86_64-linux.production-facts .#checks.x86_64-linux.secret-shapes --show-trace
 
+      # The checkout is the pull request merged onto the current base branch,
+      # so the base to compare against is that merge's first parent, not the
+      # event's base.sha, which is the base as of the last push and goes
+      # stale the moment anything else lands. Comparing against the stale
+      # base attributed other pull requests' changes to a docs-only one.
       - name: Guard the fast-path dependency invariant
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch --quiet --depth=1 origin "$BASE_SHA"
-          ./scripts/docs-drift-guard.sh "$BASE_SHA" "$(git rev-parse HEAD)"
+          if git rev-parse --verify --quiet HEAD^2 >/dev/null; then
+            base="$(git rev-parse HEAD^1)"
+          else
+            base="$EVENT_BASE_SHA"
+          fi
+          git fetch --quiet --depth=1 origin "$base"
+          ./ci/docs-drift-guard.sh "$base" "$(git rev-parse HEAD)"
 
   # Sole required status check (#169): the protect-main ruleset requires the
   # `ci-gate` context (flipped from the three platform names on 2026-07-15).

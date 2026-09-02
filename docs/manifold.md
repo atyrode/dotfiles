@@ -8,7 +8,7 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
 
 ## Ownership split
 
-- **Git owns master discovery.** `inventory/manifold.json` declares
+- **Git owns master discovery.** `fleet/manifold.json` declares
   `masterUrl` and `masterHost`; repointing the fleet is a reviewed commit.
   Vault write access can never redirect fleet terminals (the Bitwarden-based
   discovery alternative was rejected in #418 for exactly that reason).
@@ -18,7 +18,7 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
   machines, atyrode/manifold#51) and a `systemd --user` unit that executes
   the immutable store binary with `Restart=always`, a bounded delay, and the
   committed master URL. The capability currently delivers on `x86_64-linux`
-  only — widen `supportedSystems` in `inventory/manifold.json` as upstream
+  only — widen `supportedSystems` in `fleet/manifold.json` as upstream
   publishes assets for more platforms.
 - **The runtime layer owns machine state.** Enrollment and the machine token
   live outside the Nix store, exactly like `local-qwen`.
@@ -69,7 +69,7 @@ therefore operator-timed:
    curl -s https://manifold.tyrode.dev/healthz   # build must equal the new rev
    ```
 
-2. Bump the `manifold` pin (`./scripts/update-pins.sh manifold`) and merge.
+2. Bump the `manifold` pin (`./ci/update-pins.sh manifold`) and merge.
    Applying that generation restarts the agent on each machine as its unit
    changes — apply on a machine hosting live manifold sessions from a plain
    SSH session, never from inside one of its own terminals.
@@ -80,7 +80,7 @@ delivery there is a pin bump in that repository plus `atyrode infra apply`
 (interactive: Bitwarden unlock for the Clan operator identity), not
 `atyrode apply`.
 
-The pin refresh enforces step 1. `scripts/update-pins.sh` carries a
+The pin refresh enforces step 1. `ci/update-pins.sh` carries a
 `guard_manifold` precondition: it reads the hub's `/healthz` protocol version
 and the candidate tag's `PROTOCOL_VERSION`, and holds the bump whenever the
 candidate is newer, or whenever it cannot prove otherwise (unreachable hub,
@@ -138,6 +138,6 @@ holds pads, scenes,
 principals, and hashed tokens. Until tyrode-dev/infra's backup engine covers
 it (ADR 0002 gates; SQLite online-backup class), pads are not durable state.
 Migration is snapshot → restore on the new host → edit
-`inventory/manifold.json` → merge → `atyrode apply` fleet-wide. Never run two
+`fleet/manifold.json` → merge → `atyrode apply` fleet-wide. Never run two
 masters: agents hold one token for one hub, and two SQLite stores cannot be
 reconciled.

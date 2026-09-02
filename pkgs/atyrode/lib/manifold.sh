@@ -6,7 +6,7 @@
 
 # --- manifold-agent runtime --------------------------------------------------
 # Fleet enrollment for the self-hosted manifold hub (#418). The committed
-# inventory/manifold.json owns master discovery; the vault holds only the
+# fleet/manifold.json owns master discovery; the vault holds only the
 # owner key, read once during interactive provisioning. The running agent
 # authenticates with a 0600 machine token file and never touches the vault.
 
@@ -29,7 +29,7 @@ manifold_machine_name() {
 
 manifold_inventory_field() {
   jq -er --arg key "$1" '.[$key]' "$manifold_inventory" ||
-    die "$EX_SOFTWARE" "inventory/manifold.json lacks $1"
+    die "$EX_SOFTWARE" "fleet/manifold.json lacks $1"
 }
 
 manifold_applicable() {
@@ -208,7 +208,7 @@ cmd_runtime() {
   # `code` renders in its runtime dial (CODE_RUNTIME_BROKER=atyrode). The
   # manifold capability is a PTY service daemon that hosts no model, so it
   # routes here for provision/status/start/stop/restart but MUST NOT appear
-  # in that list — see checks/atyrode-runtime.nix, which asserts it.
+  # in that list — see checks/atyrode/atyrode-runtime.nix, which asserts it.
   if [[ "${2:-}" == manifold-agent ]]; then
     local verb="${1:-}"
     shift 2

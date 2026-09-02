@@ -32,7 +32,7 @@ The home Windows machine deliberately has two ownership domains:
 
 - NixOS-WSL owns the Linux guest, its system generation, the `alex` account,
   integrated Home Manager profile, and WSL interoperability settings.
-- Native Windows remains outside Nix. `windows/packages.nix` is a reviewed
+- Native Windows remains outside Nix. `fleet/windows-packages.nix` is a reviewed
   package declaration consumed by `atyrode windows plan/apply`; the controller
   invokes the existing `winget.exe` as the interactive Windows user to
   reconcile the declared exact package IDs.
@@ -198,8 +198,8 @@ installation, and NixOS repairs belong to the consuming infrastructure.
 CI is the fleet's only builder: every host closure is built on push, signed,
 and copied to a binary cache that every machine reads second, after the
 official cache, so an apply anywhere is a download of what CI already
-verified. `inventory/system-boundary.json` is the one place the cache's read
-URL and public signing key are written; `modules/binary-caches.nix` derives
+verified. `fleet/system-boundary.json` is the one place the cache's read
+URL and public signing key are written; `modules/shared/binary-caches.nix` derives
 the two ordered lists from it for nix-darwin and NixOS-WSL, and the
 system-boundary check and `doctor` assert the same lists from the same file,
 so none of the four can drift from the others.

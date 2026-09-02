@@ -1,7 +1,7 @@
 # ADR 0008: Fleet shape, substrate, and the road there
 
 - Status: Accepted
-- Date: 2026-09-01, accepted 2026-09-02
+- Date: 2026-09-01, accepted 2026-09-02, amended 2026-09-02 (clan, layout)
 - Supersedes: [0005](0005-no-declarative-secret-manager.md) — its stated
   trigger ("a concrete secret must be delivered declaratively") has fired.
 
@@ -97,12 +97,12 @@ Applications stop inventing cross-machine glue because the fleet provides it:
 
 | Concern | Substrate | Replaces |
 | --- | --- | --- |
-| Configuration | one repository, this one, for every machine including the server | `tyrode-dev/infra` as a second engine |
-| Secrets and their audience | **sops-nix**, age keys, `secrets/*.yaml` with `.sops.yaml` audience groups; the operator's daily identity is hardware-bound in the Mac's Secure Enclave and his existing software key is the recovery recipient | the Bitwarden ceremony, `vault.sh`, provisioning ceremonies that only existed to fetch a value |
-| Identity and reachability | plain WireGuard, hub-and-spoke through the workshop, keys in sops, peers in Nix | SSH key distribution, per-app auth protocols |
+| Configuration | one repository, this one, for every machine including the server; **clan** (clan-core, pinned) is the fleet layer inside it and `atyrode` the single front door that wraps it — *amended 2026-09-02, below* | `tyrode-dev/infra` as a second engine |
+| Secrets and their audience | **clan vars over sops-nix**: generators mint per-machine values encrypted to the machines that may read them; each machine mints its own age key on the machine and clan records only the public half; the operator's daily identity is hardware-bound in the Mac's Secure Enclave and his existing software key is the recovery recipient — *amended 2026-09-02* | the Bitwarden ceremony, `vault.sh`, provisioning ceremonies that only existed to fetch a value, hand-encrypted `secrets/*.yaml` |
+| Identity and reachability | plain WireGuard through clan's `wireguard` service: controller on the workshop, peers elsewhere, keys and addresses generated, never typed — *amended 2026-09-02* | SSH key distribution, per-app auth protocols, a hand-written peer list |
 | Built artifacts | CI builds every host closure and pushes to a **Cellar** bucket (already paid for, S3 to write, plain HTTPS to read, no server) | every machine rebuilding what CI already built |
 | Agent context | a **generated** `AGENTS.md` deployed by this repository to every machine (see below) | telling every agent on every machine what is authenticated where |
-| Data | restic to two targets, declared as a NixOS service: Cellar continuously, and a **disk at home** on a routine the fleet enforces (below) | a per-project backup story |
+| Data | restic to Cellar continuously (the upstream NixOS module), and clan's `localbackup` service for the **disk at home** on a routine the fleet enforces (below) — *amended 2026-09-02* | a per-project backup story |
 
 **Sessions are values.** Most "logins" (`clever`, `gh`, Cellar keys) produce a
 token that is a string; captured once, it is a secret with an audience like any
@@ -227,9 +227,9 @@ remains and receives no further investment.
 Success is measured in lines removed. Expected deletions once the substrate
 exists: `vault.sh`; the provisioning ceremonies that only fetched values;
 `install.sh`'s nine detect/repair pairs (the Determinate installer owns them);
-`infra.sh`; `tyrode-dev/infra` down to its installer and disko recipe, which
-become the client template; every clone on a machine that is a window rather
-than a workshop.
+`infra.sh`; the fleet half of `tyrode-dev/infra` (its server, disko recipe
+and clan declaration come here; its RAM installer seeds the client template);
+every clone on a machine that is a window rather than a workshop.
 
 ## Consequences
 
@@ -271,21 +271,94 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
 2. **Generated agent context.** `atyrode` renders the machine `AGENTS.md`
    from `doctor` at activation; this repository deploys it and the tool
    symlinks. This repository's own `AGENTS.md` is written at the same time.
-3. **sops-nix.** One recipient per remaining machine, the operator's two
-   identities, `.sops.yaml` audiences, the first surface moved
-   (`git-identity`), then `clever` and Cellar tokens as values, then babel.
-   Each surface leaves Bitwarden only when its sops path works; `vault.sh`
-   dies last.
-4. **Overlay and flow.** WireGuard peers in
-   Nix, push-on-green from CI, the converge floor, `atyrode fleet apply`, drift
-   in `doctor` and the shell.
-5. **The server joins this repository.** `tyrode-dev-01` as a
-   `nixosConfiguration` with slices; `infra` shrinks to installer + disko and
-   becomes the client template; `tyrode-ci-01` is deleted.
+3. **Secrets.** *(amended 2026-09-02)* The repository is restructured first
+   (below), then becomes a clan whose machines are the workshop, the Mac and
+   WSL; each machine mints its own age key and clan records the public half;
+   the operator's two identities are registered as clan users; the first
+   surface moves (`git-identity`) as a clan var, then `clever` and Cellar
+   tokens as values, then babel. Each surface leaves Bitwarden only when its
+   clan path works; `vault.sh` dies last.
+4. **Overlay and flow.** *(amended 2026-09-02)* clan's `wireguard` service
+   with the workshop as controller, push-on-green from CI, the converge
+   floor, `atyrode fleet apply` wrapping `clan machines update`, drift in
+   `doctor` and the shell.
+5. **The server joins this repository.** *(amended 2026-09-02)* `tyrode-dev-01`
+   moves in as a clan machine with its disko, boot, network and policy
+   modules (about a thousand lines); its public address becomes a value, not
+   a literal, because this repository's lint refuses address literals. What
+   remains of `infra` is the runner platform, whose fate is open (below).
+   `tyrode-ci-01` is deleted.
 6. **Delete.** Ceremonies, `vault.sh`, `install.sh` repairs, `infra.sh`,
    stale clones; measure the diff.
 7. **Front door.** Bootstrap enters the cockpit; plan/receipt/recap land as
    `--json`; the shell engine keeps shrinking behind it.
+
+## Amendment 2026-09-02: clan is the fleet layer, and the repository is reshaped
+
+The record as accepted implied dropping clan — "infra folds into dotfiles"
+carried "clan goes" without saying so, and the operator caught it the same
+day. The question was put properly, with the future in view, and the answer
+reversed the implication.
+
+**Why clan.** The fleet the operator is heading toward is self-hosted and
+larger than three machines: a backup host, service hosts, machines that come
+and go. At that size the thing that scales is not the module system, which
+NixOS already provides, but **per-machine generated secrets and role-based
+inventory**: adding a machine must be one declaration and one command, not a
+round of hand-generated keys, hand-edited peer lists and `sops updatekeys`.
+The alternative to clan at eight machines is writing clan badly — a homegrown
+roles-and-secrets library, which is exactly the shape of `tyrode-dev/infra`
+and the failure this record exists to end. Clan is also not a stranger's
+stack: its inputs are sops-nix, disko, nix-darwin and nixpkgs, the very
+primitives the first version of this record proposed composing by hand, and
+its maintainers are theirs. Its service catalog (wireguard with generated keys
+and address allocation, localbackup, sshd, trusted caches, emergency access,
+users) maps onto the substrate table row by row, and its role model
+(controller/peer, hub/agent) is the shape `manifold` has.
+
+**Measured before deciding.** The existing consumer uses two of clan's
+generators and none of its services; that is an argument about the past, not
+the future, and it was set aside. Two risks were verified in clan's source at
+the pinned revision: vars and secrets deploy on the darwin class (the same
+clanCore and sops-nix darwin module; unverified on real hardware, which the
+Mac's first update will settle), and the operator's Secure Enclave identity is
+accepted (the key-file parser takes `AGE-PLUGIN-*` lines behind the recipient
+comment the plugin writes; all crypto is delegated to the `sops` binary). A
+spike folded the Mac and WSL into a clan on a branch: the NixOS-WSL toplevel
+derivation is byte-identical to `main`, the Darwin system differs only in the
+order of an unchanged package list, vars evaluate on both classes, the lock
+grows by six nodes, evaluation costs one to three seconds, and clan's
+"recommended defaults" (extra packages, networkd, mDNS, a hostId) are taken
+back in four lines so policy stays this repository's.
+
+**What clan does not do, accepted.** It is push-only; the converge floor and
+push-on-green stay this repository's. Its darwin support is young: the machine
+class exists, one service is darwin-aware. Standalone Home Manager hosts are
+invisible to it, which under this record is fine. It is pre-1.0 and carries
+deprecation notices; the pin bot and a red pull request are the tax. Its
+default machine-key flow copies a private key over SSH; the fleet takes the
+path clan tolerates instead — the machine mints its key, clan records the
+public half — so no private key ever travels.
+
+**The repository is reshaped first.** The same sweep restructures this
+repository by role rather than by tool, so the fold lands on a clean layout
+instead of adding to the mess: `bootstrap/`, `fleet/`, `modules/{nixos,darwin,
+home,shared}`, `pkgs/`, `checks/` grouped by subject, `ci/`, `docs/`,
+`secrets/`, `lib/`. The rules that keep it that way are `AGENTS.md`'s.
+
+**Plaintext never reaches a remote.** Publishing ciphertext is safe by design
+and topology is public anyway; the residual risk is a value pasted by hand.
+A pre-commit hook on every machine scans the staged diff of every repository
+with gitleaks, and the same scanner is a whole-tree lint in CI, which also
+refuses any unencrypted file under `secrets/`.
+
+**Open, with a date.** The other 97% of `tyrode-dev/infra` is a self-hosted
+CI runner platform (ARC on Kubernetes, Clever fleet runners, brokers, a
+qualification VM) that only the deleted `tyrode-ci-01` consumed. Whether it
+lives as its own product repository or is archived is **decided after the
+server has moved**, by 2026-10-01, and is recorded as answer 10 below when it
+is. Its GitHub App broker — short-lived, repository-scoped tokens minted for
+local users — is the one platform piece with a fleet use and is evaluated then.
 
 ## Questions put to the operator, and his answers
 
@@ -300,3 +373,9 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
 7. The unpushed `manifold` work — **stays on the old box for now**; the
    runbook lists it as the first thing that must leave before anything is
    deleted.
+8. Clan's place, deciding for the fleet he is heading toward — **build on
+   clan, folded into this repository**, with `atyrode` as the front door.
+9. The repository's shape — **restructured by role**, in one move, before the
+   fold.
+10. The runner platform's fate — **open**, decided after the server has moved,
+    by 2026-10-01.

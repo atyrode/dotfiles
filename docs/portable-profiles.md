@@ -132,7 +132,7 @@ NAR bytes across 406 store paths. Its review ceilings are 40 packages,
 rounded up to a 64 MiB boundary. The aarch64 Linux ceilings
 are 40 packages, 2.5 GiB, and 500 paths and are enforced on the native CI
 runner. A dependency update that exceeds a ceiling must explain the growth and
-deliberately update `inventory/server-profile.json`.
+deliberately update `fleet/server-profile.json`.
 
 Inspect a candidate revision before updating infrastructure:
 

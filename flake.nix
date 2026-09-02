@@ -130,7 +130,7 @@
         ;
 
       treefmtEval = forAllSystems (
-        system: treefmt-nix.lib.evalModule (repositoryPkgsFor system) ./checks/treefmt.nix
+        system: treefmt-nix.lib.evalModule (repositoryPkgsFor system) ./checks/lints/treefmt.nix
       );
 
       # Keep unrelated documentation changes from invalidating the gate while
@@ -185,7 +185,7 @@
 
       homeModules = {
         # Nix's recognized community schema for reusable Home Manager modules.
-        agent-tools = import ./modules/home/agent-tools.nix;
+        agent-tools = import ./modules/home/agent-tools/contract.nix;
         profiles = capabilityModules;
       };
 
@@ -245,7 +245,7 @@
         system:
         let
           pkgs = repositoryPkgsFor system;
-          # Re-pull the factual fields in omp/models.yml from omp (cost/context via
+          # Re-pull the factual fields in pkgs/omp-configured/config/models.yml from omp (cost/context via
           # `omp models`, speed/ttft via `omp bench`). Run from the repo root:
           #   nix run .#refresh-model-facts [-- --skip-bench | --runs 3 | …]
           refreshModelFacts = pkgs.writeShellApplication {
@@ -254,7 +254,7 @@
               (pkgs.python3.withPackages (ps: [ ps.ruamel-yaml ]))
               pkgs.omp
             ];
-            text = ''python3 ${./omp/refresh-model-facts.py} "$@"'';
+            text = ''python3 ${./pkgs/omp-configured/config/refresh-model-facts.py} "$@"'';
           };
           atyrodeApp = {
             type = "app";

@@ -144,11 +144,11 @@ indistinguishable from a hung one:
 
 ```
 3/5 Converge the account login shell
-  why inventory/system-boundary.json declares /run/current-system/sw/bin/zsh
+  why fleet/system-boundary.json declares /run/current-system/sw/bin/zsh
   ok already the account login shell
 
 4/5 Review the provisioning surfaces this machine declares
-  why inventory/provisioning.json declares 6 surfaces for this machine
+  why fleet/provisioning.json declares 6 surfaces for this machine
   ok 4 ok, 1 not-applicable, 1 incomplete -- still to configure: babel-archive
 
 5/5 Render this machine's agent context
@@ -239,7 +239,7 @@ to provision is still a machine that activated.
 
 An offer resolves the prerequisites it knows about before asking about the
 surface, because a question is only fair if the answer can work. Prerequisites
-are declared once in `inventory/provisioning.json` as an ordered chain per
+are declared once in `fleet/provisioning.json` as an ordered chain per
 surface -- Babel needs a Bitwarden session and then a Clever Cloud session; the
 Git identity needs only the vault -- and each carries what is lost without it.
 On a terminal every unmet link becomes its own offer, in declared order:
@@ -298,9 +298,9 @@ atyrode tunnel revoke alex-macbook-air
 
 `tunnel` answers one question: which reviewed fleet keys may reach **this**
 machine over SSH. It has two inputs and one output. The input that is fleet
-policy is [`home/ssh-fleet-keys`](../home/ssh-fleet-keys) — public keys only,
+policy is [`modules/home/ssh/fleet-keys`](../modules/home/ssh/fleet-keys) — public keys only,
 changed exclusively through a reviewed commit, exactly as a signing key becomes
-trusted only through a reviewed commit in `home/git-allowed-signers` (see
+trusted only through a reviewed commit in `modules/home/git/allowed-signers` (see
 [git-keys](git-keys.md)). The input that is local decision is a grant file under
 `$XDG_STATE_HOME/atyrode/tunnel/grants.json`. The output is
 `~/.ssh/authorized_keys`, which atyrode owns: every mutation re-renders the whole
@@ -333,7 +333,7 @@ reachable only over SSH; moving the role is a reviewed registry change.
 ### The vault gate is intentionality, not privilege
 
 `grant` and `revoke` open a Bitwarden session first, reusing the unlock
-ceremony of [`scripts/babel-storage-configure.sh`](../scripts/babel-storage-configure.sh)
+ceremony of [`pkgs/atyrode/ceremonies/babel-storage-configure.sh`](../pkgs/atyrode/ceremonies/babel-storage-configure.sh)
 and `atyrode provision git`: unlock if locked, relock on every exit path if this
 command opened the session. `list` is read-only and never touches the vault.
 
@@ -364,13 +364,13 @@ atyrode context --json   # the generated machine section as data
 ```
 
 Every agent on a machine starts from one file: the operator policy kept in
-`home/agents/AGENTS.md`, followed by a generated `## This machine` section.
+`modules/home/agents/AGENTS.md`, followed by a generated `## This machine` section.
 `context render` writes it to `${XDG_CONFIG_HOME:-~/.config}/agents/AGENTS.md`
 (mode 0644, written whole and moved into place), and Home Manager makes
 `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.omp/agent/AGENTS.md`
 out-of-store symlinks to it, so every tool reads the same bytes and no
 tool-specific instruction file is maintained by hand. Activation renders it
-(`home/agents.nix`) and `atyrode apply` renders it again as its last step, after
+(`modules/home/agents/default.nix`) and `atyrode apply` renders it again as its last step, after
 the provisioning review may have opened sessions, so the file describes the
 machine apply leaves behind. This is ADR 0008 step 2 (the record is
 `docs/adr/0008-fleet-shape-and-substrate.md` once its pull request merges) and
@@ -406,7 +406,7 @@ atyrode identity init     # generate the key if absent; print the line to add to
 
 The machine identity is the age key sops-nix decrypts secrets with at
 activation — this machine's own, never the operator's. `init` generates it at
-the path [`modules/secrets.nix`](../modules/secrets.nix) declares for the
+the path [`modules/shared/secrets.nix`](../modules/shared/secrets.nix) declares for the
 host's activation kind (root-owned on nix-darwin and NixOS, with each `sudo`
 step announced), then prints the one line the operator adds under `machines`
 in [`.sops.yaml`](../.sops.yaml) and the `sops updatekeys` commands that
@@ -489,7 +489,7 @@ and releases its GPU memory. A new session or direct API activity resets the
 deadline; stale leases from crashed processes are discarded.
 
 `manifold-agent` joins the machine to the self-hosted manifold hub declared in
-`inventory/manifold.json`; enrollment, upgrade discipline, the tyrode-dev-01
+`fleet/manifold.json`; enrollment, upgrade discipline, the tyrode-dev-01
 cutover, and the master-migration runbook live in [manifold](manifold.md).
 
 `inventory` is a thin, read-only consumer of the flake's schema-versioned

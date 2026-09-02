@@ -6,7 +6,7 @@
 
 # code (the oh-my-pi facet-dial launcher) lives in its own repository since the
 # 2026-07 extraction; the dotfiles track its release binaries like omp/codex,
-# bumped by scripts/update-pins.sh. The archives carry static Go builds (CGO
+# bumped by ci/update-pins.sh. The archives carry static Go builds (CGO
 # disabled), so no loader fixup is needed on any platform.
 let
   version = "0.14.0";

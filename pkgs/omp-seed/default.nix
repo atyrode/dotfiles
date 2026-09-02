@@ -8,8 +8,8 @@
 }:
 
 let
-  seedConfig = ../../omp/plain-seed.yml;
-  script = builtins.readFile ../../scripts/omp-seed.sh;
+  seedConfig = ../omp-configured/config/plain-seed.yml;
+  script = builtins.readFile ./omp-seed.sh;
 in
 (writeShellApplication {
   name = "atyrode-omp-seed";

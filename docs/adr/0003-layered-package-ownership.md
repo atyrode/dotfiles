@@ -21,7 +21,7 @@ Every package has **one owning layer**, and the layer determines its scope:
 - **on-demand** — invoked transiently (e.g. via `nix run`), not installed.
 
 Ownership is computed from the real evaluated Home Manager and nix-darwin
-configurations. [`inventory/annotations.nix`](../../inventory/annotations.nix)
+configurations. [`fleet/annotations.nix`](../../fleet/annotations.nix)
 records only semantic intent and boundaries that evaluation cannot derive.
 
 The versioned `inventory.<system>` flake output attributes packages by comparing

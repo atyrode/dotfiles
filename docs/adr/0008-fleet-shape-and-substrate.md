@@ -1,7 +1,7 @@
 # ADR 0008: Fleet shape, substrate, and the road there
 
-- Status: Proposed
-- Date: 2026-09-01
+- Status: Accepted
+- Date: 2026-09-01, accepted 2026-09-02
 - Supersedes: [0005](0005-no-declarative-secret-manager.md) — its stated
   trigger ("a concrete secret must be delivered declaratively") has fired.
 
@@ -98,7 +98,7 @@ Applications stop inventing cross-machine glue because the fleet provides it:
 | Concern | Substrate | Replaces |
 | --- | --- | --- |
 | Configuration | one repository, this one, for every machine including the server | `tyrode-dev/infra` as a second engine |
-| Secrets and their audience | **sops-nix**, age keys, `secrets/*.yaml` with `.sops.yaml` audience groups; the operator's existing age identity spans it | the Bitwarden ceremony, `vault.sh`, provisioning ceremonies that only existed to fetch a value |
+| Secrets and their audience | **sops-nix**, age keys, `secrets/*.yaml` with `.sops.yaml` audience groups; the operator's daily identity is hardware-bound in the Mac's Secure Enclave and his existing software key is the recovery recipient | the Bitwarden ceremony, `vault.sh`, provisioning ceremonies that only existed to fetch a value |
 | Identity and reachability | plain WireGuard, hub-and-spoke through the workshop, keys in sops, peers in Nix | SSH key distribution, per-app auth protocols |
 | Built artifacts | CI builds every host closure and pushes to a **Cellar** bucket (already paid for, S3 to write, plain HTTPS to read, no server) | every machine rebuilding what CI already built |
 | Agent context | a **generated** `AGENTS.md` deployed by this repository to every machine (see below) | telling every agent on every machine what is authenticated where |
@@ -107,8 +107,16 @@ Applications stop inventing cross-machine glue because the fleet provides it:
 **Sessions are values.** Most "logins" (`clever`, `gh`, Cellar keys) produce a
 token that is a string; captured once, it is a secret with an audience like any
 other. The only device-bound session in the fleet is Bitwarden's, and it leaves
-the daily path: Bitwarden becomes the break-glass copy of the operator's age
-identity, the role it already plays for infra today.
+the daily path: Bitwarden becomes the break-glass copy of the operator's
+recovery age identity, the role it already plays for infra today.
+
+**Two operator identities, decided.** The key the operator edits secrets with
+day to day lives in the Mac's Secure Enclave (`age-plugin-se`, Touch ID on
+every edit) and cannot be copied off it; the software key that exists today
+becomes the recovery recipient, its only copy the Bitwarden note. Losing the
+Mac costs a re-encryption with the recovery key and rotates nothing, because
+nothing could have left the enclave. The cost accepted is that secrets are
+edited from the Mac.
 
 **Publishing ciphertext is decided.** `secrets/*.yaml` is age-encrypted to
 named recipients; a reader of the public repository learns the *names* of
@@ -263,10 +271,11 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
 2. **Generated agent context.** `atyrode` renders the machine `AGENTS.md`
    from `doctor` at activation; this repository deploys it and the tool
    symlinks. This repository's own `AGENTS.md` is written at the same time.
-3. **sops-nix.** Operator identity registered, one recipient per remaining
-   machine, `.sops.yaml` audiences, the first surface moved (`git-identity`),
-   then `clever` and Cellar tokens as values, then babel. Each surface leaves
-   Bitwarden only when its sops path works; `vault.sh` dies last.
+3. **sops-nix.** One recipient per remaining machine, the operator's two
+   identities, `.sops.yaml` audiences, the first surface moved
+   (`git-identity`), then `clever` and Cellar tokens as values, then babel.
+   Each surface leaves Bitwarden only when its sops path works; `vault.sh`
+   dies last.
 4. **Overlay and flow.** WireGuard peers in
    Nix, push-on-green from CI, the converge floor, `atyrode fleet apply`, drift
    in `doctor` and the shell.
@@ -286,3 +295,8 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
 4. Second backup target — **a disk at home**, with the routine designed so the
    fleet starts and nags and the operator only plugs in.
 5. Step 0's inventory — **begun** the same day, read-only, manifest for review.
+6. Where the operator's key lives — **the Mac's Secure Enclave**, with the
+   existing key as recovery.
+7. The unpushed `manifold` work — **stays on the old box for now**; the
+   runbook lists it as the first thing that must leave before anything is
+   deleted.

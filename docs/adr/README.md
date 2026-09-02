@@ -39,4 +39,4 @@ to this repository.
 | [0005](0005-no-declarative-secret-manager.md) | No declarative secret manager until a concrete secret needs it (superseded by ADR 0008: sops-nix) |
 | [0006](0006-managed-layering-over-profiles.md) | Managed layering and seeding over curated profiles |
 | [0007](0007-explicit-generation-cleanup.md) | Explicit, policy-driven generation and store cleanup |
-| [0008](0008-fleet-shape-and-substrate.md) | Fleet shape, substrate, and the road there (proposed; supersedes 0005) |
+| [0008](0008-fleet-shape-and-substrate.md) | Fleet shape, substrate, and the road there (supersedes 0005) |

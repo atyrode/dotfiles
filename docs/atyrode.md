@@ -421,6 +421,38 @@ audience file does not name it, `ok` when registered, and `not-applicable` on
 a portable profile. The model, enrolment, and revocation are in
 [secrets.md](secrets.md).
 
+## Operator identity
+
+```sh
+atyrode operator show     # the operator's public age recipient, and whether .sops.yaml registers it
+atyrode operator init     # mint the key in the Secure Enclave if absent; print the line to add to .sops.yaml
+```
+
+The operator identity is the age key that edits secrets: minted by
+`age-plugin-se` inside the Secure Enclave of the registered Mac, unlocked by
+Touch ID (or the login passcode) on every use, and by construction impossible
+to copy off the machine. Both verbs apply on that one host and refuse
+anywhere else with exit 65 and one sentence; the gate is the host registry's
+system, not `uname`, so the check drives the Mac's states from a Linux
+sandbox. `init` writes `~/.config/sops/age/keys.txt` (mode 0600 under a
+mode-0700 directory), says that Touch ID will prompt before it runs the one
+announced `age-plugin-se keygen`, and prints the line that fills the `&alex`
+slot in [`.sops.yaml`](../.sops.yaml) plus the reminder that `&alex-recovery`
+stays. It never replaces an existing `keys.txt`: a Secure Enclave key there
+is kept and its registration repeated, and a software key there (the day-zero
+Mac) is named as the recovery identity that belongs in Bitwarden alone, to be
+moved aside by the operator. Only the `# public key:` comment the plugin
+writes is ever read; the identity line never reaches the terminal, argv, or
+the run log.
+
+`apply` offers `operator init` on the Mac when it has no key, and `doctor
+provisioning` carries the `operator-identity` surface right after
+`machine-identity`: `not-applicable` off the Mac, `incomplete` with no usable
+key, `degraded` with the exact registration line when the key exists but the
+audience file does not name it, and `ok` when registered. The two-identity
+model, the Mac sequence, and what a lost Mac costs are in
+[secrets.md](secrets.md).
+
 ## Inspection and diagnostics
 
 ```sh

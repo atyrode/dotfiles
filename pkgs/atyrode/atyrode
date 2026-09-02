@@ -87,6 +87,8 @@ apply_job_worker=0
 . "$lib_dir/context.sh"
 # shellcheck source=lib/identity.sh
 . "$lib_dir/identity.sh"
+# shellcheck source=lib/operator.sh
+. "$lib_dir/operator.sh"
 
 usage() {
   cat <<'EOF'
@@ -124,6 +126,8 @@ Usage:
   atyrode context render
   atyrode identity show [--json]
   atyrode identity init
+  atyrode operator show
+  atyrode operator init
   atyrode doctor [HOST] [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -198,6 +202,14 @@ activation (never the operator's). show prints its public recipient and whether
 and NixOS, announcing each sudo step -- and prints the one line to add to
 .sops.yaml plus the sops updatekeys commands that re-encrypt for it. The
 private half never reaches the terminal, argv, or the log.
+operator is the operator's own age identity, the one that edits secrets: it is
+minted inside the Secure Enclave of the registered Mac by age-plugin-se, asks
+for Touch ID on every use, and cannot be copied off the machine, so the verb
+applies on that host alone and refuses elsewhere. show prints its public
+recipient and whether .sops.yaml registers it as &alex; init generates it if
+absent -- never replacing one that exists -- and prints the one line to add to
+.sops.yaml. &alex-recovery, the software key whose only copy is in Bitwarden,
+is the break-glass recipient of every file and is never read here.
 generations lists the activation profile's generations (nix-darwin or NixOS
 system profile, otherwise standalone Home Manager); rollback activates an earlier
 one (previous by default, or --to N) after confirming.
@@ -238,7 +250,7 @@ main() {
   case "$subcommand" in
     apply | clean | rollback | provision) start_run_log "$subcommand" ;;
     __apply-job) start_run_log apply-job ;;
-    identity) [[ "${1:-}" != init ]] || start_run_log identity ;;
+    identity | operator) [[ "${1:-}" != init ]] || start_run_log "$subcommand" ;;
   esac
   case "$subcommand" in
     apply) apply_config "$@" ;;
@@ -261,6 +273,7 @@ main() {
     provision) cmd_provision "$@" ;;
     context) cmd_context "$@" ;;
     identity) [[ "${1:-}" != init ]] || guard_production_mutation "identity init"; cmd_identity "$@" ;;
+    operator) [[ "${1:-}" != init ]] || guard_production_mutation "operator init"; cmd_operator "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

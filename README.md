@@ -79,7 +79,7 @@ run the same apply command again.
 - **Docker** + **docker-compose** - Linux clients in the `containers` capability
 - **OrbStack** - Docker/Linux runtime on macOS
 - **Explicit capabilities** - ffmpeg (`media`), Android tools/scrcpy (`mobile`),
-  and nmap/socat (`security`)
+  and nmap/socat/sops (`security`, plus age-plugin-se on macOS)
 
 ### macOS Apps
 - **Nix/Home Manager apps** - ChatGPT, Lichess, Obsidian, OrbStack,

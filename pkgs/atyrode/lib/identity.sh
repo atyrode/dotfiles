@@ -6,10 +6,11 @@
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
 # Two identities exist and this module only ever handles one of them. The
-# operator's key edits secrets and lives wherever the operator keeps it; it is
-# never read here. The machine's key is generated on the machine, stays on the
-# machine, and is named to sops-nix in modules/secrets.nix, so the path below
-# and the one Nix evaluates are the same fact written twice -- keep them so.
+# operator's key edits secrets and lives in the Mac's Secure Enclave
+# (operator.sh); it is never read here. The machine's key is generated on the
+# machine, stays on the machine, and is named to sops-nix in
+# modules/secrets.nix, so the path below and the one Nix evaluates are the
+# same fact written twice -- keep them so.
 #
 # On a standalone Home Manager host the key sits in the user's own
 # configuration, deliberately not in the `keys.txt` sops reads by default: on

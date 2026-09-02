@@ -379,6 +379,113 @@ pkgs.runCommand "check-atyrode-apply"
     ATYRODE_HOST=fixture-nixos atyrode identity show --json |
       jq -e '.keyFile == "/var/lib/sops-nix/machine.txt" and .recipient == null' >/dev/null
 
+    # The operator identity (ADR 0008 step 3): the age key that edits secrets,
+    # minted inside the Mac's Secure Enclave. The plugin is stubbed for a
+    # deterministic recipient -- the one the fixture audience fills the
+    # operator slot with -- and the identity line it writes is a sentinel no
+    # output may ever carry. The verb and its probe gate on the registry's
+    # system, so a Linux sandbox can walk the Mac's states by naming the host.
+    cat > "$TMPDIR/bin/age-plugin-se" <<'EOF'
+    #!${pkgs.runtimeShell}
+    fixture_recipient=age1se1fixtureoperator00000000000000000000000000000000000000000000
+    [[ "''${1:-}" == keygen && "''${2:-}" == --access-control=any-biometry-or-passcode && "''${3:-}" == -o && -n "''${4:-}" ]] || exit 64
+    umask 077
+    printf '# created: fixture\n# access control: any biometry or passcode\n# public key: %s\nAGE-PLUGIN-SE-1FIXTUREONLY\n' \
+      "$fixture_recipient" > "$4"
+    printf 'Public key: %s\n' "$fixture_recipient"
+    EOF
+    chmod +x "$TMPDIR/bin/age-plugin-se"
+    export ATYRODE_AGE_PLUGIN_SE="$TMPDIR/bin/age-plugin-se"
+    operator_key="$XDG_CONFIG_HOME/sops/age/keys.txt"
+    operator_recipient=age1se1fixtureoperator00000000000000000000000000000000000000000000
+    operator_probe() { # host status code
+      ATYRODE_HOST="$1" atyrode doctor provisioning --json |
+        jq -e --arg status "$2" --arg code "$3" '
+          .surfaces[] | select(.id == "operator-identity")
+          | .status == $status and (.code // "") == $code
+            and .command == "atyrode operator init" and .declinable == false
+            and (.implies | contains("never leaves the Secure Enclave"))
+        ' >/dev/null
+    }
+    # Off the Mac there is nothing to have: the verb refuses in one sentence
+    # and the probe is not-applicable, on a host that really is Linux.
+    operator_probe alex-x86_64-linux not-applicable platform-not-darwin
+    set +e
+    atyrode operator show > "$TMPDIR/operator-linux.out" 2> "$TMPDIR/operator-linux.err"
+    operator_status="$?"
+    set -e
+    test "$operator_status" = 65
+    test ! -s "$TMPDIR/operator-linux.out"
+    test "$(wc -l < "$TMPDIR/operator-linux.err")" = 1
+    grep -qF 'alex-x86_64-linux is not it' "$TMPDIR/operator-linux.err"
+    test ! -e "$operator_key"
+    # On the Mac with no key: show says so and exits with a finding, and the
+    # probe names the ceremony.
+    operator_probe alex-aarch64-darwin incomplete not-configured
+    set +e
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator show > "$TMPDIR/operator-none.out" 2> "$TMPDIR/operator-none.err"
+    operator_status="$?"
+    set -e
+    test "$operator_status" = 69
+    test ! -s "$TMPDIR/operator-none.out"
+    grep -qF "no operator identity yet at $operator_key" "$TMPDIR/operator-none.err"
+    grep -qF 'create one with: atyrode operator init' "$TMPDIR/operator-none.err"
+    # init says Touch ID is coming, announces the one command, lands the key
+    # at the modes a secret demands, and -- the fixture audience already
+    # naming the recipient it minted -- reports the operator registered.
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-init.out" 2> "$TMPDIR/operator-init.err"
+    grep -qF 'macOS will prompt for Touch ID' "$TMPDIR/operator-init.err"
+    grep -qE "^\\$ .*age-plugin-se keygen --access-control=any-biometry-or-passcode -o $operator_key\$" "$TMPDIR/operator-init.err"
+    grep -qF "wrote $operator_key (mode 0600, directory mode 0700)" "$TMPDIR/operator-init.err"
+    grep -qF "recipient $operator_recipient is registered in .sops.yaml as &alex" "$TMPDIR/operator-init.err"
+    test "$(cat "$TMPDIR/operator-init.out")" = "Public key: $operator_recipient"
+    test -f "$operator_key"
+    test "$(stat -c %a "$operator_key")" = 600
+    test "$(stat -c %a "''${operator_key%/*}")" = 700
+    grep -qF 'AGE-PLUGIN-SE-1FIXTUREONLY' "$operator_key"
+    operator_probe alex-aarch64-darwin ok ""
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator show > "$TMPDIR/operator-show.out" 2> "$TMPDIR/operator-show.err"
+    test "$(cat "$TMPDIR/operator-show.out")" = "$operator_recipient"
+    grep -qF 'registered in .sops.yaml as &alex' "$TMPDIR/operator-show.err"
+    # A second init keeps the key: the enclave could not give a replaced one
+    # back, and files may already be encrypted to it.
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-again.out" 2> "$TMPDIR/operator-again.err"
+    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-again.err"
+    ! grep -qF 'age-plugin-se' "$TMPDIR/operator-again.err"
+    test ! -s "$TMPDIR/operator-again.out"
+    grep -qF 'AGE-PLUGIN-SE-1FIXTUREONLY' "$operator_key"
+    # A recipient the audience file does not name: the probe and the verb
+    # print exactly the line that fills the slot, and say the recovery key stays.
+    sed -i 's/^# public key: .*/# public key: age1se1unregistered0000000000000000000000000000000000000000000000/' "$operator_key"
+    operator_probe alex-aarch64-darwin degraded not-registered
+    ATYRODE_HOST=alex-aarch64-darwin atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "operator-identity")
+      | (.remediation | contains("- &alex age1se1unregistered0000"))
+        and (.remediation | contains("sops updatekeys"))' >/dev/null
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator show > "$TMPDIR/operator-unregistered.out" 2> "$TMPDIR/operator-unregistered.err"
+    grep -qF -- '  - &alex age1se1unregistered0000' "$TMPDIR/operator-unregistered.err"
+    grep -qF 'sops updatekeys secrets/*.yaml' "$TMPDIR/operator-unregistered.err"
+    grep -qF '&alex-recovery stays' "$TMPDIR/operator-unregistered.err"
+    # The day-zero Mac: a software key in the file sops reads. It is neither
+    # overwritten nor mistaken for the operator identity, and the way out is
+    # said rather than taken.
+    printf '# created: fixture\n# public key: age1softwarefixture0000\nAGE-SECRET-KEY-1FIXTUREONLY\n' > "$operator_key"
+    operator_probe alex-aarch64-darwin incomplete not-configured
+    set +e
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-foreign.out" 2> "$TMPDIR/operator-foreign.err"
+    operator_status="$?"
+    set -e
+    test "$operator_status" = 65
+    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-foreign.err"
+    grep -qF 'holds no Secure Enclave recipient' "$TMPDIR/operator-foreign.err"
+    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$operator_key"
+    rm -f "$operator_key"
+    # Neither identity line ever reaches a terminal, in any of the runs above.
+    for operator_output in "$TMPDIR"/operator-*.out "$TMPDIR"/operator-*.err; do
+      ! grep -qF 'AGE-PLUGIN-SE-1' "$operator_output"
+      ! grep -qF 'AGE-SECRET-KEY' "$operator_output"
+    done
+
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
     # A successful apply with neither Babel's storage document nor a success
@@ -544,7 +651,7 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 5
     # And the reason a step is running, in the vocabulary of what decided it.
     grep -qF 'why inventory/system-boundary.json declares' "$TMPDIR/apply-success.err"
-    grep -qF 'why inventory/provisioning.json declares 7 surfaces' "$TMPDIR/apply-success.err"
+    grep -qF 'why inventory/provisioning.json declares 8 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
     grep -qF 'Apply complete for alex-x86_64-linux' "$TMPDIR/apply-success.err"
 

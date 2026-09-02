@@ -24,12 +24,33 @@ unreadable to it.
 
 ## Two identities
 
-**The operator identity** (`&alex` in `.sops.yaml`) is the one key that reads
-everything and the only key that ever edits: `sops secrets/<file>.yaml` opens
-a file in `$EDITOR` and re-encrypts it on save. Where its private half lives
-is the operator's decision; Bitwarden already holds the break-glass copy.
-Nothing in this repository or the CLI reads it. `~/.config/sops/age/keys.txt`,
-the file sops itself reads, is where it is expected on the workstation.
+**The operator identity** is two recipients in `.sops.yaml`, and the only
+keys that ever edit: `sops secrets/<file>.yaml` opens a file in `$EDITOR` and
+re-encrypts it on save.
+
+- `&alex` is the daily identity. It is minted by
+  [`age-plugin-se`](https://github.com/remko/age-plugin-se) inside the Secure
+  Enclave of the registered Mac (`atyrode operator init`), and every
+  decryption -- so every edit -- asks for Touch ID or the login passcode.
+  `~/.config/sops/age/keys.txt` holds a handle the enclave understands, not
+  key material: the private half cannot be extracted, copied, or backed up,
+  which is exactly why there is a second recipient.
+- `&alex-recovery` is the software key that used to be the only operator key.
+  Its only copy is the break-glass note in Bitwarden; it is not on any disk,
+  and nothing in this repository or the CLI reads it. It is a recipient of
+  every file so that losing the Mac costs one `sops updatekeys` and nothing
+  more.
+
+The `security` capability installs `sops` on every fleet member and the
+plugin on the Mac alone, and points `SOPS_AGE_KEY_FILE` at
+`~/.config/sops/age/keys.txt` so sops reads the file the ceremony writes on
+every platform (macOS would otherwise look under `~/Library`). The plugin does
+build on Linux, but its closure there is a 2 GiB Swift runtime, and a Linux
+host has no identity to decrypt with as the operator anyway: **every sops
+edit happens on the Mac**. A Linux host with `sops` can inspect what
+activation decrypted for it with its machine key
+(`SOPS_AGE_KEY_FILE=<machine key> sops -d secrets/<host>.yaml`) and nothing
+else.
 
 **A machine identity** is the age key one machine decrypts with at
 activation, generated on that machine and never copied anywhere:
@@ -39,12 +60,50 @@ activation, generated on that machine and never copied anywhere:
 | Home Manager (standalone) | `~/.config/sops/age/machine.txt` | the user, mode 0600 under a mode-0700 directory |
 | nix-darwin, NixOS, NixOS-WSL | `/var/lib/sops-nix/machine.txt` | root, mode 0600 under a mode-0700 directory; its public recipient is published at `/etc/atyrode/machine.pub` so `doctor` can read it without elevating |
 
-The Home Manager path is deliberately not `keys.txt`: on the operator's
-workstation that file is the operator identity, and an activation must never
-be able to decrypt as the operator. SSH host keys are not used either; an
+The Home Manager path is deliberately not `keys.txt`: on the Mac that file
+is the operator identity, and an activation must never be able to decrypt as
+the operator. SSH host keys are not used either; an
 explicit key is simpler to name, to reason about, and to revoke.
 [`modules/secrets.nix`](../modules/secrets.nix) is where sops-nix is told these
 paths, once for all three activation kinds.
+
+## Enrolling the operator (the Mac, once)
+
+The ceremony runs on the Mac with the operator's finger and nowhere else;
+`atyrode operator` refuses on every other host, and `doctor provisioning`
+reports the `operator-identity` surface as `not-applicable` there.
+
+1. `atyrode apply`, so the `security` capability has installed `sops` and
+   `age-plugin-se`. If `~/.config/sops/age/keys.txt` still holds the software
+   key, move it aside first (the Bitwarden note is its copy of record);
+   `operator init` refuses to overwrite any existing file and says so.
+2. `atyrode identity init`: the Mac's own machine identity, root-owned as on
+   every system host.
+3. `atyrode operator init`: says that Touch ID will prompt, runs the one
+   announced `age-plugin-se keygen --access-control=any-biometry-or-passcode`,
+   asserts the modes, and prints `- &alex age1se1...`.
+4. Paste the two lines into `.sops.yaml`: the machine's under `machines`, the
+   operator's into the `&alex` slot under `keys`, and uncomment `*alex` (and
+   `*alex-aarch64-darwin`) in the creation rules. Once files exist under
+   `secrets/`, `sops updatekeys secrets/*.yaml` re-encrypts them to the new
+   recipients; a file created afterwards is encrypted to them from the start.
+   `&alex-recovery` stays in every rule.
+5. Commit and push. From here every edit is `sops secrets/<file>.yaml` on the
+   Mac, with Touch ID.
+
+`atyrode operator show` prints the recipient and whether it is registered.
+Neither verb ever reads past the `# public key:` comment the plugin writes:
+the identity line is never printed, and `age-keygen -y` could not read it
+anyway.
+
+**A lost or replaced Mac** costs no rotation. The private half was never
+extractable, so nothing leaked with the machine; the enclave key is simply
+gone. Recover the software key from the Bitwarden note to a temporary
+`SOPS_AGE_KEY_FILE`, run the ceremony above on the new Mac, replace the
+`&alex` recipient with the new one, `sops updatekeys secrets/*.yaml`, and
+delete the temporary file. The one thing that would force a rotation of
+every value is the recovery key itself leaking, which is why it lives in
+exactly one place.
 
 ## Enrolling a machine
 
@@ -58,7 +117,7 @@ paths, once for all three activation kinds.
 2. In this repository: fill the host's slot in `.sops.yaml` (every registered
    host has one, commented out until its ceremony has run), uncomment its
    reference in the creation rules for the files it may read, and run
-   `sops updatekeys` on each of them with the operator key.
+   `sops updatekeys` on each of them on the Mac, with Touch ID.
 3. Commit and push; the machine reads its secrets on the next apply.
 
 `atyrode identity show` prints the recipient and whether it is registered;
@@ -90,7 +149,9 @@ could read** — the values, not just the audience. Ciphertext history is
 permanent: every revision of `secrets/*.yaml` ever pushed stays in Git, and a
 leaked key decrypts every past revision it was a recipient of. Re-encrypting
 protects the future; only new values protect what was already published. The
-same is true of the operator key, for every file.
+same is true of the recovery key, for every file. The Secure Enclave key is
+the one recipient this cannot happen to: it has no exportable form, so a lost
+Mac is the first case above, never this one.
 
 This is the price of publishing ciphertext, and it was decided with it (ADR
 0008): a leaked machine key costs exactly what a leaked vault session would,

@@ -3,8 +3,9 @@
 Secrets are age-encrypted YAML files under [`secrets/`](../secrets/README.md),
 committed to this public repository, and decrypted at activation by
 [sops-nix](https://github.com/Mic92/sops-nix) on every kind of host. The
-decision and its alternatives are ADR 0008 (fleet shape and substrate), which
-supersedes [ADR 0005](adr/0005-no-declarative-secret-manager.md).
+decision and its alternatives are
+[ADR 0008](adr/0008-fleet-shape-and-substrate.md), which supersedes
+[ADR 0005](adr/0005-no-declarative-secret-manager.md).
 
 ## The audience model
 

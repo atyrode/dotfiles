@@ -271,7 +271,8 @@ let
     docs-drift-guard = import ./docs-drift-guard.nix { inherit pkgs; };
     classify-ci-paths = import ./classify-ci-paths.nix { inherit pkgs; };
     production-facts = import ./production-facts.nix { inherit pkgs; };
-    secret-shapes = import ./secret-shapes.nix { inherit pkgs; };
+    secret-shapes = import ./secret-shapes.nix { inherit lib pkgs; };
+    git-hooks = import ./git-hooks.nix { inherit lib pkgs; };
     darwin-activation = import ./darwin-activation.nix {
       inherit lib pkgs;
       darwinConfigs = canonicalDarwinConfigs;

@@ -86,6 +86,15 @@ in
         source = ./git-pre-push;
         executable = true;
       };
+      # The scanner is a store path inside the hook, not a package on PATH, so
+      # a commit from an editor or a GUI client is scanned exactly like one
+      # from a shell.
+      "git/hooks/pre-commit" = {
+        text = builtins.replaceStrings [ "@gitleaks@" ] [ (lib.getExe pkgs.gitleaks) ] (
+          builtins.readFile ./git-pre-commit
+        );
+        executable = true;
+      };
     };
   };
 }

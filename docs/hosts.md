@@ -17,6 +17,17 @@ Nix exists. Infrastructure-owned NixOS and repository-owned NixOS-WSL identities
 remain excluded from that Unix picker; the registry check keeps the projection
 honest.
 
+A system host — one whose activation owner is nix-darwin or NixOS — is a
+clan machine: `lib/configurations.nix` derives clan's inventory from the
+registry, one machine per system host with its class (`darwin` or `nixos`)
+and the activation and platform as tags, and clan-core builds its
+configuration ([ADR 0008](adr/0008-fleet-shape-and-substrate.md), amended).
+Adding, renaming, or retiring a system host is still a registry edit; clan
+learns it from there, and the `host-registry` check asserts that clan names
+exactly the system hosts. A machine's key and its registration with clan are
+in [secrets.md](secrets.md). Standalone Home Manager hosts are not clan
+machines: clan does not see them and they read no secret.
+
 Capabilities are declarative Home Manager modules, not imperative `nix
 profile` state. Home Manager generations remain activation history and rollback
 points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-state boundaries.
@@ -33,11 +44,12 @@ points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-stat
 - `media`: audio/video conversion and inspection.
 - `containers`: container clients and inspection tools; the daemon is
   system-owned.
-- `security`: network diagnostics and `sops`, the editor and reader of the
-  fleet's secrets; the Mac additionally carries `age-plugin-se`, which holds
-  the operator's daily identity in its Secure Enclave ([secrets.md](secrets.md)).
-  ClamAV is intentionally absent because no registered host owns signature
-  updates or a scanning workflow.
+- `security`: network diagnostics and `sops`, the reader of what activation
+  decrypted and the crypto behind clan; the Mac additionally carries
+  `age-plugin-se`, which holds the operator's daily identity in its Secure
+  Enclave, and every clan machine carries the `clan` CLI
+  ([secrets.md](secrets.md)). ClamAV is intentionally absent because no
+  registered host owns signature updates or a scanning workflow.
 - `server`: marks a Linux-only headless composition. The reviewed portable
   server selection combines it with `base` and `agent-tools`.
 

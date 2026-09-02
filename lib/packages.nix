@@ -3,6 +3,7 @@
 # and evaluationPkgsFor (empty-registry overlay for portable evaluations).
 {
   babel,
+  clan-core,
   lib,
   nixpkgs,
   self,
@@ -60,6 +61,7 @@ let
   # as such rather than claiming nixpkgs provides them.
   flakeInputPackageNames = [
     "babel"
+    "clan-cli"
   ];
 
   inventoryRevision = self.rev or self.dirtyRev or "dirty";
@@ -97,6 +99,10 @@ let
         # right-hand `babel` is the flake input from the enclosing scope: this
         # attribute set is not recursive, so there is no self-reference here.
         babel = babel.packages.${final.stdenv.hostPlatform.system}.default;
+        # The fleet CLI, from the same clan-core revision that builds the
+        # machines, so `clan secrets` and `clan vars` on the operator's
+        # machine speak the layout the machines evaluate.
+        clan-cli = clan-core.packages.${final.stdenv.hostPlatform.system}.clan-cli;
         atyrode = final.callPackage ../pkgs/atyrode {
           capabilities = capabilitySummary;
           inherit homebrewCasks;

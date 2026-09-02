@@ -33,10 +33,11 @@
   omp-configured,
   python3,
   runtimeShell,
-  # The audience file the registration probe reads. A check overrides it with
-  # a fixture audience, the one way to reach the registered state without a
-  # real recipient in the committed file.
-  sopsAudience ? ../../.sops.yaml,
+  # Clan's registration directory the identity probes read: a machine or a
+  # user is registered when its key.json is here. A check overrides it with
+  # a fixture tree, the one way to reach the registered state without a real
+  # recipient in the committed one.
+  sopsDirectory ? ../../sops,
   stdenvNoCC,
   tmux,
   windowsPackages,
@@ -259,7 +260,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@registry@' '${registry}' \
       --replace-fail '@revision@' '${revision}' \
       --replace-fail '@operator_infra@' '${operatorInfra}' \
-      --replace-fail '@sops_audience@' '${sopsAudience}' \
+      --replace-fail '@sops_directory@' '${sopsDirectory}' \
       --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@provisioning_policy@' '${provisioningPolicy}' \

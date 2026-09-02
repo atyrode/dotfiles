@@ -21,14 +21,14 @@
     "machine-identity": {
       "label": "machine identity",
       "command": "atyrode identity init",
-      "implies": "Generates this machine's own age key, the one activation decrypts secrets with, and prints the public line to register in .sops.yaml. Local only: no secret is read, nothing is uploaded, and the private half never leaves the file.",
+      "implies": "Generates this machine's own age key, the one clan vars are decrypted with at activation, and prints the clan command that registers its public half. Local only: no secret is read, nothing is uploaded, and the private half never leaves the file.",
       "declinable": false,
       "prerequisites": []
     },
     "operator-identity": {
       "label": "operator identity",
       "command": "atyrode operator init",
-      "implies": "Mints the operator's own age key inside this Mac's Secure Enclave and prints the public line to register in .sops.yaml. Local only: Touch ID is asked once, no secret is read, nothing is uploaded, and the private half never leaves the Secure Enclave.",
+      "implies": "Mints the operator's own age key inside this Mac's Secure Enclave and prints the clan command that registers it as user alex. Local only: Touch ID is asked once, no secret is read, nothing is uploaded, and the private half never leaves the Secure Enclave.",
       "declinable": false,
       "prerequisites": []
     },

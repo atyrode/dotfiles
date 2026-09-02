@@ -29,10 +29,20 @@
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
 
-    # The secrets substrate (ADR 0008): age-encrypted secrets/*.yaml committed
-    # here, decrypted at activation by each machine's own age identity. One
-    # module covers all three activation kinds, so the audience file is the
-    # only place a secret's readers are ever written down.
+    # The fleet layer (ADR 0008 amendment): clan-core builds the nix-darwin
+    # and NixOS machines, so each machine class carries clan's vars over
+    # sops-nix and the operator's `clan` CLI reads this flake as its clan.
+    # Pinned to the same 26.05 release tarball the operator's existing clan
+    # consumes; every input clan-core shares with this flake follows ours so
+    # each module is evaluated from exactly one revision.
+    clan-core.url = "https://git.clan.lol/clan/clan-core/archive/26.05.tar.gz";
+    clan-core.inputs.nixpkgs.follows = "nixpkgs";
+    clan-core.inputs.nix-darwin.follows = "nix-darwin";
+    clan-core.inputs.sops-nix.follows = "sops-nix";
+    clan-core.inputs.treefmt-nix.follows = "treefmt-nix";
+
+    # What clan vars decrypt with at activation: sops-nix's nixos and darwin
+    # modules, each machine holding its own age key. Followed by clan-core.
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -55,6 +65,7 @@
       self,
       nixpkgs,
       babel,
+      clan-core,
       home-manager,
       nix-darwin,
       nix-homebrew,
@@ -88,6 +99,7 @@
       packagesLib = import ./lib/packages.nix {
         inherit
           babel
+          clan-core
           lib
           nixpkgs
           self
@@ -104,10 +116,10 @@
 
       configurations = import ./lib/configurations.nix {
         inherit
+          self
           lib
-          nixpkgs
+          clan-core
           home-manager
-          nix-darwin
           nix-homebrew
           nixos-wsl
           sops-nix
@@ -120,6 +132,7 @@
       inherit (configurations)
         canonicalDarwinConfigs
         canonicalNixosWslConfigs
+        clan
         darwinModule
         dotfilesHomeNixosModule
         fleetClosuresFor
@@ -161,6 +174,10 @@
 
       darwinConfigurations = canonicalDarwinConfigs;
       nixosConfigurations = canonicalNixosWslConfigs;
+      # The clan CLI locates machines through these two outputs
+      # (`clan machines update` reads `clanInternals.machines.<system>.<name>`).
+      clan = clan.config;
+      inherit (clan.config) clanInternals;
       inventory = inventoryBySystem;
       capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
 

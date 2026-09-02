@@ -2,10 +2,10 @@
 # constructors, plus the server fixtures/manifests and the per-system
 # inventory built from the evaluated configurations.
 {
+  self,
   lib,
-  nixpkgs,
+  clan-core,
   home-manager,
-  nix-darwin,
   nix-homebrew,
   nixos-wsl,
   sops-nix,
@@ -42,29 +42,7 @@ let
   forAllSystems = lib.genAttrs systems;
 
   darwinModule = ../modules/darwin;
-  secretsModule = import ../modules/shared/secrets.nix;
-
-  # Each machine decrypts with its own identity. Standalone Home Manager keeps
-  # it in the user's configuration directory, deliberately apart from the
-  # `keys.txt` sops itself reads, because on the operator's workstation that
-  # file is the operator identity and must never be an activation key. The
-  # system-owned kinds keep it where root can hold it at mode 0600.
-  homeSecretsModule = name: [
-    sops-nix.homeManagerModules.sops
-    (
-      { config, ... }:
-      secretsModule {
-        hostId = name;
-        keyFile = "${config.xdg.configHome}/sops/age/machine.txt";
-      }
-    )
-  ];
-  systemSecretsModule = name: [
-    (secretsModule {
-      hostId = name;
-      keyFile = "/var/lib/sops-nix/machine.txt";
-    })
-  ];
+  clanMachineModule = ../modules/shared/clan-machine.nix;
 
   dotfilesHomeNixosModule =
     { config, lib, ... }:
@@ -134,15 +112,12 @@ let
     home-manager.lib.homeManagerConfiguration {
       pkgs = repositoryPkgsFor host.system;
 
-      modules =
-        modulesForHost name host
-        ++ lib.optionals (host.activation == "home-manager") (homeSecretsModule name)
-        ++ [
-          {
-            home.username = host.username;
-            home.homeDirectory = host.homeDirectory;
-          }
-        ];
+      modules = modulesForHost name host ++ [
+        {
+          home.username = host.username;
+          home.homeDirectory = host.homeDirectory;
+        }
+      ];
     };
 
   mkPortableHomeConfiguration =
@@ -206,60 +181,90 @@ let
         ];
     };
 
-  mkDarwinConfig =
-    name: host:
-    nix-darwin.lib.darwinSystem {
-      specialArgs = {
-        inherit
-          homebrew-cask
-          homebrew-core
-          ;
-        inherit (host) homeDirectory;
-        homeModules = modulesForHost name host;
-        inherit (host) username;
-      };
-
-      modules = [
-        home-manager.darwinModules.home-manager
-        nix-homebrew.darwinModules.nix-homebrew
-        sops-nix.darwinModules.sops
-        darwinModule
-        {
-          nixpkgs.hostPlatform = host.system;
-          nixpkgs.overlays = [ agentToolsOverlay ];
-          nixpkgs.config.allowUnfreePredicate =
-            package: builtins.elem (lib.getName package) allowedUnfreePackages;
-        }
-      ]
-      ++ systemSecretsModule name;
+  # The system-owned hosts are clan machines (ADR 0008 amendment). The host
+  # registry stays the source of truth: the machine list is derived from it,
+  # and each machine's module list is exactly what the standalone constructors
+  # used before clan-core built them. The per-host values the constructors
+  # used to pass as `specialArgs` arrive through `_module.args` instead,
+  # because clan's `specialArgs` is one set for every machine. None of them is
+  # consumed in an `imports` list, so the difference is invisible to the
+  # modules.
+  darwinMachineModule = name: host: {
+    _module.args = {
+      inherit homebrew-cask homebrew-core;
+      inherit (host) homeDirectory username;
+      homeModules = modulesForHost name host;
     };
+    imports = [
+      home-manager.darwinModules.home-manager
+      nix-homebrew.darwinModules.nix-homebrew
+      # clan-core's clanCore already imports sops-nix's darwin module from
+      # the same (followed) revision; the module system deduplicates the
+      # path, so the explicit import stays for readers.
+      sops-nix.darwinModules.sops
+      darwinModule
+      clanMachineModule
+      {
+        nixpkgs.hostPlatform = host.system;
+        nixpkgs.overlays = [ agentToolsOverlay ];
+        nixpkgs.config.allowUnfreePredicate =
+          package: builtins.elem (lib.getName package) allowedUnfreePackages;
+      }
+    ];
+  };
 
-  mkNixosWslConfig =
-    name: host:
-    nixpkgs.lib.nixosSystem {
-      inherit (host) system;
-      specialArgs = {
-        inherit host;
-        hostId = name;
-        homeModules = modulesForHost name host;
-        hostRegistry = hosts;
-      };
-      modules = [
-        nixos-wsl.nixosModules.default
-        sops-nix.nixosModules.sops
-        dotfilesHomeNixosModule
-        ../modules/nixos/wsl.nix
-      ]
-      ++ systemSecretsModule name;
+  nixosWslMachineModule = name: host: {
+    _module.args = {
+      inherit host;
+      hostId = name;
+      homeModules = modulesForHost name host;
+      hostRegistry = hosts;
     };
+    imports = [
+      nixos-wsl.nixosModules.default
+      sops-nix.nixosModules.sops
+      dotfilesHomeNixosModule
+      ../modules/nixos/wsl.nix
+      clanMachineModule
+    ];
+  };
+
+  # Standalone Home Manager hosts are invisible to clan and read no secret;
+  # the clan machines are exactly the system-owned hosts, one class each.
+  darwinHosts = lib.filterAttrs (_name: host: host.activation == "nix-darwin") hosts;
+  nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
+  clanHosts = darwinHosts // nixosWslHosts;
+
+  # The fleet layer. `fleet/hosts.nix` stays the only place a machine is
+  # named: the inventory is a projection of it, tagged by activation and
+  # platform so a clan service can later select machines the way the
+  # registry already describes them. `self` is what the clan CLI reads the
+  # secrets and vars directories relative to.
+  clan = clan-core.lib.clan {
+    inherit self;
+    meta.name = "atyrode";
+    inventory.machines = lib.mapAttrs (_name: host: {
+      machineClass = if host.activation == "nix-darwin" then "darwin" else "nixos";
+      inherit (host) description;
+      tags = [
+        host.activation
+        host.platform
+      ];
+    }) clanHosts;
+    machines = lib.mapAttrs (
+      name: host:
+      if host.activation == "nix-darwin" then
+        darwinMachineModule name host
+      else
+        nixosWslMachineModule name host
+    ) clanHosts;
+  };
 
   canonicalHomeConfigs = lib.mapAttrs mkHomeConfig hosts;
   homeManagerHosts = lib.filterAttrs (_name: host: host.activation == "home-manager") hosts;
   standaloneHomeConfigs = lib.mapAttrs mkHomeConfig homeManagerHosts;
-  darwinHosts = lib.filterAttrs (_name: host: host.activation == "nix-darwin") hosts;
-  canonicalDarwinConfigs = lib.mapAttrs mkDarwinConfig darwinHosts;
-  nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
-  canonicalNixosWslConfigs = lib.mapAttrs mkNixosWslConfig nixosWslHosts;
+  canonicalDarwinConfigs = clan.config.darwinConfigurations;
+  canonicalNixosWslConfigs = clan.config.nixosConfigurations;
 
   inventoryBySystem = forAllSystems (
     system:
@@ -307,6 +312,7 @@ in
     canonicalDarwinConfigs
     canonicalHomeConfigs
     canonicalNixosWslConfigs
+    clan
     darwinHosts
     darwinModule
     dotfilesHomeNixosModule

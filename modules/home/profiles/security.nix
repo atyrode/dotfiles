@@ -3,25 +3,39 @@
   lib,
   pkgs,
   ...
-}:
+}@args:
+let
+  # Home Manager passes `osConfig` as a special argument only when the
+  # profile is embedded in a nixos or nix-darwin configuration; a module
+  # argument with a default would still be looked up and fail, so it is read
+  # from the argument set instead. The `clan` option tree exists only where
+  # clanCore is imported, which is what makes a system a clan machine.
+  clanMachine = (args.osConfig or { }) ? clan;
+in
 {
   # Antivirus requires system-owned signature updates and a scanning workflow.
   # No registered host has that policy, so ClamAV is intentionally absent.
   #
-  # sops is the editor of secrets/*.yaml (docs/secrets.md) and the reader a
-  # machine uses to inspect what activation decrypted for it, so every fleet
-  # member carries it. age-plugin-se holds the operator's daily identity in
-  # the Mac's Secure Enclave; the plugin builds on Linux too, but its Linux
-  # closure is a Swift runtime that drags a full clang (2.1 GiB against 88 MiB
-  # for sops), and no Linux host can decrypt as the operator anyway, so it is
-  # installed only where the enclave is.
+  # sops is what a machine uses to inspect what activation decrypted for it
+  # and the crypto behind every `clan secrets`/`clan vars` call
+  # (docs/secrets.md), so every fleet member carries it. age-plugin-se holds
+  # the operator's daily identity in the Mac's Secure Enclave; the plugin
+  # builds on Linux too, but its Linux closure is a Swift runtime that drags
+  # a full clang (2.1 GiB against 88 MiB for sops), and no Linux host can
+  # decrypt as the operator anyway, so it is installed only where the enclave
+  # is. The clan CLI is installed exactly where clan-core built the system
+  # this profile is embedded in: a standalone Home Manager host and a client's
+  # NixOS machine consuming the portable profile are not clan machines, and
+  # the former's closure budget (checks/fleet/host-closure.nix) has no room
+  # for a fleet CLI it cannot use.
   home.packages =
     (with pkgs; [
       nmap
       socat
       sops
     ])
-    ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.age-plugin-se ];
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.age-plugin-se ]
+    ++ lib.optionals clanMachine [ pkgs.clan-cli ];
 
   # sops looks for its default identity under the platform's user
   # configuration directory, which on macOS is ~/Library/Application Support

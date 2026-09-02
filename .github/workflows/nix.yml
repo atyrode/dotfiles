@@ -2,6 +2,12 @@ name: Nix
 
 on:
   pull_request:
+  # Pull requests merge through GitHub's merge queue, which tests the merged
+  # result on a temporary branch before touching main. That branch fires this
+  # event and needs the same gate; without it the queue waits on a check that
+  # never reports. A merge-group run has no pull-request number, so classify
+  # keeps its full native matrix, which is exactly what a merge should get.
+  merge_group:
   push:
     branches:
       - main

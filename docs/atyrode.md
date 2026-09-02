@@ -396,6 +396,31 @@ older than seven days, or carries no generation stamp, and `incomplete` when
 it is absent. The file is never edited by hand: if it is wrong, `doctor` is
 wrong.
 
+## Machine identity
+
+```sh
+atyrode identity show     # this machine's public age recipient, and whether .sops.yaml registers it
+atyrode identity show --json
+atyrode identity init     # generate the key if absent; print the line to add to .sops.yaml
+```
+
+The machine identity is the age key sops-nix decrypts secrets with at
+activation — this machine's own, never the operator's. `init` generates it at
+the path [`modules/secrets.nix`](../modules/secrets.nix) declares for the
+host's activation kind (root-owned on nix-darwin and NixOS, with each `sudo`
+step announced), then prints the one line the operator adds under `machines`
+in [`.sops.yaml`](../.sops.yaml) and the `sops updatekeys` commands that
+re-encrypt for it. It is idempotent: an existing key is kept and the
+registration repeated. The private half never reaches the terminal, argv, or
+the run log; only `age-keygen -y` reads the file, for its public half.
+
+`apply` offers `identity init` on a machine that has no key, and `doctor
+provisioning` carries the `machine-identity` surface: `incomplete` with no
+key, `degraded` with the exact registration line when the key exists but the
+audience file does not name it, `ok` when registered, and `not-applicable` on
+a portable profile. The model, enrolment, and revocation are in
+[secrets.md](secrets.md).
+
 ## Inspection and diagnostics
 
 ```sh

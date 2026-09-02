@@ -59,10 +59,27 @@ let
   cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
     printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
   '';
+  # The committed audience file names no machine yet, so the registered state
+  # of the identity probe is unreachable through it. The check CLI reads this
+  # one instead: the fixture host registered with the recipient the stubbed
+  # age-keygen mints, in exactly the shape the ceremony prints.
+  fixtureAudience = pkgs.writeText "fixture-sops.yaml" ''
+    keys:
+      - &alex age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm
+      - &alex-x86_64-linux age1fixturemachine0000000000000000000000000000000000000000000000
+      # - &alex-aarch64-darwin age1...
+    creation_rules:
+      - path_regex: ^secrets/shared\.yaml$
+        key_groups:
+          - age:
+              - *alex
+              - *alex-x86_64-linux
+  '';
   systemDoctorAtyrode = pkgs.atyrode.override {
     enableTestHooks = true;
     atyrode-tui = cockpitStub;
     atyrodeTuiPackage = pkgs.atyrode-tui;
+    sopsAudience = fixtureAudience;
     hostRegistry = publicTargets // {
       fixture-nixos = {
         id = "fixture-nixos";
@@ -154,6 +171,18 @@ let
           echo 'inventory/hosts.tsv is out of date with hosts/default.nix and hosts/bootstrap.nix' >&2
           exit 1
         fi
+        # The audience file is the registry's projection for secrets: the
+        # operator anchor, and one slot per fixed host -- filled or still
+        # commented out -- so `atyrode identity init` always has a named place
+        # for the line it prints. Portable profiles are not fleet members.
+        grep -qE '^  - &alex age1[0-9a-z]+$' ${../.sops.yaml} ||
+          { echo '.sops.yaml must name the operator recipient as &alex' >&2; exit 1; }
+        for host in ${lib.concatStringsSep " " (builtins.attrNames hosts)}; do
+          grep -qE "^  (# )?- &$host age1" ${../.sops.yaml} ||
+            { echo ".sops.yaml has no slot for registered host $host" >&2; exit 1; }
+          grep -qF -- "- path_regex: ^secrets/$host\\.yaml\$" ${../.sops.yaml} ||
+            { echo ".sops.yaml has no creation rule for secrets/$host.yaml" >&2; exit 1; }
+        done
         mkdir "$out"
       '';
   ciInventory = builtins.fromJSON (builtins.readFile ../inventory/ci.json);

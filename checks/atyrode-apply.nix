@@ -262,6 +262,123 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
+    # The machine identity (ADR 0008 step 3): the age key activation decrypts
+    # with, made on the machine by the machine. age-keygen is stubbed for a
+    # deterministic recipient -- the one the check CLI's fixture audience
+    # registers -- and the private line it writes is a sentinel no output may
+    # ever carry.
+    cat > "$TMPDIR/bin/age-keygen" <<'EOF'
+    #!${pkgs.runtimeShell}
+    fixture_recipient=age1fixturemachine0000000000000000000000000000000000000000000000
+    case "''${1:-}" in
+      -o)
+        umask 077
+        printf '# created: fixture\n# public key: %s\nAGE-SECRET-KEY-1FIXTUREONLY\n' \
+          "$fixture_recipient" > "$2"
+        printf 'Public key: %s\n' "$fixture_recipient" >&2
+        ;;
+      -y) sed -n 's/^# public key: //p' "$2" ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/age-keygen"
+    export ATYRODE_AGE_KEYGEN="$TMPDIR/bin/age-keygen"
+    machine_key="$XDG_CONFIG_HOME/sops/age/machine.txt"
+    fixture_recipient=age1fixturemachine0000000000000000000000000000000000000000000000
+    registration="- &alex-x86_64-linux $fixture_recipient"
+    identity_probe() {
+      atyrode doctor provisioning --json |
+        jq -e --arg status "$1" --arg code "$2" '
+          .surfaces[] | select(.id == "machine-identity")
+          | .status == $status and (.code // "") == $code
+            and .command == "atyrode identity init" and .declinable == false
+        ' >/dev/null
+    }
+    # No key: show says so and exits with a finding, the probe names the
+    # ceremony, and an apply without a terminal names it too -- and generates
+    # nothing on its own, because the key is offered, never made unasked.
+    identity_probe incomplete not-configured
+    set +e
+    atyrode identity show > "$TMPDIR/identity-none.out" 2> "$TMPDIR/identity-none.err"
+    identity_status="$?"
+    set -e
+    test "$identity_status" = 69
+    test ! -s "$TMPDIR/identity-none.out"
+    grep -qF 'no machine identity yet for alex-x86_64-linux; create one with: atyrode identity init' \
+      "$TMPDIR/identity-none.err"
+    atyrode identity show --json | jq -e '.recipient == null and .registered == false
+      and .keyFile == env.XDG_CONFIG_HOME + "/sops/age/machine.txt"' >/dev/null
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/identity-apply.err" ||
+      { cat "$TMPDIR/identity-apply.err" >&2; exit 1; }
+    grep -qF 'machine identity is not configured' "$TMPDIR/identity-apply.err"
+    grep -qF 'configure with: atyrode identity init' "$TMPDIR/identity-apply.err"
+    test ! -e "$machine_key"
+    # On a terminal the same state is a question; no is honoured and, since
+    # a machine without a key is a to-do rather than a choice, not recorded.
+    identity_decline="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$identity_decline" >&2; exit 1; }
+    printf '%s\n' "$identity_decline" | grep -qF 'run atyrode identity init for alex-x86_64-linux now?'
+    printf '%s\n' "$identity_decline" | grep -qF 'skipped; run atyrode identity init when you want to'
+    test ! -e "$machine_key"
+    test ! -e "$XDG_STATE_HOME/atyrode/provisioning-declined"
+    # Yes runs the ceremony as the operator would type it. The key lands at
+    # the path modules/secrets.nix hands sops-nix, at the modes a secret
+    # demands, and the fixture audience already names the recipient it
+    # minted, so the very same run reports the machine registered.
+    identity_accept="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$identity_accept" >&2; exit 1; }
+    printf '%s\n' "$identity_accept" | grep -qE '^  \$ atyrode identity init$'
+    printf '%s\n' "$identity_accept" | grep -qF "wrote $machine_key (mode 0600, directory mode 0700)"
+    printf '%s\n' "$identity_accept" | grep -qF "recipient $fixture_recipient is registered in .sops.yaml as &alex-x86_64-linux"
+    test -f "$machine_key"
+    test "$(stat -c %a "$machine_key")" = 600
+    test "$(stat -c %a "''${machine_key%/*}")" = 700
+    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$machine_key"
+    identity_probe ok ""
+    atyrode identity show > "$TMPDIR/identity-show.out" 2> "$TMPDIR/identity-show.err"
+    test "$(cat "$TMPDIR/identity-show.out")" = "$fixture_recipient"
+    grep -qF 'registered in .sops.yaml as &alex-x86_64-linux' "$TMPDIR/identity-show.err"
+    atyrode identity show --json | jq -e --arg recipient "$fixture_recipient" --arg line "$registration" '
+      .recipient == $recipient and .registered == true and .registration == $line
+      and .privateMaterialPrinted == false' >/dev/null
+    # A key the audience file does not name is the one state where the fix is
+    # a line in this repository, so the probe prints exactly that line, and
+    # init repeats it without touching a key other files may be encrypted to.
+    sed -i 's/^# public key: .*/# public key: age1unregistered000000000000000000000000000000000000000000000000/' "$machine_key"
+    identity_probe degraded not-registered
+    atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "machine-identity")
+      | (.remediation | contains("- &alex-x86_64-linux age1unregistered0000"))
+        and (.remediation | contains("sops updatekeys"))' >/dev/null
+    atyrode identity init > "$TMPDIR/identity-again.out" 2> "$TMPDIR/identity-again.err"
+    grep -qF 'alex-x86_64-linux already has a machine identity' "$TMPDIR/identity-again.err"
+    grep -qF -- '- &alex-x86_64-linux age1unregistered0000' "$TMPDIR/identity-again.err"
+    grep -qF 'sops updatekeys secrets/alex-x86_64-linux.yaml' "$TMPDIR/identity-again.err"
+    grep -qF 'age1unregistered' "$machine_key"
+    sed -i "s/^# public key: .*/# public key: $fixture_recipient/" "$machine_key"
+    identity_probe ok ""
+    # The private half never reaches a terminal, in any of the runs above.
+    for identity_output in "$TMPDIR"/identity-*.out "$TMPDIR"/identity-*.err; do
+      ! grep -qF 'AGE-SECRET-KEY' "$identity_output"
+    done
+    ! printf '%s\n' "$identity_accept" | grep -qF 'AGE-SECRET-KEY'
+    # A system host's key is root's. The first step is announced as the exact
+    # elevation before anything runs, and a sandbox that cannot elevate stops
+    # there with nothing written.
+    printf '#!${pkgs.runtimeShell}\nexec "$@"\n' > "$TMPDIR/bin/sudo"
+    chmod +x "$TMPDIR/bin/sudo"
+    set +e
+    ATYRODE_HOST=fixture-nixos atyrode identity init > "$TMPDIR/identity-system.out" 2> "$TMPDIR/identity-system.err"
+    identity_status="$?"
+    set -e
+    test "$identity_status" = 70
+    grep -qF 'this host activates as root' "$TMPDIR/identity-system.err"
+    grep -qE '^\$ sudo -- .*install -d -m 0700 -o root /var/lib/sops-nix$' "$TMPDIR/identity-system.err"
+    ! grep -qF 'age-keygen' "$TMPDIR/identity-system.err"
+    rm -f "$TMPDIR/bin/sudo"
+    ATYRODE_HOST=fixture-nixos atyrode identity show --json |
+      jq -e '.keyFile == "/var/lib/sops-nix/machine.txt" and .recipient == null' >/dev/null
+
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
     # A successful apply with neither Babel's storage document nor a success
@@ -427,7 +544,7 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 5
     # And the reason a step is running, in the vocabulary of what decided it.
     grep -qF 'why inventory/system-boundary.json declares' "$TMPDIR/apply-success.err"
-    grep -qF 'why inventory/provisioning.json declares 6 surfaces' "$TMPDIR/apply-success.err"
+    grep -qF 'why inventory/provisioning.json declares 7 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
     grep -qF 'Apply complete for alex-x86_64-linux' "$TMPDIR/apply-success.err"
 

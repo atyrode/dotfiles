@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "surfaceOrder": [
     "omp-seed",
+    "machine-identity",
     "agent-context",
     "git-identity",
     "babel-archive",
@@ -13,6 +14,13 @@
       "label": "omp settings seed",
       "command": "atyrode-omp-seed resolve",
       "implies": "Reviews settings this machine kept over the repository defaults. Local only: no secret, no network, nothing downloaded.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "machine-identity": {
+      "label": "machine identity",
+      "command": "atyrode identity init",
+      "implies": "Generates this machine's own age key, the one activation decrypts secrets with, and prints the public line to register in .sops.yaml. Local only: no secret is read, nothing is uploaded, and the private half never leaves the file.",
       "declinable": false,
       "prerequisites": []
     },

@@ -1,0 +1,62 @@
+# The audience of every secret in this repository (ADR 0008, docs/secrets.md).
+#
+# Two kinds of identity appear here and nowhere else. `alex` is the operator:
+# the one recipient that can read everything, and the only key that ever
+# edits a file (`sops secrets/<file>.yaml`). Everything under `machines` is a
+# machine's own activation key, generated on that machine by
+# `atyrode identity init` and never copied anywhere; the ceremony prints the
+# one line that belongs in this file. A machine is registered by filling its
+# slot and re-encrypting the files it may read: `sops updatekeys`.
+#
+# Only public recipients live here. The repository is public, and this file
+# is what a reader learns from it: which secrets exist and who may read them,
+# never a value.
+keys:
+  - &alex age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm
+  # machines -- one slot per registered host, in registry order. A slot stays
+  # commented out until that machine has run `atyrode identity init` and the
+  # operator has pasted the recipient it printed.
+  # - &alex-aarch64-darwin age1...
+  # - &alex-aarch64-linux age1...
+  # - &alex-x86_64-linux age1...
+  # - &alex-x86_64-linux-desktop age1...
+  # - &alex-x86_64-linux-wsl age1...
+
+creation_rules:
+  # Values every machine may read. Registering a machine adds it here and to
+  # its own file below; nowhere else.
+  - path_regex: ^secrets/shared\.yaml$
+    key_groups:
+      - age:
+          - *alex
+          # - *alex-aarch64-darwin
+          # - *alex-aarch64-linux
+          # - *alex-x86_64-linux
+          # - *alex-x86_64-linux-desktop
+          # - *alex-x86_64-linux-wsl
+  # Values for one machine: that machine and the operator, nobody else.
+  - path_regex: ^secrets/alex-aarch64-darwin\.yaml$
+    key_groups:
+      - age:
+          - *alex
+          # - *alex-aarch64-darwin
+  - path_regex: ^secrets/alex-aarch64-linux\.yaml$
+    key_groups:
+      - age:
+          - *alex
+          # - *alex-aarch64-linux
+  - path_regex: ^secrets/alex-x86_64-linux\.yaml$
+    key_groups:
+      - age:
+          - *alex
+          # - *alex-x86_64-linux
+  - path_regex: ^secrets/alex-x86_64-linux-desktop\.yaml$
+    key_groups:
+      - age:
+          - *alex
+          # - *alex-x86_64-linux-desktop
+  - path_regex: ^secrets/alex-x86_64-linux-wsl\.yaml$
+    key_groups:
+      - age:
+          - *alex
+          # - *alex-x86_64-linux-wsl

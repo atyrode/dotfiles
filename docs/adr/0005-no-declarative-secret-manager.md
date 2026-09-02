@@ -1,6 +1,7 @@
 # ADR 0005: No declarative secret manager until a concrete secret needs it
 
-- Status: Accepted
+- Status: Superseded by ADR 0008 (fleet shape and substrate), whose secrets
+  substrate is sops-nix; the trigger below has fired
 - Date: 2026-07-14
 
 ## Context

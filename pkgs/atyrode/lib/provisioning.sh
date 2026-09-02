@@ -21,7 +21,10 @@
 #
 # The generated agent context is the one surface that needs neither secret
 # nor decision, so apply renders it itself; its probe is for the machine
-# between applies, where the file decays as sessions come and go.
+# between applies, where the file decays as sessions come and go. The machine
+# identity needs no secret either, but it is offered rather than done: it
+# elevates on a system host, and the key it makes is the one thing on the
+# machine a rebuild cannot recreate, so the operator sees it happen once.
 #
 # These are deliberately NOT part of the system boundary. inventory/
 # system-boundary.json describes state the machine must have to be correct, and
@@ -184,6 +187,7 @@ collect_provisioning_checks() {
   jq -e '.schemaVersion == 1' "$provisioning_policy" >/dev/null ||
     die "$EX_SOFTWARE" "unsupported provisioning policy schema"
   probe_omp_seed
+  probe_machine_identity
   probe_agent_context
   probe_git_identity
   probe_babel_archive
@@ -439,6 +443,7 @@ review_incomplete_surface() { # index host
 provisioning_run() { # id host
   case "$1" in
     git-identity) provision_now git ;;
+    machine-identity) run_self_visible identity init ;;
     agent-context) run_self_visible context render ;;
     # The registry name, never a re-derived one: the archive can then only be
     # published under the identity apply just activated.

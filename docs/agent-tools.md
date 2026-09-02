@@ -15,9 +15,12 @@ Nix owns:
   guard;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator;
-- Claude Code's user-scope operator policy: the deployed
-  `~/.claude/CLAUDE.md` instructions and `~/.claude/settings.json` permission
-  rules; and
+- the operator policy every agent reads: `home/agents/AGENTS.md`, rendered by
+  `atyrode context render` into `~/.config/agents/AGENTS.md` with this
+  machine's facts appended, which `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+  and `~/.omp/agent/AGENTS.md` link to (see
+  [Agent context](atyrode.md#agent-context));
+- Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
 OMP owns mutable runtime data such as authentication, sessions, caches,
@@ -175,7 +178,7 @@ sessions, MCP state, or caches.
 
 | State | Owner |
 | --- | --- |
-| `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state |
+| `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state; the one exception is `~/.omp/agent/AGENTS.md`, a Home Manager symlink to the generated agent context |
 | `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` | Canonical Home Manager broker service; secret bearer token, mode `0600` |
 | `$XDG_CONFIG_HOME/atyrode/omp-auth-broker/env` | Client bootstrap from Bitwarden; broker token and SSH target, mode `0600` |
 | `$XDG_CACHE_HOME/atyrode/omp-auth-broker/` | Broker client snapshot cache |

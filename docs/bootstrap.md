@@ -496,6 +496,7 @@ something it cannot take back silently:
 | Babel session archive (`atyrode provision babel`) | The vault password once, after which the hourly timer publishes this machine's session archives |
 | Git identity (`atyrode provision git`) | The vault password, plus an ed25519 authentication and signing keypair materialised on disk and loaded into the agent |
 | omp seed drift (`atyrode-omp-seed resolve`) | Nothing beyond the local plain-omp settings file: repository defaults are restored over local edits, with no secret and no network call |
+| generated agent context (`atyrode context render`) | Nothing beyond a file under `~/.config/agents`: this machine's facts under the operator policy. It asks `gh` and `clever` for their session state (read-only, bounded), stores no secret, and downloads nothing; apply renders it itself, so this surface is only ever pending between applies |
 | local-qwen (`atyrode runtime provision local-qwen`) | Roughly forty gigabytes of downloads and a built container image serving a model from the local GPU |
 | manifold-agent (`atyrode runtime provision manifold-agent`) | Enrollment with the self-hosted manifold hub: an owner key read from the vault, one call to the master, and a machine token stored on disk |
 

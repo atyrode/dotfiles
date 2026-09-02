@@ -78,6 +78,7 @@ let
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
   gitAllowedSigners = ../../home/git-allowed-signers;
   sshFleetKeys = ../../home/ssh-fleet-keys;
+  agentsPolicy = ../../home/agents/AGENTS.md;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
   );
@@ -237,6 +238,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@omp_managed@' '${lib.getExe' omp-configured "omp-managed"}'
     substituteInPlace "$out/bin/atyrode" \
+      --replace-fail '@agents_policy@' '${agentsPolicy}' \
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
       --replace-fail '@babel_storage_configure@' '${lib.getExe babelStorageConfigure}' \

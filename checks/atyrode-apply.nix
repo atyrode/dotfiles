@@ -257,6 +257,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qE '^  2\. Record alex-x86_64-linux as the activated host\.$' "$TMPDIR/plan.err"
     grep -qE '^  3\. Converge the account login shell\.$' "$TMPDIR/plan.err"
     grep -qE '^  4\. Review the provisioning surfaces' "$TMPDIR/plan.err"
+    grep -qE "^  5\. Render this machine's agent context\.\$" "$TMPDIR/plan.err"
     grep -qF 'No changes were made. Drop --plan to run this.' "$TMPDIR/plan.err"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
@@ -411,23 +412,128 @@ pkgs.runCommand "check-atyrode-apply"
     # whether each part worked -- and read all of it again once the scrollback
     # is gone. A step that announces itself and then goes quiet is the shape
     # this replaces: it is indistinguishable from a step that hung.
-    grep -qE '^1/4 Rebuild and switch alex-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
-    grep -qE '^2/4 Record alex-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
-    grep -qE '^3/4 Converge the account login shell$' "$TMPDIR/apply-success.err"
-    grep -qE '^4/4 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
+    grep -qE '^1/5 Rebuild and switch alex-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
+    grep -qE '^2/5 Record alex-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
+    grep -qE '^3/5 Converge the account login shell$' "$TMPDIR/apply-success.err"
+    grep -qE '^4/5 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
+    grep -qE "^5/5 Render this machine's agent context$" "$TMPDIR/apply-success.err"
     # ... and a home-manager apply writes nothing this user could not write, so
     # it must not warn about a password prompt that will never arrive.
     if grep -qF 'nh elevates' "$TMPDIR/apply-success.err"; then
       echo 'a home-manager apply warned about an elevation it never performs' >&2
       exit 1
     fi
-    # Four steps, four verdicts: no step may end without one.
-    test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 4
+    # Five steps, five verdicts: no step may end without one.
+    test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 5
     # And the reason a step is running, in the vocabulary of what decided it.
     grep -qF 'why inventory/system-boundary.json declares' "$TMPDIR/apply-success.err"
-    grep -qF 'why inventory/provisioning.json declares 5 surfaces' "$TMPDIR/apply-success.err"
+    grep -qF 'why inventory/provisioning.json declares 6 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
     grep -qF 'Apply complete for alex-x86_64-linux' "$TMPDIR/apply-success.err"
+
+    # The agent context (ADR 0008 step 2). apply's last step rendered it, and
+    # every tool file on the machine is a symlink to this one path, so what it
+    # says is what every agent here starts from: the operator policy first,
+    # then the generated section naming this host and the rest of the fleet.
+    context_file="$XDG_CONFIG_HOME/agents/AGENTS.md"
+    grep -qE '^  \$ atyrode context render$' "$TMPDIR/apply-success.err"
+    grep -qF "wrote $context_file" "$TMPDIR/apply-success.err"
+    test -f "$context_file"
+    test ! -L "$context_file"
+    test "$(stat -c %a "$context_file")" = 644
+    test -z "$(find "$XDG_CONFIG_HOME/agents" -name '.AGENTS.md.*' -print -quit)"
+    grep -qxF '# Operator policy' "$context_file"
+    grep -qxF '## This machine' "$context_file"
+    test "$(grep -nxF '# Operator policy' "$context_file" | cut -d: -f1)" \
+      -lt "$(grep -nxF '## This machine' "$context_file" | cut -d: -f1)"
+    grep -qF -- '- Host: `alex-x86_64-linux` -- Headless x86_64 Linux development machine' "$context_file"
+    grep -qF -- '- `alex-aarch64-darwin`: Primary Apple Silicon Mac' "$context_file"
+    grep -qF -- '- `development-x86_64-linux`: Portable' "$context_file"
+    grep -qF 'None yet; secrets arrive with ADR 0008 step 3' "$context_file"
+    grep -qF -- '- Fleet cache substituter: `https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com`' "$context_file"
+    grep -qF 'does not trust it yet' "$context_file"
+    grep -qF 'No canonical clone root is declared for this host' "$context_file"
+    grep -qF 'Never edit by hand.' "$context_file"
+    # Under the session stubs exported above, every CLI is reported as it is:
+    # the vault unlocked, clever logged in, gh (real, no account here) not --
+    # and a missing session names the exact command that acquires it. A token
+    # planted in the environment is the falsification: gh would use it and bw
+    # would use it, and neither may reach the file. Assembled at run time so
+    # the fixture never holds a string a scanner would flag.
+    planted_gh_token="ghp_$(printf 'FIXTURE%.0s' 1 2 3 4 5)"
+    GH_TOKEN="$planted_gh_token" BW_SESSION=fixture-session-secret-value \
+      atyrode context render 2>"$TMPDIR/context-render.err"
+    grep -qF "wrote $context_file" "$TMPDIR/context-render.err"
+    grep -qF -- '- `gh`: not authenticated; acquire a GitHub session with `gh auth login`' "$context_file"
+    grep -qF -- '- `clever`: authenticated' "$context_file"
+    grep -qF -- '- `bw`: authenticated, vault unlocked' "$context_file"
+    ! grep -qF 'ghp_FIXTURE' "$context_file"
+    ! grep -qF 'fixture-session-secret' "$context_file"
+    ! grep -qE 'gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|[A-Za-z0-9+/]{80,}==' "$context_file"
+    # show prints the same document render writes; --json is the section as
+    # data, and it says the same things the prose does.
+    atyrode context show | sed '/^## This machine$/,$d' > "$TMPDIR/context-shown-policy"
+    sed '/^## This machine$/,$d' "$context_file" | diff - "$TMPDIR/context-shown-policy"
+    atyrode context show | grep -qF -- '- Host: `alex-x86_64-linux`'
+    atyrode context --json | jq -e '
+      .schemaVersion == 1
+      and .command == "context"
+      and .host.id == "alex-x86_64-linux"
+      and (.fleet | map(.id) | index("alex-aarch64-darwin") != null)
+      and (.fleet | map(.id) | index("alex-x86_64-linux") == null)
+      and .authentication.gh.authenticated == false
+      and .authentication.gh.acquire == "gh auth login"
+      and .authentication.clever.authenticated == true
+      and .authentication.bitwarden.vault == "unlocked"
+      and (.secrets.readable | length) == 0
+      and .fleetCache.substituter == "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com"
+      and .fleetCache.trusted == false
+      and .cloneRoot == null
+      and (.generatedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
+    ' >/dev/null
+    ! atyrode context render --json >/dev/null 2>&1
+    ! atyrode context render show >/dev/null 2>&1
+
+    # doctor owns the verdict on the file it does not write: fresh is ok, a
+    # week old or from another published revision is stale, hand-written is
+    # unreadable, and absent is a to-do apply settles. Every remedy is the one
+    # command that writes it.
+    context_probe() {
+      atyrode doctor provisioning --json |
+        jq -e --arg status "$1" --arg code "$2" '
+          .surfaces[] | select(.id == "agent-context")
+          | .status == $status and (.code // "") == $code
+            and (if $status == "ok" then .remediation == null
+                 elif $status == "degraded" then .remediation == "atyrode context render"
+                 else .command == "atyrode context render" and .declinable == false end)
+        ' >/dev/null
+    }
+    context_probe ok ""
+    stamped_revision="$(sed -nE 's/^Generated at [^ ]+ from atyrode\/dotfiles revision ([^ ]+) by .*$/\1/p' "$context_file")"
+    test -n "$stamped_revision"
+    cp "$context_file" "$TMPDIR/context-fresh"
+    sed -i "s/^Generated at [^ ]* /Generated at $(date -u -d '8 days ago' +%FT%TZ) /" "$context_file"
+    context_probe degraded context-stale
+    cp "$TMPDIR/context-fresh" "$context_file"
+    # A published build knows its revision and holds the file to it; a
+    # development build has nothing to compare and judges by age alone.
+    sed -i 's/ revision [^ ]* by / revision 0123456789abcdef0123456789abcdef01234567 by /' "$context_file"
+    if [[ "$stamped_revision" =~ ^[0-9a-f]{40}$ ]]; then
+      context_probe degraded context-stale
+    else
+      context_probe ok ""
+    fi
+    printf '# hand-written\n' > "$context_file"
+    context_probe degraded context-unreadable
+    rm -f "$context_file"
+    context_probe incomplete not-configured
+    # Off a terminal the review names the surface; the render step then
+    # settles it in the same run, so the machine never stays without one.
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/context-heal.err" ||
+      { cat "$TMPDIR/context-heal.err" >&2; exit 1; }
+    grep -qF 'configure with: atyrode context render' "$TMPDIR/context-heal.err"
+    test -f "$context_file"
+    context_probe ok ""
 
     # The durable half. A terminal scrolls; this is what a diagnosis reads
     # three weeks later, so it records the same story with timestamps and is
@@ -436,7 +542,7 @@ pkgs.runCommand "check-atyrode-apply"
     test -n "$run_log"
     test -n "$(find "$run_log" -perm 600 -print -quit)"
     grep -qE 'run: env LC_ALL=C\.UTF-8 .*nh home switch' "$run_log"
-    grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/4: Rebuild and switch' "$run_log"
+    grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/5: Rebuild and switch' "$run_log"
     grep -qF 'apply finished for alex-x86_64-linux' "$run_log"
 
     # With a terminal, the same state offers the ceremony instead of narrating
@@ -646,9 +752,9 @@ pkgs.runCommand "check-atyrode-apply"
       || { echo "a failure that changed nothing must say so: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
     ! grep -qF 'could not activate this machine' "$TMPDIR/nh-fail.err" \
       || { echo 'a build failure must not be reported as a failed activation' >&2; exit 1; }
-    # The plan promised four steps and one of them failed; the other three must
+    # The plan promised five steps and one of them failed; the other four must
     # not simply vanish from the terminal, which reads as though they ran.
-    test "$(grep -cF 'not attempted' "$TMPDIR/nh-fail.err")" = 3 \
+    test "$(grep -cF 'not attempted' "$TMPDIR/nh-fail.err")" = 4 \
       || { echo "every unreached planned step owes a verdict: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
     grep -qF 'Converge the account login shell' "$TMPDIR/nh-fail.err" \
       || { echo 'an abandoned step must be named, not just counted' >&2; exit 1; }

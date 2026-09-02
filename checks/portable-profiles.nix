@@ -115,8 +115,26 @@ assert lib.assertMsg serverConfig.atyrode.agentTools.enable
 assert lib.assertMsg (lib.hasInfix "Bash(gh pr merge:*)"
   serverConfig.home.file.".local/share/atyrode/claude-settings.json".text
 ) "portable server must carry the Claude Code standing merge authorization";
-assert lib.assertMsg (builtins.hasAttr ".claude/CLAUDE.md" serverConfig.home.file)
-  "portable server must deploy the managed Claude Code operator policy";
+# The generated agent context (ADR 0008 step 2): every tool file is an
+# out-of-store symlink to the one path `atyrode context render` writes, so a
+# render never touches a generation and every tool reads the same bytes.
+assert lib.assertMsg (lib.all
+  (
+    path:
+    builtins.hasAttr path serverConfig.home.file
+    &&
+      serverConfig.home.file.${path}.source.buildCommand
+      == "ln -s ${lib.escapeShellArg "${serverConfig.xdg.configHome}/agents/AGENTS.md"} $out"
+  )
+  [
+    ".claude/CLAUDE.md"
+    ".codex/AGENTS.md"
+    ".omp/agent/AGENTS.md"
+  ]
+) "portable server must link every agent tool file to the generated agent context";
+assert lib.assertMsg
+  (lib.hasInfix "context render" serverConfig.home.activation.renderAgentContext.data)
+  "portable server must render the agent context on activation";
 assert lib.assertMsg (
   !(serverConfig.home.sessionVariables ? ATYRODE_HOST)
 ) "portable profiles must not invent a host identity";

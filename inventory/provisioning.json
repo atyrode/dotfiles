@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "surfaceOrder": [
     "omp-seed",
+    "agent-context",
     "git-identity",
     "babel-archive",
     "local-qwen",
@@ -12,6 +13,13 @@
       "label": "omp settings seed",
       "command": "atyrode-omp-seed resolve",
       "implies": "Reviews settings this machine kept over the repository defaults. Local only: no secret, no network, nothing downloaded.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "agent-context": {
+      "label": "generated agent context",
+      "command": "atyrode context render",
+      "implies": "Writes this machine's facts under the operator policy to ~/.config/agents/AGENTS.md, which every agent tool here reads. Asks gh and clever for their session state, stores no secret, downloads nothing.",
       "declinable": false,
       "prerequisites": []
     },

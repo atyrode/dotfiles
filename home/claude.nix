@@ -14,13 +14,11 @@ let
   settingsPath = "${settingsDirectory}/settings.json";
 in
 {
-  # Nix owns Claude Code's durable operator policy. The live settings file
-  # remains a regular writable file so tooling may extend it between
-  # activations; every activation restores the reviewed template.
-  home.file.".claude/CLAUDE.md".source = ./claude/CLAUDE.md;
-
-  # Keep a managed template for evaluation checks and restore it on every
-  # activation. Tooling may update the writable live copy between activations.
+  # Nix owns Claude Code's durable operator policy: the instructions come from
+  # the generated agent context (home/agents.nix) and the permission rules
+  # from here. The live settings file remains a regular writable file so
+  # tooling may extend it between activations; every activation restores the
+  # reviewed template, which is also kept in place for evaluation checks.
   home.file.".local/share/atyrode/claude-settings.json".text = settingsText;
 
   home.activation.installClaudeSettings =

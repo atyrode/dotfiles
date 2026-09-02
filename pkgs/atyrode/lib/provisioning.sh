@@ -9,7 +9,7 @@
 # --- provisioning surfaces ----------------------------------------------------
 # A machine can be fully activated and still be missing things: an archive it
 # never configured, a fleet it never enrolled with, a model it never fetched.
-# Activation cannot install any of them, because each needs a secret or a
+# Activation cannot install most of them, because each needs a secret or a
 # decision that only the operator can supply. What activation CAN do is stop
 # them being invisible.
 #
@@ -18,6 +18,10 @@
 # one probe set and two consumers, which is what keeps the report and the offer
 # from ever disagreeing. Adding a surface is a policy entry plus a probe --
 # every machine then heals it on the next apply, with no further wiring.
+#
+# The generated agent context is the one surface that needs neither secret
+# nor decision, so apply renders it itself; its probe is for the machine
+# between applies, where the file decays as sessions come and go.
 #
 # These are deliberately NOT part of the system boundary. inventory/
 # system-boundary.json describes state the machine must have to be correct, and
@@ -180,6 +184,7 @@ collect_provisioning_checks() {
   jq -e '.schemaVersion == 1' "$provisioning_policy" >/dev/null ||
     die "$EX_SOFTWARE" "unsupported provisioning policy schema"
   probe_omp_seed
+  probe_agent_context
   probe_git_identity
   probe_babel_archive
   probe_local_qwen
@@ -434,6 +439,7 @@ review_incomplete_surface() { # index host
 provisioning_run() { # id host
   case "$1" in
     git-identity) provision_now git ;;
+    agent-context) run_self_visible context render ;;
     # The registry name, never a re-derived one: the archive can then only be
     # published under the identity apply just activated.
     babel-archive) ATYRODE_HOST="$2" provision_now babel ;;

@@ -6,6 +6,7 @@
 {
   imports = [
     ../../modules/home/agent-tools.nix
+    ../agents.nix
     ../claude.nix
     ../codex.nix
   ];

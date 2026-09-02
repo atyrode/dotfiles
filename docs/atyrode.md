@@ -133,7 +133,7 @@ inside someone else's output and reads as the dotfiles asking for root out of
 nowhere, so the step says so first:
 
 ```
-1/4 Rebuild and switch alex-aarch64-darwin through nh-darwin
+1/5 Rebuild and switch alex-aarch64-darwin through nh-darwin
   activation writes system state, so nh elevates: a sudo prompt below is its own
   $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
 ```
@@ -143,25 +143,31 @@ necessary. A step never ends in silence, because a silent step is
 indistinguishable from a hung one:
 
 ```
-3/4 Converge the account login shell
+3/5 Converge the account login shell
   why inventory/system-boundary.json declares /run/current-system/sw/bin/zsh
   ok already the account login shell
 
-4/4 Review the provisioning surfaces this machine declares
-  why inventory/provisioning.json declares 5 surfaces for this machine
-  ok 3 ok, 1 not-applicable, 1 incomplete -- still to configure: babel-archive
+4/5 Review the provisioning surfaces this machine declares
+  why inventory/provisioning.json declares 6 surfaces for this machine
+  ok 4 ok, 1 not-applicable, 1 incomplete -- still to configure: babel-archive
+
+5/5 Render this machine's agent context
+  why every agent tool here reads this file, and the review above may have changed what is authenticated
+  $ atyrode context render
+wrote /Users/alex/.config/agents/AGENTS.md
+  ok
 ```
 
 A run that aborts still owes a verdict on the steps it promised. Without one,
-a failure at step 1 of 4 leaves steps 2 through 4 missing from the terminal,
+a failure at step 1 of 5 leaves steps 2 through 5 missing from the terminal,
 which reads as though they ran and said nothing:
 
 ```
-1/4 Rebuild and switch alex-aarch64-darwin through nh-darwin
+1/5 Rebuild and switch alex-aarch64-darwin through nh-darwin
   $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
   failed nh-darwin did not complete, and nothing was activated: this machine is unchanged
 
-2/4 Record alex-aarch64-darwin as the activated host
+2/5 Record alex-aarch64-darwin as the activated host
   not attempted
 ```
 
@@ -349,6 +355,46 @@ them — the same non-transactional boundary the native Windows package phase
 carries. To undo access, revoke it; to recover the pre-management file, the
 one-time backup is still there.
 
+## Agent context
+
+```sh
+atyrode context render   # write ~/.config/agents/AGENTS.md and name the path
+atyrode context show     # print what render would write
+atyrode context --json   # the generated machine section as data
+```
+
+Every agent on a machine starts from one file: the operator policy kept in
+`home/agents/AGENTS.md`, followed by a generated `## This machine` section.
+`context render` writes it to `${XDG_CONFIG_HOME:-~/.config}/agents/AGENTS.md`
+(mode 0644, written whole and moved into place), and Home Manager makes
+`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.omp/agent/AGENTS.md`
+out-of-store symlinks to it, so every tool reads the same bytes and no
+tool-specific instruction file is maintained by hand. Activation renders it
+(`home/agents.nix`) and `atyrode apply` renders it again as its last step, after
+the provisioning review may have opened sessions, so the file describes the
+machine apply leaves behind. This is ADR 0008 step 2 (the record is
+`docs/adr/0008-fleet-shape-and-substrate.md` once its pull request merges) and
+invariant 9 of the repository's own `AGENTS.md`: context propagation is this
+repository's job.
+
+The generated section carries the generation timestamp and the dotfiles
+revision the CLI came from; this host's registry identity, platform,
+activation owner, and capabilities; the other registered hosts by name and
+role; which CLIs are authenticated here and as whom (`gh`, `clever`, and the
+Bitwarden vault state), each missing session with the exact command that
+acquires it; the secrets readable here by name (none until ADR 0008 step 3,
+which the section says in so many words); the fleet cache substituter from the
+inventory and whether this machine's Nix daemon trusts it; and the canonical
+clone root, which no registry field declares yet, so the section says so
+rather than guess. It never contains a secret value: a session is reported by
+account name, a secret by its name and path.
+
+`doctor provisioning` carries the matching `agent-context` surface: `ok` when
+the file is fresh, `degraded` with remediation `atyrode context render` when
+it was rendered from another published revision than the running CLI, is
+older than seven days, or carries no generation stamp, and `incomplete` when
+it is absent. The file is never edited by hand: if it is wrong, `doctor` is
+wrong.
 
 ## Inspection and diagnostics
 

@@ -11,6 +11,7 @@ set -euo pipefail
 # and letting it carry on past the failure.
 shopt -s inherit_errexit
 
+readonly agents_policy='@agents_policy@'
 readonly registry='@registry@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
@@ -81,6 +82,8 @@ apply_job_worker=0
 . "$lib_dir/windows.sh"
 # shellcheck source=lib/infra.sh
 . "$lib_dir/infra.sh"
+# shellcheck source=lib/context.sh
+. "$lib_dir/context.sh"
 
 usage() {
   cat <<'EOF'
@@ -114,6 +117,8 @@ Usage:
   atyrode provision git [--persist] [--yes]
   atyrode provision babel [--dry-run]
   atyrode lifecycle [--json]
+  atyrode context [show] [--json]
+  atyrode context render
   atyrode doctor [HOST] [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
@@ -175,6 +180,13 @@ supported GC/worktree-clear dry-runs when omp is available, and --json emits a s
 doctor git is a read-only audit of SSH authentication, SSH signing, forge
 remotes, Git credential helpers, and GitHub CLI credential storage. It reports
 classifications only and never prints keys, tokens, helper arguments, or remotes.
+context renders this machine's agent context: the operator policy from
+home/agents/AGENTS.md with a generated "This machine" section (host, fleet,
+which CLIs are authenticated and as whom, readable secrets by name, the fleet
+cache, the clone root). render writes ${XDG_CONFIG_HOME:-~/.config}/agents/AGENTS.md,
+which the tool files (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md,
+~/.omp/agent/AGENTS.md) link to; show prints it; --json emits the machine
+section. It never prints a secret value. apply renders it after activation.
 generations lists the activation profile's generations (nix-darwin or NixOS
 system profile, otherwise standalone Home Manager); rollback activates an earlier
 one (previous by default, or --to N) after confirming.
@@ -235,6 +247,7 @@ main() {
       ;;
     auth) cmd_auth "$@" ;;
     provision) cmd_provision "$@" ;;
+    context) cmd_context "$@" ;;
     capabilities) capabilities "$@" ;;
     doctor)
       case "${1:-}" in

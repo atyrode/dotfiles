@@ -2,15 +2,13 @@
 
 {
   # Codex runs vanilla against ~/.codex. Curated defaults seed config.toml once
-  # (then become fully user-owned); portable guidance/templates are managed.
+  # (then become fully user-owned); the repository template is managed and the
+  # global instructions are the generated agent context (home/agents.nix).
   # Auth, sessions, history, plugins, caches, and machine-local trust remain
   # Codex-owned.
-  home.file = {
-    ".codex/AGENTS.md".source = ../codex/AGENTS.md;
-    ".codex/templates" = {
-      source = ../codex/templates;
-      recursive = true;
-    };
+  home.file.".codex/templates" = {
+    source = ../codex/templates;
+    recursive = true;
   };
 
   # Seed the curated Codex defaults into the writable config once (then yours).

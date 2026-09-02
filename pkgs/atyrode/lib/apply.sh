@@ -214,6 +214,7 @@ apply_config() {
         planned+=("Reconcile native Windows packages through WinGet.")
       planned+=("Converge the account login shell.")
       planned+=("Review the provisioning surfaces this machine declares.")
+      planned+=("Render this machine's agent context.")
     fi
     plan_steps "${planned[@]}"
   fi
@@ -358,6 +359,17 @@ apply_config() {
     converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
     step_begin 'Review the provisioning surfaces this machine declares'
     review_provisioning "$json" "$host"
+    # Last, because the review may have just opened the sessions this file
+    # reports: activation already rendered it with the new CLI, and this
+    # render is what makes the file describe the machine apply leaves behind.
+    step_begin "Render this machine's agent context"
+    step_why 'every agent tool here reads this file, and the review above may have changed what is authenticated'
+    if apply_render_context; then
+      step_ok
+    else
+      step_fail 'the agent context was not rendered; run atyrode context render'
+      apply_status="$EX_UNAVAILABLE"
+    fi
   fi
   apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host"
   return "$apply_status"

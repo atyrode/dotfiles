@@ -241,7 +241,7 @@ jobs:
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
       - name: Check documentation links and production facts
-        run: nix build .#checks.x86_64-linux.docs-links .#checks.x86_64-linux.production-facts --show-trace
+        run: nix build .#checks.x86_64-linux.docs-links .#checks.x86_64-linux.production-facts .#checks.x86_64-linux.secret-shapes --show-trace
 
       - name: Guard the fast-path dependency invariant
         env:

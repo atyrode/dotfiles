@@ -28,6 +28,7 @@ let
     canonicalDarwinConfigs
     canonicalHomeConfigs
     canonicalNixosWslConfigs
+    clan
     darwinHosts
     inventoryBySystem
     mkPortableHomeConfiguration
@@ -59,31 +60,33 @@ let
   cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
     printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
   '';
-  # The committed audience file names no machine yet and its Secure Enclave
-  # slot is empty, so the registered state of either identity probe is
-  # unreachable through it. The check CLI reads this one instead: the fixture
-  # host registered with the recipient the stubbed age-keygen mints and the
-  # operator slot filled with the one the stubbed age-plugin-se mints, in
-  # exactly the shape each ceremony prints.
-  fixtureAudience = pkgs.writeText "fixture-sops.yaml" ''
-    keys:
-      - &alex age1se1fixtureoperator00000000000000000000000000000000000000000000
-      - &alex-recovery age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm
-      - &alex-x86_64-linux age1fixturemachine0000000000000000000000000000000000000000000000
-      # - &alex-aarch64-darwin age1...
-    creation_rules:
-      - path_regex: ^secrets/shared\.yaml$
-        key_groups:
-          - age:
-              - *alex
-              - *alex-recovery
-              - *alex-x86_64-linux
-  '';
+  # The committed sops tree registers the recovery recipient alone, so the
+  # registered state of either identity probe is unreachable through it. The
+  # check CLI reads this one instead: the fixture host registered with the
+  # recipient the stubbed age-keygen mints and the operator registered with
+  # the one the stubbed age-plugin-se mints, in exactly the shape
+  # `clan secrets ... add` writes.
+  fixtureRecipient = name: recipient: {
+    inherit name;
+    path = pkgs.writeText "${name}-key.json" (
+      builtins.toJSON [
+        {
+          publickey = recipient;
+          type = "age";
+        }
+      ]
+    );
+  };
+  fixtureSopsDirectory = pkgs.linkFarm "fixture-sops" [
+    (fixtureRecipient "users/alex/key.json" "age1se1fixtureoperator00000000000000000000000000000000000000000000")
+    (fixtureRecipient "users/alex-recovery/key.json" "age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm")
+    (fixtureRecipient "machines/fixture-nixos/key.json" "age1fixturemachine0000000000000000000000000000000000000000000000")
+  ];
   systemDoctorAtyrode = pkgs.atyrode.override {
     enableTestHooks = true;
     atyrode-tui = cockpitStub;
     atyrodeTuiPackage = pkgs.atyrode-tui;
-    sopsAudience = fixtureAudience;
+    sopsDirectory = fixtureSopsDirectory;
     hostRegistry = publicTargets // {
       fixture-nixos = {
         id = "fixture-nixos";
@@ -143,7 +146,32 @@ let
     ''
   );
   registryFile = pkgs.writeText "atyrode-target-registry.json" targetRegistryJson;
+  # The clan machines are the registry's system-owned hosts, one class each,
+  # and nothing else: a host clan builds that the registry does not name, or
+  # the reverse, is a second place a machine is named.
+  clanHosts = lib.filterAttrs (_name: host: host.activation != "home-manager") hosts;
+  expectedClanMachines = lib.mapAttrs (
+    _name: host: if host.activation == "nix-darwin" then "darwin" else "nixos"
+  ) clanHosts;
+  actualClanMachines = lib.mapAttrs (
+    _name: machine: machine.machineClass
+  ) clan.config.inventory.machines;
+  clanMachineConfigs =
+    lib.mapAttrsToList (_name: config: config.config) canonicalDarwinConfigs
+    ++ lib.mapAttrsToList (_name: config: config.config) canonicalNixosWslConfigs;
+  # Every clan machine decrypts with the key `atyrode identity init` writes
+  # (pkgs/atyrode/lib/identity.sh names the same path), and no generator is
+  # declared yet: the first one is a reviewed change, not a side effect.
+  clanMachineSecretsAgree = lib.all (
+    config:
+    config.sops.age.keyFile == "/var/lib/sops-nix/key.txt" && config.clan.core.vars.generators == { }
+  ) clanMachineConfigs;
   registryCheck =
+    assert lib.assertMsg (
+      actualClanMachines == expectedClanMachines
+    ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
+    assert lib.assertMsg clanMachineSecretsAgree
+      "every clan machine must read /var/lib/sops-nix/key.txt and declare no vars generator yet";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];
@@ -175,22 +203,11 @@ let
           echo 'fleet/hosts.tsv is out of date with fleet/hosts.nix and fleet/bootstrap-profiles.nix' >&2
           exit 1
         fi
-        # The audience file is the registry's projection for secrets: the
-        # operator's two anchors -- the Secure Enclave slot, commented out
-        # until `atyrode operator init` has run on the Mac, and the active
-        # recovery recipient -- and one slot per fixed host, filled or still
-        # commented out, so `atyrode identity init` always has a named place
-        # for the line it prints. Portable profiles are not fleet members.
-        grep -qE '^  (# )?- &alex age1se1' ${../.sops.yaml} ||
-          { echo '.sops.yaml must carry the Secure Enclave slot &alex' >&2; exit 1; }
-        grep -qE '^  - &alex-recovery age1[0-9a-z]+$' ${../.sops.yaml} ||
-          { echo '.sops.yaml must name the recovery recipient as &alex-recovery' >&2; exit 1; }
-        for host in ${lib.concatStringsSep " " (builtins.attrNames hosts)}; do
-          grep -qE "^  (# )?- &$host age1" ${../.sops.yaml} ||
-            { echo ".sops.yaml has no slot for registered host $host" >&2; exit 1; }
-          grep -qF -- "- path_regex: ^secrets/$host\\.yaml\$" ${../.sops.yaml} ||
-            { echo ".sops.yaml has no creation rule for secrets/$host.yaml" >&2; exit 1; }
-        done
+        # The recovery recipient is registered from day one, so the tree has
+        # a break-glass reader before the first value exists; the operator's
+        # daily identity and every machine register through their ceremonies.
+        jq -e 'any(.[]; .publickey | startswith("age1"))' ${../sops/users/alex-recovery/key.json} >/dev/null ||
+          { echo 'sops/users/alex-recovery/key.json must register the recovery recipient' >&2; exit 1; }
         mkdir "$out"
       '';
   ciInventory = builtins.fromJSON (builtins.readFile ../ci/ci.json);

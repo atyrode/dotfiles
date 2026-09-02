@@ -399,33 +399,38 @@ wrong.
 ## Machine identity
 
 ```sh
-atyrode identity show     # this machine's public age recipient, and whether .sops.yaml registers it
+atyrode identity show     # this machine's public age recipient, and whether clan registers it
 atyrode identity show --json
-atyrode identity init     # generate the key if absent; print the line to add to .sops.yaml
+atyrode identity init     # generate the key if absent; print the clan command that registers it
 ```
 
-The machine identity is the age key sops-nix decrypts secrets with at
-activation — this machine's own, never the operator's. `init` generates it at
-the path [`modules/shared/secrets.nix`](../modules/shared/secrets.nix) declares for the
-host's activation kind (root-owned on nix-darwin and NixOS, with each `sudo`
-step announced), then prints the one line the operator adds under `machines`
-in [`.sops.yaml`](../.sops.yaml) and the `sops updatekeys` commands that
-re-encrypt for it. It is idempotent: an existing key is kept and the
-registration repeated. The private half never reaches the terminal, argv, or
-the run log; only `age-keygen -y` reads the file, for its public half.
+The machine identity is the age key clan vars are decrypted with at
+activation — this machine's own, never the operator's. It exists on clan
+machines alone, the nix-darwin and NixOS hosts; on a standalone Home Manager
+host both verbs refuse with exit 65 and one sentence, because that host reads
+no secret. `init` generates the key at `/var/lib/sops-nix/key.txt`, the path
+[`modules/shared/clan-machine.nix`](../modules/shared/clan-machine.nix) hands
+sops-nix on both classes (root-owned, with each `sudo` step announced),
+publishes the public half at `/etc/atyrode/machine.pub`, and prints the one
+command the operator runs in a checkout on the Mac:
+`clan secrets machines add <host> age1...`. It is idempotent: an existing key
+is kept and the registration repeated. The private half never reaches the
+terminal, argv, or the run log; only `age-keygen -y` reads the file, for its
+public half.
 
-`apply` offers `identity init` on a machine that has no key, and `doctor
-provisioning` carries the `machine-identity` surface: `incomplete` with no
-key, `degraded` with the exact registration line when the key exists but the
-audience file does not name it, `ok` when registered, and `not-applicable` on
-a portable profile. The model, enrolment, and revocation are in
+`apply` offers `identity init` on a clan machine that has no key, and `doctor
+provisioning` carries the `machine-identity` surface: `not-applicable` on a
+standalone Home Manager host or a portable profile, `incomplete` with no key,
+`degraded` with the exact `clan secrets machines add` command when the key
+exists but `sops/machines/<host>/key.json` does not name it, and `ok` when
+registered. The model, enrolment, and revocation are in
 [secrets.md](secrets.md).
 
 ## Operator identity
 
 ```sh
-atyrode operator show     # the operator's public age recipient, and whether .sops.yaml registers it
-atyrode operator init     # mint the key in the Secure Enclave if absent; print the line to add to .sops.yaml
+atyrode operator show     # the operator's public age recipient, and whether clan registers it
+atyrode operator init     # mint the key in the Secure Enclave if absent; print the clan command that registers it
 ```
 
 The operator identity is the age key that edits secrets: minted by
@@ -436,21 +441,21 @@ anywhere else with exit 65 and one sentence; the gate is the host registry's
 system, not `uname`, so the check drives the Mac's states from a Linux
 sandbox. `init` writes `~/.config/sops/age/keys.txt` (mode 0600 under a
 mode-0700 directory), says that Touch ID will prompt before it runs the one
-announced `age-plugin-se keygen`, and prints the line that fills the `&alex`
-slot in [`.sops.yaml`](../.sops.yaml) plus the reminder that `&alex-recovery`
-stays. It never replaces an existing `keys.txt`: a Secure Enclave key there
-is kept and its registration repeated, and a software key there (the day-zero
-Mac) is named as the recovery identity that belongs in Bitwarden alone, to be
-moved aside by the operator. Only the `# public key:` comment the plugin
-writes is ever read; the identity line never reaches the terminal, argv, or
-the run log.
+announced `age-plugin-se keygen`, and prints the command that registers the
+result as clan user `alex` (`clan secrets users add alex age1se1...`) plus
+the reminder that `alex-recovery` is registered already. It never replaces an
+existing `keys.txt`: a Secure Enclave key there is kept and its registration
+repeated, and a software key there (the day-zero Mac) is named as the
+recovery identity that belongs in Bitwarden alone, to be moved aside by the
+operator. Only the `# public key:` comment the plugin writes is ever read;
+the identity line never reaches the terminal, argv, or the run log.
 
 `apply` offers `operator init` on the Mac when it has no key, and `doctor
 provisioning` carries the `operator-identity` surface right after
 `machine-identity`: `not-applicable` off the Mac, `incomplete` with no usable
-key, `degraded` with the exact registration line when the key exists but the
-audience file does not name it, and `ok` when registered. The two-identity
-model, the Mac sequence, and what a lost Mac costs are in
+key, `degraded` with the exact registration command when the key exists but
+`sops/users/alex/key.json` does not name it, and `ok` when registered. The
+two-identity model, the Mac sequence, and what a lost Mac costs are in
 [secrets.md](secrets.md).
 
 ## Inspection and diagnostics

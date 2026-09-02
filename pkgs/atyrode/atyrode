@@ -30,7 +30,7 @@ readonly windows_package_inventory='@windows_packages@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly managed_ssh_fleet_keys='@ssh_fleet_keys@'
 readonly operator_infra='@operator_infra@'
-readonly sops_audience='@sops_audience@'
+readonly sops_directory='@sops_directory@'
 readonly manifold_inventory='@manifold_inventory@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
@@ -196,20 +196,21 @@ cache, the clone root). render writes ${XDG_CONFIG_HOME:-~/.config}/agents/AGENT
 which the tool files (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md,
 ~/.omp/agent/AGENTS.md) link to; show prints it; --json emits the machine
 section. It never prints a secret value. apply renders it after activation.
-identity is this machine's own age key, the one sops-nix decrypts with at
-activation (never the operator's). show prints its public recipient and whether
-.sops.yaml registers it; init generates it if absent -- as root on nix-darwin
-and NixOS, announcing each sudo step -- and prints the one line to add to
-.sops.yaml plus the sops updatekeys commands that re-encrypt for it. The
-private half never reaches the terminal, argv, or the log.
+identity is this machine's own age key, the one clan vars decrypt with at
+activation (never the operator's). It exists on clan machines alone -- the
+nix-darwin and NixOS hosts -- and says so elsewhere. show prints its public
+recipient and whether clan registers it (sops/machines/<host>/key.json); init
+generates it if absent -- as root, announcing each sudo step -- and prints the
+`clan secrets machines add` command that registers it, to run in a checkout on
+the Mac. The private half never reaches the terminal, argv, or the log.
 operator is the operator's own age identity, the one that edits secrets: it is
 minted inside the Secure Enclave of the registered Mac by age-plugin-se, asks
 for Touch ID on every use, and cannot be copied off the machine, so the verb
 applies on that host alone and refuses elsewhere. show prints its public
-recipient and whether .sops.yaml registers it as &alex; init generates it if
-absent -- never replacing one that exists -- and prints the one line to add to
-.sops.yaml. &alex-recovery, the software key whose only copy is in Bitwarden,
-is the break-glass recipient of every file and is never read here.
+recipient and whether clan registers it (sops/users/alex/key.json); init
+generates it if absent -- never replacing one that exists -- and prints the
+`clan secrets users add` command that registers it. alex-recovery, the software
+key whose only copy is in Bitwarden, is registered already and is never read here.
 generations lists the activation profile's generations (nix-darwin or NixOS
 system profile, otherwise standalone Home Manager); rollback activates an earlier
 one (previous by default, or --to N) after confirming.

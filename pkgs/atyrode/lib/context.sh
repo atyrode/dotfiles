@@ -124,7 +124,7 @@ context_machine_json() {
     '{schemaVersion:1,command:"context",generatedAt:$generatedAt,revision:$revision,target:$target,
       host:$host,fleet:$fleet,
       authentication:{gh:$gh,clever:$clever,bitwarden:$bitwarden},
-      secrets:{readable:[],note:"none yet; secrets arrive with ADR 0008 step 3 (sops-nix)"},
+      secrets:{readable:[],note:"none yet; secrets arrive with ADR 0008 step 3 (clan vars over sops-nix)"},
       fleetCache:$fleetCache,
       cloneRoot:$cloneRoot,
       dotfilesCheckout:(if $checkout == "" then null else $checkout end)}'
@@ -169,7 +169,7 @@ context_render_section() { # machine-json
     "",
     "### Secrets readable here",
     "",
-    (if (.secrets.readable | length) == 0 then "None yet; secrets arrive with ADR 0008 step 3 (sops-nix). Until then the vault is the only secret store and `atyrode vault get NAME` is the explicit secret-output boundary."
+    (if (.secrets.readable | length) == 0 then "None yet; secrets arrive with ADR 0008 step 3 (clan vars over sops-nix). Until then the vault is the only secret store and `atyrode vault get NAME` is the explicit secret-output boundary."
      else (.secrets.readable[] | "- `\(.name)`: \(.path)") end),
     "",
     "### Nix cache",

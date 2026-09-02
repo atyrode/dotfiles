@@ -94,11 +94,11 @@ plain-English line before it, or the `error: failed to build attribute` line.
 
 Every seam (`ATYRODE_BW`, `ATYRODE_NH`, `ATYRODE_GIT`, `ATYRODE_NIX_ENV`,
 `ATYRODE_NIX_STORE`, `ATYRODE_CLEVER`, `ATYRODE_GEN_PROFILE`, `_ATYRODE_TEST_TTY`,
-`_ATYRODE_TEST_COLOR`, …) is honoured only when the CLI is built with test
-hooks. The CLI wrapper prefixes its own tools onto `PATH` and
-`adopt_activated_path` appends, so a stub placed on `PATH` can never win: use
-the seam. Do not add a seam to production code for a test's convenience;
-scope the scenario instead.
+`_ATYRODE_TEST_COLOR`, `_ATYRODE_TEST_IDENTITY_ROOT`, …) is honoured only when
+the CLI is built with test hooks. The CLI wrapper prefixes its own tools onto
+`PATH` and `adopt_activated_path` appends, so a stub placed on `PATH` can
+never win: use the seam. Do not add a seam to production code for a test's
+convenience; scope the scenario instead.
 
 A check must falsify: it defends an observable contract and fails on a
 plausible bug. Reintroduce the bug once and watch it fail before trusting it.
@@ -131,13 +131,30 @@ directory under `pkgs/`. Checks are grouped by what they defend
 `checks/default.nix` is the only registry: a check that is not imported there
 does not exist. `fleet/` is the only place a machine is named: the host and
 bootstrap registries and every inventory that describes them live there, so
-adding, renaming, or retiring a machine touches one directory.
+adding, renaming, or retiring a machine touches one directory. `sops/` is
+the only place a reader is named: clan's registration of the operator's two
+identities and of every machine's public key, and nothing else, lives there;
+`vars/` is where clan writes generated values, never a hand.
+
+## The fleet layer
+
+The fleet layer is [clan](https://clan.lol) (clan-core, pinned in
+`flake.lock`), folded into this repository per the ADR 0008 amendment:
+the flake is a clan whose machines are exactly the system hosts of `fleet/`
+(nix-darwin and NixOS), `lib/configurations.nix` derives the inventory from
+the registry, and `clan vars` over sops-nix is the secrets model. `atyrode`
+is the single front door and wraps `clan`: its ceremonies mint keys on the
+machine and print the `clan secrets ... add` command that registers them,
+its doctor reads clan's registration files, and it calls `clan` from `PATH`
+where a ceremony needs it. Standalone Home Manager hosts are invisible to
+clan, converge on their own through `atyrode apply`, and never carry the
+`clan` CLI (their closure budgets say why).
 
 ## Ownership boundaries
 
 - **dotfiles** owns machine identity, the tools present on a machine, which
-  agent skills are available, and the fleet substrate (secrets audience,
-  overlay peers, cache, backups, generated context).
+  agent skills are available, and the fleet substrate (who may read a
+  secret, overlay peers, cache, backups, generated context).
 - **`atyrode/code`** owns which optional skills a session activates and
   provider/model/thinking configuration. **`atyrode/babel`** owns session
   exploration and the archive. **`atyrode/manifold`** owns the pane of glass.

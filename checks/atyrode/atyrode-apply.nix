@@ -1273,8 +1273,16 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qE '^  1\. Place the machine key\.$' "$TMPDIR/wsl-apply.err"
     grep -qE '^  2\. Rebuild and switch alex-x86_64-linux-wsl through nh-os\.$' "$TMPDIR/wsl-apply.err"
     grep -qF "sops-nix decrypts this machine's vars at activation with this key" "$TMPDIR/wsl-apply.err"
-    grep -qE "^  \\$ $TMPDIR/bin/clan secrets get alex-x86_64-linux-wsl-age\\.key --flake $HOME/nix-dotfiles \\| sudo -- .*install -D -m 0600 -o root /dev/stdin $machine_key\$" \
+    grep -qE "^  \\$ $TMPDIR/bin/clan secrets get alex-x86_64-linux-wsl-age\\.key --flake $HOME/nix-dotfiles > \\S+/key\\.txt\$" \
       "$TMPDIR/wsl-apply.err"
+    grep -qE "^  \\$ sudo -- \\S*install -D -m 0600 -o root \\S+/key\\.txt $machine_key\$" \
+      "$TMPDIR/wsl-apply.err"
+    # The decrypted key is staged in a mode-700 directory and the directory
+    # goes with the step, whatever the step's outcome.
+    staged_dir="$(sed -n "s|^  \\$ $TMPDIR/bin/clan secrets get .* > \\(.*\\)/key\\.txt\$|\\1|p" \
+      "$TMPDIR/wsl-apply.err" | head -n 1)"
+    test -n "$staged_dir"
+    test ! -e "$staged_dir"
     grep -qF "placed at $machine_key (root, mode 0600)" "$TMPDIR/wsl-apply.err"
     grep -qF "secrets get alex-x86_64-linux-wsl-age.key --flake $HOME/nix-dotfiles" "$TMPDIR/clan-args"
     test "$(cat "$machine_key")" = AGE-SECRET-KEY-1FIXTUREONLY

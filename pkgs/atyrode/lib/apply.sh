@@ -494,8 +494,11 @@ converge_login_shell() { # host
 # and placed here so the activation that follows can decrypt this machine's
 # vars. It is placed before the switch for that reason. Only a device holding
 # an operator key can decrypt it; any other device is told which one can. The
-# key travels through the pipe and never through argv, so the announced
-# command is the pipeline itself.
+# key reaches root through a mode-600 file in a mode-700 directory rather
+# than a pipe, because GNU install refuses to copy from `/dev/stdin` on
+# macOS -- it stats the source twice and reports the pipe as replaced while
+# being copied -- and because ownership then stays an argument of the
+# elevated program rather than a shell fragment.
 machine_key_repository_file() { # host [repo]
   printf '%s/%s-age.key/secret\n' "$(machine_key_secrets_directory "${2:-}")" "$1"
 }
@@ -561,15 +564,23 @@ place_machine_key() { # host repo
   step_why "sops-nix decrypts this machine's vars at activation with this key"
   clan="$(clan_program)"
   install_program="$(command -v install)"
+  local scratch staged
+  scratch="$(vault_secure_temp_dir atyrode-machine-key)"
+  staged="$scratch/key.txt"
   local -a elevate=()
   [[ "$(id -u)" -eq 0 ]] || elevate=(sudo --)
-  show_pipeline "$(render_argv "$clan" secrets get "$host-age.key" --flake "$repo")" \
-    "$(render_argv "${elevate[@]+"${elevate[@]}"}" "$install_program" -D -m 0600 -o root /dev/stdin "$key")"
-  if ! "$clan" secrets get "$host-age.key" --flake "$repo" |
-    "${elevate[@]+"${elevate[@]}"}" "$install_program" -D -m 0600 -o root /dev/stdin "$key"; then
+  show_rendered "$(render_argv "$clan" secrets get "$host-age.key" --flake "$repo") > $(render_argv "$staged")"
+  if ! (umask 077 && "$clan" secrets get "$host-age.key" --flake "$repo" >"$staged"); then
+    rm -rf -- "$scratch"
     step_fail "the machine key was not placed at $key"
     die "$EX_SOFTWARE" "clan could not decrypt $host's machine key on this device"
   fi
+  if ! run_visible "${elevate[@]+"${elevate[@]}"}" "$install_program" -D -m 0600 -o root "$staged" "$key"; then
+    rm -rf -- "$scratch"
+    step_fail "the machine key was not placed at $key"
+    die "$EX_SOFTWARE" "the decrypted machine key could not be installed at $key"
+  fi
+  rm -rf -- "$scratch"
   step_ok "placed at $key (root, mode 0600)"
 }
 

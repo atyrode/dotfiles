@@ -214,6 +214,15 @@ type model struct {
 	tunnelPicking  bool
 	tunnelDuration int
 
+	catalog          []catalogItem
+	catalogSystem    string
+	catalogLoading   bool
+	catalogRunning   bool
+	catalogErr       error
+	catalogStatus    string
+	catalogLaunching string
+	catalogCursor    int
+
 	inventoryDiagnostic  string
 	inventoryDetailsOpen bool
 	details              bool
@@ -253,15 +262,16 @@ func newModel(cli string) model {
 		backend:   newAskBackend,
 	}
 	return model{
-		cli:        cli,
-		runner:     execCommandRunner{},
-		apply:      execApply,
-		asker:      asker,
-		nav:        newCockpitNav(),
-		phase:      ready,
-		cleanDraft: defaultCleanPolicyDraft(),
-		width:      100,
-		height:     30,
+		cli:           cli,
+		runner:        execCommandRunner{},
+		apply:         execApply,
+		asker:         asker,
+		nav:           newCockpitNav(),
+		phase:         ready,
+		cleanDraft:    defaultCleanPolicyDraft(),
+		catalogSystem: currentNixSystem(),
+		width:         100,
+		height:        30,
 	}
 }
 
@@ -534,6 +544,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tunnelActionMsg:
 		return m, m.handleTunnelAction(msg)
+	case catalogReportMsg:
+		m.catalogLoading = false
+		m.catalog, m.catalogErr = msg.entries, msg.err
+		m.catalogCursor = m.catalogFirstSelectable()
+		return m, nil
+	case catalogRunMsg:
+		return m, m.handleCatalogRun(msg)
 	case applyDoneMsg:
 		if msg.err != nil {
 			m.phase, m.err = failed, fmt.Errorf("apply failed: %w", msg.err)
@@ -578,6 +595,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.nav.Active() == workspaceTunnel {
 			return m, m.tunnelUpdate(key)
+		}
+		if m.nav.Active() == workspaceCatalog {
+			return m, m.catalogUpdate(key)
 		}
 		if m.nav.Active() == workspaceLifecycle {
 			return m, m.lifecycleUpdate(key)
@@ -727,6 +747,8 @@ func (m model) View() string {
 		content = m.runtimeView(panelWidth)
 	case workspaceTunnel:
 		content = m.tunnelView(panelWidth)
+	case workspaceCatalog:
+		content = m.catalogView(panelWidth)
 	default:
 		content = m.overviewView(panelWidth)
 	}

@@ -6,6 +6,7 @@
   bubblewrap,
   bitwarden-cli,
   capabilities,
+  catalog,
   claude-code,
   clever-tools,
   codex,
@@ -82,6 +83,7 @@ let
   };
 
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
+  catalogInventory = builtins.toFile "atyrode-catalog.json" (builtins.toJSON catalog);
   gitAllowedSigners = ../../modules/home/git/allowed-signers;
   sshFleetKeys = ../../modules/home/ssh/fleet-keys;
   agentsPolicy = ../../modules/home/agents/AGENTS.md;
@@ -250,6 +252,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \
+      --replace-fail '@catalog@' '${catalogInventory}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@git_allowed_signers@' '${gitAllowedSigners}' \
       --replace-fail '@ssh_fleet_keys@' '${sshFleetKeys}' \

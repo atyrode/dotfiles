@@ -21,8 +21,8 @@ Ask grounding, so packaged and checkout-specific behavior remain aligned.
 
 Overview explains the cockpit and lists every workspace without preallocating
 empty panel height. The top navigation is an aligned responsive grid of numbered
-titles (`1. Overview` through `8. Ask`); only the selected cell's background
-moves. `Tab` and `Shift+Tab` cycle persistent workspaces, while `1`–`8` jump
+titles (`1. Overview` through `9. Ask`); only the selected cell's background
+moves. `Tab` and `Shift+Tab` cycle persistent workspaces, while `1`–`9` jump
 directly. Local loading, selection, scroll, preview, and confirmation state
 survives round trips between workspaces. Narrow and medium layouts wrap the
 complete grid and shorten controls without entering the terminal auto-wrap
@@ -122,6 +122,21 @@ and before the vault is consulted: it is the lockout protection for a machine
 reachable only over SSH. Narrow panes degrade in that order too — prose states
 shorten to the remaining time, fingerprints drop, and the picker's labels
 shorten so every duration stays visible rather than clipped.
+
+## Catalog workspace
+
+Catalog is a view onto `atyrode run`. It reads the reviewed catalog with
+`run --json` and lists every entry with the one sentence that justifies it.
+`Enter` launches the selected entry through `atyrode run <name>` in the
+foreground, because the fetch that precedes the launch belongs on the real
+terminal; the panel states, above the list and again after a launch, that
+nothing is installed or declared and that the next `atyrode clean` reclaims it.
+
+An entry the catalog does not claim for this system stays listed but is never
+reachable by the cursor, and its row carries where it does run instead of its
+reason. On macOS that row also says the software is declared as a Homebrew
+cask, because that, not an ephemeral run, is how this fleet gets GUI
+applications onto a Mac.
 
 ## Generations / Clean workspace
 

@@ -45,9 +45,14 @@ sessions, caches, device identities, or other mutable state.
 - Python/Pillow/uv, Node/Bun/Deno, Go, Rust, and GCC are project-owned. A Nix
   project commits a dev shell and `.envrc`; other projects commit `mise.toml`
   plus their native manifest. Nix and mise must not own the same project runtime.
-- Infrequent commands use comma or an explicit `nix shell`; diagnostics direct
-  missing tools back to the owning capability instead of suggesting a global
-  install.
+- Infrequent commands use `atyrode run`, comma, or an explicit `nix shell`;
+  diagnostics direct missing tools back to the owning capability instead of
+  suggesting a global install. The catalog behind `atyrode run`
+  ([`fleet/catalog.nix`](../fleet/catalog.nix)) is reviewed data and not a
+  delivery layer: it installs nothing, no host declares it, and what it runs is
+  reclaimed by the next `atyrode clean`. An entry a capability already
+  installs is a check failure, because the catalog exists for what no machine
+  carries.
 
 
 ### Native Windows package policy

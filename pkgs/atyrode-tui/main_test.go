@@ -318,7 +318,7 @@ func TestWorkspaceTabsStayAlignedAndOnlyMoveSelection(t *testing.T) {
 	if !strings.Contains(stripTerminalControls(m.workspaceTabs(34)), "3.Gen/Clean") {
 		t.Fatal("narrow workspace tabs obscured the Generations / Clean destination")
 	}
-	for _, want := range []string{"1. Overview", "2. Apply", "3. Gen / Clean", "4. Doctor", "5. Capabilities", "6. Runtime", "7. Tunnel", "8. Ask"} {
+	for _, want := range []string{"1. Overview", "2. Apply", "3. Gen / Clean", "4. Doctor", "5. Capabilities", "6. Runtime", "7. Tunnel", "8. Catalog", "9. Ask"} {
 		if !strings.Contains(stripTerminalControls(apply), want) {
 			t.Fatalf("workspace tabs missing %q", want)
 		}

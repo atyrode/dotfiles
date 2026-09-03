@@ -1263,8 +1263,12 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$machine_key"
     mv "$operator_key.aside" "$operator_key"
     rm -f "$TMPDIR/nh-args"
-    wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json \
-      2>"$TMPDIR/wsl-apply.err")"
+    if ! wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json \
+      2>"$TMPDIR/wsl-apply.err")"; then
+      echo 'apply failed while placing the machine key; its diagnosis follows' >&2
+      cat "$TMPDIR/wsl-apply.err" >&2
+      exit 1
+    fi
     jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
     grep -qE '^  1\. Place the machine key\.$' "$TMPDIR/wsl-apply.err"
     grep -qE '^  2\. Rebuild and switch alex-x86_64-linux-wsl through nh-os\.$' "$TMPDIR/wsl-apply.err"

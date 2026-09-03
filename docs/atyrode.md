@@ -309,11 +309,10 @@ strict-host-key check. After activation the machine is asked who it is, and a
 deployment that activated the wrong closure fails there rather than exiting
 zero.
 
-This replaced `atyrode infra`, which drove a second repository through
-`nix develop`, unlocked Bitwarden for an operator identity on every run, and
-read the target's address out of that repository's enrollment inventory. The
-machines are this flake's now, the operator identity is the device's own key,
-and the address is the machine's own declaration.
+Deploying reaches outside this repository for nothing: the machines are this
+flake's, the operator identity is the device's own age key rather than a vault
+session opened per run, and where a machine is reached is its own declaration
+rather than a separate enrollment inventory.
 
 ## Fleet SSH access
 
@@ -401,10 +400,10 @@ out-of-store symlinks to it, so every tool reads the same bytes and no
 tool-specific instruction file is maintained by hand. Activation renders it
 (`modules/home/agents/default.nix`) and `atyrode apply` renders it again as its last step, after
 the provisioning review may have opened sessions, so the file describes the
-machine apply leaves behind. This is ADR 0008 step 2 (the record is
-`docs/adr/0008-fleet-shape-and-substrate.md` once its pull request merges) and
-invariant 9 of the repository's own `AGENTS.md`: context propagation is this
-repository's job.
+machine apply leaves behind. This is
+[ADR 0008](adr/0008-fleet-shape-and-substrate.md) step 2 and invariant 9 of
+the repository's own `AGENTS.md`: context propagation is this repository's
+job.
 
 The generated section carries the generation timestamp and the dotfiles
 revision the CLI came from; this host's registry identity, platform,
@@ -523,8 +522,8 @@ and releases its GPU memory. A new session or direct API activity resets the
 deadline; stale leases from crashed processes are discarded.
 
 `manifold-agent` joins the machine to the self-hosted manifold hub declared in
-`fleet/manifold.json`; enrollment, upgrade discipline, the dev-01
-cutover, and the master-migration runbook live in [manifold](manifold.md).
+`fleet/manifold.json`; enrollment, upgrade discipline, replacing an unmanaged
+agent, and the master-migration runbook live in [manifold](manifold.md).
 
 `inventory` is a thin, read-only consumer of the flake's schema-versioned
 evaluated manifest. By default it evaluates the exact immutable revision baked

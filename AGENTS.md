@@ -179,5 +179,7 @@ clan, converge on their own through `atyrode apply`, and never carry the
   provisioned from a template by a flake that lives with the client's code, on
   a machine the client owns. The operator's identity there is the portable
   `development-*` profile.
-- **`tyrode-dev/infra`** is being absorbed per ADR 0008 step 5; until then it
-  consumes this repository's `main` and nothing here may depend on it.
+- **Nothing here may depend on a repository this one does not contain.** The
+  last machine configured elsewhere moved in with ADR 0008 step 5; a
+  dependency in the other direction is a defect, because a machine has to be
+  rebuildable from this repository alone.

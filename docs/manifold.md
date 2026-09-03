@@ -87,55 +87,52 @@ unreadable constant). A held bump prints to stderr and to the Actions job
 summary, opens no pull request, and leaves the pin untouched. Clearing it means
 deploying the hub, not overriding the guard.
 
-### Incident 2026-08-30: an unattended bump took a spoke off the canvas
+### Protocol mismatch is silent
 
-`atyrode/manifold` released `v0.5.0` from work that was not meant to ship. The
-six-hourly pin cron refreshed `0.4.4 -> 0.5.0` (dotfiles #452) with a green
-gate, because no check compared the agent against the deployed hub, and the
-next `atyrode apply` installed it on a spoke. The agent speaks
-protocol 13; the hub (build `59e221b` = `v0.4.4`) accepts `{2,3,4}` and closed
-every dial `4409 protocol version mismatch`.
+An agent newer than the hub does not crash. The hub closes every dial with
+`4409 protocol version mismatch`; the agent logs the rejection, schedules a
+reconnect, and stays `active (running)` indefinitely, so `Restart=always` has
+nothing to act on and the machine looks healthy while being absent from the
+canvas. An unattended pin bump has shipped such an agent to a spoke once
+(dotfiles #452), because a green gate said nothing about the deployed hub;
+that is what `guard_manifold` above exists to prevent.
 
-The failure mode is what makes this worth a heading: **the agent never
-crashed.** It logged the rejection, scheduled a reconnect, and stayed
-`active (running)` forever, so `Restart=always` had nothing to act on and the
-machine looked healthy while being absent from the canvas. A spoke that has
-silently left the hub is diagnosed from the agent's journal, not its unit state:
+A spoke that has silently left the hub is therefore diagnosed from the agent's
+journal rather than from its unit state:
 
 ```sh
 journalctl --user -u manifold-agent -n 20   # welcome = joined; 4409 = locked out
 curl -s https://manifold.tyrode.dev/healthz # hub protocolVersion
 ```
 
-Recovery was rolling the pin back and applying from the local checkout
-(`atyrode apply --repo ~/nix-dotfiles`), since plain `atyrode apply` builds the
-published revision and cannot carry an unmerged fix.
+Rolling a bad pin back needs a local checkout
+(`atyrode apply --repo ~/nix-dotfiles`), because plain `atyrode apply` builds
+the published revision and so cannot carry an unmerged fix.
 
-## dev-01 cutover (#419)
+## Replacing an unmanaged agent (#419)
 
-Done on 2026-08-28. The VPS runs the declared user service against the pinned
-`manifold-agent` release, and the detached OMP-managed stopgap it replaced is
-gone: `atyrode runtime status manifold-agent --json` reports `enrolled: true`
-with `unit.present: true` and an active unit.
+A machine may already carry a detached agent started outside Nix. Swapping it
+for the declared user service is safe under two constraints, both structural
+rather than particular to one host:
 
-Two constraints from that swap are structural, not specific to this host, so
-they carry to the next one:
-
-- Run it from plain SSH, never from a manifold terminal. Starting the declared
-  service kills the stopgap's PTYs, including the session issuing the command.
-- Delete the stopgap definitions only after the service reports `welcome`. A
-  respawned stopgap presenting the same token can otherwise fence the
+- Run the swap from plain SSH, never from a manifold terminal. Starting the
+  declared service kills the unmanaged process's PTYs, including the session
+  that issued the command.
+- Delete the unmanaged definitions only after the service reports `welcome`. A
+  respawned process presenting the same token can otherwise fence the
   service-managed socket.
 
 Enrollment survives the swap untouched: the existing 0600 machine token is
-adopted as-is, never re-minted.
+adopted as-is, never re-minted. `atyrode runtime status manifold-agent --json`
+is the proof it worked, reporting `enrolled: true` with `unit.present: true`
+and an active unit.
 
 ## Master migration
 
 The master is a stateful pet: `manifold.db` in the `manifold-data` volume
 holds pads, scenes,
-principals, and hashed tokens. Until tyrode-dev/infra's backup engine covers
-it (ADR 0002 gates; SQLite online-backup class), pads are not durable state.
+principals, and hashed tokens. No backup engine covers it yet (ADR 0002 gates;
+SQLite online-backup class), so pads are not durable state.
 Migration is snapshot → restore on the new host → edit
 `fleet/manifold.json` → merge → `atyrode apply` fleet-wide. Never run two
 masters: agents hold one token for one hub, and two SQLite stores cannot be

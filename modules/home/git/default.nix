@@ -62,12 +62,11 @@ in
       };
     };
 
-    # Supervised user ssh-agent (#8, operator decision 2026-08-27): agent
-    # sessions and headless logins inherit SSH_AUTH_SOCK from the user
-    # manager, so SSH pushes and commit signing work without per-session key
-    # loading. `atyrode provision git` loads the vault-backed keys. Linux
-    # only: macOS keeps the validated Keychain-backed system agent, which a
-    # Home Manager agent would shadow.
+    # Supervised user ssh-agent (#8): agent sessions and headless logins inherit
+    # SSH_AUTH_SOCK from the user manager, so SSH pushes and commit signing work
+    # without per-session key loading. `atyrode provision git` loads the
+    # vault-backed keys. Linux only: macOS keeps the validated Keychain-backed
+    # system agent, which a Home Manager agent would shadow.
     services.ssh-agent.enable = pkgs.stdenv.hostPlatform.isLinux;
 
     programs.gh = {

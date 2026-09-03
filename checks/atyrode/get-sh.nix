@@ -92,7 +92,7 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   grep -F 'it will be updated to origin/main before activation' "$TMPDIR/reuse-err" >/dev/null
   grep -F 'DOTFILES_DIR' "$TMPDIR/reuse-err" >/dev/null
 
-  # An explicit source acknowledgement is a reviewed operator decision about
+  # An explicit source acknowledgement is a deliberate choice about
   # which revision to activate and is never overridden.
   for acknowledgement in --update --allow-dirty --allow-non-main; do
     bash -s -- platform-01 --yes "$acknowledgement" < ${../../get.sh} >/dev/null

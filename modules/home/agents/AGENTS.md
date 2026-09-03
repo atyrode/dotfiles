@@ -26,12 +26,11 @@ decision remains unresolved.
 ## Standing merge authorization
 
 Default to merging pull requests autonomously once CI is green and the work is
-verified. The operator granted this explicitly (2026-07-11). The evaluation step
-stays, but the default outcome is merge, not ask. Escalate and hold for review
-only when the merge genuinely warrants it: risky or behavior-changing work,
-anything touching deploy, security posture, or data, scope beyond what was
-asked for, or low confidence in the verification. Merge with squash and delete
-the branch, matching the repository convention.
+verified. The evaluation step stays, but the default outcome is merge, not ask.
+Escalate and hold for review only when the merge genuinely warrants it: risky
+or behavior-changing work, anything touching deploy, security posture, or data,
+scope beyond what was asked for, or low confidence in the verification. Merge
+with squash and delete the branch, matching the repository convention.
 
 ## External content provenance
 
@@ -85,9 +84,9 @@ non-operator content.
   from a template by a flake that lives with the client's code, on a machine
   the client owns. The operator's identity there is the portable
   `development-*` profile.
-- **tyrode-dev/infra** is being absorbed into the dotfiles (ADR 0008 step 5);
-  until then it consumes the dotfiles' `main` and nothing in the dotfiles may
-  depend on it.
+- **A separate infrastructure repository** is being absorbed into the dotfiles
+  (ADR 0008 step 5); until then it consumes the dotfiles' `main` and nothing in
+  the dotfiles may depend on it.
 - Secrets never enter derivations, argv, logs, shell history, announced
   commands, or persistent temporary files. A file that names a secret says
   where it is readable and what it is called, never its value.

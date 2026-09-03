@@ -85,7 +85,7 @@ require_registered_host() {
   die "unknown configuration $quoted; choose one of: ${ids[*]}"
 }
 
-# Explicit source-policy flags are reviewed operator decisions about which
+# Explicit source-policy flags are deliberate choices about which
 # revision to activate; this entry point must never silently add another.
 source_policy_given() {
   local arg

@@ -24,8 +24,8 @@
 readonly operator_group=admins
 readonly operator_recovery_user=alex-recovery
 
-# The clan user name of a device is its registry id, which already carries
-# the operator's name for the devices he owns.
+# The clan user name of a device is its registry id, prefixed with the
+# operator's name unless the id already carries it.
 operator_user_for() { # host
   if [[ "$1" == alex-* ]]; then printf '%s\n' "$1"; else printf 'alex-%s\n' "$1"; fi
 }

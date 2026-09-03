@@ -193,7 +193,7 @@ sessions, MCP state, or caches.
 
 ## Seeded plain-omp defaults
 
-`pkgs/omp-configured/config/plain-seed.yml` holds the agreed defaults for plain `omp`: trusted-machine
+`pkgs/omp-configured/config/plain-seed.yml` holds the repository's defaults for plain `omp`: trusted-machine
 guardrails, the bundled-role model map and fallback chains, and interface
 preferences. It is deliberately not a managed launch layer. During activation,
 `atyrode-omp-seed apply` three-way merges it into OMP's selected writable

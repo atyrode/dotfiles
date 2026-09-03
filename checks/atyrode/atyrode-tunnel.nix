@@ -68,8 +68,8 @@ pkgs.runCommand "check-atyrode-tunnel"
       chmod 700 "$HOME/.ssh"
       printf '%s\n' '{"id":"platform-01"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
       {
-        printf 'ssh-ed25519 %s alext@Alex-Windows\n' "$primary_key"
-        printf 'ssh-ed25519 %s alexMacBook-Air-de-Alex.local\n' "$macbook_key"
+        printf 'ssh-ed25519 %s user@Workstation-01\n' "$primary_key"
+        printf 'ssh-ed25519 %s user@Laptop-Host.local\n' "$macbook_key"
         printf 'ssh-ed25519                                     \n'
         printf ' %s\n' "$other_key"
         printf 'ssh-ed25519 %s\n' "$other_key"
@@ -97,7 +97,7 @@ pkgs.runCommand "check-atyrode-tunnel"
     # A read is a read: no vault, no state, no rendered file.
     test ! -s "$BW_LOG"
     test ! -e "$state"
-    grep -qF 'alext@Alex-Windows' "$keys"
+    grep -qF 'user@Workstation-01' "$keys"
 
     # Keys already accepted by sshd are reported as such before adoption, so a
     # read never understates the access a machine currently grants.
@@ -115,7 +115,7 @@ pkgs.runCommand "check-atyrode-tunnel"
     # The pre-management file is kept once, verbatim, and never overwritten by a
     # later render.
     test "$(stat -c %a "$backup")" = 600
-    grep -qF 'alexMacBook-Air-de-Alex.local' "$backup"
+    grep -qF 'user@Laptop-Host.local' "$backup"
     test "$(grep -c . "$backup")" = 5
     printf 'sentinel\n' >> "$backup"
     atyrode tunnel grant alex-macbook-air --for 1h >/dev/null 2>&1

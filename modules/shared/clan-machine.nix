@@ -14,8 +14,8 @@
 # off rather than defaulted.
 #
 # Every value clan generates is encrypted to the admins group by default:
-# the group is the operator, one member per device he works from, plus the
-# break-glass recovery key.
+# the group is the operator, one member per device the operator works from,
+# plus the break-glass recovery key.
 { _class, lib, ... }:
 {
   sops.age = {

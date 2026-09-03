@@ -152,8 +152,10 @@ let
         // {
           openssh = stubSsh;
           stdenv = pkgs.stdenv // {
-            isLinux = true;
-            isDarwin = false;
+            hostPlatform = pkgs.stdenv.hostPlatform // {
+              isLinux = true;
+              isDarwin = false;
+            };
           };
         }
       )

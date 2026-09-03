@@ -21,26 +21,29 @@ set -Eeuo pipefail
 
 endpoint="s3://atyrode-nix-cache?endpoint=cellar-c2.services.clever-cloud.com&region=us-east-1&scheme=https&compression=zstd&parallel-compression=true"
 
-key="$(mktemp)"
-trap 'rm -f "$key"' EXIT
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+key="$scratch/signing-key"
+paths="$scratch/paths"
 (umask 077 && printf '%s\n' "$NIX_CACHE_SIGNING_KEY" >"$key")
 
-mapfile -t paths < <(
-  nix path-info --all --json |
-    jq -r '
-      (if type == "object" then to_entries | map(.value + {path: .key}) else . end)
-      | .[]
-      | select((.signatures // []) | any(startswith("cache.nixos.org-1:") or startswith("atyrode-cache-1:")) | not)
-      | select((.path | endswith(".drv")) | not)
-      | select(.deriver != null)
-      | .path
-    '
-)
+# Bash 3.2 is what macOS ships and what this runs under there, so no
+# `mapfile`: the paths go through a file, and `xargs -0` hands them to one
+# `nix copy` without a length limit to worry about.
+nix path-info --all --json |
+  jq -r '
+    (if type == "object" then to_entries | map(.value + {path: .key}) else . end)
+    | .[]
+    | select((.signatures // []) | any(startswith("cache.nixos.org-1:") or startswith("atyrode-cache-1:")) | not)
+    | select((.path | endswith(".drv")) | not)
+    | select(.deriver != null)
+    | .path
+  ' >"$paths"
 
-if [[ "${#paths[@]}" -eq 0 ]]; then
+if [ ! -s "$paths" ]; then
   echo "nothing built here that the cache does not already have"
   exit 0
 fi
 
-echo "publishing ${#paths[@]} locally built paths"
-nix copy --to "$endpoint&secret-key=$key" "${paths[@]}"
+echo "publishing $(wc -l <"$paths" | tr -d ' ') locally built paths"
+tr '\n' '\0' <"$paths" | xargs -0 nix copy --to "$endpoint&secret-key=$key"

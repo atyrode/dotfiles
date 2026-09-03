@@ -322,6 +322,7 @@ let
     docs-links = import ./lints/docs-links.nix { inherit lib pkgs; };
     docs-drift-guard = import ./lints/docs-drift-guard.nix { inherit pkgs; };
     classify-ci-paths = import ./lints/classify-ci-paths.nix { inherit pkgs; };
+    macos-bash = import ./lints/macos-bash.nix { inherit pkgs; };
     production-facts = import ./lints/production-facts.nix { inherit pkgs; };
     secret-shapes = import ./lints/secret-shapes.nix { inherit lib pkgs; };
     git-hooks = import ./lints/git-hooks.nix { inherit lib pkgs; };

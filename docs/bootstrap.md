@@ -566,7 +566,7 @@ generation is needed.
 
 ## Verification coverage
 
-`checks/atyrode/bootstrap.nix` uses temporary homes and repositories, covering the
+`checks/atyrode/bootstrap/` uses temporary homes and repositories, covering the
 read-only plan, fresh and repeated application, source updates, origin and
 revision defenses, installer failures and their classification into codes,
 every self-healing repair and its undo journal, the recovery phase and its
@@ -580,8 +580,13 @@ through a test-hook override and stages the machine behind `diskutil`,
 `launchctl`, `security`, and `plutil` stand-ins — including a `/etc` that is
 reached through a symlink, a keychain that refuses an unprivileged read, and a
 launchd plist that is not readable as text, because a fixture that is easier
-than the platform tests nothing. The same check runs natively in all three CI
-jobs.
+than the platform tests nothing. The scenarios are grouped into seven
+derivations over the shared fixtures in `checks/atyrode/bootstrap/harness.nix`
+— `bootstrap-lint`, `bootstrap-core`, `bootstrap-darwin-etc`,
+`bootstrap-darwin-trust`, `bootstrap-darwin-volumes`,
+`bootstrap-darwin-codes-recover`, and `bootstrap-terminal` — so a failure in
+one group rebuilds only that group instead of every scenario. They all run
+natively in all three CI jobs.
 
 The login-shell contract is no longer among them. It is covered in
 `checks/atyrode/atyrode-apply.nix`, against the real CLI that now converges it.

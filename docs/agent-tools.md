@@ -237,81 +237,64 @@ Babel keeps a shared PostgreSQL catalog alongside the repository, so
 `babel sessions list` can answer which machine held which session, and when,
 without downloading snapshots.
 
-Provisioning happens through `atyrode apply`. Home Manager installs Babel's
-hourly timer on every managed machine, but the unit does not arm until an
-archive configuration exists, so between install and provisioning a machine
+Provisioning is a clan var
+([`modules/shared/babel-archive.nix`](../modules/shared/babel-archive.nix);
+the custody model is in [secrets.md](secrets.md)). Home Manager installs
+Babel's hourly timer on every managed machine, but the unit does not arm until
+an archive configuration exists, so between install and generation a machine
 holds an installed, inactive timer. That is the intended resting state, not a
 half-configured one: nothing is scheduled to push until there is something to
-push with. Apply offers the ceremony after a successful activation, configures
-the machine once you accept, and arms the timer as soon as the configuration is
-written. It supplies the archive identity from the host registry, because that
-identity — not the reported hostname — is what snapshots are filed under, and
-the registry is already where this fleet names its machines. Declining is
-honoured; the activation succeeds either way, and the timer stays unarmed until
-the ceremony runs.
+push with.
 
-The one step that cannot be automated is the Bitwarden password: the restic
-repository password lives in the vault, and only the operator can open it. That
-is the whole of the manual surface — one password prompt per machine, ever.
+The values only the operator holds are typed once, on an operator device, at
+`clan vars generate <host>`: the restic repository password, and the two
+add-on environments as `clever addon env <add-on> --format json` prints them,
+pasted whole. They become the shared `babel-custody` var, validated at
+generation so a bad paste fails at the terminal and never at an activation;
+the per-machine `babel-archive` var renders this machine's storage document
+from them under the registry identity -- not the reported hostname, because
+that identity is what snapshots are filed under -- and every later host reuses
+the same custody without re-prompting. `atyrode apply` on the machine places
+the document and the password file at mode 0600 under `/run/secrets`, links
+`~/.config/babel/storage.json` to the placed document, and arms the timer;
+`babel storage configure` is never run on a fleet machine. The document's
+presence at that path is what "configured" means, and `atyrode doctor
+provisioning` names the generation a machine is owed. No connection material
+and no provider hostname lives in this repository: all of it arrives through
+the prompts. A machine configured by the old ceremony keeps a plain file at
+that path, which Home Manager refuses to replace; remove it (and the old
+`~/.config/babel/repository-password`) before the first apply that places the
+link.
 
-The ceremony is also a command, for recovery and for inspecting what it would
-do. It takes no arguments on a machine that has been configured before, and
-resolves the Clever Cloud add-ons by name at run time, so no add-on identifier
-is recorded in this repository or carried by an operator:
-
-```sh
-atyrode provision babel --dry-run
-```
-
-`--dry-run` reports the repository locator, catalog host, password file, vault
-item, and how many payload keys the vault carries, without writing anything. The
-real run unlocks the vault (prompting if it is locked, or reusing `BW_SESSION`),
-generates the restic repository password on first use or retrieves the stored
-one afterwards, writes it to the
-mode-0600 file restic reads by path
-(`~/.config/babel/repository-password`), reads the Cellar and PostgreSQL
-credentials live from the Clever Cloud add-ons rather than duplicating them
-into the vault, pipes one document into `babel storage configure --from-json -`,
-and relocks on every exit path (`--keep-unlocked` opts out). Babel validates
-that document and atomically installs it at `~/.config/babel/storage.json`; its
-presence is what "configured" means. Re-running is safe: the vault item is
-created only when absent and the password is never regenerated once stored. No
-connection material lives in this repository.
-
-The same vault item carries Babel's Phase B payload key ring, in a hidden
-`payload_keys` field, and the ceremony hands it to Babel in that same document.
-One custody path for the whole deployment: a machine provisioned here gets its
-locator, its provider credentials and its keys in one act, and Babel installs
-the ring at mode 0600 beside `storage.json` — the ceremony carries it and never
-writes it, never prints it, and never puts it on a command line. Without the
-ring a fleet member still reads every plaintext catalog row and can open no
-record's content, which is a degradation rather than a failure and is exactly
-why it is easy to miss.
-
-The ring is the deployment's whole append-only history, never the newest key
-alone: an object sealed under a retired key still needs that key, so the install
-is a union that adds keys and drops none, and refuses outright when a delivered
-key id names different material than the machine already holds. A vault item
-with no ring — the state of every item created before this existed — is a note
-naming the one-time step rather than a failure:
+The vault item that once held the repository password still carries Babel's
+Phase B payload key ring, in a hidden `payload_keys` field, until the ring
+moves to a var of its own. Without the ring a fleet member still reads every
+plaintext catalog row and can open no record's content, which is a degradation
+rather than a failure and is exactly why it is easy to miss. The ring is the
+deployment's whole append-only history, never the newest key alone: an object
+sealed under a retired key still needs that key, so the upload is a union that
+adds keys and drops none, and refuses outright when a key id names different
+material in the vault than on this host:
 
 ```sh
-babel-storage-configure --upload-payload-keys   # on the machine that holds the ring
-atyrode provision babel                         # then on every other machine
+atyrode provision babel --upload-payload-keys   # on the machine that holds the ring
 ```
 
-That uploads this machine's ring into the vault item, merging with whatever is
-already there and reporting key ids and counts, never material. It is also the
-second half of rotation: append a key to the ring, upload, re-provision.
+That unlocks the vault (prompting if it is locked, or reusing `BW_SESSION`),
+merges this machine's `~/.config/babel/payload-keys.json` into the item, reports
+key ids and counts and never material, and relocks on every exit path
+(`--keep-unlocked` opts out; `--dry-run` reports the merge and writes nothing).
+It refuses when the item is absent rather than creating one.
 
 A `babel-archive` systemd user timer (launchd agent on macOS) then runs the
 `babel-archive-push` wrapper unattended. The timer's start condition is
 `~/.config/babel/storage.json`, so it arms only on a configured machine —
-storage is configured and verified first, and only then does anything push on a
-schedule. Both `atyrode apply` and `atyrode provision babel` arm it the moment
-the ceremony writes that document, so a machine configured today does not wait
-for its next login; `systemctl --user start babel-archive.timer` arms one by
-hand. To see why a timer is not armed,
+storage is placed and verified first, and only then does anything push on a
+schedule. systemd reads that condition when the timer starts, and the unit does
+not change when the document appears, so `atyrode apply` starts the timer
+after every activation and a machine whose document was placed today does not
+wait for its next login; `systemctl --user start babel-archive.timer` arms one
+by hand. To see why a timer is not armed,
 `systemctl --user status babel-archive.timer` reports it inactive and names the
 condition that was not met, `journalctl --user -u babel-archive.timer` keeps the
 same line, and the presence or absence of `~/.config/babel/storage.json` is that

@@ -131,8 +131,8 @@ path under `/run/secrets` at activation and never in the Nix store. The
 `host-registry` check asserts that the declared set is exactly the fleet's, so
 a new generator is a reviewed change rather than a side effect.
 
-The fleet declares one, [`git-identity`](../modules/shared/git-identity.nix),
-on every clan machine: an authentication key and a signing key, ed25519, minted
+The fleet declares two. The first, [`git-identity`](../modules/shared/git-identity.nix),
+is on every clan machine: an authentication key and a signing key, ed25519, minted
 per machine and never shared, so retiring a machine deletes one registration
 instead of rotating a key the whole fleet uses. The private halves are secrets
 placed by sops-nix and owned by the account that uses them; the public halves
@@ -140,6 +140,25 @@ are ordinary values in `vars/`, which is what keeps the signer set reviewable.
 A generated signing key is trusted only when a commit adds it to
 [`modules/home/git/allowed-signers`](../modules/home/git/allowed-signers), and
 the `git-identity` check fails while a generated key is missing from that file.
+
+The second is the pair in
+[`babel-archive`](../modules/shared/babel-archive.nix), Babel's storage
+custody, which replaces a Bitwarden ceremony. `babel-custody` is shared and
+prompted: the restic repository password -- existing, never minted, the one
+value no provider can reissue -- and the two Clever Cloud add-on environments
+pasted whole as `clever addon env <add-on> --format json` prints them. Its
+files are secrets that are never deployed (`deploy = false`): they exist only
+as inputs, so no machine holds the raw add-on environments, and a paste that
+is not JSON or lacks a key fails at the operator's terminal rather than at an
+activation. `babel-archive` is per machine and depends on it: from those
+inputs it renders the storage document Babel reads, under the registry
+identity, with the repository password placed beside it at the path the
+document names. Both are placed by sops-nix at mode 0600 and owned by the
+account that runs the archive timer, and Home Manager links
+`~/.config/babel/storage.json` to the placed document, so Babel reads it where
+it always has. No provider hostname or credential is in the repository: all of
+it arrives through the prompts, and the payload key ring is deliberately not
+part of this document yet ([agent-tools.md](agent-tools.md#session-archive)).
 
 ## Revocation and rotation
 

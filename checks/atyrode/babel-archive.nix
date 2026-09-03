@@ -101,40 +101,38 @@ pkgs.runCommand "check-babel-archive"
     grep -Fq 'babel/storage.json' <<<"$gate"
 
     # Half a gate is worse than none. systemd evaluates a start condition when
-    # the timer is started, not continuously, so a machine configured after
-    # activation would never arm unless the ceremony starts the timer itself --
-    # and an operator who waited for an hour that never came would have no way
-    # to tell a gate from a breakage. Both halves are asserted: the arming sits
-    # inside the function that completes a ceremony, and apply's offer runs
-    # that very command rather than the ceremony underneath it, so accepting
-    # the offer and typing the command cannot leave the timer in two different
-    # states.
+    # the timer is started, not continuously, and the document is placed by
+    # activation now, so the one thing left for the CLI to do is start the
+    # timer after every activation. That step lives in apply's plan and nowhere
+    # else: a provisioning offer that armed it too would be a second place, and
+    # two places is how the timer ended up in two states before.
     arm=${atyrodeSource}
     grep -Fq 'systemctl" --user start babel-archive.timer' "$arm"
     awk '
-      $0 ~ "^provision_babel\\(\\) \\{" { inside = 1; next }
+      $0 ~ "^archive_converge_timer\\(\\)" { inside = 1; next }
       inside && /archive_arm_timer/ { hit = 1 }
       /^\}/ { inside = 0 }
       END { exit hit ? 0 : 1 }
     ' "$arm" || {
-      echo 'atyrode: provision_babel completes the storage ceremony without arming the archive timer' >&2
+      echo 'atyrode: the apply step that converges the archive timer no longer arms it' >&2
       exit 1
     }
-    awk '
+    if awk '
       $0 ~ "^provisioning_run\\(\\)" { inside = 1; next }
-      inside && /babel-archive\).*provision_now babel/ { hit = 1 }
+      inside && /babel-archive\)/ { hit = 1 }
       /^\}/ { inside = 0 }
       END { exit hit ? 0 : 1 }
-    ' "$arm" || {
-      echo "atyrode: apply's archive offer must run the command it names (atyrode provision babel), which is what arms the timer" >&2
+    ' "$arm"; then
+      echo 'atyrode: apply offers a babel ceremony again; storage is a clan var and no ceremony may exist to fetch it' >&2
       exit 1
-    }
-    # An unconfigured machine is told why nothing archives. The reason now
-    # comes from one place -- the probe states it and the policy states what
-    # configuring it implies -- so both paths that report it stay in step.
-    grep -Fq 'the hourly timer is installed but archives nothing' "$arm"
+    fi
+    # An unconfigured machine is told which device owes the generation, by the
+    # probe and by the apply step alike, and the policy names the same command.
+    grep -Fq 'the hourly timer archives nothing until activation places it' "$arm"
+    grep -Fq 'no storage document placed yet (clan vars generate' "$arm"
     ${lib.escapeShellArg "${pkgs.jq}/bin/jq"} -e \
-      '.surfaces["babel-archive"].command == "atyrode provision babel"
+      '.surfaces["babel-archive"].command == "clan vars generate <host>"
+       and .surfaces["babel-archive"].declinable == false
        and (.surfaces["babel-archive"].implies | test("hourly timer"))' \
       ${../../fleet/provisioning.json} >/dev/null
     ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
@@ -196,35 +194,29 @@ pkgs.runCommand "check-babel-archive"
     test -n "$first_use"
     test "$export_line" -lt "$first_use"
 
-    # Payload key custody rides in this same ceremony (babel issue 112): the
-    # vault item that holds the repository password carries the Phase B key ring
-    # too, so one custody path serves the whole deployment. Every property below
-    # is about what the script may not do with a ring, which is why they are read
-    # from source rather than from a rendered attribute set.
+    # What is left of the ceremony is the payload key ring (babel issue 112),
+    # carried into the vault until the ring itself becomes a var. Every
+    # property below is about what the script may not do with a ring, which is
+    # why they are read from source rather than from a rendered attribute set.
     #
-    # The ring reaches python through the environment, on the same terms as the
-    # vault session above: argv is readable from any process listing, the
-    # environment is readable only by this user.
-    grep -Fq 'os.environ["BABEL_PAYLOAD_KEYS_JSON"]' "$ceremony"
-    grep -Fq 'BABEL_PAYLOAD_KEYS_JSON="$vault_ring"' "$ceremony"
+    # The ring reaches python through the environment or a file path, on the
+    # same terms as the vault session above: argv is readable from any process
+    # listing, the environment is readable only by this user.
+    grep -Fq 'BABEL_PAYLOAD_KEYS_FILE="$payload_keys_file"' "$ceremony"
     if grep -nE '(python3|bw|babel)[^|]*\$\{?(vault_ring|merged_item)' "$ceremony"; then
       echo 'the storage ceremony passes a payload key ring on a command line; it travels in the environment or on stdin' >&2
       exit 1
     fi
 
-    # Babel installs the ring; this script only carries it. That file is the one
+    # Babel owns the ring file; this script only reads it. That file is the one
     # thing in Babel that is nothing but key material, and it is written
     # atomically at mode 0600 by the program that owns its format -- never by a
     # shell redirect here, which would race a concurrent sync and could truncate
     # a ring whose loss is permanent.
     if grep -nE '>[[:space:]]*"\$payload_keys_file"' "$ceremony"; then
-      echo 'the storage ceremony writes the payload key document itself; babel storage configure installs it' >&2
+      echo 'the storage ceremony writes the payload key document itself; babel owns it' >&2
       exit 1
     fi
-    # And the outcome is verified rather than assumed, because the point of
-    # carrying the ring is that no operator places a key file by hand.
-    grep -Fq 'a payload key ring is 600' "$ceremony"
-    grep -Fq 'predates payload-key delivery' "$ceremony"
 
     # The union discipline, in the one place this repository can break it. The
     # upload merges the vault ring with this host's rather than replacing it: a
@@ -235,20 +227,14 @@ pkgs.runCommand "check-babel-archive"
     grep -Fq 'merged, added = dict(vault_keys), []' "$ceremony"
     grep -Fq 'names different material in the vault than on this host' "$ceremony"
 
-    # A machine whose vault item predates the ring is told the exact one-time
-    # step by name, rather than left to assemble a bw pipeline around key
-    # material by hand.
-    grep -Fq 'carries no payload key ring' "$ceremony"
-    grep -Fq -- 'babel-storage-configure --upload-payload-keys' "$ceremony"
-
-    # An upload is not a provisioning run: with no vault item it must refuse
-    # rather than mint a repository password nobody asked for, so its branch
-    # comes before the branch that generates one.
-    upload_guard="$(grep -n -m1 'elif \[ "\$upload_ring" -eq 1 \]; then' "$ceremony" | cut -d: -f1)"
-    generate_line="$(grep -n -m1 'bw generate' "$ceremony" | cut -d: -f1)"
-    test -n "$upload_guard"
-    test -n "$generate_line"
-    test "$upload_guard" -lt "$generate_line"
+    # The script fetches nothing and mints nothing any more: a bare run is
+    # refused by name, pointing at the generation, and no password is ever
+    # generated here again.
+    grep -Fq "storage is a clan var now: run 'clan vars generate <host>'" "$ceremony"
+    if grep -n 'bw generate' "$ceremony"; then
+      echo 'the ceremony mints a repository password again; the password is a prompt of the babel-custody generator' >&2
+      exit 1
+    fi
 
     # macOS runs the same wrapper hourly via launchd. launchd has no condition
     # to gate on, so there the wrapper's own check of the storage document is

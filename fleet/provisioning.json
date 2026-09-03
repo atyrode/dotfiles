@@ -50,13 +50,10 @@
     },
     "babel-archive": {
       "label": "Babel session archive",
-      "command": "atyrode provision babel",
-      "implies": "Configures where sessions are archived and arms the hourly timer that publishes them. Needs your vault password once.",
-      "declinable": true,
-      "prerequisites": [
-        "bitwarden-session",
-        "clever-session"
-      ]
+      "command": "clan vars generate <host>",
+      "implies": "Generates this machine's storage document on an operator device from the repository password and the add-on credentials typed once; the next apply places it and arms the hourly timer that publishes sessions. No vault and no provider session on this machine.",
+      "declinable": false,
+      "prerequisites": []
     },
     "local-qwen": {
       "label": "local-qwen model runtime",
@@ -78,11 +75,6 @@
       "label": "a Bitwarden session",
       "command": "atyrode vault login",
       "without": "no secret can be read on this machine, so nothing the vault holds can be configured"
-    },
-    "clever-session": {
-      "label": "a Clever Cloud session",
-      "command": "clever login",
-      "without": "the archive add-ons cannot be looked up, so this machine cannot learn where to publish"
     }
   }
 }

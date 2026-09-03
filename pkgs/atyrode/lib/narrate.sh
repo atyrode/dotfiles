@@ -129,7 +129,7 @@ confirm() { # question
 # verdict. Steps do not nest -- a nested one is a step of its own or a detail
 # line of this one -- so the indent below is set on entry and cleared on the
 # verdict rather than kept on a stack. Outside a step it is empty, so a bare
-# `atyrode provision babel` still prints its commands flush left.
+# `atyrode provision git` still prints its commands flush left.
 STEP_INDENT=''
 STEP_TOTAL=0
 STEP_INDEX=0

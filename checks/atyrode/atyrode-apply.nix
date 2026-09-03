@@ -256,8 +256,9 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qE '^  1\. Rebuild and switch development-x86_64-linux through nh-home\.$' "$TMPDIR/plan.err"
     grep -qE '^  2\. Record development-x86_64-linux as the activated host\.$' "$TMPDIR/plan.err"
     grep -qE '^  3\. Converge the account login shell\.$' "$TMPDIR/plan.err"
-    grep -qE '^  4\. Review the provisioning surfaces' "$TMPDIR/plan.err"
-    grep -qE "^  5\. Render this machine's agent context\.\$" "$TMPDIR/plan.err"
+    grep -qE '^  4\. Arm the hourly archive timer' "$TMPDIR/plan.err"
+    grep -qE '^  5\. Review the provisioning surfaces' "$TMPDIR/plan.err"
+    grep -qE "^  6\. Render this machine's agent context\.\$" "$TMPDIR/plan.err"
     grep -qF 'No changes were made. Drop --plan to run this.' "$TMPDIR/plan.err"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
@@ -448,19 +449,16 @@ pkgs.runCommand "check-atyrode-apply"
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
-    # A successful apply with neither Babel's storage document nor a success
-    # stamp names the provisioning ceremony without failing the activation.
-    # This harness has no terminal, so the non-interactive path must name the
-    # ceremony rather than offer it -- and it must still state what configuring
-    # it implies, because a machine that only says "not configured" leaves the
-    # operator to go and find out what they would be agreeing to.
-    grep -qF 'Babel session archive is not configured' "$TMPDIR/apply-success.err"
-    grep -qF 'arms the hourly timer that publishes them' "$TMPDIR/apply-success.err"
-    grep -qF 'configure with: atyrode provision babel' "$TMPDIR/apply-success.err"
+    # A successful apply on this portable fixture has nothing to say about the
+    # archive: its storage document is a clan var generated only for a fleet
+    # machine, so the surface is not applicable here rather than unconfigured,
+    # and the timer step names the document it is waiting on instead.
+    grep -qF 'no storage document placed yet' "$TMPDIR/apply-success.err"
+    ! grep -qF 'Babel session archive' "$TMPDIR/apply-success.err"
     # No question is asked where nothing can answer it.
     ! grep -qF 'now?' "$TMPDIR/apply-success.err"
     # No prompt without a terminal, and nothing an operator cannot retype: not a
-    # checkout path, and not the store path the ceremony actually lives at.
+    # checkout path, and not the store path a ceremony actually lives at.
     ! grep -qiF 'bitwarden password' "$TMPDIR/apply-success.err"
     ! grep -qF 'nix-dotfiles/scripts' "$TMPDIR/apply-success.err"
     ! grep -qF '/nix/store' "$TMPDIR/apply-success.err"
@@ -469,12 +467,13 @@ pkgs.runCommand "check-atyrode-apply"
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
 
-    # The babel ceremony ends at a master-password prompt, so a vault that is
-    # not even logged in is an earlier blocker than the one the offer is about,
-    # and an operator who is not told answers yes to a program that cannot
-    # start. Both readings are driven through the CLI's own bw seam: the
-    # wrapper prefixes the real bw onto PATH and adopt_activated_path only
-    # appends, so a stub anywhere on PATH could never win.
+    # The CLI carries its own bw, and a sandbox has no session, so every
+    # vault-backed surface below would otherwise be offered its login first.
+    # The scenarios that follow are about the surfaces themselves, so the
+    # vault stops being a free variable here. The stub is driven through the
+    # CLI's own bw seam: the wrapper prefixes the real bw onto PATH and
+    # adopt_activated_path only appends, so a stub anywhere on PATH could
+    # never win.
     mkdir -p "$TMPDIR/vaultbin"
     {
       printf '#!%s\n' "${pkgs.runtimeShell}"
@@ -486,9 +485,9 @@ pkgs.runCommand "check-atyrode-apply"
       printf 'esac\n'
     } > "$TMPDIR/vaultbin/bw"
     chmod +x "$TMPDIR/vaultbin/bw"
-    # The second link of the babel chain. A sandbox can neither hold nor
-    # acquire a real Clever Cloud session, so the stub keeps its own: `profile`
-    # succeeds once `login` has run.
+    # A sandbox can neither hold nor acquire a real Clever Cloud session, and
+    # the agent context below reports clever's session state, so the stub
+    # keeps its own: `profile` succeeds once `login` has run.
     {
       printf '#!%s\n' "${pkgs.runtimeShell}"
       printf 'case "$1" in\n'
@@ -499,94 +498,6 @@ pkgs.runCommand "check-atyrode-apply"
     } > "$TMPDIR/vaultbin/clever"
     chmod +x "$TMPDIR/vaultbin/clever"
     touch "$TMPDIR/clever-session"
-    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
-    ATYRODE_BW="$TMPDIR/vaultbin/bw" atyrode apply --repo "$HOME/nix-dotfiles" \
-      >/dev/null 2>"$TMPDIR/apply-vault-out.err" ||
-      { cat "$TMPDIR/apply-vault-out.err" >&2; exit 1; }
-    grep -qF 'it needs a Bitwarden session first: atyrode vault login' \
-      "$TMPDIR/apply-vault-out.err"
-    # Never a bare `bw login`: this fleet's account is on the EU cloud, where
-    # the bw default fails a first login with a misleading "invalid master
-    # password" -- the obvious advice is the advice that wastes an evening.
-    if grep -qF 'bw login' "$TMPDIR/apply-vault-out.err"; then
-      echo 'the vault remedy pointed at the login that fails on this fleet' >&2
-      exit 1
-    fi
-    # The claim is a reading, not a constant: a reachable vault stops the offer
-    # from mentioning login at all.
-    printf '%s\n' '{"status":"unlocked"}' > "$TMPDIR/bw-status.json"
-    ATYRODE_BW="$TMPDIR/vaultbin/bw" atyrode apply --repo "$HOME/nix-dotfiles" \
-      >/dev/null 2>"$TMPDIR/apply-vault-in.err" ||
-      { cat "$TMPDIR/apply-vault-in.err" >&2; exit 1; }
-    grep -qF 'Babel session archive is not configured' "$TMPDIR/apply-vault-in.err"
-    if grep -qF 'needs a Bitwarden session' "$TMPDIR/apply-vault-in.err"; then
-      echo 'the babel offer reported a login blocker against a reachable vault' >&2
-      exit 1
-    fi
-
-    # A prerequisite this CLI owns is something to offer, not homework to set.
-    # Declining leaves the surface alone and never starts a ceremony that
-    # cannot finish; the offer is separate from the surface's own because
-    # answering no here makes that question moot.
-    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
-    blocker_no="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" ATYRODE_CLEVER="$TMPDIR/vaultbin/clever" \
-      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
-    grep -qF 'Babel session archive needs a Bitwarden session, and without it' <<<"$blocker_no" \
-      || { echo "a blocker must say what declining costs: $blocker_no" >&2; exit 1; }
-    grep -qF 'run atyrode vault login now?' <<<"$blocker_no" \
-      || { echo "a blocker must be offered, not recited: $blocker_no" >&2; exit 1; }
-    grep -qF 'stays unconfigured until atyrode vault login runs' <<<"$blocker_no" \
-      || { echo 'declining a prerequisite must say what it leaves behind' >&2; exit 1; }
-    if grep -qF 'babel-storage-configure' <<<"$blocker_no"; then
-      echo 'declining the prerequisite must not start the ceremony anyway' >&2
-      exit 1
-    fi
-
-    # Accepting runs it here, announced by the name the offer used rather than
-    # the resolved store path: the operator was asked about `atyrode vault
-    # login`, so that is what the transcript has to show starting.
-    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
-    blocker_yes="$(printf 'y\ny\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" ATYRODE_CLEVER="$TMPDIR/vaultbin/clever" \
-      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
-    grep -qE '^  \$ atyrode vault login$' <<<"$blocker_yes" \
-      || { echo "the prerequisite must be announced as it was offered: $blocker_yes" >&2; exit 1; }
-    if grep -qE '^  \$ /nix/store/[a-z0-9]{32}-atyrode' <<<"$blocker_yes"; then
-      echo 'the announcement must not disagree with the question above it' >&2
-      exit 1
-    fi
-    # Prerequisites waterfall in declared order, each offered on its own with
-    # what declining costs, and the surface only asked about once every link
-    # holds. Both links are settled here, then the surface itself is declined,
-    # which proves the chain never runs a ceremony the operator did not accept.
-    printf '%s\n' '{"status":"unauthenticated"}' > "$TMPDIR/bw-status.json"
-    rm -f "$TMPDIR/clever-session"
-    chain_out="$(printf 'y\ny\nn\n' | _ATYRODE_TEST_TTY=1 ATYRODE_BW="$TMPDIR/vaultbin/bw" \
-      ATYRODE_CLEVER="$TMPDIR/vaultbin/clever" atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" || true
-    grep -qF 'needs a Clever Cloud session, and without it the archive add-ons cannot be looked up' <<<"$chain_out" \
-      || { echo "the second link must be offered with its cost: $chain_out" >&2; exit 1; }
-    grep -qE '^  \$ clever login$' <<<"$chain_out" \
-      || { echo "the clever login must be announced as offered: $chain_out" >&2; exit 1; }
-    test -e "$TMPDIR/clever-session" \
-      || { echo 'accepting the clever link must actually run the login' >&2; exit 1; }
-    vault_line="$(grep -nF '$ atyrode vault login' <<<"$chain_out" | head -1 | cut -d: -f1)"
-    clever_line="$(grep -nF '$ clever login' <<<"$chain_out" | head -1 | cut -d: -f1)"
-    test "$vault_line" -lt "$clever_line" \
-      || { echo 'links must be offered in declared order' >&2; exit 1; }
-    grep -qF 'run atyrode provision babel for development-x86_64-linux now?' <<<"$chain_out" \
-      || { echo 'once every link holds the surface itself is offered' >&2; exit 1; }
-    if grep -qF 'babel-storage-configure' <<<"$chain_out"; then
-      echo 'declining the surface must not run the ceremony' >&2
-      exit 1
-    fi
-    touch "$TMPDIR/clever-session"
-    rm -f "$XDG_CONFIG_HOME/babel/storage.json" \
-      "$XDG_STATE_HOME/atyrode/provisioning-declined"
-
-    # The CLI carries its own bw, and a sandbox has no session, so every
-    # vault-backed surface below would otherwise be offered its login first.
-    # That is the right behaviour and it is asserted directly above; the
-    # scenarios that follow are about the surfaces themselves, so the vault
-    # stops being a free variable here.
     printf '%s\n' '{"status":"unlocked"}' > "$TMPDIR/bw-status.json"
     export ATYRODE_BW="$TMPDIR/vaultbin/bw"
     export ATYRODE_CLEVER="$TMPDIR/vaultbin/clever"
@@ -596,19 +507,20 @@ pkgs.runCommand "check-atyrode-apply"
     # whether each part worked -- and read all of it again once the scrollback
     # is gone. A step that announces itself and then goes quiet is the shape
     # this replaces: it is indistinguishable from a step that hung.
-    grep -qE '^1/5 Rebuild and switch development-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
-    grep -qE '^2/5 Record development-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
-    grep -qE '^3/5 Converge the account login shell$' "$TMPDIR/apply-success.err"
-    grep -qE '^4/5 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
-    grep -qE "^5/5 Render this machine's agent context$" "$TMPDIR/apply-success.err"
+    grep -qE '^1/6 Rebuild and switch development-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
+    grep -qE '^2/6 Record development-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
+    grep -qE '^3/6 Converge the account login shell$' "$TMPDIR/apply-success.err"
+    grep -qE '^4/6 Arm the hourly archive timer$' "$TMPDIR/apply-success.err"
+    grep -qE '^5/6 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
+    grep -qE "^6/6 Render this machine's agent context$" "$TMPDIR/apply-success.err"
     # ... and a home-manager apply writes nothing this user could not write, so
     # it must not warn about a password prompt that will never arrive.
     if grep -qF 'nh elevates' "$TMPDIR/apply-success.err"; then
       echo 'a home-manager apply warned about an elevation it never performs' >&2
       exit 1
     fi
-    # Five steps, five verdicts: no step may end without one.
-    test "$(grep -cE '^  (ok|skip|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 5
+    # Six steps, six verdicts: no step may end without one.
+    test "$(grep -cE '^  (ok|skipped|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 6
     # And the reason a step is running, in the vocabulary of what decided it.
     grep -qF 'why fleet/system-boundary.json declares' "$TMPDIR/apply-success.err"
     grep -qF 'why fleet/provisioning.json declares 8 surfaces' "$TMPDIR/apply-success.err"
@@ -726,39 +638,77 @@ pkgs.runCommand "check-atyrode-apply"
     test -n "$run_log"
     test -n "$(find "$run_log" -perm 600 -print -quit)"
     grep -qE 'run: env LC_ALL=C\.UTF-8 .*nh home switch' "$run_log"
-    grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/5: Rebuild and switch' "$run_log"
+    grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/6: Rebuild and switch' "$run_log"
     grep -qF 'apply finished for development-x86_64-linux' "$run_log"
 
-    # With a terminal, the same state offers the ceremony instead of narrating
-    # it. This is the path a real machine takes, so it must ask before doing
-    # anything, name the identity it would configure, and honour a refusal by
-    # leaving a way back in -- while the activation itself still succeeds.
-    decline_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
-      { printf '%s\n' "$decline_out" >&2; exit 1; }
-    printf '%s\n' "$decline_out" | grep -qF 'the hourly timer is installed but archives nothing'
-    printf '%s\n' "$decline_out" | grep -qF 'run atyrode provision babel for development-x86_64-linux now?'
-    printf '%s\n' "$decline_out" | grep -qF 'this machine will not be asked again'
-    # Declining must not have configured anything.
-    test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
+    # provision names its targets, so a mistyped one cannot be mistaken for a
+    # missing feature.
+    ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
+    grep -qF 'provision expects git, babel or machine-key' "$TMPDIR/provision-usage.err"
 
-    # A decline is a per-machine answer, not a per-run one: the whole point of
-    # recording it is that the next apply does not re-ask a question already
-    # answered. Same state, same terminal, and this time no question at all.
-    ledger="$XDG_STATE_HOME/atyrode/provisioning-declined"
-    grep -q '^babel-archive	' "$ledger"
-    again_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
-      { printf '%s\n' "$again_out" >&2; exit 1; }
-    if printf '%s\n' "$again_out" | grep -qF 'run atyrode provision babel'; then
-      echo 'atyrode: a recorded decline was re-asked on the next apply' >&2
+    # The archive is never offered: its storage document is a clan var, so
+    # there is no ceremony this machine could run, only a generation an
+    # operator device owes it or a fix for an archive that is placed but not
+    # working. Every reading is a state of the document and the success stamp,
+    # judged for a fleet machine because a portable profile has no var at all.
+    babel_probe() { # host status code
+      ATYRODE_HOST="$1" atyrode doctor provisioning --json |
+        jq -e --arg status "$2" --arg code "$3" '
+          .surfaces[] | select(.id == "babel-archive")
+          | .status == $status and (.code // "") == $code
+        ' >/dev/null ||
+        { echo "atyrode: babel-archive on $1 was not $2/$3" >&2; exit 1; }
+    }
+    babel_probe development-x86_64-linux not-applicable portable-profile
+    babel_probe fixture-nixos degraded not-generated
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "babel-archive")
+      | .remediation == "clan vars generate fixture-nixos (on an operator device), then atyrode apply"' >/dev/null
+    # Document placed but no success stamp: the archive has never run here.
+    # That is configured-but-not-working, so it is told, never offered --
+    # there is no yes/no in "your archive is broken", only a fix.
+    mkdir -p "$XDG_CONFIG_HOME/babel"
+    printf '%s\n' '{}' > "$XDG_CONFIG_HOME/babel/storage.json"
+    babel_probe fixture-nixos degraded never-succeeded
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "babel-archive")
+      | .remediation == "babel archive status (then: babel archive push)"' >/dev/null
+    # A stamp older than the staleness window is degraded; a fresh one is fine.
+    mkdir -p "$XDG_STATE_HOME/babel"
+    date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
+    babel_probe fixture-nixos degraded archive-stale
+    date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
+    babel_probe fixture-nixos ok ""
+    # With the document placed, apply arms the timer instead of naming the
+    # generation it waits on. The stub systemctl refuses, which is the case
+    # that matters: the activation still succeeds, the argv is announced as
+    # the operator would repeat it, and the failure is reported by the one
+    # command that fixes it rather than as systemd's own text.
+    _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
+      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-arm.err" ||
+      { cat "$TMPDIR/apply-archive-arm.err" >&2; exit 1; }
+    grep -qE '^  \$ .*fake-systemctl --user start babel-archive\.timer$' "$TMPDIR/apply-archive-arm.err"
+    grep -qF 'arm it with: systemctl --user start babel-archive.timer' "$TMPDIR/apply-archive-arm.err"
+    ! grep -qF 'no storage document placed yet' "$TMPDIR/apply-archive-arm.err"
+    ! grep -qF 'now?' "$TMPDIR/apply-archive-arm.err"
+    rm -rf "$XDG_CONFIG_HOME/babel" "$XDG_STATE_HOME/babel"
+
+    # The provisioning surface apply does offer: the signing key the global
+    # Git config names is missing. Without a terminal that stays exactly the
+    # reminder it has always been, and nothing is asked of a machine that
+    # cannot answer.
+    printf '[user]\n\tsigningKey = %s\n' "$HOME/.ssh/absent-signing-key.pub" \
+      > "$HOME/.gitconfig"
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/git-identity-quiet.err" ||
+      { cat "$TMPDIR/git-identity-quiet.err" >&2; exit 1; }
+    grep -qF 'Git identity is not configured: Git identity incomplete: the configured signing key is missing' \
+      "$TMPDIR/git-identity-quiet.err"
+    grep -qF 'configure with: atyrode provision git' "$TMPDIR/git-identity-quiet.err"
+    if grep -qF 'run atyrode provision git' "$TMPDIR/git-identity-quiet.err" &&
+      grep -qF 'now?' "$TMPDIR/git-identity-quiet.err"; then
+      echo 'a machine with no terminal was asked a question it cannot answer' >&2
       exit 1
     fi
-    # Still reported, though: declined is not the same as absent, and "what is
-    # missing here" has to include what is missing on purpose.
-    atyrode doctor provisioning --json |
-      jq -e '.pending == 0
-        and (.surfaces[] | select(.id == "babel-archive")
-             | .status == "declined" and .code == "declined-by-operator")' >/dev/null
-    rm -f "$ledger"
 
     # A supervised apply an operator is watching keeps that operator's terminal,
     # and a captured job has none of what follows from that: the job is
@@ -779,7 +729,7 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'a live apply was submitted as a detached job' >&2
       exit 1
     fi
-    printf '%s\n' "$live_out" | grep -qF 'run atyrode provision babel for development-x86_64-linux now?'
+    printf '%s\n' "$live_out" | grep -qF 'run atyrode provision git for development-x86_64-linux now?'
     printf '%s\n' "$live_out" | grep -qF 'mutation boundary:'
     if printf '%s\n' "$live_out" | grep -qF 'reconnect with: atyrode apply-status'; then
       echo 'a live apply pointed the operator at output they were already reading' >&2
@@ -809,68 +759,43 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'a live apply captured the transcript it was supposed to stream' >&2
       exit 1
     fi
-    # The refusal configured nothing, which is also the state the blocks below
-    # start from.
-    test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
+    # The answer given through the worker was a refusal, so it is on the
+    # ledger; forgotten here so the decline below is asked for afresh.
+    ledger="$XDG_STATE_HOME/atyrode/provisioning-declined"
+    rm -f "$ledger"
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
 
-    # provision names both targets, so a mistyped one cannot be mistaken for a
-    # missing feature.
-    ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
-    grep -qF 'provision expects git, babel or machine-key' "$TMPDIR/provision-usage.err"
-
-    # Babel's storage document present but no success stamp: the archive has
-    # never run here. That is configured-but-not-working, so it is told, never
-    # offered -- there is no yes/no in "your archive is broken", only a fix.
-    mkdir -p "$XDG_CONFIG_HOME/babel"
-    printf '%s\n' '{}' > "$XDG_CONFIG_HOME/babel/storage.json"
-    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-new.err" ||
-      { cat "$TMPDIR/apply-archive-new.err" >&2; exit 1; }
-    grep -qF 'has never archived successfully' "$TMPDIR/apply-archive-new.err"
-    grep -qF 'fix with: babel archive status (then: babel archive push)' \
-      "$TMPDIR/apply-archive-new.err"
-    ! grep -qF 'now?' "$TMPDIR/apply-archive-new.err"
-
-    # A stamp older than the staleness window warns and still activates.
-    mkdir -p "$XDG_STATE_HOME/babel"
-    date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
-    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-stale.err" ||
-      { cat "$TMPDIR/apply-archive-stale.err" >&2; exit 1; }
-    grep -qE 'the last successful babel archive was [0-9]' \
-      "$TMPDIR/apply-archive-stale.err"
-    grep -qF 'fix with: babel archive status' "$TMPDIR/apply-archive-stale.err"
-
-    # A fresh stamp is silent.
-    date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
-    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-fresh.err" ||
-      { cat "$TMPDIR/apply-archive-fresh.err" >&2; exit 1; }
-    ! grep -qF 'babel archive' "$TMPDIR/apply-archive-fresh.err"
-
-    # The other provisioning surface apply notices: the signing key the global
-    # Git config names is missing. Without a terminal that stays exactly the
-    # reminder it has always been, and nothing is asked of a machine that
-    # cannot answer.
-    printf '[user]\n\tsigningKey = %s\n' "$HOME/.ssh/absent-signing-key.pub" \
-      > "$HOME/.gitconfig"
-    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/git-identity-quiet.err" ||
-      { cat "$TMPDIR/git-identity-quiet.err" >&2; exit 1; }
-    grep -qF 'Git identity is not configured: Git identity incomplete: the configured signing key is missing' \
-      "$TMPDIR/git-identity-quiet.err"
-    grep -qF 'configure with: atyrode provision git' "$TMPDIR/git-identity-quiet.err"
-    if grep -qF 'run atyrode provision git' "$TMPDIR/git-identity-quiet.err" &&
-      grep -qF 'now?' "$TMPDIR/git-identity-quiet.err"; then
-      echo 'a machine with no terminal was asked a question it cannot answer' >&2
-      exit 1
-    fi
     # With a terminal the reminder is followed by the offer to run the command
-    # it names, and a refusal is recorded so it is not asked twice.
+    # it names. This is the path a real machine takes, so it must ask before
+    # doing anything, name the identity it would configure, and honour a
+    # refusal by leaving a way back in -- while the activation itself still
+    # succeeds.
     git_decline="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 \
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$git_decline" >&2; exit 1; }
     printf '%s\n' "$git_decline" | grep -qF 'the configured signing key is missing'
     printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git for development-x86_64-linux now?'
     printf '%s\n' "$git_decline" | grep -qF 'this machine will not be asked again'
-    rm -f "$XDG_STATE_HOME/atyrode/provisioning-declined"
+    # Declining must not have configured anything.
+    test ! -e "$HOME/.ssh/absent-signing-key.pub"
+
+    # A decline is a per-machine answer, not a per-run one: the whole point of
+    # recording it is that the next apply does not re-ask a question already
+    # answered. Same state, same terminal, and this time no question at all.
+    grep -q '^git-identity	' "$ledger"
+    again_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      { printf '%s\n' "$again_out" >&2; exit 1; }
+    if printf '%s\n' "$again_out" | grep -qF 'run atyrode provision git'; then
+      echo 'atyrode: a recorded decline was re-asked on the next apply' >&2
+      exit 1
+    fi
+    # Still reported, though: declined is not the same as absent, and "what is
+    # missing here" has to include what is missing on purpose.
+    atyrode doctor provisioning --json |
+      jq -e '.pending == 0
+        and (.surfaces[] | select(.id == "git-identity")
+             | .status == "declined" and .code == "declined-by-operator")' >/dev/null
+    rm -f "$ledger"
     # Accepting runs that command for real, in this terminal. It cannot succeed
     # here (provision git refuses without an ssh-agent), and the refusal has to
     # stay the provisioning command's own: an apply that already activated does
@@ -936,9 +861,9 @@ pkgs.runCommand "check-atyrode-apply"
       || { echo "a failure that changed nothing must say so: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
     ! grep -qF 'could not activate this machine' "$TMPDIR/nh-fail.err" \
       || { echo 'a build failure must not be reported as a failed activation' >&2; exit 1; }
-    # The plan promised five steps and one of them failed; the other four must
+    # The plan promised six steps and one of them failed; the other five must
     # not simply vanish from the terminal, which reads as though they ran.
-    test "$(grep -cF 'not attempted' "$TMPDIR/nh-fail.err")" = 4 \
+    test "$(grep -cF 'not attempted' "$TMPDIR/nh-fail.err")" = 5 \
       || { echo "every unreached planned step owes a verdict: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
     grep -qF 'Converge the account login shell' "$TMPDIR/nh-fail.err" \
       || { echo 'an abandoned step must be named, not just counted' >&2; exit 1; }

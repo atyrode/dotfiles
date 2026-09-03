@@ -194,14 +194,19 @@ let
     config:
     config.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
     && config.clan.core.sops.defaultGroups == [ "admins" ]
-    && lib.attrNames config.clan.core.vars.generators == [ "git-identity" ]
+    &&
+      lib.attrNames config.clan.core.vars.generators == [
+        "babel-archive"
+        "babel-custody"
+        "git-identity"
+      ]
   ) clanMachineConfigs;
   registryCheck =
     assert lib.assertMsg (
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the git-identity generator";
+      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel and git-identity generators";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];

@@ -254,7 +254,15 @@ let
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
-    bootstrap = import ./atyrode/bootstrap.nix { inherit pkgs; };
+    bootstrap-core = import ./atyrode/bootstrap/core.nix { inherit pkgs; };
+    bootstrap-darwin-codes-recover = import ./atyrode/bootstrap/darwin-codes-recover.nix {
+      inherit pkgs;
+    };
+    bootstrap-darwin-etc = import ./atyrode/bootstrap/darwin-etc.nix { inherit pkgs; };
+    bootstrap-darwin-trust = import ./atyrode/bootstrap/darwin-trust.nix { inherit pkgs; };
+    bootstrap-darwin-volumes = import ./atyrode/bootstrap/darwin-volumes.nix { inherit pkgs; };
+    bootstrap-lint = import ./atyrode/bootstrap/lint.nix { inherit pkgs; };
+    bootstrap-terminal = import ./atyrode/bootstrap/terminal.nix { inherit pkgs; };
     codex-seed = import ./omp/codex-seed.nix { inherit pkgs; };
     desktop-fonts = import ./fleet/desktop-fonts.nix {
       inherit lib pkgs;

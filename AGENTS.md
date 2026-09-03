@@ -36,7 +36,7 @@ catch this one, so it is on whoever writes the sentence.
 ```sh
 nix flake check --show-trace            # every check for this system; green before any push
 nix fmt                                 # treefmt; CI fails on drift
-nix run nixpkgs#shellcheck -- -x pkgs/atyrode/atyrode bootstrap/install.sh get.sh ci/*.sh pkgs/*/*.sh pkgs/atyrode/ceremonies/*.sh
+nix run nixpkgs#shellcheck -- -x pkgs/atyrode/atyrode bootstrap/install.sh get.sh ci/*.sh pkgs/*/*.sh
 nix build .#atyrode                     # the CLI; then drive it: $(nix build .#atyrode --print-out-paths)/bin/atyrode
 nix build .#checks.x86_64-linux.<name>  # one check; `nix log <drv>` for the real failure
 ```

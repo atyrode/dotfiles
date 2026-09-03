@@ -47,29 +47,6 @@
 }:
 
 let
-  # The payload key ring upload, wrapped so `atyrode provision babel` reaches
-  # it with no checkout on disk and pinned to the same revision as the CLI.
-  # Storage itself is a clan var (modules/shared/babel-archive.nix), so this
-  # no longer carries clever-tools: the add-on credentials arrive through
-  # clan's prompts, on an operator device. babel is deliberately absent from
-  # runtimeInputs: a machine with no babel is not an archiving machine, and
-  # the CLI would otherwise carry babel's closure to every host in the fleet.
-  babelStorageConfigure = writeShellApplication {
-    name = "babel-storage-configure";
-    runtimeInputs = [
-      bitwarden-cli
-      coreutils
-      python3
-    ];
-    text = ''
-      # The ceremony speaks in the CLI's voice: same command announcements,
-      # same verdicts, same colour. An operator does not experience two
-      # programs, they experience one machine that must not go quiet halfway.
-      export ATYRODE_NARRATE=${../../pkgs/atyrode/lib/narrate.sh}
-      exec ${runtimeShell} ${./ceremonies/babel-storage-configure.sh} "$@"
-    '';
-  };
-
   # The generated agent context asks Clever Cloud one question -- is there a
   # session here -- and a workstation rarely carries clever-tools itself. This
   # exposes one copy to the CLI so the probe has an answer on a machine that
@@ -259,7 +236,6 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
       --replace-fail '@atyrode_disruption@' "$out/libexec/atyrode-disruption" \
-      --replace-fail '@babel_storage_configure@' '${lib.getExe babelStorageConfigure}' \
       --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityInventory}' \

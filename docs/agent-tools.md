@@ -245,44 +245,49 @@ half-configured one: nothing is scheduled to push until there is something to
 push with.
 
 The values only the operator holds are typed once, on an operator device, at
-`clan vars generate <host>`: the restic repository password, and the two
-add-on environments as `clever addon env <add-on> --format json` prints them,
-pasted whole. They become the shared `babel-custody` var, validated at
-generation so a bad paste fails at the terminal and never at an activation;
-the per-machine `babel-archive` var renders this machine's storage document
-from them under the registry identity -- not the reported hostname, because
-that identity is what snapshots are filed under -- and every later host reuses
-the same custody without re-prompting. `atyrode apply` on the machine places
-the document and the password file at mode 0600 under `/run/secrets`, links
-`~/.config/babel/storage.json` to the placed document, and arms the timer;
-`babel storage configure` is never run on a fleet machine. The document's
-presence at that path is what "configured" means, and `atyrode doctor
-provisioning` names the generation a machine is owed. No connection material
-and no provider hostname lives in this repository: all of it arrives through
-the prompts. A machine configured by the old ceremony keeps a plain file at
-that path, which Home Manager refuses to replace; remove it (and the old
-`~/.config/babel/repository-password`) before the first apply that places the
-link.
+`clan vars generate <host>`: the restic repository password, the two add-on
+environments as `clever addon env <add-on> --format json` prints them, pasted
+whole, and the deployment's payload key ring. They become the shared
+`babel-custody` var, validated at generation so a bad paste fails at the
+terminal and never at an activation; the per-machine `babel-archive` var
+renders this machine's storage document from the first three under the
+registry identity -- not the reported hostname, because that identity is what
+snapshots are filed under -- and every later host reuses the same custody
+without re-prompting. `atyrode apply` on the machine places the document, the
+password file, and the ring at mode 0600 under `/run/secrets`, links
+`~/.config/babel/storage.json` and `~/.config/babel/payload-keys.json` to the
+placed files, and arms the timer; `babel storage configure` is never run on a
+fleet machine. The document's presence at that path is what "configured"
+means, and `atyrode doctor provisioning` names the generation a machine is
+owed. No connection material and no provider hostname lives in this
+repository: all of it arrives through the prompts. A machine configured by
+the old ceremony keeps plain files at those paths, which Home Manager refuses
+to replace. Before removing any file, import the full existing ring into
+custody and verify it retains every key held by any configured machine or
+the old vault item; refuse conflicting material under the same key id.
+Only after that encrypted custody is secured, remove the old plain files
+(and `~/.config/babel/repository-password`) before the apply that places the
+links. Never leave the ring prompt empty when migrating an existing archive.
 
-The vault item that once held the repository password still carries Babel's
-Phase B payload key ring, in a hidden `payload_keys` field, until the ring
-moves to a var of its own. Without the ring a fleet member still reads every
-plaintext catalog row and can open no record's content, which is a degradation
-rather than a failure and is exactly why it is easy to miss. The ring is the
-deployment's whole append-only history, never the newest key alone: an object
-sealed under a retired key still needs that key, so the upload is a union that
-adds keys and drops none, and refuses outright when a key id names different
-material in the vault than on this host:
+The ring is the deployment's whole append-only key history, never the newest
+key alone: an object sealed under a retired key still needs that key, and
+without the ring a fleet member reads every plaintext catalog row and can open
+no record's content, which is a degradation rather than a failure and is
+exactly why it is easy to miss. The prompt takes the ring as
+`~/.config/babel/payload-keys.json` reads on a configured machine, pasted
+whole, and is validated to Babel's own rules (every key 32 bytes of standard
+base64 under a well-formed id, `active_key_id` naming one of them); left
+empty, the generator mints a ring of one fresh key under a date-stamped id,
+which is right only for a deployment that has sealed nothing yet. Rotation is
+an edit of the var, not a regeneration and not a ceremony on any machine:
+`clan vars get <host> babel-custody/payload-keys.json`, append the new key
+and name it active, `clan vars set <host> babel-custody/payload-keys.json`
+over stdin, then apply everywhere; every host seals under the new key and
+keeps opening what it already had ([secrets.md](secrets.md)).
 
-```sh
-atyrode provision babel --upload-payload-keys   # on the machine that holds the ring
-```
-
-That unlocks the vault (prompting if it is locked, or reusing `BW_SESSION`),
-merges this machine's `~/.config/babel/payload-keys.json` into the item, reports
-key ids and counts and never material, and relocks on every exit path
-(`--keep-unlocked` opts out; `--dry-run` reports the merge and writes nothing).
-It refuses when the item is absent rather than creating one.
+Do not run `babel sync --generate-key` on a managed machine: Babel's atomic
+rotation replaces the Home Manager symlink with a local file and does not
+update fleet custody. Rotate the shared var instead, retaining all prior keys.
 
 A `babel-archive` systemd user timer (launchd agent on macOS) then runs the
 `babel-archive-push` wrapper unattended. The timer's start condition is

@@ -1,4 +1,8 @@
-{ lib, pkgs }:
+{
+  lib,
+  pkgs,
+  clanMachine,
+}:
 
 let
   fixtures = import ../lib/omp-fixtures.nix { inherit lib pkgs; };
@@ -14,10 +18,9 @@ let
   linuxHasLegacyTimer = linuxAgentTools.systemd.user.timers ? atyrode-session-backup;
   darwinHasLegacyAgent = darwinAgentTools.launchd.agents ? atyrode-session-backup;
 
-  # The ceremony script and the command that runs it, read as source: the last
-  # two properties here are about what these files may not contain, and no
-  # rendered attribute set can answer that.
-  ceremony = ../../pkgs/atyrode/ceremonies/babel-storage-configure.sh;
+  # The CLI, read as source: the properties about the archive timer below are
+  # about what its functions may and may not do, and no rendered attribute set
+  # can answer that.
   atyrodeSource = import ../lib/atyrode-source.nix { inherit pkgs; };
 
   # The document `babel storage configure` writes, and nothing else does. It is
@@ -29,6 +32,19 @@ let
     assert lib.assertMsg (linuxArchiveTimer.Unit ? ConditionPathExists)
       "the archive timer must not arm before the storage ceremony: restore ConditionPathExists on its [Unit]";
     linuxArchiveTimer.Unit.ConditionPathExists;
+  # The generators, as the one clan machine this check is handed declares
+  # them. The ring and the document are what activation places; the three
+  # custody inputs never leave the operator's device.
+  custody = clanMachine.clan.core.vars.generators.babel-custody;
+  archive = clanMachine.clan.core.vars.generators.babel-archive;
+  ring = custody.files."payload-keys.json";
+  undeployed = map (name: custody.files.${name}.deploy) [
+    "repository-password"
+    "cellar-env.json"
+    "catalog-env.json"
+  ];
+  home = clanMachine.home-manager.users.${lib.head (lib.attrNames clanMachine.home-manager.users)};
+  linkTarget = name: home.xdg.configFile."babel/${name}".source;
 in
 pkgs.runCommand "check-babel-archive"
   {
@@ -50,14 +66,11 @@ pkgs.runCommand "check-babel-archive"
     # rclone is gone with the legacy archive; restic is the recovery tool.
     ! grep -Fq 'rclone' "$push"
 
-    # An unconfigured machine is a no-op, not an hourly failure, and it names the
-    # one command that sets a machine up. It must not name the ceremony script by
-    # path: the operator is not expected to run it, and a checkout may not exist
-    # on the machine reading this message.
+    # An unconfigured machine is a no-op, not an hourly failure, and it names
+    # the one command that sets a machine up.
     grep -Fq 'babel/storage.json' "$push"
     grep -Fq 'exit 0' "$push"
     grep -Fq 'atyrode apply' "$push"
-    ! grep -Fq 'babel-storage-configure' "$push"
     ! grep -Fq 'atyrode backup' "$push"
 
     # A repository is never created by the timer: `babel archive init` is a
@@ -164,75 +177,31 @@ pkgs.runCommand "check-babel-archive"
       fi
     ''}
 
-    # The vault session never reaches a command line. The ceremony's own header
-    # gives the reason -- argv is readable from any process listing while the
-    # environment is readable only by this user -- and babel SPEC.md 79 states
-    # it as a rule. A Bitwarden session is read and write access to every item
-    # in the vault for as long as it lasts, and `bw` reads BW_SESSION from the
-    # environment on its own, so naming the session as an argument is pure
-    # exposure with no benefit. That is exactly why it needs a guard rather
-    # than a comment: a redundant flag reads as a harmless clarification, and
-    # the leak it reopens is invisible in a diff.
-    ceremony=${ceremony}
-    if grep -n -- '--session' "$ceremony"; then
-      echo 'the storage ceremony names the vault session on a command line; it is exported instead' >&2
-      exit 1
-    fi
-    # The export those calls now depend on: unconditional and at top level, so
-    # it holds whichever unlock branch ran, and ahead of the first call that
-    # needs it. Without it the removal above would leave those calls with no
-    # session at all, so this is the other half of the same property.
-    export_line="$(grep -n -m1 '^export BW_SESSION$' "$ceremony" | cut -d: -f1)" || {
-      echo 'the storage ceremony no longer exports the vault session unconditionally' >&2
-      exit 1
-    }
-    first_use="$(grep -n -m1 -E '^(run_visible )?bw sync' "$ceremony" | cut -d: -f1)" || {
-      echo 'the storage ceremony no longer syncs the vault; re-point this ordering check' >&2
-      exit 1
-    }
-    test -n "$export_line"
-    test -n "$first_use"
-    test "$export_line" -lt "$first_use"
+    # What activation places is what custody generated, and nothing else on
+    # the machine may hold the key ring: the three inputs typed at the
+    # operator's device are never deployed, the ring is, at the mode babel
+    # writes it itself, owned by the account that reads it.
+    test ${lib.escapeShellArg (toString ring.deploy)} = 1
+    test ${lib.escapeShellArg (toString ring.secret)} = 1
+    test ${lib.escapeShellArg ring.mode} = 0600
+    test ${lib.escapeShellArg (lib.concatMapStringsSep "," toString undeployed)} = ',,'
+    test ${lib.escapeShellArg (toString (archive.dependencies == [ "babel-custody" ]))} = 1
 
-    # What is left of the ceremony is the payload key ring (babel issue 112),
-    # carried into the vault until the ring itself becomes a var. Every
-    # property below is about what the script may not do with a ring, which is
-    # why they are read from source rather than from a rendered attribute set.
-    #
-    # The ring reaches python through the environment or a file path, on the
-    # same terms as the vault session above: argv is readable from any process
-    # listing, the environment is readable only by this user.
-    grep -Fq 'BABEL_PAYLOAD_KEYS_FILE="$payload_keys_file"' "$ceremony"
-    if grep -nE '(python3|bw|babel)[^|]*\$\{?(vault_ring|merged_item)' "$ceremony"; then
-      echo 'the storage ceremony passes a payload key ring on a command line; it travels in the environment or on stdin' >&2
-      exit 1
-    fi
+    # Babel reads both documents where it always has, and what it finds there
+    # is the placed secret rather than a copy: a copy is a second custody.
+    test "$(readlink ${linkTarget "storage.json"})" = /run/secrets/vars/babel-archive/storage.json
+    test "$(readlink ${linkTarget "payload-keys.json"})" = /run/secrets/vars/babel-custody/payload-keys.json
 
-    # Babel owns the ring file; this script only reads it. That file is the one
-    # thing in Babel that is nothing but key material, and it is written
-    # atomically at mode 0600 by the program that owns its format -- never by a
-    # shell redirect here, which would race a concurrent sync and could truncate
-    # a ring whose loss is permanent.
-    if grep -nE '>[[:space:]]*"\$payload_keys_file"' "$ceremony"; then
-      echo 'the storage ceremony writes the payload key document itself; babel owns it' >&2
-      exit 1
-    fi
-
-    # The union discipline, in the one place this repository can break it. The
-    # upload merges the vault ring with this host's rather than replacing it: a
-    # dropped key orphans every object sealed under it forever, because nothing
-    # in this deployment deletes a remote object. Conflicting material under one
-    # key id refuses, because a key id selects the key that opens a record and
-    # two keys under one id is a fork of the deployment's key space.
-    grep -Fq 'merged, added = dict(vault_keys), []' "$ceremony"
-    grep -Fq 'names different material in the vault than on this host' "$ceremony"
-
-    # The script fetches nothing and mints nothing any more: a bare run is
-    # refused by name, pointing at the generation, and no password is ever
-    # generated here again.
-    grep -Fq "storage is a clan var now: run 'clan vars generate <host>'" "$ceremony"
-    if grep -n 'bw generate' "$ceremony"; then
-      echo 'the ceremony mints a repository password again; the password is a prompt of the babel-custody generator' >&2
+    # The ring's material never becomes a word: a pasted ring is copied
+    # verbatim, and a minted key flows from urandom through a pipe into jq
+    # without ever being captured, because a shell variable is one
+    # substitution away from argv and argv is readable from any process
+    # listing.
+    custody_script=${pkgs.writeText "babel-custody-script" custody.script}
+    grep -Fq 'cp "$prompts/payload-keys" "$out/payload-keys.json"' "$custody_script"
+    grep -Eq 'head -c 32 /dev/urandom \| base64 \|.*\|$' "$custody_script"
+    if grep -nE '(key|material|ring)="?\$\(' "$custody_script"; then
+      echo 'the custody generator captures key material into a variable' >&2
       exit 1
     fi
 

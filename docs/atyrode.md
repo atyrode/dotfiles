@@ -325,7 +325,7 @@ given.
 
 When an accepted ceremony stops anyway, the reason is the ceremony's own and
 the follow-up says so: `clear what it reported above, then: atyrode provision
-babel`. Naming the same command as a retry would send an operator to collect
+git`. Naming the same command as a retry would send an operator to collect
 the identical failure.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the

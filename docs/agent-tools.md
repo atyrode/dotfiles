@@ -132,33 +132,30 @@ of these managed layers and uses the operator's mutable approval policy. Use
 trust boundary and limits are documented in [Agent security](agent-security.md).
 
 Trusted authentication uses one canonical OMP broker backed by the `default`
-profile. The broker host's Home Manager service binds only to
-`127.0.0.1:46171`, writes its bearer token to
-`$XDG_STATE_HOME/atyrode/omp-auth-broker/token` with mode `0600`, and is the
-only process that stores or rotates OAuth refresh tokens. Bitwarden Secure Note
-`OMP auth broker` custodies only that broker's loopback URL, bearer token, and
-SSH target—not account credentials. Client machines materialize the note into
-`$XDG_CONFIG_HOME/atyrode/omp-auth-broker/env` (mode `0600`); the same Home
-Manager service then becomes a persistent SSH local-forward instead of starting
-another broker. `code` consumes the forwarded endpoint and keeps its encrypted
-snapshot cache under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
+profile, on the machine [`fleet/auth-broker.json`](../fleet/auth-broker.json)
+names. That host's Home Manager service binds only to `127.0.0.1:46171` and is
+the only process that stores or rotates OAuth refresh tokens. Every other clan
+machine's same service is a persistent SSH local-forward to that host, on the
+target [`modules/shared/omp-auth-broker.nix`](../modules/shared/omp-auth-broker.nix)
+derives from the registry and the host's `address.nix` the way clan reaches
+it, so the role and the target are decided in Nix and nothing on a machine is
+read to choose them. The bearer token is the shared `omp-auth-broker` clan var
+([secrets.md](secrets.md)): minted once on an operator device by
+`clan vars generate <host>`, placed by sops-nix at activation, mode `0600`,
+and linked to `~/.omp/auth-broker.token`, the path OMP itself reads it from on
+both sides. The broker never mints a token: until the value is placed, its
+service does not start and `atyrode doctor provisioning` reports the
+`omp-auth-broker` surface as owed a generation. `code` reads the same file at
+launch, because it talks to the broker itself and hands each run its
+credential through the environment, and keeps its encrypted snapshot cache
+under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`. No vault holds any of this,
+and no verb prints the token; `atyrode auth broker status` reports the mode,
+the broker host, the service, and whether the token is placed.
 
-Bootstrap the canonical host after applying the configuration, replacing the
-SSH target with the address every client can reach:
-
-```sh
-atyrode auth broker publish --via alex@broker-host
-```
-
-On each other machine, apply the configuration and pull the connection secret:
-
-```sh
-atyrode auth broker setup
-atyrode auth broker status
-```
-
-Add Anthropic/OpenAI OAuth accounts from `code` with `v`, then `a`, or directly
-with `omp auth-broker login <provider> --via=alex@broker-host`. Add API-key
+Add Anthropic/OpenAI OAuth accounts from `code` with `v`, then `a` -- on a
+tunnel machine the login runs on the broker host over the same SSH target,
+which Home Manager exports as `CODE_AUTH_LOGIN_VIA` -- or directly with
+`omp auth-broker login <provider> --via=alex@<broker host>`. Add API-key
 providers without exposing the key in argv:
 
 ```sh
@@ -170,6 +167,8 @@ account on its next automatic or manual (`r`) refresh; no credential file is
 copied between machines. Account-selection presets remain non-secret state in
 `$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. The `code` account
 manager reads only redacted broker data and never reads OAuth material.
+Rotating the token is `clan vars generate --regenerate` of the shared var and
+an apply on every machine, since all of them must present the same string.
 
 The `ompu` sandbox uses dedicated HOME, XDG, temporary, cache, worktree,
 authentication, and session paths below
@@ -182,8 +181,7 @@ sessions, MCP state, or caches.
 | State | Owner |
 | --- | --- |
 | `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state; the one exception is `~/.omp/agent/AGENTS.md`, a Home Manager symlink to the generated agent context |
-| `$XDG_STATE_HOME/atyrode/omp-auth-broker/token` | Canonical Home Manager broker service; secret bearer token, mode `0600` |
-| `$XDG_CONFIG_HOME/atyrode/omp-auth-broker/env` | Client bootstrap from Bitwarden; broker token and SSH target, mode `0600` |
+| `~/.omp/auth-broker.token` | Home Manager link to the `omp-auth-broker` clan var sops-nix places; the shared bearer token the broker checks and every client sends, mode `0600` |
 | `$XDG_CACHE_HOME/atyrode/omp-auth-broker/` | Broker client snapshot cache |
 | `$XDG_STATE_HOME/atyrode/code-auth-account-state.json` | `code`; non-secret account-selection presets |
 | `$XDG_STATE_HOME/code/sessions` | `code`; live session records |

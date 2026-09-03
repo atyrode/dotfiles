@@ -7,6 +7,7 @@
     "agent-context",
     "git-identity",
     "babel-archive",
+    "omp-auth-broker",
     "local-qwen",
     "manifold-agent"
   ],
@@ -52,6 +53,13 @@
       "label": "Babel session archive",
       "command": "clan vars generate <host>",
       "implies": "Generates this machine's storage document on an operator device from the repository password and the add-on credentials typed once; the next apply places it and arms the hourly timer that publishes sessions. No vault and no provider session on this machine.",
+      "declinable": false,
+      "prerequisites": []
+    },
+    "omp-auth-broker": {
+      "label": "OMP auth broker token",
+      "command": "clan vars generate <host>",
+      "implies": "Generates the bearer token the fleet's one OMP auth broker and every client of it share, on an operator device; the next apply places it, and the broker host serves with it while every other machine tunnels to that host. No vault and no provider session on this machine.",
       "declinable": false,
       "prerequisites": []
     },

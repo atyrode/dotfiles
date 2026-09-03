@@ -55,6 +55,7 @@ let
   configuredStub = pkgs.callPackage ../../pkgs/omp-configured {
     omp = stubOmp;
   };
+  brokerTokenFile = "/tmp/check-agent-auth-broker/auth-broker.token";
   evalAgentTools =
     platformPkgs: extraAgentTools:
     (lib.evalModules {
@@ -103,17 +104,28 @@ let
                 type = lib.types.attrsOf lib.types.anything;
                 default = { };
               };
+              assertions = lib.mkOption {
+                type = lib.types.listOf lib.types.anything;
+                default = [ ];
+              };
             };
 
             config = {
               xdg.configHome = "/tmp/check-agent-auth-broker/xdg-config";
               xdg.stateHome = "/tmp/check-agent-auth-broker/xdg-state";
               xdg.cacheHome = "/tmp/check-agent-auth-broker/xdg-cache";
+              # A fixture is not a clan machine, so nothing sets the broker
+              # role for it; the serve fixtures name a token path under the
+              # scratch tree that the broker check populates itself.
               atyrode.agentTools = {
                 enable = true;
                 seedPlainConfig = false;
                 ompPackage = configuredStub;
                 localClassifier.enable = false;
+                authBroker = {
+                  role = "serve";
+                  tokenFile = brokerTokenFile;
+                };
               }
               // extraAgentTools;
             };
@@ -133,16 +145,24 @@ let
       };
     }
   ) { };
-  linuxClientAgentTools = evalAgentTools (
-    pkgs
-    // {
-      openssh = stubSsh;
-      stdenv = pkgs.stdenv // {
-        isLinux = true;
-        isDarwin = false;
+  linuxClientAgentTools =
+    evalAgentTools
+      (
+        pkgs
+        // {
+          openssh = stubSsh;
+          stdenv = pkgs.stdenv // {
+            isLinux = true;
+            isDarwin = false;
+          };
+        }
+      )
+      {
+        authBroker = {
+          role = "tunnel";
+          target = "alex@broker.example";
+        };
       };
-    }
-  ) { };
   darwinAgentTools = evalAgentTools (
     pkgs
     // {
@@ -157,6 +177,7 @@ let
 in
 {
   inherit
+    brokerTokenFile
     configuredStub
     darwinAgentTools
     defaultsConfig

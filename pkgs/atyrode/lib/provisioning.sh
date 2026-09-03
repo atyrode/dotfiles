@@ -220,6 +220,7 @@ collect_provisioning_checks() {
   probe_agent_context
   probe_git_identity
   probe_babel_archive
+  probe_omp_auth_broker
   probe_local_qwen
   probe_manifold_agent
   jq -e --argjson expected "$(jq -c '.surfaceOrder' "$provisioning_policy")" \

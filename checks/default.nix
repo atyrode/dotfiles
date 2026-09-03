@@ -199,6 +199,7 @@ let
         "babel-archive"
         "babel-custody"
         "git-identity"
+        "omp-auth-broker"
       ]
   ) clanMachineConfigs;
   registryCheck =
@@ -206,7 +207,7 @@ let
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel and git-identity generators";
+      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, and omp-auth-broker generators";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];

@@ -472,9 +472,8 @@ pkgs.runCommand "check-atyrode-credentials"
     #!${pkgs.runtimeShell}
     case "$*" in
       '--user cat atyrode-omp-auth-brokers.service') exit 0 ;;
-      '--user restart atyrode-omp-auth-brokers.service')
-        touch "$TMPDIR/auth-broker-restarted"
-        ;;
+      '--user show -P ActiveState atyrode-omp-auth-brokers.service') printf 'active\n' ;;
+      '--user restart '*) touch "$TMPDIR/auth-broker-restarted" ;;
       *) exit 64 ;;
     esac
     EOF
@@ -547,56 +546,70 @@ pkgs.runCommand "check-atyrode-credentials"
     test "$(stat -c %a "$recovery_home/.ssh/id_ed25519_git_signing")" = 600
     ${pkgs.openssh}/bin/ssh-agent -k >/dev/null 2>&1 || true
 
-    # --- shared OMP auth broker: vault bootstrap, tunnel config, API keys -----
-    publisher_home="$TMPDIR/auth-publisher"
-    publisher_state="$publisher_home/.local/state"
-    mkdir -p "$publisher_state/atyrode/omp-auth-broker"
-    printf 'BROKER-TOKEN-TEST\n' > "$publisher_state/atyrode/omp-auth-broker/token"
-    chmod 600 "$publisher_state/atyrode/omp-auth-broker/token"
-    auth_publish_env=(env HOME="$publisher_home" XDG_STATE_HOME="$publisher_state" \
-      ATYRODE_BW="$TMPDIR/bin/vault-bw")
-    "''${auth_publish_env[@]}" atyrode auth broker publish --via alex@broker.example \
-      > "$TMPDIR/auth-publish.out" 2> "$TMPDIR/auth-publish.err"
-    test ! -s "$TMPDIR/auth-publish.out"
-    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-publish.err"
-    broker_note="$VAULT_STORE/$(printf 'note-%s' "$(printf '%s' 'OMP auth broker' | base64 -w0 | tr '+/=' '._-')")"
-    jq -e '.version == 1
-      and .url == "http://127.0.0.1:46171"
-      and .sshHost == "alex@broker.example"
-      and .token == "BROKER-TOKEN-TEST"' "$broker_note" >/dev/null
-
+    # --- shared OMP auth broker: placed token, status, API keys --------------
+    # The bearer token is a shared clan var sops-nix places and Home Manager
+    # links to ~/.omp/auth-broker.token; atyrode reads the link and never
+    # writes, restarts, or prints anything. Which side of the broker a host is
+    # on comes from fleet/auth-broker.json: dev-01 serves, every other clan
+    # machine tunnels, a portable profile has no side at all.
     client_home="$TMPDIR/auth-client"
-    client_config="$client_home/.config"
-    client_state="$client_home/.local/state"
-    mkdir -p "$client_home"
-    auth_client_env=(env HOME="$client_home" XDG_CONFIG_HOME="$client_config" \
-      XDG_STATE_HOME="$client_state" ATYRODE_BW="$TMPDIR/bin/vault-bw" \
-      ATYRODE_SYSTEMCTL="$TMPDIR/bin/auth-systemctl")
-    "''${auth_client_env[@]}" atyrode auth broker setup \
-      > "$TMPDIR/auth-setup.out" 2> "$TMPDIR/auth-setup.err"
-    auth_env_file="$client_config/atyrode/omp-auth-broker/env"
-    test "$(stat -c %a "$auth_env_file")" = 600
-    test -e "$TMPDIR/auth-broker-restarted"
-    (
-      set -u
-      source "$auth_env_file"
-      test "$OMP_AUTH_BROKER_MODE" = client
-      test "$OMP_AUTH_BROKER_URL" = 'http://127.0.0.1:46171'
-      test "$OMP_AUTH_BROKER_TOKEN" = BROKER-TOKEN-TEST
-      test "$OMP_AUTH_BROKER_SSH_HOST" = alex@broker.example
-    )
-    auth_status="$("''${auth_client_env[@]}" atyrode auth broker status --json)"
-    jq -e '.mode == "client" and .configured
-      and .sshHost == "alex@broker.example"' <<<"$auth_status" >/dev/null
+    mkdir -p "$client_home/.omp"
+    auth_client_env=(env HOME="$client_home" ATYRODE_SYSTEMCTL="$TMPDIR/bin/auth-systemctl")
+    for retired in publish setup; do
+      if "''${auth_client_env[@]}" atyrode auth broker "$retired" >/dev/null 2>&1; then
+        echo "auth broker $retired must be gone: the token is a clan var, not a vault item" >&2
+        exit 1
+      fi
+    done
+
+    # Before the var is placed the link dangles: status says so without
+    # inventing anything, on both sides of the broker.
+    ln -s /run/secrets/vars/omp-auth-broker/token "$client_home/.omp/auth-broker.token"
+    auth_status="$("''${auth_client_env[@]}" ATYRODE_HOST=wsl atyrode auth broker status --json)"
+    jq -e --arg tokenPath "$client_home/.omp/auth-broker.token" '
+      .mode == "tunnel" and .host == "dev-01" and .configured == false
+      and .tokenPath == $tokenPath and .service == "active"' <<<"$auth_status" >/dev/null
+    auth_status="$("''${auth_client_env[@]}" ATYRODE_HOST=dev-01 atyrode auth broker status --json)"
+    jq -e '.mode == "serve" and .host == "dev-01" and .configured == false' <<<"$auth_status" >/dev/null
+    auth_status="$("''${auth_client_env[@]}" ATYRODE_HOST=development-x86_64-linux atyrode auth broker status --json)"
+    jq -e '.mode == "none" and .host == "dev-01"' <<<"$auth_status" >/dev/null
+
+    # add-api-key needs the token to authenticate the upload; without it the
+    # failure names the generate step rather than a vault or a setup verb.
+    set +e
+    printf 'sk-deepseek-test\n' |
+      "''${auth_client_env[@]}" ATYRODE_HOST=wsl ATYRODE_FETCH="$TMPDIR/bin/auth-curl" \
+        atyrode auth broker add-api-key deepseek \
+        > "$TMPDIR/auth-add-key-unplaced.out" 2> "$TMPDIR/auth-add-key-unplaced.err"
+    add_key_status="$?"
+    set -e
+    test "$add_key_status" = 66
+    grep -qF 'clan vars generate wsl' "$TMPDIR/auth-add-key-unplaced.err"
+    test ! -e "$TMPDIR/auth-curl-args"
+
+    # The placed token: status reports it without printing it, and the upload
+    # carries it only inside the 0600 curl config, never in argv or stderr.
+    rm "$client_home/.omp/auth-broker.token"
+    printf 'BROKER-TOKEN-TEST' > "$client_home/.omp/auth-broker.token"
+    chmod 600 "$client_home/.omp/auth-broker.token"
+    auth_status="$("''${auth_client_env[@]}" ATYRODE_HOST=wsl atyrode auth broker status --json)"
+    jq -e '.mode == "tunnel" and .configured == true' <<<"$auth_status" >/dev/null
     ! grep -qF 'BROKER-TOKEN-TEST' <<<"$auth_status"
+    "''${auth_client_env[@]}" ATYRODE_HOST=wsl atyrode auth broker status > "$TMPDIR/auth-status.out"
+    grep -qF 'mode: tunnel' "$TMPDIR/auth-status.out"
+    grep -qF 'configured: yes' "$TMPDIR/auth-status.out"
+    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-status.out"
 
     printf 'sk-deepseek-test\n' |
-      "''${auth_client_env[@]}" ATYRODE_FETCH="$TMPDIR/bin/auth-curl" \
+      "''${auth_client_env[@]}" ATYRODE_HOST=wsl ATYRODE_FETCH="$TMPDIR/bin/auth-curl" \
         atyrode auth broker add-api-key deepseek \
         > "$TMPDIR/auth-add-key.out" 2> "$TMPDIR/auth-add-key.err"
     test ! -s "$TMPDIR/auth-add-key.out"
     ! grep -qF 'sk-deepseek-test' "$TMPDIR/auth-curl-args"
+    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-curl-args"
     ! grep -qF 'sk-deepseek-test' "$TMPDIR/auth-add-key.err"
+    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-add-key.err"
+    test ! -e "$TMPDIR/auth-broker-restarted"
 
     mkdir "$out"
   ''

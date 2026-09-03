@@ -143,11 +143,15 @@ pkgs.runCommand "check-omp-stack"
       ${pkgs.omp-configured}/bin/code
     grep -Fq 'export CODE_RUNTIME_BROKER="''${CODE_RUNTIME_BROKER:-atyrode}"' ${pkgs.omp-configured}/bin/code
     grep -Fq -- '--profile default usage --json' ${pkgs.omp-configured}/bin/code
-    broker_state="$TMPDIR/code-broker-state/atyrode/omp-auth-broker"
-    mkdir -p "$broker_state"
-    printf 'broker-token\n' > "$broker_state/token"
+    # The bearer token is the shared clan var Home Manager links to
+    # ~/.omp/auth-broker.token, the same file OMP resolves itself; `code` reads
+    # it into the environment because it talks to the broker over HTTP and
+    # passes the credential on through withAuthEnv. CODE_AUTH_LOGIN_VIA is
+    # not derived from anything on disk: tunnel machines export it from Home
+    # Manager, so here it is exactly what the caller's environment carried.
+    mkdir -p "$HOME/.omp"
+    printf 'broker-token\n' > "$HOME/.omp/auth-broker.token"
     CODE_ENV_LOG="$TMPDIR/code-broker-env" \
-      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
       XDG_CACHE_HOME="$TMPDIR/code-broker-cache" \
       ${configuredCodeStub}/bin/code ls
     printf '%s\n' \
@@ -159,33 +163,19 @@ pkgs.runCommand "check-omp-stack"
       'args=ls' > "$TMPDIR/expected-code-broker-env"
     cmp "$TMPDIR/expected-code-broker-env" "$TMPDIR/code-broker-env"
 
-    broker_config="$TMPDIR/code-broker-config/atyrode/omp-auth-broker"
-    mkdir -p "$broker_config"
-    cat > "$broker_config/env" <<'EOF'
-    OMP_AUTH_BROKER_MODE=client
-    OMP_AUTH_BROKER_URL=http://127.0.0.1:46171
-    OMP_AUTH_BROKER_TOKEN=shared-broker-token
-    OMP_AUTH_BROKER_SSH_HOST=alex@broker.example
-    EOF
-    chmod 600 "$broker_config/env"
-    CODE_ENV_LOG="$TMPDIR/code-shared-broker-env" \
-      XDG_CONFIG_HOME="$TMPDIR/code-broker-config" \
-      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
+    CODE_ENV_LOG="$TMPDIR/code-tunnel-broker-env" \
       XDG_CACHE_HOME="$TMPDIR/code-broker-cache" \
+      CODE_AUTH_LOGIN_VIA=alex@broker.example \
       ${configuredCodeStub}/bin/code ls
-    printf '%s\n' \
-      'OMP_AUTH_BROKER_URL=http://127.0.0.1:46171' \
-      'OMP_AUTH_BROKER_TOKEN=shared-broker-token' \
-      "OMP_AUTH_BROKER_SNAPSHOT_CACHE=$TMPDIR/code-broker-cache/atyrode/omp-auth-broker/snapshot.json" \
-      'CODE_AUTH_LOGIN_VIA=alex@broker.example' \
-      "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
-      'args=ls' > "$TMPDIR/expected-code-shared-broker-env"
-    cmp "$TMPDIR/expected-code-shared-broker-env" "$TMPDIR/code-shared-broker-env"
-    rm -rf "$TMPDIR/code-broker-config"
+    grep -Fxq 'CODE_AUTH_LOGIN_VIA=alex@broker.example' "$TMPDIR/code-tunnel-broker-env"
+    grep -Fxq 'OMP_AUTH_BROKER_TOKEN=broker-token' "$TMPDIR/code-tunnel-broker-env"
 
-    rm "$broker_state/token"
+    # A machine whose var is not yet placed has a dangling link where the
+    # token would be: `code` launches without a broker and clears any stale
+    # broker environment rather than forwarding it.
+    rm "$HOME/.omp/auth-broker.token"
+    ln -s /run/secrets/vars/omp-auth-broker/token "$HOME/.omp/auth-broker.token"
     CODE_ENV_LOG="$TMPDIR/code-no-broker-env" \
-      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
       OMP_AUTH_BROKER_URL=stale-url \
       OMP_AUTH_BROKER_TOKEN= \
       OMP_AUTH_BROKER_SNAPSHOT_CACHE=stale-cache \
@@ -198,6 +188,7 @@ pkgs.runCommand "check-omp-stack"
       "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
       'args=ls' > "$TMPDIR/expected-code-no-broker-env"
     cmp "$TMPDIR/expected-code-no-broker-env" "$TMPDIR/code-no-broker-env"
+    rm "$HOME/.omp/auth-broker.token"
 
     # `code babel` worker mode is the one launch on this machine that must not
     # resolve CODE_OMP to the managed launcher: Code's analysis worker drives OMP

@@ -533,9 +533,19 @@ Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.
 `doctor system [HOST] [--json]` audits the boundary that package installation
 alone cannot satisfy: the real login shell, Nix daemon and trust policy,
-container engine, antivirus ownership, Android device policy, and Homebrew
-drift. Its stable check IDs, row schema, statuses, exits, and read-only probe
-contract are documented in [Home Manager and system boundary](system-boundary.md).
+container engine, antivirus ownership, Android device policy, Homebrew drift,
+and, on macOS, the residue of an interrupted or superseded Nix installation.
+That last one is the state
+[`bootstrap/install.sh`](../bootstrap/install.sh) repairs before Nix exists --
+a shell rc backup that was never restored, an `/etc` profile file the
+installer wrote where nix-darwin expects to own a link, an `/etc` link into a
+store path that is gone, a TLS anchor Nix cannot read, an `fstab` line
+mounting `/nix` from a volume that no longer resolves. Repair has to run
+before Nix exists and stays in the installer; detection is shared knowledge,
+so a machine that installed successfully years ago is re-examined on every
+`atyrode doctor` and told which command repairs what it carries. Its stable
+check IDs, row schema, statuses, exits, and read-only probe contract are
+documented in [Home Manager and system boundary](system-boundary.md).
 `doctor git [--json]` is the matching user-side, read-only audit. Its ordered
 checks cover Git configuration readability, SSH-agent availability and loaded
 keys, the configured signing public key and permissions, exact managed

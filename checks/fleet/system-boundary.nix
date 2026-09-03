@@ -100,6 +100,7 @@ let
     "antivirus-data"
     "device-permissions"
     "homebrew-drift"
+    "bootstrap-residue"
   ];
   officialCache = "https://cache.nixos.org/";
   officialKey = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";

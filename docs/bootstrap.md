@@ -36,6 +36,17 @@ before `atyrode apply` can run is bootstrap's. Whatever a machine can be
 missing afterwards is detected by `atyrode doctor` and acted on by
 `atyrode apply`.
 
+The macOS repair states are the case where the two contracts meet rather than
+divide. Each of them -- a shell rc backup never restored, an `/etc` profile
+file where nix-darwin owns a link, an `/etc` link into a store path that is
+gone, a TLS anchor Nix cannot read, an `fstab` line naming a volume that no
+longer resolves -- can only be repaired before Nix exists, so the repair stays
+here. Nothing re-examined them afterwards, which meant a machine that
+installed successfully years ago carried them unseen; `atyrode doctor system`
+now reads the same paths under the `bootstrap-residue` check and names the
+`install.sh plan` that would repair what it finds. Detection is shared,
+repair is not.
+
 ## Fresh-machine command
 
 Run one command and choose from the registered presets compatible with the

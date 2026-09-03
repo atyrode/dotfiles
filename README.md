@@ -102,7 +102,9 @@ run the same apply command again.
 
 ## Daily commands
 
-Use the packaged `atyrode` interface, or check these highlights:
+Use the packaged `atyrode` interface. [Running the fleet](docs/day-to-day.md)
+is the guide: converging a machine, deploying one over SSH, adding a machine
+or a device, and what `doctor` reports. The highlights:
 
 ### Nix/Home Manager
 ```bash

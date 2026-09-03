@@ -9,6 +9,7 @@ not in a checklist.
 
 | Document | Covers |
 | --- | --- |
+| [day-to-day.md](day-to-day.md) | Running the fleet: converging a machine, adding one, adding a device, and what `doctor` is for |
 | [system-boundary.md](system-boundary.md) | Home Manager vs system (nix-darwin) ownership and the Homebrew convergence policy |
 | [hosts.md](hosts.md) | The host registry (`fleet/hosts.nix`): identity, platform, and capabilities |
 | [portable-profiles.md](portable-profiles.md) | The capability modules exported for reuse in other Home Manager configs |

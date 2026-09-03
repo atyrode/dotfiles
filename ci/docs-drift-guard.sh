@@ -60,36 +60,36 @@ compare() {
   echo "docs drift guard: no derivation drift outside the intentional whole-tree lints"
 }
 
-# Instantiate all checks for all CI systems at a revision. Uses a temporary
-# ref so the nix git fetcher can resolve commits (e.g. a PR base fetched by
-# sha) that no branch points at; shallow clones are supported.
+# Instantiate all checks for all CI systems at a revision.
+#
+# The tree is exported without its history and evaluated as a path flake,
+# because a git flake hands `self.rev` to the CLI derivation, which stamps it
+# in. That stamp changes on every commit, docs-only ones included, so
+# comparing two committed revisions reported every check that embeds the CLI
+# as drift and the fast path could never be green. A path flake has no
+# revision at all, so both sides read the same "dirty" and what remains
+# compared is what this guard is about: filesets, imports and deployed files.
 snapshot() {
-  local rev="$1" outfile="$2" repo sys first=1
-  repo="$(git rev-parse --show-toplevel)"
+  local rev="$1" outfile="$2" tree sys first=1
   rev="$(git rev-parse "$rev^{commit}")"
-  git update-ref "refs/drift-guard/$rev" "$rev"
-  TEMP_REFS+=("refs/drift-guard/$rev")
+  tree="$WORKDIR/tree-$rev"
+  mkdir -p "$tree"
+  git archive "$rev" | tar -x -C "$tree"
   {
     printf '{'
     for sys in "${SYSTEMS[@]}"; do
       [ "$first" = 1 ] || printf ','
       first=0
       printf '"%s":' "$sys"
-      nix eval --json \
-        "git+file://$repo?rev=$rev&shallow=1&allRefs=1#checks.$sys" \
+      nix eval --json "path:$tree#checks.$sys" \
         --apply 'checks: builtins.mapAttrs (_: drv: drv.drvPath) checks'
     done
     printf '}'
   } >"$outfile"
 }
 
-TEMP_REFS=()
 WORKDIR=""
 cleanup() {
-  local ref
-  for ref in "${TEMP_REFS[@]}"; do
-    git update-ref -d "$ref" || true
-  done
   [ -n "$WORKDIR" ] && rm -rf "$WORKDIR"
 }
 

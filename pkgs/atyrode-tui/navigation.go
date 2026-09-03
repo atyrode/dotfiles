@@ -17,6 +17,7 @@ const (
 	workspaceCapability clikit.WorkspaceID = "capabilities"
 	workspaceRuntime    clikit.WorkspaceID = "runtime"
 	workspaceTunnel     clikit.WorkspaceID = "tunnel"
+	workspaceCatalog    clikit.WorkspaceID = "catalog"
 	workspaceAsk        clikit.WorkspaceID = "ask"
 )
 
@@ -28,7 +29,8 @@ var cockpitWorkspaceItems = []clikit.WorkspaceItem{
 	{ID: workspaceCapability, Label: "Capabilities", Shortcut: "5"},
 	{ID: workspaceRuntime, Label: "Runtime", Shortcut: "6"},
 	{ID: workspaceTunnel, Label: "Tunnel", Shortcut: "7"},
-	{ID: workspaceAsk, Label: "Ask", Shortcut: "8"},
+	{ID: workspaceCatalog, Label: "Catalog", Shortcut: "8"},
+	{ID: workspaceAsk, Label: "Ask", Shortcut: "9"},
 }
 
 func newCockpitNav() clikit.WorkspaceNav {
@@ -71,6 +73,8 @@ func (m *model) activateWorkspace(id clikit.WorkspaceID) tea.Cmd {
 		return m.loadRuntime()
 	case workspaceTunnel:
 		return m.loadTunnel()
+	case workspaceCatalog:
+		return m.loadCatalog()
 	default:
 		return nil
 	}
@@ -107,12 +111,15 @@ func (m model) workspaceTabs(width int) string {
 		return ""
 	}
 	items := m.nav.Items()
+	// One row per tier where the labels still fit: a ninth destination must not
+	// cost the panel a third row of chrome at the widths an operator actually
+	// uses.
 	columns := 3
 	switch {
 	case width >= 132:
-		columns = 8
+		columns = 9
 	case width >= 64:
-		columns = 4
+		columns = 5
 	}
 	rows := make([]string, 0, (len(items)+columns-1)/columns)
 	for start := 0; start < len(items); start += columns {
@@ -149,12 +156,12 @@ func (m model) workspaceTabs(width int) string {
 
 func (m model) shellFooter() string {
 	_, width := m.horizontalLayout()
-	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–8 jump  ·  Ctrl+O ask  ·  q quit"
+	text := "Tab next workspace  ·  Shift+Tab previous  ·  1–9 jump  ·  Ctrl+O ask  ·  q quit"
 	switch {
 	case m.width < 60:
-		text = "Tab/⇧Tab navigate  ·  1–8 jump  ·  q"
+		text = "Tab/⇧Tab navigate  ·  1–9 jump  ·  q"
 	case m.width < 112:
-		text = "Tab/Shift+Tab navigate  ·  1–8 jump  ·  ^O ask  ·  q quit"
+		text = "Tab/Shift+Tab navigate  ·  1–9 jump  ·  ^O ask  ·  q quit"
 	}
 	return clikit.ClipLines(clikit.StDim.Render(text), width)
 }

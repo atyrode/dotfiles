@@ -42,6 +42,9 @@ let
   ];
   homebrewCasks = import ../modules/darwin/casks.nix;
   windowsPackageInventory = import ../fleet/windows-packages.nix;
+  # Curated software the operator launches ephemerally; fleet/catalog.nix says
+  # why nothing in it is declared.
+  catalogEntries = import ../fleet/catalog.nix;
 
   repositoryPackageNames = [
     "atyrode"
@@ -105,6 +108,7 @@ let
         clan-cli = clan-core.packages.${final.stdenv.hostPlatform.system}.clan-cli;
         atyrode = final.callPackage ../pkgs/atyrode {
           capabilities = capabilitySummary;
+          catalog = catalogEntries;
           inherit homebrewCasks;
           hostRegistry = publicRegistry // publicRuntimeProfiles;
           revision = inventoryRevision;

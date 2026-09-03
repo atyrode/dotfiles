@@ -137,3 +137,26 @@ atyrode rollback         # the previous generation, activated
 Rollback is why flipping something off is cheap: the old generation is still
 there until it is collected, so a change that turns out wrong is one command
 away from undone.
+
+## Running something without installing it
+
+```sh
+atyrode run                    # the reviewed catalog, with a reason each
+atyrode run tokei -- src       # run one; arguments after -- are its own
+```
+
+The catalog ([`fleet/catalog.nix`](../fleet/catalog.nix)) is a list of software
+worth remembering, not a list of software installed anywhere. A run leaves no
+generation and no GC root, so the next `atyrode clean` reclaims it and the
+machine is exactly what the registry said it was. Nothing is committed, which
+is the point: a tool borrowed for an afternoon was never a fact about this
+machine.
+
+An entry names the systems it runs on, because a package that has no macOS
+build must not be offered on the Mac. Mac applications are a different
+question: they arrive as declared Homebrew casks, so wanting one is a change
+to [the registry](../fleet/hosts.nix) and a commit, not a run.
+
+The same list is the Catalog workspace in `atyrode` with no arguments, which
+is where it is worth using: the point of the catalog is not typing fewer
+characters, it is not having to remember what the tool was called.

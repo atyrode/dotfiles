@@ -276,6 +276,10 @@ let
     bootstrap-darwin-volumes = import ./atyrode/bootstrap/darwin-volumes.nix { inherit pkgs; };
     bootstrap-lint = import ./atyrode/bootstrap/lint.nix { inherit pkgs; };
     bootstrap-terminal = import ./atyrode/bootstrap/terminal.nix { inherit pkgs; };
+    catalog = import ./fleet/catalog.nix {
+      inherit lib nixpkgs pkgs;
+      hostConfigs = canonicalHomeConfigs;
+    };
     codex-seed = import ./omp/codex-seed.nix { inherit pkgs; };
     desktop-fonts = import ./fleet/desktop-fonts.nix {
       inherit lib pkgs;

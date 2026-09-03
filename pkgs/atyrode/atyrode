@@ -13,6 +13,7 @@ shopt -s inherit_errexit
 
 readonly agents_policy='@agents_policy@'
 readonly registry='@registry@'
+readonly catalog='@catalog@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly babel_storage_configure='@babel_storage_configure@'
@@ -70,6 +71,8 @@ apply_job_worker=0
 . "$lib_dir/lifecycle.sh"
 # shellcheck source=lib/clean.sh
 . "$lib_dir/clean.sh"
+# shellcheck source=lib/catalog.sh
+. "$lib_dir/catalog.sh"
 # shellcheck source=lib/vault.sh
 . "$lib_dir/vault.sh"
 # shellcheck source=lib/tunnel.sh
@@ -133,6 +136,8 @@ Usage:
   atyrode generations [--json] [--sizes]
   atyrode rollback [--to N] [--dry-run] [--yes]
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
+  atyrode run [--list] [--json]
+  atyrode run NAME [-- ARG...]
   atyrode windows plan|apply [HOST] [--json]
 
 Fixed hosts keep registry-owned identity; portable bootstrap profiles bind the
@@ -214,6 +219,16 @@ and on macOS it also sweeps stale Home Manager Apps aliases. The auto GC roots t
 generations are owned by the Nix daemon; a non-root clean cannot unlink them and
 prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
 self-elevates). Commands reserved for later issues: workspace and agent.
+run is the reviewed catalog of software worth having without keeping: each entry
+names a nixpkgs attribute, one sentence saying why, and the systems it runs on.
+With no name, or --list, it prints the catalog; --json emits it; with a name it
+launches that entry through nix run and passes any trailing arguments to it.
+Nothing is installed, declared, or recorded, so clean is the whole return path:
+the run leaves no GC root. Given a terminal the program is handed it and behaves
+exactly as the announced nix run would; without one the launch is detached so a
+windowed program outlives the surface that asked for it. An entry that does not
+claim this machine's system is refused rather than attempted, because macOS GUI
+software is declared as a Homebrew cask and no cask has an ephemeral form.
 windows treats WinGet as the native Windows package owner. plan is read-only;
 apply reconciles exact package IDs through WSL interop after refusing channel
 conflicts. Windows mutations are not part of a Nix generation or rollback.
@@ -252,6 +267,7 @@ main() {
     generations) cmd_generations "$@" ;;
     lifecycle) cmd_lifecycle "$@" ;;
     rollback) cmd_rollback "$@" ;;
+    run) cmd_run "$@" ;;
     runtime) cmd_runtime "$@" ;;
     fleet) cmd_fleet "$@" ;;
     vault) cmd_vault "$@" ;;

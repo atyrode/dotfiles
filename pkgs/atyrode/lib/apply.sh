@@ -217,6 +217,7 @@ apply_config() {
       [[ "$activation" != nixos-wsl ]] ||
         planned+=("Reconcile native Windows packages through WinGet.")
       planned+=("Converge the account login shell.")
+      planned+=("Arm the hourly archive timer.")
       planned+=("Review the provisioning surfaces this machine declares.")
       planned+=("Render this machine's agent context.")
     fi
@@ -365,6 +366,10 @@ apply_config() {
     # machine that is still wrong never gets asked what else it would like.
     step_begin 'Converge the account login shell'
     converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
+    # The activation above may have just placed Babel's storage document, and
+    # the timer gated on it only re-reads its condition when started.
+    step_begin 'Arm the hourly archive timer'
+    archive_converge_timer "$host"
     step_begin 'Review the provisioning surfaces this machine declares'
     review_provisioning "$json" "$host"
     # Last, because the review may have just opened the sessions this file

@@ -46,10 +46,9 @@ provisioning_policy_field() { # id field
 }
 
 # A prerequisite is a session or a login some surface cannot start without.
-# They are declared once in the policy and shared: both vault-backed ceremonies
-# want the same Bitwarden session, so satisfying it for one settles it for the
-# next. Order matters and is the declared order -- logging into Clever Cloud
-# before the vault would just be a second thing to redo.
+# They are declared once in the policy and shared, so satisfying one for a
+# surface settles it for the next that wants it. Order matters and is the
+# declared order.
 prerequisite_field() { # id field
   jq -r --arg id "$1" --arg field "$2" \
     '.prerequisites[$id][$field] // ""' "$provisioning_policy"
@@ -62,7 +61,6 @@ prerequisite_field() { # id field
 prerequisite_met() { # id
   case "$1" in
     bitwarden-session) ! vault_logged_out ;;
-    clever-session) ! clever_logged_out ;;
     *) die "$EX_SOFTWARE" "no probe is wired for prerequisite $1" ;;
   esac
 }
@@ -253,12 +251,11 @@ provision_now() { # target
   run_self_visible provision "$1"
 }
 
-# Where clever comes from. A workstation rarely carries clever-tools itself --
-# the ceremony brings its own copy precisely so the machine does not have to --
-# so the CLI reaches the copy already in its closure rather than trusting PATH.
-# A probe that only looked at PATH would report "no opinion" on exactly the
-# machines that need the offer most, and the ceremony would then fail on the
-# very session the offer exists to acquire. The seam is for checks, which
+# Where clever comes from. A workstation rarely carries clever-tools itself,
+# so the CLI reaches the copy in its own closure rather than trusting PATH:
+# the generated agent context reports whether Clever Cloud has a session
+# here, and a probe that only looked at PATH would report "no opinion" on
+# exactly the machines that lack the tool. The seam is for checks, which
 # cannot log into a real provider.
 clever_program() {
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_CLEVER:-}" ]]; then
@@ -272,8 +269,7 @@ clever_program() {
 
 # Whether Clever Cloud has no session here. `clever profile` is the cheapest
 # question that needs one. A copy that cannot run at all is not a logged-out
-# provider and gets no opinion, so a broken build never offers a login that
-# would fail.
+# provider and gets no opinion.
 clever_logged_out() {
   local program
   program="$(clever_program)"
@@ -283,18 +279,10 @@ clever_logged_out() {
 
 # A prerequisite is reached by name, exactly as the ceremonies are: deriving
 # argv by splitting the policy string would make the inventory executable, and
-# an inventory that can run anything is not an inventory. clever is announced
-# by the name the offer used; the resolved copy goes to the log.
+# an inventory that can run anything is not an inventory.
 prerequisite_run() { # id
-  local program
   case "$1" in
     bitwarden-session) vault_login_child ;;
-    clever-session)
-      program="$(clever_program)"
-      show_command clever login
-      log_event "clever resolved to $program"
-      "$program" login
-      ;;
     *) die "$EX_SOFTWARE" "no runner is wired for prerequisite $1" ;;
   esac
 }
@@ -470,16 +458,16 @@ review_incomplete_surface() { # index host
 
 # Each ceremony is reached by the command the offer just named. The mapping is
 # explicit rather than derived from the command string: a surface whose
-# provisioning moves belongs to one line here, not to a parser.
+# provisioning moves belongs to one line here, not to a parser. The archive
+# has no line: its document is a clan var placed by activation, so the probe
+# only ever reports it as converged or as owed a generation, never as an
+# offer.
 provisioning_run() { # id host
   case "$1" in
     git-identity) provision_now git ;;
     machine-key) provision_now machine-key ;;
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
-    # The registry name, never a re-derived one: the archive can then only be
-    # published under the identity apply just activated.
-    babel-archive) ATYRODE_HOST="$2" provision_now babel ;;
     local-qwen) "$atyrode_runtime" provision local-qwen ;;
     manifold-agent) cmd_runtime_manifold provision ;;
     *) die "$EX_SOFTWARE" "no provisioning ceremony is wired for $1" ;;
@@ -511,16 +499,17 @@ provision_machine_key() {
   say "review the commit clan made in $checkout, then push it; apply on $host places the key"
 }
 
-# Arm the hourly archive timer, which the storage ceremony has just earned.
-# modules/home/agent-tools/contract.nix gates the timer with a ConditionPathExists on
-# Babel's storage document so that an unconfigured machine never pushes on a
-# schedule (babel SPEC.md 12, gate 728). systemd evaluates that condition when
-# the timer is started, not continuously, so a machine that activated before it
-# was configured leaves the timer inactive until something starts it -- and
-# without this, that something would be the next login. Starting a running
-# timer is a no-op, so this is safe to repeat. A host with no systemd (macOS
-# runs the same wrapper from launchd, which needs no arming) has nothing to do
-# here, and a failure to arm is reported rather than fatal: the archive is
+# Arm the hourly archive timer once activation has placed the storage
+# document. modules/home/agent-tools/contract.nix gates the timer with a
+# ConditionPathExists on that document so that an unconfigured machine never
+# pushes on a schedule (babel SPEC.md 12, gate 728). systemd evaluates the
+# condition when the timer is started, not continuously, and the unit itself
+# does not change when the document appears, so an activation that placed it
+# leaves the timer inactive until something starts it -- and without this,
+# that something would be the next login. Starting a running timer is a
+# no-op, so this is safe to repeat. A host with no systemd (macOS runs the
+# same wrapper from launchd, which needs no arming) has nothing to do here,
+# and a failure to arm is reported rather than fatal: the archive is
 # configured either way, and the operator is given the one command that fixes
 # it.
 archive_arm_timer() {
@@ -533,6 +522,17 @@ archive_arm_timer() {
   show_command "${arm[@]}"
   "${arm[@]}" >/dev/null 2>&1 ||
     printf 'could not arm the hourly archive timer; arm it with: systemctl --user start babel-archive.timer\n' >&2
+}
+
+# The apply step around it: nothing to arm on a machine whose document is not
+# placed yet, and that machine is told which device owes the generation.
+archive_converge_timer() { # host
+  if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json" ]]; then
+    archive_arm_timer
+    step_ok
+  else
+    step_skip "no storage document placed yet (clan vars generate $1 on an operator device, then apply)"
+  fi
 }
 
 # --- provision ----------------------------------------------------------------
@@ -632,35 +632,16 @@ provision_git_role() { # role private_path item_name persist yes scratch
   fi
 }
 
-# provision babel configures this machine's session archive. It is the same
-# ceremony `atyrode apply` offers, reachable by name for recovery and for
-# inspection with --dry-run; arguments are forwarded, so the override flags stay
-# usable. The identity is the registry name -- never the kernel hostname, which
-# is the thing a stable archive identity exists to stop mattering -- and it is
-# supplied only for a machine that has never been configured, because the
-# ceremony reuses a configured machine's own identity and refuses to change it.
+# provision babel carries this machine's payload key ring to the vault. It is
+# not a configuring act any more: the storage document is a clan var
+# (modules/shared/babel-archive.nix), generated on an operator device and
+# placed by activation, so nothing here reads a vault for it or arms a timer.
+# Arguments are forwarded, so --upload-payload-keys and --dry-run stay usable
+# by the names the docs give them.
 provision_babel() {
   [[ -x "$babel_storage_configure" ]] ||
-    die "$EX_UNAVAILABLE" "the babel provisioning ceremony is unavailable in this build"
-  local config_file host status=0
-  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
-  if [[ -f "$config_file" ]]; then
-    run_visible "$babel_storage_configure" "$@" || status=$?
-  else
-    host="$(resolve_host "")"
-    run_visible "$babel_storage_configure" --host-id "$host" "$@" || status=$?
-  fi
-  # Run rather than exec, because the ceremony is only half of configuring this
-  # machine: the hourly timer's start condition is the document the ceremony
-  # writes, and systemd tests that condition when the timer starts. Arming it
-  # here is what stops a machine provisioned by hand from archiving nothing
-  # until its next login. Nothing to arm when the ceremony failed or when it
-  # only rehearsed (--dry-run writes no document), and the exit status is the
-  # ceremony's own so a failure stays a failure.
-  if ((status == 0)) && [[ -f "$config_file" ]]; then
-    archive_arm_timer
-  fi
-  return "$status"
+    die "$EX_UNAVAILABLE" "the babel payload key upload is unavailable in this build"
+  run_visible "$babel_storage_configure" "$@"
 }
 
 cmd_provision() {

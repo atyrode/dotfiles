@@ -1279,22 +1279,27 @@ probe_git_identity() {
   fi
 }
 
+# The archive's storage document is a clan var placed by activation, so this
+# probe never offers a ceremony: a portable profile cannot have it, a clan
+# machine either has the placed document or is owed a generation on an
+# operator device, and a configured machine is judged by its last success.
+# `-f` follows the link Home Manager installs, so a document not yet placed
+# reads as absent exactly as it did before the value existed.
 probe_babel_archive() {
-  local config_file stamp_file last="" last_epoch now
+  local host config_file stamp_file last="" last_epoch now
 
-  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
-  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
-  if [[ ! -x "$babel_storage_configure" ]]; then
-    provisioning_check_add babel-archive not-applicable capability-not-selected \
-      "the babel archive ceremony is not part of this build" ""
+  host="$(resolve_host)"
+  if [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$host")")" == runtime ]]; then
+    provisioning_check_add babel-archive not-applicable portable-profile \
+      "a portable profile is not a clan machine, so no storage document is generated for it" ""
     return 0
   fi
+  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
   if [[ ! -f "$config_file" ]]; then
-    # The prerequisites this ceremony needs are declared in the policy and
-    # resolved centrally, so the probe states the surface's own condition and
-    # nothing about the sessions it happens to depend on.
-    provisioning_unconfigured babel-archive \
-      "the hourly timer is installed but archives nothing until this is configured"
+    provisioning_check_add babel-archive degraded not-generated \
+      "no storage document at $config_file; the hourly timer archives nothing until activation places it" \
+      "clan vars generate $host (on an operator device), then atyrode apply"
     return 0
   fi
   [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true

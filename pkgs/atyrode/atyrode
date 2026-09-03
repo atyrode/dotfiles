@@ -114,7 +114,7 @@ Usage:
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
   atyrode provision git [--persist] [--yes]
-  atyrode provision babel [--dry-run]
+  atyrode provision babel --upload-payload-keys [--dry-run]
   atyrode lifecycle [--json]
   atyrode context [show] [--json]
   atyrode context render

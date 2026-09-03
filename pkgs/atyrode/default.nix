@@ -47,16 +47,17 @@
 }:
 
 let
-  # The provisioning ceremony, wrapped so `atyrode apply` can offer it with no
-  # checkout on disk and pinned to the same revision as the CLI offering it.
-  # babel is deliberately absent from runtimeInputs: a machine with no babel is
-  # not an archiving machine, apply stays silent there, and the CLI would
-  # otherwise carry babel's closure to every host in the fleet.
+  # The payload key ring upload, wrapped so `atyrode provision babel` reaches
+  # it with no checkout on disk and pinned to the same revision as the CLI.
+  # Storage itself is a clan var (modules/shared/babel-archive.nix), so this
+  # no longer carries clever-tools: the add-on credentials arrive through
+  # clan's prompts, on an operator device. babel is deliberately absent from
+  # runtimeInputs: a machine with no babel is not an archiving machine, and
+  # the CLI would otherwise carry babel's closure to every host in the fleet.
   babelStorageConfigure = writeShellApplication {
     name = "babel-storage-configure";
     runtimeInputs = [
       bitwarden-cli
-      clever-tools
       coreutils
       python3
     ];
@@ -69,11 +70,10 @@ let
     '';
   };
 
-  # The apply process needs to ask Clever Cloud one question -- is there a
-  # session here -- and offer the login when there is not. clever-tools already
-  # travels in this closure inside the ceremony above; this exposes the same
-  # copy to the CLI, so the probe costs no closure weight and the offer can
-  # actually run what it offers on a machine that has no clever of its own.
+  # The generated agent context asks Clever Cloud one question -- is there a
+  # session here -- and a workstation rarely carries clever-tools itself. This
+  # exposes one copy to the CLI so the probe has an answer on a machine that
+  # has no clever of its own.
   babelClever = writeShellApplication {
     name = "babel-clever";
     runtimeInputs = [ clever-tools ];

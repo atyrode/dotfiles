@@ -223,45 +223,45 @@ a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
 never resolved automatically; skipping the review keeps every local value.
 
 apply also reports the provisioning surfaces this machine has left
-unconfigured: Babel session-archive health from the stamp Babel's push wrapper
-writes (see [Agent tools](agent-tools.md#session-archive)), and an incomplete
-Git identity — a `user.signingKey` whose public file is missing, or a reachable
+unconfigured: Babel session-archive health from the placed storage document
+and the stamp Babel's push wrapper writes (see
+[Agent tools](agent-tools.md#session-archive)), and an incomplete Git
+identity — a `user.signingKey` whose public file is missing, or a reachable
 agent holding no keys. Without a terminal each one prints the command that
-fixes it and nothing else. On a terminal each becomes an offer (`run atyrode
-provision babel for HOST now?`, `run atyrode provision git now?`), and
-accepting runs exactly that command in this terminal — what apply does and what
-the operator would have typed are the same thing, including the timer the
-ceremony arms. Declining prints the reminder unchanged. A configured machine
-that has never pushed successfully gets `babel archive status` and `babel
-archive push`, and an archive that has not succeeded within 48 hours is
-reported stale. None of this can fail the activation: a machine that declines
-to provision is still a machine that activated.
+fixes it and nothing else. On a terminal a surface with a ceremony becomes an
+offer (`run atyrode provision git now?`), and accepting runs exactly that
+command in this terminal — what apply does and what the operator would have
+typed are the same thing. Declining prints the reminder unchanged. The archive
+has no ceremony to offer: its document is a clan var placed by the activation
+itself, so a machine without one is told which generation it is owed
+(`clan vars generate HOST` on an operator device, then apply), a configured
+machine that has never pushed successfully gets `babel archive status` and
+`babel archive push`, and an archive that has not succeeded within 48 hours
+is reported stale. None of this can fail the activation: a machine that
+declines to provision is still a machine that activated.
 
 An offer resolves the prerequisites it knows about before asking about the
 surface, because a question is only fair if the answer can work. Prerequisites
 are declared once in `fleet/provisioning.json` as an ordered chain per
-surface -- Babel needs a Bitwarden session and then a Clever Cloud session; the
-Git identity needs only the vault -- and each carries what is lost without it.
-On a terminal every unmet link becomes its own offer, in declared order:
+surface -- the Git identity needs a Bitwarden session -- and each carries what
+is lost without it. On a terminal every unmet link becomes its own offer, in
+declared order:
 
 ```
-Babel session archive is not configured: ...
-  Babel session archive needs a Bitwarden session, and without it no secret can be read on this machine, so nothing the vault holds can be configured
+Git identity is not configured: ...
+  Git identity needs a Bitwarden session, and without it no secret can be read on this machine, so nothing the vault holds can be configured
 atyrode: run atyrode vault login now? [y/N] y
   $ atyrode vault login
-  Babel session archive needs a Clever Cloud session, and without it the archive add-ons cannot be looked up, so this machine cannot learn where to publish
-atyrode: run clever login now? [y/N] y
-  $ clever login
-atyrode: run atyrode provision babel for macbook now? [y/N]
+atyrode: run atyrode provision git for macbook now? [y/N]
 ```
 
 Telling an operator who is sitting at the prompt to go and type a command this
 CLI owns wastes the one moment they are there to answer, and the ceremony would
 only fail on it again, one link further in and a password poorer. Each link is
 asked for separately because declining one makes every question after it moot,
-and because links are shared: both vault-backed ceremonies want the same
-Bitwarden session, so once it holds the second one stops asking. Off a terminal
-the chain is stated instead, since there is nobody to answer.
+and because links are shared: every surface that wants the same session
+settles it once, and the next stops asking. Off a terminal the chain is stated
+instead, since there is nobody to answer.
 
 The session a link opens survives the rest of the run. `atyrode vault login`
 runs as its own process, so it hands its session key back through a private

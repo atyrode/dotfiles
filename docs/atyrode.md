@@ -406,10 +406,12 @@ group, and records the public half under `sops/machines/<host>/key.json`.
 `apply` places it at `/var/lib/sops-nix/key.txt` -- the path
 [`modules/shared/clan-machine.nix`](../modules/shared/clan-machine.nix) hands
 sops-nix on both classes -- as its first step on a clan machine, before the
-switch, so the activation that follows decrypts the machine's vars. The step
-is announced as the one pipeline it is, `clan secrets get <host>-age.key |
-sudo install ... /var/lib/sops-nix/key.txt`; the key travels through the pipe
-and never through argv or a stream. On a device with no registered operator
+switch, so the activation that follows decrypts the machine's vars. Both
+commands the step runs are announced: `clan secrets get <host>-age.key` into
+a mode-600 file in a mode-700 scratch directory, then
+`sudo install -D -m 0600 -o root` from there to the key's path, the scratch
+directory going with the step whatever its outcome. The key never reaches
+argv, a terminal, or the run log. On a device with no registered operator
 key the step says which device can place it instead.
 
 ```sh

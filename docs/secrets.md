@@ -116,10 +116,11 @@ writes: the identity line is never printed.
    `machine-key` surface: not applicable on a standalone Home Manager host,
    not yet in the repository, in the repository but not placed, or placed.
 2. Push, and on the machine `atyrode apply`: its first step places the key at
-   `/var/lib/sops-nix/key.txt` -- announced as the one pipeline it is, the
-   key travelling through it and never through argv -- and the activation
-   that follows decrypts the machine's vars. A machine reached over SSH gets
-   the same from `clan machines update <host>`.
+   `/var/lib/sops-nix/key.txt` -- decrypted into a mode-600 file in a
+   mode-700 scratch directory, installed from there as root, both commands
+   announced and neither carrying the key in argv -- and the activation that
+   follows decrypts the machine's vars. A machine reached over SSH gets the
+   same from `clan machines update <host>`.
 
 ## Declaring a secret
 

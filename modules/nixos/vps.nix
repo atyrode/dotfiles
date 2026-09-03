@@ -18,12 +18,10 @@ let
   machineAddress = import (machineDirectory + "/address.nix");
 
   # Which public keys may open a session on this machine. The registry under
-  # `modules/home/ssh/` is the fleet's reviewed key material — the same file
-  # the CLI reads as `sshFleetKeys` for `atyrode tunnel` — so a key reaches a
-  # machine only through a reviewed commit. On a machine whose sshd reads none
-  # of the operator's home directory, registration is access: `atyrode tunnel`
-  # renders `~/.ssh/authorized_keys`, which sshd here never consults, so every
-  # registered key is declared below or cannot connect at all.
+  # `modules/home/ssh/` is the fleet's reviewed key material, so a key reaches
+  # a machine only through a reviewed commit. sshd here reads none of the
+  # operator's home directory, so registration is access: every registered key
+  # is declared below or cannot connect at all.
   registryFields =
     line:
     lib.filter (field: builtins.isString field && field != "") (builtins.split "[[:space:]]+" line);
@@ -33,8 +31,8 @@ let
   reviewedKeys = map (fields: {
     inherit fields;
     name = builtins.elemAt fields 0;
-    keytype = builtins.elemAt fields 2;
-    key = builtins.elemAt fields 3;
+    keytype = builtins.elemAt fields 1;
+    key = builtins.elemAt fields 2;
   }) (map registryFields registryLines);
   reviewedPublicKeys = map (entry: "${entry.keytype} ${entry.key} ${entry.name}") reviewedKeys;
 in
@@ -56,9 +54,9 @@ in
       assertion =
         reviewedKeys != [ ]
         && lib.all (
-          entry: builtins.length entry.fields == 4 && lib.hasPrefix "ssh-ed25519" entry.keytype
+          entry: builtins.length entry.fields == 3 && lib.hasPrefix "ssh-ed25519" entry.keytype
         ) reviewedKeys;
-      message = "${hostId} requires modules/home/ssh/fleet-keys to hold reviewed Ed25519 keys in the NAME ROLE KEYTYPE KEY shape";
+      message = "${hostId} requires modules/home/ssh/fleet-keys to hold reviewed Ed25519 keys in the NAME KEYTYPE KEY shape";
     }
     {
       assertion =

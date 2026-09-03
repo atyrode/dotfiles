@@ -5,22 +5,20 @@
 }:
 
 let
-  # The Nerd Font is a desktop concern: both operator workstations must render
-  # powerline separators and Nerd glyphs in their terminal UIs, while headless
+  # The Nerd Font is a desktop concern: the operator workstation must render
+  # powerline separators and Nerd glyphs in its terminal UIs, while headless
   # hosts have nothing to render and must not grow the font in their closure.
   mac = hostConfigs.macbook.config;
-  linuxDesktop = hostConfigs.workstation-x86_64-linux.config;
-  headless = hostConfigs.platform-01.config;
   macPackages = map lib.getName mac.home.packages;
-  linuxDesktopPackages = map lib.getName linuxDesktop.home.packages;
-  headlessPackages = map lib.getName headless.home.packages;
+  headlessPackages = lib.concatMap (name: map lib.getName hostConfigs.${name}.config.home.packages) [
+    "dev-01"
+    "wsl"
+  ];
   nerdFont = pkgs.nerd-fonts.jetbrains-mono;
   nerdFontFile = "${nerdFont}/share/fonts/truetype/NerdFonts/JetBrainsMono/JetBrainsMonoNerdFontMono-Regular.ttf";
 in
 assert lib.assertMsg (builtins.elem "nerd-fonts-jetbrains-mono" macPackages)
   "the Mac host must install the JetBrainsMono Nerd Font";
-assert lib.assertMsg (builtins.elem "nerd-fonts-jetbrains-mono" linuxDesktopPackages)
-  "the Linux desktop host must install the JetBrainsMono Nerd Font";
 assert lib.assertMsg (
   !(builtins.elem "nerd-fonts-jetbrains-mono" headlessPackages)
 ) "the Nerd Font is a desktop concern; headless hosts must not carry it";

@@ -22,7 +22,7 @@ const fullPreview = "\x1b[?25l⠋ Building\r⏱ 0s\rFinished at 14:18:57 after 0
 	"⏱ 0sFinished at 14:18:57 after 0s\n"
 
 func TestParseBuildsStableStructuredPreview(t *testing.T) {
-	doc, err := Parse(fullPreview, Metadata{Host: "platform-01", System: "x86_64-linux", ResolvedRevision: strings.Repeat("a", 40)})
+	doc, err := Parse(fullPreview, Metadata{Host: "development-x86_64-linux", System: "x86_64-linux", ResolvedRevision: strings.Repeat("a", 40)})
 	if err != nil {
 		t.Fatal(err)
 	}

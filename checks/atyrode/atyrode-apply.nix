@@ -195,8 +195,8 @@ pkgs.runCommand "check-atyrode-apply"
       and (.[] | select(.name == "base") | .active)
       and ((.[] | select(.name == "desktop") | .active) | not)
     ' >/dev/null
-    atyrode capabilities show platform-01 --json | jq -e '
-      .host == "platform-01"
+    atyrode capabilities show development-x86_64-linux --json | jq -e '
+      .host == "development-x86_64-linux"
       and (.description | length > 0)
       and (.capabilities | map(.name) | index("agent-tools"))
       and all(.capabilities[]; .description | length > 0)
@@ -207,7 +207,7 @@ pkgs.runCommand "check-atyrode-apply"
     mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json"
     atyrode capabilities list --json | jq -e 'all(.[]; .active | not)' >/dev/null
     mv "$TMPDIR/host.json" "$XDG_CONFIG_HOME/atyrode/host.json"
-    atyrode doctor host --json | jq -e '.ok and .registered.id == "platform-01"' >/dev/null
+    atyrode doctor host --json | jq -e '.ok and .registered.id == "development-x86_64-linux"' >/dev/null
     tools="$(atyrode doctor tools --json || true)"
     jq -e '
       any(.[]; .name == "OMP"
@@ -239,7 +239,7 @@ pkgs.runCommand "check-atyrode-apply"
     ' "$TMPDIR/adopted.json" >/dev/null
 
     atyrode apply --repo "$HOME/nix-dotfiles" --plan --json | jq -e '
-      .host == "platform-01"
+      .host == "development-x86_64-linux"
       and .backend == "nh-home"
       and .source == "local"
       and .revision == "0123456789ab"
@@ -253,8 +253,8 @@ pkgs.runCommand "check-atyrode-apply"
     # before committing, so it has to name the same steps the run then walks.
     rm -f "$TMPDIR/nh-args"
     atyrode apply --repo "$HOME/nix-dotfiles" --plan >/dev/null 2>"$TMPDIR/plan.err"
-    grep -qE '^  1\. Rebuild and switch platform-01 through nh-home\.$' "$TMPDIR/plan.err"
-    grep -qE '^  2\. Record platform-01 as the activated host\.$' "$TMPDIR/plan.err"
+    grep -qE '^  1\. Rebuild and switch development-x86_64-linux through nh-home\.$' "$TMPDIR/plan.err"
+    grep -qE '^  2\. Record development-x86_64-linux as the activated host\.$' "$TMPDIR/plan.err"
     grep -qE '^  3\. Converge the account login shell\.$' "$TMPDIR/plan.err"
     grep -qE '^  4\. Review the provisioning surfaces' "$TMPDIR/plan.err"
     grep -qE "^  5\. Render this machine's agent context\.\$" "$TMPDIR/plan.err"
@@ -407,7 +407,6 @@ pkgs.runCommand "check-atyrode-apply"
             and .command == "atyrode provision machine-key" and .declinable == false
         ' >/dev/null
     }
-    machine_key_probe platform-01 not-applicable not-a-clan-machine
     machine_key_probe development-x86_64-linux not-applicable portable-profile
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/machine-key-apply.err" ||
       { cat "$TMPDIR/machine-key-apply.err" >&2; exit 1; }
@@ -443,10 +442,9 @@ pkgs.runCommand "check-atyrode-apply"
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key"
     unset _ATYRODE_TEST_IDENTITY_ROOT
     # This sandbox is itself a registered device from here on, as a real
-    # machine would be after its first apply: the operator surface is settled
-    # and stays out of every later offer.
+    # operator machine would be after its first apply, so the clan scenarios
+    # below find a key where they expect one.
     printf '# created: fixture\n# public key: %s\nAGE-SECRET-KEY-1DEVICEONLY\n' "$device_recipient" > "$operator_key"
-    operator_probe platform-01 ok ""
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
@@ -467,7 +465,7 @@ pkgs.runCommand "check-atyrode-apply"
     ! grep -qF 'nix-dotfiles/scripts' "$TMPDIR/apply-success.err"
     ! grep -qF '/nix/store' "$TMPDIR/apply-success.err"
     ! grep -qiF 'set up session backup' "$TMPDIR/apply-success.err"
-    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = platform-01
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = development-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
 
@@ -574,7 +572,7 @@ pkgs.runCommand "check-atyrode-apply"
     clever_line="$(grep -nF '$ clever login' <<<"$chain_out" | head -1 | cut -d: -f1)"
     test "$vault_line" -lt "$clever_line" \
       || { echo 'links must be offered in declared order' >&2; exit 1; }
-    grep -qF 'run atyrode provision babel for platform-01 now?' <<<"$chain_out" \
+    grep -qF 'run atyrode provision babel for development-x86_64-linux now?' <<<"$chain_out" \
       || { echo 'once every link holds the surface itself is offered' >&2; exit 1; }
     if grep -qF 'babel-storage-configure' <<<"$chain_out"; then
       echo 'declining the surface must not run the ceremony' >&2
@@ -598,8 +596,8 @@ pkgs.runCommand "check-atyrode-apply"
     # whether each part worked -- and read all of it again once the scrollback
     # is gone. A step that announces itself and then goes quiet is the shape
     # this replaces: it is indistinguishable from a step that hung.
-    grep -qE '^1/5 Rebuild and switch platform-01 through nh-home$' "$TMPDIR/apply-success.err"
-    grep -qE '^2/5 Record platform-01 as the activated host$' "$TMPDIR/apply-success.err"
+    grep -qE '^1/5 Rebuild and switch development-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
+    grep -qE '^2/5 Record development-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
     grep -qE '^3/5 Converge the account login shell$' "$TMPDIR/apply-success.err"
     grep -qE '^4/5 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
     grep -qE "^5/5 Render this machine's agent context$" "$TMPDIR/apply-success.err"
@@ -615,7 +613,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'why fleet/system-boundary.json declares' "$TMPDIR/apply-success.err"
     grep -qF 'why fleet/provisioning.json declares 8 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
-    grep -qF 'Apply complete for platform-01' "$TMPDIR/apply-success.err"
+    grep -qF 'Apply complete for development-x86_64-linux' "$TMPDIR/apply-success.err"
 
     # The agent context (ADR 0008 step 2). apply's last step rendered it, and
     # every tool file on the machine is a symlink to this one path, so what it
@@ -632,9 +630,9 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qxF '## This machine' "$context_file"
     test "$(grep -nxF '# Operator policy' "$context_file" | cut -d: -f1)" \
       -lt "$(grep -nxF '## This machine' "$context_file" | cut -d: -f1)"
-    grep -qF -- '- Host: `platform-01` -- The VPS serving the public platform' "$context_file"
+    grep -qF -- '- Host: `development-x86_64-linux` -- Portable headless x86_64 Linux development environment' "$context_file"
     grep -qF -- '- `macbook`: Primary Apple Silicon Mac' "$context_file"
-    grep -qF -- '- `development-x86_64-linux`: Portable' "$context_file"
+    grep -qF -- '- `development-aarch64-linux`: Portable' "$context_file"
     grep -qF 'None yet; secrets arrive with ADR 0008 step 3' "$context_file"
     grep -qF -- '- Fleet cache substituter: `https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com`' "$context_file"
     grep -qF 'does not trust it yet' "$context_file"
@@ -660,13 +658,13 @@ pkgs.runCommand "check-atyrode-apply"
     # data, and it says the same things the prose does.
     atyrode context show | sed '/^## This machine$/,$d' > "$TMPDIR/context-shown-policy"
     sed '/^## This machine$/,$d' "$context_file" | diff - "$TMPDIR/context-shown-policy"
-    atyrode context show | grep -qF -- '- Host: `platform-01`'
+    atyrode context show | grep -qF -- '- Host: `development-x86_64-linux`'
     atyrode context --json | jq -e '
       .schemaVersion == 1
       and .command == "context"
-      and .host.id == "platform-01"
+      and .host.id == "development-x86_64-linux"
       and (.fleet | map(.id) | index("macbook") != null)
-      and (.fleet | map(.id) | index("platform-01") == null)
+      and (.fleet | map(.id) | index("development-x86_64-linux") == null)
       and .authentication.gh.authenticated == false
       and .authentication.gh.acquire == "gh auth login"
       and .authentication.clever.authenticated == true
@@ -729,7 +727,7 @@ pkgs.runCommand "check-atyrode-apply"
     test -n "$(find "$run_log" -perm 600 -print -quit)"
     grep -qE 'run: env LC_ALL=C\.UTF-8 .*nh home switch' "$run_log"
     grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/5: Rebuild and switch' "$run_log"
-    grep -qF 'apply finished for platform-01' "$run_log"
+    grep -qF 'apply finished for development-x86_64-linux' "$run_log"
 
     # With a terminal, the same state offers the ceremony instead of narrating
     # it. This is the path a real machine takes, so it must ask before doing
@@ -738,7 +736,7 @@ pkgs.runCommand "check-atyrode-apply"
     decline_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$decline_out" >&2; exit 1; }
     printf '%s\n' "$decline_out" | grep -qF 'the hourly timer is installed but archives nothing'
-    printf '%s\n' "$decline_out" | grep -qF 'run atyrode provision babel for platform-01 now?'
+    printf '%s\n' "$decline_out" | grep -qF 'run atyrode provision babel for development-x86_64-linux now?'
     printf '%s\n' "$decline_out" | grep -qF 'this machine will not be asked again'
     # Declining must not have configured anything.
     test ! -e "$XDG_CONFIG_HOME/babel/storage.json"
@@ -781,7 +779,7 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'a live apply was submitted as a detached job' >&2
       exit 1
     fi
-    printf '%s\n' "$live_out" | grep -qF 'run atyrode provision babel for platform-01 now?'
+    printf '%s\n' "$live_out" | grep -qF 'run atyrode provision babel for development-x86_64-linux now?'
     printf '%s\n' "$live_out" | grep -qF 'mutation boundary:'
     if printf '%s\n' "$live_out" | grep -qF 'reconnect with: atyrode apply-status'; then
       echo 'a live apply pointed the operator at output they were already reading' >&2
@@ -870,7 +868,7 @@ pkgs.runCommand "check-atyrode-apply"
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$git_decline" >&2; exit 1; }
     printf '%s\n' "$git_decline" | grep -qF 'the configured signing key is missing'
-    printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git for platform-01 now?'
+    printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git for development-x86_64-linux now?'
     printf '%s\n' "$git_decline" | grep -qF 'this machine will not be asked again'
     rm -f "$XDG_STATE_HOME/atyrode/provisioning-declined"
     # Accepting runs that command for real, in this terminal. It cannot succeed
@@ -947,15 +945,16 @@ pkgs.runCommand "check-atyrode-apply"
     unset ATYRODE_NH_FAIL
 
     atyrode apply --repo "$HOME/nix-dotfiles" --dry-run >/dev/null
-    grep -F -- "home switch $HOME/nix-dotfiles --configuration platform-01" \
+    grep -F -- "home switch path:$(cat "$TMPDIR/runtime-adapter-path") --configuration development-x86_64-linux" \
       "$TMPDIR/nh-args" >/dev/null
+    grep -qF "inputs.dotfiles.url = \"path:$HOME/nix-dotfiles\"" "$TMPDIR/runtime-adapter/flake.nix"
     grep -F -- '--dry' "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
     preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
     jq -e '
       .schemaVersion == 1
-      and .host == "platform-01"
+      and .host == "development-x86_64-linux"
       and .system == "x86_64-linux"
       and .resolvedRevision == "0123456789abcdef0123456789abcdef01234567"
       and .status == "built"
@@ -974,18 +973,22 @@ pkgs.runCommand "check-atyrode-apply"
       .source == "remote"
       and .revision == "feedfacefeed"
       and .resolvedRevision == "feedfacefeedfacefeedfacefeedfacefeedface"
-      and .installable == "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#platform-01"
+      and .installable == "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#development-x86_64-linux"
       and (.dirty | not)
       and .repository == "github:atyrode/dotfiles"
     ' >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
     atyrode apply >/dev/null
-    # nh home must receive the bare flake reference; a #fragment form is
-    # passed to nix verbatim and fails attribute resolution.
-    grep -F -- 'home switch github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface --configuration platform-01' \
+    # A portable profile activates through its runtime adapter flake, whose
+    # dotfiles input pins the resolved revision; nh home receives the adapter
+    # bare, since a #fragment form is passed to nix verbatim and fails
+    # attribute resolution.
+    grep -F -- "home switch path:$(cat "$TMPDIR/runtime-adapter-path") --configuration development-x86_64-linux" \
       "$TMPDIR/nh-args" >/dev/null
-    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = platform-01
+    grep -qF 'inputs.dotfiles.url = "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface"' \
+      "$TMPDIR/runtime-adapter/flake.nix"
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = development-x86_64-linux
 
     # The user manager, not the invoking terminal, owns a mutating apply. Kill
     # the waiting CLI while nh is blocked and prove the private worker still
@@ -1045,7 +1048,7 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'apply supervision used a caller-owned systemd scope' >&2
       exit 1
     fi
-    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = platform-01
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = development-x86_64-linux
 
     # A worker that dies without publishing leaves its captured output as the
     # only account of how far the apply got. The waiting CLI must hand that
@@ -1120,7 +1123,7 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
 
-    if atyrode apply headless-aarch64-linux --plan >/dev/null 2>&1; then
+    if atyrode apply development-aarch64-linux --plan >/dev/null 2>&1; then
       echo 'cross-system host selection unexpectedly succeeded' >&2
       exit 1
     fi
@@ -1426,7 +1429,7 @@ pkgs.runCommand "check-atyrode-apply"
 
     unset ATYRODE_WINGET WINGET_LOG WINGET_STATE _ATYRODE_TEST_WSL
     export _ATYRODE_TEST_HOSTNAME=fixture-linux
-    printf '%s\n' platform-01 > "$XDG_STATE_HOME/atyrode/dotfiles-config"
+    printf '%s\n' development-x86_64-linux > "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
     # System diagnostics distinguish installed binaries from operational
     # readiness without touching the build host's account or services.
@@ -1447,7 +1450,7 @@ pkgs.runCommand "check-atyrode-apply"
       homebrew: {available:false, drift:false}
     }' > "$linux_ready"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_ready"
-    system_result="$(atyrode doctor system workstation-x86_64-linux --json)"
+    system_result="$(atyrode doctor system fixture-desktop --json)"
     jq -e '
       .schemaVersion == 1
       and .command == "doctor system"
@@ -1477,14 +1480,14 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
 
-    # A standalone Linux host whose daemon predates the fleet cache: trust and
+    # A Home Manager-only Linux host whose daemon predates the fleet cache: trust and
     # signatures are right, only the cache lists lag. No Nix layer owns
     # /etc/nix/nix.conf there, so the remediation must be the exact privileged
     # line that enrols the daemon, not a pointer to a configuration nobody has.
     linux_stale_cache="$TMPDIR/linux-stale-cache.json"
     jq '.nix.substitutersExact = false | .nix.trustedKeysExact = false' "$linux_ready" > "$linux_stale_cache"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_stale_cache"
-    if atyrode doctor system workstation-x86_64-linux --json > "$TMPDIR/linux-stale-cache.out"; then
+    if atyrode doctor system fixture-desktop --json > "$TMPDIR/linux-stale-cache.out"; then
       echo 'a daemon without the fleet cache unexpectedly passed diagnostics' >&2
       exit 1
     else
@@ -1497,8 +1500,8 @@ pkgs.runCommand "check-atyrode-apply"
     ' "$TMPDIR/linux-stale-cache.out" >/dev/null
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_ready"
 
-    minimal_result="$(atyrode doctor system platform-01 --json)"
-    # platform-01 carries the containers capability but not mobile, so
+    minimal_result="$(atyrode doctor system development-x86_64-linux --json)"
+    # development-x86_64-linux carries the containers capability but not mobile, so
     # container-engine resolves against the rootless fixture (ok) while
     # device-permissions stays not-applicable — a mixed host, unlike the desktop.
     jq -e '
@@ -1510,7 +1513,7 @@ pkgs.runCommand "check-atyrode-apply"
     antivirus_present="$TMPDIR/antivirus-present.json"
     jq '.antivirus.binariesPresent = true' "$linux_ready" > "$antivirus_present"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$antivirus_present"
-    if atyrode doctor system workstation-x86_64-linux --json > "$TMPDIR/antivirus-present.out"; then
+    if atyrode doctor system fixture-desktop --json > "$TMPDIR/antivirus-present.out"; then
       echo 'unmanaged ClamAV binaries unexpectedly passed diagnostics' >&2
       exit 1
     else
@@ -1533,7 +1536,7 @@ pkgs.runCommand "check-atyrode-apply"
     SUBSYSTEM=="usb", ATTR{idVendor}=="18d1"
     SUBSYSTEM=="video4linux", TAG+="uaccess"
     EOF
-    if atyrode doctor system workstation-x86_64-linux --json \
+    if atyrode doctor system fixture-desktop --json \
       > "$TMPDIR/android-split.out" 2> "$TMPDIR/android-split.err"; then
       echo 'unrelated Android rule lines unexpectedly passed diagnostics' >&2
       exit 1
@@ -1548,10 +1551,10 @@ pkgs.runCommand "check-atyrode-apply"
     cat > "$android_rules/51-android.rules" <<'EOF'
     SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", TAG+="uaccess"
     EOF
-    atyrode doctor system workstation-x86_64-linux --json | jq -e '.ok' >/dev/null
+    atyrode doctor system fixture-desktop --json | jq -e '.ok' >/dev/null
 
     chmod 000 "$android_rules/51-android.rules"
-    if atyrode doctor system workstation-x86_64-linux --json \
+    if atyrode doctor system fixture-desktop --json \
       > "$TMPDIR/android-unreadable.out" 2> "$TMPDIR/android-unreadable.err"; then
       echo 'an unreadable Android rule unexpectedly passed diagnostics' >&2
       exit 1
@@ -1578,7 +1581,7 @@ pkgs.runCommand "check-atyrode-apply"
       homebrew: {available:false, drift:true}
     }' > "$linux_incomplete"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_incomplete"
-    if atyrode doctor system workstation-x86_64-linux --json > "$TMPDIR/linux-incomplete.out"; then
+    if atyrode doctor system fixture-desktop --json > "$TMPDIR/linux-incomplete.out"; then
       echo 'incomplete Linux system unexpectedly passed diagnostics' >&2
       exit 1
     else

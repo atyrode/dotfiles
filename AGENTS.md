@@ -162,9 +162,10 @@ is the single front door and wraps `clan`: its `operator init` mints a
 device key and prints the `clan secrets` lines that register it in the
 `admins` group, machine keys are clan's (`clan vars generate` mints them,
 `apply` places them), its doctor reads clan's registration files, and it
-calls `clan` from `PATH` where a ceremony needs it. Standalone Home Manager hosts are invisible to
-clan, converge on their own through `atyrode apply`, and never carry the
-`clan` CLI (their closure budgets say why).
+calls `clan` from `PATH` where a ceremony needs it. Every machine of the
+fleet is a clan machine; the portable `development-*` profiles are Home
+Manager on a machine the operator does not own, are invisible to clan, and
+never carry the `clan` CLI.
 
 ## Ownership boundaries
 

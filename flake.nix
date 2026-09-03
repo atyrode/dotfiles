@@ -153,7 +153,6 @@
         inventoryBySystem
         mkPortableHomeConfiguration
         serverProfileManifests
-        standaloneHomeConfigs
         ;
 
       treefmtEval = forAllSystems (
@@ -184,8 +183,6 @@
 
     in
     {
-      homeConfigurations = standaloneHomeConfigs;
-
       darwinConfigurations = canonicalDarwinConfigs;
       nixosConfigurations = canonicalNixosConfigs;
       # The clan CLI locates machines through these two outputs

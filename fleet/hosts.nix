@@ -18,57 +18,6 @@
     ];
   };
 
-  "headless-aarch64-linux" = {
-    description = "Shape for a headless arm64 Linux machine with agent tooling";
-    system = "aarch64-linux";
-    platform = "linux";
-    activation = "home-manager";
-    username = "alex";
-    homeDirectory = "/home/alex";
-    capabilities = [
-      "base"
-      "development"
-      "agent-tools"
-      "security"
-    ];
-  };
-
-  "platform-01" = {
-    description = "The VPS serving the public platform, pending decommission";
-    system = "x86_64-linux";
-    platform = "linux";
-    activation = "home-manager";
-    username = "alex";
-    homeDirectory = "/home/alex";
-    capabilities = [
-      "base"
-      "development"
-      "agent-tools"
-      "security"
-      "containers"
-      "manifold-node"
-    ];
-  };
-
-  "workstation-x86_64-linux" = {
-    description = "Shape for an x86_64 Linux workstation with the desktop, mobile, media, and container stack";
-    system = "x86_64-linux";
-    platform = "linux";
-    activation = "home-manager";
-    username = "alex";
-    homeDirectory = "/home/alex";
-    capabilities = [
-      "base"
-      "development"
-      "agent-tools"
-      "security"
-      "desktop"
-      "mobile"
-      "media"
-      "containers"
-    ];
-  };
-
   "wsl" = {
     description = "NixOS-WSL development environment and control plane for the home Windows workstation";
     system = "x86_64-linux";

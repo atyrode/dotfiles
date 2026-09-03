@@ -8,8 +8,8 @@ Reproducible, agent-first personal operating environment for [Alex Tyrode](https
 
 ```bash
 cd ~/nix-dotfiles
-./bootstrap/install.sh plan --config platform-01
-./bootstrap/install.sh apply --config platform-01
+./bootstrap/install.sh plan --config macbook
+./bootstrap/install.sh apply --config macbook
 ```
 
 **Supported fresh-machine command:**
@@ -237,22 +237,7 @@ sudo -H nix run .#darwin-rebuild -- switch --flake .#macbook
 ```
 
 `atyrode apply` uses nix-darwin on macOS and asks for sudo when system
-activation is required.
-
-On Linux, the matching configuration still uses Home Manager directly:
-
-```bash
-HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#platform-01
-```
-
-For Linux desktop machines that need Steam, SteamCMD, and VLC:
-
-```bash
-HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#workstation-x86_64-linux
-```
-
-You can also set `ATYRODE_HOST=workstation-x86_64-linux` before running
-`atyrode apply` on a Linux desktop. Successful `atyrode apply` and
+activation is required. Successful `atyrode apply` and
 `bootstrap/install.sh apply` runs record the active configuration so helper
 commands only show what applies to the current setup.
 

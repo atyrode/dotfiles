@@ -267,12 +267,10 @@ let
       atyrode.dotfiles.hostRegistry = hosts;
     };
 
-  # Standalone Home Manager hosts are invisible to clan and read no secret;
-  # the clan machines are exactly the system-owned hosts, one class each.
+  # Every registered host is a clan machine, one class each; the Darwin
+  # subset is named because the inventory projects it separately.
   darwinHosts = lib.filterAttrs (_name: host: host.activation == "nix-darwin") hosts;
-  nixosHosts = lib.filterAttrs (_name: host: host.activation == "nixos") hosts;
-  nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
-  clanHosts = darwinHosts // nixosHosts // nixosWslHosts;
+  clanHosts = hosts;
 
   # The fleet layer. `fleet/hosts.nix` stays the only place a machine is
   # named: the inventory is a projection of it, tagged by activation and
@@ -308,8 +306,6 @@ let
   };
 
   canonicalHomeConfigs = lib.mapAttrs mkHomeConfig hosts;
-  homeManagerHosts = lib.filterAttrs (_name: host: host.activation == "home-manager") hosts;
-  standaloneHomeConfigs = lib.mapAttrs mkHomeConfig homeManagerHosts;
   canonicalDarwinConfigs = clan.config.darwinConfigurations;
   canonicalNixosConfigs = clan.config.nixosConfigurations;
 
@@ -336,19 +332,16 @@ let
   );
 
   # Every host closure a given system can realise, keyed by host id, as the
-  # artifact `atyrode apply` activates on that host: the standalone Home
-  # Manager activation package for home-manager hosts, and the system
-  # toplevel for the nix-darwin and NixOS hosts, whose Home Manager
-  # profile is embedded in the toplevel rather than activated on its own. CI
-  # builds this set per system and pushes it to the fleet binary cache, so a
-  # host missing here is a host whose apply rebuilds from source.
+  # artifact `atyrode apply` activates on that host: the system toplevel,
+  # whose Home Manager profile is embedded rather than activated on its own.
+  # CI builds this set per system and pushes it to the fleet binary cache, so
+  # a host missing here is a host whose apply rebuilds from source.
   fleetClosuresFor =
     system:
     let
       onSystem = lib.filterAttrs (name: _config: hosts.${name}.system == system);
     in
-    lib.mapAttrs (_name: config: config.activationPackage) (onSystem standaloneHomeConfigs)
-    // lib.mapAttrs (_name: config: config.system) (onSystem canonicalDarwinConfigs)
+    lib.mapAttrs (_name: config: config.system) (onSystem canonicalDarwinConfigs)
     // lib.mapAttrs (_name: config: config.config.system.build.toplevel) (
       onSystem canonicalNixosConfigs
     );
@@ -369,6 +362,5 @@ in
     mkServerHomeConfig
     serverHomeConfigs
     serverProfileManifests
-    standaloneHomeConfigs
     ;
 }

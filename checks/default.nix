@@ -74,7 +74,6 @@ let
       {
         users = builtins.toJSON {
           alex-fixture-nixos = fixtureDeviceRecipient;
-          alex-platform-01 = fixtureDeviceRecipient;
           alex-wsl = fixtureDeviceRecipient;
           alex-macbook = fixtureEnclaveRecipient;
           alex-recovery = "age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm";
@@ -129,6 +128,27 @@ let
         system = "x86_64-linux";
         username = "fixture";
       };
+      # No registered Linux host carries the desktop stack any more, and the
+      # system diagnostics for a Linux desktop (device rules, container
+      # engine, antivirus) are a contract of the CLI, not of a machine.
+      fixture-desktop = {
+        id = "fixture-desktop";
+        activation = "home-manager";
+        capabilities = [
+          "base"
+          "development"
+          "agent-tools"
+          "security"
+          "desktop"
+          "mobile"
+          "media"
+          "containers"
+        ];
+        description = "Portable x86_64 Linux desktop fixture";
+        identityMode = "runtime";
+        platform = "linux";
+        system = "x86_64-linux";
+      };
     };
   };
   systemHomeConfigs = lib.filterAttrs (
@@ -154,13 +174,12 @@ let
     ''
   );
   registryFile = pkgs.writeText "atyrode-target-registry.json" targetRegistryJson;
-  # The clan machines are the registry's system-owned hosts, one class each,
-  # and nothing else: a host clan builds that the registry does not name, or
-  # the reverse, is a second place a machine is named.
-  clanHosts = lib.filterAttrs (_name: host: host.activation != "home-manager") hosts;
+  # The clan machines are exactly the registry's hosts, one class each: a
+  # host clan builds that the registry does not name, or the reverse, is a
+  # second place a machine is named.
   expectedClanMachines = lib.mapAttrs (
     _name: host: if host.activation == "nix-darwin" then "darwin" else "nixos"
-  ) clanHosts;
+  ) hosts;
   actualClanMachines = lib.mapAttrs (
     _name: machine: machine.machineClass
   ) clan.config.inventory.machines;
@@ -189,7 +208,7 @@ let
       }
       ''
         jq -e '
-          length >= 7
+          length >= 5
           and all(.[];
             (.id | type == "string")
             and (.identityMode | IN("fixed", "runtime"))
@@ -243,23 +262,15 @@ let
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
       productionAtyrode = pkgs.atyrode;
-      productionHost =
-        {
-          "aarch64-darwin" = "macbook";
-          "aarch64-linux" = "headless-aarch64-linux";
-          "x86_64-linux" = "platform-01";
-        }
-        .${system};
+      # No aarch64-linux host is registered; dev-01 stands in there, and the
+      # refusal then also covers the system mismatch.
+      productionHost = if system == "aarch64-darwin" then "macbook" else "dev-01";
     };
     atyrode-lifecycle = import ./atyrode/atyrode-lifecycle.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
     atyrode-runtime = import ./atyrode/atyrode-runtime.nix {
-      inherit pkgs;
-      atyrode = systemDoctorAtyrode;
-    };
-    atyrode-tunnel = import ./atyrode/atyrode-tunnel.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
@@ -361,14 +372,9 @@ let
     portable-profile-contract = import ./fleet/portable-profile-contract.nix {
       inherit lib mkPortableHomeConfiguration pkgs;
       profileName = "development-${system}";
-      fixedHomeConfig =
-        canonicalHomeConfigs.${
-          {
-            "aarch64-linux" = "headless-aarch64-linux";
-            "x86_64-linux" = "platform-01";
-          }
-          .${system}
-        };
+      # No aarch64-linux host is registered, so the Linux fixed host stands
+      # in for both Linux legs; the assertions only read its evaluated config.
+      fixedHomeConfig = canonicalHomeConfigs.dev-01;
     };
     portable-profiles = import ./fleet/portable-profiles.nix {
       inherit

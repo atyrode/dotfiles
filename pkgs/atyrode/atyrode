@@ -29,7 +29,6 @@ readonly tool_inventory='@tools@'
 readonly windows_package_inventory='@windows_packages@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly managed_ssh_fleet_keys='@ssh_fleet_keys@'
-readonly operator_infra='@operator_infra@'
 readonly sops_directory='@sops_directory@'
 readonly manifold_inventory='@manifold_inventory@'
 readonly flake_ref='@flakeRef@'
@@ -81,8 +80,8 @@ apply_job_worker=0
 . "$lib_dir/manifold.sh"
 # shellcheck source=lib/windows.sh
 . "$lib_dir/windows.sh"
-# shellcheck source=lib/infra.sh
-. "$lib_dir/infra.sh"
+# shellcheck source=lib/fleet.sh
+. "$lib_dir/fleet.sh"
 # shellcheck source=lib/context.sh
 . "$lib_dir/context.sh"
 # shellcheck source=lib/operator.sh
@@ -105,7 +104,7 @@ Usage:
   atyrode runtime boot
   atyrode runtime shortcut [local-qwen]
   atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
-  atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]
+  atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes]
   atyrode vault status [--json]
   atyrode vault login|lock
   atyrode vault get NAME
@@ -158,14 +157,14 @@ instead of only naming it.
 inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
-infra provides the portable controller for the externally owned tyrode-dev-01
-NixOS host. setup performs one-time Clan age enrollment, plan verifies the
-Bitwarden identity, pinned infra checkout, Vars state, and strict SSH path
-without activation. apply fetches origin/main, visibly fast-forwards a clean
-main checkout, refuses local or divergent commits, and deploys through Clan only
-after showing the revision and incoming commits for confirmation. The private age
-identity is read only after an interactive Bitwarden unlock, materialized in
-temporary storage, never printed, and removed on every exit.
+fleet deploys a machine of this clan that the operator is not sitting at:
+apply converges the machine it runs on, fleet apply converges another one over
+SSH. plan checks that the machine's vars are generated, that it answers a
+strict host-key check, and that its configuration evaluates, without activating
+anything. apply builds the closure here, activates it there through clan, and
+verifies the machine reports itself converged afterwards. Where clan reaches it
+is the machine's own clan.core.networking.targetHost, so a deployment cannot be
+aimed somewhere the reviewed configuration does not name.
 vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
@@ -254,7 +253,7 @@ main() {
     lifecycle) cmd_lifecycle "$@" ;;
     rollback) cmd_rollback "$@" ;;
     runtime) cmd_runtime "$@" ;;
-    infra) cmd_infra "$@" ;;
+    fleet) cmd_fleet "$@" ;;
     vault) cmd_vault "$@" ;;
     tunnel)
       case "${1:-}" in

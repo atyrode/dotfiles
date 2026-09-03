@@ -1866,7 +1866,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'nh switch backend with --dry; --preview-json runs that dry backend and emits its' <<<"$help"
     grep -qF 'atyrode capabilities list [--json]' <<<"$help"
     grep -qF 'atyrode capabilities show [HOST] [--json]' <<<"$help"
-    grep -qF 'atyrode infra setup|plan|apply [--repo PATH] [--json] [--yes]' <<<"$help"
+    grep -qF 'atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes]' <<<"$help"
     grep -qF 'atyrode vault get NAME' <<<"$help"
     grep -qF 'atyrode vault put NAME' <<<"$help"
 

@@ -84,4 +84,28 @@
       "security"
     ];
   };
+
+  "tyrode-dev-01" = {
+    description = "Persistent, rebuildable personal development VPS";
+    system = "x86_64-linux";
+    platform = "linux";
+    activation = "nixos";
+    username = "alex";
+    homeDirectory = "/home/alex";
+    hostname = "tyrode-dev-01";
+    # The Nix daemon trusts the operator explicitly because clan copies a
+    # closure to this machine before activation escalates, and passwordless
+    # sudo already makes that account root-equivalent.
+    nixTrustedUsers = [
+      "root"
+      "alex"
+    ];
+    capabilities = [
+      "base"
+      "development"
+      "agent-tools"
+      "security"
+      "containers"
+    ];
+  };
 }

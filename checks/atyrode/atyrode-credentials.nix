@@ -58,45 +58,40 @@ pkgs.runCommand "check-atyrode-credentials"
     [[ "''${1:-}" == -y ]] || exit 64
     printf '%s\n' 'age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm'
     EOF
-    cat > "$TMPDIR/bin/infra-nix" <<'EOF'
+    cat > "$TMPDIR/bin/fleet-clan" <<'EOF'
     #!${pkgs.runtimeShell}
-    printf '%s\n' "$*" >> "$TMPDIR/infra-nix-args"
-    case "''${1:-}" in
-      develop) exit 0 ;;
-      eval) printf '%s\n' '/nix/store/test-tyrode-dev-01-system.drv' ;;
+    printf '%s\n' "$*" >> "$TMPDIR/clan-args"
+    case "''${1:-} ''${2:-}" in
+      "vars check") [[ -z "''${ATYRODE_TEST_VARS_INCOMPLETE:-}" ]] || exit 1 ;;
+      "machines update") ;;
       *) exit 64 ;;
     esac
     EOF
-    cat > "$TMPDIR/bin/infra-ssh" <<'EOF'
+    cat > "$TMPDIR/bin/fleet-nix" <<'EOF'
     #!${pkgs.runtimeShell}
-    printf '%s\n' "$*" >> "$TMPDIR/infra-ssh-args"
+    printf '%s\n' "$*" >> "$TMPDIR/fleet-nix-args"
+    case "''${1:-}" in
+      eval)
+        case "$*" in
+          *targetHost*) printf '%s\n' 'alex@target.example' ;;
+          *) printf '%s\n' '/nix/store/test-fixture-nixos-system.drv' ;;
+        esac
+        ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    cat > "$TMPDIR/bin/fleet-ssh" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/fleet-ssh-args"
+    [[ -z "''${ATYRODE_TEST_SSH_UNREACHABLE:-}" ]] || exit 255
     if [[ "$*" == *'atyrode doctor host --json'* ]]; then
-      printf '%s\n' '{"ok":true,"host":"tyrode-dev-01","registered":{"activation":"nixos"}}'
+      printf '%s\n' "{\"ok\":true,\"host\":\"''${ATYRODE_TEST_REPORTED_HOST:-fixture-nixos}\"}"
     fi
     EOF
-    chmod +x "$TMPDIR/bin/bw" "$TMPDIR/bin/age-keygen" "$TMPDIR/bin/infra-nix" "$TMPDIR/bin/infra-ssh"
-    mkdir -p "$TMPDIR/infra/.git" "$TMPDIR/infra/inventory" \
-      "$TMPDIR/infra/machines/tyrode-dev-01"
-    touch "$TMPDIR/infra/flake.nix"
-    cat > "$TMPDIR/infra/clan.nix" <<'EOF'
-    {
-      vars.settings.secretStore = "age";
-    }
-    EOF
-    cat > "$TMPDIR/infra/inventory/vps-enrollment.json" <<'EOF'
-    {
-      "machines": {"tyrode-dev-01": {"role": "personal-development"}},
-      "roles": {"personal-development": {"profile": "alex"}},
-      "profiles": {"alex": {"username": "alex"}}
-    }
-    EOF
-    cat > "$TMPDIR/infra/machines/tyrode-dev-01/network-intent.json" <<'EOF'
-    {
-      "uplinks": [
-        {"addresses": [{"family": "ipv4", "value": "target.example"}]}
-      ]
-    }
-    EOF
+    chmod +x "$TMPDIR/bin/bw" "$TMPDIR/bin/age-keygen" \
+      "$TMPDIR/bin/fleet-clan" "$TMPDIR/bin/fleet-nix" "$TMPDIR/bin/fleet-ssh"
+    mkdir -p "$TMPDIR/repo"
+    touch "$TMPDIR/repo/flake.nix"
     export PATH="$TMPDIR/bin:$PATH"
     # doctor git is read-only and reports classifications only. The fixture
     # gives it a real Git config, repository, SSH agent, and public key files;
@@ -337,90 +332,82 @@ pkgs.runCommand "check-atyrode-credentials"
     # is captured and never shown.
     grep -qxF 'login --raw' "$TMPDIR/bw-args"
 
-    infra_test_env=(
+    # --- fleet plan/apply: deploying a machine the operator is not sitting at -
+    # The fixture host is a clan machine of this repository, so the whole
+    # ceremony is this flake plus clan; no second repository, no vault, no
+    # identity fetched at deploy time.
+    fleet_test_env=(
       env
-      ATYRODE_AGE_KEYGEN="$TMPDIR/bin/age-keygen"
-      ATYRODE_BW="$TMPDIR/bin/bw"
-      ATYRODE_NIX="$TMPDIR/bin/infra-nix"
-      ATYRODE_SSH="$TMPDIR/bin/infra-ssh"
+      ATYRODE_CLAN="$TMPDIR/bin/fleet-clan"
+      ATYRODE_NIX="$TMPDIR/bin/fleet-nix"
+      ATYRODE_SSH="$TMPDIR/bin/fleet-ssh"
+      ATYRODE_HOST=alex-x86_64-linux
     )
-    infra_setup="$("''${infra_test_env[@]}" atyrode infra setup --repo "$TMPDIR/infra" --json)"
-    jq -e '.ok and .action == "setup" and .machine == "tyrode-dev-01"
-      and .sourceChanged and .privateMaterialPrinted == false' <<<"$infra_setup" >/dev/null
-    grep -qF 'clan vars fix tyrode-dev-01' "$TMPDIR/infra-nix-args"
-    grep -qF 'clan vars check tyrode-dev-01' "$TMPDIR/infra-nix-args"
-    ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_setup"
-    grep -qF 'vars.settings.recipients.hosts.tyrode-dev-01' "$TMPDIR/infra/clan.nix"
-    grep -qF 'age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm' \
-      "$TMPDIR/infra/clan.nix"
-    infra_setup_again="$("''${infra_test_env[@]}" atyrode infra setup --repo "$TMPDIR/infra" --json)"
-    jq -e '.ok and .action == "setup" and (.sourceChanged | not)' <<<"$infra_setup_again" >/dev/null
-    test "$(grep -Fc 'vars.settings.recipients.hosts.tyrode-dev-01' "$TMPDIR/infra/clan.nix")" = 1
 
-    infra_plan="$("''${infra_test_env[@]}" atyrode infra plan --repo "$TMPDIR/infra" --json)"
-    jq -e '.ok and .action == "plan" and .machine == "tyrode-dev-01"
-      and .targetHost == "alex@target.example" and .hostKeyCheck == "strict"
-      and .buildHost == "localhost"
-      and .drvPath == "/nix/store/test-tyrode-dev-01-system.drv"
-      and .privateMaterialPrinted == false' <<<"$infra_plan" >/dev/null
-    grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/infra-ssh-args"
-    grep -qF 'alex@target.example true' "$TMPDIR/infra-ssh-args"
-    ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_plan"
-
-    for checkout_state in dirty feature divergent; do
-      case "$checkout_state" in
-        dirty) expected_error='infra checkout is dirty' ;;
-        feature) expected_error='infra apply requires the main branch' ;;
-        divergent) expected_error='infra checkout has local commits or diverged from origin/main' ;;
-      esac
-      if "''${infra_test_env[@]}" ATYRODE_TEST_INFRA_GIT_STATE="$checkout_state" \
-        atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
-        >"$TMPDIR/infra-$checkout_state.out" 2>"$TMPDIR/infra-$checkout_state.err"; then
-        echo "infra apply must reject a $checkout_state checkout" >&2
-        exit 1
-      fi
-      grep -qF "$expected_error" "$TMPDIR/infra-$checkout_state.err"
-    done
-
-    if "''${infra_test_env[@]}" ATYRODE_TEST_BW_STATUS=unauthenticated \
-      atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
-      >"$TMPDIR/infra-unauthenticated.out" 2>"$TMPDIR/infra-unauthenticated.err"; then
-      echo "infra apply must reject an unauthenticated vault" >&2
+    # A host clan cannot deploy is refused by name, and the refusal says which
+    # command does converge it.
+    if "''${fleet_test_env[@]}" atyrode fleet plan alex-x86_64-linux \
+      >"$TMPDIR/fleet-standalone.out" 2>"$TMPDIR/fleet-standalone.err"; then
+      echo 'fleet plan must refuse a standalone Home Manager host' >&2
       exit 1
     fi
-    grep -qF '0123456789ab -> 0123456789ab' "$TMPDIR/infra-unauthenticated.err"
-    grep -qF 'infra checkout already matches origin/main' "$TMPDIR/infra-unauthenticated.err"
-    grep -qF "Bitwarden is not logged in; run 'atyrode vault login'" \
-      "$TMPDIR/infra-unauthenticated.err"
+    grep -qF 'converges with atyrode apply' "$TMPDIR/fleet-standalone.err"
 
-    rm -f "$TMPDIR/infra-fast-forwarded"
-    printf 'y\n' |
-      "''${infra_test_env[@]}" _ATYRODE_TEST_TTY=1 ATYRODE_TEST_INFRA_GIT_STATE=behind \
-        atyrode infra apply --repo "$TMPDIR/infra" --json \
-        >"$TMPDIR/infra-behind.out" 2>"$TMPDIR/infra-behind.err"
-    test -e "$TMPDIR/infra-fast-forwarded"
-    jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"
-      and .targetHost == "alex@target.example" and .verified' \
-      "$TMPDIR/infra-behind.out" >/dev/null
-    grep -qF '0123456789ab -> feedfacefeed' "$TMPDIR/infra-behind.err"
-    grep -qF 'feedface pin: update reviewed dotfiles' "$TMPDIR/infra-behind.err"
-    grep -qF 'decafbad fix: retain manifold ingress' "$TMPDIR/infra-behind.err"
-    grep -qF 'deploy tyrode-dev-01 to alex@target.example from feedfacefeed now?' \
-      "$TMPDIR/infra-behind.err"
+    fleet_plan="$("''${fleet_test_env[@]}" atyrode fleet plan fixture-nixos \
+      --repo "$TMPDIR/repo" --json 2>"$TMPDIR/fleet-plan.err")"
+    jq -e '.ok and .action == "plan" and .host == "fixture-nixos"
+      and .targetHost == "alex@target.example" and .hostKeyCheck == "strict"
+      and .buildHost == "localhost"
+      and .drvPath == "/nix/store/test-fixture-nixos-system.drv"
+      and .mutationBoundary == "read-only until fleet apply"' <<<"$fleet_plan" >/dev/null
+    grep -qF 'vars check fixture-nixos' "$TMPDIR/clan-args"
+    grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/fleet-ssh-args"
+    grep -qF 'alex@target.example true' "$TMPDIR/fleet-ssh-args"
+    # A plan activates nothing, whatever else it reports.
+    ! grep -qF 'machines update' "$TMPDIR/clan-args"
 
-    infra_apply="$("''${infra_test_env[@]}" \
-      atyrode infra apply --repo "$TMPDIR/infra" --yes --json \
-      2>"$TMPDIR/infra-current.err")"
-    jq -e '.ok and .action == "apply" and .machine == "tyrode-dev-01"
-      and .targetHost == "alex@target.example" and .verified
-      and .privateMaterialPrinted == false' <<<"$infra_apply" >/dev/null
-    grep -qF '0123456789ab -> 0123456789ab' "$TMPDIR/infra-current.err"
-    grep -qF 'infra checkout already matches origin/main' "$TMPDIR/infra-current.err"
-    grep -qF 'clan machines update tyrode-dev-01' "$TMPDIR/infra-nix-args"
+    # Vars that are not generated stop the deployment before it touches the
+    # machine, and the remedy names the command that generates them.
+    if "''${fleet_test_env[@]}" ATYRODE_TEST_VARS_INCOMPLETE=1 \
+      atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
+      >"$TMPDIR/fleet-vars.out" 2>"$TMPDIR/fleet-vars.err"; then
+      echo 'fleet apply must refuse a machine whose vars are incomplete' >&2
+      exit 1
+    fi
+    grep -qF 'clan vars generate fixture-nixos' "$TMPDIR/fleet-vars.err"
+    ! grep -qF 'machines update' "$TMPDIR/clan-args"
+
+    # An unreachable machine is a preflight failure, not a half-finished
+    # deployment.
+    if "''${fleet_test_env[@]}" ATYRODE_TEST_SSH_UNREACHABLE=1 \
+      atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
+      >"$TMPDIR/fleet-unreachable.out" 2>"$TMPDIR/fleet-unreachable.err"; then
+      echo 'fleet apply must refuse an unreachable machine' >&2
+      exit 1
+    fi
+    grep -qF 'did not answer a strict-host-key SSH check' "$TMPDIR/fleet-unreachable.err"
+    ! grep -qF 'machines update' "$TMPDIR/clan-args"
+
+    fleet_apply="$("''${fleet_test_env[@]}" \
+      atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
+      2>"$TMPDIR/fleet-apply.err")"
+    jq -e '.ok and .action == "apply" and .host == "fixture-nixos"
+      and .targetHost == "alex@target.example" and .verified' <<<"$fleet_apply" >/dev/null
+    grep -qF "machines update fixture-nixos --flake $TMPDIR/repo" "$TMPDIR/clan-args"
     grep -qF -- '--target-host alex@target.example --build-host localhost --upload-inputs --host-key-check strict' \
-      "$TMPDIR/infra-nix-args"
-    grep -qF 'alex@target.example atyrode doctor host --json' "$TMPDIR/infra-ssh-args"
-    ! grep -qF 'AGE-SECRET-KEY-1TESTONLY' <<<"$infra_apply"
+      "$TMPDIR/clan-args"
+    grep -qF 'alex@target.example atyrode doctor host --json' "$TMPDIR/fleet-ssh-args"
+    grep -qE '^  \$ .*clan machines update fixture-nixos' "$TMPDIR/fleet-apply.err"
+
+    # A machine that activated but answers as somebody else is a failure: the
+    # deployment exited zero and the wrong closure is live.
+    if "''${fleet_test_env[@]}" ATYRODE_TEST_REPORTED_HOST=someone-else \
+      atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
+      >"$TMPDIR/fleet-mismatch.out" 2>"$TMPDIR/fleet-mismatch.err"; then
+      echo 'fleet apply must fail when the machine does not verify its identity' >&2
+      exit 1
+    fi
+    grep -qF 'does not report itself as fixture-nixos' "$TMPDIR/fleet-mismatch.err"
 
     # --- provision git (#8): vault-backed per-machine key custody -------------
     # A stateful vault stub emulates Bitwarden storage, a REAL ssh-agent and

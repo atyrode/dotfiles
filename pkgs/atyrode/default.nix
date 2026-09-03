@@ -102,7 +102,6 @@ let
   windowsPackageInventory = builtins.toFile "atyrode-windows-packages.json" (
     builtins.toJSON windowsPackages
   );
-  operatorInfra = ../../fleet/operator-infra.json;
   manifoldInventory = ../../fleet/manifold.json;
   systemPolicy = ../../fleet/system-boundary.json;
   provisioningPolicy = ../../fleet/provisioning.json;
@@ -259,7 +258,6 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@registry@' '${registry}' \
       --replace-fail '@revision@' '${revision}' \
-      --replace-fail '@operator_infra@' '${operatorInfra}' \
       --replace-fail '@sops_directory@' '${sopsDirectory}' \
       --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \

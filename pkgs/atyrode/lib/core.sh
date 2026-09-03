@@ -184,6 +184,24 @@ clan_program() {
 # that silent, potentially destructive trap into a loud, safe stop. Scoped to the
 # mutating verbs so read-only commands keep ignoring the vars outright (a hostile
 # project environment can neither spoof nor block a plain `doctor`/`capabilities`).
+# Running a tool that may be a stub under test. Visibility belongs to the call
+# site rather than the program: `git rev-parse` only looks while `git clone`
+# acts, and announcing from inside one wrapper would bury the handful of
+# commands that change something under the dozen that ask a question. The
+# `visible` form is a warning as much as a convenience -- what it is handed
+# reaches the terminal and the run log, so it may carry the path to a secret
+# but never a secret itself.
+tool_exec() { # quiet|visible override_variable program argv...
+  local visibility="$1" override="$2" program="$3"
+  shift 3
+  [[ "$test_hooks" != 1 || -z "${!override:-}" ]] || program="${!override}"
+  if [[ "$visibility" == visible ]]; then
+    run_visible "$program" "$@"
+  else
+    "$program" "$@"
+  fi
+}
+
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v

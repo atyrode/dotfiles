@@ -286,6 +286,35 @@ selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.
 Activation shows a generation package diff.
 
+## Deploying another machine
+
+```sh
+atyrode fleet plan tyrode-dev-01           # vars, reachability, evaluation; activates nothing
+atyrode fleet apply tyrode-dev-01          # build here, activate there, verify
+atyrode fleet apply tyrode-dev-01 --json --yes
+```
+
+`apply` converges the machine it runs on; `fleet apply` converges another one
+over SSH, which is the only difference between them. Clan builds the closure
+on this machine and activates it on the target, so the target needs no
+toolchain and no checkout. Where it is reached is the machine's own
+`clan.core.networking.targetHost`: a deployment cannot be aimed somewhere the
+reviewed configuration does not name.
+
+Both verbs refuse a machine clan does not deploy -- a standalone Home Manager
+host has no system closure -- and say which command converges it instead. The
+run stops before touching the machine when its vars are not generated (the
+remedy names `clan vars generate <host>`) or when it does not answer a
+strict-host-key check. After activation the machine is asked who it is, and a
+deployment that activated the wrong closure fails there rather than exiting
+zero.
+
+This replaced `atyrode infra`, which drove a second repository through
+`nix develop`, unlocked Bitwarden for an operator identity on every run, and
+read the target's address out of that repository's enrollment inventory. The
+machines are this flake's now, the operator identity is the device's own key,
+and the address is the machine's own declaration.
+
 ## Fleet SSH access
 
 ```sh

@@ -13,8 +13,23 @@ the audience of every secret, the peers of the overlay, the backup routine, and
 the context every agent on every machine starts with. Machines are projections
 of this repository. Copying anything between machines is a defect.
 
-It is public. It names roles and machines, never providers, prices, addresses,
-or keys. Encrypted secrets are committed; their plaintext never is.
+It is public, and what stays out is what grants access, not what describes the
+fleet. Addresses, DNS names, MAC addresses, hardware reports, firewall rules
+and SSH policy are public here, as they are in the public fleet repositories
+run by the authors of this tooling: a machine answers on its port to the whole
+internet and its name resolves, so hiding where it is buys nothing, while
+key-only SSH and a closed firewall are the defence and are not weakened by
+being read. Private keys, tokens, passwords, anything that authenticates the
+operator, and personal data are never committed in plaintext; encrypted
+secrets are. Providers and prices stay out as business facts, not security
+ones. `checks/lints/production-facts.nix` enforces what a grep can see and
+exempts only `fleet/machines/`, where a machine states its own network.
+
+Commit messages, pull-request text and issue comments are as public as the
+files and are not scanned by any check: a fact that has no reason to be in the
+tree has no reason to be in the prose describing it either. Name what changed
+and why; do not characterise what lives elsewhere. `production-facts` will not
+catch this one, so it is on whoever writes the sentence.
 
 ## Commands (the only gates that matter)
 

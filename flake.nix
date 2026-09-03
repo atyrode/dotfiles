@@ -40,11 +40,21 @@
     clan-core.inputs.nix-darwin.follows = "nix-darwin";
     clan-core.inputs.sops-nix.follows = "sops-nix";
     clan-core.inputs.treefmt-nix.follows = "treefmt-nix";
+    clan-core.inputs.disko.follows = "disko";
 
     # What clan vars decrypt with at activation: sops-nix's nixos and darwin
     # modules, each machine holding its own age key. Followed by clan-core.
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    # What a NixOS machine of this fleet is installed and identified by: disko
+    # partitions its disk from the machine's own declaration and nixos-facter
+    # supplies the hardware facts its report captured, so a destroyed machine
+    # is rebuilt from this repository rather than from a remembered install.
+    disko.url = "github:nix-community/disko";
+    disko.inputs.nixpkgs.follows = "nixpkgs";
+
+    nixos-facter-modules.url = "github:numtide/nixos-facter-modules";
 
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
@@ -66,10 +76,12 @@
       nixpkgs,
       babel,
       clan-core,
+      disko,
       home-manager,
       nix-darwin,
       nix-homebrew,
       nixos-wsl,
+      nixos-facter-modules,
       nix-index-database,
       sops-nix,
       treefmt-nix,
@@ -119,8 +131,10 @@
           self
           lib
           clan-core
+          disko
           home-manager
           nix-homebrew
+          nixos-facter-modules
           nixos-wsl
           sops-nix
           homebrew-core
@@ -131,7 +145,7 @@
       };
       inherit (configurations)
         canonicalDarwinConfigs
-        canonicalNixosWslConfigs
+        canonicalNixosConfigs
         clan
         darwinModule
         dotfilesHomeNixosModule
@@ -173,7 +187,7 @@
       homeConfigurations = standaloneHomeConfigs;
 
       darwinConfigurations = canonicalDarwinConfigs;
-      nixosConfigurations = canonicalNixosWslConfigs;
+      nixosConfigurations = canonicalNixosConfigs;
       # The clan CLI locates machines through these two outputs
       # (`clan machines update` reads `clanInternals.machines.<system>.<name>`).
       clan = clan.config;

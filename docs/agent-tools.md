@@ -353,8 +353,7 @@ project/
 Project-specific auto-learned skills under
 `~/.omp/agent/managed-skills` remain OMP-owned mutable state. Move each useful
 one into its owning repository after removing machine-specific assumptions.
-The repository-specific `.agents/skills/bump-omp` skill owns OMP pin updates;
-generic skills such as `ts-react-dead-code-sweep` remain under
+Generic skills such as `ts-react-dead-code-sweep` live under
 `modules/home/agents/skills/`.
 
 ### Installed skills
@@ -366,7 +365,6 @@ instead of leaving a stale list.
 |---|---|---|
 | [`ts-react-dead-code-sweep`](../modules/home/agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
-| [`bump-omp`](../.agents/skills/bump-omp/SKILL.md) | this repository | repository-authored |
 
 `ts-react-dead-code-sweep` has no surface in this repository — it is a
 cross-project skill, deployed to the global `~/.agents/skills` so it is
@@ -401,9 +399,10 @@ runs dispatched CI, and a green run merges itself. Pass package names to narrow
 a manual refresh; for example, `ci/update-pins.sh omp` changes only OMP.
 A red run remains open for curation when upstream bundled content changes.
 
-Manual OMP updates MUST follow
-[`bump-omp`](../.agents/skills/bump-omp/SKILL.md). Routine bumps consume
-upstream `can1357/oh-my-pi` releases directly; there is no fork.
+A manual OMP bump is `ci/update-pins.sh omp`, or the same file edited by hand
+to a specific release: the four asset hashes and the version are the whole
+pin. Bumps consume upstream `can1357/oh-my-pi` releases directly; there is no
+fork.
 
 `omp-agents` regenerates the bundled agents from the pinned OMP binary. The
 `omp-agent-references` check ensures every agent name referenced by managed

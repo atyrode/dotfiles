@@ -30,7 +30,7 @@ func newCatalogModel(t *testing.T, payload, system string) model {
 		}
 		return []byte(payload), nil
 	})
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'7'}})
 	m = next.(model)
 	if m.nav.Active() != workspaceCatalog || cmd == nil || !m.catalogLoading {
 		t.Fatalf("catalog entry = active %q, cmd %v, loading %t", m.nav.Active(), cmd, m.catalogLoading)

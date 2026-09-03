@@ -7,7 +7,7 @@
     export XDG_STATE_HOME="$HOME/.local/state"
     mkdir -p "$XDG_CONFIG_HOME/atyrode" "$HOME/nix-dotfiles/.git" "$TMPDIR/bin"
     cp ${../../flake.nix} "$HOME/nix-dotfiles/flake.nix"
-    printf '%s\n' '{"id":"platform-01"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    printf '%s\n' '{"id":"development-x86_64-linux"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
     # `atyrode apply` converges the account login shell, so every check that
     # activates now depends on what the account database says. A sandbox has no
     # login shell and no way to set one, so the default is a machine whose

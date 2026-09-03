@@ -29,7 +29,7 @@ fleet_repository() { # repo
   printf '%s' "$repo"
 }
 
-# Which machines this command can reach. A standalone Home Manager host has no
+# Which machines this command can reach. A portable Home Manager profile has no
 # system closure to activate and no clan record; the local machine has
 # `atyrode apply`, which does the same work without a network in the way.
 fleet_target_host() { # requested

@@ -30,11 +30,10 @@ machine is one or two commands and the commit clan makes; removing one
 re-encrypts everything it could read, so the next revision is unreadable to
 it.
 
-The fleet's clan machines are exactly the nix-darwin and NixOS hosts of
-[`fleet/hosts.nix`](../fleet/hosts.nix); `atyrode` is the front door and
-`clan` is called by name for the ceremonies below. Standalone Home Manager
-hosts are not clan machines: they read no secret and hold no machine key,
-but they are operator devices like any other fixed host.
+Every host of [`fleet/hosts.nix`](../fleet/hosts.nix) is a clan machine;
+`atyrode` is the front door and `clan` is called by name for the ceremonies
+below. The portable `development-*` profiles are not: they run on machines
+the operator does not own, read no fleet secret and hold no machine key.
 
 ## Operator devices
 
@@ -113,7 +112,7 @@ writes: the identity line is never printed.
    encrypts them, and commits. `atyrode provision machine-key` is the same
    thing run from the machine itself when it is an operator device, which is
    what `atyrode apply` offers; `atyrode doctor provisioning` reports the
-   `machine-key` surface: not applicable on a standalone Home Manager host,
+   `machine-key` surface: not applicable on a portable profile,
    not yet in the repository, in the repository but not placed, or placed.
 2. Push, and on the machine `atyrode apply`: its first step places the key at
    `/var/lib/sops-nix/key.txt` -- decrypted into a mode-600 file in a

@@ -132,12 +132,12 @@ boundary](system-boundary.md).
 
 The default inventory excludes transitive closures. Exact sizes vary by platform
 and nixpkgs revision and remain an explicit diagnostic. Measure a pinned
-workstation closure without activating it, and build the portable server
+machine closure without activating it, and build the portable server
 manifest for its separately enforced budget:
 
 ```sh
-nix build --no-link .#homeConfigurations.platform-01.activationPackage
-nix path-info -Sh .#homeConfigurations.platform-01.activationPackage
+nix build --no-link .#nixosConfigurations.dev-01.config.system.build.toplevel
+nix path-info -Sh .#nixosConfigurations.dev-01.config.system.build.toplevel
 
 nix build .#server-profile-manifest
 jq . result/manifest.json

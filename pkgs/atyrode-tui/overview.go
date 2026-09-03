@@ -73,8 +73,6 @@ func workspacePurpose(id clikit.WorkspaceID) string {
 		return "Browse active capabilities and their resolved deliverables."
 	case workspaceRuntime:
 		return "Provision, start, and open machine-local on-demand services."
-	case workspaceTunnel:
-		return "Grant or revoke expiring fleet SSH access to this machine."
 	case workspaceCatalog:
 		return "Run reviewed software once, installing and declaring nothing."
 	case workspaceAsk:

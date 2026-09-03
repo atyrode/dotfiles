@@ -29,7 +29,6 @@ readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
 readonly windows_package_inventory='@windows_packages@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
-readonly managed_ssh_fleet_keys='@ssh_fleet_keys@'
 readonly sops_directory='@sops_directory@'
 readonly manifold_inventory='@manifold_inventory@'
 readonly flake_ref='@flakeRef@'
@@ -75,8 +74,6 @@ apply_job_worker=0
 . "$lib_dir/catalog.sh"
 # shellcheck source=lib/vault.sh
 . "$lib_dir/vault.sh"
-# shellcheck source=lib/tunnel.sh
-. "$lib_dir/tunnel.sh"
 # shellcheck source=lib/authbroker.sh
 . "$lib_dir/authbroker.sh"
 # shellcheck source=lib/manifold.sh
@@ -116,9 +113,6 @@ Usage:
   atyrode auth broker setup
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
-  atyrode tunnel list [--json]
-  atyrode tunnel grant NAME [--for 1h|8h|24h|7d|until-revoked]
-  atyrode tunnel revoke NAME
   atyrode provision git [--persist] [--yes]
   atyrode provision babel [--dry-run]
   atyrode lifecycle [--json]
@@ -174,15 +168,6 @@ vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
 explicit secret-output boundary. Duplicate names and non-note items are refused.
-tunnel decides which reviewed fleet keys (modules/home/ssh/fleet-keys) may reach THIS
-machine over SSH. It owns ~/.ssh/authorized_keys: every mutation re-renders the
-file from the registry plus local grant state, keeping the pre-management file
-once. Grants default to a timed grant whose deadline is an OpenSSH expiry-time
-option, so sshd stops accepting the key on its own with no timer or daemon.
-grant and revoke require an unlocked Bitwarden vault as an intentionality gate;
-list is read-only and needs no vault. The registry's one primary key is always
-rendered and can never be revoked here. Grant state is machine-local and is not
-part of a Nix generation or rollback.
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
@@ -271,12 +256,6 @@ main() {
     runtime) cmd_runtime "$@" ;;
     fleet) cmd_fleet "$@" ;;
     vault) cmd_vault "$@" ;;
-    tunnel)
-      case "${1:-}" in
-        grant | revoke) guard_production_mutation "tunnel $1" ;;
-      esac
-      cmd_tunnel "$@"
-      ;;
     auth) cmd_auth "$@" ;;
     provision) cmd_provision "$@" ;;
     context) cmd_context "$@" ;;

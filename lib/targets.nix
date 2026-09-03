@@ -95,8 +95,9 @@ let
     assert lib.assertMsg (
       host.platform == expectedPlatform
     ) "host ${name} platform ${host.platform} does not match ${host.system}";
+    # A fixed host is a machine this flake builds whole, so Home Manager on its
+    # own is a portable profile's activation owner, never a registry host's.
     assert lib.assertMsg (builtins.elem activation [
-      "home-manager"
       "nix-darwin"
       "nixos"
       "nixos-wsl"
@@ -106,7 +107,6 @@ let
         activation == "nix-darwin"
       else
         builtins.elem activation [
-          "home-manager"
           "nixos"
           "nixos-wsl"
         ]

@@ -24,10 +24,9 @@ in
   # a full clang (2.1 GiB against 88 MiB for sops), and no Linux host can
   # decrypt as the operator anyway, so it is installed only where the enclave
   # is. The clan CLI is installed exactly where clan-core built the system
-  # this profile is embedded in: a standalone Home Manager host and a client's
-  # NixOS machine consuming the portable profile are not clan machines, and
-  # the former's closure budget (checks/fleet/host-closure.nix) has no room
-  # for a fleet CLI it cannot use.
+  # this profile is embedded in: a portable Home Manager profile and a client's
+  # NixOS machine consuming it are not clan machines, so neither carries a
+  # fleet CLI it cannot use.
   home.packages =
     (with pkgs; [
       nmap

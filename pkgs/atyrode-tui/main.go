@@ -204,16 +204,6 @@ type model struct {
 	runtimeErr      error
 	runtimeAction   string
 
-	tunnel         tunnelReport
-	tunnelLoading  bool
-	tunnelMutating bool
-	tunnelErr      error
-	tunnelStatus   string
-	tunnelAction   string
-	tunnelCursor   int
-	tunnelPicking  bool
-	tunnelDuration int
-
 	catalog          []catalogItem
 	catalogSystem    string
 	catalogLoading   bool
@@ -537,13 +527,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.loadRuntime()
-	case tunnelReportMsg:
-		m.tunnelLoading = false
-		m.tunnel, m.tunnelErr = msg.report, msg.err
-		m.tunnelCursor = clampCursor(m.tunnelCursor, len(m.tunnel.Machines))
-		return m, nil
-	case tunnelActionMsg:
-		return m, m.handleTunnelAction(msg)
 	case catalogReportMsg:
 		m.catalogLoading = false
 		m.catalog, m.catalogErr = msg.entries, msg.err
@@ -592,9 +575,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.nav.Active() == workspaceRuntime {
 			return m, m.runtimeUpdate(key)
-		}
-		if m.nav.Active() == workspaceTunnel {
-			return m, m.tunnelUpdate(key)
 		}
 		if m.nav.Active() == workspaceCatalog {
 			return m, m.catalogUpdate(key)
@@ -745,8 +725,6 @@ func (m model) View() string {
 		content = m.capabilitiesWorkspaceView(panelWidth)
 	case workspaceRuntime:
 		content = m.runtimeView(panelWidth)
-	case workspaceTunnel:
-		content = m.tunnelView(panelWidth)
 	case workspaceCatalog:
 		content = m.catalogView(panelWidth)
 	default:

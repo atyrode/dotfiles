@@ -18,16 +18,14 @@ picker, because a machine whose system is owned by this flake is installed and
 updated by clan rather than picked by a bootstrap script; the registry check
 keeps the projection honest.
 
-A system host — one whose activation owner is nix-darwin or NixOS — is a
-clan machine: `lib/configurations.nix` derives clan's inventory from the
-registry, one machine per system host with its class (`darwin` or `nixos`)
-and the activation and platform as tags, and clan-core builds its
-configuration ([ADR 0008](adr/0008-fleet-shape-and-substrate.md), amended).
-Adding, renaming, or retiring a system host is still a registry edit; clan
+Every registered host is a clan machine: `lib/configurations.nix` derives
+clan's inventory from the registry, one machine per host with its class
+(`darwin` or `nixos`) and the activation and platform as tags, and clan-core
+builds its configuration ([ADR 0008](adr/0008-fleet-shape-and-substrate.md),
+amended). Adding, renaming, or retiring a host is still a registry edit; clan
 learns it from there, and the `host-registry` check asserts that clan names
-exactly the system hosts. A machine's key and its registration with clan are
-in [secrets.md](secrets.md). Standalone Home Manager hosts are not clan
-machines: clan does not see them and they read no secret.
+exactly the registry's hosts. A machine's key and its registration with clan
+are in [secrets.md](secrets.md).
 
 Capabilities are declarative Home Manager modules, not imperative `nix
 profile` state. Home Manager generations remain activation history and rollback
@@ -99,8 +97,8 @@ same capability modules through the
 [portable profile contract](portable-profiles.md). Such a consumer declares
 `activation = "nixos"` and an exact non-secret `nixTrustedUsers` list including
 `root`; `atyrode doctor system` then checks the NixOS login-shell path and that
-host-specific daemon trust boundary instead of applying standalone Linux
-defaults.
+host-specific daemon trust boundary instead of the Home Manager-only Linux
+defaults a portable profile gets.
 `wsl` is a deliberate local-workstation exception: this flake
 exports its complete `nixosConfigurations` entry and owns that WSL guest, while
 native Windows packages and state retain their separate WinGet/application

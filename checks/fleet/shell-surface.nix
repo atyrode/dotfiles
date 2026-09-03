@@ -5,7 +5,7 @@
 }:
 
 let
-  baseline = hostConfigs.platform-01.config;
+  baseline = hostConfigs.dev-01.config;
 in
 assert lib.assertMsg baseline.programs.zsh.enableCompletion
   "the baseline shell must keep completion enabled";

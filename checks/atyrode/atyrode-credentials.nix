@@ -342,17 +342,17 @@ pkgs.runCommand "check-atyrode-credentials"
       ATYRODE_CLAN="$TMPDIR/bin/fleet-clan"
       ATYRODE_NIX="$TMPDIR/bin/fleet-nix"
       ATYRODE_SSH="$TMPDIR/bin/fleet-ssh"
-      ATYRODE_HOST=platform-01
+      ATYRODE_HOST=development-x86_64-linux
     )
 
     # A host clan cannot deploy is refused by name, and the refusal says which
     # command does converge it.
-    if "''${fleet_test_env[@]}" atyrode fleet plan platform-01 \
-      >"$TMPDIR/fleet-standalone.out" 2>"$TMPDIR/fleet-standalone.err"; then
-      echo 'fleet plan must refuse a standalone Home Manager host' >&2
+    if "''${fleet_test_env[@]}" atyrode fleet plan development-x86_64-linux \
+      >"$TMPDIR/fleet-portable.out" 2>"$TMPDIR/fleet-portable.err"; then
+      echo 'fleet plan must refuse a portable Home Manager profile' >&2
       exit 1
     fi
-    grep -qF 'converges with atyrode apply' "$TMPDIR/fleet-standalone.err"
+    grep -qF 'converges with atyrode apply' "$TMPDIR/fleet-portable.err"
 
     fleet_plan="$("''${fleet_test_env[@]}" atyrode fleet plan fixture-nixos \
       --repo "$TMPDIR/repo" --json 2>"$TMPDIR/fleet-plan.err")"

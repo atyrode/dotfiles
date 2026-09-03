@@ -189,18 +189,12 @@ provisioning_unconfigured() { # id summary
 # operator device and then placed on the machine by apply, so the two
 # unfinished states name which of those two steps is owed.
 probe_machine_key() {
-  local host data activation
+  local host data
   host="$(resolve_host)"
   data="$(host_json "$host")"
-  activation="$(jq -r '.activation' <<<"$data")"
   if [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == runtime ]]; then
     provisioning_check_add machine-key not-applicable portable-profile \
       "portable profiles are not fleet members and read no secret" ""
-    return 0
-  fi
-  if [[ "$activation" == home-manager ]]; then
-    provisioning_check_add machine-key not-applicable not-a-clan-machine \
-      "$host activates with standalone Home Manager, which clan does not build, so it reads no secret" ""
     return 0
   fi
   if [[ ! -e "$(machine_key_repository_file "$host")" ]]; then
@@ -502,8 +496,6 @@ provision_machine_key() {
   data="$(host_json "$host")"
   [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == fixed ]] ||
     die "$EX_DATAERR" "$host is a portable profile; it is not a fleet member and clan does not know it"
-  [[ "$(jq -r '.activation' <<<"$data")" != home-manager ]] ||
-    die "$EX_DATAERR" "$host is not a clan machine: it activates with standalone Home Manager and reads no secret"
   user="$(operator_user_for "$host")"
   if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
     die "$EX_UNAVAILABLE" "this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate $host"

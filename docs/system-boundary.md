@@ -110,7 +110,7 @@ host explicitly:
 
 ```sh
 atyrode doctor system
-atyrode doctor system workstation-x86_64-linux
+atyrode doctor system wsl
 atyrode doctor system macbook --json
 ```
 
@@ -120,7 +120,7 @@ The checks always appear in this order:
 |---|---|
 | `login-shell` | The real account database selects the expected executable Zsh path and that path is listed as an allowed shell. |
 | `nix-daemon` | The system-owned daemon store is reachable. |
-| `nix-policy` | Trusted users match the exact host contract (`root` for standalone hosts; the declared list for integrated NixOS), the substituters are exactly the official cache followed by the fleet cache with exactly their two signing keys trusted, signatures are required, and the nix-darwin optimiser is scheduled on macOS. |
+| `nix-policy` | Trusted users match the exact host contract (`root` for portable Home Manager profiles; the declared list for integrated NixOS), the substituters are exactly the official cache followed by the fleet cache with exactly their two signing keys trusted, signatures are required, and the nix-darwin optimiser is scheduled on macOS. |
 | `container-engine` | The selected container engine is reachable without Docker-group membership, or the capability is not selected. |
 | `antivirus-data` | Verifies ClamAV binaries are absent while no host owns signatures/scanning; an unmanaged binary is drift. |
 | `device-permissions` | Android access policy is ready, or the `mobile` capability is not selected. |
@@ -159,7 +159,7 @@ Home Manager owns Zsh configuration but not the account's login-shell field.
 Which layer closes that gap is exactly what the `login-shell` row reports as
 its `owner`:
 
-- On standalone Linux the owner is `atyrode`. After a successful Home Manager
+- On a portable Home Manager profile the owner is `atyrode`. After a successful Home Manager
   activation, `atyrode apply` verifies `$HOME/.nix-profile/bin/zsh`, registers
   it in `/etc/shells`, and selects it with `chsh` using explicit root or
   `sudo` privilege — each step only where the state is actually wrong — then
@@ -186,12 +186,12 @@ failing on it would only make a correct Home Manager generation look broken.
 ## Platform policy details
 
 The reviewed Nix policy is deliberately narrow: the daemon store is
-system-owned, standalone hosts trust exactly `root`, integrated NixOS hosts
+system-owned, portable Home Manager profiles trust exactly `root`, integrated NixOS hosts
 trust exactly their declared non-secret `nixTrustedUsers`, the configured
 binary caches are exactly the official Nix cache followed by the fleet cache
 with their two signing keys, and signatures are required. nix-darwin also
 schedules store optimisation. Linux Home Manager does not pretend to own
-those settings; standalone Linux repairs belong to the system Nix
+those settings; on a portable profile repairs belong to the system Nix
 installation, and NixOS repairs belong to the consuming infrastructure.
 
 ### The fleet cache

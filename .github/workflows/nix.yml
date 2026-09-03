@@ -157,29 +157,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # The standard macOS runner offers about 14 GB for a closure that is
-      # already 10 GiB. Most of its disk is taken by toolchains this job never
-      # touches: several Xcode versions, the Android SDK, .NET, simulator
-      # runtimes. Removing them is what people do instead of paying for a
-      # larger runner. Deleting them takes three minutes, and the download the
-      # build starts with needs a fraction of that space, so the deletion runs
-      # beside the build rather than in front of it and is waited on before
-      # the closure is realised; the sizes are printed so the log shows the
-      # margin.
-      - name: Free runner disk
-        if: runner.os == 'macOS'
-        run: |
-          df -h / | tail -1
-          {
-            keep="$(xcode-select -p | sed 's|/Contents/Developer||')"
-            for xcode in /Applications/Xcode_*.app; do
-              [ "$xcode" = "$keep" ] || sudo rm -rf "$xcode"
-            done
-            sudo rm -rf /Library/Android /usr/local/share/dotnet /usr/local/.ghcup \
-              ~/Library/Developer/CoreSimulator/Caches ~/.dotnet 2>/dev/null || true
-            df -h / | tail -1
-          } > "$RUNNER_TEMP/free-disk.log" 2>&1 &
-          echo "$!" > "$RUNNER_TEMP/free-disk.pid"
+      # There is deliberately no disk cleanup here. One existed for the store
+      # tarball the GitHub cache restored on top of the closure; measured after
+      # that tarball was retired, the macOS runner starts with 44 GiB free and
+      # this build needs 3.5 GiB to download and 9.7 GiB unpacked. Deleting
+      # the Xcode versions bought 40 GiB the build never used and cost 2.6
+      # minutes of the critical path waiting for it.
 
       # Nix >= 2.33 is required for the push: the S3 store moved from the AWS
       # SDK to native curl SigV4, which is what makes Cellar (Ceph RGW,
@@ -195,27 +178,13 @@ jobs:
             extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
             extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
 
-      # The dry run is the diagnostic. It lists every derivation this system
-      # would compile rather than download, so when the build below runs out
-      # of its budget the culprit is already named in the step above it. A
-      # package that shows up here is a source build on every fresh machine
-      # too: Signal Desktop on aarch64-darwin was a multi-hour Electron compile
-      # that looked like a hung job, because the one Mac had paid it once and
-      # nobody else ever had.
-      - name: Preview fleet closure work
-        run: nix build .#fleet-closures --dry-run
-
-      # The deletion started before Nix was installed; the download the
-      # preview just planned needs a fraction of the space the realisation
-      # does, so the margin is only required from here on.
-      - name: Wait for the runner disk
-        if: runner.os == 'macOS'
-        run: |
-          # A step cannot `wait` on a process another step started; it is not
-          # this shell's child. Watching the pid is the portable equivalent.
-          pid="$(cat "$RUNNER_TEMP/free-disk.pid")"
-          while kill -0 "$pid" 2>/dev/null; do sleep 5; done
-          cat "$RUNNER_TEMP/free-disk.log"
+      # No dry run in front of the build: the build prints the same list of
+      # derivations it will compile before it starts them, and a dry run is a
+      # second full evaluation of this flake, which on the Mac is two minutes.
+      # A package that turns up in that list is a source build on every fresh
+      # machine too: Signal Desktop on aarch64-darwin was a multi-hour Electron
+      # compile that looked like a hung job, which is what the timeout below
+      # names.
 
       # Twenty minutes is generous for downloading a closure and building the
       # handful of derivations that are ours; anything longer is compiling a

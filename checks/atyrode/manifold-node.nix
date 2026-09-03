@@ -1,5 +1,5 @@
 # The manifold-node capability contract (#418/#419), asserted on the portable
-# server composition that tyrode-dev-01 consumes: the pinned agent is
+# server composition that dev-01 consumes: the pinned agent is
 # installed, the user service runs the immutable store binary with a bounded
 # restart policy, enrollment gates the unit through the token-file condition,
 # and no token material can enter the unit text. Systems outside the pin's

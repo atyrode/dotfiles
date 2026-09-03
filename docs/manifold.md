@@ -74,9 +74,9 @@ therefore operator-timed:
    changes — apply on a machine hosting live manifold sessions from a plain
    SSH session, never from inside one of its own terminals.
 
-On tyrode-dev-01 the capability arrives through that machine's own entry in
+On dev-01 the capability arrives through that machine's own entry in
 [`fleet/hosts.nix`](../fleet/hosts.nix): it is a machine of this repository,
-so delivery is `atyrode fleet apply tyrode-dev-01` from an operator device,
+so delivery is `atyrode fleet apply dev-01` from an operator device,
 not `atyrode apply`, which converges only the machine it runs on.
 
 The pin refresh enforces step 1. `ci/update-pins.sh` carries a
@@ -111,7 +111,7 @@ Recovery was rolling the pin back and applying from the local checkout
 (`atyrode apply --repo ~/nix-dotfiles`), since plain `atyrode apply` builds the
 published revision and cannot carry an unmerged fix.
 
-## tyrode-dev-01 cutover (#419)
+## dev-01 cutover (#419)
 
 Done on 2026-08-28. The VPS runs the declared user service against the pinned
 `manifold-agent` release, and the detached OMP-managed stopgap it replaced is

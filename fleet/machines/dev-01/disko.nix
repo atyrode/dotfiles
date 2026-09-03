@@ -4,7 +4,7 @@ let
   targetDisk = "/dev/disk/by-path/pci-0000:00:10.0";
 in
 {
-  disko.devices.disk.tyrode-dev-01 = {
+  disko.devices.disk.dev-01 = {
     type = "disk";
     device = targetDisk;
 
@@ -76,7 +76,7 @@ in
   assertions = [
     {
       assertion = targetDisk == "/dev/disk/by-path/pci-0000:00:10.0";
-      message = "tyrode-dev-01 Disko may target only the reviewed PCI by-path disk";
+      message = "dev-01 Disko may target only the reviewed PCI by-path disk";
     }
   ];
 }

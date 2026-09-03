@@ -7,9 +7,7 @@
 
 let
   inherit (nixosConfig) config;
-  markerFile =
-    pkgs.writeText "atyrode-wsl-host.json"
-      config.environment.etc."atyrode/wsl-host.json".text;
+  markerFile = pkgs.writeText "wsl-host.json" config.environment.etc."atyrode/wsl-host.json".text;
   packageFile = pkgs.writeText "atyrode-windows-packages.json" (builtins.toJSON windowsPackages);
 in
 assert lib.assertMsg config.wsl.enable "the managed Windows host must enable NixOS-WSL";
@@ -21,9 +19,7 @@ assert lib.assertMsg config.wsl.interop.includePath
 assert lib.assertMsg config.wsl.wslConf.interop.enabled "wsl.conf must enable Windows interop";
 assert lib.assertMsg config.wsl.wslConf.interop.appendWindowsPath
   "wsl.conf must append the Windows path";
-assert lib.assertMsg (
-  config.networking.hostName == "atyrode-wsl"
-) "the WSL hostname must be stable";
+assert lib.assertMsg (config.networking.hostName == "wsl") "the WSL hostname must be stable";
 assert lib.assertMsg config.users.users.alex.isNormalUser "the managed WSL user must exist";
 assert lib.assertMsg (builtins.hasAttr "alex" config.home-manager.users)
   "Home Manager must be integrated into NixOS-WSL";
@@ -42,9 +38,9 @@ pkgs.runCommand "check-windows-control-plane"
   ''
     jq -e '
       .schemaVersion == 1
-      and .id == "alex-x86_64-linux-wsl"
+      and .id == "wsl"
       and .activation == "nixos-wsl"
-      and .hostname == "atyrode-wsl"
+      and .hostname == "wsl"
       and .system == "x86_64-linux"
       and .username == "alex"
     ' ${markerFile} >/dev/null
@@ -109,7 +105,7 @@ pkgs.runCommand "check-windows-control-plane"
       *'--exec /bin/sh -c '*' /etc/atyrode-bootstrap-pending'*)
         touch "$WSL_STATE/pending"
         ;;
-      *'--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.alex-x86_64-linux-wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl'*)
+      *'--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#wsl'*)
         touch "$WSL_STATE/managed"
         ;;
       *'--exec /run/current-system/sw/bin/rm -f /etc/atyrode-bootstrap-pending'*)
@@ -207,7 +203,7 @@ pkgs.runCommand "check-windows-control-plane"
       > "$TMPDIR/bootstrap-apply.out"
     grep -qF 'Bootstrap complete.' "$TMPDIR/bootstrap-apply.out"
     grep -qF -- '--install --from-file' "$WSL_STUB_LOG"
-    grep -qF -- '--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.alex-x86_64-linux-wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#alex-x86_64-linux-wsl --option experimental-features nix-command flakes' \
+    grep -qF -- '--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#wsl --option experimental-features nix-command flakes' \
       "$WSL_STUB_LOG"
     grep -qF -- '--exec /etc/profiles/per-user/alex/bin/atyrode windows apply' "$WSL_STUB_LOG"
     test -f "$WSL_STATE/distro"

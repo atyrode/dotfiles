@@ -131,8 +131,8 @@ workstation closure without activating it, and build the portable server
 manifest for its separately enforced budget:
 
 ```sh
-nix build --no-link .#homeConfigurations.alex-x86_64-linux.activationPackage
-nix path-info -Sh .#homeConfigurations.alex-x86_64-linux.activationPackage
+nix build --no-link .#homeConfigurations.platform-01.activationPackage
+nix path-info -Sh .#homeConfigurations.platform-01.activationPackage
 
 nix build .#server-profile-manifest
 jq . result/manifest.json

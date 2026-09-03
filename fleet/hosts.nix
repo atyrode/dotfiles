@@ -1,5 +1,5 @@
 {
-  "alex-aarch64-darwin" = {
+  "macbook" = {
     description = "Primary Apple Silicon Mac with the full development, agent, and desktop stack";
     system = "aarch64-darwin";
     platform = "darwin";
@@ -18,8 +18,8 @@
     ];
   };
 
-  "alex-aarch64-linux" = {
-    description = "Headless arm64 Linux development machine with agent tooling";
+  "headless-aarch64-linux" = {
+    description = "Shape for a headless arm64 Linux machine with agent tooling";
     system = "aarch64-linux";
     platform = "linux";
     activation = "home-manager";
@@ -33,8 +33,8 @@
     ];
   };
 
-  "alex-x86_64-linux" = {
-    description = "Headless x86_64 Linux development machine with agent tooling";
+  "platform-01" = {
+    description = "The VPS serving the public platform, pending decommission";
     system = "x86_64-linux";
     platform = "linux";
     activation = "home-manager";
@@ -50,8 +50,8 @@
     ];
   };
 
-  "alex-x86_64-linux-desktop" = {
-    description = "x86_64 Linux workstation adding the desktop, mobile, media, and container stack";
+  "workstation-x86_64-linux" = {
+    description = "Shape for an x86_64 Linux workstation with the desktop, mobile, media, and container stack";
     system = "x86_64-linux";
     platform = "linux";
     activation = "home-manager";
@@ -69,14 +69,14 @@
     ];
   };
 
-  "alex-x86_64-linux-wsl" = {
+  "wsl" = {
     description = "NixOS-WSL development environment and control plane for the home Windows workstation";
     system = "x86_64-linux";
     platform = "linux";
     activation = "nixos-wsl";
     username = "alex";
     homeDirectory = "/home/alex";
-    hostname = "atyrode-wsl";
+    hostname = "wsl";
     capabilities = [
       "base"
       "development"
@@ -85,14 +85,14 @@
     ];
   };
 
-  "tyrode-dev-01" = {
+  "dev-01" = {
     description = "Persistent, rebuildable personal development VPS";
     system = "x86_64-linux";
     platform = "linux";
     activation = "nixos";
     username = "alex";
     homeDirectory = "/home/alex";
-    hostname = "tyrode-dev-01";
+    hostname = "dev-01";
     # The Nix daemon trusts the operator explicitly because clan copies a
     # closure to this machine before activation escalates, and passwordless
     # sudo already makes that account root-equivalent.

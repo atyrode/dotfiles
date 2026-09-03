@@ -66,7 +66,7 @@ pkgs.runCommand "check-atyrode-tunnel"
       rm -rf "$HOME"
       mkdir -p "$HOME/.ssh" "$XDG_CONFIG_HOME/atyrode"
       chmod 700 "$HOME/.ssh"
-      printf '%s\n' '{"id":"alex-x86_64-linux"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+      printf '%s\n' '{"id":"platform-01"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
       {
         printf 'ssh-ed25519 %s alext@Alex-Windows\n' "$primary_key"
         printf 'ssh-ed25519 %s alexMacBook-Air-de-Alex.local\n' "$macbook_key"

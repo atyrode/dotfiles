@@ -22,11 +22,9 @@
 #        machine reachable only over SSH. Everything else is `revocable`.
 # KEYTYPE/BASE64-KEY  the first two fields of the key's authorized_keys line.
 #
-# Seeded from the operator's pre-management ~/.ssh/authorized_keys on
-# alex-x86_64-linux. That file held five lines but only three distinct keys:
-# one key had been pasted twice, once split across two lines that sshd
-# silently discarded as malformed. Rendering the file from this registry is
-# what stops that failure mode from recurring.
+# The rendered file is generated from this registry alone, which is what stops
+# a duplicated key, or one split across two lines that sshd silently discards
+# as malformed, from reaching an authorized_keys file.
 
 alex-windows      primary    ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIE46zTCcblt3gILmUZWpus7QtKgfpybAJkL0iH0IabUG
 alex-macbook-air  revocable  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIMRcKLAXoDVuzSVgqi8KokRBFYMAAj10rpoD5aMdO4Bd

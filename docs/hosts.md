@@ -87,7 +87,7 @@ public here too. A machine that could not state its own address could not be
 rebuilt from this repository, which is the test that matters
 ([invariant 8](../AGENTS.md)). The provider is a different kind of fact and
 stays out of every file; `checks/lints/production-facts.nix` enforces both
-halves of that rule. `tyrode-dev-01`, the persistent development VPS, is the
+halves of that rule. `dev-01`, the persistent development VPS, is the
 first machine of this shape: `modules/nixos/vps.nix` is its policy — one open
 port, declarative root-owned SSH keys drawn from the reviewed fleet key
 registry, passwordless sudo for the operator's account alone, and rootless
@@ -101,7 +101,7 @@ same capability modules through the
 `root`; `atyrode doctor system` then checks the NixOS login-shell path and that
 host-specific daemon trust boundary instead of applying standalone Linux
 defaults.
-`alex-x86_64-linux-wsl` is a deliberate local-workstation exception: this flake
+`wsl` is a deliberate local-workstation exception: this flake
 exports its complete `nixosConfigurations` entry and owns that WSL guest, while
 native Windows packages and state retain their separate WinGet/application
 boundary. The full Home Manager, nix-darwin, NixOS-WSL, and Windows ownership

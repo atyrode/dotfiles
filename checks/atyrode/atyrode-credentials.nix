@@ -341,12 +341,12 @@ pkgs.runCommand "check-atyrode-credentials"
       ATYRODE_CLAN="$TMPDIR/bin/fleet-clan"
       ATYRODE_NIX="$TMPDIR/bin/fleet-nix"
       ATYRODE_SSH="$TMPDIR/bin/fleet-ssh"
-      ATYRODE_HOST=alex-x86_64-linux
+      ATYRODE_HOST=platform-01
     )
 
     # A host clan cannot deploy is refused by name, and the refusal says which
     # command does converge it.
-    if "''${fleet_test_env[@]}" atyrode fleet plan alex-x86_64-linux \
+    if "''${fleet_test_env[@]}" atyrode fleet plan platform-01 \
       >"$TMPDIR/fleet-standalone.out" 2>"$TMPDIR/fleet-standalone.err"; then
       echo 'fleet plan must refuse a standalone Home Manager host' >&2
       exit 1

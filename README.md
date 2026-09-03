@@ -8,8 +8,8 @@ Reproducible, agent-first personal operating environment for [Alex Tyrode](https
 
 ```bash
 cd ~/nix-dotfiles
-./bootstrap/install.sh plan --config alex-x86_64-linux
-./bootstrap/install.sh apply --config alex-x86_64-linux
+./bootstrap/install.sh plan --config platform-01
+./bootstrap/install.sh apply --config platform-01
 ```
 
 **Supported fresh-machine command:**
@@ -47,7 +47,7 @@ native/WSL changes without applying them. After review, run the printed revision
 ```
 
 The bootstrap verifies a pinned NixOS-WSL image, activates
-`alex-x86_64-linux-wsl`, and then reconciles reviewed native packages through
+`wsl`, and then reconciles reviewed native packages through
 WinGet. If it first enables or updates WSL, follow its reboot instruction and
 run the same apply command again.
 
@@ -232,7 +232,7 @@ managed guidance files, and secret/mutable ownership.
 For this Mac, the manual switch command is:
 
 ```bash
-sudo -H nix run .#darwin-rebuild -- switch --flake .#alex-aarch64-darwin
+sudo -H nix run .#darwin-rebuild -- switch --flake .#macbook
 ```
 
 `atyrode apply` uses nix-darwin on macOS and asks for sudo when system
@@ -241,16 +241,16 @@ activation is required.
 On Linux, the matching configuration still uses Home Manager directly:
 
 ```bash
-HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x86_64-linux
+HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#platform-01
 ```
 
 For Linux desktop machines that need Steam, SteamCMD, and VLC:
 
 ```bash
-HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#alex-x86_64-linux-desktop
+HOME_MANAGER_BACKUP_EXT=backup nix run .#home-manager -- switch --flake .#workstation-x86_64-linux
 ```
 
-You can also set `ATYRODE_HOST=alex-x86_64-linux-desktop` before running
+You can also set `ATYRODE_HOST=workstation-x86_64-linux` before running
 `atyrode apply` on a Linux desktop. Successful `atyrode apply` and
 `bootstrap/install.sh apply` runs record the active configuration so helper
 commands only show what applies to the current setup.

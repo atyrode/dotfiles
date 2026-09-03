@@ -77,7 +77,7 @@ activate work in progress before pushing. It additionally validates the
 checkout and Git repository and reports a dirty tree:
 
 ```sh
-atyrode apply alex-x86_64-linux-desktop --repo /home/alex/nix-dotfiles --plan
+atyrode apply workstation-x86_64-linux --repo /home/alex/nix-dotfiles --plan
 ```
 
 Before calling `nh`, the CLI validates the host, user, system, backend, and
@@ -96,8 +96,8 @@ of them run. `--plan` prints exactly that list and stops:
 
 ```
 Plan
-  1. Rebuild and switch alex-aarch64-darwin through nh-darwin.
-  2. Record alex-aarch64-darwin as the activated host.
+  1. Rebuild and switch macbook through nh-darwin.
+  2. Record macbook as the activated host.
   3. Converge the account login shell.
   4. Review the provisioning surfaces this machine declares.
 ```
@@ -133,7 +133,7 @@ inside someone else's output and reads as the dotfiles asking for root out of
 nowhere, so the step says so first:
 
 ```
-1/5 Rebuild and switch alex-aarch64-darwin through nh-darwin
+1/5 Rebuild and switch macbook through nh-darwin
   activation writes system state, so nh elevates: a sudo prompt below is its own
   $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
 ```
@@ -163,11 +163,11 @@ a failure at step 1 of 5 leaves steps 2 through 5 missing from the terminal,
 which reads as though they ran and said nothing:
 
 ```
-1/5 Rebuild and switch alex-aarch64-darwin through nh-darwin
+1/5 Rebuild and switch macbook through nh-darwin
   $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
   failed nh-darwin did not complete, and nothing was activated: this machine is unchanged
 
-2/5 Record alex-aarch64-darwin as the activated host
+2/5 Record macbook as the activated host
   not attempted
 ```
 
@@ -252,7 +252,7 @@ atyrode: run atyrode vault login now? [y/N] y
   Babel session archive needs a Clever Cloud session, and without it the archive add-ons cannot be looked up, so this machine cannot learn where to publish
 atyrode: run clever login now? [y/N] y
   $ clever login
-atyrode: run atyrode provision babel for alex-aarch64-darwin now? [y/N]
+atyrode: run atyrode provision babel for macbook now? [y/N]
 ```
 
 Telling an operator who is sitting at the prompt to go and type a command this
@@ -289,9 +289,9 @@ Activation shows a generation package diff.
 ## Deploying another machine
 
 ```sh
-atyrode fleet plan tyrode-dev-01           # vars, reachability, evaluation; activates nothing
-atyrode fleet apply tyrode-dev-01          # build here, activate there, verify
-atyrode fleet apply tyrode-dev-01 --json --yes
+atyrode fleet plan dev-01           # vars, reachability, evaluation; activates nothing
+atyrode fleet apply dev-01          # build here, activate there, verify
+atyrode fleet apply dev-01 --json --yes
 ```
 
 `apply` converges the machine it runs on; `fleet apply` converges another one
@@ -491,7 +491,7 @@ The per-device model and what a lost device costs are in
 
 ```sh
 atyrode capabilities list --json
-atyrode capabilities show alex-x86_64-linux --json
+atyrode capabilities show platform-01 --json
 atyrode runtime status local-qwen --json
 atyrode runtime provision local-qwen
 atyrode runtime run local-qwen
@@ -501,7 +501,7 @@ atyrode runtime status manifold-agent --json
 atyrode provision git
 atyrode auth broker status --json
 atyrode inventory --json
-atyrode inventory --host alex-x86_64-linux --json
+atyrode inventory --host platform-01 --json
 atyrode inventory --ref <branch-tag-or-commit> --json
 atyrode inventory --repo /absolute/path/to/checkout --json
 atyrode lifecycle
@@ -523,7 +523,7 @@ and releases its GPU memory. A new session or direct API activity resets the
 deadline; stale leases from crashed processes are discarded.
 
 `manifold-agent` joins the machine to the self-hosted manifold hub declared in
-`fleet/manifold.json`; enrollment, upgrade discipline, the tyrode-dev-01
+`fleet/manifold.json`; enrollment, upgrade discipline, the dev-01
 cutover, and the master-migration runbook live in [manifold](manifold.md).
 
 `inventory` is a thin, read-only consumer of the flake's schema-versioned

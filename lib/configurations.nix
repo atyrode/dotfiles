@@ -42,7 +42,10 @@ let
   forAllSystems = lib.genAttrs systems;
 
   darwinModule = ../modules/darwin;
-  clanMachineModule = ../modules/shared/clan-machine.nix;
+  clanMachineModules = [
+    ../modules/shared/clan-machine.nix
+    ../modules/shared/git-identity.nix
+  ];
 
   dotfilesHomeNixosModule =
     { config, lib, ... }:
@@ -203,14 +206,14 @@ let
       # path, so the explicit import stays for readers.
       sops-nix.darwinModules.sops
       darwinModule
-      clanMachineModule
       {
         nixpkgs.hostPlatform = host.system;
         nixpkgs.overlays = [ agentToolsOverlay ];
         nixpkgs.config.allowUnfreePredicate =
           package: builtins.elem (lib.getName package) allowedUnfreePackages;
       }
-    ];
+    ]
+    ++ clanMachineModules;
   };
 
   nixosWslMachineModule = name: host: {
@@ -225,8 +228,8 @@ let
       sops-nix.nixosModules.sops
       dotfilesHomeNixosModule
       ../modules/nixos/wsl.nix
-      clanMachineModule
-    ];
+    ]
+    ++ clanMachineModules;
   };
 
   # Standalone Home Manager hosts are invisible to clan and read no secret;

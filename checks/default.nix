@@ -169,20 +169,20 @@ let
     ++ lib.mapAttrsToList (_name: config: config.config) canonicalNixosWslConfigs;
   # Every clan machine decrypts with the key `atyrode apply` places
   # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
-  # to the admins group, and no generator is declared yet: the first one is a
-  # reviewed change, not a side effect.
+  # to the admins group, and the declared generators are exactly the fleet's:
+  # a new one is a reviewed change, not a side effect.
   clanMachineSecretsAgree = lib.all (
     config:
     config.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
     && config.clan.core.sops.defaultGroups == [ "admins" ]
-    && config.clan.core.vars.generators == { }
+    && lib.attrNames config.clan.core.vars.generators == [ "git-identity" ]
   ) clanMachineConfigs;
   registryCheck =
     assert lib.assertMsg (
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt and declare no vars generator yet";
+      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the git-identity generator";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];
@@ -280,6 +280,12 @@ let
     desktop-fonts = import ./fleet/desktop-fonts.nix {
       inherit lib pkgs;
       hostConfigs = canonicalHomeConfigs;
+    };
+    git-identity = import ./fleet/git-identity.nix {
+      inherit lib pkgs system;
+      clanConfigs = lib.mapAttrs (_name: machine: machine.config) (
+        canonicalDarwinConfigs // canonicalNixosWslConfigs
+      );
     };
     get-entrypoint = import ./atyrode/get-sh.nix { inherit pkgs; };
     omp-seed = import ./omp/omp-seed.nix { inherit pkgs; };

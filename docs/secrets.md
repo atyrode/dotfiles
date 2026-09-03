@@ -128,10 +128,19 @@ A secret is an output of a `clan.core.vars.generators.<name>` entry in the
 host's Nix configuration: a script, its inputs, and the files it produces,
 each marked secret or not. `clan vars generate` runs it on an operator device and
 commits the result under `vars/`; sops-nix places each secret at a mode-0600
-path under `/run/secrets` at activation and never in the Nix store. With no
-generator declared, sops-nix does nothing at activation, which is why an empty
-fleet converges on every host today; the `host-registry` check asserts that
-this is still the state until the first generator is a reviewed change.
+path under `/run/secrets` at activation and never in the Nix store. The
+`host-registry` check asserts that the declared set is exactly the fleet's, so
+a new generator is a reviewed change rather than a side effect.
+
+The fleet declares one, [`git-identity`](../modules/shared/git-identity.nix),
+on every clan machine: an authentication key and a signing key, ed25519, minted
+per machine and never shared, so retiring a machine deletes one registration
+instead of rotating a key the whole fleet uses. The private halves are secrets
+placed by sops-nix and owned by the account that uses them; the public halves
+are ordinary values in `vars/`, which is what keeps the signer set reviewable.
+A generated signing key is trusted only when a commit adds it to
+[`modules/home/git/allowed-signers`](../modules/home/git/allowed-signers), and
+the `git-identity` check fails while a generated key is missing from that file.
 
 ## Revocation and rotation
 

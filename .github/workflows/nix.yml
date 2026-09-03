@@ -72,6 +72,8 @@ jobs:
       actions: write
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      HAVE_CACHE: ${{ secrets.CELLAR_ADDON_KEY_ID != '' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
@@ -82,11 +84,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # The fleet cache holds what main compiled, intermediate derivations
+      # included, so a pull request rebuilds what it changed and downloads the
+      # rest. Without it every platform rebuilt every check from an empty
+      # store on every push, which is most of what a pull request used to wait
+      # for.
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
+            extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
 
       # Restore the newest Nix store cache for this platform; without it every
       # run rebuilds all local derivations from an empty store (~13 min).
@@ -112,6 +121,18 @@ jobs:
       - name: Check flake
         run: nix flake check --show-trace --print-build-logs
 
+      # Only green main publishes: what a machine can substitute is what a
+      # reviewed revision produced. Every platform publishes, because the
+      # consumer that matters here is the next pull request's runner, and
+      # there is one of those per platform.
+      - name: Publish what this run built
+        if: github.ref == 'refs/heads/main' && env.HAVE_CACHE == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLAR_ADDON_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLAR_ADDON_KEY_SECRET }}
+          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: ./ci/publish-store.sh
+
   # Every host closure this system can realise, built as the fleet's only
   # builder and, on Linux, published for the fleet to download instead of
   # rebuild. Deliberately a separate job with no store cache: the closures are
@@ -121,10 +142,10 @@ jobs:
   # from the fleet cache itself, so once a revision's own derivations have been
   # pushed the next run is almost entirely downloads.
   #
-  # Darwin is built and never pushed. There is one Mac, so a cached Darwin
-  # closure would have exactly one consumer -- the machine that would build it
-  # anyway. Building it here is the gate that was missing: the class of failure
-  # that once reached the Mac only surfaces inside this derivation.
+  # Darwin is published too. The reasoning that kept it out -- one Mac, one
+  # consumer -- forgot the consumer that runs on every pull request: the
+  # Darwin runner itself, which used to compile the Mac's closure from
+  # scratch every time because nothing it had ever built was kept.
   closures:
     name: closures ${{ matrix.system }}
     needs: changes
@@ -151,18 +172,25 @@ jobs:
       # already 10 GiB. Most of its disk is taken by toolchains this job never
       # touches: several Xcode versions, the Android SDK, .NET, simulator
       # runtimes. Removing them is what people do instead of paying for a
-      # larger runner; the sizes are printed so the log shows the margin.
+      # larger runner. Deleting them takes three minutes, and the download the
+      # build starts with needs a fraction of that space, so the deletion runs
+      # beside the build rather than in front of it and is waited on before
+      # the closure is realised; the sizes are printed so the log shows the
+      # margin.
       - name: Free runner disk
         if: runner.os == 'macOS'
         run: |
           df -h / | tail -1
-          keep="$(xcode-select -p | sed 's|/Contents/Developer||')"
-          for xcode in /Applications/Xcode_*.app; do
-            [ "$xcode" = "$keep" ] || sudo rm -rf "$xcode"
-          done
-          sudo rm -rf /Library/Android /usr/local/share/dotnet /usr/local/.ghcup \
-            ~/Library/Developer/CoreSimulator/Caches ~/.dotnet 2>/dev/null || true
-          df -h / | tail -1
+          {
+            keep="$(xcode-select -p | sed 's|/Contents/Developer||')"
+            for xcode in /Applications/Xcode_*.app; do
+              [ "$xcode" = "$keep" ] || sudo rm -rf "$xcode"
+            done
+            sudo rm -rf /Library/Android /usr/local/share/dotnet /usr/local/.ghcup \
+              ~/Library/Developer/CoreSimulator/Caches ~/.dotnet 2>/dev/null || true
+            df -h / | tail -1
+          } > "$RUNNER_TEMP/free-disk.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/free-disk.pid"
 
       # Nix >= 2.33 is required for the push: the S3 store moved from the AWS
       # SDK to native curl SigV4, which is what makes Cellar (Ceph RGW,
@@ -188,6 +216,18 @@ jobs:
       - name: Preview fleet closure work
         run: nix build .#fleet-closures --dry-run
 
+      # The deletion started before Nix was installed; the download the
+      # preview just planned needs a fraction of the space the realisation
+      # does, so the margin is only required from here on.
+      - name: Wait for the runner disk
+        if: runner.os == 'macOS'
+        run: |
+          # A step cannot `wait` on a process another step started; it is not
+          # this shell's child. Watching the pid is the portable equivalent.
+          pid="$(cat "$RUNNER_TEMP/free-disk.pid")"
+          while kill -0 "$pid" 2>/dev/null; do sleep 5; done
+          cat "$RUNNER_TEMP/free-disk.log"
+
       # Twenty minutes is generous for downloading a closure and building the
       # handful of derivations that are ours; anything longer is compiling a
       # package that belongs in a cache or a vendor release, and the job fails
@@ -197,23 +237,16 @@ jobs:
         run: nix build .#fleet-closures --print-build-logs --min-free 2G --max-free 6G
 
       # Only green main is published: machines converge to what CI built from
-      # main and nothing else. The signing key exists on disk for the length
-      # of this step, mode 600 under the runner's private temp directory, and
-      # is removed on every exit path. zstd with parallel compression keeps a
-      # multi-gigabyte first push inside the job timeout; xz would take an hour.
-      - name: Push fleet closures to the cache
-        if: runner.os == 'Linux' && github.ref == 'refs/heads/main' && env.HAVE_CACHE == 'true'
+      # main and nothing else. Everything this runner compiled goes, not just
+      # the finished closures, so the next pull request downloads the
+      # intermediate work instead of repeating it.
+      - name: Publish what this run built
+        if: github.ref == 'refs/heads/main' && env.HAVE_CACHE == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.CELLAR_ADDON_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLAR_ADDON_KEY_SECRET }}
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
-        run: |
-          key="$RUNNER_TEMP/nix-cache-signing-key"
-          trap 'rm -f "$key"' EXIT
-          (umask 077 && printf '%s\n' "$NIX_CACHE_SIGNING_KEY" > "$key")
-          nix copy \
-            --to "s3://atyrode-nix-cache?endpoint=cellar-c2.services.clever-cloud.com&region=us-east-1&scheme=https&compression=zstd&parallel-compression=true&secret-key=$key" \
-            ./result
+        run: ./ci/publish-store.sh
 
   # Docs-only fast path: Markdown is not fully inert — links are linted and
   # docs can leak production facts — so build the two intentional whole-tree

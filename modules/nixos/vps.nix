@@ -74,12 +74,18 @@ in
 
   facter.reportPath = machineDirectory + "/facter.json";
 
-  # How clan reaches the machine. The operator's account, not root: root has
-  # no password and no SSH login, and activation escalates through sudo.
-  clan.core.networking.targetHost = "${username}@${machineAddress.ipv4}";
+  # How clan reaches the machine: its name, never its address. An address is
+  # a fact that changes when the machine is rehosted, and clan's own default
+  # for this option is the machine's fully qualified name for exactly that
+  # reason -- with a name, moving the machine costs a DNS record and no
+  # commit, and everything that addresses it keeps working. The account is
+  # the operator's, not root: root has no password and no SSH login, and
+  # activation escalates through sudo.
+  clan.core.networking.targetHost = "${username}@${config.networking.fqdn}";
 
   networking = {
     hostName = host.hostname;
+    inherit (machineAddress) domain;
     # The reviewed public-VPS exposure is exactly TCP 22. mkForce keeps this
     # authoritative over clan-core's recommended-defaults mDNS port (UDP
     # 5353), which must never listen on a public uplink.

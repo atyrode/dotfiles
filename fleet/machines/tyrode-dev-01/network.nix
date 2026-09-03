@@ -1,5 +1,11 @@
 { lib, ... }:
 
+let
+  # One description of one fact: the addresses this machine answers on are
+  # stated once, in `address.nix`, and both the uplink below and the name the
+  # fleet reaches it by are derived from that file.
+  machine = import ./address.nix;
+in
 {
   networking = {
     networkmanager.enable = lib.mkForce false;
@@ -21,11 +27,11 @@
     links = lib.mkForce { };
     netdevs = lib.mkForce { };
     networks = lib.mkForce {
-      "00-tyrode-uplink" = {
-        matchConfig.MACAddress = "e6:fa:af:f1:7b:6a";
+      "00-uplink" = {
+        matchConfig.MACAddress = machine.mac;
         address = [
-          "152.53.112.19/22"
-          "2a0a:4cc0:80:41e4:e4fa:afff:fef1:7b6a/64"
+          "${machine.ipv4}/${toString machine.ipv4PrefixLength}"
+          "${machine.ipv6}/${toString machine.ipv6PrefixLength}"
         ];
         networkConfig = {
           DHCP = "no";
@@ -39,12 +45,12 @@
         routes = [
           {
             Destination = "0.0.0.0/0";
-            Gateway = "152.53.112.1";
+            Gateway = machine.ipv4Gateway;
             GatewayOnLink = true;
           }
           {
             Destination = "::/0";
-            Gateway = "fe80::1";
+            Gateway = machine.ipv6Gateway;
             GatewayOnLink = true;
             IPv6Preference = "medium";
             Metric = 1024;

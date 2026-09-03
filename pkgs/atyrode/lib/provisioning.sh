@@ -544,11 +544,11 @@ archive_arm_timer() {
 }
 
 # --- provision ----------------------------------------------------------------
-# One-time interactive machine provisioning (#8, operator decision 2026-08-27):
-# per-machine Git SSH keys are vault-backed. `provision git` reconciles the
-# machine's auth and signing identities against Bitwarden — materializing a
-# vault key into agent memory, backing up a pre-vault local key, or
-# bootstrapping a brand-new one (generate, store, register with GitHub).
+# One-time interactive machine provisioning (#8): per-machine Git SSH keys are
+# vault-backed. `provision git` reconciles the machine's auth and signing
+# identities against Bitwarden — materializing a vault key into agent memory,
+# backing up a pre-vault local key, or bootstrapping a brand-new one (generate,
+# store, register with GitHub).
 # Default custody is agent-memory: no private file lands on disk; --persist
 # writes the 0600 file for machines that must survive agent restarts
 # unattended. Public halves are always written (they are the reviewed data).

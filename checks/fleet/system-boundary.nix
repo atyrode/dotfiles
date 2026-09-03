@@ -211,8 +211,9 @@ assert lib.assertMsg (
       "plugdev"
     ]
 ) "Android device-access policy differs from the reviewed boundary";
-assert lib.assertMsg (boundary.homebrew.cleanup == "zap")
-  "Homebrew cleanup must remove undeclared native state declaratively (operator decision 2026-08-27)";
+assert lib.assertMsg (
+  boundary.homebrew.cleanup == "zap"
+) "Homebrew cleanup must remove undeclared native state declaratively";
 assert lib.assertMsg (
   sort capabilityOwners == sort knownCapabilities
 ) "the evaluated inventory has missing or unknown capability owners";

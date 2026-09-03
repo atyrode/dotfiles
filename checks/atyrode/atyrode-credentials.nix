@@ -327,9 +327,10 @@ pkgs.runCommand "check-atyrode-credentials"
       atyrode vault login >/dev/null
     grep -qxF 'config server https://vault.bitwarden.eu' "$TMPDIR/bw-args"
     # --raw and nothing else: a plain login ends by printing the session key it
-    # minted as copy-paste advice, and that key was found in a transcript the
-    # operator had shared. The raw form emits only the key, on stdout, where it
-    # is captured and never shown.
+    # minted as copy-paste advice, which puts the one secret this flow exists to
+    # protect into the terminal, the scrollback, and any captured transcript.
+    # The raw form emits only the key, on stdout, where it is captured and
+    # never shown.
     grep -qxF 'login --raw' "$TMPDIR/bw-args"
 
     # --- fleet plan/apply: deploying a machine the operator is not sitting at -

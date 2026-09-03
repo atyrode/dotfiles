@@ -27,11 +27,10 @@ store; private keys and tokens must not.
 
 ## Vault-backed custody and `atyrode provision git`
 
-Since the 2026-08-27 operator decision (#8), per-machine keys are
-**vault-backed on every machine, including macOS**: Bitwarden is the custody
-and recovery authority, and `atyrode provision git` is the one interactive
-verb that reconciles a machine against it, under the same
-unlock→fetch→lock discipline as `atyrode auth broker setup`:
+Per-machine keys are **vault-backed on every machine, including macOS** (#8):
+Bitwarden is the custody and recovery authority, and `atyrode provision git`
+is the one interactive verb that reconciles a machine against it, under the
+same unlock→fetch→lock discipline as `atyrode auth broker setup`:
 
 - **Blank machine, keys in the vault** → materializes them into the running
   ssh-agent's memory and writes only the public halves. No private file

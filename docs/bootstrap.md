@@ -90,13 +90,12 @@ find. Passing `--update`, `--allow-dirty`, or `--allow-non-main` is a reviewed
 decision about which revision to activate, and suppresses the implicit update.
 A fresh clone already sits at `origin/main` and is handed off unchanged.
 
-The 2026-07-10 decision to
-support no `curl | shell` path was revised on 2026-07-11 with these
-mitigations: the fetched script is function-wrapped so a truncated download
-executes nothing, the confirmation prompt reads from the terminal and a
-non-interactive run requires an explicit `--yes`, and the bootstrap below
-still executes only from cloned, inspectable code. The
-clone-first command remains supported and equivalent:
+A fetched-and-piped script is supported rather than forbidden because three
+mitigations make it no more trusting than a clone: the fetched script is
+function-wrapped so a truncated download executes nothing, the confirmation
+prompt reads from the terminal and a non-interactive run requires an explicit
+`--yes`, and the bootstrap below still executes only from cloned, inspectable
+code. The clone-first command remains supported and equivalent:
 
 ```sh
 git clone https://github.com/atyrode/dotfiles.git "$HOME/nix-dotfiles" && "$HOME/nix-dotfiles/bootstrap/install.sh" apply --config development-x86_64-linux
@@ -211,7 +210,7 @@ shell profiles because the flake and Home Manager own those concerns. Existing
 Nix installations are reused. A Linux single-user install may still invoke
 `sudo` once to create `/nix` when it does not already exist.
 
-This choice was reviewed on 2026-07-10:
+The alternatives lost on these grounds:
 
 - [Upstream Nix](https://nix.dev/manual/nix/latest/) keeps the existing
   runtime, supports all three repository targets, and provides official

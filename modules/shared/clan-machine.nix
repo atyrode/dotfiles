@@ -3,14 +3,19 @@
 # this same module; the one class-specific attribute is selected by `_class`
 # because it does not exist as an option on the other class.
 #
-# The machine's age key is minted on the machine by `atyrode identity init`
-# and never travels; clan records only the public half under
-# sops/machines/<name>/key.json. Clan only points sops-nix at the key when it
-# generated the key itself, so the path is named here for both classes: it is
-# the same fact `atyrode identity` writes to, and the two must agree. SSH host
-# keys are deliberately not identities: a host key changes when sshd is
-# reinstalled and is harder to revoke than a recipient the ceremony printed,
-# so both derivations sops-nix offers are switched off rather than defaulted.
+# The machine's age key is clan's: `clan vars generate` mints it on an
+# operator device and keeps its private half in the repository, encrypted to
+# the admins group, under sops/secrets/<name>-age.key. Clan places it at the
+# path below when it deploys a machine, and `atyrode apply` places it there
+# on the machine the operator sits on; the path is stated here so both agree
+# with sops-nix on where the key is. SSH host keys are deliberately not
+# identities: a host key changes when sshd is reinstalled and is harder to
+# revoke than a recipient, so both derivations sops-nix offers are switched
+# off rather than defaulted.
+#
+# Every value clan generates is encrypted to the admins group by default:
+# the group is the operator, one member per device he works from, plus the
+# break-glass recovery key.
 { _class, lib, ... }:
 {
   sops.age = {
@@ -18,6 +23,7 @@
     sshKeyPaths = [ ];
   };
   sops.gnupg.sshKeyPaths = [ ];
+  clan.core.sops.defaultGroups = [ "admins" ];
 
   # clanCore's "recommended defaults" add debugging packages (tcpdump,
   # dnsutils, htop, jq, curl, git, nixos-facter), networkd, mDNS, and nix

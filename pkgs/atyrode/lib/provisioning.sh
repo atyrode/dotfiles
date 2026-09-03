@@ -183,12 +183,47 @@ provisioning_unconfigured() { # id summary
   provisioning_check_add "$1" incomplete not-configured "$2$suffix" "" "${unmet[@]+"${unmet[@]}"}"
 }
 
+# The doctor probe for the machine's own age key, the one clan vars are
+# decrypted with at activation. A host clan does not build cannot have one;
+# on a clan machine the key is first minted into the repository by an
+# operator device and then placed on the machine by apply, so the two
+# unfinished states name which of those two steps is owed.
+probe_machine_key() {
+  local host data activation
+  host="$(resolve_host)"
+  data="$(host_json "$host")"
+  activation="$(jq -r '.activation' <<<"$data")"
+  if [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == runtime ]]; then
+    provisioning_check_add machine-key not-applicable portable-profile \
+      "portable profiles are not fleet members and read no secret" ""
+    return 0
+  fi
+  if [[ "$activation" == home-manager ]]; then
+    provisioning_check_add machine-key not-applicable not-a-clan-machine \
+      "$host activates with standalone Home Manager, which clan does not build, so it reads no secret" ""
+    return 0
+  fi
+  if [[ ! -e "$(machine_key_repository_file "$host")" ]]; then
+    provisioning_unconfigured machine-key \
+      "no machine key in the repository; on any operator device run: clan vars generate $host"
+    return 0
+  fi
+  if ! machine_key_placed; then
+    provisioning_check_add machine-key degraded not-placed \
+      "the machine key is in the repository but not at $(machine_key_file); atyrode apply places it" \
+      "atyrode apply"
+    return 0
+  fi
+  provisioning_check_add machine-key ok "" \
+    "machine key placed; secrets are decrypted at activation" ""
+}
+
 collect_provisioning_checks() {
   provisioning_checks='[]'
   jq -e '.schemaVersion == 1' "$provisioning_policy" >/dev/null ||
     die "$EX_SOFTWARE" "unsupported provisioning policy schema"
   probe_omp_seed
-  probe_machine_identity
+  probe_machine_key
   probe_operator_identity
   probe_agent_context
   probe_git_identity
@@ -445,7 +480,7 @@ review_incomplete_surface() { # index host
 provisioning_run() { # id host
   case "$1" in
     git-identity) provision_now git ;;
-    machine-identity) run_self_visible identity init ;;
+    machine-key) provision_now machine-key ;;
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
     # The registry name, never a re-derived one: the archive can then only be
@@ -455,6 +490,33 @@ provisioning_run() { # id host
     manifold-agent) cmd_runtime_manifold provision ;;
     *) die "$EX_SOFTWARE" "no provisioning ceremony is wired for $1" ;;
   esac
+}
+
+# Mint this machine's age key into the repository. Clan does the minting and
+# encrypts the private half to the admins group, which is why this can only
+# run on a device that is a member: any other device is told so rather than
+# handed clan's own refusal. Clan commits what it writes; the operator pushes.
+provision_machine_key() {
+  local host data user recipient checkout clan
+  host="$(resolve_host)"
+  data="$(host_json "$host")"
+  [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == fixed ]] ||
+    die "$EX_DATAERR" "$host is a portable profile; it is not a fleet member and clan does not know it"
+  [[ "$(jq -r '.activation' <<<"$data")" != home-manager ]] ||
+    die "$EX_DATAERR" "$host is not a clan machine: it activates with standalone Home Manager and reads no secret"
+  user="$(operator_user_for "$host")"
+  if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
+    die "$EX_UNAVAILABLE" "this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate $host"
+  fi
+  checkout="$(machine_key_secrets_directory "")"
+  checkout="${checkout%/sops/secrets}"
+  [[ -d "$checkout/.git" ]] ||
+    die "$EX_UNAVAILABLE" "no repository checkout at ~/nix-dotfiles to mint the key into"
+  clan="$(clan_program)"
+  say "clan mints $host's key and encrypts it to group $operator_group; it commits the result, which is then pushed like any other change"
+  run_visible "$clan" vars generate "$host" --flake "$checkout" ||
+    die "$EX_SOFTWARE" "clan did not generate $host's vars"
+  say "review the commit clan made in $checkout, then push it; apply on $host places the key"
 }
 
 # Arm the hourly archive timer, which the storage ceremony has just earned.
@@ -618,7 +680,13 @@ cmd_provision() {
       provision_babel "$@"
       return
       ;;
-    *) die "$EX_USAGE" "provision expects git or babel" ;;
+    machine-key)
+      shift
+      [[ $# -eq 0 ]] || die "$EX_USAGE" "unknown provision machine-key option: $1"
+      provision_machine_key
+      return
+      ;;
+    *) die "$EX_USAGE" "provision expects git, babel or machine-key" ;;
   esac
   shift
   while [[ $# -gt 0 ]]; do

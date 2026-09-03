@@ -379,3 +379,23 @@ local users — is the one platform piece with a fleet use and is evaluated then
    fold.
 10. The runner platform's fate — **open**, decided after the server has moved,
     by 2026-10-01.
+
+### Sub-amendment 2026-09-02: one operator key per device
+
+Answer 6 is revised. The operator's identity is **one clan user per device
+he works from** (`alex-<host>`), every one a member of the `admins` group
+that every value is encrypted to, plus `alex-recovery` in Bitwarden. The
+Mac's key is Secure Enclave-backed because that hardware exists there, and
+it grants nothing the others lack; a Linux device's key is a plain age file.
+Nothing about the fleet depends on any one device, which was the point of
+the question and what "the Mac's Secure Enclave" had quietly undone.
+
+Machine keys follow **clan's default**: `clan vars generate` mints a
+machine's key on an operator device and keeps its private half in the
+repository encrypted to the group; `atyrode apply` places it on the machine
+the operator sits on and `clan machines update` on one reached over SSH.
+The mint-on-machine ceremony (`atyrode identity init`) is deleted: whoever
+holds the operator key can already read every value, so a machine key
+encrypted to that same key added nothing but a ceremony, and a rebuilt
+machine now needs no re-registration.
+

@@ -243,6 +243,10 @@ let
   clan = clan-core.lib.clan {
     inherit self;
     meta.name = "atyrode";
+    # The Mac's operator key is a Secure Enclave handle, so every clan
+    # command that decrypts with it needs the plugin on its own PATH; clan
+    # resolves the name through nixpkgs at the pin above.
+    secrets.age.plugins = [ "age-plugin-se" ];
     inventory.machines = lib.mapAttrs (_name: host: {
       machineClass = if host.activation == "nix-darwin" then "darwin" else "nixos";
       inherit (host) description;

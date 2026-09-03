@@ -207,7 +207,11 @@ apply_config() {
   # before committing is the one the run then walks step by step. A preview is
   # a machine interface and plans nothing, so it stays out of this.
   if [[ "$preview_json" == 0 ]]; then
-    local -a planned=("Rebuild and switch $host through $backend.")
+    local -a planned=()
+    case "$activation" in
+      nix-darwin | nixos-wsl | nixos) [[ "$dry" == 1 ]] || planned+=("Place the machine key.") ;;
+    esac
+    planned+=("Rebuild and switch $host through $backend.")
     if [[ "$dry" == 0 ]]; then
       planned+=("Record $host as the activated host.")
       [[ "$activation" != nixos-wsl ]] ||
@@ -276,6 +280,10 @@ apply_config() {
     trap - EXIT
     return 0
   fi
+
+  case "$activation" in
+    nix-darwin | nixos-wsl | nixos) [[ "$dry" == 1 ]] || place_machine_key "$host" "$flake_source" ;;
+  esac
 
   step_begin "Rebuild and switch $host through $backend"
   [[ "$dry" == 0 ]] || step_why 'a dry run builds the closure and reports the diff without switching'
@@ -479,6 +487,101 @@ converge_login_shell() { # host
     return 1
   fi
   step_ok "changed to $target"
+}
+
+# The machine's age key is clan's: minted on an operator device by
+# `clan vars generate`, kept in the repository encrypted to the admins group,
+# and placed here so the activation that follows can decrypt this machine's
+# vars. It is placed before the switch for that reason. Only a device holding
+# an operator key can decrypt it; any other device is told which one can. The
+# key reaches root through a mode-600 file in a mode-700 directory rather
+# than a pipe, because GNU install refuses to copy from `/dev/stdin` on
+# macOS -- it stats the source twice and reports the pipe as replaced while
+# being copied -- and because ownership then stays an argument of the
+# elevated program rather than a shell fragment.
+machine_key_repository_file() { # host [repo]
+  printf '%s/%s-age.key/secret\n' "$(machine_key_secrets_directory "${2:-}")" "$1"
+}
+
+# A key minted today is committed in the checkout apply is about to build
+# from, which is newer than the sops tree this build of the CLI carries; so
+# the checkout is read when one is named or is where it conventionally lives,
+# and the built-in tree only where there is none.
+machine_key_secrets_directory() { # [repo]
+  if [[ -n "$1" ]]; then
+    printf '%s/sops/secrets' "$1"
+  elif [[ -d "$HOME/nix-dotfiles/.git" ]]; then
+    printf '%s/nix-dotfiles/sops/secrets' "$HOME"
+  else
+    printf '%s/secrets' "$sops_directory"
+  fi
+}
+
+machine_key_file() {
+  printf '%s/var/lib/sops-nix/key.txt\n' "$(machine_key_system_root)"
+}
+
+# The key belongs to root under a directory the user cannot list, which a
+# build sandbox is not root of either; a check relocates the path under a
+# scratch root through this seam and nothing else changes.
+machine_key_system_root() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_IDENTITY_ROOT:-}" ]]; then
+    printf '%s' "$_ATYRODE_TEST_IDENTITY_ROOT"
+  fi
+}
+
+# Whether the key is in place. Root holds it under a mode-700 directory, so an
+# unprivileged reader asks sudo without a password and treats a refusal as
+# not knowing, which for the caller means not placed.
+machine_key_placed() {
+  local key
+  key="$(machine_key_file)"
+  if [[ "$(id -u)" -eq 0 || -n "$(machine_key_system_root)" ]]; then
+    [[ -e "$key" ]]
+  else
+    sudo -n test -e "$key" 2>/dev/null
+  fi
+}
+
+place_machine_key() { # host repo
+  local host="$1" repo="$2" key clan install_program
+  key="$(machine_key_file)"
+  step_begin 'Place the machine key'
+  if [[ ! -e "$(machine_key_repository_file "$host" "$repo")" ]]; then
+    step_skip "no machine key in the repository yet (clan vars generate $host on an operator device)"
+    return 0
+  fi
+  if machine_key_placed; then
+    step_skip 'already placed'
+    return 0
+  fi
+  local user recipient
+  user="$(operator_user_for "$host")"
+  if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
+    step_skip "this device cannot decrypt the machine key; apply from a registered operator device or place it with: atyrode fleet apply $host"
+    return 0
+  fi
+  step_why "sops-nix decrypts this machine's vars at activation with this key"
+  clan="$(clan_program)"
+  install_program="$(command -v install)"
+  local scratch staged
+  scratch="$(vault_secure_temp_dir atyrode-machine-key)"
+  staged="$scratch/key.txt"
+  local -a elevate=()
+  [[ "$(id -u)" -eq 0 ]] || elevate=(sudo --)
+  show_rendered "$(render_argv "$clan" secrets get "$host-age.key" --flake "$repo") > $(render_argv "$staged")"
+  if ! (umask 077 && "$clan" secrets get "$host-age.key" --flake "$repo" >"$staged"); then
+    rm -rf -- "$scratch"
+    step_fail "the machine key was not placed at $key"
+    die "$EX_SOFTWARE" "clan could not decrypt $host's machine key on this device"
+  fi
+  if ! run_visible "${elevate[@]+"${elevate[@]}"}" "$install_program" -D -m 0600 -o root "$staged" "$key"; then
+    rm -rf -- "$scratch"
+    step_fail "the machine key was not placed at $key"
+    die "$EX_SOFTWARE" "the decrypted machine key could not be installed at $key"
+  fi
+  rm -rf -- "$scratch"
+  step_ok "placed at $key (root, mode 0600)"
 }
 
 # Shown before it runs: these are the commands that edit /etc/shells and the

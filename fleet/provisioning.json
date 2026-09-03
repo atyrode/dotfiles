@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "surfaceOrder": [
     "omp-seed",
-    "machine-identity",
+    "machine-key",
     "operator-identity",
     "agent-context",
     "git-identity",
@@ -18,17 +18,17 @@
       "declinable": false,
       "prerequisites": []
     },
-    "machine-identity": {
-      "label": "machine identity",
-      "command": "atyrode identity init",
-      "implies": "Generates this machine's own age key, the one clan vars are decrypted with at activation, and prints the clan command that registers its public half. Local only: no secret is read, nothing is uploaded, and the private half never leaves the file.",
+    "machine-key": {
+      "label": "machine key",
+      "command": "atyrode provision machine-key",
+      "implies": "Mints this machine's age key on an operator device and stores it in the repository encrypted to the admins group; atyrode apply places it.",
       "declinable": false,
       "prerequisites": []
     },
     "operator-identity": {
       "label": "operator identity",
       "command": "atyrode operator init",
-      "implies": "Mints the operator's own age key inside this Mac's Secure Enclave and prints the clan command that registers it as user alex. Local only: Touch ID is asked once, no secret is read, nothing is uploaded, and the private half never leaves the Secure Enclave.",
+      "implies": "Mints this device's own age key (inside the Secure Enclave on a Mac, a plain age file elsewhere) and prints the two clan commands that register it as a member of the admins group. Local only: no secret is read, nothing is uploaded, and the key never leaves the device.",
       "declinable": false,
       "prerequisites": []
     },

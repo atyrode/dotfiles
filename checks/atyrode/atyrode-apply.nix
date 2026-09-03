@@ -262,14 +262,15 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
-    # The machine identity (ADR 0008 step 3, amended): the age key clan vars
-    # are decrypted with, made on the machine by the machine and registered
-    # with clan by its public half alone. age-keygen is stubbed for a
-    # deterministic recipient, and the private line it writes is a sentinel
-    # no output may ever carry.
+    # The operator identity (ADR 0008 step 3, amended: one key per device):
+    # every fixed host is an operator device holding its own key, a member of
+    # the admins group every value is encrypted to. Off a Mac the key comes
+    # from age-keygen, stubbed here for a deterministic recipient -- the one
+    # the fixture sops tree registers for the device -- and the private line
+    # it writes is a sentinel no output may ever carry.
     cat > "$TMPDIR/bin/age-keygen" <<'EOF'
     #!${pkgs.runtimeShell}
-    minted_recipient=age1freshmachine00000000000000000000000000000000000000000000000
+    minted_recipient=age1fixturedevice00000000000000000000000000000000000000000000000
     case "''${1:-}" in
       -o)
         umask 077
@@ -277,147 +278,96 @@ pkgs.runCommand "check-atyrode-apply"
           "$minted_recipient" > "$2"
         printf 'Public key: %s\n' "$minted_recipient" >&2
         ;;
-      -y) sed -n 's/^# public key: //p' "$2" ;;
       *) exit 64 ;;
     esac
     EOF
     chmod +x "$TMPDIR/bin/age-keygen"
     export ATYRODE_AGE_KEYGEN="$TMPDIR/bin/age-keygen"
-    minted_recipient=age1freshmachine00000000000000000000000000000000000000000000000
-    fixture_recipient=age1fixturemachine0000000000000000000000000000000000000000000000
-    identity_probe() { # host status code
+    device_recipient=age1fixturedevice00000000000000000000000000000000000000000000000
+    operator_key="$XDG_CONFIG_HOME/sops/age/keys.txt"
+    operator_probe() { # host status code
       ATYRODE_HOST="$1" atyrode doctor provisioning --json |
         jq -e --arg status "$2" --arg code "$3" '
-          .surfaces[] | select(.id == "machine-identity")
+          .surfaces[] | select(.id == "operator-identity")
           | .status == $status and (.code // "") == $code
-            and .command == "atyrode identity init" and .declinable == false
+            and .command == "atyrode operator init" and .declinable == false
+            and (.implies | contains("never leaves the device"))
         ' >/dev/null
     }
-    # A standalone Home Manager host is not a clan machine: it reads no
-    # secret, so there is no key to make. The verb refuses with the reason,
-    # the probe is not-applicable, and an apply never mentions a ceremony
-    # this host cannot have.
-    identity_probe alex-x86_64-linux not-applicable not-a-clan-machine
+    # No key yet: show says so and exits with a finding, and the probe names
+    # the ceremony. A portable profile is not a device and refuses outright.
+    test ! -e "$operator_key"
+    operator_probe fixture-nixos incomplete not-configured
     set +e
-    atyrode identity show > "$TMPDIR/identity-home.out" 2> "$TMPDIR/identity-home.err"
-    identity_status="$?"
+    ATYRODE_HOST=fixture-nixos atyrode operator show > "$TMPDIR/operator-none.out" 2> "$TMPDIR/operator-none.err"
+    operator_status="$?"
     set -e
-    test "$identity_status" = 65
-    test ! -s "$TMPDIR/identity-home.out"
-    test "$(wc -l < "$TMPDIR/identity-home.err")" = 1
-    grep -qF 'alex-x86_64-linux is not a clan machine' "$TMPDIR/identity-home.err"
-    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/identity-apply.err" ||
-      { cat "$TMPDIR/identity-apply.err" >&2; exit 1; }
-    ! grep -qF 'machine identity' "$TMPDIR/identity-apply.err"
-    # A clan machine with no key: show says so and exits with a finding, the
-    # record names the path sops-nix reads (modules/shared/clan-machine.nix
-    # sets the same one), and the probe names the ceremony.
-    identity_probe fixture-nixos incomplete not-configured
+    test "$operator_status" = 69
+    test ! -s "$TMPDIR/operator-none.out"
+    grep -qF "no operator key at $operator_key; this device cannot edit a secret" "$TMPDIR/operator-none.err"
+    grep -qF 'create one with: atyrode operator init' "$TMPDIR/operator-none.err"
     set +e
-    ATYRODE_HOST=fixture-nixos atyrode identity show > "$TMPDIR/identity-none.out" 2> "$TMPDIR/identity-none.err"
-    identity_status="$?"
+    ATYRODE_HOST=development-x86_64-linux atyrode operator show > "$TMPDIR/operator-portable.out" 2> "$TMPDIR/operator-portable.err"
+    operator_status="$?"
     set -e
-    test "$identity_status" = 69
-    test ! -s "$TMPDIR/identity-none.out"
-    grep -qF 'no machine identity yet for fixture-nixos; create one with: atyrode identity init' \
-      "$TMPDIR/identity-none.err"
-    ATYRODE_HOST=fixture-nixos atyrode identity show --json | jq -e '
-      .recipient == null and .registered == false and .registration == null
-      and .keyFile == "/var/lib/sops-nix/key.txt" and .machineClass == "nixos"' >/dev/null
-    # The key is root's, so a sandbox that cannot elevate stops before
-    # anything is written, and says what is missing.
+    test "$operator_status" = 65
+    grep -qF 'is a portable profile; it is not an operator device' "$TMPDIR/operator-portable.err"
+    operator_probe development-x86_64-linux not-applicable portable-profile
+    # init on a Linux device says there is no enclave, announces the one
+    # command, lands the key at the modes a secret demands, and -- the fixture
+    # sops tree already registering the recipient it minted in the group --
+    # reports the device registered.
+    ATYRODE_HOST=fixture-nixos atyrode operator init > "$TMPDIR/operator-init.out" 2> "$TMPDIR/operator-init.err"
+    grep -qF 'no Secure Enclave here: the key is a file, protected only by this account' "$TMPDIR/operator-init.err"
+    grep -qE "^\\$ $TMPDIR/bin/age-keygen -o $operator_key\$" "$TMPDIR/operator-init.err"
+    grep -qF "wrote $operator_key (mode 0600, directory mode 0700)" "$TMPDIR/operator-init.err"
+    grep -qF "recipient $device_recipient is registered with clan as sops/users/alex-fixture-nixos/key.json (group admins)" \
+      "$TMPDIR/operator-init.err"
+    test ! -s "$TMPDIR/operator-init.out"
+    test -f "$operator_key"
+    test "$(stat -c %a "$operator_key")" = 600
+    test "$(stat -c %a "''${operator_key%/*}")" = 700
+    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$operator_key"
+    operator_probe fixture-nixos ok ""
+    ATYRODE_HOST=fixture-nixos atyrode operator show > "$TMPDIR/operator-show.out" 2> "$TMPDIR/operator-show.err"
+    test "$(cat "$TMPDIR/operator-show.out")" = "$device_recipient"
+    grep -qF 'registered with clan as sops/users/alex-fixture-nixos/key.json (group admins)' "$TMPDIR/operator-show.err"
+    # A second init keeps the key: files may already be encrypted to it.
+    ATYRODE_HOST=fixture-nixos atyrode operator init > "$TMPDIR/operator-again.out" 2> "$TMPDIR/operator-again.err"
+    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-again.err"
+    ! grep -qF 'age-keygen' "$TMPDIR/operator-again.err"
+    test ! -s "$TMPDIR/operator-again.out"
+    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$operator_key"
+    # A recipient clan does not register: the probe and the verb print
+    # exactly the two commands that register it, in order.
+    sed -i 's/^# public key: .*/# public key: age1unregistereddevice000000000000000000000000000000000000000000/' "$operator_key"
+    operator_probe fixture-nixos degraded not-registered
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "operator-identity")
+      | (.summary | contains("sops/users/alex-fixture-nixos/key.json in group admins"))
+        and .remediation == "in any checkout, run: clan secrets users add alex-fixture-nixos age1unregistereddevice000000000000000000000000000000000000000000 && clan secrets groups add-user admins alex-fixture-nixos"' >/dev/null
+    ATYRODE_HOST=fixture-nixos atyrode operator show > "$TMPDIR/operator-unregistered.out" 2> "$TMPDIR/operator-unregistered.err"
+    grep -qF 'register this device with clan in any checkout of this repository, then commit what it writes under sops/:' \
+      "$TMPDIR/operator-unregistered.err"
+    grep -qE '^  \$ clan secrets users add alex-fixture-nixos age1unregistereddevice000000000000000000000000000000000000000000$' \
+      "$TMPDIR/operator-unregistered.err"
+    grep -qE '^  \$ clan secrets groups add-user admins alex-fixture-nixos$' "$TMPDIR/operator-unregistered.err"
+    # A file without a recipient line is not one this ceremony wrote: it is
+    # neither overwritten nor mistaken for a key, and the way out is said
+    # rather than taken.
+    printf 'not a key file\n' > "$operator_key"
+    operator_probe fixture-nixos incomplete not-configured
     set +e
-    ATYRODE_HOST=fixture-nixos atyrode identity init > "$TMPDIR/identity-nosudo.out" 2> "$TMPDIR/identity-nosudo.err"
-    identity_status="$?"
+    ATYRODE_HOST=fixture-nixos atyrode operator init > "$TMPDIR/operator-foreign.out" 2> "$TMPDIR/operator-foreign.err"
+    operator_status="$?"
     set -e
-    test "$identity_status" = 69
-    grep -qF 'belongs to root, and sudo is unavailable' "$TMPDIR/identity-nosudo.err"
-    # The ceremony as the operator would see it. sudo is stubbed to run the
-    # announced argv as the sandbox user, and the machine's root-owned paths
-    # are relocated under a scratch root: every step is announced as the
-    # elevation it is, the key lands at the modes a secret demands, the
-    # public half is published beside it, and the minted recipient -- which
-    # clan does not register yet -- is printed as the one command that does.
-    machine_root="$TMPDIR/machine"
-    export _ATYRODE_TEST_IDENTITY_ROOT="$machine_root"
-    machine_key="$machine_root/var/lib/sops-nix/key.txt"
-    machine_recipient="$machine_root/etc/atyrode/machine.pub"
-    {
-      printf '#!${pkgs.runtimeShell}\n'
-      printf 'args=()\n'
-      printf 'while [ "$#" -gt 0 ]; do\n'
-      printf '  case "$1" in --) ;; -o) if [ "''${2:-}" = root ]; then shift; else args+=("$1"); fi ;; *) args+=("$1") ;; esac\n'
-      printf '  shift\n'
-      printf 'done\n'
-      printf 'exec "''${args[@]}"\n'
-    } > "$TMPDIR/bin/sudo"
-    chmod +x "$TMPDIR/bin/sudo"
-    ATYRODE_HOST=fixture-nixos atyrode identity init > "$TMPDIR/identity-init.out" 2> "$TMPDIR/identity-init.err"
-    grep -qF 'this host activates as root, so the key is root'"'"'s: each step below elevates and says so' "$TMPDIR/identity-init.err"
-    grep -qE "^\\$ sudo -- .*install -d -m 0700 -o root $machine_root/var/lib/sops-nix\$" "$TMPDIR/identity-init.err"
-    grep -qE "^\\$ sudo -- $TMPDIR/bin/age-keygen -o $machine_key\$" "$TMPDIR/identity-init.err"
-    grep -qE "^\\$ sudo -- $TMPDIR/bin/age-keygen -y $machine_key\$" "$TMPDIR/identity-init.err"
-    grep -qE "^\\$ sudo -- .*install -m 0644 -o root .* $machine_recipient\$" "$TMPDIR/identity-init.err"
-    grep -qF "wrote $machine_key (root, mode 0600, directory mode 0700) and published its recipient at $machine_recipient" \
-      "$TMPDIR/identity-init.err"
-    grep -qF 'register it with clan in a checkout of this repository on the Mac, then commit sops/machines/fixture-nixos/key.json:' \
-      "$TMPDIR/identity-init.err"
-    grep -qE "^  \\$ clan secrets machines add fixture-nixos $minted_recipient\$" "$TMPDIR/identity-init.err"
-    grep -qF 'once a generator is declared, clan vars generate fixture-nixos encrypts its values to this machine' \
-      "$TMPDIR/identity-init.err"
-    test -f "$machine_key"
-    test "$(stat -c %a "$machine_key")" = 600
-    test "$(stat -c %a "''${machine_key%/*}")" = 700
-    test "$(stat -c %a "$machine_recipient")" = 644
-    test "$(cat "$machine_recipient")" = "$minted_recipient"
-    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$machine_key"
-    # A key clan does not register is the one state where the fix is a
-    # command in a checkout rather than here: the probe and the verb print
-    # exactly that command, and init repeats it without touching a key that
-    # values may already be encrypted to.
-    identity_probe fixture-nixos degraded not-registered
-    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e --arg recipient "$minted_recipient" '
-      .surfaces[] | select(.id == "machine-identity")
-      | (.summary | contains("sops/machines/fixture-nixos/key.json"))
-        and .remediation == "in a checkout on the Mac, run: clan secrets machines add fixture-nixos " + $recipient' >/dev/null
-    ATYRODE_HOST=fixture-nixos atyrode identity show > "$TMPDIR/identity-show.out" 2> "$TMPDIR/identity-show.err"
-    test "$(cat "$TMPDIR/identity-show.out")" = "$minted_recipient"
-    grep -qE "^  \\$ clan secrets machines add fixture-nixos $minted_recipient\$" "$TMPDIR/identity-show.err"
-    ATYRODE_HOST=fixture-nixos atyrode identity show --json | jq -e --arg recipient "$minted_recipient" '
-      .recipient == $recipient and .registered == false
-      and .registration == "clan secrets machines add fixture-nixos " + $recipient
-      and .privateMaterialPrinted == false' >/dev/null
-    ATYRODE_HOST=fixture-nixos atyrode identity init > "$TMPDIR/identity-again.out" 2> "$TMPDIR/identity-again.err"
-    grep -qF "fixture-nixos already has a machine identity at $machine_key; keeping it" "$TMPDIR/identity-again.err"
-    grep -qE "^  \\$ clan secrets machines add fixture-nixos $minted_recipient\$" "$TMPDIR/identity-again.err"
-    ! grep -qF 'sudo' "$TMPDIR/identity-again.err"
-    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$machine_key"
-    # Registered: the published recipient is the one the fixture sops tree
-    # records under sops/machines/fixture-nixos, so every reader agrees.
-    printf '%s\n' "$fixture_recipient" > "$machine_recipient"
-    identity_probe fixture-nixos ok ""
-    ATYRODE_HOST=fixture-nixos atyrode identity show > "$TMPDIR/identity-registered.out" 2> "$TMPDIR/identity-registered.err"
-    test "$(cat "$TMPDIR/identity-registered.out")" = "$fixture_recipient"
-    grep -qF 'registered with clan as sops/machines/fixture-nixos/key.json' "$TMPDIR/identity-registered.err"
-    ATYRODE_HOST=fixture-nixos atyrode identity show --json | jq -e --arg recipient "$fixture_recipient" '
-      .recipient == $recipient and .registered == true
-      and .registration == "clan secrets machines add fixture-nixos " + $recipient' >/dev/null
-    ATYRODE_HOST=fixture-nixos atyrode identity init > "$TMPDIR/identity-settled.out" 2> "$TMPDIR/identity-settled.err"
-    grep -qF "recipient $fixture_recipient is registered with clan as sops/machines/fixture-nixos/key.json" \
-      "$TMPDIR/identity-settled.err"
-    # The private half never reaches a terminal, in any of the runs above.
-    for identity_output in "$TMPDIR"/identity-*.out "$TMPDIR"/identity-*.err; do
-      ! grep -qF 'AGE-SECRET-KEY' "$identity_output"
-    done
-    rm -f "$TMPDIR/bin/sudo"
-    unset _ATYRODE_TEST_IDENTITY_ROOT
-
-    # The operator identity (ADR 0008 step 3): the age key that edits secrets,
-    # minted inside the Mac's Secure Enclave. The plugin is stubbed for a
-    # deterministic recipient -- the one the fixture sops tree registers as
-    # user alex -- and the identity line it writes is a sentinel no output
-    # may ever carry. The verb and its probe gate on the registry's system,
-    # so a Linux sandbox can walk the Mac's states by naming the host.
+    test "$operator_status" = 65
+    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-foreign.err"
+    grep -qF 'holds no age recipient line' "$TMPDIR/operator-foreign.err"
+    rm -f "$operator_key"
+    # On a Mac the key is minted by age-plugin-se inside the Secure Enclave;
+    # the verb and its probe gate on the registry's system, so a Linux
+    # sandbox walks the Mac's ceremony by naming the host.
     cat > "$TMPDIR/bin/age-plugin-se" <<'EOF'
     #!${pkgs.runtimeShell}
     fixture_recipient=age1se1fixtureoperator00000000000000000000000000000000000000000000
@@ -429,98 +379,74 @@ pkgs.runCommand "check-atyrode-apply"
     EOF
     chmod +x "$TMPDIR/bin/age-plugin-se"
     export ATYRODE_AGE_PLUGIN_SE="$TMPDIR/bin/age-plugin-se"
-    operator_key="$XDG_CONFIG_HOME/sops/age/keys.txt"
-    operator_recipient=age1se1fixtureoperator00000000000000000000000000000000000000000000
-    operator_probe() { # host status code
-      ATYRODE_HOST="$1" atyrode doctor provisioning --json |
-        jq -e --arg status "$2" --arg code "$3" '
-          .surfaces[] | select(.id == "operator-identity")
-          | .status == $status and (.code // "") == $code
-            and .command == "atyrode operator init" and .declinable == false
-            and (.implies | contains("never leaves the Secure Enclave"))
-        ' >/dev/null
-    }
-    # Off the Mac there is nothing to have: the verb refuses in one sentence
-    # and the probe is not-applicable, on a host that really is Linux.
-    operator_probe alex-x86_64-linux not-applicable platform-not-darwin
-    set +e
-    atyrode operator show > "$TMPDIR/operator-linux.out" 2> "$TMPDIR/operator-linux.err"
-    operator_status="$?"
-    set -e
-    test "$operator_status" = 65
-    test ! -s "$TMPDIR/operator-linux.out"
-    test "$(wc -l < "$TMPDIR/operator-linux.err")" = 1
-    grep -qF 'alex-x86_64-linux is not it' "$TMPDIR/operator-linux.err"
-    test ! -e "$operator_key"
-    # On the Mac with no key: show says so and exits with a finding, and the
-    # probe names the ceremony.
+    enclave_recipient=age1se1fixtureoperator00000000000000000000000000000000000000000000
     operator_probe alex-aarch64-darwin incomplete not-configured
-    set +e
-    ATYRODE_HOST=alex-aarch64-darwin atyrode operator show > "$TMPDIR/operator-none.out" 2> "$TMPDIR/operator-none.err"
-    operator_status="$?"
-    set -e
-    test "$operator_status" = 69
-    test ! -s "$TMPDIR/operator-none.out"
-    grep -qF "no operator identity yet at $operator_key" "$TMPDIR/operator-none.err"
-    grep -qF 'create one with: atyrode operator init' "$TMPDIR/operator-none.err"
-    # init says Touch ID is coming, announces the one command, lands the key
-    # at the modes a secret demands, and -- the fixture sops tree already
-    # registering the recipient it minted -- reports the operator registered.
-    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-init.out" 2> "$TMPDIR/operator-init.err"
-    grep -qF 'macOS will prompt for Touch ID' "$TMPDIR/operator-init.err"
-    grep -qE "^\\$ .*age-plugin-se keygen --access-control=any-biometry-or-passcode -o $operator_key\$" "$TMPDIR/operator-init.err"
-    grep -qF "wrote $operator_key (mode 0600, directory mode 0700)" "$TMPDIR/operator-init.err"
-    grep -qF "recipient $operator_recipient is registered with clan as sops/users/alex/key.json" "$TMPDIR/operator-init.err"
-    test "$(cat "$TMPDIR/operator-init.out")" = "Public key: $operator_recipient"
-    test -f "$operator_key"
-    test "$(stat -c %a "$operator_key")" = 600
-    test "$(stat -c %a "''${operator_key%/*}")" = 700
+    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-mac.out" 2> "$TMPDIR/operator-mac.err"
+    grep -qF 'macOS will prompt for Touch ID' "$TMPDIR/operator-mac.err"
+    grep -qE "^\\$ .*age-plugin-se keygen --access-control=any-biometry-or-passcode -o $operator_key\$" "$TMPDIR/operator-mac.err"
+    grep -qF "recipient $enclave_recipient is registered with clan as sops/users/alex-aarch64-darwin/key.json (group admins)" \
+      "$TMPDIR/operator-mac.err"
+    test "$(cat "$TMPDIR/operator-mac.out")" = "Public key: $enclave_recipient"
     grep -qF 'AGE-PLUGIN-SE-1FIXTUREONLY' "$operator_key"
     operator_probe alex-aarch64-darwin ok ""
-    ATYRODE_HOST=alex-aarch64-darwin atyrode operator show > "$TMPDIR/operator-show.out" 2> "$TMPDIR/operator-show.err"
-    test "$(cat "$TMPDIR/operator-show.out")" = "$operator_recipient"
-    grep -qF 'registered with clan as sops/users/alex/key.json' "$TMPDIR/operator-show.err"
-    # A second init keeps the key: the enclave could not give a replaced one
-    # back, and files may already be encrypted to it.
-    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-again.out" 2> "$TMPDIR/operator-again.err"
-    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-again.err"
-    ! grep -qF 'age-plugin-se' "$TMPDIR/operator-again.err"
-    test ! -s "$TMPDIR/operator-again.out"
-    grep -qF 'AGE-PLUGIN-SE-1FIXTUREONLY' "$operator_key"
-    # A recipient clan does not register: the probe and the verb print
-    # exactly the command that registers it, and say the recovery user is
-    # registered already.
-    sed -i 's/^# public key: .*/# public key: age1se1unregistered0000000000000000000000000000000000000000000000/' "$operator_key"
-    operator_probe alex-aarch64-darwin degraded not-registered
-    ATYRODE_HOST=alex-aarch64-darwin atyrode doctor provisioning --json | jq -e '
-      .surfaces[] | select(.id == "operator-identity")
-      | (.summary | contains("sops/users/alex/key.json"))
-        and .remediation == "in a checkout on this Mac, run: clan secrets users add alex age1se1unregistered0000000000000000000000000000000000000000000000"' >/dev/null
-    ATYRODE_HOST=alex-aarch64-darwin atyrode operator show > "$TMPDIR/operator-unregistered.out" 2> "$TMPDIR/operator-unregistered.err"
-    grep -qF 'register it with clan in a checkout of this repository on this Mac, then commit sops/users/alex/key.json:' \
-      "$TMPDIR/operator-unregistered.err"
-    grep -qE '^  \$ clan secrets users add alex age1se1unregistered0000000000000000000000000000000000000000000000$' \
-      "$TMPDIR/operator-unregistered.err"
-    grep -qF 'alex-recovery is registered already' "$TMPDIR/operator-unregistered.err"
-    # The day-zero Mac: a software key in the file sops reads. It is neither
-    # overwritten nor mistaken for the operator identity, and the way out is
-    # said rather than taken.
-    printf '# created: fixture\n# public key: age1softwarefixture0000\nAGE-SECRET-KEY-1FIXTUREONLY\n' > "$operator_key"
-    operator_probe alex-aarch64-darwin incomplete not-configured
-    set +e
-    ATYRODE_HOST=alex-aarch64-darwin atyrode operator init > "$TMPDIR/operator-foreign.out" 2> "$TMPDIR/operator-foreign.err"
-    operator_status="$?"
-    set -e
-    test "$operator_status" = 65
-    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-foreign.err"
-    grep -qF 'holds no Secure Enclave recipient' "$TMPDIR/operator-foreign.err"
-    grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$operator_key"
-    rm -f "$operator_key"
     # Neither identity line ever reaches a terminal, in any of the runs above.
     for operator_output in "$TMPDIR"/operator-*.out "$TMPDIR"/operator-*.err; do
       ! grep -qF 'AGE-PLUGIN-SE-1' "$operator_output"
       ! grep -qF 'AGE-SECRET-KEY' "$operator_output"
     done
+
+    # The machine key (ADR 0008 step 3, amended: clan's default): the age key
+    # a machine decrypts its vars with is minted into the repository by an
+    # operator device and placed on the machine by apply. The probe names
+    # which of the two steps is owed; a host clan does not build has neither.
+    machine_key_probe() { # host status code
+      ATYRODE_HOST="$1" atyrode doctor provisioning --json |
+        jq -e --arg status "$2" --arg code "$3" '
+          .surfaces[] | select(.id == "machine-key")
+          | .status == $status and (.code // "") == $code
+            and .command == "atyrode provision machine-key" and .declinable == false
+        ' >/dev/null
+    }
+    machine_key_probe alex-x86_64-linux not-applicable not-a-clan-machine
+    machine_key_probe development-x86_64-linux not-applicable portable-profile
+    atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/machine-key-apply.err" ||
+      { cat "$TMPDIR/machine-key-apply.err" >&2; exit 1; }
+    ! grep -qF 'machine key' "$TMPDIR/machine-key-apply.err"
+    machine_key_probe fixture-nixos incomplete not-configured
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "machine-key")
+      | .summary == "no machine key in the repository; on any operator device run: clan vars generate fixture-nixos"' >/dev/null
+    # Minting needs a registered operator key on this device; without one the
+    # ceremony says which device can, rather than handing over clan's refusal.
+    set +e
+    ATYRODE_HOST=fixture-nixos atyrode provision machine-key > "$TMPDIR/machine-key-nodevice.out" 2> "$TMPDIR/machine-key-nodevice.err"
+    machine_key_status="$?"
+    set -e
+    test "$machine_key_status" = 69
+    grep -qF 'this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate fixture-nixos' \
+      "$TMPDIR/machine-key-nodevice.err"
+    # In the repository but not on the machine: the root-owned path is
+    # relocated under a scratch root, and the fix is apply.
+    machine_root="$TMPDIR/machine"
+    export _ATYRODE_TEST_IDENTITY_ROOT="$machine_root"
+    machine_key="$machine_root/var/lib/sops-nix/key.txt"
+    mkdir -p "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key"
+    printf '{"data":"ENC[AES256_GCM,fixture]","sops":{"age":[]}}\n' > "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key/secret"
+    machine_key_probe fixture-nixos degraded not-placed
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e --arg key "$machine_key" '
+      .surfaces[] | select(.id == "machine-key")
+      | .summary == "the machine key is in the repository but not at " + $key + "; atyrode apply places it"
+        and .remediation == "atyrode apply"' >/dev/null
+    mkdir -p "''${machine_key%/*}"
+    printf 'AGE-SECRET-KEY-1PLACED\n' > "$machine_key"
+    machine_key_probe fixture-nixos ok ""
+    rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key"
+    unset _ATYRODE_TEST_IDENTITY_ROOT
+    # This sandbox is itself a registered device from here on, as a real
+    # machine would be after its first apply: the operator surface is settled
+    # and stays out of every later offer.
+    printf '# created: fixture\n# public key: %s\nAGE-SECRET-KEY-1DEVICEONLY\n' "$device_recipient" > "$operator_key"
+    operator_probe alex-x86_64-linux ok ""
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
@@ -893,7 +819,7 @@ pkgs.runCommand "check-atyrode-apply"
     # provision names both targets, so a mistyped one cannot be mistaken for a
     # missing feature.
     ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
-    grep -qF 'provision expects git or babel' "$TMPDIR/provision-usage.err"
+    grep -qF 'provision expects git, babel or machine-key' "$TMPDIR/provision-usage.err"
 
     # Babel's storage document present but no success stamp: the archive has
     # never run here. That is configured-but-not-working, so it is told, never
@@ -1297,9 +1223,80 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$WINGET_STATE/twilight"
 
-    wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json \
-      2>"$TMPDIR/wsl-apply.err")"
+    # The machine key is placed before the switch, so the activation that
+    # follows can decrypt this machine's vars. clan is stubbed to hand out a
+    # sentinel and sudo to run the announced argv as the sandbox user; the
+    # root-owned path is relocated under a scratch root. What the operator
+    # reads is the pipeline itself -- the key travels through it and never
+    # through argv or any stream.
+    cat > "$TMPDIR/bin/clan" <<'EOF'
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "$*" >> "$TMPDIR/clan-args"
+    [[ "''${1:-}" == secrets && "''${2:-}" == get ]] || exit 64
+    printf 'AGE-SECRET-KEY-1FIXTUREONLY\n'
+    EOF
+    chmod +x "$TMPDIR/bin/clan"
+    export ATYRODE_CLAN="$TMPDIR/bin/clan"
+    {
+      printf '#!${pkgs.runtimeShell}\n'
+      printf 'args=()\n'
+      printf 'while [ "$#" -gt 0 ]; do\n'
+      printf '  case "$1" in --) ;; -o) if [ "''${2:-}" = root ]; then shift; else args+=("$1"); fi ;; *) args+=("$1") ;; esac\n'
+      printf '  shift\n'
+      printf 'done\n'
+      printf 'exec "''${args[@]}"\n'
+    } > "$TMPDIR/bin/sudo"
+    chmod +x "$TMPDIR/bin/sudo"
+    machine_root="$TMPDIR/wsl-machine"
+    export _ATYRODE_TEST_IDENTITY_ROOT="$machine_root"
+    machine_key="$machine_root/var/lib/sops-nix/key.txt"
+    mkdir -p "$HOME/nix-dotfiles/sops/secrets/alex-x86_64-linux-wsl-age.key"
+    printf '{"data":"ENC[AES256_GCM,fixture]","sops":{"age":[]}}\n' > "$HOME/nix-dotfiles/sops/secrets/alex-x86_64-linux-wsl-age.key/secret"
+    # Without a registered operator key on this device the step says which
+    # device can, and the switch still runs.
+    mv "$operator_key" "$operator_key.aside"
+    rm -f "$TMPDIR/clan-args"
+    atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-nodevice.err"
+    grep -qF 'this device cannot decrypt the machine key; apply from a registered operator device or place it with: atyrode fleet apply alex-x86_64-linux-wsl' \
+      "$TMPDIR/wsl-apply-nodevice.err"
+    test ! -e "$TMPDIR/clan-args"
+    test ! -e "$machine_key"
+    mv "$operator_key.aside" "$operator_key"
+    rm -f "$TMPDIR/nh-args"
+    if ! wsl_apply="$(atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json \
+      2>"$TMPDIR/wsl-apply.err")"; then
+      echo 'apply failed while placing the machine key; its diagnosis follows' >&2
+      cat "$TMPDIR/wsl-apply.err" >&2
+      exit 1
+    fi
     jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
+    grep -qE '^  1\. Place the machine key\.$' "$TMPDIR/wsl-apply.err"
+    grep -qE '^  2\. Rebuild and switch alex-x86_64-linux-wsl through nh-os\.$' "$TMPDIR/wsl-apply.err"
+    grep -qF "sops-nix decrypts this machine's vars at activation with this key" "$TMPDIR/wsl-apply.err"
+    grep -qE "^  \\$ $TMPDIR/bin/clan secrets get alex-x86_64-linux-wsl-age\\.key --flake $HOME/nix-dotfiles > \\S+/key\\.txt\$" \
+      "$TMPDIR/wsl-apply.err"
+    grep -qE "^  \\$ sudo -- \\S*install -D -m 0600 -o root \\S+/key\\.txt $machine_key\$" \
+      "$TMPDIR/wsl-apply.err"
+    # The decrypted key is staged in a mode-700 directory and the directory
+    # goes with the step, whatever the step's outcome.
+    staged_dir="$(sed -n "s|^  \\$ $TMPDIR/bin/clan secrets get .* > \\(.*\\)/key\\.txt\$|\\1|p" \
+      "$TMPDIR/wsl-apply.err" | head -n 1)"
+    test -n "$staged_dir"
+    test ! -e "$staged_dir"
+    grep -qF "placed at $machine_key (root, mode 0600)" "$TMPDIR/wsl-apply.err"
+    grep -qF "secrets get alex-x86_64-linux-wsl-age.key --flake $HOME/nix-dotfiles" "$TMPDIR/clan-args"
+    test "$(cat "$machine_key")" = AGE-SECRET-KEY-1FIXTUREONLY
+    test "$(stat -c %a "$machine_key")" = 600
+    ! grep -qF 'AGE-SECRET-KEY' "$TMPDIR/wsl-apply.err"
+    ! grep -qF 'AGE-SECRET-KEY' <<<"$wsl_apply"
+    # Placed once: the next apply skips it without asking clan again.
+    rm -f "$TMPDIR/clan-args"
+    atyrode apply alex-x86_64-linux-wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-placed.err"
+    grep -qF 'already placed' "$TMPDIR/wsl-apply-placed.err"
+    test ! -e "$TMPDIR/clan-args"
+    rm -f "$TMPDIR/bin/sudo" "$TMPDIR/bin/clan"
+    rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/alex-x86_64-linux-wsl-age.key"
+    unset ATYRODE_CLAN _ATYRODE_TEST_IDENTITY_ROOT
     # NixOS and nix-darwin activate as root, and the backend elevates for that
     # itself. Unannounced, the password prompt arrives mid-build from inside
     # someone else's output, and reads as the dotfiles asking for root out of

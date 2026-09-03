@@ -143,10 +143,11 @@ The fleet layer is [clan](https://clan.lol) (clan-core, pinned in
 the flake is a clan whose machines are exactly the system hosts of `fleet/`
 (nix-darwin and NixOS), `lib/configurations.nix` derives the inventory from
 the registry, and `clan vars` over sops-nix is the secrets model. `atyrode`
-is the single front door and wraps `clan`: its ceremonies mint keys on the
-machine and print the `clan secrets ... add` command that registers them,
-its doctor reads clan's registration files, and it calls `clan` from `PATH`
-where a ceremony needs it. Standalone Home Manager hosts are invisible to
+is the single front door and wraps `clan`: its `operator init` mints a
+device key and prints the `clan secrets` lines that register it in the
+`admins` group, machine keys are clan's (`clan vars generate` mints them,
+`apply` places them), its doctor reads clan's registration files, and it
+calls `clan` from `PATH` where a ceremony needs it. Standalone Home Manager hosts are invisible to
 clan, converge on their own through `atyrode apply`, and never carry the
 `clan` CLI (their closure budgets say why).
 

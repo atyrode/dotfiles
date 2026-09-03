@@ -57,13 +57,27 @@ stderr_is_tty() {
 # stays silent: an operator wants to see the four commands that act, not the
 # forty that look.
 show_command() {
-  local rendered="" part
+  local rendered
+  rendered="$(render_argv "$@")"
+  narrate_log "run: $rendered"
+  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $rendered")" >&2
+}
 
+render_argv() {
+  local rendered="" part
   for part in "$@"; do
     rendered="$rendered${rendered:+ }$(printf '%q' "$part")"
   done
-  narrate_log "run: $rendered"
-  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $rendered")" >&2
+  printf '%s' "$rendered"
+}
+
+# A command whose shape is shell syntax -- a pipe, a redirection -- is still
+# one command to the operator, and what is announced must paste back as it
+# stands. The caller composes the line from render_argv pieces so the pipe or
+# the `>` stays itself instead of becoming a quoted character.
+show_rendered() { # rendered-shell-line
+  narrate_log "run: $1"
+  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $1")" >&2
 }
 
 run_visible() {

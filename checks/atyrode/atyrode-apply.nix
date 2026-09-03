@@ -1460,7 +1460,8 @@ pkgs.runCommand "check-atyrode-apply"
         "container-engine",
         "antivirus-data",
         "device-permissions",
-        "homebrew-drift"
+        "homebrew-drift",
+        "bootstrap-residue"
       ]
       and (.checks[] | select(.id == "container-engine") | .actual.mode) == "rootless"
       and (.checks[] | select(.id == "antivirus-data") | .code) == "not-configured"
@@ -1669,7 +1670,18 @@ pkgs.runCommand "check-atyrode-apply"
     export _ATYRODE_TEST_SYSTEM="aarch64-darwin"
     export _ATYRODE_TEST_USER=alex
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$darwin_ready"
-    darwin_result="$(atyrode doctor system alex-aarch64-darwin --json)"
+    # The residue probe reads a real /etc unless a scenario relocates it, and
+    # the Darwin builder has one; every reading below is about the fixture,
+    # not about the machine CI happens to run on.
+    mkdir -p "$TMPDIR/etc-clean"
+    export _ATYRODE_TEST_ETC_ROOT="$TMPDIR/etc-clean"
+    if ! darwin_result="$(atyrode doctor system alex-aarch64-darwin --json \
+      2>"$TMPDIR/darwin-ready.err")"; then
+      echo 'the ready Darwin fixture did not pass diagnostics' >&2
+      cat "$TMPDIR/darwin-ready.err" >&2
+      printf '%s\n' "$darwin_result" >&2
+      exit 1
+    fi
     jq -e '
       .ok
       and .platform == "darwin"
@@ -1677,6 +1689,44 @@ pkgs.runCommand "check-atyrode-apply"
       and (.checks[] | select(.id == "device-permissions") | .status) == "ok"
       and (.checks[] | select(.id == "homebrew-drift") | .status) == "ok"
     ' <<< "$darwin_result" >/dev/null
+    jq -e '(.checks[] | select(.id == "bootstrap-residue")
+      | .status == "ok" and .owner == "bootstrap")' <<<"$darwin_result" >/dev/null
+
+    # Each state install.sh repairs before Nix exists, seen once Nix does.
+    dirty_etc="$TMPDIR/etc-dirty"
+    mkdir -p "$dirty_etc/profile.d" "$dirty_etc/ssl/certs" "$dirty_etc/nix" "$dirty_etc/zsh"
+    printf 'original bashrc\n' > "$dirty_etc/bashrc.backup-before-nix"
+    printf 'installer bashrc\n' > "$dirty_etc/bashrc"
+    { printf 'export PATH=/nix/var/nix/profiles/default/bin\n'; printf '# End Nix\n'; } \
+      > "$dirty_etc/zshrc"
+    ln -s /nix/store/00000000000000000000000000000000-gone/etc/zshenv "$dirty_etc/zshenv"
+    printf 'ssl-cert-file = %s\n' "$dirty_etc/ssl/certs/ca-bundle.crt" > "$dirty_etc/nix/nix.conf"
+    : > "$dirty_etc/ssl/certs/ca-bundle.crt"
+    printf 'UUID=DEAD-BEEF /nix apfs rw,noauto,nobrowse,nosuid,noatime\n' > "$dirty_etc/fstab"
+    _ATYRODE_TEST_ETC_ROOT="$dirty_etc" atyrode doctor system alex-aarch64-darwin --json \
+      > "$TMPDIR/darwin-residue.out" && {
+      echo 'bootstrap residue did not fail diagnostics' >&2
+      exit 1
+    }
+    jq -e '(.checks[] | select(.id == "bootstrap-residue")) as $c
+      | $c.status == "incomplete"
+      and $c.code == "bootstrap-residue"
+      and ($c.actual.shellProfileBackups | index("'"$dirty_etc"'/bashrc"))
+      and ($c.actual.unrecognisedProfiles | index("'"$dirty_etc"'/zshrc"))
+      and ($c.actual.staleEtcLinks | index("'"$dirty_etc"'/zshenv"))
+      and ($c.actual.brokenTrustAnchors | index("'"$dirty_etc"'/ssl/certs/ca-bundle.crt"))
+      and ($c.actual.staleFstabEntry == "'"$dirty_etc"'/fstab")
+      and ($c.remediation | contains("bootstrap/install.sh plan --config alex-aarch64-darwin"))
+    ' "$TMPDIR/darwin-residue.out" >/dev/null
+    # A backup a completed install left identical to its target is not residue.
+    cp "$dirty_etc/bashrc.backup-before-nix" "$dirty_etc/bashrc"
+    rm -f "$dirty_etc/zshrc" "$dirty_etc/zshenv" "$dirty_etc/fstab"
+    : > "$dirty_etc/nix/nix.conf"
+    printf 'anchors\n' > "$dirty_etc/ssl/certs/ca-certificates.crt"
+    _ATYRODE_TEST_ETC_ROOT="$dirty_etc" atyrode doctor system alex-aarch64-darwin --json \
+      > "$TMPDIR/darwin-residue-clean.out"
+    jq -e '(.checks[] | select(.id == "bootstrap-residue") | .status) == "ok"' \
+      "$TMPDIR/darwin-residue-clean.out" >/dev/null
 
     darwin_missing_adb="$TMPDIR/darwin-missing-adb.json"
     jq '.device.adbAvailable = false' "$darwin_ready" > "$darwin_missing_adb"

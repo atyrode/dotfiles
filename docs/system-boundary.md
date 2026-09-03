@@ -125,6 +125,7 @@ The checks always appear in this order:
 | `antivirus-data` | Verifies ClamAV binaries are absent while no host owns signatures/scanning; an unmanaged binary is drift. |
 | `device-permissions` | Android access policy is ready, or the `mobile` capability is not selected. |
 | `homebrew-drift` | The generated nix-darwin Brewfile matches Homebrew state, or Homebrew does not apply. |
+| `bootstrap-residue` | macOS carries none of the states `bootstrap/install.sh` repairs before Nix exists: an unrestored `.backup-before-nix` shell rc, an `/etc` profile file where nix-darwin owns a link, an `/etc` link into a store path that is gone, a TLS anchor Nix cannot read, an `fstab` line mounting `/nix` from a volume that no longer resolves. Not applicable off macOS. |
 
 Each row has a stable `id`, `owner`, `required`, `status`, `code`, `summary`,
 `remediation`, `expected`, and `actual` shape. Status is one of:

@@ -1046,6 +1046,138 @@ probe_homebrew_drift() {
     "$expected_json" "$actual_json"
 }
 
+# Where the files bootstrap repairs live. A build sandbox is not root of a
+# real /etc and a probe that read the builder's would answer for the wrong
+# machine, so a scenario relocates the tree through this seam exactly as
+# bootstrap/install.sh relocates its own.
+bootstrap_etc_root() {
+  if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_ETC_ROOT:-}" ]]; then
+    printf '%s' "$_ATYRODE_TEST_ETC_ROOT"
+  else
+    printf '/etc'
+  fi
+}
+
+# The residue of an interrupted or superseded Nix installation on macOS.
+# bootstrap/install.sh repairs these states before Nix exists, which is the
+# only moment it can; nothing re-examined them afterwards, so a machine that
+# installed successfully years ago could carry any of them and never be told.
+# Detection is not repair and belongs where the knowledge is shared: this
+# probe reads the same paths install.sh's detectors read, and names the
+# command that repairs what it finds.
+#
+# The sixth state install.sh knows, an orphaned Nix Store volume, is
+# deliberately absent: its own detector requires the store database to be
+# missing, and a machine running this CLI out of the store always has one.
+probe_bootstrap_residue() { # platform host
+  local platform="$1" host="$2" etc target backup entry link_target named
+  local -a backups=() unrecognised=() stale_links=() anchors=()
+  local fstab="" status code summary remediation expected_json actual_json
+
+  expected_json='{"shellProfileBackups":[],"unrecognisedProfiles":[],"staleEtcLinks":[],"brokenTrustAnchors":[],"staleFstabEntry":null}'
+  if [[ "$platform" != darwin ]]; then
+    actual_json='{"shellProfileBackups":null,"unrecognisedProfiles":null,"staleEtcLinks":null,"brokenTrustAnchors":null,"staleFstabEntry":null}'
+    system_check_add bootstrap-residue bootstrap false not-applicable platform-not-darwin \
+      "the states bootstrap repairs are macOS system state" "" "$expected_json" "$actual_json"
+    return
+  fi
+  etc="$(bootstrap_etc_root)"
+
+  # A backup identical to its target is what a completed install leaves
+  # behind; one that differs is an original the install never restored.
+  for target in "$etc/bashrc" "$etc/profile.d/nix.sh" "$etc/zshrc" \
+    "$etc/bash.bashrc" "$etc/zsh/zshrc"; do
+    backup="$target.backup-before-nix"
+    [[ -e "$backup" ]] || continue
+    [[ -e "$target" ]] && cmp -s "$backup" "$target" && continue
+    backups+=("$target")
+  done
+
+  # A regular file carrying the installer's marker where nix-darwin expects
+  # to own a link: activation will refuse until it is moved aside.
+  for target in "$etc/bashrc" "$etc/zshrc" "$etc/bash.bashrc" "$etc/zsh/zshrc"; do
+    [[ -f "$target" && ! -L "$target" ]] || continue
+    grep -q '^# End Nix$' "$target" 2>/dev/null || continue
+    unrecognised+=("$target")
+  done
+
+  # Links into a store path or /etc/static that resolve to nothing: the
+  # generation they named is gone and every reader of them fails.
+  if [[ -d "$etc" ]]; then
+    while IFS= read -r entry; do
+      [[ -L "$entry" && ! -e "$entry" ]] || continue
+      link_target="$(readlink "$entry" 2>/dev/null)" || continue
+      case "$link_target" in
+        /nix/store/* | /etc/static | /etc/static/* | */etc/static | */etc/static/*) ;;
+        *) continue ;;
+      esac
+      stale_links+=("$entry")
+    done < <(find -H "$etc" -type l 2>/dev/null | LC_ALL=C sort)
+  fi
+
+  # The TLS anchors Nix reads. Unreadable or empty is the state that turns
+  # every substituter into a download failure with no obvious cause. A path
+  # nix.conf names answers for itself whether or not it is there; the
+  # conventional one answers only once something occupies it, because a
+  # machine that keeps its anchors elsewhere is not broken.
+  # A machine with no nix.conf names nothing, which is not a failure: under
+  # pipefail the missing file would otherwise end this probe in silence.
+  named="$(awk '$1 == "ssl-cert-file" { print $3 }' "$etc/nix/nix.conf" 2>/dev/null | tail -n 1 || true)"
+  for target in "$etc/ssl/certs/ca-certificates.crt" "$named"; do
+    [[ -n "$target" ]] || continue
+    case "$target" in "$etc"/*) ;; *) continue ;; esac
+    [[ "$target" == "$named" || -e "$target" || -L "$target" ]] || continue
+    [[ -r "$target" && -s "$target" ]] && continue
+    word_in_list "$target" "${anchors[*]-}" && continue
+    anchors+=("$target")
+  done
+
+  # An fstab line mounting /nix from a volume UUID that no longer resolves
+  # leaves the machine unbootable into its own store.
+  if [[ -f "$etc/fstab" && ! -L "$etc/fstab" ]]; then
+    local uuid
+    uuid="$(awk '$2 == "/nix" && $3 == "apfs" {
+        for (i = 1; i <= NF; i++)
+          if ($i ~ /^UUID=/) { sub(/^UUID=/, "", $i); print $i; exit }
+      }' "$etc/fstab")"
+    if [[ -n "$uuid" ]] && ! diskutil info "$uuid" >/dev/null 2>&1; then
+      fstab="$etc/fstab"
+    fi
+  fi
+
+  actual_json="$(jq -nc \
+    --args '{shellProfileBackups:$ARGS.positional}' "${backups[@]+"${backups[@]}"}")"
+  actual_json="$(jq -nc --argjson base "$actual_json" \
+    --args '$base + {unrecognisedProfiles:$ARGS.positional}' "${unrecognised[@]+"${unrecognised[@]}"}")"
+  actual_json="$(jq -nc --argjson base "$actual_json" \
+    --args '$base + {staleEtcLinks:$ARGS.positional}' "${stale_links[@]+"${stale_links[@]}"}")"
+  actual_json="$(jq -nc --argjson base "$actual_json" \
+    --args '$base + {brokenTrustAnchors:$ARGS.positional}' "${anchors[@]+"${anchors[@]}"}")"
+  actual_json="$(jq -nc --argjson base "$actual_json" --arg fstab "$fstab" \
+    '$base + {staleFstabEntry:(if $fstab == "" then null else $fstab end)}')"
+
+  if jq -e '[.shellProfileBackups,.unrecognisedProfiles,.staleEtcLinks,.brokenTrustAnchors]
+      | all(length == 0)' <<<"$actual_json" >/dev/null && [[ -z "$fstab" ]]; then
+    status=ok
+    code=""
+    summary="no residue from an interrupted or superseded Nix installation"
+    remediation=""
+  else
+    status=incomplete
+    code="bootstrap-residue"
+    summary="$(jq -r '[
+        (.shellProfileBackups | length | if . > 0 then "\(.) shell rc backup(s)" else empty end),
+        (.unrecognisedProfiles | length | if . > 0 then "\(.) unrecognised /etc profile(s)" else empty end),
+        (.staleEtcLinks | length | if . > 0 then "\(.) stale /etc link(s)" else empty end),
+        (.brokenTrustAnchors | length | if . > 0 then "\(.) unusable TLS trust anchor(s)" else empty end),
+        (if .staleFstabEntry then "an fstab entry naming a volume that is gone" else empty end)
+      ] | join(", ")' <<<"$actual_json") from an earlier Nix installation"
+    remediation="see what would change, then repair: $HOME/nix-dotfiles/bootstrap/install.sh plan --config $host, then the same with apply"
+  fi
+  system_check_add bootstrap-residue bootstrap true "$status" "$code" "$summary" "$remediation" \
+    "$expected_json" "$actual_json"
+}
+
 doctor_system() {
   local requested="" json=0 host data platform user system capabilities ok result
 
@@ -1082,6 +1214,7 @@ doctor_system() {
   probe_antivirus "$data"
   probe_device_permissions "$data" "$platform" "$user"
   probe_homebrew_drift "$platform"
+  probe_bootstrap_residue "$platform" "$host"
   jq -e --argjson expected "$(jq -c '.checkOrder' "$system_policy")" \
     'map(.id) == $expected' <<<"$system_checks" >/dev/null ||
     die "$EX_SOFTWARE" "system diagnostics do not match the policy order"

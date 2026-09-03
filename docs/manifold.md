@@ -74,11 +74,10 @@ therefore operator-timed:
    changes — apply on a machine hosting live manifold sessions from a plain
    SSH session, never from inside one of its own terminals.
 
-On tyrode-dev-01 the capability arrives through the `alex-x86_64-linux`
-registry entry, which tyrode-dev/infra consumes via its dotfiles flake pin:
-delivery there is a pin bump in that repository plus `atyrode infra apply`
-(interactive: Bitwarden unlock for the Clan operator identity), not
-`atyrode apply`.
+On tyrode-dev-01 the capability arrives through that machine's own entry in
+[`fleet/hosts.nix`](../fleet/hosts.nix): it is a machine of this repository,
+so delivery is `atyrode fleet apply tyrode-dev-01` from an operator device,
+not `atyrode apply`, which converges only the machine it runs on.
 
 The pin refresh enforces step 1. `ci/update-pins.sh` carries a
 `guard_manifold` precondition: it reads the hub's `/healthz` protocol version

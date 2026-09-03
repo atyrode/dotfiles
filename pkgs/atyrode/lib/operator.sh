@@ -122,12 +122,12 @@ operator_generate() { # key host-json
   chmod 700 "$directory"
   if operator_platform_darwin "$2"; then
     say "macOS will prompt for Touch ID: the key is minted inside the Secure Enclave and never leaves it"
-    (umask 077 && infra_exec visible ATYRODE_AGE_PLUGIN_SE age-plugin-se keygen \
+    (umask 077 && tool_exec visible ATYRODE_AGE_PLUGIN_SE age-plugin-se keygen \
       --access-control=any-biometry-or-passcode -o "$key") ||
       die "$EX_SOFTWARE" "age-plugin-se did not write $key"
   else
     say "no Secure Enclave here: the key is a file, protected only by this account"
-    (umask 077 && infra_exec visible ATYRODE_AGE_KEYGEN age-keygen -o "$key") ||
+    (umask 077 && tool_exec visible ATYRODE_AGE_KEYGEN age-keygen -o "$key") ||
       die "$EX_SOFTWARE" "age-keygen did not write $key"
   fi
   chmod 600 "$key"

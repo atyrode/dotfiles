@@ -13,9 +13,10 @@ These contain system, platform, activation, description, and capabilities, but
 never a username or home directory. `atyrode` validates the invoking non-root
 account and materializes those identity fields locally for Home Manager.
 `fleet/hosts.tsv` projects both bootstrap target kinds for `get.sh` before
-Nix exists. Infrastructure-owned NixOS and repository-owned NixOS-WSL identities
-remain excluded from that Unix picker; the registry check keeps the projection
-honest.
+Nix exists. NixOS and NixOS-WSL identities remain excluded from that Unix
+picker, because a machine whose system is owned by this flake is installed and
+updated by clan rather than picked by a bootstrap script; the registry check
+keeps the projection honest.
 
 A system host — one whose activation owner is nix-darwin or NixOS — is a
 clan machine: `lib/configurations.nix` derives clan's inventory from the
@@ -75,9 +76,26 @@ as `lib.hostRegistry`; account-portable profiles are in
 `lib.bootstrapProfiles`; `lib.targetRegistry` combines both.
 `lib.capabilities` lists valid capability names.
 
-External production NixOS hosts do not belong in this standalone registry.
-Their infrastructure flake supplies identity and system facts while importing
-the same capability modules through the
+A NixOS machine this repository owns keeps its own hardware and network facts
+in `fleet/machines/<host>/`: the disk layout disko writes, the boot loader, the
+`systemd-networkd` configuration of its uplink, the `nixos-facter` report of
+what the machine actually contains, and the address clan deploys to. Those
+facts are public here on purpose. An address is not what protects a machine
+that answers on the internet, resolves publicly, and is scanned continuously;
+key-only SSH, no root login, and a firewall open on one port are, and they are
+public here too. A machine that could not state its own address could not be
+rebuilt from this repository, which is the test that matters
+([invariant 8](../AGENTS.md)). The provider is a different kind of fact and
+stays out of every file; `checks/lints/production-facts.nix` enforces both
+halves of that rule. `tyrode-dev-01`, the persistent development VPS, is the
+first machine of this shape: `modules/nixos/vps.nix` is its policy — one open
+port, declarative root-owned SSH keys drawn from the reviewed fleet key
+registry, passwordless sudo for the operator's account alone, and rootless
+Docker — and clan refuses to deploy it unless the operator names it.
+
+A client's production NixOS host is still not in this registry. Its
+infrastructure flake supplies identity and system facts while importing the
+same capability modules through the
 [portable profile contract](portable-profiles.md). Such a consumer declares
 `activation = "nixos"` and an exact non-secret `nixTrustedUsers` list including
 `root`; `atyrode doctor system` then checks the NixOS login-shell path and that
@@ -97,8 +115,9 @@ For a fixed machine identity:
 2. Declare a supported `system`, matching `platform`, supported `activation`
    owner, non-empty `username`, absolute `homeDirectory`, a non-empty one-line
    `description`, and at least one valid capability. A `nixos-wsl` host also
-   requires a stable hostname. An infrastructure-supplied `nixos` identity must
-   declare a unique, non-empty `nixTrustedUsers` list containing `root`.
+   requires a stable hostname. A `nixos` host must declare a unique, non-empty
+   `nixTrustedUsers` list containing `root`, and its hardware and network facts
+   go in `fleet/machines/<host>/`.
 
 For a portable Linux bootstrap profile:
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "comment": "Closure budgets for the concrete headless hosts the operator actually runs. fleet/server-profile.json budgets the exported 'server' capability contract, which excludes development and containers and therefore never covers these machines; without this file their growth is unmeasured. Desktop and WSL hosts are deliberately absent: the desktop carries games and DAWs whose size is not a regression signal, and the WSL host is a thin control plane. checks/fleet/host-closure.nix prints the measured numbers on every run, so tightening a ceiling never requires guessing.",
+  "comment": "Closure budgets for the concrete headless hosts the operator actually runs. fleet/server-profile.json budgets the exported 'server' capability contract, which excludes development and containers and therefore never covers these machines; without this file their growth is unmeasured. Desktop and WSL hosts are deliberately absent: the desktop carries games and DAWs whose size is not a regression signal, and the WSL host is a thin control plane. tyrode-dev-01 is a NixOS machine, so its ceiling is set on the Home Manager profile the check measures for every registered host rather than on its whole system closure (5458539480 bytes over 921 store paths on 2026-09-03): the profile is the part a capability list grows, and a ceiling with the whole system's slack in it would defend nothing. checks/fleet/host-closure.nix prints the measured numbers on every run, so tightening a ceiling never requires guessing.",
   "budgets": {
     "alex-x86_64-linux": {
       "measured": {
@@ -15,6 +15,17 @@
     },
     "alex-aarch64-linux": {
       "measured": null,
+      "maxNarBytes": 5368709120,
+      "maxStorePaths": 600,
+      "maxTopLevelPackages": 90
+    },
+    "tyrode-dev-01": {
+      "measured": {
+        "date": "2026-09-03",
+        "narBytes": 4117237280,
+        "storePaths": 495,
+        "topLevelPackages": 79
+      },
       "maxNarBytes": 5368709120,
       "maxStorePaths": 600,
       "maxTopLevelPackages": 90

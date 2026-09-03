@@ -5,8 +5,10 @@
   self,
   lib,
   clan-core,
+  disko,
   home-manager,
   nix-homebrew,
+  nixos-facter-modules,
   nixos-wsl,
   sops-nix,
   homebrew-core,
@@ -232,11 +234,45 @@ let
     ++ clanMachineModules;
   };
 
+  # A NixOS machine of this fleet owns its whole substrate: disko partitions
+  # the disk the machine declares, nixos-facter supplies the hardware facts
+  # its report captured, and the machine's own directory under `fleet/` is
+  # imported in full so a half-ported machine fails evaluation instead of
+  # silently booting without storage, network, or boot authority.
+  nixosMachineModule =
+    name: host:
+    let
+      machineDirectory = ../fleet/machines + "/${name}";
+    in
+    {
+      _module.args = {
+        inherit host machineDirectory;
+        hostId = name;
+        homeModules = modulesForHost name host;
+      };
+      imports = [
+        disko.nixosModules.disko
+        nixos-facter-modules.nixosModules.facter
+        sops-nix.nixosModules.sops
+        dotfilesHomeNixosModule
+        (machineDirectory + "/disko.nix")
+        (machineDirectory + "/network.nix")
+        (machineDirectory + "/boot.nix")
+        ../modules/nixos/vps.nix
+      ]
+      ++ clanMachineModules;
+      # The registry the packages overlay reads is this flake's own, so the
+      # machine never restates it: the option exists for a consuming flake
+      # that has to supply what it does not contain.
+      atyrode.dotfiles.hostRegistry = hosts;
+    };
+
   # Standalone Home Manager hosts are invisible to clan and read no secret;
   # the clan machines are exactly the system-owned hosts, one class each.
   darwinHosts = lib.filterAttrs (_name: host: host.activation == "nix-darwin") hosts;
+  nixosHosts = lib.filterAttrs (_name: host: host.activation == "nixos") hosts;
   nixosWslHosts = lib.filterAttrs (_name: host: host.activation == "nixos-wsl") hosts;
-  clanHosts = darwinHosts // nixosWslHosts;
+  clanHosts = darwinHosts // nixosHosts // nixosWslHosts;
 
   # The fleet layer. `fleet/hosts.nix` stays the only place a machine is
   # named: the inventory is a projection of it, tagged by activation and
@@ -260,10 +296,14 @@ let
     }) clanHosts;
     machines = lib.mapAttrs (
       name: host:
-      if host.activation == "nix-darwin" then
-        darwinMachineModule name host
-      else
-        nixosWslMachineModule name host
+      let
+        machineModule = {
+          "nix-darwin" = darwinMachineModule;
+          "nixos" = nixosMachineModule;
+          "nixos-wsl" = nixosWslMachineModule;
+        };
+      in
+      machineModule.${host.activation} name host
     ) clanHosts;
   };
 
@@ -271,7 +311,7 @@ let
   homeManagerHosts = lib.filterAttrs (_name: host: host.activation == "home-manager") hosts;
   standaloneHomeConfigs = lib.mapAttrs mkHomeConfig homeManagerHosts;
   canonicalDarwinConfigs = clan.config.darwinConfigurations;
-  canonicalNixosWslConfigs = clan.config.nixosConfigurations;
+  canonicalNixosConfigs = clan.config.nixosConfigurations;
 
   inventoryBySystem = forAllSystems (
     system:
@@ -298,7 +338,7 @@ let
   # Every host closure a given system can realise, keyed by host id, as the
   # artifact `atyrode apply` activates on that host: the standalone Home
   # Manager activation package for home-manager hosts, and the system
-  # toplevel for the nix-darwin and NixOS-WSL hosts, whose Home Manager
+  # toplevel for the nix-darwin and NixOS hosts, whose Home Manager
   # profile is embedded in the toplevel rather than activated on its own. CI
   # builds this set per system and pushes it to the fleet binary cache, so a
   # host missing here is a host whose apply rebuilds from source.
@@ -310,7 +350,7 @@ let
     lib.mapAttrs (_name: config: config.activationPackage) (onSystem standaloneHomeConfigs)
     // lib.mapAttrs (_name: config: config.system) (onSystem canonicalDarwinConfigs)
     // lib.mapAttrs (_name: config: config.config.system.build.toplevel) (
-      onSystem canonicalNixosWslConfigs
+      onSystem canonicalNixosConfigs
     );
 
 in
@@ -318,7 +358,7 @@ in
   inherit
     canonicalDarwinConfigs
     canonicalHomeConfigs
-    canonicalNixosWslConfigs
+    canonicalNixosConfigs
     clan
     darwinHosts
     darwinModule

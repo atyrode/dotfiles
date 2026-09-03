@@ -27,7 +27,7 @@ let
   inherit (configurations)
     canonicalDarwinConfigs
     canonicalHomeConfigs
-    canonicalNixosWslConfigs
+    canonicalNixosConfigs
     clan
     darwinHosts
     inventoryBySystem
@@ -166,7 +166,7 @@ let
   ) clan.config.inventory.machines;
   clanMachineConfigs =
     lib.mapAttrsToList (_name: config: config.config) canonicalDarwinConfigs
-    ++ lib.mapAttrsToList (_name: config: config.config) canonicalNixosWslConfigs;
+    ++ lib.mapAttrsToList (_name: config: config.config) canonicalNixosConfigs;
   # Every clan machine decrypts with the key `atyrode apply` places
   # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
   # to the admins group, and the declared generators are exactly the fleet's:
@@ -193,7 +193,7 @@ let
           and all(.[];
             (.id | type == "string")
             and (.identityMode | IN("fixed", "runtime"))
-            and (.activation | IN("home-manager", "nix-darwin", "nixos-wsl"))
+            and (.activation | IN("home-manager", "nix-darwin", "nixos", "nixos-wsl"))
             and (.system | type == "string")
             and (.description | type == "string" and length > 0)
             and (.capabilities | length > 0)
@@ -284,7 +284,7 @@ let
     git-identity = import ./fleet/git-identity.nix {
       inherit lib pkgs system;
       clanConfigs = lib.mapAttrs (_name: machine: machine.config) (
-        canonicalDarwinConfigs // canonicalNixosWslConfigs
+        canonicalDarwinConfigs // canonicalNixosConfigs
       );
     };
     get-entrypoint = import ./atyrode/get-sh.nix { inherit pkgs; };
@@ -341,7 +341,7 @@ let
     # alex-x86_64-linux-wsl, only exists on x86_64-linux.
     windows = import ./fleet/windows.nix {
       inherit lib pkgs;
-      nixosConfig = canonicalNixosWslConfigs.alex-x86_64-linux-wsl;
+      nixosConfig = canonicalNixosConfigs.alex-x86_64-linux-wsl;
       windowsPackages = windowsPackageInventory;
     };
   }

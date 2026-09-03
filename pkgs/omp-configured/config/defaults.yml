@@ -8,7 +8,6 @@ modelRoles:
   task: openai-codex/gpt-5.6-terra:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
   librarian: openai-codex/gpt-5.6-terra:medium
-  designer: anthropic/claude-sonnet-5:medium
   reviewer: anthropic/claude-sonnet-5:high
   plan: anthropic/claude-fable-5:high
   slow: anthropic/claude-opus-5:xhigh
@@ -37,7 +36,7 @@ retry:
   # `reviewer`/`librarian` were agent names: both matched nothing and never
   # fired, silently, since unknown role names raise no warning. Those agents
   # take their model from task.agentModelOverrides and inherit `default`.
-  # `designer`/`task` work only because each is both an agent and a role.
+  # `task` works only because it is both an agent and a role.
   # Check omp's current role list before adding a key; it grows (`vision` is
   # recent). Deliberately not duplicated here — a copy would go stale.
   fallbackChains:
@@ -57,10 +56,6 @@ retry:
       - anthropic/claude-sonnet-5:xhigh
       - openai-codex/gpt-5.6-sol:xhigh
       - openai-codex/gpt-5.6-terra:xhigh
-    designer:
-      - anthropic/claude-opus-5:medium
-      - openai-codex/gpt-5.6-terra:medium
-      - openai-codex/gpt-5.6-sol:medium
 
 personality: pragmatic
 
@@ -132,7 +127,6 @@ codexResets:
 task:
   showResolvedModelBadge: true
   agentModelOverrides:
-    designer: anthropic/claude-sonnet-5:medium
     librarian: openai-codex/gpt-5.6-terra:medium
     reviewer: anthropic/claude-sonnet-5:high
     scout: openai-codex/gpt-5.6-luna:medium

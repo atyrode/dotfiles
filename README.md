@@ -170,7 +170,6 @@ Pinned OMP updates have additional hash and integration checks documented in
 
 ```
 dotfiles/
-├── .agents/                 # Repository-local agent skills (bump-omp)
 ├── .github/                 # Native Linux/macOS flake-check workflows
 ├── bootstrap/               # Phased bootstrap with interrupted-apply marker
 ├── checks/                  # Nix check registry; suites grouped by subject

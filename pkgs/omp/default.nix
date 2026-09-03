@@ -7,23 +7,23 @@
 }:
 
 let
-  version = "18.1.6";
+  version = "18.1.7";
   sources = {
     "x86_64-linux" = {
       asset = "omp-linux-x64";
-      hash = "sha256-+UO2qtrzOaO6yjXkOuc4adqE6abiwH2uFcdN18asT7A=";
+      hash = "sha256-aUD78kLtcZc11Uv5pR15CAfPdlF7GvhqygnHVr02O6Y=";
     };
     "aarch64-linux" = {
       asset = "omp-linux-arm64";
-      hash = "sha256-lhhgfrJHN+U/St23aUNKJfmSA8ZcnSNPtMlbclHUQO4=";
+      hash = "sha256-tupfZG1yyx9g6hSrPV1lvyrJ/Yi5+OaxQjHy/glG+2A=";
     };
     "x86_64-darwin" = {
       asset = "omp-darwin-x64";
-      hash = "sha256-mHsyOiIdSOfXE1VfLz1ySNUB++5DqXA9jzlng2MdssA=";
+      hash = "sha256-H7XMHiDLCjJD60fDPyR9XLItLpvNjuquyzA/F1VFDmc=";
     };
     "aarch64-darwin" = {
       asset = "omp-darwin-arm64";
-      hash = "sha256-XfmJgjUYnJUxkD0IXajPqDBt/iDR7WxBSVeH1PJVhx0=";
+      hash = "sha256-XHUtOWBhkplZO4KIBcvDTeaB4NbUBXvZlqWR6fgDhS8=";
     };
   };
   source =

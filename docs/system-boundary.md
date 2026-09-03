@@ -199,8 +199,15 @@ installation, and NixOS repairs belong to the consuming infrastructure.
 CI is the fleet's only builder: every host closure is built on push, signed,
 and copied to a binary cache that every machine reads second, after the
 official cache, so an apply anywhere is a download of what CI already
-verified. `fleet/system-boundary.json` is the one place the cache's read
-URL and public signing key are written; `modules/shared/binary-caches.nix` derives
+verified. From a green `main` it publishes everything the run compiled, not
+only the finished closures and not only on Linux: the derivations behind the
+checks, and the Mac's closure too. The consumer that made this worth doing is
+CI itself. Every pull request used to rebuild every check on three platforms
+from an empty store, which was most of the time a change spent waiting;
+publishing the intermediate work means a pull request builds what it changed
+and downloads the rest. `fleet/system-boundary.json` is the one place the
+cache's read URL and public signing key are written;
+`modules/shared/binary-caches.nix` derives
 the two ordered lists from it for nix-darwin and NixOS-WSL, and the
 system-boundary check and `doctor` assert the same lists from the same file,
 so none of the four can drift from the others.

@@ -5,9 +5,9 @@ let
   # message names a different host per system.
   expectedPickerHost =
     {
-      "aarch64-darwin" = "alex-aarch64-darwin";
-      "aarch64-linux" = "alex-aarch64-linux";
-      "x86_64-linux" = "alex-x86_64-linux";
+      "aarch64-darwin" = "macbook";
+      "aarch64-linux" = "headless-aarch64-linux";
+      "x86_64-linux" = "platform-01";
     }
     .${pkgs.stdenv.hostPlatform.system};
 in
@@ -44,7 +44,7 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   cp ${../../fleet/hosts.tsv} "$TMPDIR/hosts.tsv"
 
   # git is absent from this build environment until the stub joins PATH.
-  if bash ${../../get.sh} alex-x86_64-linux >/dev/null 2>"$TMPDIR/git-err"; then
+  if bash ${../../get.sh} platform-01 >/dev/null 2>"$TMPDIR/git-err"; then
     echo 'missing git unexpectedly succeeded' >&2
     exit 1
   fi
@@ -53,7 +53,7 @@ pkgs.runCommand "check-get-entrypoint" { } ''
 
   # A foreign directory at the target must never be reused or clobbered.
   mkdir -p "$HOME/nix-dotfiles"
-  if bash ${../../get.sh} alex-x86_64-linux --yes >/dev/null 2>"$TMPDIR/foreign-err"; then
+  if bash ${../../get.sh} platform-01 --yes >/dev/null 2>"$TMPDIR/foreign-err"; then
     echo 'foreign directory unexpectedly reused' >&2
     exit 1
   fi
@@ -68,21 +68,21 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   fi
   grep -F 'unknown configuration' "$TMPDIR/host-err" >/dev/null
   grep -F 'choose one of:' "$TMPDIR/host-err" >/dev/null
-  grep -F 'alex-x86_64-linux' "$TMPDIR/host-err" >/dev/null
+  grep -F 'platform-01' "$TMPDIR/host-err" >/dev/null
   test ! -e "$INSTALL_ARGS_FILE"
 
   # Streamed like curl | bash: stdin is the script, no terminal exists, and
   # --yes hands off to the cloned install.sh with stdin detached. A fresh
   # clone already sits at origin/main, so it needs no source update.
   rm -rf "$HOME/nix-dotfiles"
-  bash -s -- alex-x86_64-linux --yes < ${../../get.sh} >/dev/null 2>"$TMPDIR/clone-err"
-  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config alex-x86_64-linux --yes'
+  bash -s -- platform-01 --yes < ${../../get.sh} >/dev/null 2>"$TMPDIR/clone-err"
+  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config platform-01 --yes'
   test ! -s "$INSTALL_STDIN_FILE"
   # The two things a piped-in script does before an inspectable checkout takes
   # over: write the clone, and hand control to it. git clone names where it
   # writes but never where it reads from.
   grep -F '$ git clone https://github.com/atyrode/dotfiles.git' "$TMPDIR/clone-err" >/dev/null
-  grep -F "$ $HOME/nix-dotfiles/bootstrap/install.sh apply --config alex-x86_64-linux --yes" "$TMPDIR/clone-err" >/dev/null
+  grep -F "$ $HOME/nix-dotfiles/bootstrap/install.sh apply --config platform-01 --yes" "$TMPDIR/clone-err" >/dev/null
 
   # A reused checkout is fast-forwarded to origin/main instead of deciding, at
   # whatever revision it happens to hold, what the fetched script means.
@@ -95,14 +95,14 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   # An explicit source acknowledgement is a reviewed operator decision about
   # which revision to activate and is never overridden.
   for acknowledgement in --update --allow-dirty --allow-non-main; do
-    bash -s -- alex-x86_64-linux --yes "$acknowledgement" < ${../../get.sh} >/dev/null
-    test "$(cat "$INSTALL_ARGS_FILE")" = "apply --config alex-x86_64-linux --yes $acknowledgement"
+    bash -s -- platform-01 --yes "$acknowledgement" < ${../../get.sh} >/dev/null
+    test "$(cat "$INSTALL_ARGS_FILE")" = "apply --config platform-01 --yes $acknowledgement"
   done
 
   # The existing correct-origin clone is reused, and without a terminal the
   # confirmation cannot be assumed: no --yes means no install.sh run.
   rm "$INSTALL_ARGS_FILE"
-  if bash ${../../get.sh} alex-x86_64-linux >/dev/null 2>"$TMPDIR/tty-err"; then
+  if bash ${../../get.sh} platform-01 >/dev/null 2>"$TMPDIR/tty-err"; then
     echo 'missing terminal unexpectedly succeeded' >&2
     exit 1
   fi
@@ -120,9 +120,9 @@ pkgs.runCommand "check-get-entrypoint" { } ''
   test ! -e "$INSTALL_ARGS_FILE"
 
   # DOTFILES_DIR relocates the clone and forwards extra install arguments.
-  DOTFILES_DIR="$TMPDIR/elsewhere" bash ${../../get.sh} alex-aarch64-darwin --yes --update >/dev/null
+  DOTFILES_DIR="$TMPDIR/elsewhere" bash ${../../get.sh} macbook --yes --update >/dev/null
   test -x "$TMPDIR/elsewhere/bootstrap/install.sh"
-  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config alex-aarch64-darwin --yes --update'
+  test "$(cat "$INSTALL_ARGS_FILE")" = 'apply --config macbook --yes --update'
 
   mkdir "$out"
 ''

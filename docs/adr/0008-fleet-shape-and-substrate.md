@@ -67,13 +67,13 @@ machines that are not yours:
 
 | Machine | Role | Platform |
 | --- | --- | --- |
-| `tyrode-dev-01` | **workshop and services**: where development happens and where always-on services run, isolated by cgroup slice | NixOS (already) |
+| `dev-01` | **workshop and services**: where development happens and where always-on services run, isolated by cgroup slice | NixOS (already) |
 | MacBook Air | offline workshop and desktop | nix-darwin |
 | Windows desktop / WSL | thin window and the Windows package surface | NixOS-WSL |
 
 Everything else is decommissioned or becomes a template:
 
-- The original development VPS (`alex-x86_64-linux`) is **left**, by a
+- The original development VPS (`platform-01`) is **left**, by a
   runbook, not a leap (see Roadmap step 0).
 - The qualification VM (`tyrode-ci-01`) is **deleted**. CI is
   GitHub Actions; a NixOS generation is a better safety net than a VM run.
@@ -282,7 +282,7 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
    with the workshop as controller, push-on-green from CI, the converge
    floor, `atyrode fleet apply` wrapping `clan machines update`, drift in
    `doctor` and the shell.
-5. **The server joins this repository.** *(amended 2026-09-02)* `tyrode-dev-01`
+5. **The server joins this repository.** *(amended 2026-09-02)* `dev-01`
    moves in as a clan machine with its disko, boot, network and policy
    modules (about a thousand lines); its public address becomes a value, not
    a literal, because this repository's lint refuses address literals. What

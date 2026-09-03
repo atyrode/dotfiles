@@ -74,9 +74,9 @@ let
       {
         users = builtins.toJSON {
           alex-fixture-nixos = fixtureDeviceRecipient;
-          alex-x86_64-linux = fixtureDeviceRecipient;
-          alex-x86_64-linux-wsl = fixtureDeviceRecipient;
-          alex-aarch64-darwin = fixtureEnclaveRecipient;
+          alex-platform-01 = fixtureDeviceRecipient;
+          alex-wsl = fixtureDeviceRecipient;
+          alex-macbook = fixtureEnclaveRecipient;
           alex-recovery = "age1pjcf90jv97whw39dxtynv99rwgdj4u7nuy7m3a4fvhgfrsrgvsespknzgm";
         };
         nativeBuildInputs = [ pkgs.jq ];
@@ -245,9 +245,9 @@ let
       productionAtyrode = pkgs.atyrode;
       productionHost =
         {
-          "aarch64-darwin" = "alex-aarch64-darwin";
-          "aarch64-linux" = "alex-aarch64-linux";
-          "x86_64-linux" = "alex-x86_64-linux";
+          "aarch64-darwin" = "macbook";
+          "aarch64-linux" = "headless-aarch64-linux";
+          "x86_64-linux" = "platform-01";
         }
         .${system};
     };
@@ -338,10 +338,10 @@ let
     # windows is neither a lint nor source-pure: it stubs wsl.exe and
     # winget.exe and drives pwsh, which makes it the heaviest check in the
     # registry. It sits on this leg because its subject host,
-    # alex-x86_64-linux-wsl, only exists on x86_64-linux.
+    # wsl, only exists on x86_64-linux.
     windows = import ./fleet/windows.nix {
       inherit lib pkgs;
-      nixosConfig = canonicalNixosConfigs.alex-x86_64-linux-wsl;
+      nixosConfig = canonicalNixosConfigs.wsl;
       windowsPackages = windowsPackageInventory;
     };
   }
@@ -359,8 +359,8 @@ let
       fixedHomeConfig =
         canonicalHomeConfigs.${
           {
-            "aarch64-linux" = "alex-aarch64-linux";
-            "x86_64-linux" = "alex-x86_64-linux";
+            "aarch64-linux" = "headless-aarch64-linux";
+            "x86_64-linux" = "platform-01";
           }
           .${system}
         };

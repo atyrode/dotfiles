@@ -61,7 +61,7 @@ infrastructure pins this flake and imports its Home Manager profiles. It passes
 the non-secret machine identity with `activation = "nixos"` and an exact
 `nixTrustedUsers` list, while retaining ownership of those daemon settings.
 Dotfiles do not acquire production identity, disks, services, or secrets. The
-repository-owned `alex-x86_64-linux-wsl` configuration is the deliberate
+repository-owned `wsl` configuration is the deliberate
 workstation exception: it owns only the local WSL guest and imports the same
 portable profiles. See [Portable Home Manager profiles](portable-profiles.md).
 
@@ -110,8 +110,8 @@ host explicitly:
 
 ```sh
 atyrode doctor system
-atyrode doctor system alex-x86_64-linux-desktop
-atyrode doctor system alex-aarch64-darwin --json
+atyrode doctor system workstation-x86_64-linux
+atyrode doctor system macbook --json
 ```
 
 The checks always appear in this order:

@@ -5,7 +5,7 @@
 }:
 
 let
-  baseline = hostConfigs.alex-x86_64-linux.config;
+  baseline = hostConfigs.platform-01.config;
 in
 assert lib.assertMsg baseline.programs.zsh.enableCompletion
   "the baseline shell must keep completion enabled";

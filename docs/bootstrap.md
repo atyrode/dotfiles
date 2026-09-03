@@ -183,7 +183,7 @@ machine, reaches the network, or takes real time, on the line before running
 it:
 
 ```
-$ nix run /Users/alex/nix-dotfiles#atyrode -- apply alex-aarch64-darwin --repo /Users/alex/nix-dotfiles --git-auth-mode ssh --restart-shell
+$ nix run /Users/alex/nix-dotfiles#atyrode -- apply macbook --repo /Users/alex/nix-dotfiles --git-auth-mode ssh --restart-shell
 $ sudo -- chsh -s /run/current-system/sw/bin/zsh alex
 $ sh /tmp/atyrode-nix.XXXX/nix-2.34.7-aarch64-darwin/install --daemon --yes --no-channel-add --no-modify-profile
 ```

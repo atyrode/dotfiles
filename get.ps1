@@ -16,7 +16,7 @@ $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repository = 'atyrode/dotfiles'
-$HostId = 'alex-x86_64-linux-wsl'
+$HostId = 'wsl'
 $Username = 'alex'
 $MinimumWslVersion = [Version]'2.4.4'
 $NixosWslVersion = '2605.7.2'

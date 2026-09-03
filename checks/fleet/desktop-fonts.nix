@@ -8,9 +8,9 @@ let
   # The Nerd Font is a desktop concern: both operator workstations must render
   # powerline separators and Nerd glyphs in their terminal UIs, while headless
   # hosts have nothing to render and must not grow the font in their closure.
-  mac = hostConfigs.alex-aarch64-darwin.config;
-  linuxDesktop = hostConfigs.alex-x86_64-linux-desktop.config;
-  headless = hostConfigs.alex-x86_64-linux.config;
+  mac = hostConfigs.macbook.config;
+  linuxDesktop = hostConfigs.workstation-x86_64-linux.config;
+  headless = hostConfigs.platform-01.config;
   macPackages = map lib.getName mac.home.packages;
   linuxDesktopPackages = map lib.getName linuxDesktop.home.packages;
   headlessPackages = map lib.getName headless.home.packages;

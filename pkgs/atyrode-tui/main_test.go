@@ -731,10 +731,10 @@ func TestPanelsKeepRightBorderWithinWindow(t *testing.T) {
 		m := newApplyTestModel("atyrode")
 		m.width, m.height, m.phase = windowWidth, 26, ready
 		m.plan = applyPlan{
-			Host:         "alex-x86_64-linux",
+			Host:         "platform-01",
 			System:       "x86_64-linux",
 			User:         "alex",
-			Installable:  "github:atyrode/dotfiles/11bbf08875fa8b8428b1fb2d9814a0957e1ec3b0#alex-x86_64-linux",
+			Installable:  "github:atyrode/dotfiles/11bbf08875fa8b8428b1fb2d9814a0957e1ec3b0#platform-01",
 			Revision:     "11bbf08875fa",
 			Source:       "remote",
 			Backend:      "nh-home",

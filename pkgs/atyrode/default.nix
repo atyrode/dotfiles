@@ -104,6 +104,7 @@ let
     builtins.toJSON windowsPackages
   );
   manifoldInventory = ../../fleet/manifold.json;
+  authBrokerInventory = ../../fleet/auth-broker.json;
   systemPolicy = ../../fleet/system-boundary.json;
   provisioningPolicy = ../../fleet/provisioning.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
@@ -261,6 +262,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@revision@' '${revision}' \
       --replace-fail '@sops_directory@' '${sopsDirectory}' \
       --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
+      --replace-fail '@auth_broker_inventory@' '${authBrokerInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@provisioning_policy@' '${provisioningPolicy}' \
       --replace-fail '@lib_dir@' "$out/libexec/atyrode/lib" \

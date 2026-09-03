@@ -1320,6 +1320,31 @@ probe_babel_archive() {
   provisioning_check_add babel-archive ok "" "babel archived successfully at $last" ""
 }
 
+# The broker's bearer token is a shared clan var placed by activation, so this
+# probe offers no ceremony either: the mode and the broker host are Nix facts
+# read from fleet/auth-broker.json, and the only question on the machine is
+# whether the token has been placed behind the link OMP reads.
+probe_omp_auth_broker() {
+  local host mode broker_host
+
+  host="$(resolve_host)"
+  mode="$(auth_broker_mode "$host")"
+  broker_host="$(auth_broker_host)"
+  if [[ "$mode" == none ]]; then
+    provisioning_check_add omp-auth-broker not-applicable portable-profile \
+      "a portable profile is not a clan machine, so it holds no broker token" ""
+    return 0
+  fi
+  if ! auth_broker_token_placed; then
+    provisioning_check_add omp-auth-broker degraded not-generated \
+      "$mode mode, broker host $broker_host: no bearer token at $(auth_broker_token_file), so this machine cannot $([[ "$mode" == serve ]] && printf 'serve' || printf 'authenticate to') the broker until activation places it" \
+      "clan vars generate $host (on an operator device), then atyrode apply"
+    return 0
+  fi
+  provisioning_check_add omp-auth-broker ok "" \
+    "$mode mode, broker host $broker_host: bearer token placed" ""
+}
+
 # Applicability and provisioned-ness both come from the runtime's own status,
 # never re-derived here: the WSL and CUDA predicate belongs to the capability
 # that needs it, and a second copy would be a second answer.

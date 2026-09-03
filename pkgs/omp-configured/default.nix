@@ -1500,23 +1500,25 @@ let
       export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
       export CODE_OMP=${lib.getExe ompManagedDefault}
       export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
-      broker_state="''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-auth-broker"
-      broker_config="''${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/omp-auth-broker/env"
-      if [[ -r "$broker_config" ]]; then
-        # Provisioned from Bitwarden by `atyrode auth broker setup`.
-        # shellcheck source=/dev/null
-        source "$broker_config"
-      fi
-      if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_state/token" ]]; then
-        OMP_AUTH_BROKER_TOKEN="$(<"$broker_state/token")"
+      # code is not OMP: it asks the broker over HTTP for the identities it
+      # presents and hands the run its credential through the environment
+      # (withAuthEnv), so the bearer token has to be a value here rather than
+      # a file OMP would read on its own. It is read from the one place OMP
+      # itself resolves it, the token of the default profile's configuration
+      # root, which Home Manager links to the clan var sops-nix places; a
+      # machine where it is not yet placed has a dangling link, reads as
+      # unreadable, and launches without a broker. CODE_AUTH_LOGIN_VIA is the
+      # SSH target the tunnel machines export from Home Manager, so the
+      # provider login runs on the broker host; on that host it stays unset
+      # and the login is local.
+      broker_token_file="$HOME/.omp/auth-broker.token"
+      if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_token_file" ]]; then
+        OMP_AUTH_BROKER_TOKEN="$(<"$broker_token_file")"
       fi
       if [[ -n "''${OMP_AUTH_BROKER_TOKEN:-}" ]]; then
         export OMP_AUTH_BROKER_TOKEN
         export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
         export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
-        if [[ -n "''${OMP_AUTH_BROKER_SSH_HOST:-}" ]]; then
-          export CODE_AUTH_LOGIN_VIA="''${CODE_AUTH_LOGIN_VIA:-$OMP_AUTH_BROKER_SSH_HOST}"
-        fi
       else
         unset OMP_AUTH_BROKER_URL OMP_AUTH_BROKER_TOKEN OMP_AUTH_BROKER_SNAPSHOT_CACHE
       fi

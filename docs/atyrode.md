@@ -430,6 +430,7 @@ atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
 atyrode provision git
 atyrode auth broker status --json
+atyrode auth broker add-api-key PROVIDER
 atyrode inventory --json
 atyrode inventory --host wsl --json
 atyrode inventory --ref <branch-tag-or-commit> --json

@@ -523,7 +523,7 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(grep -cE '^  (ok|skipped|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 6
     # And the reason a step is running, in the vocabulary of what decided it.
     grep -qF 'why fleet/system-boundary.json declares' "$TMPDIR/apply-success.err"
-    grep -qF 'why fleet/provisioning.json declares 8 surfaces' "$TMPDIR/apply-success.err"
+    grep -qF 'why fleet/provisioning.json declares 9 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
     grep -qF 'Apply complete for development-x86_64-linux' "$TMPDIR/apply-success.err"
 
@@ -692,6 +692,36 @@ pkgs.runCommand "check-atyrode-apply"
     ! grep -qF 'no storage document placed yet' "$TMPDIR/apply-archive-arm.err"
     ! grep -qF 'now?' "$TMPDIR/apply-archive-arm.err"
     rm -rf "$XDG_CONFIG_HOME/babel" "$XDG_STATE_HOME/babel"
+
+    # The broker token is the same shape as the archive document: a shared
+    # clan var an operator device generates and the next apply places behind
+    # ~/.omp/auth-broker.token. The surface reads the link and the inventory
+    # (fleet/auth-broker.json names the serving host; every other clan machine
+    # tunnels) and never a vault; a portable profile has no var to read.
+    broker_probe() { # host status code
+      ATYRODE_HOST="$1" atyrode doctor provisioning --json |
+        jq -e --arg status "$2" --arg code "$3" '
+          .surfaces[] | select(.id == "omp-auth-broker")
+          | .status == $status and (.code // "") == $code
+        ' >/dev/null ||
+        { echo "atyrode: omp-auth-broker on $1 was not $2/$3" >&2; exit 1; }
+    }
+    atyrode doctor provisioning --json | jq -e '
+      [.surfaces[].id] | index("omp-auth-broker") == index("babel-archive") + 1' >/dev/null
+    broker_probe development-x86_64-linux not-applicable portable-profile
+    broker_probe fixture-nixos degraded not-generated
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e --arg token "$HOME/.omp/auth-broker.token" '
+      .surfaces[] | select(.id == "omp-auth-broker")
+      | (.summary | startswith("tunnel mode, broker host dev-01: no bearer token at " + $token))
+        and .remediation == "clan vars generate fixture-nixos (on an operator device), then atyrode apply"' >/dev/null
+    mkdir -p "$HOME/.omp"
+    printf 'BROKER-TOKEN-TEST' > "$HOME/.omp/auth-broker.token"
+    broker_probe fixture-nixos ok ""
+    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json > "$TMPDIR/broker-placed.json"
+    jq -e '.surfaces[] | select(.id == "omp-auth-broker")
+      | .summary == "tunnel mode, broker host dev-01: bearer token placed"' "$TMPDIR/broker-placed.json" >/dev/null
+    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/broker-placed.json"
+    rm "$HOME/.omp/auth-broker.token"
 
     # The provisioning surface apply does offer: the signing key the global
     # Git config names is missing. Without a terminal that stays exactly the

@@ -31,6 +31,7 @@ readonly windows_package_inventory='@windows_packages@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly sops_directory='@sops_directory@'
 readonly manifold_inventory='@manifold_inventory@'
+readonly auth_broker_inventory='@auth_broker_inventory@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
 readonly flake_remote_url="https://github.com/${flake_ref#github:}"
@@ -109,8 +110,6 @@ Usage:
   atyrode vault login|lock
   atyrode vault get NAME
   atyrode vault put NAME
-  atyrode auth broker publish --via USER@HOST
-  atyrode auth broker setup
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
   atyrode provision git [--persist] [--yes]

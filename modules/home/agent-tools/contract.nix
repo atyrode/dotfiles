@@ -40,62 +40,41 @@ let
   # Trusted sessions share one credential pool in OMP's default profile. `code`
   # applies immutable per-launch account pools; changing a preset never mutates
   # or duplicates credentials.
-  brokerStateDir = "${config.xdg.stateHome}/atyrode/omp-auth-broker";
-  brokerTokenFile = "${brokerStateDir}/token";
-  brokerConfigFile = "${config.xdg.configHome}/atyrode/omp-auth-broker/env";
+  #
+  # One broker serves the fleet and every other machine tunnels to it. Which
+  # is which, and where the tunnel goes, are decided in Nix by
+  # modules/shared/omp-auth-broker.nix from fleet/auth-broker.json and arrive
+  # here as the authBroker options: nothing is read from a file at run time to
+  # choose. The bearer token is a shared clan var, placed by sops-nix and
+  # linked to ~/.omp/auth-broker.token, where OMP reads it on both sides; the
+  # broker therefore never mints one, and a broker host whose token is not yet
+  # placed refuses to serve rather than inventing a token no client holds.
+  bcfg = cfg.authBroker;
   brokerBind = "127.0.0.1:46171";
   rawOmpPackage = cfg.ompPackage.rawOmp or pkgs.omp;
   rawOmp = lib.getExe rawOmpPackage;
-  brokerSupervisor = pkgs.writeShellScript "omp-auth-broker" ''
-    set -euo pipefail
-    umask 077
-
-    state_dir=${lib.escapeShellArg brokerStateDir}
-    token_file=${lib.escapeShellArg brokerTokenFile}
-    config_file=${lib.escapeShellArg brokerConfigFile}
-    mkdir=${lib.getExe' pkgs.coreutils "mkdir"}
-    mktemp=${lib.getExe' pkgs.coreutils "mktemp"}
-    chmod=${lib.getExe' pkgs.coreutils "chmod"}
-    mv=${lib.getExe' pkgs.coreutils "mv"}
-
-    if [[ -r "$config_file" ]]; then
-      # Provisioned by `atyrode auth broker setup`; values are shell-escaped
-      # and the file is private (0600).
-      # shellcheck source=/dev/null
-      source "$config_file"
-    fi
-    mode="''${OMP_AUTH_BROKER_MODE:-local}"
-    if [[ "$mode" == client ]]; then
-      target="''${OMP_AUTH_BROKER_SSH_HOST:-}"
-      [[ -n "$target" ]] || {
-        echo "omp auth broker client has no SSH host; rerun: atyrode auth broker setup" >&2
-        exit 1
-      }
-      exec ${lib.getExe pkgs.openssh} \
-        -NT \
-        -L ${brokerBind}:127.0.0.1:46171 \
-        -o ExitOnForwardFailure=yes \
-        -o ServerAliveInterval=30 \
-        -o ServerAliveCountMax=3 \
-        "$target"
-    fi
-    if [[ "$mode" != local ]]; then
-      echo "unknown OMP auth broker mode: $mode" >&2
-      exit 1
-    fi
-
-    "$mkdir" -p -m 0700 "$state_dir"
-    token="$(${rawOmp} --profile default auth-broker token)"
-    if [[ -z "$token" ]]; then
-      echo "omp auth-broker returned an empty token" >&2
-      exit 1
-    fi
-    token_tmp="$("$mktemp" "$state_dir/.token.XXXXXX")"
-    printf '%s\n' "$token" > "$token_tmp"
-    "$chmod" 0600 "$token_tmp"
-    "$mv" -f "$token_tmp" "$token_file"
-    exec ${rawOmp} --profile default auth-broker serve --bind=${brokerBind}
-  '';
+  brokerSupervisor = pkgs.writeShellScript "omp-auth-broker" (
+    if bcfg.role == "serve" then
+      ''
+        set -euo pipefail
+        token_file=${lib.escapeShellArg bcfg.tokenFile}
+        if [[ ! -s "$token_file" ]]; then
+          echo "omp auth broker: no bearer token at $token_file; generate it on an operator device (clan vars generate <this machine>), then atyrode apply" >&2
+          exit 1
+        fi
+        exec ${rawOmp} --profile default auth-broker serve --bind=${brokerBind}
+      ''
+    else
+      ''
+        exec ${lib.getExe pkgs.openssh} \
+          -NT \
+          -L ${brokerBind}:127.0.0.1:46171 \
+          -o ExitOnForwardFailure=yes \
+          -o ServerAliveInterval=30 \
+          -o ServerAliveCountMax=3 \
+          ${lib.escapeShellArg bcfg.target}
+      ''
+  );
 
   # Host-wide pressure guard: when the machine is running out of both memory
   # and swap, earlyoom kills the fattest expendable agent worker before the
@@ -253,6 +232,43 @@ in
     ompPackage = lib.mkPackageOption pkgs "omp-configured" { };
     ompAgentsPackage = lib.mkPackageOption pkgs "omp-agents" { };
     seedPackage = lib.mkPackageOption pkgs "omp-seed" { };
+
+    authBroker = {
+      # Set by modules/shared/omp-auth-broker.nix on every clan machine. A
+      # home that is not a clan machine (a portable profile, a check fixture)
+      # has no role and runs no broker service: it holds no token to serve
+      # with, and a tunnel to a broker it cannot authenticate to is noise.
+      role = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.enum [
+            "serve"
+            "tunnel"
+          ]
+        );
+        default = null;
+        description = ''
+          What this machine's broker service does: `serve` runs the fleet's
+          one OMP auth broker on loopback; `tunnel` keeps an SSH local-forward
+          to the machine that does. `null` runs nothing.
+        '';
+      };
+
+      target = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "alex@dev-01.example.org";
+        description = "SSH `user@host` the tunnel forwards to; required when role is `tunnel`.";
+      };
+
+      tokenFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          Where sops-nix places the shared bearer token. The broker refuses to
+          serve while it is absent, so that it never mints a token of its own.
+        '';
+      };
+    };
 
     localClassifier = {
       # A local model that powers `code`'s prompt→profile suggestion (ctrl+o): a
@@ -457,13 +473,41 @@ in
         ];
       }
 
-      {
+      (lib.mkIf (bcfg.role != null) {
+        assertions = [
+          {
+            assertion = bcfg.role != "tunnel" || bcfg.target != null;
+            message = "atyrode.agentTools.authBroker.role is tunnel, but no target is set";
+          }
+          {
+            assertion = bcfg.role != "serve" || bcfg.tokenFile != null;
+            message = "atyrode.agentTools.authBroker.role is serve, but no tokenFile is set";
+          }
+        ];
+
+        # `code` adds OAuth accounts by running the provider login on the
+        # broker host over SSH; on the host itself the login is local. The
+        # target is the same one the tunnel uses, so it is stated once, here,
+        # rather than read back from a file the launcher would have to parse.
+        home.sessionVariables = lib.mkIf (bcfg.role == "tunnel") {
+          CODE_AUTH_LOGIN_VIA = bcfg.target;
+        };
+
+        # A broker host whose token is not yet placed has nothing to serve
+        # with; the condition keeps the unit from restarting every five
+        # seconds until the value is generated, and the supervisor's own check
+        # is what says so in the journal when it is started by hand.
         systemd.user.services = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           atyrode-omp-auth-brokers = {
             Unit = {
-              Description = "OMP authentication broker or SSH client tunnel";
+              Description =
+                if bcfg.role == "serve" then
+                  "OMP authentication broker"
+                else
+                  "SSH tunnel to the OMP authentication broker on ${bcfg.target}";
               After = [ "network.target" ];
-            };
+            }
+            // lib.optionalAttrs (bcfg.role == "serve") { ConditionPathExists = bcfg.tokenFile; };
             Service = {
               Type = "simple";
               ExecStart = "${brokerSupervisor}";
@@ -480,12 +524,14 @@ in
             config = {
               ProgramArguments = [ "${brokerSupervisor}" ];
               RunAtLoad = true;
-              KeepAlive = true;
+              # PathState is launchd's ConditionPathExists: the broker is kept
+              # alive only while its token is placed.
+              KeepAlive = if bcfg.role == "serve" then { PathState.${bcfg.tokenFile} = true; } else true;
               ProcessType = "Background";
             };
           };
         };
-      }
+      })
 
       {
         # The wrapper by name so an operator can run one archive by hand.

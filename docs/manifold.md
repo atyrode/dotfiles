@@ -32,7 +32,7 @@ atyrode runtime status manifold-agent --json
 
 Provisioning is interactive and one-time: it reads the manifold owner key from
 the Bitwarden Secure Note named by `vaultItemName` (under the same
-unlock→fetch→lock discipline as `atyrode auth broker setup`), POSTs the machine's
+unlock→fetch→lock discipline as `atyrode provision git`), POSTs the machine's
 hostname to `/api/machines`, and installs the minted token at
 `~/.config/manifold/machine.token` (0600). The owner key never enters argv,
 logs, or disk outside the secure temp dir; the running agent never touches the

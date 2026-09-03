@@ -131,7 +131,7 @@ path under `/run/secrets` at activation and never in the Nix store. The
 `host-registry` check asserts that the declared set is exactly the fleet's, so
 a new generator is a reviewed change rather than a side effect.
 
-The fleet declares two. The first, [`git-identity`](../modules/shared/git-identity.nix),
+The fleet declares three. The first, [`git-identity`](../modules/shared/git-identity.nix),
 is on every clan machine: an authentication key and a signing key, ed25519, minted
 per machine and never shared, so retiring a machine deletes one registration
 instead of rotating a key the whole fleet uses. The private halves are secrets
@@ -159,6 +159,22 @@ account that runs the archive timer, and Home Manager links
 it always has. No provider hostname or credential is in the repository: all of
 it arrives through the prompts, and the payload key ring is deliberately not
 part of this document yet ([agent-tools.md](agent-tools.md#session-archive)).
+
+The third, [`omp-auth-broker`](../modules/shared/omp-auth-broker.nix), is
+the bearer token of the fleet's one OMP authentication broker
+([agent-tools.md](agent-tools.md#security-boundaries)), and it replaces the
+Bitwarden note that carried it. It is shared, because the broker checks
+requests against the same string every client sends, and minted, not
+prompted: 32 random bytes, hex, from the generator alone. The one file is a
+secret placed on every clan machine at mode 0600, owned by the account that
+runs the agent stack, and Home Manager links `~/.omp/auth-broker.token` --
+the path OMP reads it from on both sides -- to the placed file, so the broker
+host serves with it and never mints its own, and every other machine
+authenticates through its tunnel with it. Which machine serves is
+[`fleet/auth-broker.json`](../fleet/auth-broker.json); the module derives the
+tunnel target from the registry and that machine's `address.nix`, so no host
+is named anywhere else. Rotation is one `clan vars generate --regenerate` of
+the shared var followed by an apply on every machine.
 
 ## Revocation and rotation
 

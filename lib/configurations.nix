@@ -48,6 +48,7 @@ let
     ../modules/shared/clan-machine.nix
     ../modules/shared/git-identity.nix
     ../modules/shared/babel-archive.nix
+    ../modules/shared/omp-auth-broker.nix
   ];
 
   dotfilesHomeNixosModule =

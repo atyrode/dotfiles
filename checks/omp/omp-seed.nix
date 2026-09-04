@@ -72,8 +72,7 @@ pkgs.runCommand "check-omp-seed"
     [ "$(stat -c '%a' "$config")" = "600" ] || fail "first boot config mode is not 600"
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "first boot did not seed secrets.enabled"
     [ "$(yq eval '.task.disabledAgents | length' "$config")" = "0" ] || fail "first boot did not seed empty disabledAgents"
-    [ "$(yq eval '.inspect_image.mode' "$config")" = "on" ] || fail "first boot did not seed inspect_image.mode"
-    [ "$(yq eval '.inspect_image | has("enabled")' "$config")" = "false" ] || fail "first boot seeded obsolete inspect_image.enabled"
+    [ "$(yq eval 'has("inspect_image")' "$config")" = "false" ] || fail "first boot seeded inspect_image settings omp removed"
 
     # Scenario: a profile-scoped agent environment must never redirect the
     # seeder. PI_CODING_AGENT_DIR points at a decoy profile root; apply must

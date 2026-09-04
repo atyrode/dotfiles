@@ -20,15 +20,14 @@ task:
   # Keep bare omp's baseline aligned with omp-managed. `code` owns richer
   # per-session routing overlays and replaces these when a dialed launch starts.
   agentModelOverrides:
-    librarian: openai-codex/gpt-5.6-terra:medium
     reviewer: anthropic/claude-sonnet-5:high
     scout: openai-codex/gpt-5.6-luna:medium
     sonic: openai-codex/gpt-5.6-luna:minimal
     task: openai-codex/gpt-5.6-terra:medium
   # All bundled agents stay spawnable in plain omp. An unattributed machine
-  # edit once disabled all six (issue #173); seeding the empty list makes any
-  # future non-empty value surface as reviewable drift instead of silently
-  # killing subagent spawns.
+  # edit once disabled every one of them (issue #173); seeding the empty list
+  # makes any future non-empty value surface as reviewable drift instead of
+  # silently killing subagent spawns.
   disabledAgents: []
 
 # Sol for interactive work; cheap Luna/Terra routes for recurring background
@@ -153,8 +152,6 @@ stt:
   submitTrigger: say-submit
 speechgen:
   enabled: true
-inspect_image:
-  mode: on
 
 # Obsidian integration is deferred work; keep it out of the system prompt.
 vault:

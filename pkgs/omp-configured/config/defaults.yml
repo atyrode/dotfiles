@@ -7,7 +7,6 @@ modelRoles:
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-terra:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
-  librarian: openai-codex/gpt-5.6-terra:medium
   reviewer: anthropic/claude-sonnet-5:high
   plan: anthropic/claude-fable-5:high
   slow: anthropic/claude-opus-5:xhigh
@@ -33,9 +32,9 @@ retry:
   # on Fable deliberately and falls back to main-plan Opus. Trivial leads carry
   # no chain: a blip on commit/tiny/sonic is harmless.
   # Keys are omp role ids or provider/model selectors — never agent names.
-  # `reviewer`/`librarian` were agent names: both matched nothing and never
-  # fired, silently, since unknown role names raise no warning. Those agents
-  # take their model from task.agentModelOverrides and inherit `default`.
+  # `reviewer` was an agent name: it matched nothing and never fired, silently,
+  # since unknown role names raise no warning. That agent takes its model from
+  # task.agentModelOverrides and inherits `default`.
   # `task` works only because it is both an agent and a role.
   # Check omp's current role list before adding a key; it grows (`vision` is
   # recent). Deliberately not duplicated here — a copy would go stale.
@@ -127,7 +126,6 @@ codexResets:
 task:
   showResolvedModelBadge: true
   agentModelOverrides:
-    librarian: openai-codex/gpt-5.6-terra:medium
     reviewer: anthropic/claude-sonnet-5:high
     scout: openai-codex/gpt-5.6-luna:medium
     sonic: openai-codex/gpt-5.6-luna:minimal

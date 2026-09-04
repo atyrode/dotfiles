@@ -499,7 +499,6 @@ modelRoles:
   task: ${local_model}
   reviewer: ${local_model}
   sonic: ${local_model}
-  librarian: ${local_model}
   scout: ${local_model}
   tiny: ${local_model}
   commit: ${local_model}
@@ -513,7 +512,6 @@ task:
     task: ${local_model}
     reviewer: ${local_model}
     sonic: ${local_model}
-    librarian: ${local_model}
     scout: ${local_model}
 advisor:
   enabled: false

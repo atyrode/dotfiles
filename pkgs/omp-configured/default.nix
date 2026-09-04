@@ -1261,7 +1261,7 @@ let
         --append-system-prompt ${lib.escapeShellArg untrustedPrompt}
         --no-lsp
         --no-pty
-        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,inspect_image,checkpoint,rewind,task,hub,todo,write'
+        --tools 'read,bash,edit,ast_grep,ast_edit,ask,glob,grep,checkpoint,rewind,task,hub,todo,write'
         --cwd "$target_cwd"
       )
 

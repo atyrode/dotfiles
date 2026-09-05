@@ -134,16 +134,31 @@ adopted as-is, never re-minted. `atyrode runtime status manifold-agent --json`
 is the proof it worked, reporting `phase: "connected"`. An enrolled token
 and an active process without a current welcome are not enough.
 
-## The development hub on dev-01
+## The preview tier on dev-01
 
 `dev-01` is a spoke of the master like every machine here, and it also hosts
-the hub one iterates on: a compose stack the operator runs from a checkout on
-port 7912, which [`modules/nixos/manifold-dev-hub.nix`](../modules/nixos/manifold-dev-hub.nix)
-fronts as `dev.manifold.tyrode.dev` with Caddy and a Let's Encrypt
-certificate. That module is why the VPS opens 80 and 443 beside SSH. The
-stack itself is not declared: it is started by hand from the checkout, and a
-vhost whose upstream is down answers 502, which is what "not running" should
-look like.
+everything one iterates on, under one wildcard.
+[`modules/nixos/manifold-dev-hub.nix`](../modules/nixos/manifold-dev-hub.nix)
+fronts two names with Caddy, and is why the VPS opens 80 and 443 beside SSH:
+
+- `preview.manifold.tyrode.dev` — the integrated instance: every green `main`
+  of atyrode/manifold, on the compose stack the operator runs from
+  `~/manifold-dev` on port 7912.
+- `*.manifold.tyrode.dev` — one hostname per pull request (`283.…`) or live
+  worktree (`<name>.…`), proxied to an operator-owned router on 127.0.0.1:7900
+  that manifold's `infra/previews/preview.sh` generates as previews come and
+  go. Certificates are issued on demand, per hostname, only for names the
+  router vouches for.
+
+Both are driven from GitHub through one deploy key
+([`modules/home/ssh/deploy-keys`](../modules/home/ssh/deploy-keys)): a
+forced-command SSH key whose only power is to run
+`~/manifold-dev/infra/previews/receiver.sh`, which deploys `main` or brings a
+preview up or down. The private half is atyrode/manifold's
+`DEV_DEPLOY_SSH_KEY` repository secret. The stacks themselves are not
+declared here: they are the operator's checkouts, and a vhost whose upstream
+is down answers 502, which is what "not running" should look like. DNS:
+`preview` and `*` A records to this machine; the apex stays the master's.
 
 ## Master migration
 

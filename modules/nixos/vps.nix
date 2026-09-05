@@ -25,16 +25,36 @@ let
   registryFields =
     line:
     lib.filter (field: builtins.isString field && field != "") (builtins.split "[[:space:]]+" line);
-  registryLines = lib.filter (line: line != "" && !lib.hasPrefix "#" line) (
-    lib.splitString "\n" (builtins.readFile ../home/ssh/fleet-keys)
-  );
+  registryLines =
+    file:
+    lib.filter (line: line != "" && !lib.hasPrefix "#" line) (
+      lib.splitString "\n" (builtins.readFile file)
+    );
   reviewedKeys = map (fields: {
     inherit fields;
     name = builtins.elemAt fields 0;
     keytype = builtins.elemAt fields 1;
     key = builtins.elemAt fields 2;
-  }) (map registryFields registryLines);
+  }) (map registryFields (registryLines ../home/ssh/fleet-keys));
   reviewedPublicKeys = map (entry: "${entry.keytype} ${entry.key} ${entry.name}") reviewedKeys;
+
+  # Which public keys may run ONE command on this machine and nothing else
+  # (`modules/home/ssh/deploy-keys`): rendered with a forced command and every
+  # forwarding refused, so the automation holding the private half -- a GitHub
+  # workflow, for the manifold deploy key -- can trigger that script and cannot
+  # open a shell. Rows naming another host are not rendered here.
+  deployKeys = map (fields: {
+    inherit fields;
+    name = builtins.elemAt fields 0;
+    hostId = builtins.elemAt fields 1;
+    keytype = builtins.elemAt fields 2;
+    key = builtins.elemAt fields 3;
+    command = builtins.elemAt fields 4;
+  }) (map registryFields (registryLines ../home/ssh/deploy-keys));
+  deployPublicKeys = map (
+    entry:
+    ''command="${entry.command}",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ${entry.keytype} ${entry.key} ${entry.name}''
+  ) (lib.filter (entry: entry.hostId == hostId) deployKeys);
 in
 {
   assertions = [
@@ -57,6 +77,15 @@ in
           entry: builtins.length entry.fields == 3 && lib.hasPrefix "ssh-ed25519" entry.keytype
         ) reviewedKeys;
       message = "${hostId} requires modules/home/ssh/fleet-keys to hold reviewed Ed25519 keys in the NAME KEYTYPE KEY shape";
+    }
+    {
+      assertion = lib.all (
+        entry:
+        builtins.length entry.fields == 5
+        && lib.hasPrefix "ssh-ed25519" entry.keytype
+        && lib.hasPrefix "/" entry.command
+      ) deployKeys;
+      message = "${hostId} requires modules/home/ssh/deploy-keys rows in the NAME HOST KEYTYPE KEY COMMAND shape, with an absolute command";
     }
     {
       assertion =
@@ -135,7 +164,7 @@ in
         hashedPassword = "!";
         home = homeDirectory;
         isNormalUser = true;
-        openssh.authorizedKeys.keys = reviewedPublicKeys;
+        openssh.authorizedKeys.keys = reviewedPublicKeys ++ deployPublicKeys;
         shell = pkgs.zsh;
         linger = true;
       };

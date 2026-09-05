@@ -95,8 +95,15 @@ def main():
         if not om4:
             print(f"warn: {key} ({prov}/{m['id']}) not found in `omp models`", file=sys.stderr)
             continue
-        m["cost_in"] = om4["cost"]["input"]
-        m["cost_out"] = om4["cost"]["output"]
+        # omp's model table lags a launch by a release or two, and a model it
+        # has not priced yet lists at $0. That is an absence, not a price: a
+        # $0 flagship would sort to the bottom of its pool's ladder. Keep the
+        # curated figure and say so, the same way `code generate init` does.
+        if om4["cost"]["input"] > 0 or om4["cost"]["output"] > 0:
+            m["cost_in"] = om4["cost"]["input"]
+            m["cost_out"] = om4["cost"]["output"]
+        else:
+            print(f"warn: {key} ({prov}/{m['id']}) is unpriced in `omp models`; keeping cost_in/cost_out", file=sys.stderr)
         m["context"] = om4["contextWindow"]
         th = om4.get("thinking") or []
         if th:

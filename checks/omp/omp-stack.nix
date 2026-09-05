@@ -291,70 +291,81 @@ pkgs.runCommand "check-omp-stack"
     test ! -e "$rpc_home/.pi"
 
     cat > "$TMPDIR/settings-guard.test.ts" <<'EOF'
-    import guard, {
-      restoreManagedPaths,
-      resolveMachineConfigPath,
-    } from "${settingsGuardExtension}";
+    import guard from "${settingsGuardExtension}";
+    import { mkdirSync } from "node:fs";
 
-    const restored = restoreManagedPaths(
-      {
-        modelRoles: { default: "changed", extra: "keep" },
-        custom: { keep: true },
-      },
-      { modelRoles: { default: "baseline" } },
-    );
-    if (!restored.changed) throw new Error("managed change was not detected");
-    const config = restored.config as Record<string, any>;
-    if (config.modelRoles.default !== "baseline") throw new Error("managed value was not restored");
-    if (config.modelRoles.extra !== undefined) throw new Error("managed parent was only partially restored");
-    if (config.custom.keep !== true) throw new Error("unmanaged value was lost");
-
-    const agentDir = `''${process.env.HOME}/.omp/agent`;
-    await Bun.write(`''${agentDir}/config.yaml`, "custom: baseline\n");
-    if (!resolveMachineConfigPath().endsWith("config.yaml")) {
-      throw new Error("upstream yaml fallback was not selected");
-    }
-
-    const handlers = new Map<string, Function>();
-    const pi = { on(name: string, handler: Function) { handlers.set(name, handler); } };
-    guard(pi as any);
+    const seed = async (...args: string[]) => {
+      const child = Bun.spawn(["${pkgs.omp-seed}/bin/atyrode-omp-seed", ...args], {
+        env: process.env, stdout: "pipe", stderr: "pipe",
+      });
+      const stdout = await new Response(child.stdout).text();
+      const stderr = await new Response(child.stderr).text();
+      if (await child.exited !== 0) throw new Error(stderr);
+      return stdout;
+    };
+    let handlers: Map<string, Function>;
     let warning = "";
-    await handlers.get("session_start")?.({}, {
-      ui: { notify(message: string) { warning = message; } },
-    });
-    await Bun.write(
-      `''${agentDir}/config.yaml`,
-      "modelRoles:\n  default: attempted-change\ncustom: preserved-edit\n",
-    );
-    await Bun.sleep(1_200);
-    const watched = Bun.YAML.parse(await Bun.file(`''${agentDir}/config.yaml`).text());
-    if (watched.modelRoles !== undefined || watched.custom !== "preserved-edit") {
-      throw new Error("watcher did not restore managed paths and retain unmanaged edits");
-    }
-    if (!warning.includes("tried to change Nix-managed")) {
-      throw new Error("watcher did not report the rejected persistence");
+    for (const filename of ["config.yml", "config.yaml"]) {
+      process.env.HOME = `''${process.env.TMPDIR}/guard-''${filename}`;
+      process.env.XDG_STATE_HOME = `''${process.env.HOME}/.local/state`;
+      delete process.env.PI_CODING_AGENT_DIR;
+      delete process.env.PI_CONFIG_DIR;
+      const agentDir = `''${process.env.HOME}/.omp/agent`;
+      mkdirSync(agentDir, { recursive: true });
+      const path = `''${agentDir}/''${filename}`;
+      await Bun.write(path, "{}\n");
+      await seed("apply");
+      const original = Bun.YAML.parse(await Bun.file(path).text());
+      const missing = structuredClone(original);
+      delete missing.task.agentModelOverrides;
+      delete missing.edit.enforceSeenLines;
+      await Bun.write(path, Bun.YAML.stringify(missing));
+
+      handlers = new Map<string, Function>();
+      guard({ on(name: string, handler: Function) { handlers.set(name, handler); } } as any);
+      await handlers.get("session_start")?.({}, {
+        ui: { notify(message: string) { warning = message; } },
+      });
+      await seed("resolve", "--reset-all");
+      await Bun.sleep(1_200);
+      await handlers.get("session_shutdown")?.();
+      await seed("apply");
+      const status = JSON.parse(await seed("status", "--json"));
+      if (status.pending.length || status.drift.length) {
+        throw new Error(`running managed session undid seed reset: ''${JSON.stringify(status)}`);
+      }
+      const reset = Bun.YAML.parse(await Bun.file(path).text());
+      if (!Bun.deepEquals(reset, original)) throw new Error("reset lost seeded settings");
+
+      // A genuine operator edit must still be retained and reported as drift.
+      reset.edit.enforceSeenLines = false;
+      await Bun.write(path, Bun.YAML.stringify(reset));
+      await seed("apply");
+      const edited = JSON.parse(await seed("status", "--json"));
+      if (edited.drift.length !== 1 || edited.drift[0].key !== "edit.enforceSeenLines"
+          || edited.drift[0].reason !== "local-edit" || edited.drift[0].live !== false) {
+        throw new Error("genuine operator override was hidden or overwritten");
+      }
     }
     warning = "";
     const settingsResult = await handlers.get("input")?.(
       { text: "  /SeTtInGs  " },
       { ui: { notify(message: string) { warning = message; } } },
     );
-    if (settingsResult?.handled !== true || !warning.includes("Nix-managed settings")) {
+    if (settingsResult?.handled !== true) {
       throw new Error("settings command was not guarded");
     }
     if (await handlers.get("input")?.({ text: "/settingsx" }, { ui: { notify() {} } })) {
       throw new Error("unrelated input was consumed");
     }
-    await handlers.get("session_shutdown")?.();
     EOF
-    mkdir -p "$HOME/.omp/agent"
     ${pkgs.bun}/bin/bun "$TMPDIR/settings-guard.test.ts"
 
     # #78 — managed launchers are immutable at LAUNCH: a hostile ~/.omp cannot
     # override the managed routing default or enforced policy (approvals,
     # task isolation), and `config set` on a managed path is refused. The
-    # in-session guard above covers the running-session half; this covers the
-    # next-launch half that makes profiles reliable.
+    # command guard above covers /settings; this covers the launch-layer
+    # precedence that keeps managed values independent of the machine file.
     imm_home="$TMPDIR/immutable-home"
     mkdir -p "$imm_home/.omp/agent"
     cat > "$imm_home/.omp/agent/config.yml" <<'YAML'

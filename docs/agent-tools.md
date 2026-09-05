@@ -213,9 +213,17 @@ PTY-backed automation.
 
 The seed may overlap keys owned by managed launchers: `defaults.yml` and
 `policy.yml` layer above the machine configuration, so seeded values cannot
-change managed behavior. The flake check asserts agreement wherever seeded and
+change managed behavior. The session guard blocks `/settings`; it never rolls
+the shared writable configuration back to a startup snapshot. Seed resets and
+edits by other sessions must survive while managed sessions are running and
+when they shut down. The flake check asserts agreement wherever seeded and
 enforced values overlap. Writes abort if the machine configuration changes
 between read and write; rerun to evaluate the new state.
+
+After upgrading from the startup-snapshot guard, restart existing managed
+sessions before reviewing drift: an already-running session still has the old
+extension loaded and can undo a reset. The replacement guard does not require
+further reset/restart cycles.
 
 ## Session archive
 

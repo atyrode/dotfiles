@@ -15,6 +15,7 @@
       "mobile"
       "media"
       "containers"
+      "manifold-node"
     ];
   };
 
@@ -31,6 +32,7 @@
       "development"
       "agent-tools"
       "security"
+      "manifold-node"
     ];
   };
 

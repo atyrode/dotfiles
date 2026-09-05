@@ -170,5 +170,5 @@ fi
 if wants manifold; then
   bump manifold "$repo_root/pkgs/manifold-agent/default.nix" atyrode/manifold v \
     'https://github.com/atyrode/manifold/releases/download/@tag@/@asset@' \
-    manifold-agent-linux-x64
+    manifold-agent-linux-x64 manifold-agent-darwin-arm64
 fi

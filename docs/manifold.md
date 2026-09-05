@@ -15,14 +15,14 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
   `bun run release` there and never by an apply here.
   Vault write access can never redirect fleet terminals (the Bitwarden-based
   discovery alternative was rejected in #418 for exactly that reason).
-- **Nix owns the agent and its unit.** The `manifold-node` capability installs
-  the pinned `manifold-agent` (a release-asset pin, like omp/code/codex —
-  the upstream flake's bun-deps derivation is not reproducible across
-  machines, atyrode/manifold#51) and a `systemd --user` unit that executes
-  the immutable store binary with `Restart=always`, a bounded delay, and the
-  committed master URL. The capability currently delivers on `x86_64-linux`
-  only — widen `supportedSystems` in `fleet/manifold.json` as upstream
-  publishes assets for more platforms.
+- **Nix owns the agent and its native service.** The `manifold-node` capability
+  installs the pinned release asset (the upstream flake's bun-deps derivation
+  is not reproducible across machines, atyrode/manifold#51). Linux uses
+  `systemd --user`; Apple Silicon macOS uses a Home Manager launchd agent.
+  Both execute the immutable store binary against the committed master URL.
+  `fleet/manifold.json` declares the supported systems and every owned spoke:
+  `macbook`, `wsl`, and `dev-01`. Portable development profiles do not enroll
+  client machines into the fleet.
 - **The runtime layer owns machine state.** Enrollment and the machine token
   live outside the Nix store, exactly like `local-qwen`.
 
@@ -33,20 +33,32 @@ atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
 ```
 
-Provisioning is interactive and one-time: it reads the manifold owner key from
-the Bitwarden Secure Note named by `vaultItemName` (under the same
-unlock→fetch→lock discipline as `atyrode provision git`), POSTs the machine's
-hostname to `/api/machines`, and installs the minted token at
-`~/.config/manifold/machine.token` (0600). The owner key never enters argv,
-logs, or disk outside the secure temp dir; the running agent never touches the
-vault. Re-running is idempotent. A lost token is recovered explicitly with
-`--rotate-token`, which revokes the old token immediately — a live agent still
-using it is fenced.
+After activation, `atyrode apply` offers enrollment when the installed
+capability has no token. It remains an authorized, interactive operation:
+it reads the owner key from the Bitwarden Secure Note named by `vaultItemName`
+(under the same unlock→fetch→lock discipline as `atyrode provision git`),
+POSTs the canonical fleet name to `/api/machines`, and installs the minted
+token at `~/.config/manifold/machine.token` (0600, in a 0700 directory).
+The owner key never enters argv, logs, or disk outside the secure temp dir;
+the running agent never touches the vault.
 
-The unit is inert (`ConditionPathExists` on the token file) until enrollment,
-so applying the capability before provisioning is safe everywhere. Headless
-machines need user lingering (`loginctl enable-linger`) so the agent survives
-logout; on the managed NixOS server that is system-owned.
+Re-running with an existing token neither contacts the vault/master nor
+restarts an active agent. It starts an inactive managed service and fails if
+that start fails. A lost token is recovered explicitly with `--rotate-token`:
+this revokes the old token, fences its holder, and restarts a running managed
+agent to load the replacement. Never rotate merely to repair a protocol
+mismatch.
+
+The declared service waits for its token before starting. Linux uses
+`ConditionPathExists`; launchd uses `KeepAlive.PathState` and logs to
+`~/.local/state/manifold/agent.log`. Enrollment loads/starts the service in
+the current user's session. Headless Linux machines need user lingering so
+the agent survives logout; managed NixOS owns that setting. The macOS agent
+lives in the logged-in user's GUI session, not a system daemon.
+
+Acceptance is `phase: "connected"` in runtime status, followed by the named
+machine appearing on the canvas. `enrolled` or `running` alone is not proof
+of a hub connection, and provisioning doctor does not mark it healthy.
 
 ## Upgrades
 
@@ -80,21 +92,23 @@ unreadable constant). A held bump prints to stderr and to the Actions job
 summary, opens no pull request, and leaves the pin untouched. Clearing it means
 deploying the hub, not overriding the guard.
 
-### Protocol mismatch is silent
+### Protocol mismatch does not stop the process
 
 An agent newer than the hub does not crash. The hub closes every dial with
 `4409 protocol version mismatch`; the agent logs the rejection, schedules a
-reconnect, and stays `active (running)` indefinitely, so `Restart=always` has
-nothing to act on and the machine looks healthy while being absent from the
-canvas. An unattended pin bump has shipped such an agent to a spoke once
-(dotfiles #452), because a green gate said nothing about the deployed hub;
-that is what `guard_manifold` above exists to prevent.
+reconnect, and stays active indefinitely, so a service manager cannot diagnose
+the absent canvas node by process state alone. An unattended pin bump shipped
+such an agent once (dotfiles #452); `guard_manifold` prevents that release
+ordering error.
 
-A spoke that has silently left the hub is therefore diagnosed from the agent's
-journal rather than from its unit state:
+Runtime status inspects structured connection events as well as process
+state. A restart or disconnect invalidates an earlier welcome, and a
+rejection makes provisioning doctor degraded. Inspect the native log for
+the cause:
 
 ```sh
 journalctl --user -u manifold-agent -n 20   # welcome = joined; 4409 = locked out
+tail -n 20 ~/.local/state/manifold/agent.log # macOS equivalent
 curl -s https://manifold.tyrode.dev/healthz # hub protocolVersion
 ```
 
@@ -117,8 +131,8 @@ rather than particular to one host:
 
 Enrollment survives the swap untouched: the existing 0600 machine token is
 adopted as-is, never re-minted. `atyrode runtime status manifold-agent --json`
-is the proof it worked, reporting `enrolled: true` with `unit.present: true`
-and an active unit.
+is the proof it worked, reporting `phase: "connected"`. An enrolled token
+and an active process without a current welcome are not enough.
 
 ## The development hub on dev-01
 

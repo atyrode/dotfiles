@@ -1,3 +1,3 @@
 development-aarch64-linux	aarch64-linux	base,development,agent-tools,security	Portable headless arm64 Linux development environment with agent tooling
 development-x86_64-linux	x86_64-linux	base,development,agent-tools,security,containers	Portable headless x86_64 Linux development environment with agent tooling
-macbook	aarch64-darwin	base,development,agent-tools,security,desktop,mobile,media,containers	Primary Apple Silicon Mac with the full development, agent, and desktop stack
+macbook	aarch64-darwin	base,development,agent-tools,security,desktop,mobile,media,containers,manifold-node	Primary Apple Silicon Mac with the full development, agent, and desktop stack

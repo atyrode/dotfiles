@@ -1,16 +1,11 @@
-# The manifold-node capability contract (#418/#419), asserted on the portable
-# server composition and on every spoke fleet/manifold.json names. A spoke's
-# registry entry must select the capability -- dev-01 was one apply away from
-# losing its agent because #516's entry had dropped it (#538): the pinned agent is
-# installed, the user service runs the immutable store binary with a bounded
-# restart policy, enrollment gates the unit through the token-file condition,
-# and no token material can enter the unit text. Systems outside the pin's
-# supported set must stay clean: they keep evaluating without referencing the
-# unbuildable package.
+# Every owned machine is a declared spoke. Native service contracts must keep
+# unenrolled machines inert and credentials outside the Nix store while making
+# enrolled agents durable on both user managers.
 {
   hosts,
   lib,
   nixosConfigs,
+  darwinConfigs,
   pkgs,
   serverConfig,
   system,
@@ -20,69 +15,100 @@ let
   inventory = builtins.fromJSON (builtins.readFile ../../fleet/manifold.json);
   supported = builtins.elem system inventory.supportedSystems;
   spokesHere = lib.filter (name: hosts.${name}.system == system) inventory.spokes;
-  spokeSelects =
-    name:
-    lib.assertMsg (builtins.elem "manifold-node" hosts.${name}.capabilities)
-      "${name} is a spoke in fleet/manifold.json but its fleet/hosts.nix entry does not select manifold-node";
-  homeConfigs = {
-    "the server profile" = serverConfig;
-  }
-  // lib.listToAttrs (
-    map (
-      name: lib.nameValuePair "${name}'s home" nixosConfigs.${name}.config.home-manager.users.alex
-    ) spokesHere
-  );
-  # The unit type merges repeatable INI keys into lists, so a single
-  # definition reads back as a singleton; compare through toList.
+  homeConfigs =
+    lib.optionalAttrs (serverConfig != null) {
+      "the server profile" = serverConfig;
+    }
+    // lib.listToAttrs (
+      map (
+        name:
+        lib.nameValuePair name (
+          if hosts.${name}.platform == "darwin" then
+            darwinConfigs.${name}.config.home-manager.users.${hosts.${name}.username}
+          else
+            nixosConfigs.${name}.config.home-manager.users.${hosts.${name}.username}
+        )
+      ) spokesHere
+    );
   one = value: lib.toList value;
   contract =
     name: homeConfig:
     let
       unit = homeConfig.systemd.user.services.manifold-agent or null;
+      launchAgent = homeConfig.launchd.agents.manifold-agent or null;
       packageNames = map lib.getName homeConfig.home.packages;
+      machineName = homeConfig.home.sessionVariables.ATYRODE_HOST or "%H";
+      tokenFile = "${homeConfig.home.homeDirectory}/.config/manifold/machine.token";
       environment = lib.toList (unit.Service.Environment or [ ]);
       hasEnvironment = entry: builtins.elem entry environment;
     in
-    if supported then
-      assert lib.assertMsg (builtins.elem "manifold-agent" packageNames)
-        "${name} must install the pinned manifold-agent";
-      assert lib.assertMsg (unit != null) "${name} must declare the manifold-agent unit";
-      assert lib.assertMsg (
-        one unit.Service.ExecStart == [ (lib.getExe pkgs.manifold-agent) ]
-      ) "manifold-agent must execute the immutable pinned store binary";
-      assert lib.assertMsg (
-        one unit.Service.Restart == [ "always" ]
-        && one unit.Service.RestartSec == [ 3 ]
-        && one unit.Unit.StartLimitIntervalSec == [ 0 ]
-      ) "manifold-agent must restart always, with a bounded delay and no start rate limit";
-      assert lib.assertMsg (
-        one unit.Unit.ConditionPathExists == [ "%h/.config/manifold/machine.token" ]
-      ) "an unenrolled machine must skip the unit, not fail it";
-      assert lib.assertMsg (hasEnvironment "MANIFOLD_SERVER_URL=${inventory.masterUrl}")
-        "the unit must dial the committed master declaration";
-      assert lib.assertMsg (hasEnvironment "MANIFOLD_MACHINE_NAME=%H")
-        "the machine name must be the hostname, matching what provisioning enrolls";
-      assert lib.assertMsg
-        (hasEnvironment "MANIFOLD_MACHINE_TOKEN_FILE=%h/.config/manifold/machine.token")
-        "the agent must read the token from the 0600 file";
-      assert lib.assertMsg (
-        !(lib.any (lib.hasPrefix "MANIFOLD_MACHINE_TOKEN=") environment)
-      ) "the machine token must never enter the unit text";
-      assert lib.assertMsg (
-        lib.toList unit.Install.WantedBy == [ "default.target" ]
-      ) "manifold-agent must start with the user manager";
-      true
-    else
+    if !supported then
       assert lib.assertMsg (
         !(builtins.elem "manifold-agent" packageNames)
-      ) "systems without a filled upstream deps hash must not reference manifold-agent";
+      ) "unsupported systems must not install manifold-agent";
       assert lib.assertMsg (
-        unit == null
-      ) "systems outside the supported set must not declare the manifold-agent unit";
-      true;
+        unit == null && launchAgent == null
+      ) "unsupported systems must not declare a Manifold service";
+      true
+    else
+      assert lib.assertMsg (builtins.elem "manifold-agent" packageNames)
+        "${name} must install the pinned agent";
+      if pkgs.stdenv.hostPlatform.isDarwin then
+        assert lib.assertMsg (unit == null) "Darwin must not depend on systemd";
+        assert lib.assertMsg (
+          launchAgent != null && launchAgent.enable
+        ) "${name} must enable the launchd agent";
+        assert lib.assertMsg (
+          launchAgent.config.ProgramArguments == [ (lib.getExe pkgs.manifold-agent) ]
+        ) "the Mac must run the pinned agent";
+        assert lib.assertMsg (launchAgent.config.KeepAlive.PathState.${tokenFile} or false
+        ) "an unenrolled Mac must remain inert; its placed token enables the agent";
+        assert lib.assertMsg (
+          launchAgent.config.EnvironmentVariables.MANIFOLD_SERVER_URL == inventory.masterUrl
+          && launchAgent.config.EnvironmentVariables.MANIFOLD_MACHINE_NAME == machineName
+          && launchAgent.config.EnvironmentVariables.MANIFOLD_MACHINE_TOKEN_FILE == tokenFile
+          && !(launchAgent.config.EnvironmentVariables ? MANIFOLD_MACHINE_TOKEN)
+        ) "launchd must use reviewed discovery, canonical identity and a token path, never token bytes";
+        assert lib.assertMsg (
+          launchAgent.config.StandardOutPath
+          == "${homeConfig.home.homeDirectory}/.local/state/manifold/agent.log"
+          && launchAgent.config.StandardErrorPath == launchAgent.config.StandardOutPath
+        ) "connection diagnosis needs the agent event log";
+        true
+      else
+        assert lib.assertMsg (
+          unit != null && launchAgent == null
+        ) "${name} must enable only the systemd agent";
+        assert lib.assertMsg (
+          one unit.Service.ExecStart == [ (lib.getExe pkgs.manifold-agent) ]
+        ) "the Linux service must run the pinned agent";
+        assert lib.assertMsg (
+          one unit.Service.Restart == [ "always" ]
+          && one unit.Service.RestartSec == [ 3 ]
+          && one unit.Unit.StartLimitIntervalSec == [ 0 ]
+        ) "the agent must recover from disconnects without exhausting its start limit";
+        assert lib.assertMsg (
+          one unit.Unit.ConditionPathExists == [ "%h/.config/manifold/machine.token" ]
+        ) "an unenrolled Linux machine must remain inert";
+        assert lib.assertMsg (
+          hasEnvironment "MANIFOLD_SERVER_URL=${inventory.masterUrl}"
+          && hasEnvironment "MANIFOLD_MACHINE_NAME=${machineName}"
+          && hasEnvironment "MANIFOLD_MACHINE_TOKEN_FILE=%h/.config/manifold/machine.token"
+          && !(lib.any (lib.hasPrefix "MANIFOLD_MACHINE_TOKEN=") environment)
+        ) "systemd must use reviewed discovery, canonical identity and a token path, never token bytes";
+        assert lib.assertMsg (
+          lib.toList unit.Install.WantedBy == [ "default.target" ]
+        ) "the agent must start with the user manager";
+        true;
 in
-assert lib.all spokeSelects spokesHere;
+assert lib.assertMsg (
+  lib.sort builtins.lessThan inventory.spokes == builtins.attrNames hosts
+) "every owned machine must appear in the Manifold spoke inventory";
+assert lib.all (name: builtins.elem "manifold-node" hosts.${name}.capabilities) inventory.spokes;
 assert lib.all lib.id (lib.mapAttrsToList contract homeConfigs);
 pkgs.runCommand "check-manifold-node-${system}" { } ''
+  ${lib.optionalString supported ''
+    ${lib.getExe pkgs.bun} ${./manifold-agent-smoke.ts} ${lib.getExe pkgs.manifold-agent}
+  ''}
   mkdir "$out"
 ''

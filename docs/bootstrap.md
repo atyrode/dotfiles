@@ -509,7 +509,7 @@ something it cannot take back silently:
 | omp seed drift (`atyrode-omp-seed resolve`) | Nothing beyond the local plain-omp settings file: repository defaults are restored over local edits, with no secret and no network call |
 | generated agent context (`atyrode context render`) | Nothing beyond a file under `~/.config/agents`: this machine's facts under the operator policy. It asks `gh` and `clever` for their session state (read-only, bounded), stores no secret, and downloads nothing; apply renders it itself, so this surface is only ever pending between applies |
 | local-qwen (`atyrode runtime provision local-qwen`) | Roughly forty gigabytes of downloads and a built container image serving a model from the local GPU |
-| manifold-agent (`atyrode runtime provision manifold-agent`) | Enrollment with the self-hosted manifold hub: an owner key read from the vault, one call to the master, and a machine token stored on disk |
+| manifold-agent (`atyrode runtime provision manifold-agent`) | Starting the managed agent for the machine token activation placed; the token is minted on an operator device by `atyrode runtime enroll manifold-agent <host>` and this machine never holds the hub's owner key |
 
 Three rules govern all of them, so that a surface is data rather than a
 dialogue somebody has to design again:

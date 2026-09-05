@@ -162,6 +162,33 @@ let
             && !(unit.Unit.RefuseManualStop or false)
         ) "transport replacement must not stop its independently supervised terminal owner";
         true;
+  # The credentials are clan vars: the owner key shared, operator-only and
+  # never deployed; the token per machine, placed for the account whose agent
+  # reads it, behind the link at the path every unit and the CLI name. A
+  # machine that received the owner key, or a token that landed as a file the
+  # units cannot find, would pass the unit contract above and still be wrong.
+  custody =
+    name:
+    let
+      machine =
+        if hosts.${name}.platform == "darwin" then darwinConfigs.${name} else nixosConfigs.${name};
+      generators = machine.config.clan.core.vars.generators;
+      token = generators.manifold-agent.files."machine-token";
+      link = homeConfigs.${name}.home.file.".config/manifold/machine.token";
+    in
+    assert lib.assertMsg (
+      generators.manifold-custody.share && !generators.manifold-custody.files."owner-key".deploy
+    ) "${name}: the hub owner key must be shared custody that no machine receives";
+    assert lib.assertMsg (
+      !generators.manifold-agent.share
+      && token.secret
+      && token.owner == hosts.${name}.username
+      && token.mode == "0600"
+    ) "${name}: the machine token must be this machine's own 0600 secret, owned by its account";
+    assert lib.assertMsg (
+      link.force && link.source != null
+    ) "${name}: ~/.config/manifold/machine.token must be the forced link to the placed token";
+    true;
 in
 assert lib.assertMsg (
   lib.sort builtins.lessThan inventory.spokes == builtins.attrNames hosts
@@ -171,6 +198,7 @@ assert lib.all lib.id (
   lib.mapAttrsToList (contract ((pkgs.manifold-agent.terminalHostProtocol or 0) == 1)) homeConfigs
 );
 assert lib.all lib.id (lib.mapAttrsToList (contract true) splitHomeConfigs);
+assert lib.all custody spokesHere;
 pkgs.runCommand "check-manifold-node-${system}" { } ''
   ${lib.optionalString supported ''
     ${lib.getExe pkgs.bun} ${./manifold-agent-smoke.ts} ${lib.getExe pkgs.manifold-agent} ${

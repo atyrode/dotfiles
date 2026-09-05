@@ -37,6 +37,16 @@ paint() {
   if _narrate_use_color; then printf '\033[%sm%s\033[0m' "$code" "$*"; else printf '%s' "$*"; fi
 }
 
+# The step voice has three weights, and every line below chooses one, so an
+# operator glancing at a scrolling apply reads the shape before the words: a
+# heading is bold cyan, an announced command is bold behind a cyan prompt, and
+# everything that explains or qualifies -- the reason for a step, a detail it
+# established, the elapsed time -- is muted. Muted is the bright-black palette
+# entry rather than the faint attribute, because faint is the one SGR that
+# terminals and renderers most often draw as ordinary text, which is exactly
+# the wall of white this palette exists to break.
+muted() { paint 90 "$*"; }
+
 # Whether we can hold a yes/no dialogue with a human: both ends of the pipe are
 # a terminal. The override forces it on so confirm gates stay exercisable from a
 # harness that has no tty.
@@ -60,7 +70,7 @@ show_command() {
   local rendered
   rendered="$(render_argv "$@")"
   narrate_log "run: $rendered"
-  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $rendered")" >&2
+  printf '%s%s %s\n' "$STEP_INDENT" "$(paint '1;36' '$')" "$(paint 1 "$rendered")" >&2
 }
 
 render_argv() {
@@ -77,7 +87,7 @@ render_argv() {
 # the `>` stays itself instead of becoming a quoted character.
 show_rendered() { # rendered-shell-line
   narrate_log "run: $1"
-  printf '%s\n' "$(paint 2 "$STEP_INDENT\$ $1")" >&2
+  printf '%s%s %s\n' "$STEP_INDENT" "$(paint '1;36' '$')" "$(paint 1 "$1")" >&2
 }
 
 run_visible() {
@@ -146,10 +156,10 @@ plan_steps() { # label...
   STEP_TOTAL=$#
   STEP_INDEX=0
   STEP_PLAN=("$@")
-  printf '\n%s\n' "$(paint 1 'Plan')" >&2
+  printf '\n%s\n' "$(paint '1;36' 'Plan')" >&2
   for label in "$@"; do
     index=$((index + 1))
-    printf '  %d. %s\n' "$index" "$label" >&2
+    printf '  %s %s\n' "$(paint '1;36' "$index.")" "$(muted "$label")" >&2
     narrate_log "plan $index/$STEP_TOTAL: $label"
   done
 }
@@ -165,7 +175,7 @@ step_abandon_plan() {
   for ((index = STEP_INDEX + 1; index <= STEP_TOTAL; index++)); do
     printf '\n%s %s\n  %s\n' \
       "$(paint '1;36' "$index/$STEP_TOTAL")" "$(paint 1 "${STEP_PLAN[index - 1]}")" \
-      "$(paint 2 'not attempted')" >&2
+      "$(paint '1;33' 'not attempted')" >&2
     narrate_log "step $index/$STEP_TOTAL not attempted: ${STEP_PLAN[index - 1]}"
   done
   STEP_INDEX="$STEP_TOTAL"
@@ -184,14 +194,14 @@ step_begin() { # label
 # declaration this machine has to match, or a diagnosis that was just made.
 # Printed only where the answer is not already in the label.
 step_why() { # text
-  printf '  %s %s\n' "$(paint 2 'why')" "$1" >&2
+  printf '  %s\n' "$(muted "why $1")" >&2
   narrate_log "  why: $1"
 }
 
 # A fact the step established or a file it wrote -- the detail that makes the
 # verdict checkable rather than merely reassuring.
 step_detail() { # text
-  printf '  %s\n' "$(paint 2 "$1")" >&2
+  printf '  %s\n' "$(muted "$1")" >&2
   narrate_log "  $1"
 }
 
@@ -202,11 +212,14 @@ _step_elapsed() {
   [[ "$_step_started" != 0 ]] || return 0
   seconds=$(($(date +%s) - _step_started))
   ((seconds >= 2)) || return 0
-  printf ' %s' "$(paint 2 "${seconds}s")"
+  printf ' %s' "$(muted "${seconds}s")"
 }
 
+# One line: the verdict carries the colour, and what qualifies it -- the
+# detail, the time -- follows muted on the same line, so a column of verdicts
+# scans top to bottom without the eye stepping down for each.
 _step_end() { # painted-verdict detail
-  printf '  %s%s%s\n' "$1" "${2:+ $2}" "$(_step_elapsed)" >&2
+  printf '  %s%s%s\n' "$1" "${2:+ $(muted "$2")}" "$(_step_elapsed)" >&2
   STEP_INDENT=''
   _step_started=0
 }

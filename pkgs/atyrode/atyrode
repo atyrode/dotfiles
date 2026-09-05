@@ -100,7 +100,8 @@ Usage:
   atyrode runtime list [--json]
   atyrode runtime status [local-qwen|manifold-agent] [--json]
   atyrode runtime provision local-qwen [--data-dir PATH] [--yes]
-  atyrode runtime provision manifold-agent [--rotate-token]
+  atyrode runtime enroll manifold-agent HOST [--rotate-token]
+  atyrode runtime provision manifold-agent
   atyrode runtime start|stop|run [local-qwen]
   atyrode runtime start|stop|restart manifold-agent
   atyrode runtime autostart [local-qwen] on|off

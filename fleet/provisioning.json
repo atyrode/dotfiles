@@ -73,11 +73,9 @@
     "manifold-agent": {
       "label": "Manifold fleet agent",
       "command": "atyrode runtime provision manifold-agent",
-      "implies": "Enrols this machine with the Manifold hub named in fleet/manifold.json when needed, stores the machine token it mints, and starts the native managed agent. A new enrollment needs your vault password once; an existing enrollment is not rotated.",
+      "implies": "Starts the native managed agent for the machine token activation placed. The token is this machine's clan var, minted by `atyrode runtime enroll manifold-agent <host>` on an operator device that holds the hub's owner key as a clan var this machine never receives. No vault and no owner key on this machine.",
       "declinable": true,
-      "prerequisites": [
-        "bitwarden-session"
-      ]
+      "prerequisites": []
     }
   },
   "prerequisites": {

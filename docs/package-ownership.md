@@ -38,10 +38,12 @@ sessions, caches, device identities, or other mutable state.
 - `desktop`, `mobile`, `media`, `containers`, and `security` are explicit host
   capabilities. Container daemons and Homebrew application state remain
   system-owned. The `security` capability contains network diagnostics and
-  `sops` (with `age-plugin-se` on Darwin only: its Linux closure is a 2 GiB
-  Swift runtime, and no Linux host decrypts as the operator); ClamAV is
-  intentionally unowned because there is no signature-update and scanning
-  workflow.
+  `sops` (with `age-plugin-se` on Darwin only: its Linux closure is a 2.1 GiB
+  Swift runtime. A Linux operator device decrypts with its own key and needs
+  no plugin; the writes that must encrypt to the Mac's enclave recipient run
+  clan inside a transient `nix shell nixpkgs#age-plugin-se`,
+  [secrets.md](secrets.md#operator-devices)); ClamAV is intentionally
+  unowned because there is no signature-update and scanning workflow.
 - Python/Pillow/uv, Node/Bun/Deno, Go, Rust, and GCC are project-owned. A Nix
   project commits a dev shell and `.envrc`; other projects commit `mise.toml`
   plus their native manifest. Nix and mise must not own the same project runtime.

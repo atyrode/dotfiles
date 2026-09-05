@@ -6,9 +6,12 @@
 
 # --- manifold-agent runtime --------------------------------------------------
 # Fleet enrollment for the self-hosted manifold hub (#418). The committed
-# fleet/manifold.json owns master discovery; the vault holds only the
-# owner key, read once during interactive provisioning. The running agent
-# authenticates with a 0600 machine token file and never touches the vault.
+# fleet/manifold.json owns master discovery. The hub's owner key is a shared
+# clan var no machine receives, and each machine's token is a clan var placed
+# at activation behind ~/.config/manifold/machine.token: enrolling is done on
+# an operator device (`runtime enroll`), and a machine only ever starts the
+# agent that reads what was placed for it (`runtime provision`). No machine
+# holds the owner key and nothing here opens a vault.
 
 manifold_token_path() {
   # Both native units pin this path: the systemd unit uses %h and launchd
@@ -53,28 +56,16 @@ manifold_applicable() {
 }
 
 manifold_token_mode() {
-  stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null
+  stat -L -c %a "$1" 2>/dev/null || stat -L -f %Lp "$1" 2>/dev/null
 }
-manifold_prepare_token_directory() {
-  local directory
-  directory="$(dirname "$(manifold_token_path)")"
-  if [[ -e "$directory" || -L "$directory" ]]; then
-    [[ -d "$directory" && ! -L "$directory" ]] ||
-      die "$EX_DATAERR" "$directory is not a safe Manifold credential directory"
-  else
-    mkdir -p "$directory" || die "$EX_UNAVAILABLE" "could not create $directory"
-  fi
-  chmod 700 "$directory" || die "$EX_UNAVAILABLE" "could not secure $directory"
-}
-
+# The token is what activation placed, read through the link Home Manager
+# keeps at the path the units name. Only the file at the end of the link is
+# judged, because the link and its directory are Home Manager's; a dangling
+# link is the unenrolled state and a placed file is 0600 by declaration.
 manifold_enrolled() {
-  local token_path directory
+  local token_path
   token_path="$(manifold_token_path)"
-  directory="$(dirname "$token_path")"
-  [[ -d "$directory" && ! -L "$directory" &&
-    -f "$token_path" && ! -L "$token_path" && -s "$token_path" &&
-    "$(manifold_token_mode "$token_path")" == 600 &&
-    "$(manifold_token_mode "$directory")" == 700 ]]
+  [[ -f "$token_path" && -s "$token_path" && "$(manifold_token_mode "$token_path")" == 600 ]]
 }
 
 manifold_launchd_label() {
@@ -288,104 +279,121 @@ manifold_fail_if_rejected() {
   fi
 }
 
+# On the machine, provisioning is starting the agent for a token activation
+# has placed. It never mints: the owner key that could is not on this machine
+# by design, so a missing token names the operator-device ceremony instead.
 manifold_provision() {
-  local rotate=0
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --rotate-token) rotate=1 ;;
-      *) die "$EX_USAGE" "unknown manifold-agent provision option: $1" ;;
-    esac
-    shift
-  done
+  [[ $# -eq 0 ]] || die "$EX_USAGE" "unknown manifold-agent provision option: $1"
   manifold_system_supported ||
     die "$EX_UNAVAILABLE" "manifold-agent has no declared release for $(actual_system)"
   command -v manifold-agent >/dev/null 2>&1 ||
     die "$EX_UNAVAILABLE" "the manifold-node capability is not installed on this machine"
-  local token_path token_directory token_tmp master_url item_name machine_name
-  token_path="$(manifold_token_path)"
-  token_directory="$(dirname "$token_path")"
-  [[ ! -L "$token_path" ]] ||
-    die "$EX_DATAERR" "$token_path must not be a symbolic link"
-  manifold_prepare_token_directory
-  if [[ "$rotate" == 0 && -e "$token_path" ]]; then
-    [[ -f "$token_path" && -s "$token_path" ]] ||
-      die "$EX_DATAERR" "$token_path is not a usable machine token; remove the invalid file, then rerun enrollment"
-    chmod 600 "$token_path" || die "$EX_UNAVAILABLE" "could not secure $token_path"
-    manifold_start || return $?
-    manifold_fail_if_rejected || return $?
-    printf 'atyrode: %s is already enrolled and its agent is running (token at %s)\n' \
-      "$(manifold_node_name)" "$token_path" >&2
-    manifold_render_status
+  local host
+  host="$(manifold_node_name)"
+  manifold_enrolled ||
+    die "$EX_NOINPUT" "no machine token is placed at $(manifold_token_path); on an operator device run: atyrode runtime enroll manifold-agent $host, then atyrode apply here"
+  manifold_start || return $?
+  manifold_fail_if_rejected || return $?
+  printf 'atyrode: %s is enrolled and its agent is running\n' "$host" >&2
+  manifold_render_status
+}
+
+# On an operator device, enrolling asks the hub for a machine's token and
+# stores it as that machine's clan var, so the next apply on the machine
+# places it. The owner key is read from clan's shared custody, decrypted with
+# this device's operator key, and travels only through a 0600 curl config in a
+# secure temp dir -- never argv, never a machine. A token this device already
+# holds as a plain file, from before the token was a clan var, is adopted
+# rather than re-minted, so the cutover rotates nothing.
+manifold_enroll() { # host [--rotate-token]
+  local host="" rotate=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --rotate-token) rotate=1 ;;
+      -*) die "$EX_USAGE" "unknown manifold-agent enroll option: $arg" ;;
+      *)
+        [[ -z "$host" ]] || die "$EX_USAGE" "manifold-agent enroll takes one host"
+        host="$arg"
+        ;;
+    esac
+  done
+  [[ -n "$host" ]] || die "$EX_USAGE" "manifold-agent enroll needs the host to enroll: atyrode runtime enroll manifold-agent <host>"
+  host="$(resolve_host "$host")"
+  jq -e --arg host "$host" '.spokes | index($host) != null' "$manifold_inventory" >/dev/null ||
+    die "$EX_USAGE" "$host is not a Manifold spoke in fleet/manifold.json"
+  local clan checkout master_url
+  local -a clan_write
+  clan="$(clan_program)"
+  checkout="$(fleet_repository "")"
+  mapfile -t clan_write < <(clan_write_command "$checkout")
+  master_url="$(manifold_inventory_field masterUrl)"
+
+  local legacy
+  legacy="$(manifold_token_path)"
+  if [[ "$rotate" == 0 && "$host" == "$(resolve_host)" && -f "$legacy" && ! -L "$legacy" && -s "$legacy" ]]; then
+    say "$host already holds a token from before it was a clan var; adopting it, so nothing is rotated"
+    show_rendered "$(render_argv "${clan_write[@]}" vars set "$host" manifold-agent/machine-token --flake "$checkout") < $(printf '%q' "$legacy")"
+    "${clan_write[@]}" vars set "$host" manifold-agent/machine-token --flake "$checkout" <"$legacy" ||
+      die "$EX_SOFTWARE" "clan did not store $host's machine token"
+    say "review the commit clan made in $checkout, then push it; apply on $host places the token behind the file it already reads"
     return 0
   fi
-  master_url="$(manifold_inventory_field masterUrl)"
-  item_name="$(manifold_inventory_field vaultItemName)"
-  machine_name="$(manifold_node_name)"
-  # Rotation revokes the credential the running process holds, so the agent
-  # that follows a rotation is a restarted agent: whether that may happen is
-  # decided here, before the vault is opened or the master asked to revoke
-  # anything, because a revoked token with a refused restart is an agent
-  # fenced off its own hub. Decided by the same reading every restart gets,
-  # not by a status sample: a manager that cannot answer does not clear the
-  # way to revoking what its agent holds.
-  [[ "$rotate" == 0 ]] || manifold_service_guard restart
+
+  # Rotation revokes the token the running agent holds, and that agent is on
+  # another machine, or is this one: either way the operator is told what the
+  # revocation ends before the hub is asked for it.
+  [[ "$rotate" == 0 ]] ||
+    say "rotating revokes $host's current token: an agent still using it is fenced off the hub until the new token is placed and the agent restarted"
 
   local scratch
   scratch="$(vault_secure_temp_dir atyrode-manifold)"
-  manifold_provision_cleanup() {
-    rm -rf -- "${scratch:-}"
-    vault_close_session
-  }
-  trap manifold_provision_cleanup EXIT HUP INT TERM
+  manifold_enroll_cleanup() { rm -rf -- "${scratch:-}"; }
+  trap manifold_enroll_cleanup EXIT HUP INT TERM
 
-  # The owner key must never enter argv (world-readable in /proc); it flows
-  # from the vault note into a 0600 curl config inside the secure temp dir.
-  vault_item_notes "$item_name" "$scratch" >"$scratch/owner.key" ||
-    die "$EX_UNAVAILABLE" "could not read the Manifold owner key"
+  show_command "$clan" vars get "$host" manifold-custody/owner-key --flake "$checkout"
+  "$clan" vars get "$host" manifold-custody/owner-key --flake "$checkout" >"$scratch/owner.key" 2>"$scratch/owner.err" ||
+    die "$EX_NOINPUT" "clan holds no Manifold owner key yet; on an operator device run: clan vars generate $host --generator manifold-custody (it prompts for the hub's owner key once, and no machine receives it)"
   [[ -s "$scratch/owner.key" ]] ||
-    die "$EX_DATAERR" "Bitwarden Secure Note '$item_name' is empty"
-  printf 'header = "Authorization: Bearer %s"\n' "$(cat "$scratch/owner.key")" \
+    die "$EX_DATAERR" "manifold-custody/owner-key is empty"
+  printf 'header = "Authorization: Bearer %s"\n' "$(tr -d '[:space:]' <"$scratch/owner.key")" \
     >"$scratch/curl.cfg" || die "$EX_UNAVAILABLE" "could not prepare the protected enrollment request"
 
-  local fetch payload response token
+  local fetch payload response token denial
   fetch="$(optional_host_command ATYRODE_FETCH curl)" ||
     die "$EX_UNAVAILABLE" "curl is required to enroll with the manifold master"
-  payload="$(jq -nc --arg name "$machine_name" --argjson rotate "$([[ "$rotate" == 1 ]] && printf true || printf false)" \
+  payload="$(jq -nc --arg name "$host" --argjson rotate "$([[ "$rotate" == 1 ]] && printf true || printf false)" \
     '{name:$name} + (if $rotate then {rotateToken:true} else {} end)')"
   response="$scratch/response.json"
   run_visible "$fetch" -fsSL --config "$scratch/curl.cfg" -X POST \
     -H 'content-type: application/json' -d "$payload" \
     -o "$response" "$master_url/api/actions/core.machines.enroll" ||
     die "$EX_UNAVAILABLE" "could not enroll with the manifold master at $master_url"
-  jq -e '.ok == true and (.result | type == "object")' "$response" >/dev/null ||
-    die "$EX_UNAVAILABLE" "Manifold enrollment action was refused or returned an invalid response; no token was installed"
+  # Enrollment is an action: the answer is HTTP 200 either way, and a refusal
+  # is `ok: false` carrying the rule that refused, which is what the operator
+  # needs to read.
+  if ! jq -e '.ok == true and (.result | type == "object")' "$response" >/dev/null; then
+    denial="$(jq -r '.denial | select(type == "object") | "\(.rule): \(.message)"' "$response" 2>/dev/null || true)"
+    die "$EX_UNAVAILABLE" "the manifold master refused to enroll $host${denial:+ ($denial)}; no token was stored"
+  fi
   token="$(jq -er '.result.machineToken // "" | strings' "$response")" ||
     die "$EX_DATAERR" "Manifold enrollment returned an invalid machine token"
-  trap - EXIT HUP INT TERM
-  manifold_provision_cleanup
   if [[ -z "$token" ]]; then
-    die "$EX_DATAERR" "machine '$machine_name' is already enrolled and the master mints no token on re-enrollment; recover a lost token with --rotate-token (this fences any agent still using the old token)"
+    die "$EX_DATAERR" "machine '$host' is already enrolled and the master mints no token on re-enrollment; recover a lost token with --rotate-token (this fences any agent still using the old token)"
   fi
-  token_tmp="$(mktemp "$token_directory/.machine.token.XXXXXX")" ||
-    die "$EX_UNAVAILABLE" "could not stage the Manifold machine token"
-  if ! printf '%s\n' "$token" >"$token_tmp"; then
-    rm -f -- "$token_tmp"
-    die "$EX_UNAVAILABLE" "could not write the Manifold machine token"
+  # The token reaches clan on stdin: the announced line says where it goes,
+  # and the value never appears in it.
+  show_rendered "$(render_argv "${clan_write[@]}" vars set "$host" manifold-agent/machine-token --flake "$checkout") < (the minted token)"
+  printf '%s\n' "$token" | "${clan_write[@]}" vars set "$host" manifold-agent/machine-token --flake "$checkout" ||
+    die "$EX_SOFTWARE" "the master minted a token for $host but clan did not store it; it is lost, so rerun with --rotate-token"
+  token=""
+  manifold_enroll_cleanup
+  trap - EXIT HUP INT TERM
+  say "enrolled $host with $master_url; review the commit clan made in $checkout, then push it"
+  if [[ "$rotate" == 1 ]]; then
+    say "on $host: atyrode apply places the new token, then atyrode runtime restart manifold-agent loads it"
+  else
+    say "on $host: atyrode apply places the token and starts the agent"
   fi
-  if ! chmod 600 "$token_tmp" || ! mv -f "$token_tmp" "$token_path"; then
-    rm -f -- "$token_tmp"
-    die "$EX_UNAVAILABLE" "could not install the Manifold machine token"
-  fi
-  printf 'atyrode: enrolled %s with %s (token at %s)\n' \
-    "$machine_name" "$master_url" "$token_path" >&2
-  # Explicit rotation revokes the credential held in the running process.
-  # Only that explicit request may restart an otherwise healthy agent.
-  if [[ "$rotate" == 1 && "$(manifold_service_snapshot)" == $'true\tactive\trunning' ]]; then
-    manifold_service restart || return $?
-  fi
-  manifold_start || return $?
-  manifold_fail_if_rejected || return $?
-  manifold_render_status
 }
 
 # What a stop or restart of the agent would end is judged by the same reading
@@ -444,6 +452,10 @@ cmd_runtime_manifold() {
       manifold_provision "$@" || return $?
       provisioning_clear_decline manifold-agent
       ;;
+    enroll)
+      guard_production_mutation "runtime enroll manifold-agent"
+      manifold_enroll "$@"
+      ;;
     status)
       if [[ "${1:-}" == --json ]]; then manifold_status_json; else manifold_render_status; fi
       ;;
@@ -452,7 +464,7 @@ cmd_runtime_manifold() {
       activation_lock
       manifold_service "$verb"
       ;;
-    *) die "$EX_USAGE" "manifold-agent expects provision, status, start, stop, or restart" ;;
+    *) die "$EX_USAGE" "manifold-agent expects provision, enroll, status, start, stop, or restart" ;;
   esac
 }
 
@@ -460,7 +472,7 @@ cmd_runtime() {
   # `runtime list` enumerates *launchable model runtimes* only: it is what
   # `code` renders in its runtime dial (CODE_RUNTIME_BROKER=atyrode). The
   # manifold capability is a PTY service daemon that hosts no model, so it
-  # routes here for provision/status/start/stop/restart but MUST NOT appear
+  # routes here for provision/enroll/status/start/stop/restart but MUST NOT appear
   # in that list — see checks/atyrode/atyrode-runtime.nix, which asserts it.
   if [[ "${2:-}" == manifold-agent ]]; then
     local verb="${1:-}"

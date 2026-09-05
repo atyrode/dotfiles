@@ -189,14 +189,17 @@ let
   # Every clan machine decrypts with the key `atyrode apply` places
   # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
   # to the admins group, and the declared generators are exactly the fleet's:
-  # a new one is a reviewed change, not a side effect. The fleet-wide four are
-  # on every machine; the VPS -- the one machine whose registry activation is
-  # plain `nixos` -- also holds the Cloudflare DNS token
-  # (modules/nixos/cloudflare-dns.nix), and no other machine may.
+  # a new one is a reviewed change, not a side effect. The fleet-wide six are
+  # on every machine, every one of which is a Manifold spoke; the VPS -- the
+  # one machine whose registry activation is plain `nixos` -- also holds the
+  # Cloudflare DNS token (modules/nixos/cloudflare-dns.nix), and no other
+  # machine may.
   fleetGenerators = [
     "babel-archive"
     "babel-custody"
     "git-identity"
+    "manifold-agent"
+    "manifold-custody"
     "omp-auth-broker"
   ];
   expectedGenerators =

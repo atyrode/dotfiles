@@ -53,31 +53,44 @@ pkgs.runCommand "check-atyrode-runtime"
     test ! -e "$XDG_CONFIG_HOME/atyrode/runtime"
     test ! -e "$XDG_STATE_HOME/atyrode/runtime"
 
-    # Manifold enrollment is vault-brokered and idempotent (#418). The stubs
-    # prove the wire contract: the owner key flows only through the curl
-    # config file (never argv), a fresh enrollment lands a 0600 token, a
-    # re-run touches neither the vault nor the master, a token-less existing
-    # row demands the explicit --rotate-token recovery, and rotation mints.
-    # The manager seams exercise both native paths without touching the
-    # runner's user session or creating a row on the live hub.
+    # Manifold's credentials are clan vars (#418, ADR 0008 secrets row). Two
+    # verbs, two places: `runtime enroll <host>` runs on an operator device and
+    # stores what the hub mints with `clan vars set`; `runtime provision` runs
+    # on the machine and starts the agent for the token activation placed. The
+    # stubs prove the wire contract: the owner key comes from clan and flows
+    # only through the curl config file (never argv), the minted token reaches
+    # clan on stdin and never a file of this machine, a refusal stores
+    # nothing, a token-less existing row demands --rotate-token, and a token
+    # this device already holds as a file is adopted rather than re-minted. A
+    # placed token is a link to a 0600 file, as sops-nix leaves it.
     export ATYRODE_HOST=wsl
     export _ATYRODE_TEST_HOSTNAME=legacy-wsl
     export _ATYRODE_TEST_CURRENT_SYSTEM=${splitGeneration}
-    mkdir -p "$XDG_CONFIG_HOME/systemd/user"
+    mkdir -p "$XDG_CONFIG_HOME/systemd/user" "$HOME/nix-dotfiles"
+    touch "$HOME/nix-dotfiles/flake.nix"
     ln -sfn ${splitGeneration}/etc/systemd/user/manifold-agent.service "$XDG_CONFIG_HOME/systemd/user/manifold-agent.service"
     mkdir -p "$TMPDIR/manifold-bin"
-    cat > "$TMPDIR/manifold-bin/bw" <<'EOF'
+    cat > "$TMPDIR/manifold-bin/clan" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
-    case "$1" in
-      status) printf '{"status":"unlocked"}\n' ;;
-      sync) ;;
-      list) printf '[{"id":"item-1","name":"manifold owner key","type":2}]\n' ;;
-      get) printf '{"id":"item-1","name":"manifold owner key","type":2,"notes":"fixture-owner-key"}\n' ;;
-      lock) ;;
+    printf '%s\n' "$*" >> "$MANIFOLD_CLAN_LOG"
+    case "$1 $2" in
+      'vars get')
+        [[ "$4" == manifold-custody/owner-key ]] || exit 64
+        [[ "''${MANIFOLD_CUSTODY_MISSING:-0}" != 1 ]] || { echo 'no value' >&2; exit 1; }
+        printf 'fixture-owner-key\n' ;;
+      'vars set')
+        [[ "$4" == manifold-agent/machine-token ]] || exit 64
+        cat > "$MANIFOLD_CLAN_STORE/$3" ;;
       *) exit 64 ;;
     esac
     EOF
+    placed_token() { # value
+      mkdir -p "$TMPDIR/run-secrets" "$HOME/.config/manifold"
+      printf '%s\n' "$1" > "$TMPDIR/run-secrets/machine-token"
+      chmod 600 "$TMPDIR/run-secrets/machine-token"
+      ln -sfn "$TMPDIR/run-secrets/machine-token" "$HOME/.config/manifold/machine.token"
+    }
     cat > "$TMPDIR/manifold-bin/curl-stub" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
@@ -104,7 +117,7 @@ pkgs.runCommand "check-atyrode-runtime"
       printf '{"ok":true,"result":{"machine":{"id":"machine-1","name":"fixture-node"},"machineToken":"minted-token"}}\n' > "$output"
     fi
     EOF
-    chmod +x "$TMPDIR/manifold-bin/bw" "$TMPDIR/manifold-bin/curl-stub"
+    chmod +x "$TMPDIR/manifold-bin/clan" "$TMPDIR/manifold-bin/curl-stub"
     cat > "$TMPDIR/bin/manifold-agent" <<'EOF'
     #!${pkgs.runtimeShell}
     exit 64
@@ -137,32 +150,76 @@ pkgs.runCommand "check-atyrode-runtime"
     chmod +x "$TMPDIR/bin/manifold-agent" "$TMPDIR/manifold-bin/systemctl" "$TMPDIR/manifold-bin/journalctl"
     export ATYRODE_SYSTEMCTL="$TMPDIR/manifold-bin/systemctl"
     export ATYRODE_JOURNALCTL="$TMPDIR/manifold-bin/journalctl"
-    export ATYRODE_BW="$TMPDIR/manifold-bin/bw"
+    export ATYRODE_CLAN="$TMPDIR/manifold-bin/clan"
     export ATYRODE_FETCH="$TMPDIR/manifold-bin/curl-stub"
     export MANIFOLD_ENROLL_LOG="$TMPDIR/manifold-enroll.log"
+    export MANIFOLD_CLAN_LOG="$TMPDIR/manifold-clan.log"
+    export MANIFOLD_CLAN_STORE="$TMPDIR/manifold-clan-store"
     export MANIFOLD_ROW_EXISTS="$TMPDIR/manifold-row-exists"
+    mkdir -p "$MANIFOLD_CLAN_STORE"
+    token_file="$HOME/.config/manifold/machine.token"
 
-    # Action refusals arrive with HTTP 200; they must not install a credential
+    # Nothing placed: the machine cannot mint, so it is told which device can,
+    # by doctor as a fix and by provision as a refusal that names the same command.
+    atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "manifold-agent")
+      | .status == "degraded"
+        and .remediation == "atyrode runtime enroll manifold-agent wsl (on an operator device), then atyrode apply"' >/dev/null
+    set +e
+    atyrode runtime provision manifold-agent >/dev/null 2>"$TMPDIR/manifold-unplaced.err"
+    result="$?"
+    set -e
+    test "$result" -eq 66
+    grep -qF 'atyrode runtime enroll manifold-agent wsl' "$TMPDIR/manifold-unplaced.err"
+    test ! -e "$MANIFOLD_ENROLL_LOG"
+
+    # No owner key in clan yet: the ceremony names the generator that takes it,
+    # and asks the hub nothing.
+    if MANIFOLD_CUSTODY_MISSING=1 atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-nocustody.err"; then
+      echo 'enroll proceeded without an owner key' >&2
+      exit 1
+    fi
+    grep -qF 'clan vars generate wsl --generator manifold-custody' "$TMPDIR/manifold-nocustody.err"
+    test ! -e "$MANIFOLD_ENROLL_LOG"
+
+    # Action refusals arrive with HTTP 200; they must not store a credential
     # or be confused with an idempotent existing machine lacking a new token.
-    if MANIFOLD_ENROLL_REFUSED=1 atyrode runtime provision manifold-agent > /dev/null 2>"$TMPDIR/manifold-refused.err"; then
+    if MANIFOLD_ENROLL_REFUSED=1 atyrode runtime enroll manifold-agent wsl > /dev/null 2>"$TMPDIR/manifold-refused.err"; then
       echo 'refused enrollment was accepted' >&2
       exit 1
     fi
-    test ! -e "$HOME/.config/manifold/machine.token"
+    grep -qF 'enrollment denied' "$TMPDIR/manifold-refused.err"
+    test ! -e "$MANIFOLD_CLAN_STORE/wsl"
     ! grep -q -- '--rotate-token' "$TMPDIR/manifold-refused.err"
 
-    atyrode runtime provision manifold-agent >/dev/null 2>&1
-    token_file="$HOME/.config/manifold/machine.token"
-    test "$(cat "$token_file")" = minted-token
-    test "$(stat -c %a "$token_file")" = 600
-    jq -e '.name == "wsl" and (has("rotateToken") | not)' \
-      "$MANIFOLD_ENROLL_LOG" >/dev/null
+    # A fresh enrollment stores the minted token as wsl's var, and the two
+    # secrets appear in no announced line and no argv.
+    atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-enroll.err"
+    test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = minted-token
+    jq -e '.name == "wsl" and (has("rotateToken") | not)' "$MANIFOLD_ENROLL_LOG" >/dev/null
+    grep -qF 'vars set wsl manifold-agent/machine-token' "$MANIFOLD_CLAN_LOG"
+    ! grep -qF 'fixture-owner-key' "$TMPDIR/manifold-enroll.err" "$MANIFOLD_CLAN_LOG"
+    ! grep -qF 'minted-token' "$TMPDIR/manifold-enroll.err" "$MANIFOLD_CLAN_LOG"
+    test ! -e "$token_file"
 
-    # Idempotent re-run: an enrolled machine must not touch the vault or the
-    # master again — poisoned stubs prove the code path is never reached.
-    ATYRODE_BW=/bin/false ATYRODE_FETCH=/bin/false \
+    # A token this device holds as a plain file, from before it was a var, is
+    # adopted into clan without asking the hub.
+    mkdir -p "$HOME/.config/manifold"
+    printf 'legacy-token\n' > "$token_file"
+    chmod 600 "$token_file"
+    enrollments_before="$(wc -l < "$MANIFOLD_ENROLL_LOG")"
+    atyrode runtime enroll manifold-agent wsl >/dev/null 2>&1
+    test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = legacy-token
+    test "$(wc -l < "$MANIFOLD_ENROLL_LOG")" -eq "$enrollments_before"
+    rm "$token_file"
+
+    # Activation placed the token: provision starts the agent, a re-run touches
+    # neither clan nor the hub, and status reads the connection.
+    placed_token minted-token
+    atyrode runtime provision manifold-agent >/dev/null 2>&1
+    test "$(cat "$TMPDIR/manifold-running-token")" = minted-token
+    ATYRODE_CLAN=/bin/false ATYRODE_FETCH=/bin/false \
       atyrode runtime provision manifold-agent >/dev/null 2>&1
-    test "$(cat "$token_file")" = minted-token
     test "$(wc -l < "$TMPDIR/manifold-service-actions")" -eq 1
     atyrode runtime status manifold-agent --json |
       jq -e '.phase == "connected" and .machineName == "wsl"' >/dev/null
@@ -174,18 +231,38 @@ pkgs.runCommand "check-atyrode-runtime"
     echo '{"evt":"welcome"}' > "$TMPDIR/manifold-events"
     rm "$TMPDIR/manifold-active"
     if MANIFOLD_START_FAIL=1 atyrode runtime provision manifold-agent > /dev/null 2>"$TMPDIR/manifold-start.err"; then
-      echo 'enrollment reported success after the managed service refused to start' >&2
+      echo 'provision reported success after the managed service refused to start' >&2
       exit 1
     fi
-    ATYRODE_BW=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
-    test "$(cat "$token_file")" = minted-token
+    ATYRODE_CLAN=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
     atyrode runtime status manifold-agent --json | jq -e '.phase == "connected"' >/dev/null
 
-    # Legacy control and rotation must refuse BEFORE a manager stop or credential revocation.
+    # A lost token against an existing row must refuse and name the recovery;
+    # explicit rotation mints a replacement and says the agent must be restarted.
+    touch "$MANIFOLD_ROW_EXISTS"
+    rm "$MANIFOLD_CLAN_STORE/wsl"
+    if atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-lost.err"; then
+      echo 'enroll unexpectedly succeeded without a minted token' >&2
+      exit 1
+    fi
+    grep -q -- --rotate-token "$TMPDIR/manifold-lost.err"
+    test ! -e "$MANIFOLD_CLAN_STORE/wsl"
+    atyrode runtime enroll manifold-agent wsl --rotate-token >/dev/null 2>"$TMPDIR/manifold-rotate.err"
+    test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = rotated-token
+    jq -e 'select(has("rotateToken")) | .rotateToken == true and .name == "wsl"' \
+      "$MANIFOLD_ENROLL_LOG" >/dev/null
+    grep -qF 'atyrode runtime restart manifold-agent' "$TMPDIR/manifold-rotate.err"
+    # A machine that is not a spoke cannot be enrolled by mistake.
+    if atyrode runtime enroll manifold-agent development-x86_64-linux >/dev/null 2>&1; then
+      echo 'enroll accepted a machine that is not a spoke' >&2
+      exit 1
+    fi
+
+
+    # Legacy control must refuse BEFORE a manager stop.
     export _ATYRODE_TEST_CURRENT_SYSTEM=${legacyGeneration}
     ln -sfn ${legacyGeneration}/etc/systemd/user/manifold-agent.service "$XDG_CONFIG_HOME/systemd/user/manifold-agent.service"
     actions_before="$(wc -l < "$TMPDIR/manifold-service-actions")"
-    enrollments_before="$(wc -l < "$MANIFOLD_ENROLL_LOG")"
     for verb in stop restart; do
       set +e
       atyrode runtime "$verb" manifold-agent >/dev/null 2>&1
@@ -193,35 +270,10 @@ pkgs.runCommand "check-atyrode-runtime"
       set -e
       test "$result" -eq 69
     done
-    for manager_unknown in 0 1; do
-      set +e
-      MANIFOLD_MANAGER_UNKNOWN="$manager_unknown" atyrode runtime provision manifold-agent --rotate-token >/dev/null 2>&1
-      result="$?"
-      set -e
-      test "$result" -eq 69
-      test "$(cat "$token_file")" = minted-token
-      test "$(wc -l < "$MANIFOLD_ENROLL_LOG")" -eq "$enrollments_before"
-    done
     test "$(wc -l < "$TMPDIR/manifold-service-actions")" -eq "$actions_before"
     export _ATYRODE_TEST_CURRENT_SYSTEM=${splitGeneration}
     ln -sfn ${splitGeneration}/etc/systemd/user/manifold-agent.service "$XDG_CONFIG_HOME/systemd/user/manifold-agent.service"
 
-    # A lost token against an existing row must refuse and name the recovery.
-    rm "$token_file"
-    touch "$MANIFOLD_ROW_EXISTS"
-    if atyrode runtime provision manifold-agent >/dev/null 2>"$TMPDIR/manifold-lost.err"; then
-      echo 'provision unexpectedly succeeded without a minted token' >&2
-      exit 1
-    fi
-    grep -q -- --rotate-token "$TMPDIR/manifold-lost.err"
-    test ! -e "$token_file"
-
-    # Explicit rotation mints a replacement and fences the old token.
-    atyrode runtime provision manifold-agent --rotate-token >/dev/null 2>&1
-    test "$(cat "$token_file")" = rotated-token
-    test "$(cat "$TMPDIR/manifold-running-token")" = rotated-token
-    jq -e 'select(has("rotateToken")) | .rotateToken == true and .name == "wsl"' \
-      "$MANIFOLD_ENROLL_LOG" >/dev/null
 
     # Status is a read-only probe with a stable JSON contract.
     atyrode runtime status manifold-agent --json | jq -e '
@@ -238,9 +290,9 @@ pkgs.runCommand "check-atyrode-runtime"
       echo 'runtime unexpectedly accepted an unknown capability' >&2
       exit 1
     fi
-    rm -rf "$HOME/.config/manifold" "$MANIFOLD_ENROLL_LOG" "$MANIFOLD_ROW_EXISTS"
+    rm -rf "$HOME/.config/manifold" "$TMPDIR/run-secrets" "$MANIFOLD_ENROLL_LOG" "$MANIFOLD_ROW_EXISTS"
 
-    # A loaded launchd job is not necessarily running. Enrollment must load
+    # A loaded launchd job is not necessarily running. Provisioning must load
     # a missing job, start an inactive one, and leave a live agent alone.
     export ATYRODE_HOST=macbook
     export _ATYRODE_TEST_SYSTEM=aarch64-darwin
@@ -272,12 +324,12 @@ pkgs.runCommand "check-atyrode-runtime"
     EOF
     chmod +x "$TMPDIR/manifold-bin/launchctl"
     export ATYRODE_LAUNCHCTL="$TMPDIR/manifold-bin/launchctl"
+    placed_token mac-token
     atyrode runtime provision manifold-agent >"$TMPDIR/manifold-mac.out" 2>"$TMPDIR/manifold-mac.err"
-    jq -e '.name == "macbook"' "$MANIFOLD_ENROLL_LOG" >/dev/null
     atyrode runtime status manifold-agent --json |
       jq -e '.applicable and .enrolled and .unit.present and .phase == "connected" and .machineName == "macbook"' >/dev/null
     actions_before="$(wc -l < "$TMPDIR/manifold-mac-actions")"
-    ATYRODE_BW=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
+    ATYRODE_CLAN=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
     test "$(wc -l < "$TMPDIR/manifold-mac-actions")" -eq "$actions_before"
     rm "$TMPDIR/manifold-mac-active"
     atyrode doctor provisioning --json |
@@ -286,13 +338,11 @@ pkgs.runCommand "check-atyrode-runtime"
       echo 'inactive launchd agent was reported as converged after kickstart failed' >&2
       exit 1
     fi
-    ATYRODE_BW=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
-    test "$(cat "$token_file")" = minted-token
-    ! grep -qF 'fixture-owner-key' "$TMPDIR/manifold-mac.err"
-    ! grep -qF 'minted-token' "$TMPDIR/manifold-mac.err"
-    rm -rf "$HOME/.config/manifold" "$HOME/.local/state/manifold" "$MANIFOLD_ENROLL_LOG" "$MANIFOLD_ROW_EXISTS"
+    ATYRODE_CLAN=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
+    ! grep -qF 'mac-token' "$TMPDIR/manifold-mac.err"
+    rm -rf "$HOME/.config/manifold" "$HOME/.local/state/manifold" "$TMPDIR/run-secrets" "$MANIFOLD_CLAN_STORE" "$MANIFOLD_CLAN_LOG"
     rm "$TMPDIR/bin/manifold-agent"
-    unset ATYRODE_BW ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL MANIFOLD_ENROLL_LOG MANIFOLD_ROW_EXISTS ATYRODE_HOST
+    unset ATYRODE_CLAN ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL MANIFOLD_ENROLL_LOG MANIFOLD_CLAN_LOG MANIFOLD_CLAN_STORE MANIFOLD_ROW_EXISTS ATYRODE_HOST
     export _ATYRODE_TEST_HOSTNAME=fixture-linux
     export _ATYRODE_TEST_SYSTEM=x86_64-linux
     export _ATYRODE_TEST_CURRENT_SYSTEM="$ATYRODE_TEST_CURRENT"

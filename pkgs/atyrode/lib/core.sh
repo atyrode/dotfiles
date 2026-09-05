@@ -174,6 +174,27 @@ clan_program() {
     die "$EX_UNAVAILABLE" "clan is not on PATH; it is installed by the security capability on clan machines"
 }
 
+# Every value clan writes is encrypted to the admins group, and one member of
+# that group is the Mac's Secure Enclave recipient, which sops can only wrap a
+# data key for through age-plugin-se. The Mac carries the plugin; a Linux
+# operator device does not (modules/home/profiles/security.nix says what it
+# would cost), and clan's own plugin wrapping never reaches sops, because the
+# PATH it computes for its cached store paths replaces the one its outer nix
+# shell built. Launching clan itself inside the shell puts the plugin in the
+# PATH clan copies, so every write from a Linux device goes through here; a
+# read decrypts with this device's own key and needs nothing. The argv is
+# returned rather than run so callers keep announcing and running it
+# themselves; under a stubbed clan there is no sops to help.
+clan_write_command() { # checkout
+  local clan
+  clan="$(clan_program)"
+  if [[ "$(actual_system)" == *-linux && ("$test_hooks" != 1 || -z "${ATYRODE_CLAN:-}") ]]; then
+    printf '%s\n' nix shell --inputs-from "$1" nixpkgs#age-plugin-se -c "$clan"
+  else
+    printf '%s\n' "$clan"
+  fi
+}
+
 # guard_production_mutation refuses to run a store-mutating command when a
 # test-only tool-substitution override is present on a production binary. Those
 # vars (including ATYRODE_BW, ATYRODE_CLAN, ATYRODE_AGE_KEYGEN, ATYRODE_AGE_PLUGIN_SE, ATYRODE_NIX, ATYRODE_SSH,

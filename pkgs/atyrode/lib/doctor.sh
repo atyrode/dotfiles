@@ -1368,11 +1368,16 @@ probe_local_qwen() {
   fi
 }
 
+# The token is a clan var placed by activation, and the ceremony that mints it
+# runs on an operator device, so an unenrolled machine is told which device
+# can enroll it rather than offered a command that cannot work here. Once the
+# token is placed the only question on the machine is whether the agent runs.
 probe_manifold_agent() {
-  local status phase reason
+  local status phase reason host
   status="$(manifold_status_json)"
   phase="$(jq -r '.phase' <<<"$status")"
   reason="$(jq -r '.reason // empty' <<<"$status")"
+  host="$(jq -r '.machineName' <<<"$status")"
   if [[ "$(jq -r '.applicable' <<<"$status")" != true ]]; then
     provisioning_check_add manifold-agent not-applicable capability-not-selected \
       "$reason" ""
@@ -1380,8 +1385,9 @@ probe_manifold_agent() {
   fi
   case "$phase" in
     available)
-      provisioning_unconfigured manifold-agent \
-        "the agent is installed but this machine is not enrolled with any hub"
+      provisioning_check_add manifold-agent degraded not-enrolled \
+        "the agent is installed but no machine token is placed at $(jq -r '.tokenPath' <<<"$status")" \
+        "atyrode runtime enroll manifold-agent $host (on an operator device), then atyrode apply"
       ;;
     enrolled)
       # Enrollment already records opt-in. Starting its inactive service needs

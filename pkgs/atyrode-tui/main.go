@@ -1436,6 +1436,11 @@ func (m model) applyControl(key string) string {
 }
 
 func (m model) footer() string {
+	_, width := m.horizontalLayout()
+	return ansi.Wrap(m.footerControls(), max(1, width), "")
+}
+
+func (m model) footerControls() string {
 	if m.err != nil {
 		return m.errorFooter()
 	}

@@ -56,35 +56,53 @@ the current user's session. Headless Linux machines need user lingering so
 the agent survives logout; managed NixOS owns that setting. The macOS agent
 lives in the logged-in user's GUI session, not a system daemon.
 
-Acceptance is `phase: "connected"` in runtime status, followed by the named
-machine appearing on the canvas. `enrolled` or `running` alone is not proof
-of a hub connection, and provisioning doctor does not mark it healthy.
+`phase: "connected"` in runtime status proves a current hub connection, followed
+by the named machine appearing on the canvas. It does **not** prove maintenance
+preserved workloads. Preservation additionally requires the expected terminal
+IDs, the same running workloads, and working input/output after the transition.
+An empty replacement inventory is a maintenance failure, not recovery.
 
 ## Upgrades
 
-Starting or restarting an agent is destructive twice over: a restart kills
-every PTY the old process owns, and a *new* agent presenting the same machine
-token supersedes the live one on hello — the hub closes the older socket and
-reconciles away every session the newcomer does not advertise. Upgrades are
-therefore operator-timed:
+The released combined agent owns its PTY masters and deliberately terminates
+them on shutdown. Starting a second combined agent with the same token can also
+supersede the incumbent and reconcile away its inventory. Never use a production
+machine token for a replacement smoke test.
 
-1. Upgrade the hub first (protocol compat accepts older agents; the reverse is
-   rejected loudly). The hub is released upstream: `bun run release` in
-   atyrode/manifold publishes the tag, its `Deploy hub` workflow deploys the
-   operator's instance, and `curl -s https://manifold.tyrode.dev/healthz`
-   reports the tag as `build`.
+A task's Git diff is not its activation scope: compare the running generation
+with the entire built candidate, including embedded Home Manager units. A
+same-version executable-path or environment change can restart a service.
+Running an apply over ordinary SSH protects the deployer's connection, **not
+anyone else's terminals**. It is not permission to replace a live PTY owner.
 
-2. Bump the `manifold` pin (`./ci/update-pins.sh manifold`) and merge.
-   Applying that generation restarts the agent on each machine as its unit
-   changes — apply on a machine hosting live manifold sessions from a plain
-   SSH session, never from inside one of its own terminals.
+The continuity architecture in manifold #278 separates the terminal host from
+the networking agent. The terminal host has its own service lifetime and a
+stable managed-profile command, so a transport pin update does not replace the
+running owner. Linux also keeps that owner across definition changes and
+refuses direct service stops; macOS keeps an unchanged loaded owner plist. Its
+first migration from a combined agent cannot preserve legacy PTY masters by
+magic: close admission, let those workloads finish, and perform deliberate
+maintenance. Do not stop or overlap the legacy owner to test the new topology.
 
-On dev-01 the capability arrives through that machine's own entry in
-[`fleet/hosts.nix`](../fleet/hosts.nix): it is a machine of this repository,
-so delivery is `atyrode fleet apply dev-01` from an operator device,
-not `atyrode apply`, which converges only the machine it runs on.
+Release, promotion, pin publication and activation are distinct operations:
 
-The pin refresh enforces step 1. `ci/update-pins.sh` carries a
+1. Publish and verify the release. Publication is not production deployment.
+2. Promote the target hub deliberately before installing a newer-protocol
+   agent; compatibility accepts older agents, not newer ones.
+3. Refresh the transport pin only after compatibility is proven. Restarting the
+   retained terminal host to use newly installed code is separate maintenance,
+   never an incidental transport update.
+4. Inspect and enforce the exact running-to-candidate disruption report before
+   activation. Unknown effects or a protected-owner replacement must refuse;
+   neither `--yes` nor a successful package build proves preservation.
+5. Verify expected terminal identity, workload continuity and usable I/O after
+   an allowed transport replacement.
+
+On dev-01, `atyrode apply` converges that local machine; `atyrode fleet apply
+dev-01` requests convergence from another operator device. Both paths must obey
+the same activation safety contract.
+
+The pin refresh enforces hub compatibility. `ci/update-pins.sh` carries a
 `guard_manifold` precondition: it reads the hub's `/healthz` protocol version
 and the candidate tag's `PROTOCOL_VERSION`, and holds the bump whenever the
 candidate is newer, or whenever it cannot prove otherwise (unreachable hub,
@@ -118,21 +136,19 @@ the published revision and so cannot carry an unmerged fix.
 
 ## Replacing an unmanaged agent (#419)
 
-A machine may already carry a detached agent started outside Nix. Swapping it
-for the declared user service is safe under two constraints, both structural
-rather than particular to one host:
+An unmanaged combined agent is still a live terminal owner. Converting it to
+a managed service is not safe while its workloads remain, whether the command
+is issued over SSH or from a Manifold terminal.
 
-- Run the swap from plain SSH, never from a manifold terminal. Starting the
-  declared service kills the unmanaged process's PTYs, including the session
-  that issued the command.
-- Delete the unmanaged definitions only after the service reports `welcome`. A
-  respawned process presenting the same token can otherwise fence the
-  service-managed socket.
+Close new admission and let existing workloads finish before replacing that
+owner. Prevent its old supervisor from respawning it; do not start a same-token
+replacement alongside it. If the deployed version cannot establish a race-free
+drain, stop and arrange explicit legacy maintenance rather than infer safety
+from a sampled zero count.
 
-Enrollment survives the swap untouched: the existing 0600 machine token is
-adopted as-is, never re-minted. `atyrode runtime status manifold-agent --json`
-is the proof it worked, reporting `phase: "connected"`. An enrolled token
-and an active process without a current welcome are not enough.
+Enrollment need not change: retain the existing machine credential and never
+rotate it as a deployment workaround. A subsequent `phase: "connected"` proves
+connectivity only; it cannot turn unexpected terminal loss into success.
 
 ## The development hub on dev-01
 

@@ -15,6 +15,18 @@
       "reason": "the same agent on macOS, labelled by Home Manager"
     },
     {
+      "scope": "user",
+      "service": "manifold-terminal-host.service",
+      "owner": "modules/home/profiles/manifold-node.nix",
+      "reason": "owns terminal workloads independently of the replaceable transport"
+    },
+    {
+      "scope": "launchd",
+      "service": "org.nix-community.home.manifold-terminal-host",
+      "owner": "modules/home/profiles/manifold-node.nix",
+      "reason": "retained terminal owner; replacing its loaded plist stops live workloads"
+    },
+    {
       "scope": "system",
       "service": "sshd.service",
       "owner": "modules/nixos/vps.nix, modules/nixos/wsl.nix (services.openssh)",

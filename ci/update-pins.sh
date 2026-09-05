@@ -90,7 +90,7 @@ hold() { # name reason
 # makes the six-hourly cron obey it. Fails closed: anything it cannot prove
 # holds the bump.
 guard_manifold() { # tag version repo
-  local tag="$1" version="$2" repo="$3" master_url health_url protocol_url hub candidate
+  local tag="$1" version="$2" repo="$3" master_url health_url protocol_url host_protocol_url hub candidate
   if ! master_url="$(jq -er .masterUrl "$repo_root/fleet/manifold.json")"; then
     hold manifold "fleet/manifold.json declares no masterUrl"
     return 1
@@ -99,6 +99,10 @@ guard_manifold() { # tag version repo
   show_command curl -fsSL --max-time 20 "$health_url"
   if ! hub="$(curl -fsSL --max-time 20 "$health_url" | jq -er .protocolVersion)"; then
     hold manifold "hub $master_url is unreachable, so $version cannot be cleared"
+    return 1
+  fi
+  if [[ ! "$hub" =~ ^[0-9]+$ ]]; then
+    hold manifold "hub $master_url reported an invalid protocol version"
     return 1
   fi
   # Read the candidate's protocol version from its tagged source rather than by
@@ -115,6 +119,17 @@ guard_manifold() { # tag version repo
   if [[ "$candidate" -gt "$hub" ]]; then
     hold manifold \
       "$version speaks protocol $candidate but the hub serves $hub; deploy the hub first (docs/manifold.md)"
+    return 1
+  fi
+  # Service topology is a release capability, not a semver guess. An unknown
+  # terminal-host contract must not silently install a combined PTY owner as
+  # a replaceable transport (or start a mode an older binary does not support).
+  host_protocol_url="https://raw.githubusercontent.com/$repo/$tag/packages/protocol/src/terminal-host.ts"
+  show_command curl -fsSL --max-time 20 "$host_protocol_url"
+  manifold_terminal_host_protocol="$(curl -fsSL --max-time 20 "$host_protocol_url" |
+    sed -nE 's/^export const TERMINAL_HOST_PROTOCOL_VERSION = ([0-9]+);$/\1/p')" || manifold_terminal_host_protocol=""
+  if [[ "$manifold_terminal_host_protocol" != 1 ]]; then
+    hold manifold "cannot prove supported terminal-host protocol 1 for $tag; update the service contract before pinning"
     return 1
   fi
 }
@@ -146,6 +161,10 @@ bump() { # name file repo tag_prefix url_template assets...
     hash="$(nix hash file --sri "$tmp/${asset//\//-}")"
     replace_hash "$file" "$asset" "$hash"
   done
+  if [[ "$name" == manifold ]]; then
+    run_visible sed -i \
+      "s/terminalHostProtocol = [0-9]*;/terminalHostProtocol = $manifold_terminal_host_protocol;/" "$file"
+  fi
   printf '%s %s -> %s\n' "$name" "$current" "$version"
 }
 

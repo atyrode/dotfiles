@@ -30,12 +30,37 @@ let
         )
       ) spokesHere
     );
+  splitHomeConfigs = lib.listToAttrs (
+    map (
+      name:
+      let
+        machine =
+          (if hosts.${name}.platform == "darwin" then darwinConfigs.${name} else nixosConfigs.${name})
+          .extendModules {
+            modules = [
+              {
+                nixpkgs.overlays = [
+                  (_final: previous: {
+                    manifold-agent = previous.manifold-agent.overrideAttrs (old: {
+                      passthru = (old.passthru or { }) // { terminalHostProtocol = 1; };
+                    });
+                  })
+                ];
+              }
+            ];
+          };
+      in
+      lib.nameValuePair name machine.config.home-manager.users.${hosts.${name}.username}
+    ) spokesHere
+  );
   one = value: lib.toList value;
   contract =
-    name: homeConfig:
+    split: name: homeConfig:
     let
       unit = homeConfig.systemd.user.services.manifold-agent or null;
       launchAgent = homeConfig.launchd.agents.manifold-agent or null;
+      hostUnit = homeConfig.systemd.user.services.manifold-terminal-host or null;
+      hostLaunch = homeConfig.launchd.agents.manifold-terminal-host or null;
       packageNames = map lib.getName homeConfig.home.packages;
       machineName = homeConfig.home.sessionVariables.ATYRODE_HOST or "%H";
       tokenFile = "${homeConfig.home.homeDirectory}/.config/manifold/machine.token";
@@ -74,6 +99,18 @@ let
           == "${homeConfig.home.homeDirectory}/.local/state/manifold/agent.log"
           && launchAgent.config.StandardErrorPath == launchAgent.config.StandardOutPath
         ) "connection diagnosis needs the agent event log";
+        assert lib.assertMsg (
+          if split then
+            hostLaunch != null && hostLaunch.enable
+            && hostLaunch.config.ProgramArguments == [
+              "${homeConfig.home.profileDirectory}/bin/manifold-agent"
+              "--terminal-host"
+            ]
+            && !(hostLaunch.config.EnvironmentVariables ? MANIFOLD_MACHINE_TOKEN_FILE)
+            && launchAgent.config.EnvironmentVariables.MANIFOLD_TERMINAL_HOST_SOCKET
+              == hostLaunch.config.EnvironmentVariables.MANIFOLD_TERMINAL_HOST_SOCKET
+          else hostLaunch == null
+        ) "the launchd owner must remain stable across transport pin changes and receive no hub credential";
         true
       else
         assert lib.assertMsg (
@@ -99,16 +136,34 @@ let
         assert lib.assertMsg (
           lib.toList unit.Install.WantedBy == [ "default.target" ]
         ) "the agent must start with the user manager";
+        assert lib.assertMsg (
+          if split then
+            hostUnit != null
+            && one hostUnit.Service.ExecStart == [
+              "${homeConfig.home.profileDirectory}/bin/manifold-agent --terminal-host"
+            ]
+            && one hostUnit.Unit."X-SwitchMethod" == [ "keep-old" ]
+            && one hostUnit.Unit.RefuseManualStop == [ true ]
+            && (hostUnit.Unit.PartOf or [ ]) == [ ]
+            && (hostUnit.Unit.BindsTo or [ ]) == [ ]
+            && one unit.Unit."X-Atyrode-SessionOwner" == [ false ]
+            && !(lib.any (lib.hasPrefix "MANIFOLD_MACHINE_TOKEN") (one hostUnit.Service.Environment))
+          else
+            hostUnit == null
+            && one unit.Unit."X-SwitchMethod" == [ "keep-old" ]
+            && one unit.Unit.RefuseManualStop == [ true ]
+        ) "transport replacement must not stop its independently supervised terminal owner";
         true;
 in
 assert lib.assertMsg (
   lib.sort builtins.lessThan inventory.spokes == builtins.attrNames hosts
 ) "every owned machine must appear in the Manifold spoke inventory";
 assert lib.all (name: builtins.elem "manifold-node" hosts.${name}.capabilities) inventory.spokes;
-assert lib.all lib.id (lib.mapAttrsToList contract homeConfigs);
+assert lib.all lib.id (lib.mapAttrsToList (contract ((pkgs.manifold-agent.terminalHostProtocol or 0) == 1)) homeConfigs);
+assert lib.all lib.id (lib.mapAttrsToList (contract true) splitHomeConfigs);
 pkgs.runCommand "check-manifold-node-${system}" { } ''
   ${lib.optionalString supported ''
-    ${lib.getExe pkgs.bun} ${./manifold-agent-smoke.ts} ${lib.getExe pkgs.manifold-agent}
+    ${lib.getExe pkgs.bun} ${./manifold-agent-smoke.ts} ${lib.getExe pkgs.manifold-agent} ${toString (pkgs.manifold-agent.terminalHostProtocol or 0)}
   ''}
   mkdir "$out"
 ''

@@ -1252,6 +1252,41 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-placed.err"
     grep -qF 'already placed' "$TMPDIR/wsl-apply-placed.err"
     test ! -e "$TMPDIR/clan-args"
+    # A spoke applies a published revision, not a checkout: the key is read
+    # from the flake's fetched tree -- the bytes nh builds -- and never from
+    # whatever ~/nix-dotfiles happens to hold. Here the checkout is stale
+    # (no key) while the fetched tree has one; WSL's first apply after #542
+    # found it the other way round and skipped placement.
+    rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
+    fetched_tree="$TMPDIR/fetched-tree"
+    mkdir -p "$fetched_tree/sops/secrets/wsl-age.key"
+    printf '{"data":"ENC[AES256_GCM,fixture]","sops":{"age":[]}}\n' > "$fetched_tree/sops/secrets/wsl-age.key/secret"
+    remote_rev=0123456789012345678901234567890123456789
+    cat > "$TMPDIR/bin/nix" <<EOF
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "\$*" >> "$TMPDIR/nix-args"
+    [[ "\$*" == "flake prefetch --json github:atyrode/dotfiles/$remote_rev" ]] || exit 64
+    printf '{"storePath":"%s"}\n' "$fetched_tree"
+    EOF
+    chmod +x "$TMPDIR/bin/nix"
+    export ATYRODE_NIX="$TMPDIR/bin/nix"
+    # The stub keeps only the last nh argv; the checkout run's is read below.
+    mv "$TMPDIR/nh-args" "$TMPDIR/nh-args.checkout"
+    rm -f "$TMPDIR/clan-args" "$TMPDIR/nix-args"
+    if ! atyrode apply wsl --ref "$remote_rev" --json >/dev/null 2>"$TMPDIR/wsl-apply-remote.err"; then
+      echo 'a remote apply failed while placing the machine key; its diagnosis follows' >&2
+      cat "$TMPDIR/wsl-apply-remote.err" >&2
+      exit 1
+    fi
+    grep -qF "flake prefetch --json github:atyrode/dotfiles/$remote_rev" "$TMPDIR/nix-args"
+    grep -qF "secrets get wsl-age.key --flake $fetched_tree" "$TMPDIR/clan-args"
+    grep -qF "placed at $machine_key (root, mode 0600)" "$TMPDIR/wsl-apply-remote.err"
+    test "$(cat "$machine_key")" = AGE-SECRET-KEY-1FIXTUREONLY
+    grep -Fx -- "os switch github:atyrode/dotfiles/$remote_rev#wsl --diff always" \
+      "$TMPDIR/nh-args" >/dev/null
+    mv "$TMPDIR/nh-args.checkout" "$TMPDIR/nh-args"
+    rm -rf "$fetched_tree" "$TMPDIR/bin/nix" "$TMPDIR/nix-args"
+    unset ATYRODE_NIX
     rm -f "$TMPDIR/bin/sudo" "$TMPDIR/bin/clan"
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
     unset ATYRODE_CLAN _ATYRODE_TEST_IDENTITY_ROOT

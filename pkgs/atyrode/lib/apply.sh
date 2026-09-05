@@ -512,10 +512,29 @@ machine_key_repository_file() { # host [repo]
   printf '%s/%s-age.key/secret\n' "$(machine_key_secrets_directory "${2:-}")" "$1"
 }
 
-# A key minted today is committed in the checkout apply is about to build
-# from, which is newer than the sops tree this build of the CLI carries; so
-# the checkout is read when one is named or is where it conventionally lives,
-# and the built-in tree only where there is none.
+# The tree apply is about to build from, as a directory: the checkout when
+# one was named, otherwise the flake's fetched source -- the same bytes nh
+# reads, so a key committed today is found on every spoke, and no other
+# checkout on the device, stale or not, is consulted. A `github:` reference
+# is not a path, so testing it for a file finds nothing, which is how every
+# remote apply skipped placement until 2026-09-05.
+flake_source_tree() { # flake_source
+  if [[ -d "$1" ]]; then
+    printf '%s\n' "$1"
+    return 0
+  fi
+  local tree
+  tree="$(tool_exec quiet ATYRODE_NIX nix flake prefetch --json "$1" | jq -r '.storePath // empty')" || tree=""
+  [[ -n "$tree" && -d "$tree" ]] ||
+    die "$EX_UNAVAILABLE" "cannot fetch the source tree of $1 to read the machine key from"
+  printf '%s\n' "$tree"
+}
+
+# apply names the tree it builds from (flake_source_tree). The provisioning
+# review and the minting ceremony name none: they read the checkout where it
+# conventionally lives, because a key minted today is committed there before
+# any build of the CLI carries it, and the built-in tree only where there is
+# no checkout.
 machine_key_secrets_directory() { # [repo]
   if [[ -n "$1" ]]; then
     printf '%s/sops/secrets' "$1"
@@ -552,10 +571,11 @@ machine_key_placed() {
   fi
 }
 
-place_machine_key() { # host repo
-  local host="$1" repo="$2" key clan install_program
+place_machine_key() { # host flake_source
+  local host="$1" repo key clan install_program
   key="$(machine_key_file)"
   step_begin 'Place the machine key'
+  repo="$(flake_source_tree "$2")"
   if [[ ! -e "$(machine_key_repository_file "$host" "$repo")" ]]; then
     step_skip "no machine key in the repository yet (clan vars generate $host on an operator device)"
     return 0

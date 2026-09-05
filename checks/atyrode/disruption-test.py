@@ -48,6 +48,34 @@ def report(current, candidate, activation="home-manager", scope=None, extra=()):
     return value
 
 
+with tempfile.TemporaryDirectory(prefix="disruption-masks-") as directory:
+    root = Path(directory)
+    old = root / "old"
+    new = root / "new"
+    relative = "home-files/.config/systemd/user/console-getty.service"
+    for generation in (old, new):
+        path = generation / relative
+        path.parent.mkdir(parents=True)
+        path.symlink_to("/dev/null")
+    unchanged = report(old, new)
+    assert unchanged["status"] == "safe", unchanged
+    assert not unchanged["effects"], unchanged
+    (old / relative).unlink()
+    put(old, relative, unit("/bin/shell", owner=True))
+    wanted = (old / relative).parent / "default.target.wants"
+    wanted.mkdir()
+    (wanted / "console-getty.service").symlink_to("../console-getty.service")
+    masked = report(old, new)
+    assert masked["status"] == "blocked", masked
+    assert any(effect["action"] == "stop" and effect["protected"]
+               for effect in masked["effects"]), masked
+    unmasked = report(new, old)
+    assert any(effect["action"] == "start" for effect in unmasked["effects"]), unmasked
+    (new / relative).unlink()
+    (new / relative).symlink_to("/nonexistent-disruption-fixture")
+    assert report(old, new)["status"] == "unknown"
+
+
 with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     root = Path(directory)
     current = root / "old-home-manager-generation"

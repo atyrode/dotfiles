@@ -637,7 +637,7 @@ submit_apply_job() {
   # shell resolves it fine. The public wrapper re-prefixes the package's own
   # tools, so forwarding cannot displace them with caller-supplied binaries.
   for env_name in PATH XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME \
-    ATYRODE_HOST ATYRODE_GIT_AUTH_MODE SSH_AUTH_SOCK; do
+    ATYRODE_HOST ATYRODE_GIT_AUTH_MODE ATYRODE_CONVERGE_RUNNING SSH_AUTH_SOCK; do
     [[ -z "${!env_name:-}" ]] ||
       run_args+=("--setenv=$env_name=${!env_name}")
   done

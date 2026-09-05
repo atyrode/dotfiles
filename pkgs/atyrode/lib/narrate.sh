@@ -51,6 +51,9 @@ muted() { paint 90 "$*"; }
 # a terminal. The override forces it on so confirm gates stay exercisable from a
 # harness that has no tty.
 interactive() {
+  # An unattended run answers no question even on a terminal: what an
+  # operator sees running it by hand is exactly what the timer would do.
+  [[ "${NARRATE_UNATTENDED:-0}" != 1 ]] || return 1
   [[ -n "${_ATYRODE_TEST_TTY:-}" ]] && return 0
   [[ -t 0 && -t 1 ]]
 }

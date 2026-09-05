@@ -6,6 +6,13 @@
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
+# An unattended apply arms these two before it does anything that can fail;
+# a die while they are set is that run's `failed` receipt, so a timer that
+# stopped on an error is reported by doctor and the shell rather than only
+# by a log nobody opens.
+converge_host=""
+converge_target=""
+
 die() {
   local code="$1"
   shift
@@ -13,6 +20,7 @@ die() {
   # failed, the steps that never started, then why the run stopped.
   step_abandon_plan
   log_event "failed $code: $*"
+  [[ -z "$converge_target" ]] || converge_record failed "$converge_host" "$converge_target" "$*" ""
   printf 'atyrode: %s\n' "$*" >&2
   [[ -z "$RUN_LOG" ]] || printf '  %s %s\n' "$(paint 2 'log:')" "$(paint 36 "$RUN_LOG")" >&2
   exit "$code"

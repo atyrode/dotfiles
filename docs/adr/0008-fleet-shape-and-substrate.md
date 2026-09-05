@@ -292,7 +292,11 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
 4. **Overlay and flow.** *(amended 2026-09-02)* clan's `wireguard` service
    with the workshop as controller, push-on-green from CI, the converge
    floor, `atyrode fleet apply` wrapping `clan machines update`, drift in
-   `doctor` and the shell.
+   `doctor` and the shell. *(2026-09-05: the floor and drift landed as
+   `atyrode apply --unattended`, a per-machine timer, the `convergence`
+   doctor surface and one shell line; `fleet apply` copies the closure itself
+   rather than wrapping `clan machines update`; push-on-green is #581 and the
+   overlay #582.)*
 5. **The server joins this repository.** *(amended 2026-09-02)* `dev-01`
    moves in as a clan machine with its disko, boot, network and policy
    modules (about a thousand lines); its public address becomes a value, not

@@ -88,10 +88,20 @@ stays out of every file; `checks/lints/production-facts.nix` enforces both
 halves of that rule. `dev-01`, the persistent development VPS, is the
 first machine of this shape: `modules/nixos/vps.nix` is its policy — SSH plus
 the web ports of exactly the vhosts `modules/nixos/manifold-dev-hub.nix`
-names (the development manifold hub's front; [manifold.md](manifold.md)),
+and `modules/nixos/myparcelle-dev.nix` name (the Manifold preview tier and
+parcel application fronts), with their upstreams bound to loopback,
 declarative root-owned SSH keys drawn from the reviewed fleet key registry,
 passwordless sudo for the operator's account alone, and rootless Docker — and
 clan refuses to deploy it unless the operator names it.
+
+The parcel development edge serves `myparcelle.tyrode.dev` from port 4173
+and `auth.myparcelle.tyrode.dev` from port 8082. Caddy owns TLS; the
+application checkout owns the development runtime and identity database.
+Only the `myparcelle` realm and theme resources are public on the auth host:
+Keycloak administration stays on loopback. Storybook is not published.
+Source delivery does not authorize activation: any future activation needs
+an independently reviewed service-disruption plan and the
+[terminal-preservation safeguards](manifold.md#upgrades).
 
 A client's production NixOS host is still not in this registry. Its
 infrastructure flake supplies identity and system facts while importing the

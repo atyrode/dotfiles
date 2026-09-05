@@ -651,34 +651,17 @@ provision_git_role() { # role private_path item_name persist yes scratch
   fi
 }
 
-# provision babel carries this machine's payload key ring to the vault. It is
-# not a configuring act any more: the storage document is a clan var
-# (modules/shared/babel-archive.nix), generated on an operator device and
-# placed by activation, so nothing here reads a vault for it or arms a timer.
-# Arguments are forwarded, so --upload-payload-keys and --dry-run stay usable
-# by the names the docs give them.
-provision_babel() {
-  [[ -x "$babel_storage_configure" ]] ||
-    die "$EX_UNAVAILABLE" "the babel payload key upload is unavailable in this build"
-  run_visible "$babel_storage_configure" "$@"
-}
-
 cmd_provision() {
   local target="${1:-}" persist=0 yes=0
   case "$target" in
     git) ;;
-    babel)
-      shift
-      provision_babel "$@"
-      return
-      ;;
     machine-key)
       shift
       [[ $# -eq 0 ]] || die "$EX_USAGE" "unknown provision machine-key option: $1"
       provision_machine_key
       return
       ;;
-    *) die "$EX_USAGE" "provision expects git, babel or machine-key" ;;
+    *) die "$EX_USAGE" "provision expects git or machine-key" ;;
   esac
   shift
   while [[ $# -gt 0 ]]; do

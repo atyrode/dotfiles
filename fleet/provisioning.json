@@ -52,7 +52,7 @@
     "babel-archive": {
       "label": "Babel session archive",
       "command": "clan vars generate <host>",
-      "implies": "Generates this machine's storage document on an operator device from the repository password and the add-on credentials typed once; the next apply places it and arms the hourly timer that publishes sessions. No vault and no provider session on this machine.",
+      "implies": "Generates this machine's storage document on an operator device from the repository password, the add-on credentials, and the payload key ring typed once; the next apply places them and arms the hourly timer that publishes sessions. No vault and no provider session on this machine.",
       "declinable": false,
       "prerequisites": []
     },

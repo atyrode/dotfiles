@@ -272,7 +272,10 @@ let
     omp-agent-references = import ./omp/omp-agent-references.nix { inherit lib pkgs; };
     agent-tools-terminal-viewing = import ./atyrode/agent-terminal-viewing.nix { inherit pkgs; };
     classifier-schedule = import ./lints/classifier-schedule.nix { inherit lib pkgs; };
-    babel-archive = import ./atyrode/babel-archive.nix { inherit lib pkgs; };
+    babel-archive = import ./atyrode/babel-archive.nix {
+      inherit lib pkgs;
+      clanMachine = canonicalNixosConfigs.dev-01.config;
+    };
   }
   // {
     manifold-node = import ./atyrode/manifold-node.nix {

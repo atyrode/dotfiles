@@ -732,7 +732,7 @@ pkgs.runCommand "check-atyrode-apply"
     # provision names its targets, so a mistyped one cannot be mistaken for a
     # missing feature.
     ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
-    grep -qF 'provision expects git, babel or machine-key' "$TMPDIR/provision-usage.err"
+    grep -qF 'provision expects git or machine-key' "$TMPDIR/provision-usage.err"
 
     # The archive is never offered: its storage document is a clan var, so
     # there is no ceremony this machine could run, only a generation an

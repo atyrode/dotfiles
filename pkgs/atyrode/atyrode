@@ -17,7 +17,6 @@ readonly catalog='@catalog@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly atyrode_disruption='@atyrode_disruption@'
-readonly babel_storage_configure='@babel_storage_configure@'
 readonly babel_clever='@babel_clever@'
 readonly atyrode_runtime='@atyrode_runtime@'
 readonly capability_inventory='@capabilities@'
@@ -116,7 +115,6 @@ Usage:
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
   atyrode provision git [--persist] [--yes]
-  atyrode provision babel --upload-payload-keys [--dry-run]
   atyrode lifecycle [--json]
   atyrode context [show] [--json]
   atyrode context render

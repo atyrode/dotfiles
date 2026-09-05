@@ -184,20 +184,30 @@ The second is the pair in
 [`babel-archive`](../modules/shared/babel-archive.nix), Babel's storage
 custody, which replaces a Bitwarden ceremony. `babel-custody` is shared and
 prompted: the restic repository password -- existing, never minted, the one
-value no provider can reissue -- and the two Clever Cloud add-on environments
-pasted whole as `clever addon env <add-on> --format json` prints them. Its
-files are secrets that are never deployed (`deploy = false`): they exist only
-as inputs, so no machine holds the raw add-on environments, and a paste that
-is not JSON or lacks a key fails at the operator's terminal rather than at an
-activation. `babel-archive` is per machine and depends on it: from those
-inputs it renders the storage document Babel reads, under the registry
-identity, with the repository password placed beside it at the path the
-document names. Both are placed by sops-nix at mode 0600 and owned by the
-account that runs the archive timer, and Home Manager links
-`~/.config/babel/storage.json` to the placed document, so Babel reads it where
-it always has. No provider hostname or credential is in the repository: all of
-it arrives through the prompts, and the payload key ring is deliberately not
-part of this document yet ([agent-tools.md](agent-tools.md#session-archive)).
+value no provider can reissue -- the two Clever Cloud add-on environments
+pasted whole as `clever addon env <add-on> --format json` prints them, and
+the deployment's payload key ring, pasted whole from a configured machine's
+`~/.config/babel/payload-keys.json` or left empty to mint a ring of one fresh
+key. The first three files are secrets that are never deployed
+(`deploy = false`): they exist only as inputs, so no machine holds the raw
+add-on environments, and a paste that is not JSON or lacks a key fails at the
+operator's terminal rather than at an activation. The ring is the fourth
+file, and it is deployed: it is validated to Babel's own rules at generation,
+placed on every machine at mode 0600, and linked from
+`~/.config/babel/payload-keys.json`, because every host opens records with
+the same ring. `babel-archive` is per machine and depends on the custody:
+from the first three inputs it renders the storage document Babel reads,
+under the registry identity, with the repository password placed beside it at
+the path the document names. Both are placed by sops-nix at mode 0600 and
+owned by the account that runs the archive timer, and Home Manager links
+`~/.config/babel/storage.json` to the placed document, so Babel reads it
+where it always has. No provider hostname or credential is in the repository:
+all of it arrives through the prompts. Rotating a payload key is an edit of
+the var, never a regeneration -- the ring is append-only, because an object
+sealed under a retired key still needs it: `clan vars get <host>
+babel-custody/payload-keys.json`, add the new key and name it `active_key_id`,
+`clan vars set <host> babel-custody/payload-keys.json` over stdin (`set`
+re-encrypts to the same audience and commits), then apply on every machine.
 
 The third, [`omp-auth-broker`](../modules/shared/omp-auth-broker.nix), is
 the bearer token of the fleet's one OMP authentication broker

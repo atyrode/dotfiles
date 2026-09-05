@@ -608,8 +608,8 @@ place_machine_key() { # host flake_source
   local user recipient
   user="$(operator_user_for "$host")"
   if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
-    step_skip "this device cannot decrypt the machine key; apply from a registered operator device or place it with: atyrode fleet apply $host"
-    return 0
+    step_fail "this device cannot decrypt $host's machine key"
+    die "$EX_UNAVAILABLE" "activation requires the machine key first; from a registered operator device run: atyrode fleet apply $host"
   fi
   step_why "sops-nix decrypts this machine's vars at activation with this key"
   clan="$(clan_program)"

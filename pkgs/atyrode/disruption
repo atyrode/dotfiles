@@ -657,10 +657,11 @@ class Runtime:
     an answer in a shape not anticipated -- is an error the caller records as
     unknown. Nothing is started, stopped or signalled."""
 
-    def __init__(self, systemctl, launchctl, manager_user=None):
+    def __init__(self, systemctl, launchctl, manager_user=None, manager_uid=None, run_user_dir="/run/user"):
         self.systemctl = systemctl
         self.launchctl = launchctl
-        self.uid = os.geteuid()
+        self.uid = os.geteuid() if manager_uid is None else manager_uid
+        self.run_user_dir = run_user_dir
         # The account whose managers this process may ask as its own. The
         # OS answers in production; the CLI names it only in a test-hooks
         # build, whose fixture identity is not the sandbox account running
@@ -682,14 +683,56 @@ class Runtime:
     def loaded(self, scope, service, user):
         if scope == "launchd":
             return self.launchd_loaded(service, user)
-        argv = [self.systemctl]
-        if scope == "user":
-            argv.append("--user")
-            if user and user != self.user:
-                if self.uid != 0:
-                    raise Unreadable(f"{user}'s user manager cannot be asked from {self.user or self.uid}")
-                argv.append(f"--machine={user}@")
-        argv += ["show", "--property=LoadState,ActiveState", "--", service]
+        if scope != "user":
+            return self.systemd_loaded([self.systemctl], service)
+        if user:
+            return self.systemd_loaded(self.user_manager_argv(user), service)
+        # A unit NixOS defines in /etc/systemd/user is switched in every live
+        # user manager (switch-to-configuration-ng walks logind's users and
+        # /run/user/<uid>), so it is unloaded only when every one of them
+        # says so; a manager that cannot be asked is a manager that may be
+        # running it.
+        managers = self.live_user_managers()
+        if not managers:
+            return False
+        for uid, name in managers:
+            if self.systemd_loaded(self.user_manager_argv(name, uid), service):
+                return True
+        return False
+
+    def live_user_managers(self):
+        """Every uid with a runtime directory, named for --machine when the
+        account database knows it and by number otherwise; systemctl then
+        answers for it or refuses, and a refusal is unknown, never absence."""
+        try:
+            entries = os.listdir(self.run_user_dir)
+        except OSError as error:
+            raise Unreadable(f"{self.run_user_dir}: {error.strerror or error}") from error
+        managers = []
+        for entry in sorted(entries):
+            if not entry.isdigit():
+                continue
+            uid = int(entry)
+            if uid == self.uid:
+                managers.append((uid, self.user))
+                continue
+            try:
+                managers.append((uid, pwd.getpwuid(uid).pw_name))
+            except KeyError:
+                managers.append((uid, str(uid)))
+        return managers
+
+    def user_manager_argv(self, user, uid=None):
+        argv = [self.systemctl, "--user"]
+        if user == self.user and (uid is None or uid == self.uid):
+            return argv
+        if self.uid != 0:
+            raise Unreadable(f"{user}'s user manager cannot be asked from {self.user or self.uid}")
+        argv.append(f"--machine={user}@")
+        return argv
+
+    def systemd_loaded(self, argv, service):
+        argv = argv + ["show", "--property=LoadState,ActiveState", "--", service]
         result = self.run(argv)
         if result.returncode != 0:
             raise Unreadable(f"systemctl show {service} exited {result.returncode}: {result.stderr.strip()}")
@@ -698,8 +741,6 @@ class Runtime:
         active_state = properties.get("ActiveState")
         if load_state is None or active_state is None:
             raise Unreadable(f"systemctl show {service} answered without LoadState/ActiveState")
-        if load_state == "not-found" and active_state == "inactive":
-            return False
         if active_state in ("inactive", "failed") and load_state in ("loaded", "not-found", "masked"):
             return False
         if active_state in ("active", "activating", "deactivating", "reloading", "refreshing", "maintenance"):
@@ -1155,6 +1196,8 @@ def main(argv):
     parser.add_argument("--systemctl", default="systemctl")
     parser.add_argument("--launchctl", default="/bin/launchctl")
     parser.add_argument("--manager-user", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--manager-uid", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--run-user-dir", default="/run/user", help=argparse.SUPPRESS)
     parser.add_argument("--mutate", choices=("stop", "restart"), default=None, help="judge an explicit stop or restart of --service against the running generation instead of a switch")
     parser.add_argument("--service", type=parse_scope, default=None, help="scope:service the explicit mutation targets")
     parser.add_argument("--live", default=None, help="the unit file or plist the manager loaded, checked against the deployed one")
@@ -1175,7 +1218,7 @@ def main(argv):
     policy = load_policy(args.policy)
     runtime = None
     if args.runtime:
-        runtime = Runtime(args.systemctl, args.launchctl, args.manager_user)
+        runtime = Runtime(args.systemctl, args.launchctl, args.manager_user, args.manager_uid, args.run_user_dir)
     report = Report(args.host, policy, args.scope, runtime)
     report.current = resolve(args.current, "current")
     report.candidate = resolve(args.candidate, "candidate")

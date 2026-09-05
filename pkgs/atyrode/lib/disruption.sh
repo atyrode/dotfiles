@@ -128,10 +128,12 @@ activation_lock() {
 }
 
 # The manager commands the analyzer may ask, through the seams every other
-# status query uses, and -- in a test-hooks build only -- the account whose
-# managers count as this process's own: the fixture identity is not the
-# sandbox account running the check, while the effective uid stays the
-# sandbox's. A production build lets the analyzer read both from the OS.
+# status query uses, and -- in a test-hooks build only -- the identity the
+# analyzer holds while asking: the account whose managers count as its own,
+# the effective uid a check simulates (root asks every live user manager
+# through --machine, anyone else only their own), and where live user
+# managers are enumerated from (/run/user in production). A production build
+# passes none of these and the analyzer reads them from the OS.
 disruption_manager_args() { # out-array-name
   local -n out="$1"
   out=()
@@ -142,7 +144,10 @@ disruption_manager_args() { # out-array-name
   if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
     out+=(--launchctl "$launchctl")
   fi
-  [[ "$test_hooks" != 1 ]] || out+=(--manager-user "$(actual_user)")
+  [[ "$test_hooks" != 1 ]] || {
+    out+=(--manager-user "$(actual_user)" --manager-uid "$(effective_uid)")
+    [[ -z "${_ATYRODE_TEST_RUN_USER_DIR:-}" ]] || out+=(--run-user-dir "$_ATYRODE_TEST_RUN_USER_DIR")
+  }
 }
 
 # The report, as JSON on stdout. A report is produced whenever the analyzer

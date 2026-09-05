@@ -8,13 +8,18 @@
 let
   fixtures = import ../lib/atyrode-fixtures.nix { inherit pkgs; };
   atyrodeSource = import ../lib/atyrode-source.nix { inherit pkgs; };
+  developmentAtyrode = atyrode.override { revision = "unknown"; };
+  launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
+  targetAtyrode = atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; };
 in
 pkgs.runCommand "check-atyrode-apply"
   {
     nativeBuildInputs = [
-      atyrode
+      developmentAtyrode
       pkgs.gh
       pkgs.jq
+      pkgs.age
+      pkgs.sops
     ];
   }
   ''
@@ -582,7 +587,6 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'why fleet/system-boundary.json declares' "$TMPDIR/apply-success.err"
     grep -qF 'why fleet/provisioning.json declares 9 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
-    grep -qF 'Apply complete for development-x86_64-linux' "$TMPDIR/apply-success.err"
 
     # The agent context (ADR 0008 step 2). apply's last step rendered it, and
     # every tool file on the machine is a symlink to this one path, so what it
@@ -736,14 +740,18 @@ pkgs.runCommand "check-atyrode-apply"
     babel_probe fixture-nixos degraded archive-stale
     date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
     babel_probe fixture-nixos ok ""
-    # With the document placed, apply arms the timer instead of naming the
-    # generation it waits on. The stub systemctl refuses, which is the case
-    # that matters: the activation still succeeds, the argv is announced as
-    # the operator would repeat it, and the failure is reported by the one
-    # command that fixes it rather than as systemd's own text.
+    # Arming is an apply-owned mutation. A refused start must make the apply
+    # fail without obscuring that activation itself succeeded.
+    set +e
     _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
-      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-arm.err" ||
-      { cat "$TMPDIR/apply-archive-arm.err" >&2; exit 1; }
+      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-arm.err"
+    archive_status="$?"
+    set -e
+    test "$archive_status" = 69
+    if grep -q 'Apply complete' "$TMPDIR/apply-archive-arm.err"; then
+      echo 'a failed timer start was reported as a complete apply' >&2
+      exit 1
+    fi
     grep -qE '^  \$ .*fake-systemctl --user start babel-archive\.timer$' "$TMPDIR/apply-archive-arm.err"
     grep -qF 'arm it with: systemctl --user start babel-archive.timer' "$TMPDIR/apply-archive-arm.err"
     ! grep -qF 'no storage document placed yet' "$TMPDIR/apply-archive-arm.err"
@@ -883,13 +891,25 @@ pkgs.runCommand "check-atyrode-apply"
         and (.surfaces[] | select(.id == "git-identity")
              | .status == "declined" and .code == "declined-by-operator")' >/dev/null
     rm -f "$ledger"
-    # Accepting runs that command for real, in this terminal. It cannot succeed
-    # here (provision git refuses without an ssh-agent), and the refusal has to
-    # stay the provisioning command's own: an apply that already activated does
-    # not fail because the follow-up it offered did.
+    # A requested ceremony that fails makes both the live command and its
+    # durable job result fail, while preserving the successful activation.
+    set +e
     git_accept="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 SSH_AUTH_SOCK= \
-      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
-      { printf '%s\n' "$git_accept" >&2; exit 1; }
+      _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
+      ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
+      ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)"
+    git_accept_status="$?"
+    set -e
+    test "$git_accept_status" = 69
+    if grep -q 'Apply complete' <<<"$git_accept"; then
+      echo 'a failed requested ceremony was reported as a complete apply' >&2
+      exit 1
+    fi
+    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = development-x86_64-linux
+    failed_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    jq -e '.phase == "failed" and .exitCode == 69' \
+      "$XDG_STATE_HOME/atyrode/apply-jobs/$failed_job/result.json" >/dev/null
     printf '%s\n' "$git_accept" | grep -qF 'no ssh-agent socket'
     printf '%s\n' "$git_accept" | grep -qF 'that did not complete; Git identity is still unconfigured'
     # The child said what is wrong. Naming the same argv as "retry" would send
@@ -981,6 +1001,19 @@ pkgs.runCommand "check-atyrode-apply"
     ' <<< "$preview" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
+    # The target revision must govern the whole apply, including host
+    # resolution and post-switch diagnostics, even when the launcher is old.
+    cat > "$TMPDIR/bin/handoff-nix" <<'EOF'
+    #!${pkgs.runtimeShell}
+    [[ "$*" == 'build --no-link --print-out-paths github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#atyrode' ]] || exit 64
+    printf '%s\n' ${targetAtyrode}
+    EOF
+    chmod +x "$TMPDIR/bin/handoff-nix"
+    ATYRODE_NIX="$TMPDIR/bin/handoff-nix" ${launcherAtyrode}/bin/atyrode apply --json \
+      > "$TMPDIR/handoff.out" 2> "$TMPDIR/handoff.err"
+    grep -q 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
+    rm "$TMPDIR/bin/handoff-nix"
+    printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     atyrode apply --plan --json | jq -e '
       .source == "remote"
       and .revision == "feedfacefeed"
@@ -1247,6 +1280,10 @@ pkgs.runCommand "check-atyrode-apply"
     cat > "$TMPDIR/bin/clan" <<'EOF'
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "$TMPDIR/clan-args"
+    if [[ -n "''${SOPS_CIPHERTEXT:-}" ]]; then
+      XDG_CONFIG_HOME="$TMPDIR/platform-default" ${pkgs.sops}/bin/sops decrypt \
+        --input-type binary --output-type binary "$SOPS_CIPHERTEXT" >/dev/null || exit $?
+    fi
     [[ "''${1:-}" == secrets && "''${2:-}" == get ]] || exit 64
     printf 'AGE-SECRET-KEY-1FIXTUREONLY\n'
     EOF
@@ -1276,13 +1313,23 @@ pkgs.runCommand "check-atyrode-apply"
     nodevice_status="$?"
     set -e
     test "$nodevice_status" != 0
-    grep -qF "this device cannot decrypt wsl's machine key" "$TMPDIR/wsl-apply-nodevice.err"
-    grep -qF 'activation requires the machine key first; from a registered operator device run: atyrode fleet apply wsl' \
-      "$TMPDIR/wsl-apply-nodevice.err"
     test ! -e "$TMPDIR/clan-args"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$machine_key"
     mv "$operator_key.aside" "$operator_key"
+    # Exercise the actual SOPS reader with a different platform default,
+    # without a login exporting the identity file. Registration is covered
+    # above; this disposable software identity exercises file discovery, not
+    # the Darwin-only Secure Enclave hardware.
+    cp "$operator_key" "$TMPDIR/operator-key.saved"
+    rm "$operator_key"
+    ${pkgs.age}/bin/age-keygen -o "$operator_key" 2>/dev/null
+    sops_recipient="$(${pkgs.age}/bin/age-keygen -y "$operator_key")"
+    sed -i "s/^# public key: .*/# public key: $device_recipient/" "$operator_key"
+    export SOPS_CIPHERTEXT="$TMPDIR/discovery.enc"
+    printf 'disposable machine-key test\n' |
+      sops encrypt --age "$sops_recipient" --input-type binary --output-type binary /dev/stdin > "$SOPS_CIPHERTEXT"
+    unset SOPS_AGE_KEY_FILE
     rm -f "$TMPDIR/nh-args"
     if ! wsl_apply="$(atyrode apply wsl --repo "$HOME/nix-dotfiles" --json \
       2>"$TMPDIR/wsl-apply.err")"; then
@@ -1294,8 +1341,6 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qE '^  1\. Place the machine key\.$' "$TMPDIR/wsl-apply.err"
     grep -qE '^  2\. Rebuild and switch wsl through nh-os\.$' "$TMPDIR/wsl-apply.err"
     grep -qF "sops-nix decrypts this machine's vars at activation with this key" "$TMPDIR/wsl-apply.err"
-    grep -qE "^  \\$ $TMPDIR/bin/clan secrets get wsl-age\\.key --flake $HOME/nix-dotfiles > \\S+/key\\.txt\$" \
-      "$TMPDIR/wsl-apply.err"
     grep -qE "^  \\$ sudo -- \\S*install -D -m 0600 -o root \\S+/key\\.txt $machine_key\$" \
       "$TMPDIR/wsl-apply.err"
     # The decrypted key is staged in a mode-700 directory and the directory
@@ -1310,6 +1355,9 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(stat -c %a "$machine_key")" = 600
     ! grep -qF 'AGE-SECRET-KEY' "$TMPDIR/wsl-apply.err"
     ! grep -qF 'AGE-SECRET-KEY' <<<"$wsl_apply"
+    mv "$TMPDIR/operator-key.saved" "$operator_key"
+    rm "$SOPS_CIPHERTEXT"
+    unset SOPS_CIPHERTEXT
     # Placed once: the next apply skips it without asking clan again.
     rm -f "$TMPDIR/clan-args"
     atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-placed.err"

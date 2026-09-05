@@ -317,10 +317,10 @@ vault_login_child() {
 #               to offer, only a fix to name
 #   declined    say nothing; they already answered
 #
-# Always non-fatal. A machine that declines every surface is still a machine
-# that activated successfully, and apply must not imply otherwise.
+# Declining an optional surface is not an activation failure. Accepting a
+# ceremony that then fails is an incomplete apply, and must reach its caller.
 review_provisioning() { # json host
-  local json="$1" host="$2" count index status acted=0 tally leftovers
+  local json="$1" host="$2" count index status acted=0 tally leftovers review_status=0
 
   collect_provisioning_checks
   count="$(jq -r 'length' <<<"$provisioning_checks")"
@@ -330,11 +330,11 @@ review_provisioning() { # json host
     status="$(jq -r ".[$index].status" <<<"$provisioning_checks")"
     case "$status" in
       degraded)
-        review_degraded_surface "$json" "$index"
+        review_degraded_surface "$json" "$index" || review_status="$EX_UNAVAILABLE"
         acted=1
         ;;
       incomplete)
-        review_incomplete_surface "$index" "$host"
+        review_incomplete_surface "$index" "$host" || review_status="$EX_UNAVAILABLE"
         acted=1
         ;;
     esac
@@ -354,8 +354,15 @@ review_provisioning() { # json host
   leftovers="$(jq -r '
     map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
   ' <<<"$provisioning_checks")"
-  step_ok "$tally${leftovers:+ -- still to configure: $leftovers}"
-  return 0
+  provisioning_leftovers="$leftovers"
+  if [[ "$review_status" != 0 ]]; then
+    step_fail "$tally${leftovers:+ -- still to configure: $leftovers}"
+  elif [[ -n "$leftovers" ]]; then
+    step_skip "$tally -- still to configure: $leftovers"
+  else
+    step_ok "$tally"
+  fi
+  return "$review_status"
 }
 
 review_degraded_surface() { # json index
@@ -373,8 +380,8 @@ review_degraded_surface() { # json index
   # this terminal is an interactive dialogue from another program, and an
   # operator should never be prompted by something they did not see start.
   if [[ "$id" == omp-seed && "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 ]] && interactive; then
-    run_visible atyrode-omp-seed resolve || true
-    return 0
+    run_visible atyrode-omp-seed resolve
+    return $?
   fi
   [[ -z "$remediation" ]] || printf '  fix with: %s\n' "$remediation" >&2
 }
@@ -428,7 +435,7 @@ review_incomplete_surface() { # index host
     if ! prerequisite_run "$requirement"; then
       printf '  that did not complete; %s stays unconfigured.\n' "$label" >&2
       printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
-      return 0
+      return "$EX_UNAVAILABLE"
     fi
   done
   # The prompt names the machine, not just the command: these ceremonies write
@@ -451,7 +458,7 @@ review_incomplete_surface() { # index host
   if ! provisioning_run "$id" "$2"; then
     printf '  that did not complete; %s is still unconfigured.\n' "$label" >&2
     printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
-    return 0
+    return "$EX_UNAVAILABLE"
   fi
   provisioning_clear_decline "$id"
 }
@@ -488,8 +495,7 @@ provision_machine_key() {
   if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
     die "$EX_UNAVAILABLE" "this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate $host"
   fi
-  checkout="$(machine_key_secrets_directory "")"
-  checkout="${checkout%/sops/secrets}"
+  checkout="$HOME/nix-dotfiles"
   [[ -d "$checkout/.git" ]] ||
     die "$EX_UNAVAILABLE" "no repository checkout at ~/nix-dotfiles to mint the key into"
   clan="$(clan_program)"
@@ -508,28 +514,30 @@ provision_machine_key() {
 # leaves the timer inactive until something starts it -- and without this,
 # that something would be the next login. Starting a running timer is a
 # no-op, so this is safe to repeat. A host with no systemd (macOS runs the
-# same wrapper from launchd, which needs no arming) has nothing to do here,
-# and a failure to arm is reported rather than fatal: the archive is
-# configured either way, and the operator is given the one command that fixes
-# it.
+# same wrapper from launchd) has nothing to arm.
 archive_arm_timer() {
   local systemctl
   local -a arm
   systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" || return 0
   arm=("$systemctl" --user start babel-archive.timer)
-  # Announced, then silenced: the argv is what an operator repeats, while
-  # systemd's own failure text is replaced below by the line that names the fix.
+  # Keep the service's real error alongside the command that retries arming.
   show_command "${arm[@]}"
-  "${arm[@]}" >/dev/null 2>&1 ||
+  if ! "${arm[@]}"; then
     printf 'could not arm the hourly archive timer; arm it with: systemctl --user start babel-archive.timer\n' >&2
+    return "$EX_UNAVAILABLE"
+  fi
 }
 
 # The apply step around it: nothing to arm on a machine whose document is not
 # placed yet, and that machine is told which device owes the generation.
 archive_converge_timer() { # host
   if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json" ]]; then
-    archive_arm_timer
-    step_ok
+    if archive_arm_timer; then
+      step_ok
+    else
+      step_fail 'the hourly archive timer was not armed'
+      return "$EX_UNAVAILABLE"
+    fi
   else
     step_skip "no storage document placed yet (clan vars generate $1 on an operator device, then apply)"
   fi

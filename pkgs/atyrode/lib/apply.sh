@@ -86,6 +86,36 @@ apply_config() {
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
   [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
   [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
+  local git_command=git
+  if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
+    git_command="$ATYRODE_GIT"
+  fi
+  if [[ -z "$repo" ]]; then
+    ref="${ref:-main}"
+    if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+      local rev
+      show_command "$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref"
+      rev="$("$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref" | head -n 1 | cut -f 1)" || true
+      [[ "$rev" =~ ^[0-9a-f]{40}$ ]] ||
+        die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
+      ref="$rev"
+    fi
+    # A published CLI is only the launcher for another revision. Its registry,
+    # bootstrap and post-switch probes cannot govern a different generation.
+    # Development builds deliberately exercise their local code instead.
+    if [[ "$embedded_revision" =~ ^[0-9a-f]{40}$ && "$embedded_revision" != "$ref" ]]; then
+      local target_cli
+      show_command nix build --no-link --print-out-paths "$flake_ref/$ref#atyrode"
+      target_cli="$(tool_exec quiet ATYRODE_NIX nix build --no-link --print-out-paths "$flake_ref/$ref#atyrode")" ||
+        die "$EX_UNAVAILABLE" "could not build the apply CLI for $ref; nothing was activated"
+      [[ -x "$target_cli/bin/atyrode" ]] ||
+        die "$EX_UNAVAILABLE" "the target revision provides no atyrode executable"
+      show_command "$target_cli/bin/atyrode" apply "${original_args[@]}" --ref "$ref"
+      "$target_cli/bin/atyrode" apply "${original_args[@]}" --ref "$ref"
+      return $?
+    fi
+    original_args+=(--ref "$ref")
+  fi
   if [[ "$apply_job_worker" == 0 && "$plan" == 0 && "$dry" == 0 ]] &&
     apply_supervision_available; then
     submit_apply_job "${original_args[@]}"
@@ -94,10 +124,7 @@ apply_config() {
 
   local host data expected_system expected_user expected_home expected_hostname actual_hostname conflicting_host platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
   local windows_preflight='null' mutation_boundary="activation only after preflight"
-  local git_command=git
-  if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
-    git_command="$ATYRODE_GIT"
-  fi
+  local provisioning_leftovers=""
   host="$(resolve_host "$requested")"
   # Resolved once, for everything below and every copy of the CLI apply runs:
   # the recorded id under ~/.config is a Home Manager file that NixOS relinks
@@ -166,26 +193,12 @@ apply_config() {
     installable="$repo#$host"
   else
     source="remote"
-    ref="${ref:-main}"
-    # Resolving the ref to an exact commit keeps the activation deterministic
-    # and bypasses the flake tarball cache, which can serve a branch name
-    # stale for up to an hour.
-    local rev=""
-    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-      rev="$ref"
-    else
-      # A network call, and the first thing that hangs when the forge is
-      # unreachable, so it is named rather than left as an unexplained pause.
-      show_command "$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref"
-      rev="$("$git_command" ls-remote "$flake_remote_url" "refs/heads/$ref" "refs/tags/$ref" | head -n 1 | cut -f 1)" || true
-      [[ -n "$rev" ]] || die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
-    fi
-    revision="${rev:0:12}"
-    resolved_revision="$rev"
+    revision="${ref:0:12}"
+    resolved_revision="$ref"
     dirty=false
     repository="$flake_ref"
-    flake_source="$flake_ref/$rev"
-    installable="$flake_ref/$rev#$host"
+    flake_source="$flake_ref/$ref"
+    installable="$flake_ref/$ref#$host"
   fi
   case "$activation" in
     home-manager) backend="nh-home" ;;
@@ -394,9 +407,9 @@ apply_config() {
     # The activation above may have just placed Babel's storage document, and
     # the timer gated on it only re-reads its condition when started.
     step_begin 'Arm the hourly archive timer'
-    archive_converge_timer "$host"
+    archive_converge_timer "$host" || apply_status="$EX_UNAVAILABLE"
     step_begin 'Review the provisioning surfaces this machine declares'
-    review_provisioning "$json" "$host"
+    review_provisioning "$json" "$host" || apply_status="$EX_UNAVAILABLE"
     # Last, because the review may have just opened the sessions this file
     # reports: activation already rendered it with the new CLI, and this
     # render is what makes the file describe the machine apply leaves behind.
@@ -408,8 +421,15 @@ apply_config() {
       step_fail 'the agent context was not rendered; run atyrode context render'
       apply_status="$EX_UNAVAILABLE"
     fi
+    # Rendering is the last mutation after the review, so refresh its verdict
+    # before describing what remains; do not report a blocker we just cleared.
+    provisioning_checks="$(jq 'map(select(.id != "agent-context"))' <<<"$provisioning_checks")"
+    probe_agent_context
+    provisioning_leftovers="$(jq -r '
+      map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
+    ' <<<"$provisioning_checks")"
   fi
-  apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host"
+  apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host" "$apply_status"
   return "$apply_status"
 }
 
@@ -417,13 +437,19 @@ apply_config() {
 # left". At most three lines: what remains theirs to run, how to pick up the
 # shell this apply just declared, and where the detail went when the scrollback
 # is gone. All of it on stderr: stdout is the data, this is the story.
-apply_epilogue() { # dry restart activation home host
-  local dry="$1" restart="$2" activation="$3" home="$4" host="$5" shell_path
+apply_epilogue() { # dry restart activation home host status
+  local dry="$1" restart="$2" activation="$3" home="$4" host="$5" status="$6" shell_path
 
   log_event "apply finished for $host"
   if [[ "$dry" == 1 ]]; then
     printf '\n%s %s\n' "$(paint '1;33' 'Dry run complete for')" "$(paint 36 "$host")" >&2
     summary_line '' 'nothing was switched; drop --dry-run to activate'
+  elif [[ "$status" != 0 ]]; then
+    printf '\n%s %s\n' "$(paint '1;31' 'Apply incomplete for')" "$(paint 36 "$host")" >&2
+    summary_line '' 'activation succeeded, but a follow-up step failed; see the diagnosis above'
+  elif [[ -n "${provisioning_leftovers:-}" ]]; then
+    printf '\n%s %s\n' "$(paint '1;33' 'Activated with outstanding configuration for')" "$(paint 36 "$host")" >&2
+    summary_line remaining "$provisioning_leftovers"
   else
     printf '\n%s %s\n' "$(paint '1;32' 'Apply complete for')" "$(paint 36 "$host")" >&2
     # apply owns removing packages from the environment, not reclaiming their
@@ -530,7 +556,15 @@ converge_login_shell() { # host
 # being copied -- and because ownership then stays an argument of the
 # elevated program rather than a shell fragment.
 machine_key_repository_file() { # host [repo]
-  printf '%s/%s-age.key/secret\n' "$(machine_key_secrets_directory "${2:-}")" "$1"
+  local directory="$sops_directory/secrets"
+  if [[ -n "${2:-}" ]]; then
+    directory="$2/sops/secrets"
+  elif [[ -f "$HOME/nix-dotfiles/sops/secrets/$1-age.key/secret" ]]; then
+    # A newly minted key can precede the installed CLI, but a stale checkout
+    # cannot make a key already published with this CLI disappear.
+    directory="$HOME/nix-dotfiles/sops/secrets"
+  fi
+  printf '%s/%s-age.key/secret\n' "$directory" "$1"
 }
 
 # The tree apply is about to build from, as a directory: the checkout when
@@ -549,21 +583,6 @@ flake_source_tree() { # flake_source
   [[ -n "$tree" && -d "$tree" ]] ||
     die "$EX_UNAVAILABLE" "cannot fetch the source tree of $1 to read the machine key from"
   printf '%s\n' "$tree"
-}
-
-# apply names the tree it builds from (flake_source_tree). The provisioning
-# review and the minting ceremony name none: they read the checkout where it
-# conventionally lives, because a key minted today is committed there before
-# any build of the CLI carries it, and the built-in tree only where there is
-# no checkout.
-machine_key_secrets_directory() { # [repo]
-  if [[ -n "$1" ]]; then
-    printf '%s/sops/secrets' "$1"
-  elif [[ -d "$HOME/nix-dotfiles/.git" ]]; then
-    printf '%s/nix-dotfiles/sops/secrets' "$HOME"
-  else
-    printf '%s/secrets' "$sops_directory"
-  fi
 }
 
 machine_key_file() {
@@ -609,7 +628,7 @@ place_machine_key() { # host flake_source
   user="$(operator_user_for "$host")"
   if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
     step_fail "this device cannot decrypt $host's machine key"
-    die "$EX_UNAVAILABLE" "activation requires the machine key first; from a registered operator device run: atyrode fleet apply $host"
+    die "$EX_UNAVAILABLE" "activation requires a registered local operator identity; run: atyrode operator show"
   fi
   step_why "sops-nix decrypts this machine's vars at activation with this key"
   clan="$(clan_program)"

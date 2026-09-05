@@ -224,6 +224,10 @@ main() {
   # questions about the programs the machine declares, so none of them should
   # depend on whether the caller's shell has been restarted since activation.
   adopt_activated_path
+  # Clan must use the identity operator init owns even in the shell that
+  # predates activation; Home Manager session variables require a new login.
+  export SOPS_AGE_KEY_FILE
+  SOPS_AGE_KEY_FILE="$(operator_key_file)"
   if [[ $# == 0 ]] && interactive; then
     export ATYRODE_CLI="$0"
     exec "$atyrode_tui"

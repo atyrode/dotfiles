@@ -81,24 +81,27 @@ pkgs.runCommand "check-atyrode-runtime"
     cat > "$TMPDIR/manifold-bin/curl-stub" <<'EOF'
     #!${pkgs.runtimeShell}
     set -eu
-    config="" output="" payload=""
+    config="" output="" payload="" url=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --config) shift; config="$1" ;;
         -o) shift; output="$1" ;;
         -d) shift; payload="$1" ;;
-        *) ;;
+        https://*) url="$1" ;;
       esac
       shift
     done
     grep -q 'Authorization: Bearer fixture-owner-key' "$config"
+    [[ "$url" == https://manifold.tyrode.dev/api/actions/core.machines.enroll ]]
     printf '%s\n' "$payload" >> "$MANIFOLD_ENROLL_LOG"
-    if [[ "$payload" == *rotateToken* ]]; then
-      printf '{"machineToken":"rotated-token"}\n' > "$output"
+    if [[ "''${MANIFOLD_ENROLL_REFUSED:-0}" == 1 ]]; then
+      printf '{"ok":false,"denial":{"rule":"forbidden","message":"enrollment denied"}}\n' > "$output"
+    elif [[ "$payload" == *rotateToken* ]]; then
+      printf '{"ok":true,"result":{"machine":{"id":"machine-1","name":"fixture-node"},"machineToken":"rotated-token"}}\n' > "$output"
     elif [[ -e "$MANIFOLD_ROW_EXISTS" ]]; then
-      printf '{"id":"machine-1","name":"fixture-node"}\n' > "$output"
+      printf '{"ok":true,"result":{"machine":{"id":"machine-1","name":"fixture-node"}}}\n' > "$output"
     else
-      printf '{"machineToken":"minted-token"}\n' > "$output"
+      printf '{"ok":true,"result":{"machine":{"id":"machine-1","name":"fixture-node"},"machineToken":"minted-token"}}\n' > "$output"
     fi
     EOF
     chmod +x "$TMPDIR/manifold-bin/bw" "$TMPDIR/manifold-bin/curl-stub"
@@ -138,6 +141,15 @@ pkgs.runCommand "check-atyrode-runtime"
     export ATYRODE_FETCH="$TMPDIR/manifold-bin/curl-stub"
     export MANIFOLD_ENROLL_LOG="$TMPDIR/manifold-enroll.log"
     export MANIFOLD_ROW_EXISTS="$TMPDIR/manifold-row-exists"
+
+    # Action refusals arrive with HTTP 200; they must not install a credential
+    # or be confused with an idempotent existing machine lacking a new token.
+    if MANIFOLD_ENROLL_REFUSED=1 atyrode runtime provision manifold-agent > /dev/null 2>"$TMPDIR/manifold-refused.err"; then
+      echo 'refused enrollment was accepted' >&2
+      exit 1
+    fi
+    test ! -e "$HOME/.config/manifold/machine.token"
+    ! grep -q -- '--rotate-token' "$TMPDIR/manifold-refused.err"
 
     atyrode runtime provision manifold-agent >/dev/null 2>&1
     token_file="$HOME/.config/manifold/machine.token"

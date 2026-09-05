@@ -37,7 +37,7 @@ After activation, `atyrode apply` offers enrollment when the installed
 capability has no token. It remains an authorized, interactive operation:
 it reads the owner key from the Bitwarden Secure Note named by `vaultItemName`
 (under the same unlock→fetch→lock discipline as `atyrode provision git`),
-POSTs the canonical fleet name to `/api/machines`, and installs the minted
+POSTs the canonical fleet name to `/api/actions/core.machines.enroll`, and installs the minted
 token at `~/.config/manifold/machine.token` (0600, in a 0700 directory).
 The owner key never enters argv, logs, or disk outside the secure temp dir;
 the running agent never touches the vault.

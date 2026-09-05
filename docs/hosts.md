@@ -80,16 +80,18 @@ in `fleet/machines/<host>/`: the disk layout disko writes, the boot loader, the
 what the machine actually contains, and the address clan deploys to. Those
 facts are public here on purpose. An address is not what protects a machine
 that answers on the internet, resolves publicly, and is scanned continuously;
-key-only SSH, no root login, and a firewall open on one port are, and they are
-public here too. A machine that could not state its own address could not be
+key-only SSH, no root login, and a firewall open on the ports it serves are,
+and they are public here too. A machine that could not state its own address could not be
 rebuilt from this repository, which is the test that matters
 ([invariant 8](../AGENTS.md)). The provider is a different kind of fact and
 stays out of every file; `checks/lints/production-facts.nix` enforces both
 halves of that rule. `dev-01`, the persistent development VPS, is the
-first machine of this shape: `modules/nixos/vps.nix` is its policy — one open
-port, declarative root-owned SSH keys drawn from the reviewed fleet key
-registry, passwordless sudo for the operator's account alone, and rootless
-Docker — and clan refuses to deploy it unless the operator names it.
+first machine of this shape: `modules/nixos/vps.nix` is its policy — SSH plus
+the web ports of exactly the vhosts `modules/nixos/manifold-dev-hub.nix`
+names (the development manifold hub's front; [manifold.md](manifold.md)),
+declarative root-owned SSH keys drawn from the reviewed fleet key registry,
+passwordless sudo for the operator's account alone, and rootless Docker — and
+clan refuses to deploy it unless the operator names it.
 
 A client's production NixOS host is still not in this registry. Its
 infrastructure flake supplies identity and system facts while importing the

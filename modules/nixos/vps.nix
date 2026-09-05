@@ -84,12 +84,17 @@ in
   networking = {
     hostName = host.hostname;
     inherit (machineAddress) domain;
-    # The reviewed public-VPS exposure is exactly TCP 22. mkForce keeps this
+    # The reviewed public-VPS exposure is TCP 22, and 80 + 443 for exactly the
+    # vhosts modules/nixos/manifold-dev-hub.nix declares. mkForce keeps this
     # authoritative over clan-core's recommended-defaults mDNS port (UDP
     # 5353), which must never listen on a public uplink.
     firewall = {
       enable = true;
-      allowedTCPPorts = lib.mkForce [ 22 ];
+      allowedTCPPorts = lib.mkForce [
+        22
+        80
+        443
+      ];
       allowedUDPPorts = lib.mkForce [ ];
     };
   };

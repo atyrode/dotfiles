@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
-  "comment": "Master declaration for the manifold fleet (#418). Git, not the vault, owns hub discovery: changing the master is a reviewed commit, so vault write access can never repoint fleet terminals. The owner key stays in Bitwarden under vaultItemName and is read only by the one-time interactive `atyrode runtime provision manifold-agent`; the running agent needs only its 0600 machine token file. supportedSystems mirrors the release-asset platforms published by atyrode/manifold's Release workflow (pinned in pkgs/manifold-agent); widen it only as upstream publishes more assets.",
+  "comment": "Master declaration for the manifold fleet (#418). Git, not the vault, owns hub discovery: changing the master is a reviewed commit, so vault write access can never repoint fleet terminals. The master is not a machine of this fleet since 2026-09-05: it is the operator's Clever Cloud deployment of atyrode/manifold (its ADR 0022), and every machine here, dev-01 included, is a spoke of it; dev-01 hosts only the development hub (modules/nixos/manifold-dev-hub.nix). The owner key stays in Bitwarden under vaultItemName and is read only by the one-time interactive `atyrode runtime provision manifold-agent`; the running agent needs only its 0600 machine token file. supportedSystems mirrors the release-asset platforms published by atyrode/manifold's Release workflow (pinned in pkgs/manifold-agent); widen it only as upstream publishes more assets.",
   "masterUrl": "https://manifold.tyrode.dev",
-  "masterHost": "dev-01",
   "vaultItemName": "manifold owner key",
-  "supportedSystems": ["x86_64-linux"]
+  "supportedSystems": [
+    "x86_64-linux"
+  ]
 }

@@ -657,14 +657,21 @@ class Runtime:
     an answer in a shape not anticipated -- is an error the caller records as
     unknown. Nothing is started, stopped or signalled."""
 
-    def __init__(self, systemctl, launchctl):
+    def __init__(self, systemctl, launchctl, manager_user=None):
         self.systemctl = systemctl
         self.launchctl = launchctl
         self.uid = os.geteuid()
-        try:
-            self.user = pwd.getpwuid(self.uid).pw_name
-        except KeyError:
-            self.user = None
+        # The account whose managers this process may ask as its own. The
+        # OS answers in production; the CLI names it only in a test-hooks
+        # build, whose fixture identity is not the sandbox account running
+        # the check, and the effective uid stays the sandbox's own.
+        if manager_user:
+            self.user = manager_user
+        else:
+            try:
+                self.user = pwd.getpwuid(self.uid).pw_name
+            except KeyError:
+                self.user = None
 
     def run(self, argv):
         try:
@@ -701,12 +708,15 @@ class Runtime:
 
     def launchd_loaded(self, label, user):
         if user:
-            try:
-                uid = pwd.getpwnam(user).pw_uid
-            except KeyError as error:
-                raise Unreadable(f"no such user: {user}") from error
-            if uid != self.uid and self.uid != 0:
-                raise Unreadable(f"{user}'s launchd domain cannot be asked from {self.user or self.uid}")
+            if user == self.user:
+                uid = self.uid
+            else:
+                try:
+                    uid = pwd.getpwnam(user).pw_uid
+                except KeyError as error:
+                    raise Unreadable(f"no such user: {user}") from error
+                if self.uid != 0:
+                    raise Unreadable(f"{user}'s launchd domain cannot be asked from {self.user or self.uid}")
             target = f"gui/{uid}/{label}"
         else:
             if self.uid != 0:
@@ -1144,6 +1154,7 @@ def main(argv):
     parser.add_argument("--runtime", action="store_true", help="ask the native manager whether a protected unit the engine would touch is loaded at all")
     parser.add_argument("--systemctl", default="systemctl")
     parser.add_argument("--launchctl", default="/bin/launchctl")
+    parser.add_argument("--manager-user", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--mutate", choices=("stop", "restart"), default=None, help="judge an explicit stop or restart of --service against the running generation instead of a switch")
     parser.add_argument("--service", type=parse_scope, default=None, help="scope:service the explicit mutation targets")
     parser.add_argument("--live", default=None, help="the unit file or plist the manager loaded, checked against the deployed one")
@@ -1164,7 +1175,7 @@ def main(argv):
     policy = load_policy(args.policy)
     runtime = None
     if args.runtime:
-        runtime = Runtime(args.systemctl, args.launchctl)
+        runtime = Runtime(args.systemctl, args.launchctl, args.manager_user)
     report = Report(args.host, policy, args.scope, runtime)
     report.current = resolve(args.current, "current")
     report.candidate = resolve(args.candidate, "candidate")

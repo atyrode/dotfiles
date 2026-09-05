@@ -127,6 +127,24 @@ activation_lock() {
   export ATYRODE_ACTIVATION_LOCK_FD="$activation_lock_fd"
 }
 
+# The manager commands the analyzer may ask, through the seams every other
+# status query uses, and -- in a test-hooks build only -- the account whose
+# managers count as this process's own: the fixture identity is not the
+# sandbox account running the check, while the effective uid stays the
+# sandbox's. A production build lets the analyzer read both from the OS.
+disruption_manager_args() { # out-array-name
+  local -n out="$1"
+  out=()
+  local systemctl launchctl
+  if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
+    out+=(--systemctl "$systemctl")
+  fi
+  if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
+    out+=(--launchctl "$launchctl")
+  fi
+  [[ "$test_hooks" != 1 ]] || out+=(--manager-user "$(actual_user)")
+}
+
 # The report, as JSON on stdout. A report is produced whenever the analyzer
 # ran; its status carries the verdict. Only the analyzer failing to run at all
 # is an error here, and that is refused like any other unknown.
@@ -141,13 +159,9 @@ disruption_analyze() { # host activation current candidate user scope...
   shift 5
   local -a args=(--host "$host" --activation "$activation" --current "$current" --candidate "$candidate" --runtime)
   [[ -z "$user" ]] || args+=(--user "$user")
-  local systemctl launchctl
-  if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
-    args+=(--systemctl "$systemctl")
-  fi
-  if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
-    args+=(--launchctl "$launchctl")
-  fi
+  local -a manager_args
+  disruption_manager_args manager_args
+  args+=("${manager_args[@]+"${manager_args[@]}"}")
   local scope
   for scope in "$@"; do
     args+=(--scope "$scope")
@@ -178,13 +192,9 @@ disruption_mutation_guard() { # scope:service action live-path
     die "$EX_UNAVAILABLE" "$host has no activated generation, so ${target#*:} has no deployed definition to read; activate first"
   local -a args=(--host "$host" --activation "$activation" --current "$current" --user "$user" --runtime --mutate "$action" --service "$target")
   [[ -z "$live" ]] || args+=(--live "$live")
-  local systemctl launchctl
-  if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
-    args+=(--systemctl "$systemctl")
-  fi
-  if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
-    args+=(--launchctl "$launchctl")
-  fi
+  local -a manager_args
+  disruption_manager_args manager_args
+  args+=("${manager_args[@]+"${manager_args[@]}"}")
   [[ -x "$atyrode_disruption" ]] ||
     die "$EX_UNAVAILABLE" "the disruption analyzer is unavailable, so no service mutation can be shown safe"
   report="$("$atyrode_disruption" "${args[@]}")" ||

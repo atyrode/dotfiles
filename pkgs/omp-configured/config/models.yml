@@ -68,6 +68,26 @@ models:
     context: 1000000
     thinking: low→max
     role: Flagship. Leads the smart GPT tier.
+  astra:
+    id: gpt-6-astra
+    pool: O
+    tier: 4
+    bucket: codex-main
+    # cost is OpenAI's published rate: omp 18.1.10's model table still lists
+    # this model at $0, and the refresh script would write that back. Drop the
+    # note once omp prices it. speed/ttft from `code generate init --refresh`
+    # on dev-01 (single run, omp 18.1.10).
+    cost_in: 10
+    cost_out: 50
+    speed: 61.5
+    ttft: 2.24
+    context: 1000000
+    thinking: low→max
+    role: >-
+      Most capable OpenAI rung, and the top of pool O's ladder (tier 4). The
+      `elite` notch on the model dial leads with it on the gpt-only, gpt-led
+      and mixed lanes; at `smart` the deliberative bump already reaches it for
+      the plan/judgment roles. Draws the ordinary codex-main quota.
   spark:
     id: gpt-5.3-codex-spark
     pool: O

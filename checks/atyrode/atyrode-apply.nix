@@ -1287,6 +1287,19 @@ pkgs.runCommand "check-atyrode-apply"
     mv "$TMPDIR/nh-args.checkout" "$TMPDIR/nh-args"
     rm -rf "$fetched_tree" "$TMPDIR/bin/nix" "$TMPDIR/nix-args"
     unset ATYRODE_NIX
+    # After the switch, the review names the host apply switched. The id
+    # recorded under ~/.config is a Home Manager file that NixOS relinks from
+    # a unit the activation only restarts; a stale one (here: the name the
+    # host had before #517) must not turn the review into "unknown host".
+    mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json.aside"
+    printf '{"id":"alex-x86_64-linux-wsl"}\n' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    if ! atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-stale.err"; then
+      echo 'apply failed with a stale host record; its diagnosis follows' >&2
+      cat "$TMPDIR/wsl-apply-stale.err" >&2
+      exit 1
+    fi
+    ! grep -qF 'unknown host' "$TMPDIR/wsl-apply-stale.err"
+    mv "$TMPDIR/host.json.aside" "$XDG_CONFIG_HOME/atyrode/host.json"
     rm -f "$TMPDIR/bin/sudo" "$TMPDIR/bin/clan"
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
     unset ATYRODE_CLAN _ATYRODE_TEST_IDENTITY_ROOT

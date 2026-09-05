@@ -99,6 +99,11 @@ apply_config() {
     git_command="$ATYRODE_GIT"
   fi
   host="$(resolve_host "$requested")"
+  # Resolved once, for everything below and every copy of the CLI apply runs:
+  # the recorded id under ~/.config is a Home Manager file that NixOS relinks
+  # from a unit the activation only restarts, so a later read would race the
+  # switch and name the host this machine used to be.
+  export ATYRODE_HOST="$host"
   data="$(host_json "$host")"
   expected_system="$(jq -r '.system' <<<"$data")"
   expected_user="$(jq -r '.username' <<<"$data")"

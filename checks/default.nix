@@ -383,8 +383,14 @@ let
     # Linux-only package), so it exists on Linux systems only.
     resource-guard = import ./atyrode/agent-resource-guard.nix { inherit lib pkgs; };
     manifold-node = import ./atyrode/manifold-node.nix {
-      inherit lib pkgs system;
+      inherit
+        hosts
+        lib
+        pkgs
+        system
+        ;
       serverConfig = serverHomeConfig.config;
+      nixosConfigs = canonicalNixosConfigs;
     };
     portable-profile-contract = import ./fleet/portable-profile-contract.nix {
       inherit lib mkPortableHomeConfiguration pkgs;

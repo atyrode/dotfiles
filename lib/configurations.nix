@@ -285,9 +285,13 @@ let
     inherit self;
     meta.name = "atyrode";
     # The Mac's operator key is a Secure Enclave handle, so every clan
-    # command that decrypts with it needs the plugin on its own PATH; clan
-    # resolves the name through nixpkgs at the pin above.
-    secrets.age.plugins = [ "age-plugin-se" ];
+    # command that decrypts with it needs the plugin on its own PATH. Named
+    # as a flake reference, not a bare package: clan allowlists the bare
+    # names it will put on a PATH and age-plugin-se is not on that list at
+    # the pinned revision, while a reference is resolved through its own
+    # runtime flake and is not checked. The first `clan vars generate` of the
+    # fleet failed on the bare name (#542).
+    secrets.age.plugins = [ "nixpkgs#age-plugin-se" ];
     inventory.machines = lib.mapAttrs (_name: host: {
       machineClass = if host.activation == "nix-darwin" then "darwin" else "nixos";
       inherit (host) description;

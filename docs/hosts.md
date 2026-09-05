@@ -145,6 +145,13 @@ Host IDs are canonical and have no aliases. A rename is a clean cutover: update
 active-configuration state and automation, then replace the registry key. Do
 not leave the former name as a forwarding configuration.
 
+On the first apply after a fixed host's ID or hostname changes, name the new
+host explicitly: `atyrode apply <new-host>`. A generated `host.json` that still
+names the removed ID is ignored during automatic detection. An explicit target
+may replace an unregistered former hostname, and the apply prints the hostname
+the switch will install; it still refuses when the current hostname belongs to
+a different registered machine.
+
 For retirement, first remove callers and machine state that select the host,
 then remove its canonical registry entry. Never reuse an old host ID for a
 different machine or security boundary. Mutable sessions, credentials, trust

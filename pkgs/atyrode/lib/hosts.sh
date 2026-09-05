@@ -38,12 +38,15 @@ runtime_identity_json() {
 }
 
 resolve_host() {
-  local requested="${1:-}"
+  local requested="${1:-}" recorded=""
   if [[ -z "$requested" ]]; then
     requested="${ATYRODE_HOST:-}"
   fi
   if [[ -z "$requested" && -r "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json" ]]; then
-    requested="$(jq -r '.id // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json")"
+    recorded="$(jq -r '.id // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json")"
+    if [[ -n "$recorded" ]] && jq -e --arg recorded "$recorded" 'has($recorded)' "$registry" >/dev/null; then
+      requested="$recorded"
+    fi
   fi
   if [[ -n "$requested" ]]; then
     jq -er --arg requested "$requested" '

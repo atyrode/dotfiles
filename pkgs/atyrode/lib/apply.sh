@@ -92,7 +92,7 @@ apply_config() {
     return $?
   fi
 
-  local host data expected_system expected_user expected_home expected_hostname platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
+  local host data expected_system expected_user expected_home expected_hostname actual_hostname conflicting_host platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
   local windows_preflight='null' mutation_boundary="activation only after preflight"
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
@@ -132,7 +132,23 @@ apply_config() {
   fi
   [[ "$(actual_system)" == "$expected_system" ]] || die "$EX_DATAERR" "host $host requires $expected_system, found $(actual_system)"
   [[ "$(actual_user)" == "$expected_user" ]] || die "$EX_DATAERR" "host $host requires user $expected_user, found $(actual_user)"
-  [[ -z "$expected_hostname" || "$(actual_hostname)" == "$expected_hostname" ]] || die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $(actual_hostname)"
+  actual_hostname="$(actual_hostname)"
+  if [[ -n "$expected_hostname" && "$actual_hostname" != "$expected_hostname" ]]; then
+    conflicting_host="$(jq -r --arg hostname "$actual_hostname" '
+      [to_entries[]
+        | select((.value.identityMode // "fixed") == "fixed")
+        | select(.value.hostname == $hostname)]
+      | if length == 1 then .[0].key else empty end
+    ' "$registry")"
+    if [[ -n "$requested" && -z "$conflicting_host" ]]; then
+      printf 'atyrode: hostname %s is not registered; the switch renames this machine to %s\n' \
+        "$actual_hostname" "$expected_hostname" >&2
+    elif [[ -n "$conflicting_host" ]]; then
+      die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $actual_hostname, which belongs to $conflicting_host; apply $conflicting_host or correct the hostname before applying $host"
+    else
+      die "$EX_DATAERR" "host $host requires hostname $expected_hostname, found $actual_hostname; the switch renames this machine; pass the host explicitly: atyrode apply $host"
+    fi
+  fi
   command -v nh >/dev/null || die "$EX_UNAVAILABLE" "nh is unavailable"
   command -v "$git_command" >/dev/null || die "$EX_UNAVAILABLE" "git is unavailable"
 

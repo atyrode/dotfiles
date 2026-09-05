@@ -217,6 +217,58 @@ pkgs.runCommand "check-atyrode-apply"
       and all(.[]; .status != "missing" or (.remediation | contains("do not install globally")))
     ' <<< "$tools" >/dev/null
 
+    # A generated identity can outlive a clean host-ID cutover. It must not
+    # prevent the unique machine identity from resolving, while an explicit
+    # environment selection remains authoritative and rejects typos.
+    printf '%s\n' '{"id":"alex-aarch64-darwin"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    env _ATYRODE_TEST_SYSTEM=aarch64-darwin _ATYRODE_TEST_USER=alex \
+      _ATYRODE_TEST_HOSTNAME=alex-aarch64-darwin \
+      atyrode apply --repo "$HOME/nix-dotfiles" --plan --json |
+      jq -e '.host == "macbook" and .backend == "nh-darwin"' >/dev/null
+    printf '%s\n' '{"id":"alex-x86_64-linux-wsl"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    env _ATYRODE_TEST_SYSTEM=x86_64-linux _ATYRODE_TEST_USER=alex \
+      _ATYRODE_TEST_HOSTNAME=wsl \
+      atyrode context --json |
+      jq -e '.host.id == "wsl"' >/dev/null
+    set +e
+    ATYRODE_HOST=alex-aarch64-darwin atyrode apply --repo "$HOME/nix-dotfiles" --plan \
+      > /dev/null 2> "$TMPDIR/unknown-host.err"
+    unknown_host_status="$?"
+    set -e
+    test "$unknown_host_status" = 65
+    grep -qF 'unknown host: alex-aarch64-darwin' "$TMPDIR/unknown-host.err"
+
+    # Naming an unregistered former hostname is enough to distinguish a
+    # deliberate rename from applying one registered machine over another.
+    env _ATYRODE_TEST_HOSTNAME=tyrode-dev-01 \
+      atyrode apply dev-01 --repo "$HOME/nix-dotfiles" --plan --json \
+      > "$TMPDIR/rename-plan.json" 2> "$TMPDIR/rename-plan.err"
+    jq -e '.host == "dev-01" and .backend == "nh-os"' "$TMPDIR/rename-plan.json" >/dev/null
+    grep -qF 'hostname tyrode-dev-01 is not registered; the switch renames this machine to dev-01' \
+      "$TMPDIR/rename-plan.err"
+
+    printf '%s\n' '{"id":"dev-01"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    set +e
+    env _ATYRODE_TEST_HOSTNAME=tyrode-dev-01 \
+      atyrode apply --repo "$HOME/nix-dotfiles" --plan \
+      > /dev/null 2> "$TMPDIR/implicit-rename.err"
+    implicit_rename_status="$?"
+    set -e
+    test "$implicit_rename_status" = 65
+    grep -qF 'the switch renames this machine; pass the host explicitly: atyrode apply dev-01' \
+      "$TMPDIR/implicit-rename.err"
+
+    set +e
+    env _ATYRODE_TEST_HOSTNAME=wsl \
+      atyrode apply dev-01 --repo "$HOME/nix-dotfiles" --plan \
+      > /dev/null 2> "$TMPDIR/cross-host.err"
+    cross_host_status="$?"
+    set -e
+    test "$cross_host_status" = 65
+    grep -qF 'found wsl, which belongs to wsl; apply wsl or correct the hostname before applying dev-01' \
+      "$TMPDIR/cross-host.err"
+    printf '%s\n' '{"id":"development-x86_64-linux"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+
     # The CLI reads and drives this machine, so it must see the machine's own
     # programs no matter what PATH the caller had. A bootstrap that has just
     # activated still holds the PATH it started with: on a real Darwin run that

@@ -44,7 +44,13 @@ let
     "catalog-env.json"
   ];
   home = clanMachine.home-manager.users.${lib.head (lib.attrNames clanMachine.home-manager.users)};
-  linkTarget = name: home.xdg.configFile."babel/${name}".source;
+  # The inspected machine is dev-01, even on ARM and Darwin runners. Execute
+  # its generated symlink command with the runner's native builder rather than
+  # asking the runner to realize dev-01's x86_64-linux derivation.
+  linkTarget =
+    name:
+    pkgs.runCommand "check-babel-link-${name}" { }
+      home.xdg.configFile."babel/${name}".source.buildCommand;
 in
 pkgs.runCommand "check-babel-archive"
   {

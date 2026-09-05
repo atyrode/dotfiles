@@ -37,6 +37,9 @@ pkgs.runCommand "check-atyrode-apply"
     unit=""
     path_forwarded=0
     pty=0
+    if [[ -n "''${ATYRODE_TEST_MANAGER_HOST:-}" ]]; then
+      export ATYRODE_HOST="$ATYRODE_TEST_MANAGER_HOST"
+    fi
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --unit=*) unit="''${1#--unit=}"; shift ;;
@@ -221,9 +224,9 @@ pkgs.runCommand "check-atyrode-apply"
       and all(.[]; .status != "missing" or (.remediation | contains("do not install globally")))
     ' <<< "$tools" >/dev/null
 
-    # A generated identity can outlive a clean host-ID cutover. It must not
-    # prevent the unique machine identity from resolving, while an explicit
-    # environment selection remains authoritative and rejects typos.
+    # Generated identities in files and login environments can outlive a
+    # rename. Only an explicit argument may require a retired identity;
+    # recovering an inherited value requires a current record or exact host.
     printf '%s\n' '{"id":"alex-aarch64-darwin"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
     env _ATYRODE_TEST_SYSTEM=aarch64-darwin _ATYRODE_TEST_USER=alex \
       _ATYRODE_TEST_HOSTNAME=alex-aarch64-darwin \
@@ -234,8 +237,18 @@ pkgs.runCommand "check-atyrode-apply"
       _ATYRODE_TEST_HOSTNAME=wsl \
       atyrode context --json |
       jq -e '.host.id == "wsl"' >/dev/null
+    env ATYRODE_HOST=alex-x86_64-linux-wsl \
+      _ATYRODE_TEST_SYSTEM=x86_64-linux _ATYRODE_TEST_USER=alex \
+      _ATYRODE_TEST_HOSTNAME=wsl atyrode context --json |
+      jq -e '.host.id == "wsl"' >/dev/null
     set +e
-    ATYRODE_HOST=alex-aarch64-darwin atyrode apply --repo "$HOME/nix-dotfiles" --plan \
+    env ATYRODE_HOST=retired-host _ATYRODE_TEST_HOSTNAME=unregistered \
+      atyrode context --json > /dev/null 2> "$TMPDIR/ambiguous-inherited-host.err"
+    inherited_status="$?"
+    set -e
+    test "$inherited_status" = 65
+    set +e
+    atyrode apply alex-aarch64-darwin --repo "$HOME/nix-dotfiles" --plan \
       > /dev/null 2> "$TMPDIR/unknown-host.err"
     unknown_host_status="$?"
     set -e
@@ -1523,12 +1536,15 @@ pkgs.runCommand "check-atyrode-apply"
     # clear it so this scenario turns on interop reachability alone.
     rm -f "$WINGET_STATE/stable" "$WINGET_STATE/twilight"
     : > "$WINGET_LOG"
+    mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json.before-worker"
+    printf '%s\n' '{"id":"alex-x86_64-linux-wsl"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
     set +e
     env -u ATYRODE_WINGET \
+      ATYRODE_HOST=alex-x86_64-linux-wsl ATYRODE_TEST_MANAGER_HOST=dev-01 \
       _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
       ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
       ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
-      atyrode apply wsl --repo "$HOME/nix-dotfiles" \
+      atyrode apply --repo "$HOME/nix-dotfiles" \
       > "$TMPDIR/wsl-path.out" 2> "$TMPDIR/wsl-path.err"
     wsl_path_status="$?"
     set -e
@@ -1541,6 +1557,7 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     grep -qF -- '--version' "$WINGET_LOG"
+    mv "$TMPDIR/host.json.before-worker" "$XDG_CONFIG_HOME/atyrode/host.json"
 
     set +e
     WINGET_QUERY_ERROR=1 atyrode windows plan wsl --json \

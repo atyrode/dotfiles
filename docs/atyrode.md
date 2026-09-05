@@ -57,8 +57,13 @@ atyrode apply-status     # reconnect to the latest manager-owned apply job
 atyrode apply-status JOB --json
 ```
 
-The default host comes from `ATYRODE_HOST`, then the managed host identity file,
-then an unambiguous user/system/hostname match.
+The default host comes from a registered `ATYRODE_HOST`, then the managed host
+identity file, then an unambiguous user/system/hostname match. Generated values
+can outlive a rename in an existing login or user manager: an unregistered
+environment value requires a current managed identity or an exact hostname match,
+never a guess from platform alone. An explicit host argument remains authoritative
+and an unknown argument is refused. Apply resolves the host before submitting its
+managed job and forwards that answer rather than rediscovering it in the worker.
 
 Without `--repo`, apply resolves the requested ref (default `main`) to an exact
 commit with `git ls-remote`. A published CLI whose revision differs first

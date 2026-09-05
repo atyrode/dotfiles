@@ -116,21 +116,20 @@ apply_config() {
     fi
     original_args+=(--ref "$ref")
   fi
+  local host
+  host="$(resolve_host "$requested")"
+  # Resolve in the submitting login, before systemd substitutes its own
+  # environment. Every worker and post-switch CLI inherits the same answer.
+  export ATYRODE_HOST="$host"
   if [[ "$apply_job_worker" == 0 && "$plan" == 0 && "$dry" == 0 ]] &&
     apply_supervision_available; then
     submit_apply_job "${original_args[@]}"
     return $?
   fi
 
-  local host data expected_system expected_user expected_home expected_hostname actual_hostname conflicting_host platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
+  local data expected_system expected_user expected_home expected_hostname actual_hostname conflicting_host platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
   local windows_preflight='null' mutation_boundary="activation only after preflight"
   local provisioning_leftovers=""
-  host="$(resolve_host "$requested")"
-  # Resolved once, for everything below and every copy of the CLI apply runs:
-  # the recorded id under ~/.config is a Home Manager file that NixOS relinks
-  # from a unit the activation only restarts, so a later read would race the
-  # switch and name the host this machine used to be.
-  export ATYRODE_HOST="$host"
   data="$(host_json "$host")"
   expected_system="$(jq -r '.system' <<<"$data")"
   expected_user="$(jq -r '.username' <<<"$data")"

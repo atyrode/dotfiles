@@ -38,9 +38,13 @@ runtime_identity_json() {
 }
 
 resolve_host() {
-  local requested="${1:-}" recorded=""
-  if [[ -z "$requested" ]]; then
-    requested="${ATYRODE_HOST:-}"
+  local requested="${1:-}" recorded="" inherited="${ATYRODE_HOST:-}"
+  # Home Manager generates this environment value; an old login or user
+  # manager can retain it after a rename. Only a registered value selects a
+  # host. An explicit argument still fails rather than silently changing target.
+  if [[ -z "$requested" && -n "$inherited" ]] &&
+    jq -e --arg inherited "$inherited" 'has($inherited)' "$registry" >/dev/null; then
+    requested="$inherited"
   fi
   if [[ -z "$requested" && -r "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json" ]]; then
     recorded="$(jq -r '.id // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/atyrode/host.json")"
@@ -59,13 +63,13 @@ resolve_host() {
   system="$(actual_system)"
   user="$(actual_user)"
   hostname="$(actual_hostname)"
-  matches="$(jq -r --arg system "$system" --arg user "$user" --arg hostname "$hostname" '
+  matches="$(jq -r --arg system "$system" --arg user "$user" --arg hostname "$hostname" --arg inherited "$inherited" '
     [to_entries[]
       | select((.value.identityMode // "fixed") == "fixed")
       | select(.value.system == $system and .value.username == $user)]
     | ((map(select(.value.hostname == $hostname))) // []) as $exact
     | if ($exact | length) == 1 then $exact[0].key
-      elif length == 1 then .[0].key
+      elif length == 1 and $inherited == "" then .[0].key
       else empty end
   ' "$registry")"
   [[ -n "$matches" ]] || die "$EX_DATAERR" "host identity is ambiguous; pass a registered host explicitly"

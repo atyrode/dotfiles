@@ -174,6 +174,10 @@ apply_config() {
       mutation_boundary="NixOS activation followed by non-transactional native Windows reconciliation"
       windows_preflight="$(windows_plan "$host")"
       ;;
+    # A VPS converges itself the way WSL does when the operator sits on it:
+    # `fleet apply` refuses its own machine by design, so without this a VPS
+    # that is also an operator device could be converged from nowhere (#544).
+    nixos) backend="nh-os" ;;
     *) die "$EX_SOFTWARE" "host $host has unsupported activation owner $activation" ;;
   esac
 
@@ -254,7 +258,7 @@ apply_config() {
       nh_args=("$nh_command" home switch "$activation_flake_source" --configuration "$host" --backup-extension backup --diff always)
       ;;
     nix-darwin) nh_args=("$nh_command" darwin switch "$installable" --diff always) ;;
-    nixos-wsl) nh_args=("$nh_command" os switch "$installable" --diff always) ;;
+    nixos-wsl | nixos) nh_args=("$nh_command" os switch "$installable" --diff always) ;;
   esac
   [[ "$dry" == 0 ]] || nh_args+=(--dry)
   if [[ "$preview_json" == 1 ]]; then
@@ -295,7 +299,7 @@ apply_config() {
   # asking for root out of nowhere, mid-build, with nothing on screen to say
   # which of the thousand lines above wanted it.
   case "$activation" in
-    nix-darwin | nixos-wsl)
+    nix-darwin | nixos-wsl | nixos)
       [[ "$dry" == 1 ]] ||
         step_detail 'activation writes system state, so nh elevates: a sudo prompt below is its own'
       ;;

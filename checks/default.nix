@@ -183,31 +183,42 @@ let
   actualClanMachines = lib.mapAttrs (
     _name: machine: machine.machineClass
   ) clan.config.inventory.machines;
-  clanMachineConfigs =
-    lib.mapAttrsToList (_name: config: config.config) canonicalDarwinConfigs
-    ++ lib.mapAttrsToList (_name: config: config.config) canonicalNixosConfigs;
+  clanMachineConfigs = lib.mapAttrs (_name: config: config.config) (
+    canonicalDarwinConfigs // canonicalNixosConfigs
+  );
   # Every clan machine decrypts with the key `atyrode apply` places
   # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
   # to the admins group, and the declared generators are exactly the fleet's:
-  # a new one is a reviewed change, not a side effect.
+  # a new one is a reviewed change, not a side effect. The fleet-wide four are
+  # on every machine; the VPS -- the one machine whose registry activation is
+  # plain `nixos` -- also holds the Cloudflare DNS token
+  # (modules/nixos/cloudflare-dns.nix), and no other machine may.
+  fleetGenerators = [
+    "babel-archive"
+    "babel-custody"
+    "git-identity"
+    "omp-auth-broker"
+  ];
+  expectedGenerators =
+    name:
+    lib.sort builtins.lessThan (
+      fleetGenerators ++ lib.optional (hosts.${name}.activation == "nixos") "cloudflare-dns"
+    );
   clanMachineSecretsAgree = lib.all (
-    config:
+    name:
+    let
+      config = clanMachineConfigs.${name};
+    in
     config.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
     && config.clan.core.sops.defaultGroups == [ "admins" ]
-    &&
-      lib.attrNames config.clan.core.vars.generators == [
-        "babel-archive"
-        "babel-custody"
-        "git-identity"
-        "omp-auth-broker"
-      ]
-  ) clanMachineConfigs;
+    && lib.attrNames config.clan.core.vars.generators == expectedGenerators name
+  ) (lib.attrNames clanMachineConfigs);
   registryCheck =
     assert lib.assertMsg (
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, and omp-auth-broker generators";
+      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, and omp-auth-broker generators -- plus cloudflare-dns on the VPS alone";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];

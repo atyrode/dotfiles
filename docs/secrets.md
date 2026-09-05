@@ -131,7 +131,7 @@ path under `/run/secrets` at activation and never in the Nix store. The
 `host-registry` check asserts that the declared set is exactly the fleet's, so
 a new generator is a reviewed change rather than a side effect.
 
-The fleet declares three. The first, [`git-identity`](../modules/shared/git-identity.nix),
+The fleet declares four. The first, [`git-identity`](../modules/shared/git-identity.nix),
 is on every clan machine: an authentication key and a signing key, ed25519, minted
 per machine and never shared, so retiring a machine deletes one registration
 instead of rotating a key the whole fleet uses. The private halves are secrets
@@ -175,6 +175,19 @@ authenticates through its tunnel with it. Which machine serves is
 tunnel target from the registry and that machine's `address.nix`, so no host
 is named anywhere else. Rotation is one `clan vars generate --regenerate` of
 the shared var followed by an apply on every machine.
+
+The fourth, [`cloudflare-dns`](../modules/nixos/cloudflare-dns.nix), is on
+the VPS alone: the Cloudflare API token that edits the `tyrode.dev` zone,
+which manifold's cutover kit pulls to say which host `manifold.tyrode.dev`
+names. It is per machine and prompted, never shared or minted: Cloudflare
+issues it, scoped to `Zone.DNS: Edit` on that one zone and client-IP filtered
+to the VPS's address, so the same string is inert anywhere else and the other
+machines never hold it. The `host-registry` check is what says so -- every
+machine declares the fleet-wide four, and a machine whose registry activation
+is plain `nixos` declares this one too. A paste that is not a token fails at
+the operator's terminal, and the placed file is linked from
+`~/.config/cloudflare/api-token`, where the kit and any Cloudflare tool on the
+machine already read it.
 
 ## Revocation and rotation
 

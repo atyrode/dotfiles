@@ -498,7 +498,7 @@ cmd_generations() {
 # on the same terms as apply, because the agent that owns every terminal does
 # not care which direction the generation that stops it came from.
 cmd_rollback() {
-  local to="" dry=0 assume_yes=0 expected_disruption=""
+  local to="" dry=0 assume_yes=0 expected_disruption="" requested=""
   local -a scopes=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -520,7 +520,11 @@ cmd_rollback() {
         ;;
       -n | --dry-run) dry=1 ;;
       -y | --yes) assume_yes=1 ;;
-      *) die "$EX_USAGE" "unknown rollback option: $1" ;;
+      --*) die "$EX_USAGE" "unknown rollback option: $1" ;;
+      *)
+        [[ -z "$requested" ]] || die "$EX_USAGE" "rollback accepts at most one host"
+        requested="$1"
+        ;;
     esac
     shift || true
   done
@@ -559,12 +563,17 @@ cmd_rollback() {
 
   # The lock is held from here through the activation, so the generation the
   # report describes is the one still running when the switch begins; a dry
-  # run holds nothing, since it changes nothing.
+  # run holds nothing, since it changes nothing. A NixOS rollback runs under
+  # sudo, which drops the receipt and the environment apply resolves the host
+  # from, so the host may be named on the command line; the operator whose
+  # Home Manager units the report labels is the account that invoked sudo.
   [[ "$dry" == 1 ]] || activation_lock
-  local running report
-  running="$(current_generation "$activation")" ||
+  local running report host operator
+  host="$(resolve_host "$requested")"
+  operator="${SUDO_USER:-$(id -un)}"
+  running="$(current_generation "$activation" "$operator")" ||
     die "$EX_UNAVAILABLE" "the generation running now cannot be named, so generation $target cannot be shown safe against it"
-  report="$(disruption_analyze "$(resolve_host "")" "$activation" "$running" "$genpath" "$(id -un)" "${scopes[@]+"${scopes[@]}"}")" ||
+  report="$(disruption_analyze "$host" "$activation" "$running" "$genpath" "$operator" "${scopes[@]+"${scopes[@]}"}")" ||
     die "$EX_UNAVAILABLE" "the disruption analyzer did not produce a report, and a rollback without one cannot be shown safe"
   disruption_render "$report"
   if [[ "$dry" == 1 ]]; then

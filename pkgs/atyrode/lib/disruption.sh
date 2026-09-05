@@ -23,20 +23,31 @@
 # system owners publish /run/current-system; standalone Home Manager compares
 # against the gcroot its own activation reads. A first activation has nothing
 # to compare against and reports an empty path, which the analyzer treats as
-# "every unit is new". A Home Manager profile whose gcroot is gone is not a
-# first activation, it is a machine whose baseline cannot be named, so that
-# is a failure rather than an empty answer.
-current_generation() { # activation
+# "every unit is new". That is only true when nothing was activated before:
+# a machine with no system link but a Home Manager gcroot ran standalone
+# Home Manager, whose agents its first embedded activation would replace
+# under a report saying nothing runs, and a Home Manager profile whose gcroot
+# is gone is not a first activation either. Both are baselines that cannot be
+# named, and that is a failure rather than an empty answer.
+current_generation() { # activation user
+  local gcroot
+  gcroot="$(home_manager_gcroot "$2")"
   case "$1" in
     nixos | nixos-wsl | nix-darwin)
       local link=/run/current-system
       [[ "$test_hooks" != 1 || -z "${_ATYRODE_TEST_CURRENT_SYSTEM:-}" ]] || link="$_ATYRODE_TEST_CURRENT_SYSTEM"
-      [[ -e "$link" ]] || return 0
-      readlink -f "$link"
+      if [[ -e "$link" ]]; then
+        readlink -f "$link"
+        return 0
+      fi
+      [[ ! -e "$gcroot" ]] || {
+        printf 'atyrode: %s does not exist but %s does: this machine ran standalone Home Manager, and the generation its agents would be switched from cannot be named\n' \
+          "$link" "$gcroot" >&2
+        return 1
+      }
       ;;
     home-manager)
-      local gcroot profile
-      gcroot="${XDG_STATE_HOME:-$HOME/.local/state}/home-manager/gcroots/current-home"
+      local profile
       if [[ -e "$gcroot" ]]; then
         readlink -f "$gcroot"
         return 0
@@ -51,11 +62,31 @@ current_generation() { # activation
   esac
 }
 
-# The GC-rooted link the candidate is built to. The same path serves the
-# preview and the activation that follows it, so a candidate previewed once is
-# not rebuilt and cannot be collected between the two.
+# Home Manager's own record of what it last activated for an account. The
+# account is named rather than assumed from $HOME, because a NixOS rollback
+# runs under sudo with root's HOME and must still find the operator's.
+home_manager_gcroot() { # user
+  local home="$HOME"
+  if [[ -n "$1" && "$1" != "$(id -un)" && "$1" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]; then
+    home="$(eval "printf '%s' ~$1")"
+  fi
+  if [[ "$home" == "$HOME" ]]; then
+    printf '%s/home-manager/gcroots/current-home\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
+  else
+    printf '%s/.local/state/home-manager/gcroots/current-home\n' "$home"
+  fi
+}
+
+# The GC-rooted link a candidate is built to: one per invocation, so a preview
+# or dry run for the same host -- which holds no lock -- can never rewrite
+# the link a locked apply is about to read and activate. The link is removed
+# once its closure has been analysed and, for an activation, switched to; the
+# profile roots what was activated, and the indirect root Nix registered for
+# the link is dropped with it.
 candidate_link_path() { # host
-  printf '%s/atyrode/candidate-%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "$1"
+  local directory="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
+  mkdir -p "$directory"
+  mktemp -u "$directory/candidate-$1.XXXXXXXX"
 }
 
 # One machine, one activation at a time. apply and rollback take this before
@@ -79,11 +110,24 @@ activation_lock() {
 # The report, as JSON on stdout. A report is produced whenever the analyzer
 # ran; its status carries the verdict. Only the analyzer failing to run at all
 # is an error here, and that is refused like any other unknown.
+#
+# The manager is always asked whether a protected unit the engine would touch
+# is loaded at all, through the same seams every other status query uses. A
+# preview asks unlocked and an activation asks again under the lock; the
+# answer is part of the effects, so it is part of the fingerprint, and a unit
+# that came back between the two makes the acknowledgement stale.
 disruption_analyze() { # host activation current candidate user scope...
   local host="$1" activation="$2" current="$3" candidate="$4" user="$5"
   shift 5
-  local -a args=(--host "$host" --activation "$activation" --current "$current" --candidate "$candidate")
+  local -a args=(--host "$host" --activation "$activation" --current "$current" --candidate "$candidate" --runtime)
   [[ -z "$user" ]] || args+=(--user "$user")
+  local systemctl launchctl
+  if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
+    args+=(--systemctl "$systemctl")
+  fi
+  if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
+    args+=(--launchctl "$launchctl")
+  fi
   local scope
   for scope in "$@"; do
     args+=(--scope "$scope")
@@ -91,6 +135,50 @@ disruption_analyze() { # host activation current candidate user scope...
   [[ -x "$atyrode_disruption" ]] ||
     die "$EX_UNAVAILABLE" "the disruption analyzer is unavailable, so no activation can be shown safe"
   "$atyrode_disruption" "${args[@]}"
+}
+
+# The same reading, for a stop or restart asked of one unit outside any
+# activation (`runtime stop|restart manifold-agent`, token rotation). The
+# unit's role is read from the definition the running generation deploys and
+# from the file the manager loaded, which must agree; a unit holding the
+# session-owner role is refused while the manager reports it loaded, and
+# only a manager proving it is not loaded turns the request into a plain
+# start. There is no flag past this: a deliberately drained owner is stopped
+# through the manager by the operator, after which apply migrates it.
+disruption_mutation_guard() { # scope:service action live-path
+  local target="$1" action="$2" live="$3" host data activation user current report
+  validate_scope "$target"
+  host="$(resolve_host "")"
+  data="$(host_json "$host")"
+  activation="$(jq -r '.activation' <<<"$data")"
+  user="$(jq -r '.username' <<<"$data")"
+  current="$(current_generation "$activation" "$user")" ||
+    die "$EX_UNAVAILABLE" "the generation $host runs now cannot be named, so a $action of ${target#*:} cannot be shown safe"
+  [[ -n "$current" ]] ||
+    die "$EX_UNAVAILABLE" "$host has no activated generation, so ${target#*:} has no deployed definition to read; activate first"
+  local -a args=(--host "$host" --activation "$activation" --current "$current" --user "$user" --runtime --mutate "$action" --service "$target")
+  [[ -z "$live" ]] || args+=(--live "$live")
+  local systemctl launchctl
+  if systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)"; then
+    args+=(--systemctl "$systemctl")
+  fi
+  if launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)"; then
+    args+=(--launchctl "$launchctl")
+  fi
+  [[ -x "$atyrode_disruption" ]] ||
+    die "$EX_UNAVAILABLE" "the disruption analyzer is unavailable, so no service mutation can be shown safe"
+  report="$("$atyrode_disruption" "${args[@]}")" ||
+    die "$EX_UNAVAILABLE" "the disruption analyzer did not produce a report, and a $action without one cannot be shown safe"
+  disruption_render "$report"
+  case "$(jq -r '.status' <<<"$report")" in
+    safe) ;;
+    blocked)
+      die "$EX_UNAVAILABLE" "$action refused: ${target#*:} holds the session-owner role and is loaded, so a $action ends every session it holds; drain it and stop it through the manager deliberately, then migrate it with atyrode apply"
+      ;;
+    *)
+      die "$EX_UNAVAILABLE" "$action refused: whether ${target#*:} may be disrupted could not be established (see the report above)"
+      ;;
+  esac
 }
 
 # `--scope scope:service` is checked here rather than trusted to reach the

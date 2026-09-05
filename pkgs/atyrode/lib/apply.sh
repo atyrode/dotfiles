@@ -27,6 +27,14 @@ create_runtime_adapter() {
 EOF
   printf '%s\n' "$directory"
 }
+
+# What an apply leaves in its wake when it ends, however it ends: the runtime
+# adapter flake and the candidate's GC-root link. Both are named by variables
+# of apply_config, which is the only caller and sets them before the trap.
+apply_scratch_cleanup() {
+  [[ -z "${adapter_dir:-}" ]] || rm -rf -- "$adapter_dir"
+  [[ -z "${candidate_link:-}" ]] || rm -f -- "$candidate_link"
+}
 apply_config() {
   local requested="" repo="" ref="" git_auth_mode="${ATYRODE_GIT_AUTH_MODE:-}" plan=0 dry=0 json=0 preview_json=0 restart=0
   local expected_disruption="" candidate_path=""
@@ -303,13 +311,16 @@ apply_config() {
     return 0
   }
 
-  local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source"
+  local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source" candidate_link=""
   if [[ "$identity_mode" == runtime && -z "$candidate_path" ]]; then
     [[ "$source" != local ]] || adapter_source="path:$flake_source"
     adapter_dir="$(create_runtime_adapter "$host" "$data" "$adapter_source" "$git_auth_mode")"
     activation_flake_source="path:$adapter_dir"
-    trap '[[ -z "${adapter_dir:-}" ]] || rm -rf -- "$adapter_dir"' EXIT
   fi
+  # The adapter and the candidate link are this invocation's alone and are
+  # removed however it ends: a refused activation must not leave a GC root
+  # pinning the closure it refused, nor an adapter flake in /tmp.
+  trap 'apply_scratch_cleanup' EXIT
 
   local nh_command=nh
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_NH:-}" ]]; then
@@ -326,8 +337,8 @@ apply_config() {
   # between would make it a report about nothing. Previews hold no lock; they
   # mutate nothing and a stale preview is refused by its fingerprint anyway.
   [[ "$dry" == 1 ]] || activation_lock
-  local current candidate candidate_link="" report preview_output=""
-  current="$(current_generation "$activation")" ||
+  local current candidate report preview_output=""
+  current="$(current_generation "$activation" "$expected_user")" ||
     die "$EX_UNAVAILABLE" "the generation $host runs now cannot be named, so no candidate can be shown safe against it"
 
   # The candidate is built to a GC-rooted link before anything is decided
@@ -346,16 +357,16 @@ apply_config() {
   fi
   if [[ -n "$candidate_path" ]]; then
     candidate="$candidate_path"
+    # nh darwin rejects a store-path installable, so a copied darwin closure
+    # gets no nh diff: its dry run is the disruption report alone.
     if [[ "$dry" == 1 ]]; then
       case "$activation" in
         home-manager) build_args=("$nh_command" home switch "$candidate" --backup-extension backup "${diff_args[@]}") ;;
-        nix-darwin) build_args=("$nh_command" darwin switch "$candidate" "${diff_args[@]}") ;;
         nixos-wsl | nixos) build_args=("$nh_command" os switch "$candidate" "${diff_args[@]}") ;;
       esac
     fi
   else
     candidate_link="$(candidate_link_path "$host")"
-    mkdir -p "${candidate_link%/*}"
     # nh home passes a #fragment through to nix verbatim instead of treating
     # it as the configuration name, so the flake reference goes bare and
     # --configuration carries the host. System owners resolve the fragment.
@@ -371,11 +382,18 @@ apply_config() {
     [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
     local preview_file
     preview_file="$(mktemp)"
-    show_command env "LC_ALL=$nh_locale" "${build_args[@]}"
-    if ! LC_ALL="$nh_locale" "${build_args[@]}" >"$preview_file" 2>&1; then
-      cat "$preview_file" >&2
-      rm -f "$preview_file"
-      die "$EX_SOFTWARE" "$backend preview failed"
+    if [[ "${#build_args[@]}" -gt 0 ]]; then
+      show_command env "LC_ALL=$nh_locale" "${build_args[@]}"
+      if ! LC_ALL="$nh_locale" "${build_args[@]}" >"$preview_file" 2>&1; then
+        cat "$preview_file" >&2
+        rm -f "$preview_file"
+        die "$EX_SOFTWARE" "$backend preview failed"
+      fi
+    else
+      # A darwin closure that arrived built: nh has no dry switch for a store
+      # path, so the preview names the two generations and carries no package
+      # diff; the disruption report below is the part that decides anything.
+      printf '<<< %s\n>>> %s\n' "${current:-none}" "$candidate" >"$preview_file"
     fi
     if ! preview_output="$("$atyrode_preview_parser" --host "$host" --system "$expected_system" --revision "$resolved_revision" <"$preview_file")"; then
       rm -f "$preview_file"
@@ -412,7 +430,7 @@ apply_config() {
     else
       printf '%s\n' "$preview_output"
     fi
-    [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
+    apply_scratch_cleanup
     trap - EXIT
     return 0
   fi
@@ -422,7 +440,7 @@ apply_config() {
     *) step_fail 'this activation is refused by default' ;;
   esac
   if [[ "$dry" == 1 ]]; then
-    [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
+    apply_scratch_cleanup
     trap - EXIT
     apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host" "$apply_status"
     return 0
@@ -463,7 +481,7 @@ apply_config() {
     die "$EX_SOFTWARE" "$backend failed while activating $host"
   }
   step_ok
-  [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
+  apply_scratch_cleanup
   trap - EXIT
   if [[ "$dry" == 0 ]]; then
     local state_dir state_file temp

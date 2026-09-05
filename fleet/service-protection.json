@@ -30,7 +30,8 @@
       "scope": "system",
       "service": "sshd.service",
       "owner": "modules/nixos/vps.nix, modules/nixos/wsl.nix (services.openssh)",
-      "reason": "the deployer's own way in; restarting it under a fleet apply strands the session driving the activation"
+      "reason": "the deployer's own way in; removing or stopping the listener strands every session, while a restart or reload keeps established sessions only because NixOS declares KillMode=process, which the analyzer requires to see on both definitions",
+      "sessionsSurvive": { "killMode": "process" }
     },
     {
       "scope": "system",

@@ -130,7 +130,7 @@ Usage:
   atyrode doctor provisioning [--json]
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
-  atyrode rollback [--to N] [--dry-run] [--yes] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
+  atyrode rollback [HOST] [--to N] [--dry-run] [--yes] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
   atyrode run [--list] [--json]
   atyrode run NAME [-- ARG...]

@@ -6,12 +6,15 @@ machine from the generation it runs now to a candidate closure already built
 -- which services does the maintained activation engine start, stop, restart,
 reload or retain, and is any of them one whose loss ends live sessions?
 
-The answer is computed from the two closures alone. No running service is
-sampled, no terminal is counted, nothing is executed from either tree: the
-report is a pure function of (host, current, candidate, policy), which is what
-lets `apply --expected-disruption` bind an operator's acknowledgement to the
-exact activation it was given for. The rules are transcriptions of the
-engines' own decisions, taken from their pinned sources:
+The answer is computed from the two closures. No terminal is counted and
+nothing is executed from either tree; the only runtime question asked, and
+only when the caller passes --runtime, is whether a protected unit the engine
+would act on is loaded at all, put to the native manager and believed only
+when it answers authoritatively. The report is otherwise a pure function of
+(host, current, candidate, policy), which is what lets `apply
+--expected-disruption` bind an operator's acknowledgement to the exact
+activation it was given for. The rules are transcriptions of the engines' own
+decisions, taken from their pinned sources:
 
   NixOS system and NixOS-declared user units
       switch-to-configuration-ng: units are compared section by section with
@@ -24,34 +27,49 @@ engines' own decisions, taken from their pinned sources:
       Unit.X-OnlyManualStart (the running instance is kept). A unit that
       disappears is stopped unless Unit.X-StopOnRemoval=false. Sockets, paths,
       slices and the fixed system targets are never restarted. Drop-ins under
-      <unit>.d/*.conf are folded into the unit before comparison.
+      <unit>.d/*.conf are folded into the unit before comparison, and a unit
+      that exists only as drop-ins is still a unit.
   Home Manager user units (standalone, or embedded in a NixOS or nix-darwin
   generation through home-manager-<user>.service / the activation script)
       sd-switch: units equal up to Description/Documentation are untouched;
       equal up to X-Reload-Triggers reload; otherwise Unit.RefuseManualStart
       stops, Unit.X-SwitchMethod (reload, restart, stop-start, keep-old) or
       the legacy X-ReloadIfChanged/X-RestartIfChanged/X-StopIfChanged decide,
-      and the default is stop-start. RefuseManualStop turns a stop-start, a
-      stop or a removal into a retained running instance. Drop-ins are not
-      read by sd-switch and are not read here.
+      and the default is stop-start. RefuseManualStop is read from the unit
+      that is running, as sd-switch asks the manager rather than the new
+      file: on the old side it turns a stop-start, a stop or a removal into a
+      retained running instance. Drop-ins are folded in as sd-switch's
+      UnitFile::load does, but only a unit with a base file is a unit.
   launchd (nix-darwin daemons and agents, Home Manager agents)
       nix-darwin: a plist whose bytes differ from the deployed copy is
       unloaded and loaded again; one that disappears is unloaded. Home
       Manager: the same, keyed on file bytes and the LaunchAgentDomains entry.
 
 Static analysis cannot see which units are active, so it reports every unit
-the engine would act on if it were: an inactive unit counts as if running. It
-also cannot see a Home Manager generation the user activated by hand since the
-system generation was built; the embedded generation is the baseline. Both
-over-approximate towards refusal, never towards silence.
+the engine would act on if it were: an inactive unit counts as if running.
+With --runtime, a protected unit the manager authoritatively reports as not
+loaded is reported as started rather than disrupted, and only then; a manager
+that cannot be asked, or answers anything else, leaves the effect as the
+static reading says (or unknown, when the answer itself could not be read).
+The analysis also cannot see a Home Manager generation the user activated by
+hand since the system generation was built; the embedded generation is the
+baseline. Everything over-approximates towards refusal, never towards silence.
 
 Every effect names a unit and the action the engine takes. `protected` marks
 the units whose disruption is refused by default: those the fleet policy
 lists, unless both sides of the change declare X-Atyrode-SessionOwner=false,
 and any unit that declares X-Atyrode-SessionOwner=true on either side. A
 protected unit may be started (nothing is running yet) or retained (keep);
-anything else blocks. Anything the analysis cannot read, parse or locate is
-an `unknown` action, and unknown is a refusal, not a pass.
+anything else blocks. A listed unit whose policy entry names the KillMode
+under which its restart keeps established sessions (sshd: KillMode=process on
+both sides) is not protected against a restart or reload proven to run under
+that mode; its stop and removal stay protected. Handing the owner role away --
+a running owner retained under a candidate that declares it is no longer the
+owner -- is refused even when the engine keeps it running, because the next
+activation would then stop it as an ordinary unit; it is allowed only once
+the manager proves the old owner is no longer loaded. Anything the analysis
+cannot read, parse or locate is an `unknown` action, and unknown is a
+refusal, not a pass.
 """
 
 import argparse
@@ -59,7 +77,10 @@ import hashlib
 import json
 import os
 import plistlib
+import pwd
 import re
+import stat
+import subprocess
 import sys
 
 SCHEMA_VERSION = 1
@@ -140,14 +161,18 @@ def list_dir(path):
 
 def is_dir(path):
     try:
-        return os.path.isdir(path)
+        return stat.S_ISDIR(os.stat(path).st_mode)
+    except FileNotFoundError:
+        return False
     except OSError as error:
         raise Unreadable(f"{path}: {error.strerror or error}") from error
 
 
 def is_file(path):
     try:
-        return os.path.isfile(path)
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except FileNotFoundError:
+        return False
     except OSError as error:
         raise Unreadable(f"{path}: {error.strerror or error}") from error
 
@@ -211,10 +236,10 @@ def unit_bool(unit, section, key, default):
     return parsed
 
 
-def load_unit(directory, name, dropins):
-    """The unit as the engine sees it. A missing base file with drop-ins is
-    how NixOS expresses some template instances; the drop-ins alone then
-    describe it, as they do for switch-to-configuration."""
+def load_unit(directory, name):
+    """The unit as the engine sees it, drop-ins folded in as both engines do.
+    A missing base file with drop-ins is how NixOS expresses some template
+    instances; the drop-ins alone then describe it."""
     base = os.path.join(directory, name)
     merged = {}
     origin = base
@@ -222,27 +247,27 @@ def load_unit(directory, name, dropins):
         merged = parse_unit_text(read_text(base), base)
     elif os.path.lexists(base):
         raise Unreadable(f"{base}: not a regular file")
-    if dropins:
-        dropin_dir = base + ".d"
-        entries = list_dir(dropin_dir) if is_dir(dropin_dir) else None
-        for entry in entries or []:
-            if not entry.endswith(".conf"):
-                continue
-            path = os.path.join(dropin_dir, entry)
-            if not is_file(path):
-                raise Unreadable(f"{path}: not a regular file")
-            for section, keys in parse_unit_text(read_text(path), path).items():
-                target = merged.setdefault(section, {})
-                for key, values in keys.items():
-                    target.setdefault(key, []).extend(values)
+    dropin_dir = base + ".d"
+    entries = list_dir(dropin_dir) if is_dir(dropin_dir) else None
+    for entry in entries or []:
+        if not entry.endswith(".conf"):
+            continue
+        path = os.path.join(dropin_dir, entry)
+        if not is_file(path):
+            raise Unreadable(f"{path}: not a regular file")
+        for section, keys in parse_unit_text(read_text(path), path).items():
+            target = merged.setdefault(section, {})
+            for key, values in keys.items():
+                target.setdefault(key, []).extend(values)
     if not merged and not is_file(base):
         raise Unreadable(f"{origin}: no unit definition")
     return merged
 
 
-def unit_names(directory, dropins):
+def unit_names(directory, dropin_only_units):
     """Every unit a directory defines: files with a unit suffix, plus (for
-    the drop-in aware engine) names that exist only as a `.d` directory."""
+    switch-to-configuration) names that exist only as a `.d` directory;
+    sd-switch's find_unit_file_path needs the base file."""
     entries = list_dir(directory)
     if entries is None:
         return set()
@@ -250,7 +275,7 @@ def unit_names(directory, dropins):
     for entry in entries:
         if entry.endswith(UNIT_SUFFIXES):
             names.add(entry)
-        elif dropins and entry.endswith(".d") and entry[:-2].endswith(UNIT_SUFFIXES):
+        elif dropin_only_units and entry.endswith(".d") and entry[:-2].endswith(UNIT_SUFFIXES):
             names.add(entry[:-2])
     return names
 
@@ -425,7 +450,10 @@ def sd_switch_method(unit):
 def sd_switch_action(name, old, new, old_wanted, new_wanted):
     if old is None and new is None:
         return None
-    refuses_stop = unit_bool(old if new is None else new, "Unit", "RefuseManualStop", False)
+    # sd-switch asks the manager whether the running instance refuses a manual
+    # stop; the running instance is the old definition, and the property the
+    # new file carries is deliberately ignored (unit_file.rs).
+    refuses_stop = old is not None and unit_bool(old, "Unit", "RefuseManualStop", False)
     if new is None:
         return "keep" if refuses_stop else "stop"
     if old is None:
@@ -456,20 +484,32 @@ def sd_switch_action(name, old, new, old_wanted, new_wanted):
 
 
 class Report:
-    def __init__(self, host, policy, scopes):
+    def __init__(self, host, policy, scopes, runtime):
         self.host = host
         self.policy = policy
         self.scopes = scopes
+        self.runtime = runtime
         self.effects = []
         self.reasons = []
+        self.refusals = []
         self.current = ""
         self.candidate = ""
 
+    def entry(self, scope, service):
+        for entry in self.policy["protected"]:
+            if entry["scope"] == scope and entry["service"] == service:
+                return entry
+        return None
+
     def listed(self, scope, service):
-        return any(
-            entry["scope"] == scope and entry["service"] == service
-            for entry in self.policy["protected"]
-        )
+        return self.entry(scope, service) is not None
+
+    def owner_side(self, scope, service, owner):
+        """Whether one side of a change holds the session-owner role: an
+        explicit claim wins, a listed name holds it unless it disclaims."""
+        if owner is not None:
+            return owner
+        return self.listed(scope, service)
 
     def protected(self, scope, service, owners):
         """owners: the X-Atyrode-SessionOwner claims of the sides that exist."""
@@ -478,6 +518,18 @@ class Report:
         if self.listed(scope, service):
             return not all(owner is False for owner in owners)
         return False
+
+    def sessions_survive(self, scope, service, action, old, new):
+        """A listed unit whose entry names the KillMode under which a restart
+        keeps established sessions (sshd) is not disrupted by a restart or
+        reload when both definitions are proven to run under that mode."""
+        entry = self.entry(scope, service)
+        if entry is None or action not in ("restart", "reload") or old is None or new is None:
+            return False
+        kill_mode = (entry.get("sessionsSurvive") or {}).get("killMode")
+        if not kill_mode:
+            return False
+        return all(unit_value(side, "Service", "KillMode") == kill_mode for side in (old, new))
 
     def add(self, scope, service, action, protected, reason, user=None):
         effect = {
@@ -494,14 +546,41 @@ class Report:
     def unknown(self, scope, service, reason, user=None):
         self.add(scope, service, "unknown", True, reason, user)
 
+    def settle(self, scope, service, action, protected, reason, user, role_handed_away):
+        """The last word on a protected unit the engine would touch: ask the
+        manager (when allowed) whether anything is loaded to touch, and refuse
+        a running owner handing its role away unless the manager proves it is
+        gone. A unit that is not loaded cannot be stopped or restarted; the
+        engine starts the new definition instead, if a target wants it."""
+        disruptive = action in ("stop", "restart", "reload") or (action == "keep" and role_handed_away)
+        if protected and disruptive and self.runtime:
+            try:
+                loaded = self.runtime.loaded(scope, service, user)
+            except Unreadable as error:
+                self.unknown(scope, service, f"{reason}; the manager could not say whether it is loaded: {error}", user)
+                return
+            if loaded is False:
+                if action == "stop":
+                    return
+                action = "start"
+                reason = f"{reason}; the manager reports the unit is not loaded, so nothing is running to disrupt and the new definition is started"
+                role_handed_away = False
+        if protected and role_handed_away and action == "keep":
+            self.refusals.append(
+                f"{where(scope, user)}:{service} is the running session owner and the candidate declares it is no longer the owner; "
+                "the engine keeps it running now, but the next activation would stop it as an ordinary unit, so the role "
+                "is handed over only after the old owner is drained and stopped and the manager reports it unloaded"
+            )
+        self.add(scope, service, action, protected, reason, user)
+
     def compare_systemd(self, scope, old_dir, new_dir, engine, user=None):
-        dropins = engine == "stc"
-        decide = stc_action if dropins else sd_switch_action
+        dropin_only = engine == "stc"
+        decide = stc_action if dropin_only else sd_switch_action
         try:
             old_present = old_dir is not None and is_dir(old_dir)
             new_present = is_dir(new_dir)
-            old_names = unit_names(old_dir, dropins) if old_present else set()
-            new_names = unit_names(new_dir, dropins) if new_present else set()
+            old_names = unit_names(old_dir, dropin_only) if old_present else set()
+            new_names = unit_names(new_dir, dropin_only) if new_present else set()
             old_wanted = wanted_units(old_dir) if old_present else set()
             new_wanted = wanted_units(new_dir) if new_present else set()
         except Unreadable as error:
@@ -509,9 +588,11 @@ class Report:
             return
         for name in sorted(old_names | new_names):
             try:
-                old = load_unit(old_dir, name, dropins) if name in old_names else None
-                new = load_unit(new_dir, name, dropins) if name in new_names else None
-                owners = [owner_property(side) for side in (old, new) if side is not None]
+                old = load_unit(old_dir, name) if name in old_names else None
+                new = load_unit(new_dir, name) if name in new_names else None
+                old_owner = owner_property(old)
+                new_owner = owner_property(new)
+                owners = [owner for owner, side in ((old_owner, old), (new_owner, new)) if side is not None]
                 action = decide(name, old, new, old_wanted, new_wanted)
             except Unreadable as error:
                 self.unknown(scope, name, str(error), user)
@@ -519,7 +600,17 @@ class Report:
             if action is None:
                 continue
             protected = self.protected(scope, name, owners)
-            self.add(scope, name, action, protected, describe(engine, action), user)
+            reason = describe(engine, action)
+            if protected and self.sessions_survive(scope, name, action, old, new):
+                protected = False
+                reason = f"{reason}; KillMode={unit_value(new, 'Service', 'KillMode')} on both definitions keeps established sessions"
+            role_handed_away = (
+                old is not None
+                and new is not None
+                and self.owner_side(scope, name, old_owner)
+                and new_owner is False
+            )
+            self.settle(scope, name, action, protected, reason, user, role_handed_away)
 
     def compare_launchd(self, old_dir, new_dir, old_domains, new_domains, user, origin):
         try:
@@ -535,7 +626,9 @@ class Report:
             try:
                 old = read_bytes(os.path.join(old_dir, name)) if name in old_names else None
                 new = read_bytes(os.path.join(new_dir, name)) if name in new_names else None
-                owners = [plist_owner(side, name) for side in (old, new) if side is not None]
+                old_owner = plist_owner(old, name) if old is not None else None
+                new_owner = plist_owner(new, name) if new is not None else None
+                owners = [owner for owner, side in ((old_owner, old), (new_owner, new)) if side is not None]
                 old_domain = domain_of(old_domains, label) if old is not None else None
                 new_domain = domain_of(new_domains, label) if new is not None else None
             except Unreadable as error:
@@ -549,7 +642,82 @@ class Report:
                 continue
             else:
                 action, why = "restart", f"{origin}: the plist changed; it is unloaded and loaded again"
-            self.add("launchd", label, action, self.protected("launchd", label, owners), why, user)
+            self.settle("launchd", label, action, self.protected("launchd", label, owners), why, user, False)
+
+
+def where(scope, user):
+    return scope + (f"@{user}" if user else "")
+
+
+class Runtime:
+    """The native manager's answer to one question: is this unit loaded at
+    all. Only a definite "no" is believed; a definite "yes" changes nothing
+    (the static reading already assumed it), and anything else -- a manager
+    that cannot be reached, another user's manager this process may not ask,
+    an answer in a shape not anticipated -- is an error the caller records as
+    unknown. Nothing is started, stopped or signalled."""
+
+    def __init__(self, systemctl, launchctl):
+        self.systemctl = systemctl
+        self.launchctl = launchctl
+        self.uid = os.geteuid()
+        try:
+            self.user = pwd.getpwuid(self.uid).pw_name
+        except KeyError:
+            self.user = None
+
+    def run(self, argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise Unreadable(f"{argv[0]}: {error}") from error
+
+    def loaded(self, scope, service, user):
+        if scope == "launchd":
+            return self.launchd_loaded(service, user)
+        argv = [self.systemctl]
+        if scope == "user":
+            argv.append("--user")
+            if user and user != self.user:
+                if self.uid != 0:
+                    raise Unreadable(f"{user}'s user manager cannot be asked from {self.user or self.uid}")
+                argv.append(f"--machine={user}@")
+        argv += ["show", "--property=LoadState,ActiveState", "--", service]
+        result = self.run(argv)
+        if result.returncode != 0:
+            raise Unreadable(f"systemctl show {service} exited {result.returncode}: {result.stderr.strip()}")
+        properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        load_state = properties.get("LoadState")
+        active_state = properties.get("ActiveState")
+        if load_state is None or active_state is None:
+            raise Unreadable(f"systemctl show {service} answered without LoadState/ActiveState")
+        if load_state == "not-found" and active_state == "inactive":
+            return False
+        if active_state in ("inactive", "failed") and load_state in ("loaded", "not-found", "masked"):
+            return False
+        if active_state in ("active", "activating", "deactivating", "reloading", "refreshing", "maintenance"):
+            return True
+        raise Unreadable(f"systemctl show {service} answered LoadState={load_state} ActiveState={active_state}")
+
+    def launchd_loaded(self, label, user):
+        if user:
+            try:
+                uid = pwd.getpwnam(user).pw_uid
+            except KeyError as error:
+                raise Unreadable(f"no such user: {user}") from error
+            if uid != self.uid and self.uid != 0:
+                raise Unreadable(f"{user}'s launchd domain cannot be asked from {self.user or self.uid}")
+            target = f"gui/{uid}/{label}"
+        else:
+            if self.uid != 0:
+                raise Unreadable(f"the system launchd domain cannot be asked from {self.user or self.uid}")
+            target = f"system/{label}"
+        result = self.run([self.launchctl, "print", target])
+        if result.returncode == 0:
+            return True
+        if "Could not find service" in result.stderr or "Could not find service" in result.stdout:
+            return False
+        raise Unreadable(f"launchctl print {target} exited {result.returncode}: {result.stderr.strip()}")
 
 
 def describe(engine, action):
@@ -613,7 +781,7 @@ def embedded_hm_generations(system_dir):
             continue
         user = systemd_unescape(name[len("home-manager-") : -len(".service")])
         try:
-            unit = load_unit(units_dir, name, True)
+            unit = load_unit(units_dir, name)
             user = unit_value(unit, "Service", "User") or user
             exec_start = unit_value(unit, "Service", "ExecStart")
             if not exec_start:
@@ -797,23 +965,21 @@ def finish(report):
     report.effects.sort(key=lambda e: (e["scope"], e.get("user", ""), e["service"]))
     status = "safe"
     for effect in report.effects:
-        where = effect["scope"] + (f"@{effect['user']}" if "user" in effect else "")
         if effect["action"] == "unknown":
             status = "unknown"
-            report.reasons.append(f"{where}:{effect['service']}: {effect['reason']}")
+            report.reasons.append(f"{where(effect['scope'], effect.get('user'))}:{effect['service']}: {effect['reason']}")
     if status == "safe":
         for effect in report.effects:
-            where = effect["scope"] + (f"@{effect['user']}" if "user" in effect else "")
+            location = f"{where(effect['scope'], effect.get('user'))}:{effect['service']}"
             if effect["protected"] and effect["action"] in ("stop", "restart", "reload"):
                 status = "blocked"
-                report.reasons.append(
-                    f"{where}:{effect['service']} is a protected service and the activation would {effect['action']} it"
-                )
+                report.reasons.append(f"{location} is a protected service and this would {effect['action']} it")
             elif report.scopes is not None and effect["action"] != "keep" and not in_scope(effect, report.scopes):
                 status = "blocked"
-                report.reasons.append(
-                    f"{where}:{effect['service']} would be {effect['action']}ed but is outside the requested scope"
-                )
+                report.reasons.append(f"{location} would be {effect['action']}ed but is outside the requested scope")
+        if report.refusals:
+            status = "blocked"
+            report.reasons.extend(report.refusals)
     document = {
         "schemaVersion": SCHEMA_VERSION,
         "status": status,
@@ -837,6 +1003,9 @@ def load_policy(path):
     for entry in policy["protected"]:
         if entry.get("scope") not in ("system", "user", "launchd") or not entry.get("service"):
             raise SystemExit(f"atyrode-disruption: {path}: malformed protected entry {entry!r}")
+        survive = entry.get("sessionsSurvive")
+        if survive is not None and not (isinstance(survive, dict) and isinstance(survive.get("killMode"), str) and survive["killMode"]):
+            raise SystemExit(f"atyrode-disruption: {path}: sessionsSurvive must name a killMode in {entry!r}")
     return policy
 
 
@@ -878,6 +1047,78 @@ def hold_lock(fd):
     return 0
 
 
+def deployed_unit_dirs(activation, current, scope, user):
+    """Where the running generation defines a unit of this scope, in the
+    order the manager would find it: NixOS's /etc trees, then the Home
+    Manager generation the system embeds; nix-darwin's Library trees, then
+    Home Manager's LaunchAgents; standalone Home Manager's own tree."""
+    dirs = []
+    if activation in ("nixos", "nixos-wsl"):
+        if scope == "system":
+            dirs.append(os.path.join(current, "etc", "systemd", "system"))
+        elif scope == "user":
+            dirs.append(os.path.join(current, "etc", "systemd", "user"))
+            generation, error = embedded_hm_generations(current).get(user, (None, None))
+            if error:
+                raise Unreadable(error)
+            if generation:
+                dirs.append(hm_units_dir(generation))
+    elif activation == "home-manager":
+        if scope == "user":
+            dirs.append(hm_units_dir(current))
+    elif scope == "launchd":
+        dirs.append(os.path.join(current, "Library", "LaunchDaemons"))
+        dirs.append(os.path.join(current, "Library", "LaunchAgents"))
+        dirs.append(os.path.join(current, "user", "Library", "LaunchAgents"))
+        generation, error = darwin_hm_generations(current).get(user, (None, None))
+        if error:
+            raise Unreadable(error)
+        if generation:
+            dirs.append(os.path.join(generation, "LaunchAgents"))
+    return dirs
+
+
+def owner_claim_at(scope, service, path):
+    """The X-Atyrode-SessionOwner claim of one definition file."""
+    if scope == "launchd":
+        return plist_owner(read_bytes(path), path)
+    return owner_property(load_unit(os.path.dirname(path), os.path.basename(path)))
+
+
+def analyze_mutation(report, activation, current, scope, service, action, user, live):
+    """An explicit stop or restart of one unit, outside any generation switch.
+    Protection is read from the definition the running generation deploys
+    and, when the caller names it, from the file the manager actually
+    loaded; the two must agree, because a manager running one definition
+    while the generation says another is a role transition in progress, and
+    the unit under it is not one whose owner role anyone can vouch for."""
+    filename = service if scope != "launchd" else service + ".plist"
+    deployed = None
+    for directory in deployed_unit_dirs(activation, current, scope, user):
+        candidate = os.path.join(directory, filename)
+        if is_file(candidate) or (scope != "launchd" and is_dir(candidate + ".d")):
+            deployed = candidate
+            break
+    if deployed is None:
+        raise Unreadable(f"{current} deploys no {scope} unit {service}")
+    claims = [owner_claim_at(scope, service, deployed)]
+    if live:
+        if not is_file(live):
+            raise Unreadable(f"{live}: the manager's copy of {service} is not a readable file")
+        claims.append(owner_claim_at(scope, service, live))
+        if claims[0] != claims[1]:
+            raise Unreadable(
+                f"{deployed} and {live} disagree about {OWNER_PROPERTY}: a role transition is in progress"
+            )
+    protected = report.protected(scope, service, claims)
+    reason = f"explicit {action} requested outside any activation"
+    if protected:
+        reason += f"; the deployed definition holds the session-owner role"
+    else:
+        reason += f"; the deployed definition declares it is not a session owner"
+    report.settle(scope, service, action, protected, reason, user, False)
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="atyrode-disruption", description=__doc__.splitlines()[0])
     parser.add_argument("--host")
@@ -888,18 +1129,39 @@ def main(argv):
     parser.add_argument("--scope", action="append", type=parse_scope, default=None)
     parser.add_argument("--policy", default="@service_protection@")
     parser.add_argument("--hold-lock-fd", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--runtime", action="store_true", help="ask the native manager whether a protected unit the engine would touch is loaded at all")
+    parser.add_argument("--systemctl", default="systemctl")
+    parser.add_argument("--launchctl", default="/bin/launchctl")
+    parser.add_argument("--mutate", choices=("stop", "restart"), default=None, help="judge an explicit stop or restart of --service against the running generation instead of a switch")
+    parser.add_argument("--service", type=parse_scope, default=None, help="scope:service the explicit mutation targets")
+    parser.add_argument("--live", default=None, help="the unit file or plist the manager loaded, checked against the deployed one")
     args = parser.parse_args(argv)
 
     if args.hold_lock_fd is not None:
         return hold_lock(args.hold_lock_fd)
+    if args.mutate:
+        if not args.service:
+            parser.error("--mutate requires --service scope:service")
+        args.candidate = args.current
     for required in ("host", "activation", "candidate"):
         if not getattr(args, required):
             parser.error(f"--{required} is required")
 
     policy = load_policy(args.policy)
-    report = Report(args.host, policy, args.scope)
+    runtime = None
+    if args.runtime:
+        runtime = Runtime(args.systemctl, args.launchctl)
+    report = Report(args.host, policy, args.scope, runtime)
     report.current = resolve(args.current, "current")
     report.candidate = resolve(args.candidate, "candidate")
+    if args.mutate:
+        scope, service = args.service
+        try:
+            analyze_mutation(report, args.activation, report.current, scope, service, args.mutate, args.user, args.live)
+        except Unreadable as error:
+            report.unknown(scope, service, str(error), args.user)
+        print(json.dumps(finish(report)))
+        return 0
     if report.current and report.current == report.candidate:
         # Nothing to switch: the engines compare a generation to itself and
         # touch nothing, so the report is empty and safe.

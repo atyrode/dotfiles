@@ -20,6 +20,10 @@ let
       asset = "manifold-agent-linux-x64";
       hash = "sha256-lVM5yIpIB+F3SwJ7vc6xh7upF7Q/6koKguqhvfDfbgk=";
     };
+    "aarch64-darwin" = {
+      asset = "manifold-agent-darwin-arm64";
+      hash = "sha256-wFShk0kOHntyT7XHWQK4sGA0IIuy8R14GarNG801yFI=";
+    };
   };
   source =
     sources.${stdenv.hostPlatform.system}
@@ -38,21 +42,19 @@ stdenv.mkDerivation {
   dontPatchELF = true;
   dontStrip = true;
 
-  nativeBuildInputs = [
-    makeWrapper
-    patchelf
-  ];
+  nativeBuildInputs = [ makeWrapper ] ++ lib.optionals stdenv.hostPlatform.isLinux [ patchelf ];
 
   installPhase = ''
     runHook preInstall
 
-    # Like omp, a Bun single-file executable: patch PT_INTERP in place so the
-    # binary runs as itself (--set-interpreter rewrites one page and leaves
-    # the appended Bun payload intact). The wrapper bakes the pinned tag as
-    # the default build provenance, mirroring the upstream flake wrapper, so
-    # the agent's `starting` log line names what is deployed.
+    # Bun single-file executables carry their runtime payload after the native
+    # image. Linux needs only its PT_INTERP page rewritten; the Darwin asset is
+    # copied byte-for-byte so its Mach-O signature and appended payload remain
+    # intact.
     install -Dm755 "$src" "$out/libexec/manifold-agent"
-    patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} "$out/libexec/manifold-agent"
+    ${lib.optionalString stdenv.hostPlatform.isLinux ''
+      patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} "$out/libexec/manifold-agent"
+    ''}
     makeWrapper "$out/libexec/manifold-agent" "$out/bin/manifold-agent" \
       --set-default MANIFOLD_BUILD "v${version}"
 

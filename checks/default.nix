@@ -275,6 +275,17 @@ let
     babel-archive = import ./atyrode/babel-archive.nix { inherit lib pkgs; };
   }
   // {
+    manifold-node = import ./atyrode/manifold-node.nix {
+      inherit
+        hosts
+        lib
+        pkgs
+        system
+        ;
+      serverConfig = if isLinux then serverHomeConfig.config else null;
+      nixosConfigs = canonicalNixosConfigs;
+      darwinConfigs = canonicalDarwinConfigs;
+    };
     atyrode-apply = import ./atyrode/atyrode-apply.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
@@ -382,16 +393,6 @@ let
     # The resource guard evaluates the Linux module branch (earlyoom is a
     # Linux-only package), so it exists on Linux systems only.
     resource-guard = import ./atyrode/agent-resource-guard.nix { inherit lib pkgs; };
-    manifold-node = import ./atyrode/manifold-node.nix {
-      inherit
-        hosts
-        lib
-        pkgs
-        system
-        ;
-      serverConfig = serverHomeConfig.config;
-      nixosConfigs = canonicalNixosConfigs;
-    };
     portable-profile-contract = import ./fleet/portable-profile-contract.nix {
       inherit lib mkPortableHomeConfiguration pkgs;
       profileName = "development-${system}";

@@ -64,7 +64,10 @@
       deliveryBoundary = "Home Manager installs the pinned agent and its user service; enrollment and the machine token stay machine-local through atyrode runtime";
       mutableState = "The 0600 machine token and agent runtime state remain in the user home, outside the Nix store";
       securityBoundary = "The owner key lives only in the operator vault and is read once during interactive provisioning; no token or key is evaluated, logged, or committed";
-      platforms = [ "linux" ];
+      platforms = [
+        "darwin"
+        "linux"
+      ];
     };
     mobile = {
       title = "Mobile";

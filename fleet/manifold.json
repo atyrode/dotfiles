@@ -4,9 +4,12 @@
   "masterUrl": "https://manifold.tyrode.dev",
   "vaultItemName": "manifold owner key",
   "supportedSystems": [
+    "aarch64-darwin",
     "x86_64-linux"
   ],
   "spokes": [
-    "dev-01"
+    "dev-01",
+    "macbook",
+    "wsl"
   ]
 }

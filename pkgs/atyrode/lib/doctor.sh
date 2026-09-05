@@ -1369,16 +1369,53 @@ probe_local_qwen() {
 }
 
 probe_manifold_agent() {
-  if ! manifold_applicable; then
+  local status phase reason
+  status="$(manifold_status_json)"
+  phase="$(jq -r '.phase' <<<"$status")"
+  reason="$(jq -r '.reason // empty' <<<"$status")"
+  if [[ "$(jq -r '.applicable' <<<"$status")" != true ]]; then
     provisioning_check_add manifold-agent not-applicable capability-not-selected \
-      "requires a Linux host with the manifold-node capability installed" ""
-  elif manifold_enrolled; then
-    provisioning_check_add manifold-agent ok "" \
-      "this machine is enrolled with the manifold hub" ""
-  else
-    provisioning_unconfigured manifold-agent \
-      "the agent is installed but this machine is not enrolled with any hub"
+      "$reason" ""
+    return 0
   fi
+  case "$phase" in
+    available)
+      provisioning_unconfigured manifold-agent \
+        "the agent is installed but this machine is not enrolled with any hub"
+      ;;
+    enrolled)
+      # Enrollment already records opt-in. Starting its inactive service needs
+      # no vault session, but keeps the same declined-offer semantics as the
+      # initial ceremony and the same converging command.
+      if provisioning_declined manifold-agent; then
+        provisioning_check_add manifold-agent declined declined-by-operator \
+          "this machine is enrolled, but its managed agent is inactive" \
+          "reconsider by running the command; that clears the decline"
+      else
+        provisioning_check_add manifold-agent incomplete inactive \
+          "this machine is enrolled, but its managed agent is inactive" ""
+      fi
+      ;;
+    rejected)
+      provisioning_check_add manifold-agent degraded connection-rejected \
+        "the managed agent's latest connection was rejected by the Manifold hub" \
+        "atyrode runtime status manifold-agent (inspect the agent log; a protocol mismatch is not repaired by rotating a token)"
+      ;;
+    running)
+      provisioning_check_add manifold-agent degraded connection-unconfirmed \
+        "the managed agent is running, but no successful Manifold welcome has been observed" \
+        "inspect with: atyrode runtime status manifold-agent"
+      ;;
+    connected)
+      provisioning_check_add manifold-agent ok "" \
+        "the managed agent is running and connected to the Manifold hub" ""
+      ;;
+    *)
+      provisioning_check_add manifold-agent degraded state-unknown \
+        "the managed agent reported an unknown state: $phase" \
+        "inspect with: atyrode runtime status manifold-agent"
+      ;;
+  esac
 }
 
 # Never fails: an unconfigured optional surface is a to-do, not a fault, and a

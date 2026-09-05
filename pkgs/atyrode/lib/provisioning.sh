@@ -484,7 +484,7 @@ provisioning_run() { # id host
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
     local-qwen) "$atyrode_runtime" provision local-qwen ;;
-    manifold-agent) cmd_runtime_manifold provision ;;
+    manifold-agent) run_self_visible runtime provision manifold-agent ;;
     *) die "$EX_SOFTWARE" "no provisioning ceremony is wired for $1" ;;
   esac
 }

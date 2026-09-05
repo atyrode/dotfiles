@@ -14,11 +14,11 @@
 }:
 
 let
-  version = "0.4.4";
+  version = "0.6.2";
   sources = {
     "x86_64-linux" = {
       asset = "manifold-agent-linux-x64";
-      hash = "sha256-+2DYjECdK1b6AEkAOkaHLfq7UHnW2Ly73Seyq4CZvK0=";
+      hash = "sha256-lVM5yIpIB+F3SwJ7vc6xh7upF7Q/6koKguqhvfDfbgk=";
     };
   };
   source =

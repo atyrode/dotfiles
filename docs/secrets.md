@@ -129,6 +129,12 @@ where it is missing.
 Neither verb ever reads past the `# public key:` comment the generator
 writes: the identity line is never printed.
 
+The CLI passes its operator identity path to SOPS explicitly. It does not
+depend on a fresh login importing Home Manager's `SOPS_AGE_KEY_FILE` session
+variable: macOS otherwise searches a different default directory. Registration
+proves that ciphertext names this recipient, not that the local hardware can
+decrypt it; the actual decryption must succeed before activation begins.
+
 ## Enrolling a machine
 
 1. On any operator device, in a checkout: `clan vars generate <host>`. It
@@ -138,6 +144,10 @@ writes: the identity line is never printed.
    what `atyrode apply` offers; `atyrode doctor provisioning` reports the
    `machine-key` surface: not applicable on a portable profile,
    not yet in the repository, in the repository but not placed, or placed.
+   A visible key is detected without reading its contents or requiring a
+   cached sudo authorization. If its directory cannot be traversed and sudo
+   cannot inspect it, placement is reported as unknown, never as absent and
+   never as a reason to mint another key.
 2. Push, and on the machine `atyrode apply`: its first step places the key at
    `/var/lib/sops-nix/key.txt` -- decrypted into a mode-600 file in a
    mode-700 scratch directory, installed from there as root, both commands
@@ -145,8 +155,10 @@ writes: the identity line is never printed.
    follows decrypts the machine's vars. A machine reached over SSH gets the
    same from `clan machines update <host>`.
    If the local operator identity cannot decrypt that key, apply stops before
-   activation; an already registered operator device must instead run
-   `atyrode fleet apply <host>`.
+   activation. `atyrode operator show` diagnoses local registration. Remote
+   deployment is an alternative only for a host with a reviewed SSH target;
+   `macbook` currently has no such target, so `fleet apply macbook` is not a
+   recovery command. Its registered local identity must perform placement.
 
 ## Declaring a secret
 

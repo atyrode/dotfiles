@@ -60,13 +60,15 @@ atyrode apply-status JOB --json
 The default host comes from `ATYRODE_HOST`, then the managed host identity file,
 then an unambiguous user/system/hostname match.
 
-Without `--repo`, apply activates the published flake. It resolves the
-requested ref (default `main`) to an exact commit with `git ls-remote`, then
-activates the pinned `github:atyrode/dotfiles/<commit>`. No local checkout is
-involved, so the command behaves identically from any directory on any
-machine, and pinning the resolved commit bypasses the flake tarball cache: an
-apply immediately after a merge activates that merge. `--ref` selects a
-branch, tag, or full commit instead of `main`:
+Without `--repo`, apply resolves the requested ref (default `main`) to an exact
+commit with `git ls-remote`. A published CLI whose revision differs first
+builds and invokes that commit's `atyrode`, before host resolution or job
+submission. The target revision owns bootstrap, activation and all follow-up
+probes; the replaced CLI never interprets the new generation.
+
+No local checkout is involved. Pinning the resolved commit bypasses the flake
+tarball cache, so an apply immediately after a merge selects that merge.
+`--ref` selects a branch, tag, or full commit instead of `main`:
 
 ```sh
 atyrode apply --ref feature-branch --plan
@@ -84,6 +86,13 @@ Before calling `nh`, the CLI validates the host, user, system, backend, and
 revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
 path. A successful real activation records the canonical host atomically;
 failures and dry runs do not update state.
+
+Activation success and apply completion are distinct. A failed requested
+provisioning ceremony, login-shell convergence, timer start, or context render
+produces a nonzero exit and an incomplete apply verdict, including in the
+supervised job result. Optional surfaces left unconfigured are listed as
+outstanding rather than labelled a complete apply; explicitly declining an
+optional surface is not a failure.
 
 ### What the CLI shows while it runs
 
@@ -112,6 +121,12 @@ ceremony and the interactive seed dialogue, every Bitwarden call that logs in,
 unlocks, syncs or writes an item, `nix-store --gc` and `nh clean`, every
 rollback that re-runs activation, the Clan deployment that activates a remote
 host, and the `curl` that enrolls this machine with a fleet master.
+
+Command narration is on by default, including captured preview builds, source
+prefetches, bootstrap archive extraction, and provisioning's key installation
+and agent loading. It goes to stderr, leaving structured stdout usable with
+`--json` and `--preview-json`. This is an action transcript, not shell tracing:
+`set -x` would expose secret-bearing expansions and is not a verbosity mode.
 
 Read-only probing stays silent: printing every `command -v` and `bw status`
 would bury the handful of commands that act. So does the shell's own

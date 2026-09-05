@@ -186,7 +186,7 @@ provisioning_unconfigured() { # id summary
 # A placed key is conclusive machine state even when the conventional checkout
 # is stale; otherwise the repository says whether minting or placement is owed.
 probe_machine_key() {
-  local host data
+  local host data key_status=0
   host="$(resolve_host)"
   data="$(host_json "$host")"
   if [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == runtime ]]; then
@@ -194,11 +194,19 @@ probe_machine_key() {
       "portable profiles are not fleet members and read no secret" ""
     return 0
   fi
-  if machine_key_placed; then
-    provisioning_check_add machine-key ok "" \
-      "machine key placed; secrets are decrypted at activation" ""
-    return 0
-  fi
+  machine_key_placed || key_status=$?
+  case "$key_status" in
+    0)
+      provisioning_check_add machine-key ok "" \
+        "machine key placed; secrets are decrypted at activation" ""
+      return 0
+      ;;
+    2)
+      provisioning_check_add machine-key degraded inspection-unavailable \
+        "cannot inspect $(machine_key_file); sudo authorization is unavailable, so placement is unknown" ""
+      return 0
+      ;;
+  esac
   if [[ ! -e "$(machine_key_repository_file "$host")" ]]; then
     provisioning_unconfigured machine-key \
       "no machine key in the repository; on any operator device run: clan vars generate $host"
@@ -317,10 +325,10 @@ vault_login_child() {
 #               to offer, only a fix to name
 #   declined    say nothing; they already answered
 #
-# Always non-fatal. A machine that declines every surface is still a machine
-# that activated successfully, and apply must not imply otherwise.
+# Declining an optional surface is not an activation failure. Accepting a
+# ceremony that then fails is an incomplete apply, and must reach its caller.
 review_provisioning() { # json host
-  local json="$1" host="$2" count index status acted=0 tally leftovers
+  local json="$1" host="$2" count index status acted=0 tally leftovers review_status=0
 
   collect_provisioning_checks
   count="$(jq -r 'length' <<<"$provisioning_checks")"
@@ -330,11 +338,11 @@ review_provisioning() { # json host
     status="$(jq -r ".[$index].status" <<<"$provisioning_checks")"
     case "$status" in
       degraded)
-        review_degraded_surface "$json" "$index"
+        review_degraded_surface "$json" "$index" || review_status="$EX_UNAVAILABLE"
         acted=1
         ;;
       incomplete)
-        review_incomplete_surface "$index" "$host"
+        review_incomplete_surface "$index" "$host" || review_status="$EX_UNAVAILABLE"
         acted=1
         ;;
     esac
@@ -354,8 +362,15 @@ review_provisioning() { # json host
   leftovers="$(jq -r '
     map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
   ' <<<"$provisioning_checks")"
-  step_ok "$tally${leftovers:+ -- still to configure: $leftovers}"
-  return 0
+  provisioning_leftovers="$leftovers"
+  if [[ "$review_status" != 0 ]]; then
+    step_fail "$tally${leftovers:+ -- still to configure: $leftovers}"
+  elif [[ -n "$leftovers" ]]; then
+    step_skip "$tally -- still to configure: $leftovers"
+  else
+    step_ok "$tally"
+  fi
+  return "$review_status"
 }
 
 review_degraded_surface() { # json index
@@ -373,8 +388,8 @@ review_degraded_surface() { # json index
   # this terminal is an interactive dialogue from another program, and an
   # operator should never be prompted by something they did not see start.
   if [[ "$id" == omp-seed && "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 ]] && interactive; then
-    run_visible atyrode-omp-seed resolve || true
-    return 0
+    run_visible atyrode-omp-seed resolve
+    return $?
   fi
   [[ -z "$remediation" ]] || printf '  fix with: %s\n' "$remediation" >&2
 }
@@ -428,7 +443,7 @@ review_incomplete_surface() { # index host
     if ! prerequisite_run "$requirement"; then
       printf '  that did not complete; %s stays unconfigured.\n' "$label" >&2
       printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
-      return 0
+      return "$EX_UNAVAILABLE"
     fi
   done
   # The prompt names the machine, not just the command: these ceremonies write
@@ -451,7 +466,7 @@ review_incomplete_surface() { # index host
   if ! provisioning_run "$id" "$2"; then
     printf '  that did not complete; %s is still unconfigured.\n' "$label" >&2
     printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
-    return 0
+    return "$EX_UNAVAILABLE"
   fi
   provisioning_clear_decline "$id"
 }
@@ -488,8 +503,7 @@ provision_machine_key() {
   if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
     die "$EX_UNAVAILABLE" "this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate $host"
   fi
-  checkout="$(machine_key_secrets_directory "")"
-  checkout="${checkout%/sops/secrets}"
+  checkout="$HOME/nix-dotfiles"
   [[ -d "$checkout/.git" ]] ||
     die "$EX_UNAVAILABLE" "no repository checkout at ~/nix-dotfiles to mint the key into"
   clan="$(clan_program)"
@@ -508,28 +522,30 @@ provision_machine_key() {
 # leaves the timer inactive until something starts it -- and without this,
 # that something would be the next login. Starting a running timer is a
 # no-op, so this is safe to repeat. A host with no systemd (macOS runs the
-# same wrapper from launchd, which needs no arming) has nothing to do here,
-# and a failure to arm is reported rather than fatal: the archive is
-# configured either way, and the operator is given the one command that fixes
-# it.
+# same wrapper from launchd) has nothing to arm.
 archive_arm_timer() {
   local systemctl
   local -a arm
   systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" || return 0
   arm=("$systemctl" --user start babel-archive.timer)
-  # Announced, then silenced: the argv is what an operator repeats, while
-  # systemd's own failure text is replaced below by the line that names the fix.
+  # Keep the service's real error alongside the command that retries arming.
   show_command "${arm[@]}"
-  "${arm[@]}" >/dev/null 2>&1 ||
+  if ! "${arm[@]}"; then
     printf 'could not arm the hourly archive timer; arm it with: systemctl --user start babel-archive.timer\n' >&2
+    return "$EX_UNAVAILABLE"
+  fi
 }
 
 # The apply step around it: nothing to arm on a machine whose document is not
 # placed yet, and that machine is told which device owes the generation.
 archive_converge_timer() { # host
   if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json" ]]; then
-    archive_arm_timer
-    step_ok
+    if archive_arm_timer; then
+      step_ok
+    else
+      step_fail 'the hourly archive timer was not armed'
+      return "$EX_UNAVAILABLE"
+    fi
   else
     step_skip "no storage document placed yet (clan vars generate $1 on an operator device, then apply)"
   fi
@@ -578,13 +594,14 @@ provision_git_role() { # role private_path item_name persist yes scratch
         die "$EX_DATAERR" "the local $role key and Secure Note '$item_name' are different keys; resolve that conflict manually before provisioning"
       printf 'atyrode: %s key matches the vault\n' "$role" >&2
     else
-      install -m 644 "$material.pub" "$public_path"
+      run_visible install -m 644 "$material.pub" "$public_path"
       if [[ "$persist" == 1 ]]; then
-        install -m 600 "$material" "$private_path"
+        run_visible install -m 600 "$material" "$private_path"
         printf 'atyrode: installed the vault-backed %s key at %s\n' "$role" "$private_path" >&2
       fi
     fi
     if ! provision_git_agent_loaded "$public_path"; then
+      show_command "$provision_ssh_add" "$material"
       "$provision_ssh_add" "$material" 2>/dev/null ||
         die "$EX_UNAVAILABLE" "could not load the $role key into the ssh-agent"
       printf 'atyrode: loaded the %s key into the agent\n' "$role" >&2
@@ -600,6 +617,7 @@ provision_git_role() { # role private_path item_name persist yes scratch
       printf 'atyrode: left the %s key device-local (no vault recovery)\n' "$role" >&2
     fi
     if ! provision_git_agent_loaded "$public_path"; then
+      show_command "$provision_ssh_add" "$private_path"
       "$provision_ssh_add" "$private_path" 2>/dev/null ||
         printf 'atyrode: warning: could not load the %s key into the ssh-agent\n' "$role" >&2
     fi
@@ -616,10 +634,11 @@ provision_git_role() { # role private_path item_name persist yes scratch
   run_visible "$provision_ssh_keygen" -t ed25519 -N "" \
     -C "$(actual_user)@$(manifold_machine_name) git-$role" -f "$material" -q
   vault_store_note "$item_name" "$material" "$scratch"
-  install -m 644 "$material.pub" "$public_path"
+  run_visible install -m 644 "$material.pub" "$public_path"
   if [[ "$persist" == 1 ]]; then
-    install -m 600 "$material" "$private_path"
+    run_visible install -m 600 "$material" "$private_path"
   fi
+  show_command "$provision_ssh_add" "$material"
   "$provision_ssh_add" "$material" 2>/dev/null ||
     die "$EX_UNAVAILABLE" "could not load the new $role key into the ssh-agent"
   local gh_cli register=(ssh-key add "$public_path" --title "$(manifold_machine_name) git-$role")
@@ -690,7 +709,7 @@ cmd_provision() {
   }
   trap provision_cleanup EXIT HUP INT TERM
   vault_open_session 0
-  bw_cli sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
+  bw_visible sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
 
   provision_git_role auth "$ssh_home/id_ed25519" \
     "Git SSH auth key ($host)" "$persist" "$yes" "$scratch"

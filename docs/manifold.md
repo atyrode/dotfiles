@@ -174,7 +174,8 @@ connectivity only; it cannot turn unexpected terminal loss into success.
 `dev-01` is a spoke of the master like every machine here, and it also hosts
 everything one iterates on, under one wildcard.
 [`modules/nixos/manifold-dev-hub.nix`](../modules/nixos/manifold-dev-hub.nix)
-fronts two names with Caddy, and is why the VPS opens 80 and 443 beside SSH:
+fronts two names with Caddy, sharing the VPS's ports 80 and 443 with the
+[parcel development edge](hosts.md#current-capabilities):
 
 - `preview.manifold.tyrode.dev` — the integrated instance: every green `main`
   of atyrode/manifold, on the compose stack the operator runs from

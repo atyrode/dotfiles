@@ -19,12 +19,12 @@
 # wildcard never issues eagerly -- with a managed policy, `preview.` answered
 # every handshake with `internal error` (dev-01, 2026-09-05).
 #
-# Ports 80 and 443 are the VPS's reviewed exposure beyond SSH, and exist for
-# these vhosts alone: `modules/nixos/vps.nix` opens exactly the set this
-# module names. The stacks themselves (images, data volumes, restarts) are
-# not declared here: they are the operator's checkouts, started by the
-# receiver the deploy key runs (`modules/home/ssh/deploy-keys`), and a vhost
-# whose upstream is down answers 502, which is the state "not running" should
+# Ports 80 and 443 are the VPS's reviewed exposure beyond SSH, shared with
+# myparcelle-dev.nix: modules/nixos/vps.nix opens exactly that set.
+# The stacks themselves (images, data volumes, restarts) are not declared
+# here: they are the operator's checkouts, started by the receiver the deploy
+# key runs (`modules/home/ssh/deploy-keys`), and a vhost whose upstream is down
+# answers 502, which is the state "not running" should
 # have -- never a fallback to some other hub.
 _: {
   services.caddy = {

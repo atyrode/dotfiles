@@ -263,6 +263,7 @@ let
         ../modules/nixos/vps.nix
         ../modules/nixos/cloudflare-dns.nix
         ../modules/nixos/manifold-dev-hub.nix
+        ../modules/nixos/myparcelle-dev.nix
       ]
       ++ clanMachineModules;
       # The registry the packages overlay reads is this flake's own, so the

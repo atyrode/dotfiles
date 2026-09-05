@@ -8,12 +8,16 @@
 # (Clever Cloud, atyrode/manifold ADR 0022); this machine hosts only what
 # one iterates on, and is a spoke of the stable one like every other.
 #
-# Certificates for the wildcard are issued ON DEMAND, per hostname, on first
+# Certificates for BOTH vhosts are issued ON DEMAND, per hostname, on first
 # request, and only for hostnames the router vouches for (`/__preview/ask`
-# answers 200 for a registered preview and 404 otherwise), so a stray name
-# under the wildcard never costs a certificate. A DNS-validated wildcard
-# certificate would need a DNS plugin and the zone token in Caddy's hands;
-# on-demand issuance needs neither.
+# answers 200 for `preview.` and every registered preview, 404 otherwise), so
+# a stray name under the wildcard never costs a certificate. A DNS-validated
+# wildcard certificate would need a DNS plugin and the zone token in Caddy's
+# hands; on-demand issuance needs neither. `preview.` cannot be a managed
+# name: Caddy 2.10+ treats a name covered by a wildcard site block as served
+# by the wildcard's certificate and skips its own issuance, and an on-demand
+# wildcard never issues eagerly -- with a managed policy, `preview.` answered
+# every handshake with `internal error` (dev-01, 2026-09-05).
 #
 # Ports 80 and 443 are the VPS's reviewed exposure beyond SSH, and exist for
 # these vhosts alone: `modules/nixos/vps.nix` opens exactly the set this
@@ -31,6 +35,10 @@ _: {
       }
     '';
     virtualHosts."preview.manifold.tyrode.dev".extraConfig = ''
+      tls {
+        on_demand
+      }
+
       encode zstd gzip
 
       header {

@@ -38,6 +38,27 @@ def omp_models():
     return idx
 
 
+def sibling_prices(idx):
+    """Priced rows by bare model id (reseller prefix stripped), highest wins.
+
+    omp's model table lags a launch unevenly: the provider's own row (the one
+    POOL_PROVIDER reads) can list a new model at $0 while openrouter's
+    `openai/<id>` row carries the price. This is the fill for such a row -
+    the same rule as `code generate init` - so a refresh never writes $0 back
+    and tips the ladder. Highest wins where resellers disagree: a reseller
+    discounts, it does not mark up.
+    """
+    out = {}
+    for m in idx.values():
+        cost = m.get("cost") or {}
+        if not cost.get("input"):
+            continue
+        bare = m["id"].rsplit("/", 1)[-1].lower()
+        if bare not in out or cost["input"] > out[bare][0]:
+            out[bare] = (cost["input"], cost["output"])
+    return out
+
+
 def bench_from(models_data):
     """Index a bench --json payload by selector, keeping only successful runs.
 
@@ -89,21 +110,23 @@ def main():
     models = doc["models"]
 
     mi = omp_models()
+    siblings = sibling_prices(mi)
     for key, m in models.items():
         prov = POOL_PROVIDER[m["pool"]]
         om4 = mi.get((prov, m["id"]))
         if not om4:
             print(f"warn: {key} ({prov}/{m['id']}) not found in `omp models`", file=sys.stderr)
             continue
-        # omp's model table lags a launch by a release or two, and a model it
-        # has not priced yet lists at $0. That is an absence, not a price: a
-        # $0 flagship would sort to the bottom of its pool's ladder. Keep the
-        # curated figure and say so, the same way `code generate init` does.
-        if om4["cost"]["input"] > 0 or om4["cost"]["output"] > 0:
-            m["cost_in"] = om4["cost"]["input"]
-            m["cost_out"] = om4["cost"]["output"]
+        # A $0 row is an absence, not a price - a $0 flagship would sort to
+        # the bottom of its pool's ladder. Fill it from the same model's priced
+        # row under another provider; failing that, keep the curated figure.
+        cost = (om4["cost"]["input"], om4["cost"]["output"])
+        if cost[0] <= 0:
+            cost = siblings.get(m["id"].lower(), (0, 0))
+        if cost[0] > 0:
+            m["cost_in"], m["cost_out"] = cost
         else:
-            print(f"warn: {key} ({prov}/{m['id']}) is unpriced in `omp models`; keeping cost_in/cost_out", file=sys.stderr)
+            print(f"warn: {key} ({prov}/{m['id']}) is unpriced under every provider in `omp models`; keeping cost_in/cost_out", file=sys.stderr)
         m["context"] = om4["contextWindow"]
         th = om4.get("thinking") or []
         if th:

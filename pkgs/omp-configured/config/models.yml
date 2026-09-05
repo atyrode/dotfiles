@@ -73,9 +73,9 @@ models:
     pool: O
     tier: 4
     bucket: codex-main
-    # cost is OpenAI's published rate: omp 18.1.10's model table still lists
-    # this model at $0, and the refresh script would write that back. Drop the
-    # note once omp prices it. speed/ttft from `code generate init --refresh`
+    # cost from omp's openrouter row (openai/gpt-6-astra): the openai-codex
+    # row still lists this model at $0, and the refresh script fills a $0 row
+    # from its priced sibling. speed/ttft from `code generate init --refresh`
     # on dev-01 (single run, omp 18.1.10).
     cost_in: 10
     cost_out: 50

@@ -1,0 +1,24 @@
+# Fleet deploy-key registry: public keys a machine accepts for exactly ONE
+# command and nothing else. The sibling `fleet-keys` grants a session; a line
+# here grants a forced command with no PTY, no port or agent forwarding and
+# no X11 (modules/nixos/vps.nix renders each row with those options into the
+# same root-owned /etc/ssh/authorized_keys.d/<user> file). Public material
+# only; the private half belongs to whatever automation holds it -- for the
+# manifold deploy row, a GitHub Actions repository-level credential on
+# atyrode/manifold -- so a workflow can trigger that one script on the host
+# and cannot open a shell.
+#
+# A key reaches a machine only through a reviewed commit here and a redeploy;
+# a line removed cannot connect. Rotate by replacing the KEY field and the
+# secret on the automation side in the same hour.
+#
+# One line per key, whitespace-separated, four fields:
+#
+#   NAME  HOST  KEYTYPE  BASE64-KEY  COMMAND
+#
+# NAME     stable identifier, written as the comment of the rendered line.
+# HOST     the fleet host id that accepts it; other hosts ignore the row.
+# COMMAND  absolute path of the forced command on that host. The caller's
+#          command text arrives as SSH_ORIGINAL_COMMAND; the script decides.
+
+manifold-deploy  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIINhtNvQ1OSskawGaz6rKvHFg3J95BF1ref1QwwupxXu  /home/alex/manifold-dev/infra/previews/receiver.sh

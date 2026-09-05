@@ -343,6 +343,9 @@ let
             else
               printf '   Mounted:                   Yes\n'
             fi
+            if [ "''${FAKE_DISKUTIL_LONG_OUTPUT:-0}" = 1 ]; then
+              printf '%2097152s\n' 'Additional native disk metadata'
+            fi
             rm -f "$table.next"
             exit 0
             ;;

@@ -7,6 +7,9 @@ mkScenario "darwin-volumes" ''
   # An fstab entry naming a volume that no longer resolves is dropped, and
   # the file it came from is archived first so the edit is reversible.
   darwin_fixture darwin-fstab-repair
+  # A field reader must drain native output, not turn a successful probe into
+  # SIGPIPE when diskutil continues writing after the selected field.
+  export FAKE_DISKUTIL_LONG_OUTPUT=1
   export PATH="$fresh_tools:$base_path"
   printf 'Nix Store\tdisk3s7\tLIVE-UUID\n' > "$FAKE_VOLUMES"
   printf 'UUID=DEAD-UUID /nix apfs rw,noauto,nobrowse,nosuid,noatime,owners\n' \
@@ -19,6 +22,7 @@ mkScenario "darwin-volumes" ''
   test ! -e "$etc/fstab"
   archive="$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'fstab.*' -print -quit)"
   grep -F 'UUID=DEAD-UUID /nix apfs' "$archive" >/dev/null
+  unset FAKE_DISKUTIL_LONG_OUTPUT
 
   # An orphaned Nix Store volume is renamed, never deleted: the installer
   # finds volumes by label, so a rename is enough to route it onto its

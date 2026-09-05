@@ -649,6 +649,8 @@ diskutil_command() {
 
 diskutil_field() {
   local device="$1" field="$2"
+  # Drain the native command: exiting after one field races its remaining
+  # writes, turning successful metadata into SIGPIPE under pipefail.
 
   "$(diskutil_command)" info "$device" 2>/dev/null |
     awk -F: -v want="$field" '
@@ -657,10 +659,10 @@ diskutil_field() {
         sub(/^[[:space:]]+/, "", key)
         sub(/[[:space:]]+$/, "", key)
       }
-      key == want {
+      key == want && !found {
         sub(/^[^:]*:[[:space:]]*/, "")
         print
-        exit
+        found = 1
       }
     '
 }

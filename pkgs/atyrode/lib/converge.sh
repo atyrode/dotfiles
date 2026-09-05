@@ -154,23 +154,35 @@ probe_convergence() {
     "atyrode apply"
 }
 
-# One muted line at the top of a login shell, and only when there is something
-# to say: a receipt that is not "current" or "converged". Read from the file
-# alone -- a prompt must never wait on the network -- so what it reports is the
-# last run's verdict, dated, not a live comparison.
+# The login shell's inbox, read from the receipt alone -- a prompt never waits
+# on the network, so this is the last run's verdict, dated. Two kinds of
+# message: news, shown once (an update landed overnight), and unfinished
+# business, shown on every new shell until the receipt changes (an update is
+# waiting on the operator, or the run failed). Nothing to say when the machine
+# was simply found current.
 converge_shell_notice() {
-  local receipt outcome at target reason remediation
+  local receipt seen outcome at target reason remediation
   receipt="$(converge_receipt_file)"
   [[ -f "$receipt" ]] || return 0
+  seen="${receipt%.json}.seen"
   outcome="$(jq -r '.outcome // empty' "$receipt" 2>/dev/null || true)"
-  case "$outcome" in
-    held | failed) ;;
-    *) return 0 ;;
-  esac
   at="$(jq -r '.at // empty' "$receipt" 2>/dev/null || true)"
   target="$(jq -r '.target // empty' "$receipt" 2>/dev/null || true)"
   reason="$(jq -r '.reason // empty' "$receipt" 2>/dev/null || true)"
   remediation="$(jq -r '.remediation // empty' "$receipt" 2>/dev/null || true)"
-  printf '%s\n' "$(muted "atyrode: the unattended apply at $at $outcome at ${target:0:12}: $reason")"
-  [[ -z "$remediation" ]] || printf '%s\n' "$(muted "  fix with: $remediation")"
+  case "$outcome" in
+    converged)
+      [[ "$(cat "$seen" 2>/dev/null || true)" != "$at" ]] || return 0
+      printf '%s\n' "$(muted "atyrode: updated to ${target:0:12} at $at while you were away")"
+      printf '%s\n' "$at" >"$seen" 2>/dev/null || true
+      ;;
+    held)
+      printf '%s\n' "$(muted "atyrode: an update to ${target:0:12} is waiting since $at: $reason")"
+      [[ -z "$remediation" ]] || printf '%s\n' "$(muted "  fix with: $remediation")"
+      ;;
+    failed)
+      printf '%s\n' "$(muted "atyrode: the update to ${target:0:12} failed at $at: $reason")"
+      [[ -z "$remediation" ]] || printf '%s\n' "$(muted "  fix with: $remediation")"
+      ;;
+  esac
 }

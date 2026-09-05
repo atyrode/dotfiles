@@ -37,15 +37,17 @@ in
         };
       };
 
-  # Daily, spread over an hour so three machines never build on the cache at
-  # the same minute, and Persistent so a machine that slept through its slot
-  # converges when it wakes rather than a day later. Push-on-green is the fast
-  # path; this is the floor beneath it.
+  # Every six hours, spread over half an hour so three machines never fetch
+  # from the cache at the same minute, and Persistent so a machine that slept
+  # through a slot converges when it wakes. Often enough that the shell knows
+  # the same day when an update is waiting; cheap when nothing changed, since
+  # a machine found current costs one ls-remote and no build. Push-on-green is
+  # the fast path; this is the floor beneath it.
   systemd.user.timers.atyrode-converge = lib.mkIf (fleetMember && pkgs.stdenv.hostPlatform.isLinux) {
-    Unit.Description = "Daily converge of this machine to the published main";
+    Unit.Description = "Converge of this machine to the published main, every six hours";
     Timer = {
-      OnCalendar = "*-*-* 04:00";
-      RandomizedDelaySec = "1h";
+      OnCalendar = "*-*-* 00/6:00";
+      RandomizedDelaySec = "30m";
       Persistent = true;
     };
     Install.WantedBy = [ "timers.target" ];
@@ -64,12 +66,18 @@ in
         managedHostId
         "--unattended"
       ];
-      StartCalendarInterval = [
-        {
-          Hour = 4;
-          Minute = 0;
-        }
-      ];
+      StartCalendarInterval =
+        map
+          (hour: {
+            Hour = hour;
+            Minute = 0;
+          })
+          [
+            0
+            6
+            12
+            18
+          ];
       ProcessType = "Background";
       EnvironmentVariables.PATH = lib.concatStringsSep ":" [
         "/etc/profiles/per-user/${config.home.username}/bin"

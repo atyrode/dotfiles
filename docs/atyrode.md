@@ -349,10 +349,12 @@ the disruption report is anything but safe. It takes no preview, restart or
 acknowledgement option and never reads a checkout. The receipt
 (`~/.local/state/atyrode/converge.json`: `current`, `converged`, `held` or
 `failed`, both revisions, the reason and its remedy) is what `doctor
-provisioning` reports under `convergence` and what the login shell prints one
-muted line from. The timers are declared in
-[`modules/home/atyrode`](../modules/home/atyrode/default.nix): a systemd user
-timer at 04:00 with `Persistent=`, a launchd calendar interval on macOS.
+provisioning` reports under `convergence` and what the login shell reads as
+its inbox: `converged` is news, said once; `held` and `failed` repeat on every
+new shell until the receipt changes; `current` says nothing. The timers are
+declared in [`modules/home/atyrode`](../modules/home/atyrode/default.nix): a
+systemd user timer every six hours with `Persistent=`, a launchd calendar
+interval on macOS.
 
 ## Deploying another machine
 

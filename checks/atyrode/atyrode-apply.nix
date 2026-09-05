@@ -1553,9 +1553,12 @@ pkgs.runCommand "check-atyrode-apply"
       | .status == "degraded" and .code == "held" and .remediation == "atyrode apply"
         and (.summary | contains("main is feedfacefeed") and contains("runs 111111111111"))
     ' >/dev/null
+    # A hold is unfinished business: every new shell repeats it until the
+    # receipt changes.
     ${launcherAtyrode}/bin/atyrode __converge-notice > "$TMPDIR/converge-notice.out"
-    grep -qF 'held at feedfacefeed' "$TMPDIR/converge-notice.out"
+    grep -qF 'an update to feedfacefeed is waiting' "$TMPDIR/converge-notice.out"
     grep -qF 'fix with: atyrode apply' "$TMPDIR/converge-notice.out"
+    grep -qF 'an update to feedfacefeed is waiting' <<<"$(${launcherAtyrode}/bin/atyrode __converge-notice)"
 
     # Nothing CI has not built: a dry build that would compile anything holds.
     printf 'these 3 derivations will be built:\n  /nix/store/fixture.drv\n' > "$TMPDIR/converge-dry-run"
@@ -1585,7 +1588,7 @@ pkgs.runCommand "check-atyrode-apply"
     test "$failed_status" = 69
     converge_outcome failed
     jq -e '.reason | contains("could not build the apply CLI")' "$receipt" >/dev/null
-    ${launcherAtyrode}/bin/atyrode __converge-notice | grep -qF 'failed at feedfacefeed'
+    grep -qF 'the update to feedfacefeed failed' <<<"$(${launcherAtyrode}/bin/atyrode __converge-notice)"
 
     # Every precondition met: the switch happens with nobody at the keyboard,
     # and main's CLI then reports the machine as current.
@@ -1599,6 +1602,9 @@ pkgs.runCommand "check-atyrode-apply"
     ${targetAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
       .surfaces[] | select(.id == "convergence") | .status == "ok"
     ' >/dev/null
+    # An update that landed is news: the first shell hears it, the next does
+    # not, and a machine found current has nothing to say.
+    grep -qF 'updated to feedfacefeed' <<<"$(${targetAtyrode}/bin/atyrode __converge-notice)"
     test -z "$(${targetAtyrode}/bin/atyrode __converge-notice)"
     rm -f "$TMPDIR/nh-activations" "$TMPDIR/converge-nix-args"
     _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ${targetAtyrode}/bin/atyrode apply wsl --unattended > "$TMPDIR/converge-current.out" 2>&1 \
@@ -1607,7 +1613,8 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'Nothing to converge for' "$TMPDIR/converge-current.out"
     test ! -e "$TMPDIR/nh-activations"
     test ! -e "$TMPDIR/converge-nix-args"
-    rm -f "$receipt" "$TMPDIR/bin/converge-nix" "$TMPDIR/converge-dry-run"
+    test -z "$(${targetAtyrode}/bin/atyrode __converge-notice)"
+    rm -f "$receipt" "''${receipt%.json}.seen" "$TMPDIR/bin/converge-nix" "$TMPDIR/converge-dry-run"
     unset -f converge converge_outcome
     # After the switch, the review names the host apply switched. The id
     # recorded under ~/.config is a Home Manager file that NixOS relinks from

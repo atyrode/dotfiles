@@ -355,9 +355,12 @@ manifold_provision() {
   response="$scratch/response.json"
   run_visible "$fetch" -fsSL --config "$scratch/curl.cfg" -X POST \
     -H 'content-type: application/json' -d "$payload" \
-    -o "$response" "$master_url/api/machines" ||
+    -o "$response" "$master_url/api/actions/core.machines.enroll" ||
     die "$EX_UNAVAILABLE" "could not enroll with the manifold master at $master_url"
-  token="$(jq -r '.machineToken // empty' "$response")"
+  jq -e '.ok == true and (.result | type == "object")' "$response" >/dev/null ||
+    die "$EX_UNAVAILABLE" "Manifold enrollment action was refused or returned an invalid response; no token was installed"
+  token="$(jq -er '.result.machineToken // "" | strings' "$response")" ||
+    die "$EX_DATAERR" "Manifold enrollment returned an invalid machine token"
   trap - EXIT HUP INT TERM
   manifold_provision_cleanup
   if [[ -z "$token" ]]; then

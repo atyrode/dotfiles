@@ -1,0 +1,922 @@
+#!@python3@
+"""Exact-generation service disruption analysis.
+
+One question, answered before anything is queued for a stop: switching this
+machine from the generation it runs now to a candidate closure already built
+-- which services does the maintained activation engine start, stop, restart,
+reload or retain, and is any of them one whose loss ends live sessions?
+
+The answer is computed from the two closures alone. No running service is
+sampled, no terminal is counted, nothing is executed from either tree: the
+report is a pure function of (host, current, candidate, policy), which is what
+lets `apply --expected-disruption` bind an operator's acknowledgement to the
+exact activation it was given for. The rules are transcriptions of the
+engines' own decisions, taken from their pinned sources:
+
+  NixOS system and NixOS-declared user units
+      switch-to-configuration-ng: units are compared section by section with
+      Description, Documentation, OnFailure, OnSuccess, OnFailureJobMode,
+      IgnoreOnIsolate, StopWhenUnneeded, RefuseManualStart, RefuseManualStop,
+      AllowIsolate, CollectMode and SourcePath ignored. A change confined to
+      X-Reload-Triggers, Service.ExecReload or Mount.Options reloads. Any other
+      change restarts a service unless Service.X-ReloadIfChanged (reload),
+      Service.X-RestartIfChanged=false, Unit.RefuseManualStop or
+      Unit.X-OnlyManualStart (the running instance is kept). A unit that
+      disappears is stopped unless Unit.X-StopOnRemoval=false. Sockets, paths,
+      slices and the fixed system targets are never restarted. Drop-ins under
+      <unit>.d/*.conf are folded into the unit before comparison.
+  Home Manager user units (standalone, or embedded in a NixOS or nix-darwin
+  generation through home-manager-<user>.service / the activation script)
+      sd-switch: units equal up to Description/Documentation are untouched;
+      equal up to X-Reload-Triggers reload; otherwise Unit.RefuseManualStart
+      stops, Unit.X-SwitchMethod (reload, restart, stop-start, keep-old) or
+      the legacy X-ReloadIfChanged/X-RestartIfChanged/X-StopIfChanged decide,
+      and the default is stop-start. RefuseManualStop turns a stop-start, a
+      stop or a removal into a retained running instance. Drop-ins are not
+      read by sd-switch and are not read here.
+  launchd (nix-darwin daemons and agents, Home Manager agents)
+      nix-darwin: a plist whose bytes differ from the deployed copy is
+      unloaded and loaded again; one that disappears is unloaded. Home
+      Manager: the same, keyed on file bytes and the LaunchAgentDomains entry.
+
+Static analysis cannot see which units are active, so it reports every unit
+the engine would act on if it were: an inactive unit counts as if running. It
+also cannot see a Home Manager generation the user activated by hand since the
+system generation was built; the embedded generation is the baseline. Both
+over-approximate towards refusal, never towards silence.
+
+Every effect names a unit and the action the engine takes. `protected` marks
+the units whose disruption is refused by default: those the fleet policy
+lists, unless both sides of the change declare X-Atyrode-SessionOwner=false,
+and any unit that declares X-Atyrode-SessionOwner=true on either side. A
+protected unit may be started (nothing is running yet) or retained (keep);
+anything else blocks. Anything the analysis cannot read, parse or locate is
+an `unknown` action, and unknown is a refusal, not a pass.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import plistlib
+import re
+import sys
+
+SCHEMA_VERSION = 1
+OWNER_PROPERTY = "X-Atyrode-SessionOwner"
+UNIT_SUFFIXES = (
+    ".service",
+    ".socket",
+    ".target",
+    ".timer",
+    ".mount",
+    ".automount",
+    ".path",
+    ".slice",
+    ".swap",
+    ".device",
+    ".scope",
+)
+STC_UNIT_IGNORES = {
+    "X-Reload-Triggers",
+    "Description",
+    "Documentation",
+    "OnFailure",
+    "OnSuccess",
+    "OnFailureJobMode",
+    "IgnoreOnIsolate",
+    "StopWhenUnneeded",
+    "RefuseManualStart",
+    "RefuseManualStop",
+    "AllowIsolate",
+    "CollectMode",
+    "SourcePath",
+}
+STC_NEVER_RESTARTED = {
+    "sysinit.target",
+    "basic.target",
+    "multi-user.target",
+    "graphical.target",
+}
+HM_GENERATION_SUFFIX = "-home-manager-generation"
+HM_UNITS_SUBDIR = os.path.join("home-files", ".config", "systemd", "user")
+
+
+class Unreadable(Exception):
+    """A path the analysis needed and could not use as intended."""
+
+
+# --- reading closures ------------------------------------------------------
+
+
+def read_text(path):
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError as error:
+        raise Unreadable(f"{path}: {error.strerror or error}") from error
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise Unreadable(f"{path}: not UTF-8 text") from error
+
+
+def read_bytes(path):
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError as error:
+        raise Unreadable(f"{path}: {error.strerror or error}") from error
+
+
+def list_dir(path):
+    try:
+        return sorted(os.listdir(path))
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise Unreadable(f"{path}: {error.strerror or error}") from error
+
+
+def is_dir(path):
+    try:
+        return os.path.isdir(path)
+    except OSError as error:
+        raise Unreadable(f"{path}: {error.strerror or error}") from error
+
+
+def is_file(path):
+    try:
+        return os.path.isfile(path)
+    except OSError as error:
+        raise Unreadable(f"{path}: {error.strerror or error}") from error
+
+
+def systemd_bool(value):
+    lowered = value.strip().lower()
+    if lowered in ("1", "yes", "true", "on"):
+        return True
+    if lowered in ("0", "no", "false", "off"):
+        return False
+    return None
+
+
+def parse_unit_text(text, origin):
+    """systemd's own INI: repeated keys accumulate, a trailing backslash
+    continues the line, and `#`/`;` open comments. Sections map key -> list."""
+    sections = {}
+    current = None
+    pending = ""
+    for raw in text.splitlines():
+        line = pending + raw
+        if line.endswith("\\"):
+            pending = line[:-1] + " "
+            continue
+        pending = ""
+        stripped = line.strip()
+        if not stripped or stripped[0] in "#;":
+            continue
+        if stripped.startswith("["):
+            if not stripped.endswith("]") or len(stripped) < 3:
+                raise Unreadable(f"{origin}: malformed section header {stripped!r}")
+            current = stripped[1:-1]
+            sections.setdefault(current, {})
+            continue
+        if current is None:
+            raise Unreadable(f"{origin}: assignment before any section: {stripped!r}")
+        if "=" not in stripped:
+            raise Unreadable(f"{origin}: malformed assignment {stripped!r}")
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise Unreadable(f"{origin}: empty key in {stripped!r}")
+        sections[current].setdefault(key, []).append(value.strip())
+    if pending:
+        raise Unreadable(f"{origin}: unterminated line continuation")
+    return sections
+
+
+def unit_value(unit, section, key):
+    values = unit.get(section, {}).get(key)
+    return values[-1] if values else None
+
+
+def unit_bool(unit, section, key, default):
+    value = unit_value(unit, section, key)
+    if value is None:
+        return default
+    parsed = systemd_bool(value)
+    if parsed is None:
+        raise Unreadable(f"{section}.{key} is not a boolean: {value!r}")
+    return parsed
+
+
+def load_unit(directory, name, dropins):
+    """The unit as the engine sees it. A missing base file with drop-ins is
+    how NixOS expresses some template instances; the drop-ins alone then
+    describe it, as they do for switch-to-configuration."""
+    base = os.path.join(directory, name)
+    merged = {}
+    origin = base
+    if is_file(base):
+        merged = parse_unit_text(read_text(base), base)
+    elif os.path.lexists(base):
+        raise Unreadable(f"{base}: not a regular file")
+    if dropins:
+        dropin_dir = base + ".d"
+        entries = list_dir(dropin_dir) if is_dir(dropin_dir) else None
+        for entry in entries or []:
+            if not entry.endswith(".conf"):
+                continue
+            path = os.path.join(dropin_dir, entry)
+            if not is_file(path):
+                raise Unreadable(f"{path}: not a regular file")
+            for section, keys in parse_unit_text(read_text(path), path).items():
+                target = merged.setdefault(section, {})
+                for key, values in keys.items():
+                    target.setdefault(key, []).extend(values)
+    if not merged and not is_file(base):
+        raise Unreadable(f"{origin}: no unit definition")
+    return merged
+
+
+def unit_names(directory, dropins):
+    """Every unit a directory defines: files with a unit suffix, plus (for
+    the drop-in aware engine) names that exist only as a `.d` directory."""
+    entries = list_dir(directory)
+    if entries is None:
+        return set()
+    names = set()
+    for entry in entries:
+        if entry.endswith(UNIT_SUFFIXES):
+            names.add(entry)
+        elif dropins and entry.endswith(".d") and entry[:-2].endswith(UNIT_SUFFIXES):
+            names.add(entry[:-2])
+    return names
+
+
+def wanted_units(directory):
+    """Units a `*.wants` or `*.requires` directory pulls in: the ones the
+    engine starts when they are new, because a target already wants them."""
+    entries = list_dir(directory)
+    wanted = set()
+    for entry in entries or []:
+        if not (entry.endswith(".wants") or entry.endswith(".requires")):
+            continue
+        members = list_dir(os.path.join(directory, entry))
+        for member in members or []:
+            wanted.add(member)
+    return wanted
+
+
+def owner_property(unit):
+    """None when the unit says nothing; otherwise its explicit claim."""
+    if unit is None:
+        return None
+    value = unit_value(unit, "Unit", OWNER_PROPERTY)
+    if value is None:
+        return None
+    parsed = systemd_bool(value)
+    if parsed is None:
+        raise Unreadable(f"Unit.{OWNER_PROPERTY} is not a boolean: {value!r}")
+    return parsed
+
+
+# --- comparison rules --------------------------------------------------------
+
+
+def stc_compare(old, new):
+    """switch-to-configuration-ng's compare_units: equal, reload or restart."""
+    verdict = "equal"
+    new_sections = set(new)
+    for section, old_keys in old.items():
+        if section not in new_sections:
+            if section == "Unit":
+                if any(key not in STC_UNIT_IGNORES for key in old_keys):
+                    return "restart"
+                continue
+            if section == "Service" and list(old_keys) == ["ExecReload"]:
+                continue
+            return "restart"
+        new_sections.discard(section)
+        new_keys = new[section]
+        remaining = set(new_keys)
+        for key, old_values in old_keys.items():
+            remaining.discard(key)
+            if key not in new_keys:
+                if section == "Unit" and key in STC_UNIT_IGNORES:
+                    continue
+                if section == "Service" and key == "ExecReload":
+                    continue
+                return "restart"
+            if old_values != new_keys[key]:
+                if section == "Unit":
+                    if key == "X-Reload-Triggers":
+                        verdict = "reload"
+                        continue
+                    if key in STC_UNIT_IGNORES:
+                        continue
+                if section == "Service" and key == "ExecReload":
+                    verdict = "reload"
+                    continue
+                if section == "Mount" and key == "Options":
+                    verdict = "reload"
+                    continue
+                return "restart"
+        if remaining:
+            if section == "Unit":
+                for key in remaining:
+                    if key == "X-Reload-Triggers":
+                        verdict = "reload"
+                    elif key not in STC_UNIT_IGNORES:
+                        return "restart"
+            elif section == "Service" and remaining == {"ExecReload"}:
+                verdict = "reload"
+            else:
+                return "restart"
+    for section in new_sections:
+        if section == "Unit":
+            if any(key not in STC_UNIT_IGNORES for key in new[section]):
+                return "restart"
+        elif section == "Service" and set(new[section]) == {"ExecReload"}:
+            verdict = "reload"
+        else:
+            return "restart"
+    return verdict
+
+
+def stc_modified_action(name, new):
+    """handle_modified_unit for a unit compare_units wants restarted."""
+    if name in STC_NEVER_RESTARTED or name.endswith((".path", ".slice")):
+        return None
+    if name.endswith(".mount"):
+        return "reload" if name in ("-.mount", "nix.mount") else "restart"
+    if name.endswith(".socket"):
+        return None
+    if unit_bool(new, "Service", "X-ReloadIfChanged", False):
+        return "reload"
+    if (
+        not unit_bool(new, "Service", "X-RestartIfChanged", True)
+        or unit_bool(new, "Unit", "RefuseManualStop", False)
+        or unit_bool(new, "Unit", "X-OnlyManualStart", False)
+    ):
+        return "keep"
+    return "restart"
+
+
+def stc_action(name, old, new, old_wanted, new_wanted):
+    if old is None and new is None:
+        return None
+    if new is None:
+        if name.endswith(".target"):
+            return None
+        return "stop" if unit_bool(old, "Unit", "X-StopOnRemoval", True) else "keep"
+    if old is None:
+        if name in new_wanted and not name.endswith(".target"):
+            return "start"
+        return None
+    if name.endswith(".target"):
+        return "stop" if unit_bool(new, "Unit", "X-StopOnReconfiguration", False) else None
+    verdict = stc_compare(old, new)
+    if verdict == "equal":
+        if name in new_wanted and name not in old_wanted:
+            return "start"
+        return None
+    if verdict == "reload":
+        return "reload"
+    return stc_modified_action(name, new)
+
+
+def sd_switch_eq(old, new, ignored):
+    def strip(unit):
+        return {
+            section: {key: values for key, values in keys.items() if (section, key) not in ignored}
+            for section, keys in unit.items()
+        }
+
+    return strip(old) == strip(new)
+
+
+SD_RESTART_IGNORES = {("Unit", "Description"), ("Unit", "Documentation")}
+SD_RELOAD_IGNORES = SD_RESTART_IGNORES | {("Unit", "X-Reload-Triggers")}
+
+
+def sd_switch_method(unit):
+    if unit_bool(unit, "Unit", "RefuseManualStart", False):
+        return "stop-only"
+    method = unit_value(unit, "Unit", "X-SwitchMethod")
+    if method is not None:
+        if method not in ("reload", "restart", "stop-start", "keep-old"):
+            raise Unreadable(f"Unit.X-SwitchMethod is not a known method: {method!r}")
+        return method
+    if unit_bool(unit, "Unit", "X-ReloadIfChanged", False):
+        return "reload"
+    if unit_value(unit, "Unit", "X-RestartIfChanged") is not None and not unit_bool(
+        unit, "Unit", "X-RestartIfChanged", True
+    ):
+        return "keep-old"
+    if unit_value(unit, "Unit", "X-StopIfChanged") is not None and not unit_bool(
+        unit, "Unit", "X-StopIfChanged", True
+    ):
+        return "restart"
+    return "stop-start"
+
+
+def sd_switch_action(name, old, new, old_wanted, new_wanted):
+    if old is None and new is None:
+        return None
+    refuses_stop = unit_bool(old if new is None else new, "Unit", "RefuseManualStop", False)
+    if new is None:
+        return "keep" if refuses_stop else "stop"
+    if old is None:
+        if name in new_wanted and sd_switch_method(new) != "stop-only":
+            return "start"
+        return None
+    if sd_switch_eq(old, new, SD_RESTART_IGNORES):
+        if name in new_wanted and name not in old_wanted:
+            return "start"
+        return None
+    if sd_switch_eq(old, new, SD_RELOAD_IGNORES):
+        return "reload"
+    if name.endswith(".target"):
+        return None
+    method = sd_switch_method(new)
+    if method == "reload":
+        return "reload"
+    if method == "restart":
+        return "restart"
+    if method == "keep-old":
+        return "keep"
+    if method == "stop-only":
+        return "keep" if refuses_stop else "stop"
+    return "keep" if refuses_stop else "restart"
+
+
+# --- effects -----------------------------------------------------------------
+
+
+class Report:
+    def __init__(self, host, policy, scopes):
+        self.host = host
+        self.policy = policy
+        self.scopes = scopes
+        self.effects = []
+        self.reasons = []
+        self.current = ""
+        self.candidate = ""
+
+    def listed(self, scope, service):
+        return any(
+            entry["scope"] == scope and entry["service"] == service
+            for entry in self.policy["protected"]
+        )
+
+    def protected(self, scope, service, owners):
+        """owners: the X-Atyrode-SessionOwner claims of the sides that exist."""
+        if any(owner is True for owner in owners):
+            return True
+        if self.listed(scope, service):
+            return not all(owner is False for owner in owners)
+        return False
+
+    def add(self, scope, service, action, protected, reason, user=None):
+        effect = {
+            "scope": scope,
+            "service": service,
+            "action": action,
+            "protected": protected,
+            "reason": reason,
+        }
+        if user is not None:
+            effect["user"] = user
+        self.effects.append(effect)
+
+    def unknown(self, scope, service, reason, user=None):
+        self.add(scope, service, "unknown", True, reason, user)
+
+    def compare_systemd(self, scope, old_dir, new_dir, engine, user=None):
+        dropins = engine == "stc"
+        decide = stc_action if dropins else sd_switch_action
+        try:
+            old_present = old_dir is not None and is_dir(old_dir)
+            new_present = is_dir(new_dir)
+            old_names = unit_names(old_dir, dropins) if old_present else set()
+            new_names = unit_names(new_dir, dropins) if new_present else set()
+            old_wanted = wanted_units(old_dir) if old_present else set()
+            new_wanted = wanted_units(new_dir) if new_present else set()
+        except Unreadable as error:
+            self.unknown(scope, "*", f"unit directory unreadable: {error}", user)
+            return
+        for name in sorted(old_names | new_names):
+            try:
+                old = load_unit(old_dir, name, dropins) if name in old_names else None
+                new = load_unit(new_dir, name, dropins) if name in new_names else None
+                owners = [owner_property(side) for side in (old, new) if side is not None]
+                action = decide(name, old, new, old_wanted, new_wanted)
+            except Unreadable as error:
+                self.unknown(scope, name, str(error), user)
+                continue
+            if action is None:
+                continue
+            protected = self.protected(scope, name, owners)
+            self.add(scope, name, action, protected, describe(engine, action), user)
+
+    def compare_launchd(self, old_dir, new_dir, old_domains, new_domains, user, origin):
+        try:
+            old_present = old_dir is not None and is_dir(old_dir)
+            new_present = is_dir(new_dir)
+            old_names = plist_names(old_dir) if old_present else set()
+            new_names = plist_names(new_dir) if new_present else set()
+        except Unreadable as error:
+            self.unknown("launchd", "*", f"{origin}: {error}", user)
+            return
+        for name in sorted(old_names | new_names):
+            label = name[: -len(".plist")]
+            try:
+                old = read_bytes(os.path.join(old_dir, name)) if name in old_names else None
+                new = read_bytes(os.path.join(new_dir, name)) if name in new_names else None
+                owners = [plist_owner(side, name) for side in (old, new) if side is not None]
+                old_domain = domain_of(old_domains, label) if old is not None else None
+                new_domain = domain_of(new_domains, label) if new is not None else None
+            except Unreadable as error:
+                self.unknown("launchd", label, f"{origin}: {error}", user)
+                continue
+            if new is None:
+                action, why = "stop", f"{origin}: the agent is gone from the candidate; it is unloaded"
+            elif old is None:
+                action, why = "start", f"{origin}: new in the candidate; it is loaded"
+            elif old == new and old_domain == new_domain:
+                continue
+            else:
+                action, why = "restart", f"{origin}: the plist changed; it is unloaded and loaded again"
+            self.add("launchd", label, action, self.protected("launchd", label, owners), why, user)
+
+
+def describe(engine, action):
+    engine_name = "switch-to-configuration" if engine == "stc" else "sd-switch"
+    if action == "stop":
+        return f"{engine_name}: the unit is gone from the candidate; it is stopped"
+    if action == "start":
+        return f"{engine_name}: a target wants the unit and it is new; it is started"
+    if action == "reload":
+        return f"{engine_name}: only reload-safe keys changed; it is reloaded"
+    if action == "keep":
+        return f"{engine_name}: the definition changed but the unit declares it must keep running; the running instance is retained on the old definition"
+    return f"{engine_name}: the definition changed; it is restarted"
+
+
+def plist_names(directory):
+    entries = list_dir(directory)
+    return {entry for entry in entries or [] if entry.endswith(".plist")}
+
+
+def plist_owner(data, name):
+    try:
+        parsed = plistlib.loads(data)
+    except Exception as error:  # plistlib raises several unrelated types
+        raise Unreadable(f"{name}: not a plist ({error})") from error
+    if not isinstance(parsed, dict):
+        raise Unreadable(f"{name}: plist root is not a dictionary")
+    value = parsed.get(OWNER_PROPERTY)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raise Unreadable(f"{name}: {OWNER_PROPERTY} is not a boolean")
+
+
+def domain_of(domains_dir, label):
+    if domains_dir is None or not is_dir(domains_dir):
+        return None
+    path = os.path.join(domains_dir, label)
+    if not is_file(path):
+        return None
+    return read_text(path).strip()
+
+
+# --- locating what a generation embeds ------------------------------------------
+
+
+def hm_units_dir(generation):
+    return os.path.join(generation, HM_UNITS_SUBDIR)
+
+
+def embedded_hm_generations(system_dir):
+    """NixOS: home-manager-<user>.service runs `<setup-env> <generation>`;
+    the generation is the last ExecStart word. Returns {user: (path|None,
+    error|None)} for every such unit in the system's etc/systemd/system."""
+    found = {}
+    units_dir = os.path.join(system_dir, "etc", "systemd", "system")
+    names = unit_names(units_dir, True) if is_dir(units_dir) else set()
+    for name in sorted(names):
+        if not (name.startswith("home-manager-") and name.endswith(".service")):
+            continue
+        user = systemd_unescape(name[len("home-manager-") : -len(".service")])
+        try:
+            unit = load_unit(units_dir, name, True)
+            user = unit_value(unit, "Service", "User") or user
+            exec_start = unit_value(unit, "Service", "ExecStart")
+            if not exec_start:
+                raise Unreadable(f"{name}: no ExecStart")
+            generation = exec_start.split()[-1]
+            if not generation.startswith("/") or not generation.endswith(HM_GENERATION_SUFFIX):
+                raise Unreadable(f"{name}: ExecStart does not end in a Home Manager generation: {exec_start!r}")
+            if not is_dir(generation):
+                raise Unreadable(f"{name}: Home Manager generation {generation} is not a readable directory")
+            found[user] = (generation, None)
+        except Unreadable as error:
+            found[user] = (None, str(error))
+    return found
+
+
+def systemd_unescape(name):
+    return re.sub(r"\\x([0-9a-fA-F]{2})", lambda match: chr(int(match.group(1), 16)), name).replace("-", "/")
+
+
+def darwin_hm_generations(system_dir):
+    """nix-darwin: the activate script announces each user it activates Home
+    Manager for, then runs `sudo -u <user> --set-home ... <activation-<user>
+    script>` whose last line execs the generation. A user announced without
+    a resolvable generation is an unknown, never a silently skipped one."""
+    found = {}
+    activate = os.path.join(system_dir, "activate")
+    if not is_file(activate):
+        return found
+    text = read_text(activate)
+    users = set(re.findall(r"^\s*echo Activating home-manager configuration for (\S+) >&2\s*$", text, re.M))
+    scripts = {}
+    for line in text.splitlines():
+        match = re.search(r"sudo -u (\S+) --set-home .*?(/\S+activation-\1)\s*$", line.strip())
+        if match:
+            scripts[match.group(1)] = match.group(2)
+    for user in sorted(users | set(scripts)):
+        try:
+            script = scripts.get(user)
+            if script is None:
+                raise Unreadable(f"{activate}: announces Home Manager for {user} but runs no activation script for them")
+            body = read_text(script)
+            generation = None
+            for token in re.findall(r"/\S+", body):
+                if token.endswith(HM_GENERATION_SUFFIX + "/activate"):
+                    generation = token[: -len("/activate")]
+            if generation is None:
+                raise Unreadable(f"{script}: names no Home Manager generation")
+            if not is_dir(generation):
+                raise Unreadable(f"{script}: Home Manager generation {generation} is not a readable directory")
+            found[user] = (generation, None)
+        except Unreadable as error:
+            found[user] = (None, str(error))
+    return found
+
+
+# --- the analyses per activation owner ----------------------------------------------
+
+
+def analyze_nixos(report, current, candidate):
+    old_etc = os.path.join(current, "etc", "systemd") if current else None
+    new_etc = os.path.join(candidate, "etc", "systemd")
+    if not is_dir(new_etc):
+        report.unknown("system", "*", f"{new_etc}: the candidate carries no systemd tree")
+        return
+    report.compare_systemd(
+        "system",
+        os.path.join(old_etc, "system") if old_etc else None,
+        os.path.join(new_etc, "system"),
+        "stc",
+    )
+    report.compare_systemd(
+        "user",
+        os.path.join(old_etc, "user") if old_etc else None,
+        os.path.join(new_etc, "user"),
+        "stc",
+    )
+    old_hm = embedded_hm_generations(current) if current else {}
+    new_hm = embedded_hm_generations(candidate)
+    for user in sorted(set(old_hm) | set(new_hm)):
+        old_gen, old_error = old_hm.get(user, (None, None))
+        new_gen, new_error = new_hm.get(user, (None, None))
+        if old_error or new_error:
+            report.unknown("user", "home-manager", old_error or new_error, user)
+            continue
+        if new_gen is None:
+            # The system stops carrying this user's Home Manager: the units
+            # it had keep running under sd-switch's absence, which no engine
+            # then manages. Refuse rather than guess what that leaves behind.
+            report.unknown("user", "home-manager", "the candidate no longer embeds a Home Manager generation for this user", user)
+            continue
+        report.compare_systemd(
+            "user",
+            hm_units_dir(old_gen) if old_gen else None,
+            hm_units_dir(new_gen),
+            "sd-switch",
+            user,
+        )
+
+
+def analyze_home_manager(report, current, candidate, user):
+    if not is_dir(os.path.join(candidate, "home-files")):
+        report.unknown("user", "*", f"{candidate}: not a Home Manager generation (no home-files)", user)
+        return
+    report.compare_systemd(
+        "user",
+        hm_units_dir(current) if current else None,
+        hm_units_dir(candidate),
+        "sd-switch",
+        user,
+    )
+
+
+def analyze_darwin(report, current, candidate, user):
+    library = os.path.join(candidate, "Library")
+    if not is_dir(library):
+        report.unknown("launchd", "*", f"{library}: the candidate carries no Library tree")
+        return
+    for subdir in ("LaunchDaemons", "LaunchAgents"):
+        report.compare_launchd(
+            os.path.join(current, "Library", subdir) if current else None,
+            os.path.join(candidate, "Library", subdir),
+            None,
+            None,
+            None,
+            f"nix-darwin {subdir}",
+        )
+    report.compare_launchd(
+        os.path.join(current, "user", "Library", "LaunchAgents") if current else None,
+        os.path.join(candidate, "user", "Library", "LaunchAgents"),
+        None,
+        None,
+        user,
+        "nix-darwin user LaunchAgents",
+    )
+    old_hm = darwin_hm_generations(current) if current else {}
+    new_hm = darwin_hm_generations(candidate)
+    for hm_user in sorted(set(old_hm) | set(new_hm)):
+        old_gen, old_error = old_hm.get(hm_user, (None, None))
+        new_gen, new_error = new_hm.get(hm_user, (None, None))
+        if old_error or new_error:
+            report.unknown("launchd", "home-manager", old_error or new_error, hm_user)
+            continue
+        if new_gen is None:
+            report.unknown("launchd", "home-manager", "the candidate no longer embeds a Home Manager generation for this user", hm_user)
+            continue
+        report.compare_launchd(
+            os.path.join(old_gen, "LaunchAgents") if old_gen else None,
+            os.path.join(new_gen, "LaunchAgents"),
+            os.path.join(old_gen, "LaunchAgentDomains") if old_gen else None,
+            os.path.join(new_gen, "LaunchAgentDomains"),
+            hm_user,
+            "Home Manager LaunchAgents",
+        )
+
+
+# --- verdict ---------------------------------------------------------------------
+
+
+def fingerprint(report):
+    material = json.dumps(
+        {
+            "host": report.host,
+            "currentGeneration": report.current,
+            "candidateGeneration": report.candidate,
+            "effects": [
+                [e["scope"], e.get("user", ""), e["service"], e["action"], e["protected"]]
+                for e in report.effects
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def in_scope(effect, scopes):
+    return any(scope == effect["scope"] and service == effect["service"] for scope, service in scopes)
+
+
+def finish(report):
+    report.effects.sort(key=lambda e: (e["scope"], e.get("user", ""), e["service"]))
+    status = "safe"
+    for effect in report.effects:
+        where = effect["scope"] + (f"@{effect['user']}" if "user" in effect else "")
+        if effect["action"] == "unknown":
+            status = "unknown"
+            report.reasons.append(f"{where}:{effect['service']}: {effect['reason']}")
+    if status == "safe":
+        for effect in report.effects:
+            where = effect["scope"] + (f"@{effect['user']}" if "user" in effect else "")
+            if effect["protected"] and effect["action"] in ("stop", "restart", "reload"):
+                status = "blocked"
+                report.reasons.append(
+                    f"{where}:{effect['service']} is a protected service and the activation would {effect['action']} it"
+                )
+            elif report.scopes is not None and effect["action"] != "keep" and not in_scope(effect, report.scopes):
+                status = "blocked"
+                report.reasons.append(
+                    f"{where}:{effect['service']} would be {effect['action']}ed but is outside the requested scope"
+                )
+    document = {
+        "schemaVersion": SCHEMA_VERSION,
+        "status": status,
+        "currentGeneration": report.current,
+        "candidateGeneration": report.candidate,
+        "fingerprint": fingerprint(report) if status == "safe" else "",
+        "effects": report.effects,
+        "reasons": report.reasons,
+    }
+    return document
+
+
+def load_policy(path):
+    try:
+        with open(path, "rb") as handle:
+            policy = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"atyrode-disruption: cannot read the protection policy {path}: {error}")
+    if policy.get("schemaVersion") != 1 or not isinstance(policy.get("protected"), list):
+        raise SystemExit(f"atyrode-disruption: {path} is not a schemaVersion 1 protection policy")
+    for entry in policy["protected"]:
+        if entry.get("scope") not in ("system", "user", "launchd") or not entry.get("service"):
+            raise SystemExit(f"atyrode-disruption: {path}: malformed protected entry {entry!r}")
+    return policy
+
+
+def parse_scope(value):
+    if ":" not in value:
+        raise argparse.ArgumentTypeError(f"--scope expects scope:service, got {value!r}")
+    scope, service = value.split(":", 1)
+    if scope not in ("system", "user", "launchd") or not service:
+        raise argparse.ArgumentTypeError(f"--scope expects system|user|launchd:service, got {value!r}")
+    return (scope, service)
+
+
+def resolve(path, what):
+    if not path:
+        return ""
+    if not path.startswith("/"):
+        raise SystemExit(f"atyrode-disruption: --{what} must be an absolute path")
+    try:
+        real = os.path.realpath(path)
+        if not os.path.isdir(real):
+            raise SystemExit(f"atyrode-disruption: --{what} {path} is not a readable directory")
+    except OSError as error:
+        raise SystemExit(f"atyrode-disruption: --{what} {path}: {error.strerror}")
+    return real
+
+
+def hold_lock(fd):
+    """Take an exclusive, non-blocking flock on a descriptor the caller opened
+    and keeps open: the lock lives with the caller's open file description, so
+    it survives this process and ends when the caller closes the descriptor."""
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 1
+    except OSError as error:
+        raise SystemExit(f"atyrode-disruption: cannot lock descriptor {fd}: {error.strerror}")
+    return 0
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="atyrode-disruption", description=__doc__.splitlines()[0])
+    parser.add_argument("--host")
+    parser.add_argument("--activation", choices=("nixos", "nixos-wsl", "nix-darwin", "home-manager"))
+    parser.add_argument("--current", default="", help="the generation running now; empty for a first activation")
+    parser.add_argument("--candidate")
+    parser.add_argument("--user", default=None, help="the account whose Home Manager units are analysed")
+    parser.add_argument("--scope", action="append", type=parse_scope, default=None)
+    parser.add_argument("--policy", default="@service_protection@")
+    parser.add_argument("--hold-lock-fd", type=int, default=None, help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+
+    if args.hold_lock_fd is not None:
+        return hold_lock(args.hold_lock_fd)
+    for required in ("host", "activation", "candidate"):
+        if not getattr(args, required):
+            parser.error(f"--{required} is required")
+
+    policy = load_policy(args.policy)
+    report = Report(args.host, policy, args.scope)
+    report.current = resolve(args.current, "current")
+    report.candidate = resolve(args.candidate, "candidate")
+    if report.current and report.current == report.candidate:
+        # Nothing to switch: the engines compare a generation to itself and
+        # touch nothing, so the report is empty and safe.
+        print(json.dumps(finish(report)))
+        return 0
+    try:
+        if args.activation in ("nixos", "nixos-wsl"):
+            analyze_nixos(report, report.current, report.candidate)
+        elif args.activation == "home-manager":
+            analyze_home_manager(report, report.current, report.candidate, args.user)
+        else:
+            analyze_darwin(report, report.current, report.candidate, args.user)
+    except Unreadable as error:
+        report.unknown("system" if args.activation != "home-manager" else "user", "*", str(error))
+    print(json.dumps(finish(report)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

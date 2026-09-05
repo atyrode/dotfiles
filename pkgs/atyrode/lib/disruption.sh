@@ -1,0 +1,178 @@
+# shellcheck shell=bash
+#
+# The gate every activation passes: what the switch from the running
+# generation to an exact candidate does to services, and whether that may
+# happen unattended.
+#
+# Sourced by bin/atyrode; every @substitution@ lives in that entry point.
+#
+# On 2026-09-05 a task-scoped edit activated an aggregate generation whose
+# unrelated Home Manager change restarted the agent that owned every live
+# terminal. Nothing in the diff, the package list or the commit said so; only
+# the two closures did. So the closures are what is read, by one analyzer
+# (libexec/atyrode-disruption), and its report is the single thing apply,
+# rollback, the fleet and the cockpit act on. The report is computed before
+# anything is queued for a stop, and an operator's acknowledgement of a
+# disruptive report -- `--expected-disruption` -- names the report's
+# fingerprint, which binds host, both generations and every effect: a
+# different candidate, a generation switched underneath, or one more affected
+# service and the acknowledgement no longer applies. There is no flag that
+# says "yes to whatever this turns out to be".
+
+# Where the generation this machine runs lives, per activation owner. The
+# system owners publish /run/current-system; standalone Home Manager compares
+# against the gcroot its own activation reads. A first activation has nothing
+# to compare against and reports an empty path, which the analyzer treats as
+# "every unit is new". A Home Manager profile whose gcroot is gone is not a
+# first activation, it is a machine whose baseline cannot be named, so that
+# is a failure rather than an empty answer.
+current_generation() { # activation
+  case "$1" in
+    nixos | nixos-wsl | nix-darwin)
+      local link=/run/current-system
+      [[ "$test_hooks" != 1 || -z "${_ATYRODE_TEST_CURRENT_SYSTEM:-}" ]] || link="$_ATYRODE_TEST_CURRENT_SYSTEM"
+      [[ -e "$link" ]] || return 0
+      readlink -f "$link"
+      ;;
+    home-manager)
+      local gcroot profile
+      gcroot="${XDG_STATE_HOME:-$HOME/.local/state}/home-manager/gcroots/current-home"
+      if [[ -e "$gcroot" ]]; then
+        readlink -f "$gcroot"
+        return 0
+      fi
+      profile="$(gen_profile)"
+      [[ ! -e "$profile" ]] || {
+        printf 'atyrode: %s exists but %s does not, so the generation Home Manager would switch from cannot be named\n' \
+          "$profile" "$gcroot" >&2
+        return 1
+      }
+      ;;
+  esac
+}
+
+# The GC-rooted link the candidate is built to. The same path serves the
+# preview and the activation that follows it, so a candidate previewed once is
+# not rebuilt and cannot be collected between the two.
+candidate_link_path() { # host
+  printf '%s/atyrode/candidate-%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "$1"
+}
+
+# One machine, one activation at a time. apply and rollback take this before
+# they read the current generation and hold it past the switch, so the
+# generation a report was computed against is the one still running when the
+# switch starts. The lock is an flock on a descriptor this shell keeps open:
+# taken by the analyzer, it lives with the open file description, which the
+# child leaves behind when it exits. /tmp because root's rollback and the
+# user's apply must contend for the same file, and because a lock a user
+# cannot see is not a lock.
+activation_lock_fd=""
+activation_lock() {
+  local lock=/tmp/atyrode-activation.lock
+  { : >>"$lock"; } 2>/dev/null || true
+  exec {activation_lock_fd}<"$lock" ||
+    die "$EX_UNAVAILABLE" "cannot open the activation lock $lock"
+  "$atyrode_disruption" --hold-lock-fd "$activation_lock_fd" ||
+    die "$EX_UNAVAILABLE" "another activation holds $lock (an apply or rollback is in progress); let it finish, or inspect it with: atyrode apply-status"
+}
+
+# The report, as JSON on stdout. A report is produced whenever the analyzer
+# ran; its status carries the verdict. Only the analyzer failing to run at all
+# is an error here, and that is refused like any other unknown.
+disruption_analyze() { # host activation current candidate user scope...
+  local host="$1" activation="$2" current="$3" candidate="$4" user="$5"
+  shift 5
+  local -a args=(--host "$host" --activation "$activation" --current "$current" --candidate "$candidate")
+  [[ -z "$user" ]] || args+=(--user "$user")
+  local scope
+  for scope in "$@"; do
+    args+=(--scope "$scope")
+  done
+  [[ -x "$atyrode_disruption" ]] ||
+    die "$EX_UNAVAILABLE" "the disruption analyzer is unavailable, so no activation can be shown safe"
+  "$atyrode_disruption" "${args[@]}"
+}
+
+# `--scope scope:service` is checked here rather than trusted to reach the
+# analyzer well-formed, because a malformed scope silently matching nothing
+# would widen what an operator meant to narrow.
+validate_scope() { # scope
+  [[ "$1" =~ ^(system|user|launchd):[^[:space:]]+$ ]] ||
+    die "$EX_USAGE" "--scope expects system|user|launchd:service (for example system:caddy.service), got: $1"
+}
+
+# What an operator reads: one line per effect, then why the verdict is what
+# it is. Painted by severity so a blocked report cannot be skimmed as fine.
+disruption_render() { # report
+  local report="$1" status line
+  status="$(jq -r '.status' <<<"$report")"
+  case "$status" in
+    safe) say "$(paint '1;32' 'disruption: safe') $(paint 2 "fingerprint $(jq -r '.fingerprint' <<<"$report")")" ;;
+    blocked) say "$(paint '1;31' 'disruption: blocked')" ;;
+    *) say "$(paint '1;33' "disruption: $status")" ;;
+  esac
+  say "$(paint 2 "current   $(jq -r '.currentGeneration | if . == "" then "(none: first activation)" else . end' <<<"$report")")"
+  say "$(paint 2 "candidate $(jq -r '.candidateGeneration' <<<"$report")")"
+  if [[ "$(jq -r '.effects | length' <<<"$report")" == 0 ]]; then
+    say "  $(paint 2 'no service is started, stopped, restarted or reloaded')"
+  fi
+  while IFS= read -r line; do
+    say "  $line"
+  done < <(jq -r '
+    .effects[] |
+    "\(.scope)\(if .user then "@" + .user else "" end):\(.service)  \(.action)\(if .protected then "  [protected]" else "" end)  -- \(.reason)"
+  ' <<<"$report")
+  while IFS= read -r line; do
+    say "  $(paint '1;31' 'refused:') $line"
+  done < <(jq -r '.reasons[]' <<<"$report")
+}
+
+# The verdict, applied. Returns only when the switch may proceed; every other
+# outcome names what stood in the way and stops the run before any mutation.
+# `expected` tightens: an acknowledgement for a different report is a stale
+# one, and a stale acknowledgement is worse than none because it says the
+# operator looked at something other than what is about to happen.
+disruption_enforce() { # report expected candidate
+  local report="$1" expected="$2" candidate="$3" status fingerprint
+  status="$(jq -r '.status' <<<"$report")"
+  fingerprint="$(jq -r '.fingerprint' <<<"$report")"
+  log_event "disruption report: $(jq -c . <<<"$report")"
+  case "$status" in
+    safe) ;;
+    blocked)
+      die "$EX_UNAVAILABLE" "activation refused: it would disrupt a protected service (see the report above); the inspected closure is $candidate and switching it is a deliberate operator maintenance -- drain its sessions first -- not an unattended apply"
+      ;;
+    *)
+      die "$EX_UNAVAILABLE" "activation refused: the service impact of $candidate could not be established (see the report above); an unknown impact cannot be shown safe, so make the generation readable or fix what the report names, then preview again"
+      ;;
+  esac
+  if [[ -n "$expected" && "$expected" != "$fingerprint" ]]; then
+    die "$EX_DATAERR" "activation refused: --expected-disruption names report $expected but the report for this candidate is $fingerprint; the candidate, the running generation or its effects changed since that preview, so preview again and acknowledge the report you read"
+  fi
+}
+
+# The candidate, and nothing else, becomes the system. nh switches an exact
+# store path for NixOS and Home Manager; nh darwin does not accept one, so the
+# two commands nh would run are run directly: nix-darwin's own profile set and
+# its own activate, on the inspected closure. Nothing here re-evaluates a
+# flake, so the generation activated is the generation analyzed.
+activate_closure() { # activation candidate nh_locale nh_command
+  local activation="$1" candidate="$2" nh_locale="$3" nh_command="$4"
+  local -a nh_args
+  case "$activation" in
+    home-manager) nh_args=("$nh_command" home switch "$candidate" --backup-extension backup --diff always) ;;
+    nixos-wsl | nixos) nh_args=("$nh_command" os switch "$candidate" --diff always) ;;
+    nix-darwin)
+      local nix_program
+      nix_program="$(command -v nix)"
+      [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX:-}" ]] || nix_program="$ATYRODE_NIX"
+      local -a elevate=()
+      [[ "$(id -u)" -eq 0 ]] || elevate=(sudo --)
+      run_visible "${elevate[@]+"${elevate[@]}"}" "$nix_program" build --no-link --profile /nix/var/nix/profiles/system "$candidate" || return 1
+      run_visible "${elevate[@]+"${elevate[@]}"}" "$candidate/sw/bin/darwin-rebuild" activate
+      return
+      ;;
+  esac
+  show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
+  LC_ALL="$nh_locale" "${nh_args[@]}"
+}

@@ -29,6 +29,8 @@ EOF
 }
 apply_config() {
   local requested="" repo="" ref="" git_auth_mode="${ATYRODE_GIT_AUTH_MODE:-}" plan=0 dry=0 json=0 preview_json=0 restart=0
+  local expected_disruption="" candidate_path=""
+  local -a scopes=()
   # Activation can succeed while a state apply owns is left unconverged. That
   # is not a clean apply, so it is carried to the exit code rather than being
   # printed and forgotten.
@@ -76,6 +78,22 @@ apply_config() {
         restart=1
         shift
         ;;
+      --expected-disruption)
+        [[ $# -ge 2 ]] || die "$EX_USAGE" "--expected-disruption requires the fingerprint of a previewed disruption report"
+        expected_disruption="$2"
+        shift 2
+        ;;
+      --scope)
+        [[ $# -ge 2 ]] || die "$EX_USAGE" "--scope requires scope:service"
+        validate_scope "$2"
+        scopes+=("$2")
+        shift 2
+        ;;
+      --candidate)
+        [[ $# -ge 2 ]] || die "$EX_USAGE" "--candidate requires the store path of a built closure"
+        candidate_path="$2"
+        shift 2
+        ;;
       -h | --help)
         usage
         return
@@ -86,11 +104,15 @@ apply_config() {
   [[ -z "$repo" || -z "$ref" ]] || die "$EX_USAGE" "--ref selects a published revision and cannot be combined with --repo"
   [[ "$preview_json" == 0 || "$plan" == 0 ]] || die "$EX_USAGE" "--preview-json cannot be combined with --plan"
   [[ "$preview_json" == 0 || "$json" == 0 ]] || die "$EX_USAGE" "--preview-json already selects structured JSON output"
+  [[ -z "$candidate_path" || (-z "$repo" && -z "$ref") ]] ||
+    die "$EX_USAGE" "--candidate activates a closure already built and copied here; it cannot be combined with --repo or --ref"
+  [[ -z "$expected_disruption" || "$expected_disruption" =~ ^[0-9a-f]{64}$ ]] ||
+    die "$EX_USAGE" "--expected-disruption expects the 64-hex fingerprint printed by apply --preview-json"
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
   fi
-  if [[ -z "$repo" ]]; then
+  if [[ -z "$repo" && -z "$candidate_path" ]]; then
     ref="${ref:-main}"
     if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
       local rev
@@ -178,7 +200,21 @@ apply_config() {
   command -v nh >/dev/null || die "$EX_UNAVAILABLE" "nh is unavailable"
   command -v "$git_command" >/dev/null || die "$EX_UNAVAILABLE" "git is unavailable"
 
-  if [[ -n "$repo" ]]; then
+  if [[ -n "$candidate_path" ]]; then
+    # A closure built elsewhere and copied here (fleet apply). Its revision is
+    # whatever that build was; the closure itself is what is analyzed and
+    # activated, so no source is consulted and no key is placed: the fleet
+    # placed it before it handed over.
+    [[ "$candidate_path" == /nix/store/* && -d "$candidate_path" && ! -L "$candidate_path" ]] ||
+      die "$EX_NOINPUT" "--candidate must name a store path present on this machine: $candidate_path"
+    source="closure"
+    revision="closure"
+    resolved_revision="closure"
+    dirty=false
+    repository="$candidate_path"
+    flake_source=""
+    installable="$candidate_path"
+  elif [[ -n "$repo" ]]; then
     source="local"
     [[ "$repo" == /* ]] || die "$EX_USAGE" "repository path must be absolute: $repo"
     [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
@@ -245,11 +281,13 @@ apply_config() {
   # a machine interface and plans nothing, so it stays out of this.
   if [[ "$preview_json" == 0 ]]; then
     local -a planned=()
-    case "$activation" in
-      nix-darwin | nixos-wsl | nixos) [[ "$dry" == 1 ]] || planned+=("Place the machine key.") ;;
-    esac
-    planned+=("Rebuild and switch $host through $backend.")
+    [[ -n "$candidate_path" ]] || planned+=("Build the candidate closure of $host through $backend.")
+    planned+=("Analyse what activating the candidate does to services.")
     if [[ "$dry" == 0 ]]; then
+      case "$activation" in
+        nix-darwin | nixos-wsl | nixos) [[ -n "$candidate_path" ]] || planned+=("Place the machine key.") ;;
+      esac
+      planned+=("Activate the inspected closure through $backend.")
       planned+=("Record $host as the activated host.")
       [[ "$activation" != nixos-wsl ]] ||
         planned+=("Reconcile native Windows packages through WinGet.")
@@ -266,14 +304,13 @@ apply_config() {
   }
 
   local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source"
-  if [[ "$identity_mode" == runtime ]]; then
+  if [[ "$identity_mode" == runtime && -z "$candidate_path" ]]; then
     [[ "$source" != local ]] || adapter_source="path:$flake_source"
     adapter_dir="$(create_runtime_adapter "$host" "$data" "$adapter_source" "$git_auth_mode")"
     activation_flake_source="path:$adapter_dir"
     trap '[[ -z "${adapter_dir:-}" ]] || rm -rf -- "$adapter_dir"' EXIT
   fi
 
-  local -a nh_args
   local nh_command=nh
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_NH:-}" ]]; then
     nh_command="$ATYRODE_NH"
@@ -283,23 +320,59 @@ apply_config() {
   # derivation metadata. Keep the backend on a platform-native UTF-8 locale.
   local nh_locale=C.UTF-8
   [[ "$expected_system" != *-darwin ]] || nh_locale=en_US.UTF-8
-  # nh home passes a #fragment through to nix verbatim instead of treating
-  # it as the configuration name, so the flake reference goes bare and
-  # --configuration carries the host. System owners resolve the fragment.
-  case "$activation" in
-    home-manager)
-      nh_args=("$nh_command" home switch "$activation_flake_source" --configuration "$host" --backup-extension backup --diff always)
-      ;;
-    nix-darwin) nh_args=("$nh_command" darwin switch "$installable" --diff always) ;;
-    nixos-wsl | nixos) nh_args=("$nh_command" os switch "$installable" --diff always) ;;
-  esac
-  [[ "$dry" == 0 ]] || nh_args+=(--dry)
+
+  # From here to the switch this machine's generation must not move: the
+  # report is about the generation running now, and a rollback landing in
+  # between would make it a report about nothing. Previews hold no lock; they
+  # mutate nothing and a stale preview is refused by its fingerprint anyway.
+  [[ "$dry" == 1 ]] || activation_lock
+  local current candidate candidate_link="" report preview_output=""
+  current="$(current_generation "$activation")" ||
+    die "$EX_UNAVAILABLE" "the generation $host runs now cannot be named, so no candidate can be shown safe against it"
+
+  # The candidate is built to a GC-rooted link before anything is decided
+  # about it, so the closure analyzed is the closure activated: nh is then
+  # handed that exact store path, never the flake reference again. A dry run
+  # or preview builds through nh's own --dry switch, which stops after the
+  # diff it prints; the activation path builds without a diff, because the
+  # switch on the store path prints it against the running generation. A
+  # closure that arrived already built is not built again; a dry run of it
+  # still asks nh for the diff so the preview reads the same either way.
+  local verb=build
+  local -a build_args=() diff_args=(--diff never)
+  if [[ "$dry" == 1 ]]; then
+    verb=switch
+    diff_args=(--diff always --dry)
+  fi
+  if [[ -n "$candidate_path" ]]; then
+    candidate="$candidate_path"
+    if [[ "$dry" == 1 ]]; then
+      case "$activation" in
+        home-manager) build_args=("$nh_command" home switch "$candidate" --backup-extension backup "${diff_args[@]}") ;;
+        nix-darwin) build_args=("$nh_command" darwin switch "$candidate" "${diff_args[@]}") ;;
+        nixos-wsl | nixos) build_args=("$nh_command" os switch "$candidate" "${diff_args[@]}") ;;
+      esac
+    fi
+  else
+    candidate_link="$(candidate_link_path "$host")"
+    mkdir -p "${candidate_link%/*}"
+    # nh home passes a #fragment through to nix verbatim instead of treating
+    # it as the configuration name, so the flake reference goes bare and
+    # --configuration carries the host. System owners resolve the fragment.
+    case "$activation" in
+      home-manager)
+        build_args=("$nh_command" home "$verb" "$activation_flake_source" --configuration "$host" --backup-extension backup -o "$candidate_link" "${diff_args[@]}")
+        ;;
+      nix-darwin) build_args=("$nh_command" darwin "$verb" "$installable" -o "$candidate_link" "${diff_args[@]}") ;;
+      nixos-wsl | nixos) build_args=("$nh_command" os "$verb" "$installable" -o "$candidate_link" "${diff_args[@]}") ;;
+    esac
+  fi
   if [[ "$preview_json" == 1 ]]; then
     [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
-    local preview_file preview_output
+    local preview_file
     preview_file="$(mktemp)"
-    show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
-    if ! LC_ALL="$nh_locale" "${nh_args[@]}" >"$preview_file" 2>&1; then
+    show_command env "LC_ALL=$nh_locale" "${build_args[@]}"
+    if ! LC_ALL="$nh_locale" "${build_args[@]}" >"$preview_file" 2>&1; then
       cat "$preview_file" >&2
       rm -f "$preview_file"
       die "$EX_SOFTWARE" "$backend preview failed"
@@ -309,6 +382,30 @@ apply_config() {
       die "$EX_SOFTWARE" "$backend preview output was not understood"
     fi
     rm -f "$preview_file"
+  elif [[ "${#build_args[@]}" -gt 0 ]]; then
+    step_begin "Build the candidate closure of $host through $backend"
+    [[ "$dry" == 0 ]] || step_why 'a dry run builds the closure and reports the diff without switching'
+    # Rendered as an `env` invocation so the locale it needs travels with the
+    # copy an operator pastes back, and printed before it runs so the thousand
+    # lines of nh and Nix output that follow are unmistakably theirs.
+    show_command env "LC_ALL=$nh_locale" "${build_args[@]}"
+    LC_ALL="$nh_locale" "${build_args[@]}" || {
+      step_fail "$backend did not build $host; nothing was activated and this machine is unchanged"
+      die "$EX_SOFTWARE" "$backend failed to build $host"
+    }
+    step_ok
+  fi
+  if [[ -n "$candidate_link" ]]; then
+    candidate="$(readlink -f "$candidate_link" 2>/dev/null || true)"
+    [[ -n "$candidate" && -d "$candidate" ]] ||
+      die "$EX_SOFTWARE" "$backend left no candidate closure at $candidate_link, so there is nothing to analyse or activate"
+  fi
+
+  [[ "$preview_json" == 1 ]] || step_begin 'Analyse what activating the candidate does to services'
+  report="$(disruption_analyze "$host" "$activation" "$current" "$candidate" "$expected_user" "${scopes[@]+"${scopes[@]}"}")" ||
+    die "$EX_UNAVAILABLE" "the disruption analyzer did not produce a report, and an activation without one cannot be shown safe"
+  if [[ "$preview_json" == 1 ]]; then
+    preview_output="$(jq -c --argjson disruption "$report" '. + {disruption:$disruption}' <<<"$preview_output")"
     if [[ "$activation" == nixos-wsl ]]; then
       jq -c --argjson windowsPlan "$windows_preflight" \
         '. + {windowsPlan:$windowsPlan,windowsTransactional:false}' <<<"$preview_output"
@@ -319,38 +416,44 @@ apply_config() {
     trap - EXIT
     return 0
   fi
+  disruption_render "$report"
+  case "$(jq -r '.status' <<<"$report")" in
+    safe) step_ok ;;
+    *) step_fail 'this activation is refused by default' ;;
+  esac
+  if [[ "$dry" == 1 ]]; then
+    [[ -z "$adapter_dir" ]] || rm -rf -- "$adapter_dir"
+    trap - EXIT
+    apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host" "$apply_status"
+    return 0
+  fi
+  disruption_enforce "$report" "$expected_disruption" "$candidate"
 
   case "$activation" in
-    nix-darwin | nixos-wsl | nixos) [[ "$dry" == 1 ]] || place_machine_key "$host" "$flake_source" ;;
+    nix-darwin | nixos-wsl | nixos) [[ -n "$candidate_path" ]] || place_machine_key "$host" "$flake_source" ;;
   esac
 
-  step_begin "Rebuild and switch $host through $backend"
-  [[ "$dry" == 0 ]] || step_why 'a dry run builds the closure and reports the diff without switching'
+  step_begin "Activate the inspected closure through $backend"
+  step_detail "$candidate"
   # nix-darwin and NixOS activate as root, and the backend elevates for that
   # itself rather than atyrode -- so the password prompt that interrupts the
-  # build belongs to sudo, called by the command below, for the one part of
+  # switch belongs to sudo, called by the command below, for the one part of
   # this machine a user cannot write. Unannounced it reads as the dotfiles
-  # asking for root out of nowhere, mid-build, with nothing on screen to say
-  # which of the thousand lines above wanted it.
+  # asking for root out of nowhere, with nothing on screen to say which of
+  # the lines above wanted it.
   case "$activation" in
     nix-darwin | nixos-wsl | nixos)
-      [[ "$dry" == 1 ]] ||
-        step_detail 'activation writes system state, so nh elevates: a sudo prompt below is its own'
+      step_detail 'activation writes system state, so it elevates: a sudo prompt below is its own'
       ;;
   esac
-  # nh builds the closure before it switches, so most failures here never
-  # reached this machine at all. Claiming activation failed sends an operator
-  # to repair a machine that is fine, and sent this one at a build error that
-  # reproduces everywhere. The profile link is the evidence for which happened,
-  # read rather than inferred from an exit code that cannot tell them apart.
+  # The closure is already built, so a failure here is the switch itself.
+  # The profile link is the evidence for how far it got, read rather than
+  # inferred from an exit code that cannot tell a refused sudo from a failed
+  # activation script.
   local profile_link profile_before profile_after
   profile_link="$(gen_profile)"
   profile_before="$(readlink "$profile_link" 2>/dev/null || true)"
-  # Rendered as an `env` invocation so the locale it needs travels with the copy
-  # an operator pastes back, and printed before it runs so the thousand lines of
-  # nh and Nix output that follow are unmistakably theirs rather than ours.
-  show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
-  LC_ALL="$nh_locale" "${nh_args[@]}" || {
+  activate_closure "$activation" "$candidate" "$nh_locale" "$nh_command" || {
     profile_after="$(readlink "$profile_link" 2>/dev/null || true)"
     if [[ "$profile_before" == "$profile_after" ]]; then
       step_fail "$backend did not complete, and nothing was activated: this machine is unchanged"

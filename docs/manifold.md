@@ -160,6 +160,30 @@ declared here: they are the operator's checkouts, and a vhost whose upstream
 is down answers 502, which is what "not running" should look like. DNS:
 `preview` and `*` A records to this machine; the apex stays the master's.
 
+Concretely, as of 2026-09-05: the checkout is `~/manifold-dev` (a git worktree
+of `~/manifold`), its `.env` sets `COMPOSE_PROJECT_NAME=manifold-dev` and
+`COMPOSE_FILE=compose.yaml:/home/alex/manifold-dev-deploy/compose.dev.yaml`,
+and that overlay publishes `127.0.0.1:7912:7777`, names the in-container
+machine `dev-hub`, and parks the bundled caddy behind a profile. A deploy is
+`git -C ~/manifold-dev checkout <rev>` then, from that directory,
+`MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose up -d --build manifold`;
+`/healthz` reports the revision. Back the volume
+(`manifold-dev_manifold-data`) up before a deploy that crosses a schema
+version; `~/manifold-dev-deploy/backups/` holds the tarballs.
+
+The dev hub has its own spoke on the same machine, and it is by-hand for the
+same reason the stack is: it must track a checkout revision, not a release
+pin. `~/.config/systemd/user/manifold-dev-agent.service` (hand-written, not
+Home Manager's) runs `~/.local/share/manifold-dev-agent/manifold-agent`, built
+with `bun build --compile packages/agent/src/main.ts` from the revision the dev
+hub runs, enrolled as `dev-01` on `https://dev.manifold.tyrode.dev` with its
+token at `~/.config/manifold/dev/machine.token`. It is a second
+`manifold-agent` process beside the Home Manager unit and shares nothing with
+it: different hub, different token file, different `MANIFOLD_BUILD`. After a
+dev-hub deploy that changes the agent wire, rebuild the binary, update the
+unit's `MANIFOLD_BUILD`, and `systemctl --user restart manifold-dev-agent`.
+Never point this unit at the master: the master's spoke is the declared one.
+
 ## Master migration
 
 The master is a stateful pet: `manifold.db` holds containers, scenes,

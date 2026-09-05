@@ -107,6 +107,11 @@ let
   authBrokerInventory = ../../fleet/auth-broker.json;
   systemPolicy = ../../fleet/system-boundary.json;
   provisioningPolicy = ../../fleet/provisioning.json;
+  # The services whose disruption an unattended activation may never cause,
+  # read by libexec/atyrode-disruption on every apply, rollback and fleet
+  # deploy. Compiled in rather than read from the checkout so the policy a
+  # closure is reviewed with is the policy that guards its activation.
+  serviceProtection = ../../fleet/service-protection.json;
   tools = builtins.toFile "atyrode-tool-inventory.json" (
     builtins.toJSON [
       {
@@ -233,6 +238,7 @@ stdenvNoCC.mkDerivation {
   src = ./atyrode;
   libSrc = ./lib;
   runtimeSrc = ./runtime;
+  disruptionSrc = ./disruption;
   nativeBuildInputs = [ makeWrapper ];
 
   dontUnpack = true;
@@ -244,10 +250,15 @@ stdenvNoCC.mkDerivation {
     substituteInPlace "$out/libexec/atyrode-runtime" \
       --replace-fail '@shell@' '${runtimeShell}' \
       --replace-fail '@omp_managed@' '${lib.getExe' omp-configured "omp-managed"}'
+    install -D -m755 "$disruptionSrc" "$out/libexec/atyrode-disruption"
+    substituteInPlace "$out/libexec/atyrode-disruption" \
+      --replace-fail '@python3@' '${python3.interpreter}' \
+      --replace-fail '@service_protection@' '${serviceProtection}'
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@agents_policy@' '${agentsPolicy}' \
       --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
+      --replace-fail '@atyrode_disruption@' "$out/libexec/atyrode-disruption" \
       --replace-fail '@babel_storage_configure@' '${lib.getExe babelStorageConfigure}' \
       --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \

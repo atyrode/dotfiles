@@ -300,7 +300,7 @@ func (m *model) startPreview() tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.previewCancel = cancel
 	m.previewLoading, m.previewErr = true, nil
-	runner, cli, args := m.runner, m.cli, m.applyArgs(true)
+	runner, cli, args := m.runner, m.cli, m.previewArgs()
 	return func() tea.Msg {
 		out, err := runner.Output(ctx, cli, args...)
 		if err != nil {
@@ -315,6 +315,9 @@ func (m *model) startPreview() tea.Cmd {
 		}
 		if result.ResolvedRevision != plan.ResolvedRevision || result.Host != plan.Host || result.System != plan.System {
 			return previewMsg{revision: revision, generation: generation, err: fmt.Errorf("decode activation preview: plan identity changed")}
+		}
+		if err := previewdata.ValidateDisruption(result.Disruption); err != nil {
+			return previewMsg{revision: revision, generation: generation, err: fmt.Errorf("decode activation preview: %w", err)}
 		}
 		return previewMsg{revision: revision, generation: generation, preview: result}
 	}
@@ -383,15 +386,42 @@ func (m *model) cancelInspections() {
 	m.cancelLifecycle()
 }
 
-func (m model) applyArgs(preview bool) []string {
+func (m model) previewArgs() []string {
+	return append(m.targetArgs(), "--preview-json")
+}
+
+// applyArgs builds the real activation command. The fingerprint comes from the
+// safe disruption report the operator reviewed, so the backend refuses if the
+// live analysis no longer matches what was shown.
+func (m model) applyArgs(fingerprint string) []string {
+	return append(m.targetArgs(), "--expected-disruption", fingerprint)
+}
+
+func (m model) targetArgs() []string {
 	args := []string{"apply"}
 	if m.plan.Source == "remote" {
 		args = append(args, "--ref", m.plan.ResolvedRevision)
 	}
-	if preview {
-		args = append(args, "--preview-json")
-	}
 	return args
+}
+
+// activationFingerprint is the single gate for every activation entry point.
+// It only returns a fingerprint when a completed preview for the current plan
+// carries a safe disruption report; otherwise it explains the refusal.
+func (m model) activationFingerprint() (string, error) {
+	switch {
+	case m.phase != ready && m.phase != confirming:
+		return "", fmt.Errorf("the apply plan is not ready")
+	case m.previewLoading:
+		return "", fmt.Errorf("the disruption check is still running")
+	case m.previewErr != nil:
+		return "", fmt.Errorf("the activation preview failed: %w", m.previewErr)
+	case m.preview.SchemaVersion == 0:
+		return "", fmt.Errorf("the disruption check has not run")
+	case m.preview.ResolvedRevision != m.plan.ResolvedRevision || m.preview.Host != m.plan.Host || m.preview.System != m.plan.System:
+		return "", fmt.Errorf("the preview no longer matches the apply plan")
+	}
+	return m.preview.ActivationFingerprint()
 }
 
 func isFullGitRevision(revision string) bool {
@@ -481,6 +511,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.previewLoading, m.previewCancel = false, nil
 		if msg.err != nil {
 			m.preview, m.previewErr = previewdata.Document{}, msg.err
+			if m.phase == confirming {
+				m.phase = ready
+			}
 		} else {
 			m.preview, m.previewErr = msg.preview, nil
 			m.previewCursor, m.details = 0, false
@@ -535,6 +568,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case catalogRunMsg:
 		return m, m.handleCatalogRun(msg)
 	case applyDoneMsg:
+		// The reviewed report was bound to the generation that was current
+		// before nh ran; whatever happened, it no longer describes this host.
+		m.preview, m.previewErr, m.details, m.previewCursor = previewdata.Document{}, nil, false, 0
 		if msg.err != nil {
 			m.phase, m.err = failed, fmt.Errorf("apply failed: %w", msg.err)
 		} else {
@@ -645,16 +681,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.details, m.previewCursor = !m.details, 0
 			}
 		case "a", "enter":
-			if m.phase == ready {
-				m.cancelPreview()
+			if m.phase != ready {
+				break
+			}
+			if _, err := m.activationFingerprint(); err == nil {
 				m.phase = confirming
+			} else if m.preview.SchemaVersion == 0 && !m.previewLoading && m.previewErr == nil && !m.inventoryLoading {
+				// The disruption check is the prerequisite, so asking to apply
+				// without one runs the check instead of skipping it.
+				return m, m.startPreview()
 			}
 		case "y":
-			if m.phase == confirming {
-				m.cancelInspections()
-				m.phase, m.err = applying, nil
-				return m, m.apply(m.cli, m.applyArgs(false)...)
+			if m.phase != confirming {
+				break
 			}
+			fingerprint, err := m.activationFingerprint()
+			if err != nil {
+				m.phase = ready
+				break
+			}
+			m.cancelInspections()
+			m.phase, m.err = applying, nil
+			return m, m.apply(m.cli, m.applyArgs(fingerprint)...)
 		case "n":
 			if m.phase == confirming {
 				m.phase = ready
@@ -900,40 +948,34 @@ func (m model) previewStatusRows(width int) []string {
 	rows := make([]string, 0, 10)
 	switch {
 	case m.phase == loadingPlan:
-		appendWrappedRow(&rows, clikit.StDim.Render("Loading apply plan…"), width)
+		appendWrappedRow(&rows, "Loading apply plan…", width, clikit.StDim)
 	case m.phase == applying:
-		appendWrappedRow(&rows, clikit.StWarn.Render("Apply is running in the terminal…"), width)
+		appendWrappedRow(&rows, "Apply is running in the terminal…", width, clikit.StWarn)
 	case m.previewLoading:
-		appendWrappedRow(&rows, titleStyle.Render("Loading optional dry preview…"), width)
+		appendWrappedRow(&rows, "Running disruption check…", width, titleStyle)
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StDim.Render("The exact-revision Nix evaluation is running in the background."), width)
-		appendWrappedRow(&rows, "Apply controls remain available. Press v to cancel.", width)
+		appendWrappedRow(&rows, "The exact-revision dry build and service-effect analysis are running in the background.", width, clikit.StDim)
+		appendWrappedRow(&rows, "Apply waits for a safe report. Press v to cancel.", width)
 	case m.previewErr != nil:
-		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Preview unavailable"), width)
+		appendWrappedRow(&rows, "Preview unavailable — activation refused", width, clikit.StBrk.Bold(true))
 		rows = append(rows, "")
 		reason := strings.Split(stripTerminalControls(m.previewErr.Error()), "\n")
 		if len(reason) > maxErrorLines {
 			reason = reason[:maxErrorLines]
 		}
 		for _, line := range reason {
-			appendWrappedRow(&rows, clikit.StDim.Render(line), width)
+			appendWrappedRow(&rows, line, width, clikit.StDim)
 		}
 		rows = append(rows, "")
-		appendWrappedRow(&rows, "Press v to retry. Apply remains available.", width)
+		appendWrappedRow(&rows, "Press v to retry. Apply stays refused until the check succeeds.", width)
 	default:
-		marker := "Preview not loaded"
-		if m.phase == confirming {
-			marker = "Optional dry preview was not run."
-		}
-		appendWrappedRow(&rows, titleStyle.Render(marker), width)
+		appendWrappedRow(&rows, "Disruption check not run", width, titleStyle)
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StDim.Render("The validated exact-revision plan is ready."), width)
-		if m.phase == confirming {
-			appendWrappedRow(&rows, "Apply can continue without the optional package/action diff.", width)
-		} else if m.inventoryLoading {
-			appendWrappedRow(&rows, "Capability inventory is loading. Preview waits to avoid duplicate Nix evaluation.", width)
+		appendWrappedRow(&rows, "The validated exact-revision plan is ready, but activation requires a safe service-disruption report.", width, clikit.StDim)
+		if m.inventoryLoading {
+			appendWrappedRow(&rows, "Capability inventory is loading. The check waits to avoid duplicate Nix evaluation.", width)
 		} else {
-			appendWrappedRow(&rows, "Press v to load the optional package/action diff.", width)
+			appendWrappedRow(&rows, "Press v (or enter) to run the check and load the package diff.", width)
 		}
 	}
 	return rows
@@ -967,38 +1009,38 @@ func (m model) capabilityRowsForWidth(width int) []string {
 	rows := make([]string, 0, 32)
 	switch {
 	case !m.inventoryRequested:
-		appendWrappedRow(&rows, titleStyle.Render("Inventory not loaded"), width)
+		appendWrappedRow(&rows, "Inventory not loaded", width, titleStyle)
 		rows = append(rows, "")
 		if m.previewLoading {
-			appendWrappedRow(&rows, clikit.StDim.Render("Cancel the running preview with v before loading capabilities."), width)
+			appendWrappedRow(&rows, "Cancel the running preview with v before loading capabilities.", width, clikit.StDim)
 		} else {
-			appendWrappedRow(&rows, clikit.StDim.Render("Press c to load exact-revision capability details."), width)
+			appendWrappedRow(&rows, "Press c to load exact-revision capability details.", width, clikit.StDim)
 		}
 		return rows
 	case m.inventoryLoading:
-		appendWrappedRow(&rows, clikit.StDim.Render("Loading exact-revision inventory…"), width)
+		appendWrappedRow(&rows, "Loading exact-revision inventory…", width, clikit.StDim)
 		return rows
 	case m.inventoryErr != nil:
-		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Inventory unavailable"), width)
+		appendWrappedRow(&rows, "Inventory unavailable", width, clikit.StBrk.Bold(true))
 		rows = append(rows, "")
 		reason := strings.TrimPrefix(m.inventoryErr.Error(), "inventory unavailable: ")
-		appendWrappedRow(&rows, clikit.StDim.Render(stripTerminalControls(reason)), width)
+		appendWrappedRow(&rows, stripTerminalControls(reason), width, clikit.StDim)
 		if m.inventoryDiagnostic != "" {
 			rows = append(rows, "")
 			if m.inventoryDetailsOpen {
-				appendWrappedRow(&rows, titleStyle.Render("Diagnostic detail"), width)
+				appendWrappedRow(&rows, "Diagnostic detail", width, titleStyle)
 				for _, line := range strings.Split(m.inventoryDiagnostic, "\n") {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render(line), width, 2)
+					appendIndentedWrappedRow(&rows, line, width, 2, clikit.StDim)
 				}
 			} else {
-				appendWrappedRow(&rows, clikit.StDim.Render("Press d to show bounded diagnostic detail."), width)
+				appendWrappedRow(&rows, "Press d to show bounded diagnostic detail.", width, clikit.StDim)
 			}
 		}
 		rows = append(rows, "")
 		appendWrappedRow(&rows, "The activation preview and apply confirmation remain available.", width)
 		return rows
 	case len(m.inventory.Capabilities) == 0:
-		appendWrappedRow(&rows, clikit.StDim.Render("No active capabilities were declared by this apply plan."), width)
+		appendWrappedRow(&rows, "No active capabilities were declared by this apply plan.", width, clikit.StDim)
 		return rows
 	}
 
@@ -1022,22 +1064,22 @@ func (m model) capabilityRowsForWidth(width int) []string {
 		if capability.Marker {
 			marker = "Intentional marker · no direct deliverables."
 		}
-		appendWrappedRow(&rows, clikit.StWarn.Render(marker), width)
+		appendWrappedRow(&rows, marker, width, clikit.StWarn)
 	} else {
 		for _, group := range deliverableGroups(capability.Deliverables) {
 			rows = append(rows, "")
-			appendWrappedRow(&rows, titleStyle.Render(fmt.Sprintf("%s (%d)", kindTitle(group.kind), len(group.items))), width)
+			appendWrappedRow(&rows, fmt.Sprintf("%s (%d)", kindTitle(group.kind), len(group.items)), width, titleStyle)
 			for _, item := range group.items {
 				appendIndentedWrappedRow(&rows, item.Description, width, 2)
 				secondary := strings.TrimSpace(strings.Join(nonEmpty(item.Name, item.Version, item.Source), "  ·  "))
 				if secondary != "" {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render(secondary), width, 4)
+					appendIndentedWrappedRow(&rows, secondary, width, 4, clikit.StDim)
 				}
 				if item.Delivery != "" {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render("via "+item.Delivery), width, 4)
+					appendIndentedWrappedRow(&rows, "via "+item.Delivery, width, 4, clikit.StDim)
 				}
 				if item.System != "" {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render("for "+item.System), width, 4)
+					appendIndentedWrappedRow(&rows, "for "+item.System, width, 4, clikit.StDim)
 				}
 			}
 		}
@@ -1056,8 +1098,8 @@ func (m model) capabilityRowsForWidth(width int) []string {
 			continue
 		}
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StHead.Render(boundary.label), width)
-		appendIndentedWrappedRow(&rows, clikit.StDim.Render(boundary.value), width, 2)
+		appendWrappedRow(&rows, boundary.label, width, clikit.StHead)
+		appendIndentedWrappedRow(&rows, boundary.value, width, 2, clikit.StDim)
 	}
 	return rows
 }
@@ -1116,6 +1158,8 @@ func (m model) previewRows() []string {
 
 func (m model) previewRowsForWidth(width int) []string {
 	rows := make([]string, 0, 24)
+	m.appendDisruptionRows(&rows, width)
+	rows = append(rows, "")
 	revision := m.preview.ResolvedRevision
 	if len(revision) > 12 {
 		revision = revision[:12]
@@ -1132,18 +1176,19 @@ func (m model) previewRowsForWidth(width int) []string {
 	if m.preview.Status == "no-changes" {
 		status += " · no version or size changes"
 	}
-	appendWrappedRow(&rows, clikit.StOk.Render(status), width)
+	appendWrappedRow(&rows, status, width, clikit.StOk)
+	rows = append(rows, "")
 	if m.details {
 		rows = append(rows, "")
-		appendWrappedRow(&rows, titleStyle.Render("Technical details"), width)
+		appendWrappedRow(&rows, "Technical details", width, titleStyle)
 		if generations := m.preview.Generations; generations != nil {
 			if generations.Previous != "" {
-				appendWrappedRow(&rows, clikit.StHead.Render("Previous generation"), width)
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(generations.Previous), width, 2)
+				appendWrappedRow(&rows, "Previous generation", width, clikit.StHead)
+				appendIndentedWrappedRow(&rows, generations.Previous, width, 2, clikit.StDim)
 			}
 			if generations.New != "" {
-				appendWrappedRow(&rows, clikit.StHead.Render("New generation"), width)
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(generations.New), width, 2)
+				appendWrappedRow(&rows, "New generation", width, clikit.StHead)
+				appendIndentedWrappedRow(&rows, generations.New, width, 2, clikit.StDim)
 			}
 		}
 		raw := make([]string, 0, len(m.preview.Technical))
@@ -1155,14 +1200,16 @@ func (m model) previewRowsForWidth(width int) []string {
 		}
 		if len(raw) > 0 {
 			rows = append(rows, "")
-			appendWrappedRow(&rows, titleStyle.Render("Normalized nh report"), width)
+			appendWrappedRow(&rows, "Normalized nh report", width, titleStyle)
 			for _, line := range raw {
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(line), width, 2)
+				appendIndentedWrappedRow(&rows, line, width, 2, clikit.StDim)
 			}
 		}
 		return rows
 	}
 
+	rows = append(rows, "")
+	appendWrappedRow(&rows, "Package diff", width, titleStyle)
 	added, updated, removed := len(m.preview.Packages.Added), len(m.preview.Packages.Updated), len(m.preview.Packages.Removed)
 	var packageFacts []string
 	if added > 0 {
@@ -1206,11 +1253,11 @@ func (m model) previewRowsForWidth(width int) []string {
 			continue
 		}
 		rows = append(rows, "")
-		appendWrappedRow(&rows, group.style.Bold(true).Render(fmt.Sprintf("%s (%d)", group.name, len(group.changes))), width)
+		appendWrappedRow(&rows, fmt.Sprintf("%s (%d)", group.name, len(group.changes)), width, group.style.Bold(true))
 		for _, change := range group.changes {
-			appendIndentedWrappedRow(&rows, titleStyle.Render(change.Name), width, 2)
+			appendIndentedWrappedRow(&rows, change.Name, width, 2, titleStyle)
 			if secondary := packageSecondary(change); secondary != "" {
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(secondary), width, 4)
+				appendIndentedWrappedRow(&rows, secondary, width, 4, clikit.StDim)
 			}
 		}
 	}
@@ -1218,16 +1265,19 @@ func (m model) previewRowsForWidth(width int) []string {
 	return rows
 }
 
-func appendWrappedRow(rows *[]string, line string, width int) {
-	for _, wrapped := range strings.Split(ansi.Wrap(line, width, " "), "\n") {
-		*rows = append(*rows, wrapped)
-	}
+func appendWrappedRow(rows *[]string, line string, width int, style ...lipgloss.Style) {
+	appendIndentedWrappedRow(rows, line, width, 0, style...)
 }
 
-func appendIndentedWrappedRow(rows *[]string, line string, width, indent int) {
+func appendIndentedWrappedRow(rows *[]string, line string, width, indent int, style ...lipgloss.Style) {
 	contentWidth := max(1, width-indent)
 	prefix := strings.Repeat(" ", indent)
 	for _, wrapped := range strings.Split(ansi.Wrap(line, contentWidth, " "), "\n") {
+		// A viewport may show this row without its predecessor. Style after
+		// wrapping so every continuation carries its own complete SGR state.
+		if len(style) != 0 {
+			wrapped = style[0].Render(wrapped)
+		}
 		*rows = append(*rows, prefix+wrapped)
 	}
 }
@@ -1246,6 +1296,86 @@ func packageSecondary(change previewdata.PackageChange) string {
 		details = append(details, change.SizeDelta)
 	}
 	return strings.Join(details, "  ·  ")
+}
+
+// appendDisruptionRows renders the service-disruption verdict separately from
+// the package diff: which named services the candidate generation would
+// touch, which of them are protected, and why activation is or is not allowed.
+func (m model) appendDisruptionRows(rows *[]string, width int) {
+	appendWrappedRow(rows, "Service disruption", width, titleStyle)
+	report := m.preview.Disruption
+	if report == nil {
+		appendWrappedRow(rows, "?  No disruption report — activation refused", width, clikit.StWarn.Bold(true))
+		appendIndentedWrappedRow(rows, "This preview predates service-effect analysis. Only a safe report from the current backend can authorize apply.", width, 3, clikit.StDim)
+		return
+	}
+	switch report.Status {
+	case previewdata.DisruptionSafe:
+		verdict := "✓  Safe to activate"
+		kept := 0
+		for _, effect := range report.Effects {
+			if effect.Action == previewdata.ActionKeep {
+				kept++
+			}
+		}
+		switch {
+		case len(report.Effects) == 0:
+			verdict += " · no service effects"
+		case kept > 0:
+			verdict += fmt.Sprintf(" · %d service(s) keep running with updates pending", kept)
+		}
+		appendWrappedRow(rows, verdict, width, clikit.StOk)
+	case previewdata.DisruptionBlocked:
+		appendWrappedRow(rows, "✗  Activation blocked — protected services would be disrupted", width, clikit.StBrk.Bold(true))
+	default:
+		appendWrappedRow(rows, "?  Service disruption unknown — activation refused", width, clikit.StWarn.Bold(true))
+	}
+	for _, effect := range report.Effects {
+		appendIndentedWrappedRow(rows, disruptionEffectLine(effect), width, 3)
+		if effect.Reason != "" {
+			appendIndentedWrappedRow(rows, effect.Reason, width, 6, clikit.StDim)
+		}
+	}
+	for _, reason := range report.Reasons {
+		appendIndentedWrappedRow(rows, "• "+reason, width, 3, clikit.StWarn)
+	}
+	if !m.details {
+		return
+	}
+	if report.CurrentGeneration != "" {
+		appendIndentedWrappedRow(rows, labelStyle.Render("current")+clikit.StDim.Render(report.CurrentGeneration), width, 3)
+	}
+	if report.CandidateGeneration != "" {
+		appendIndentedWrappedRow(rows, labelStyle.Render("candidate")+clikit.StDim.Render(report.CandidateGeneration), width, 3)
+	}
+	if report.Fingerprint != "" {
+		appendIndentedWrappedRow(rows, labelStyle.Render("fingerprint")+clikit.StDim.Render(report.Fingerprint), width, 3)
+	}
+}
+
+func disruptionEffectLine(effect previewdata.ServiceEffect) string {
+	scope := effect.Scope
+	if effect.User != "" {
+		scope += ":" + effect.User
+	}
+	action := effect.Action
+	if effect.Action == previewdata.ActionKeep {
+		action = "keep running / update pending"
+	}
+	switch {
+	case effect.Action == previewdata.ActionUnknown:
+		action = clikit.StWarn.Bold(true).Render(action)
+	case effect.Protected && !effect.SafeInSafeReport():
+		action = clikit.StBrk.Bold(true).Render(action)
+	case effect.Action == previewdata.ActionKeep:
+		action = clikit.StOk.Render(action)
+	default:
+		action = clikit.StHead.Render(action)
+	}
+	if effect.Protected {
+		action += "  ·  " + clikit.StWarn.Render("protected")
+	}
+	return titleStyle.Render(effect.Service) + "  " + action + clikit.StDim.Render("  ·  "+scope)
 }
 
 func diskUsageSentence(delta string) string {
@@ -1288,7 +1418,33 @@ func (m model) errorFooter() string {
 	return strings.Join(lines, "\n")
 }
 
+// applyControl names what the apply key does right now, so the footer never
+// advertises an activation the gate would refuse.
+func (m model) applyControl(key string) string {
+	if m.phase != ready {
+		return key + " apply"
+	}
+	if _, err := m.activationFingerprint(); err == nil {
+		return key + " apply"
+	}
+	switch {
+	case m.previewLoading:
+		return "apply waits"
+	case m.preview.SchemaVersion == 0 && m.previewErr == nil:
+		return key + " check"
+	case m.preview.Disruption != nil && m.preview.Disruption.Status == previewdata.DisruptionBlocked:
+		return "apply blocked"
+	default:
+		return "apply refused"
+	}
+}
+
 func (m model) footer() string {
+	_, width := m.horizontalLayout()
+	return ansi.Wrap(m.footerControls(), max(1, width), "")
+}
+
+func (m model) footerControls() string {
 	if m.err != nil {
 		return m.errorFooter()
 	}
@@ -1312,13 +1468,13 @@ func (m model) footer() string {
 			if m.phase == confirming {
 				return clikit.StWarn.Render("c back  ·  y/n apply")
 			}
-			return clikit.StDim.Render("c back  ·  a apply  ·  q")
+			return clikit.StDim.Render("c back  ·  " + m.applyControl("a") + "  ·  q")
 		}
 		if m.phase == confirming {
 			controls += "  ·  y confirm  ·  n cancel"
 			return clikit.StWarn.Render(controls)
 		}
-		return clikit.StDim.Render(controls + "  ·  enter apply  ·  q")
+		return clikit.StDim.Render(controls + "  ·  " + m.applyControl("enter") + "  ·  q")
 	}
 	switch m.phase {
 	case confirming:
@@ -1334,26 +1490,28 @@ func (m model) footer() string {
 		}
 		return clikit.StOk.Render(m.status) + "\n" + clikit.StDim.Render("c capabilities  ·  r refresh  ·  ^O ask  ·  q quit")
 	case ready:
-		previewControl := "v preview"
+		previewControl := "v check"
 		if m.previewLoading {
-			previewControl = "v cancel preview"
+			previewControl = "v cancel check"
 		} else if m.preview.SchemaVersion != 0 {
 			previewControl = "d " + mode
+		} else if m.previewErr != nil {
+			previewControl = "v retry check"
 		}
 		if m.width < 60 {
 			if m.previewLoading {
-				return clikit.StDim.Render("v cancel  ·  a apply  ·  q")
+				return clikit.StDim.Render("v cancel  ·  q")
 			}
-			return clikit.StDim.Render(previewControl + "  ·  c caps  ·  a apply  ·  q")
+			return clikit.StDim.Render(previewControl + "  ·  c caps  ·  " + m.applyControl("a") + "  ·  q")
 		}
 		if m.width < 112 {
 			mediumControl := previewControl
 			if m.previewLoading {
 				mediumControl = "v cancel"
 			}
-			return clikit.StDim.Render("↑/↓ scroll  ·  " + mediumControl + "  ·  c capabilities  ·  enter apply  ·  q")
+			return clikit.StDim.Render("↑/↓ scroll  ·  " + mediumControl + "  ·  c capabilities  ·  " + m.applyControl("enter") + "  ·  q")
 		}
-		return clikit.StDim.Render("↑/↓ preview  ·  " + previewControl + "  ·  c capabilities  ·  enter apply  ·  r refresh  ·  ^O ask  ·  q")
+		return clikit.StDim.Render("↑/↓ preview  ·  " + previewControl + "  ·  c capabilities  ·  " + m.applyControl("enter") + "  ·  r refresh  ·  ^O ask  ·  q")
 	default:
 		return clikit.StDim.Render("^O ask  ·  q quit")
 	}

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "ownerProperty": "X-Atyrode-SessionOwner",
+  "protected": [
+    {
+      "scope": "user",
+      "service": "manifold-agent.service",
+      "owner": "modules/home/profiles/manifold-node.nix (pkgs/manifold-agent)",
+      "reason": "owns the production-connected PTYs until the terminal host is split out; a stop ends every live terminal (#565)"
+    },
+    {
+      "scope": "launchd",
+      "service": "org.nix-community.home.manifold-agent",
+      "owner": "modules/home/profiles/manifold-node.nix (pkgs/manifold-agent)",
+      "reason": "the same agent on macOS, labelled by Home Manager"
+    },
+    {
+      "scope": "user",
+      "service": "manifold-terminal-host.service",
+      "owner": "modules/home/profiles/manifold-node.nix",
+      "reason": "owns terminal workloads independently of the replaceable transport"
+    },
+    {
+      "scope": "launchd",
+      "service": "org.nix-community.home.manifold-terminal-host",
+      "owner": "modules/home/profiles/manifold-node.nix",
+      "reason": "retained terminal owner; replacing its loaded plist stops live workloads"
+    },
+    {
+      "scope": "system",
+      "service": "sshd.service",
+      "owner": "modules/nixos/vps.nix, modules/nixos/wsl.nix (services.openssh)",
+      "reason": "the deployer's own way in; removing or stopping the listener strands every session, while a restart or reload keeps established sessions only because NixOS declares KillMode=process, which the analyzer requires to see on both definitions",
+      "sessionsSurvive": { "killMode": "process" }
+    },
+    {
+      "scope": "system",
+      "service": "docker.service",
+      "owner": "modules/nixos/wsl.nix (virtualisation.docker)",
+      "reason": "every container on the machine stops with the engine"
+    },
+    {
+      "scope": "user",
+      "service": "docker.service",
+      "owner": "modules/nixos/vps.nix (virtualisation.docker.rootless)",
+      "reason": "the development hub's containers run under the rootless engine and stop with it"
+    }
+  ]
+}

@@ -15,6 +15,9 @@
 
 let
   version = "0.6.2";
+  # The pin refresh reads this capability from the exact release's protocol
+  # source. Zero names the deployed combined agent, not a guessed semver range.
+  terminalHostProtocol = 0;
   sources = {
     "x86_64-linux" = {
       asset = "manifold-agent-linux-x64";
@@ -32,6 +35,7 @@ in
 stdenv.mkDerivation {
   pname = "manifold-agent";
   inherit version;
+  passthru = { inherit terminalHostProtocol; };
 
   src = fetchurl {
     url = "https://github.com/atyrode/manifold/releases/download/v${version}/${source.asset}";

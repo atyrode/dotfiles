@@ -321,6 +321,14 @@ manifold_provision() {
   master_url="$(manifold_inventory_field masterUrl)"
   item_name="$(manifold_inventory_field vaultItemName)"
   machine_name="$(manifold_node_name)"
+  # Rotation revokes the credential the running process holds, so the agent
+  # that follows a rotation is a restarted agent: whether that may happen is
+  # decided here, before the vault is opened or the master asked to revoke
+  # anything, because a revoked token with a refused restart is an agent
+  # fenced off its own hub. Decided by the same reading every restart gets,
+  # not by a status sample: a manager that cannot answer does not clear the
+  # way to revoking what its agent holds.
+  [[ "$rotate" == 0 ]] || manifold_service_guard restart
 
   local scratch
   scratch="$(vault_secure_temp_dir atyrode-manifold)"
@@ -377,6 +385,22 @@ manifold_provision() {
   manifold_render_status
 }
 
+# What a stop or restart of the agent would end is judged by the same reading
+# every activation gets, before the manager is asked for anything: the agent
+# that owns the machine's terminals is refused while it is loaded, and a
+# transport that declares it owns nothing restarts freely.
+manifold_service_guard() { # verb
+  case "$(actual_system)" in
+    *-linux)
+      disruption_mutation_guard user:manifold-agent.service "$1" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/manifold-agent.service"
+      ;;
+    *-darwin)
+      disruption_mutation_guard "launchd:$(manifold_launchd_label)" "$1" "$(manifold_launchd_plist)"
+      ;;
+  esac
+}
+
 manifold_service() {
   local verb="$1" system systemctl launchctl target
   system="$(actual_system)"
@@ -387,17 +411,20 @@ manifold_service() {
     stop:*-linux | restart:*-linux)
       systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" ||
         die "$EX_UNAVAILABLE" "systemctl is unavailable; manifold-agent service control requires systemd"
+      manifold_service_guard "$verb"
       run_visible "$systemctl" --user "$verb" manifold-agent.service
       ;;
     stop:*-darwin)
       launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)" ||
         die "$EX_UNAVAILABLE" "launchctl is unavailable; manifold-agent service control requires launchd"
+      manifold_service_guard stop
       target="$(manifold_launchd_target)"
       run_visible "$launchctl" bootout "$target"
       ;;
     restart:*-darwin)
       launchctl="$(optional_host_command ATYRODE_LAUNCHCTL launchctl)" ||
         die "$EX_UNAVAILABLE" "launchctl is unavailable; manifold-agent service control requires launchd"
+      manifold_service_guard restart
       run_visible "$launchctl" kickstart -k "$(manifold_launchd_target)"
       ;;
     *) die "$EX_UNAVAILABLE" "manifold-agent is unsupported on $system" ;;
@@ -410,6 +437,7 @@ cmd_runtime_manifold() {
   case "$verb" in
     provision)
       guard_production_mutation "runtime provision manifold-agent"
+      activation_lock
       manifold_provision "$@" || return $?
       provisioning_clear_decline manifold-agent
       ;;
@@ -418,6 +446,7 @@ cmd_runtime_manifold() {
       ;;
     start | stop | restart)
       guard_production_mutation "runtime $verb manifold-agent"
+      activation_lock
       manifold_service "$verb"
       ;;
     *) die "$EX_USAGE" "manifold-agent expects provision, status, start, stop, or restart" ;;

@@ -16,6 +16,7 @@ readonly registry='@registry@'
 readonly catalog='@catalog@'
 readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
+readonly atyrode_disruption='@atyrode_disruption@'
 readonly babel_storage_configure='@babel_storage_configure@'
 readonly babel_clever='@babel_clever@'
 readonly atyrode_runtime='@atyrode_runtime@'
@@ -67,6 +68,8 @@ apply_job_worker=0
 . "$lib_dir/provisioning.sh"
 # shellcheck source=lib/apply.sh
 . "$lib_dir/apply.sh"
+# shellcheck source=lib/disruption.sh
+. "$lib_dir/disruption.sh"
 # shellcheck source=lib/lifecycle.sh
 . "$lib_dir/lifecycle.sh"
 # shellcheck source=lib/clean.sh
@@ -91,7 +94,7 @@ apply_job_worker=0
 usage() {
   cat <<'EOF'
 Usage:
-  atyrode apply [HOST] [--ref REF] [--repo PATH] [--git-auth-mode ssh|https-gh] [--plan|--dry-run|--preview-json] [--json] [--restart-shell]
+  atyrode apply [HOST] [--ref REF | --repo PATH | --candidate STOREPATH] [--git-auth-mode ssh|https-gh] [--plan|--dry-run|--preview-json] [--json] [--restart-shell] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
   atyrode apply-status [JOB] [--json]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
@@ -105,7 +108,7 @@ Usage:
   atyrode runtime boot
   atyrode runtime shortcut [local-qwen]
   atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
-  atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes]
+  atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes] [--scope SCOPE:SERVICE]...
   atyrode vault status [--json]
   atyrode vault login|lock
   atyrode vault get NAME
@@ -127,7 +130,7 @@ Usage:
   atyrode doctor provisioning [--json]
   atyrode host [HOST] [--json]
   atyrode generations [--json] [--sizes]
-  atyrode rollback [--to N] [--dry-run] [--yes]
+  atyrode rollback [HOST] [--to N] [--dry-run] [--yes] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
   atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
   atyrode run [--list] [--json]
   atyrode run NAME [-- ARG...]
@@ -141,17 +144,33 @@ apply preview modes are non-activating: --plan resolves and validates the target
 then prints preflight metadata without invoking nh; --dry-run invokes the normal
 nh switch backend with --dry; --preview-json runs that dry backend and emits its
 normalized package/action preview as JSON.
-apply validates everything before invoking nh, and afterwards reports plain-omp
-settings that drifted from the seeded defaults. Mutating Linux Home Manager
-applies run as manager-owned jobs rather than as children of the invoking
-shell. Started from a terminal the job is handed that terminal: activation
-output streams as it happens, every prompt it raises (sudo, the vault) is
-answerable, and the job ends with the terminal. Without one it is detached and
-its output captured, so replacing a terminal-hosting service cannot terminate
-the activation and apply-status reconnects to the durable result. On a terminal
-apply also offers an interactive keep-or-reset review after activation, and
-offers to run the provisioning command for each surface it finds unconfigured
-instead of only naming it.
+apply builds the candidate closure first, then reads it against the generation
+this machine runs -- every systemd unit, including the Home Manager units a
+system generation embeds, and every launchd plist -- and reports what the
+switch starts, stops, restarts, reloads or retains. That report is the only
+authority on whether the switch may proceed: a stop, restart or reload of a
+protected service (fleet/service-protection.json, and any unit declaring
+X-Atyrode-SessionOwner=true) is refused, as is any impact that could not be
+read, in every entry path (apply, background jobs, rollback, fleet, bootstrap,
+the cockpit). --preview-json carries the report under `disruption` with a
+fingerprint that binds host, both generations and every effect;
+--expected-disruption FINGERPRINT refuses to activate anything but that exact
+report, and --scope SCOPE:SERVICE (system, user or launchd) refuses any effect
+outside the services listed. Neither flag lifts a refusal: there is no
+argument that approves disrupting a protected service, and a refused switch
+is a deliberate maintenance on the machine itself. --candidate activates a
+closure already built and copied here (the fleet's path) after the same
+reading. apply validates everything before building, and afterwards reports
+plain-omp settings that drifted from the seeded defaults. Mutating Linux Home
+Manager applies run as manager-owned jobs rather than as children of the
+invoking shell. Started from a terminal the job is handed that terminal:
+activation output streams as it happens, every prompt it raises (sudo, the
+vault) is answerable, and the job ends with the terminal. Without one it is
+detached and its output captured, so replacing a terminal-hosting service
+cannot terminate the activation and apply-status reconnects to the durable
+result. On a terminal apply also offers an interactive keep-or-reset review
+after activation, and offers to run the provisioning command for each surface
+it finds unconfigured instead of only naming it.
 inventory evaluates the versioned manifest at this CLI's exact revision by
 default; --ref selects another published revision and --repo evaluates a local
 checkout. It is read-only and currently requires --json.
@@ -159,10 +178,13 @@ fleet deploys a machine of this clan that the operator is not sitting at:
 apply converges the machine it runs on, fleet apply converges another one over
 SSH. plan checks that the machine's vars are generated, that it answers a
 strict host-key check, and that its configuration evaluates, without activating
-anything. apply builds the closure here, activates it there through clan, and
-verifies the machine reports itself converged afterwards. Where clan reaches it
-is the machine's own clan.core.networking.targetHost, so a deployment cannot be
-aimed somewhere the reviewed configuration does not name.
+anything. apply builds the closure here, copies it there, has the machine read
+it against its own running generation and show the disruption report, places
+the machine's secrets through clan, and only then activates -- through the
+machine's own `atyrode apply --candidate`, bound to the fingerprint just shown
+-- and verifies the machine reports itself converged afterwards. Where it is
+reached is the machine's own clan.core.networking.targetHost, so a deployment
+cannot be aimed somewhere the reviewed configuration does not name.
 vault provides exact-name Bitwarden Secure Note storage. get and put sync and
 unlock interactively when needed, then relock only when they opened the session.
 put accepts secret material only from hidden terminal input or stdin; get is the
@@ -193,7 +215,9 @@ decrypted with at activation, is clan's: `clan vars generate <host>` mints it on
 an operator device and apply places it.
 generations lists the activation profile's generations (nix-darwin or NixOS
 system profile, otherwise standalone Home Manager); rollback activates an earlier
-one (previous by default, or --to N) after confirming.
+one (previous by default, or --to N) after reading it against the running
+generation exactly as apply does -- --dry-run prints that report -- and
+confirming.
 clean reclaims disk from generations the
 config no longer references, always keeping the current one and a rollback
 window (--keep / --keep-since); it previews the plan and asks before touching

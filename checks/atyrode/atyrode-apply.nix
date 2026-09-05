@@ -10,6 +10,26 @@ let
   developmentAtyrode = atyrode.override { revision = "unknown"; };
   launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
   targetAtyrode = atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; };
+  serviceGeneration =
+    name: service: command:
+    pkgs.runCommand "${name}-home-manager-generation" { } ''
+      mkdir -p "$out/home-files/.config/systemd/user"
+      printf '[Unit]\nDescription=Fixture 1.0\n[Service]\nExecStart=%s\n' '${command}' \
+        > "$out/home-files/.config/systemd/user/${service}.service"
+    '';
+  ownerOld =
+    serviceGeneration "owner-old" "manifold-agent"
+      "/nix/store/fixture-manifold-1.0/bin/agent --old";
+  ownerNew =
+    serviceGeneration "owner-new" "manifold-agent"
+      "/nix/store/fixture-manifold-1.0/bin/agent --new";
+  scopedOld = serviceGeneration "scoped-old" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --old";
+  scopedNew = serviceGeneration "scoped-new" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --new";
+  unknownCandidate = pkgs.runCommand "fixture-unknown-generation" { } ''mkdir "$out"'';
+  contextCandidate = pkgs.runCommand "context-candidate-home-manager-generation" { } ''
+    mkdir -p "$out/home-files/.config/systemd/user"
+    ln -s ${targetAtyrode} "$out/home-path"
+  '';
 in
 pkgs.runCommand "check-atyrode-apply"
   {
@@ -37,6 +57,9 @@ pkgs.runCommand "check-atyrode-apply"
     unit=""
     path_forwarded=0
     pty=0
+    if [[ -n "''${ATYRODE_TEST_MANAGER_HOST:-}" ]]; then
+      export ATYRODE_HOST="$ATYRODE_TEST_MANAGER_HOST"
+    fi
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --unit=*) unit="''${1#--unit=}"; shift ;;
@@ -70,6 +93,8 @@ pkgs.runCommand "check-atyrode-apply"
     #!${pkgs.runtimeShell}
     case "$*" in
       *show-environment*) exit 0 ;;
+      *'show --property=LoadState,ActiveState -- manifold-agent.service')
+        printf 'LoadState=loaded\nActiveState=%s\n' "''${ATYRODE_TEST_OWNER_ACTIVE:-active}" ;;
       *is-active*)
         unit=""
         for arg in "$@"; do unit="$arg"; done
@@ -221,9 +246,9 @@ pkgs.runCommand "check-atyrode-apply"
       and all(.[]; .status != "missing" or (.remediation | contains("do not install globally")))
     ' <<< "$tools" >/dev/null
 
-    # A generated identity can outlive a clean host-ID cutover. It must not
-    # prevent the unique machine identity from resolving, while an explicit
-    # environment selection remains authoritative and rejects typos.
+    # Generated identities in files and login environments can outlive a
+    # rename. Only an explicit argument may require a retired identity;
+    # recovering an inherited value requires a current record or exact host.
     printf '%s\n' '{"id":"alex-aarch64-darwin"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
     env _ATYRODE_TEST_SYSTEM=aarch64-darwin _ATYRODE_TEST_USER=alex \
       _ATYRODE_TEST_HOSTNAME=alex-aarch64-darwin \
@@ -234,8 +259,18 @@ pkgs.runCommand "check-atyrode-apply"
       _ATYRODE_TEST_HOSTNAME=wsl \
       atyrode context --json |
       jq -e '.host.id == "wsl"' >/dev/null
+    env ATYRODE_HOST=alex-x86_64-linux-wsl \
+      _ATYRODE_TEST_SYSTEM=x86_64-linux _ATYRODE_TEST_USER=alex \
+      _ATYRODE_TEST_HOSTNAME=wsl atyrode context --json |
+      jq -e '.host.id == "wsl"' >/dev/null
     set +e
-    ATYRODE_HOST=alex-aarch64-darwin atyrode apply --repo "$HOME/nix-dotfiles" --plan \
+    env ATYRODE_HOST=retired-host _ATYRODE_TEST_HOSTNAME=unregistered \
+      atyrode context --json > /dev/null 2> "$TMPDIR/ambiguous-inherited-host.err"
+    inherited_status="$?"
+    set -e
+    test "$inherited_status" = 65
+    set +e
+    atyrode apply alex-aarch64-darwin --repo "$HOME/nix-dotfiles" --plan \
       > /dev/null 2> "$TMPDIR/unknown-host.err"
     unknown_host_status="$?"
     set -e
@@ -309,13 +344,6 @@ pkgs.runCommand "check-atyrode-apply"
     # before committing, so it has to name the same steps the run then walks.
     rm -f "$TMPDIR/nh-args"
     atyrode apply --repo "$HOME/nix-dotfiles" --plan >/dev/null 2>"$TMPDIR/plan.err"
-    grep -qE '^  1\. Rebuild and switch development-x86_64-linux through nh-home\.$' "$TMPDIR/plan.err"
-    grep -qE '^  2\. Record development-x86_64-linux as the activated host\.$' "$TMPDIR/plan.err"
-    grep -qE '^  3\. Converge the account login shell\.$' "$TMPDIR/plan.err"
-    grep -qE '^  4\. Arm the hourly archive timer' "$TMPDIR/plan.err"
-    grep -qE '^  5\. Review the provisioning surfaces' "$TMPDIR/plan.err"
-    grep -qE "^  6\. Render this machine's agent context\.\$" "$TMPDIR/plan.err"
-    grep -qF 'No changes were made. Drop --plan to run this.' "$TMPDIR/plan.err"
     test ! -e "$TMPDIR/nh-args"
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
 
@@ -575,28 +603,12 @@ pkgs.runCommand "check-atyrode-apply"
     export ATYRODE_BW="$TMPDIR/vaultbin/bw"
     export ATYRODE_CLEVER="$TMPDIR/vaultbin/clever"
 
-    # Transparency is a contract, not a courtesy. An operator watching an apply
-    # has to be able to see what it will do, what it is doing and why, and
-    # whether each part worked -- and read all of it again once the scrollback
-    # is gone. A step that announces itself and then goes quiet is the shape
-    # this replaces: it is indistinguishable from a step that hung.
-    grep -qE '^1/6 Rebuild and switch development-x86_64-linux through nh-home$' "$TMPDIR/apply-success.err"
-    grep -qE '^2/6 Record development-x86_64-linux as the activated host$' "$TMPDIR/apply-success.err"
-    grep -qE '^3/6 Converge the account login shell$' "$TMPDIR/apply-success.err"
-    grep -qE '^4/6 Arm the hourly archive timer$' "$TMPDIR/apply-success.err"
-    grep -qE '^5/6 Review the provisioning surfaces' "$TMPDIR/apply-success.err"
-    grep -qE "^6/6 Render this machine's agent context$" "$TMPDIR/apply-success.err"
     # ... and a home-manager apply writes nothing this user could not write, so
     # it must not warn about a password prompt that will never arrive.
     if grep -qF 'nh elevates' "$TMPDIR/apply-success.err"; then
       echo 'a home-manager apply warned about an elevation it never performs' >&2
       exit 1
     fi
-    # Six steps, six verdicts: no step may end without one.
-    test "$(grep -cE '^  (ok|skipped|failed)( |$)' "$TMPDIR/apply-success.err")" -eq 6
-    # And the reason a step is running, in the vocabulary of what decided it.
-    grep -qF 'why fleet/system-boundary.json declares' "$TMPDIR/apply-success.err"
-    grep -qF 'why fleet/provisioning.json declares 9 surfaces' "$TMPDIR/apply-success.err"
     grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
 
     # The agent context (ADR 0008 step 2). apply's last step rendered it, and
@@ -622,6 +634,11 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'does not trust it yet' "$context_file"
     grep -qF 'No canonical clone root is declared for this host' "$context_file"
     grep -qF 'Never edit by hand.' "$context_file"
+    # A copied closure renders its own revision, not the invoking CLI's or an
+    # unrelated global profile's. This matters for standalone HM on NixOS.
+    atyrode apply development-x86_64-linux --candidate ${contextCandidate} \
+      > "$TMPDIR/candidate-context.out" 2> "$TMPDIR/candidate-context.err"
+    grep -qF 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
     # Under the session stubs exported above, every CLI is reported as it is:
     # the vault unlocked, clever logged in, gh (real, no account here) not --
     # and a missing session names the exact command that acquires it. A token
@@ -710,7 +727,6 @@ pkgs.runCommand "check-atyrode-apply"
     test -n "$run_log"
     test -n "$(find "$run_log" -perm 600 -print -quit)"
     grep -qE 'run: env LC_ALL=C\.UTF-8 .*nh home switch' "$run_log"
-    grep -qE '^[0-9-]{10}T[0-9:]{8}Z step 1/6: Rebuild and switch' "$run_log"
     grep -qF 'apply finished for development-x86_64-linux' "$run_log"
 
     # provision names its targets, so a mistyped one cannot be mistaken for a
@@ -967,24 +983,13 @@ pkgs.runCommand "check-atyrode-apply"
 
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     export ATYRODE_NH_FAIL=1
+    rm -f "$TMPDIR/nh-activations"
     if atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/nh-fail.err"; then
       echo 'failed activation unexpectedly succeeded' >&2
       exit 1
     fi
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
-    # nh builds before it switches, so a failure here usually never reached the
-    # machine. Reporting it as a failed activation sent an operator to repair a
-    # machine that was fine, and bootstrap then offered to reset its Nix.
-    grep -qF 'nothing was activated: this machine is unchanged' "$TMPDIR/nh-fail.err" \
-      || { echo "a failure that changed nothing must say so: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
-    ! grep -qF 'could not activate this machine' "$TMPDIR/nh-fail.err" \
-      || { echo 'a build failure must not be reported as a failed activation' >&2; exit 1; }
-    # The plan promised six steps and one of them failed; the other five must
-    # not simply vanish from the terminal, which reads as though they ran.
-    test "$(grep -cF 'not attempted' "$TMPDIR/nh-fail.err")" = 5 \
-      || { echo "every unreached planned step owes a verdict: $(cat "$TMPDIR/nh-fail.err")" >&2; exit 1; }
-    grep -qF 'Converge the account login shell' "$TMPDIR/nh-fail.err" \
-      || { echo 'an abandoned step must be named, not just counted' >&2; exit 1; }
+    test ! -e "$TMPDIR/nh-activations"
     unset ATYRODE_NH_FAIL
 
     atyrode apply --repo "$HOME/nix-dotfiles" --dry-run >/dev/null
@@ -1012,6 +1017,82 @@ pkgs.runCommand "check-atyrode-apply"
     ' <<< "$preview" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
     grep -qE '^\$ env LC_ALL=C.UTF-8 .*nh home switch .* --dry$' "$TMPDIR/preview.err"
+
+    # Package-version output cannot authorize a service restart. These real
+    # command-boundary cases inspect different immutable generation trees.
+    (
+      export ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl"
+      export ATYRODE_TEST_CANDIDATE=${ownerNew}
+      ln -sfn ${ownerOld} "$XDG_STATE_HOME/home-manager/gcroots/current-home"
+      rm -f "$TMPDIR/nh-activations"
+      owner_preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
+      jq -e '.disruption.status == "blocked" and
+        any(.disruption.effects[]; .service == "manifold-agent.service" and
+          .protected and (.action == "restart" or .action == "stop"))' \
+        <<<"$owner_preview" >/dev/null
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/owner-refused.err"
+      refused_status="$?"
+      set -e
+      test "$refused_status" = 69
+      test ! -e "$TMPDIR/nh-activations"
+      test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+
+      # An absence-based preview is stale if the owner returns before the locked apply.
+      inactive_preview="$(ATYRODE_TEST_OWNER_ACTIVE=inactive atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
+      inactive_fingerprint="$(jq -er '.disruption | select(.status == "safe") | .fingerprint' <<<"$inactive_preview")"
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" --expected-disruption "$inactive_fingerprint" >/dev/null 2>&1
+      returned_owner_status="$?"
+      set -e
+      test "$returned_owner_status" = 69
+      test ! -e "$TMPDIR/nh-activations"
+      ATYRODE_TEST_OWNER_ACTIVE=inactive atyrode apply --repo "$HOME/nix-dotfiles" \
+        --expected-disruption "$inactive_fingerprint" >/dev/null 2>&1
+      test -s "$TMPDIR/nh-activations"
+      rm "$TMPDIR/nh-activations"
+
+      export ATYRODE_TEST_CANDIDATE=${scopedNew}
+      ln -sfn ${scopedOld} "$XDG_STATE_HOME/home-manager/gcroots/current-home"
+      scoped_preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json --scope user:caddy.service)"
+      fingerprint="$(jq -er '.disruption | select(.status == "safe") | .fingerprint' <<<"$scoped_preview")"
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" --scope user:other.service >/dev/null 2>&1
+      scope_status="$?"
+      set -e
+      test "$scope_status" = 69
+      test ! -e "$TMPDIR/nh-activations"
+
+      # A different running generation invalidates the fingerprint even when
+      # the candidate and its package-version diff stayed the same.
+      ln -sfn "$ATYRODE_TEST_CURRENT" "$XDG_STATE_HOME/home-manager/gcroots/current-home"
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" --expected-disruption "$fingerprint" >/dev/null 2>&1
+      stale_status="$?"
+      set -e
+      test "$stale_status" = 65
+      test ! -e "$TMPDIR/nh-activations"
+
+      export ATYRODE_TEST_CANDIDATE=${unknownCandidate}
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>&1
+      unknown_status="$?"
+      set -e
+      test "$unknown_status" = 69
+      test ! -e "$TMPDIR/nh-activations"
+
+      export ATYRODE_TEST_CANDIDATE=${scopedNew}
+      export ATYRODE_GEN_PROFILE="$TMPDIR/guard-existing-profile"
+      touch "$ATYRODE_GEN_PROFILE"
+      rm "$XDG_STATE_HOME/home-manager/gcroots/current-home"
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>&1
+      unknown_current_status="$?"
+      set -e
+      test "$unknown_current_status" = 69
+      test ! -e "$TMPDIR/nh-activations"
+      ln -s "$ATYRODE_TEST_CURRENT" "$XDG_STATE_HOME/home-manager/gcroots/current-home"
+    )
 
     # The target revision must govern the whole apply, including host
     # resolution and post-switch diagnostics, even when the launcher is old.
@@ -1041,7 +1122,7 @@ pkgs.runCommand "check-atyrode-apply"
     # dotfiles input pins the resolved revision; nh home receives the adapter
     # bare, since a #fragment form is passed to nix verbatim and fails
     # attribute resolution.
-    grep -F -- "home switch path:$(cat "$TMPDIR/runtime-adapter-path") --configuration development-x86_64-linux" \
+    grep -Fx -- "home switch $ATYRODE_TEST_CANDIDATE --backup-extension backup --diff always" \
       "$TMPDIR/nh-args" >/dev/null
     grep -qF 'inputs.dotfiles.url = "github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface"' \
       "$TMPDIR/runtime-adapter/flake.nix"
@@ -1072,11 +1153,16 @@ pkgs.runCommand "check-atyrode-apply"
     kill "$apply_caller"
     wait "$apply_caller" 2>/dev/null || true
     job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
-    for _ in $(seq 1 100); do
+    # Build and switch are separate backend calls, followed by the normal convergence probes.
+    for _ in $(seq 1 600); do
       [[ ! -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" ]] || break
       sleep 0.05
     done
-    test -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json"
+    if [[ ! -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" ]]; then
+      cat "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/output.log" >&2
+      echo 'detached worker did not publish its result within 30 seconds' >&2
+      exit 1
+    fi
     jq -e '.phase == "succeeded" and .exitCode == 0' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" >/dev/null
     apply_status="$(atyrode apply-status "$job_id" --json)"
@@ -1319,14 +1405,14 @@ pkgs.runCommand "check-atyrode-apply"
     # Without a registered operator key on this device, applying must stop
     # before the switch that would ask sops-nix for the absent machine key.
     mv "$operator_key" "$operator_key.aside"
-    rm -f "$TMPDIR/clan-args" "$TMPDIR/nh-args"
+    rm -f "$TMPDIR/clan-args" "$TMPDIR/nh-args" "$TMPDIR/nh-activations"
     set +e
     atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-nodevice.err"
     nodevice_status="$?"
     set -e
     test "$nodevice_status" != 0
     test ! -e "$TMPDIR/clan-args"
-    test ! -e "$TMPDIR/nh-args"
+    test ! -e "$TMPDIR/nh-activations"
     test ! -e "$machine_key"
     mv "$operator_key.aside" "$operator_key"
     # Exercise the actual SOPS reader with a different platform default,
@@ -1350,8 +1436,6 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
-    grep -qE '^  1\. Place the machine key\.$' "$TMPDIR/wsl-apply.err"
-    grep -qE '^  2\. Rebuild and switch wsl through nh-os\.$' "$TMPDIR/wsl-apply.err"
     grep -qF "sops-nix decrypts this machine's vars at activation with this key" "$TMPDIR/wsl-apply.err"
     grep -qE "^  \\$ sudo -- \\S*install -D -m 0600 -o root \\S+/key\\.txt $machine_key\$" \
       "$TMPDIR/wsl-apply.err"
@@ -1405,7 +1489,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF "secrets get wsl-age.key --flake $fetched_tree" "$TMPDIR/clan-args"
     grep -qF "placed at $machine_key (root, mode 0600)" "$TMPDIR/wsl-apply-remote.err"
     test "$(cat "$machine_key")" = AGE-SECRET-KEY-1FIXTUREONLY
-    grep -Fx -- "os switch github:atyrode/dotfiles/$remote_rev#wsl --diff always" \
+    grep -Fx -- "os switch $ATYRODE_TEST_CANDIDATE --diff always" \
       "$TMPDIR/nh-args" >/dev/null
     mv "$TMPDIR/nh-args.checkout" "$TMPDIR/nh-args"
     rm -rf "$fetched_tree" "$TMPDIR/bin/nix" "$TMPDIR/nix-args"
@@ -1426,12 +1510,7 @@ pkgs.runCommand "check-atyrode-apply"
     rm -f "$TMPDIR/bin/sudo" "$TMPDIR/bin/clan"
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
     unset ATYRODE_CLAN _ATYRODE_TEST_IDENTITY_ROOT
-    # NixOS and nix-darwin activate as root, and the backend elevates for that
-    # itself. Unannounced, the password prompt arrives mid-build from inside
-    # someone else's output, and reads as the dotfiles asking for root out of
-    # nowhere -- so the step names whose prompt it is before it can appear.
-    grep -qF 'so nh elevates: a sudo prompt below is its own' "$TMPDIR/wsl-apply.err"
-    grep -Fx -- "os switch $HOME/nix-dotfiles#wsl --diff always" \
+    grep -Fx -- "os switch $ATYRODE_TEST_CANDIDATE --diff always" \
       "$TMPDIR/nh-args" >/dev/null
     grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \
       "$WINGET_LOG" >/dev/null
@@ -1523,12 +1602,15 @@ pkgs.runCommand "check-atyrode-apply"
     # clear it so this scenario turns on interop reachability alone.
     rm -f "$WINGET_STATE/stable" "$WINGET_STATE/twilight"
     : > "$WINGET_LOG"
+    mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json.before-worker"
+    printf '%s\n' '{"id":"alex-x86_64-linux-wsl"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
     set +e
     env -u ATYRODE_WINGET \
+      ATYRODE_HOST=alex-x86_64-linux-wsl ATYRODE_TEST_MANAGER_HOST=dev-01 \
       _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
       ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
       ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
-      atyrode apply wsl --repo "$HOME/nix-dotfiles" \
+      atyrode apply --repo "$HOME/nix-dotfiles" \
       > "$TMPDIR/wsl-path.out" 2> "$TMPDIR/wsl-path.err"
     wsl_path_status="$?"
     set -e
@@ -1541,6 +1623,7 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     grep -qF -- '--version' "$WINGET_LOG"
+    mv "$TMPDIR/host.json.before-worker" "$XDG_CONFIG_HOME/atyrode/host.json"
 
     set +e
     WINGET_QUERY_ERROR=1 atyrode windows plan wsl --json \

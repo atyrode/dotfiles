@@ -649,6 +649,8 @@ diskutil_command() {
 
 diskutil_field() {
   local device="$1" field="$2"
+  # Drain the native command: exiting after one field races its remaining
+  # writes, turning successful metadata into SIGPIPE under pipefail.
 
   "$(diskutil_command)" info "$device" 2>/dev/null |
     awk -F: -v want="$field" '
@@ -657,10 +659,10 @@ diskutil_field() {
         sub(/^[[:space:]]+/, "", key)
         sub(/[[:space:]]+$/, "", key)
       }
-      key == want {
+      key == want && !found {
         sub(/^[^:]*:[[:space:]]*/, "")
         print
-        exit
+        found = 1
       }
     '
 }
@@ -1660,8 +1662,45 @@ managed_activation_plan() {
   run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --plan
 }
 
+# Activation is two calls, not one: the packaged CLI previews the candidate it
+# is about to build -- which reads that closure against whatever generation
+# this machine already runs and reports every service the switch would touch
+# -- and the activation that follows names the fingerprint of that report, so
+# it activates that candidate against that generation with those effects or
+# refuses. A machine bootstrapped for the first time has no generation and
+# reports nothing to disrupt; a machine being updated is where this matters,
+# because the agent owning its terminals is exactly the kind of service an
+# update restarts in passing. jq does not exist yet on a machine bootstrap is
+# running on, so the two fields are read from the CLI's compact JSON by
+# pattern: the report is emitted by the CLI's own jq in a fixed key order,
+# and a document without both fields is refused rather than guessed at.
 activate_configuration() {
-  run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --restart-shell
+  local preview disruption status fingerprint
+  preview="$(run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" --preview-json)" || return 1
+  [[ "$preview" == *'"disruption":{'* ]] || {
+    printf 'bootstrap: the packaged CLI previewed %s without a disruption report, so the activation cannot be shown safe\n' \
+      "$FLAKE_CONFIG" >&2
+    return 1
+  }
+  disruption="${preview#*\"disruption\":\{}"
+  status=""
+  [[ ! "$disruption" =~ \"status\":\"([a-z]+)\" ]] || status="${BASH_REMATCH[1]}"
+  if [[ "$status" != safe ]]; then
+    printf 'bootstrap: activating %s is refused: the disruption report is %s\n' \
+      "$FLAKE_CONFIG" "${status:-unreadable}" >&2
+    printf '  %s\n' "${disruption%%\}*}}" >&2
+    printf 'bootstrap: read the full report with: atyrode apply %s --repo %s --dry-run\n' \
+      "$FLAKE_CONFIG" "$DOTFILES_DIR" >&2
+    return 1
+  fi
+  [[ "$disruption" =~ \"fingerprint\":\"([0-9a-f]{64})\" ]] || {
+    printf 'bootstrap: the disruption report for %s carries no fingerprint to bind the activation to\n' \
+      "$FLAKE_CONFIG" >&2
+    return 1
+  }
+  fingerprint="${BASH_REMATCH[1]}"
+  run_atyrode apply "$FLAKE_CONFIG" --repo "$DOTFILES_DIR" --git-auth-mode "$GIT_AUTH_MODE" \
+    --expected-disruption "$fingerprint" --restart-shell
 }
 
 # Callers catch this function's failure, and catching a function suppresses

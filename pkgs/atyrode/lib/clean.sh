@@ -493,25 +493,51 @@ cmd_generations() {
 # rollback — activate an earlier generation (previous by default, or --to N).
 # A mutation, so it confirms first and --dry-run only previews; roll-forward is
 # always possible, and it refuses to "roll back" to the current generation.
+# An earlier generation is a candidate like any other: what its activation
+# does to services is analysed against the generation running now and refused
+# on the same terms as apply, because the agent that owns every terminal does
+# not care which direction the generation that stops it came from.
 cmd_rollback() {
-  local to="" dry=0 assume_yes=0
+  local to="" dry=0 assume_yes=0 expected_disruption="" requested=""
+  local -a scopes=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --to)
         shift
         to="${1:-}"
         ;;
+      --expected-disruption)
+        shift
+        expected_disruption="${1:-}"
+        [[ "$expected_disruption" =~ ^[0-9a-f]{64}$ ]] ||
+          die "$EX_USAGE" "--expected-disruption expects the 64-hex fingerprint printed by rollback --dry-run"
+        ;;
+      --scope)
+        shift
+        [[ -n "${1:-}" ]] || die "$EX_USAGE" "--scope requires scope:service"
+        validate_scope "$1"
+        scopes+=("$1")
+        ;;
       -n | --dry-run) dry=1 ;;
       -y | --yes) assume_yes=1 ;;
-      *) die "$EX_USAGE" "unknown rollback option: $1" ;;
+      --*) die "$EX_USAGE" "unknown rollback option: $1" ;;
+      *)
+        [[ -z "$requested" ]] || die "$EX_USAGE" "rollback accepts at most one host"
+        requested="$1"
+        ;;
     esac
     shift || true
   done
   command -v nix-env >/dev/null || die "$EX_UNAVAILABLE" "nix-env is unavailable"
-  local profile platform
+  local profile platform activation
   profile="$(gen_profile)"
   platform="$(gen_platform)"
   [[ -e "$profile" ]] || die "$EX_NOINPUT" "no $platform generations profile at $profile"
+  case "$platform" in
+    nix-darwin) activation=nix-darwin ;;
+    nixos) activation=nixos ;;
+    *) activation=home-manager ;;
+  esac
 
   local listing current target
   # A failed read must not exit 1 with no diagnostic under `set -e`; the
@@ -530,11 +556,31 @@ cmd_rollback() {
   fi
   [[ "$target" != "$current" ]] || die "$EX_USAGE" "generation $target is already current"
 
+  local genpath
+  genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" ||
+    die "$EX_DATAERR" "cannot resolve generation $target"
   printf 'atyrode: roll %s back from generation %s to %s\n' "$platform" "$current" "$target" >&2
+
+  # The lock is held from here through the activation, so the generation the
+  # report describes is the one still running when the switch begins; a dry
+  # run holds nothing, since it changes nothing. A NixOS rollback runs under
+  # sudo, which drops the receipt and the environment apply resolves the host
+  # from, so the host may be named on the command line; the operator whose
+  # Home Manager units the report labels is the account that invoked sudo.
+  [[ "$dry" == 1 ]] || activation_lock
+  local running report host operator
+  host="$(resolve_host "$requested")"
+  operator="${SUDO_USER:-$(actual_user)}"
+  running="$(current_generation "$activation" "$operator")" ||
+    die "$EX_UNAVAILABLE" "the generation running now cannot be named, so generation $target cannot be shown safe against it"
+  report="$(disruption_analyze "$host" "$activation" "$running" "$genpath" "$operator" "${scopes[@]+"${scopes[@]}"}")" ||
+    die "$EX_UNAVAILABLE" "the disruption analyzer did not produce a report, and a rollback without one cannot be shown safe"
+  disruption_render "$report"
   if [[ "$dry" == 1 ]]; then
     printf '  dry run — nothing activated\n' >&2
     return 0
   fi
+  disruption_enforce "$report" "$expected_disruption" "$genpath"
   [[ "$assume_yes" == 1 ]] || confirm "activate generation $target now?" || return 0
 
   # Activating a generation is the same class of change `apply` makes, and apply
@@ -548,9 +594,6 @@ cmd_rollback() {
   elif [[ "$platform" == nixos ]]; then
     [[ "$(effective_uid)" == 0 ]] ||
       die "$EX_UNAVAILABLE" "NixOS rollback requires root; rerun this exact command with sudo"
-    local genpath
-    genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" ||
-      die "$EX_DATAERR" "cannot resolve generation $target"
     [[ -x "$genpath/bin/switch-to-configuration" ]] ||
       die "$EX_DATAERR" "generation $target has no NixOS switch-to-configuration program"
     # Resolved rather than run through core's nix_env wrapper: an announced
@@ -563,8 +606,6 @@ cmd_rollback() {
     run_visible "$profile/bin/switch-to-configuration" switch ||
       die "$EX_SOFTWARE" "NixOS rollback activation failed"
   else
-    local genpath
-    genpath="$(readlink -f "$profile-$target-link" 2>/dev/null)" || die "$EX_DATAERR" "cannot resolve generation $target"
     [[ -x "$genpath/activate" ]] || die "$EX_DATAERR" "generation $target has no activate script"
     run_visible "$genpath/activate" || die "$EX_SOFTWARE" "rollback activation failed"
   fi

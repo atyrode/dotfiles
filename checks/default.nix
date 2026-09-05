@@ -286,6 +286,10 @@ let
       nixosConfigs = canonicalNixosConfigs;
       darwinConfigs = canonicalDarwinConfigs;
     };
+    atyrode-disruption = import ./atyrode/atyrode-disruption.nix {
+      inherit pkgs;
+      inherit (pkgs) atyrode;
+    };
     atyrode-apply = import ./atyrode/atyrode-apply.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;

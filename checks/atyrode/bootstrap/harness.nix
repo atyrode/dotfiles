@@ -202,6 +202,19 @@ let
       *" -- apply "*)
         case " $* " in
           *" --plan "*) exit 0 ;;
+          *" --preview-json "*)
+            if [ "''${FAKE_BUILD_FAIL:-0}" = 1 ]; then
+              printf "error: Cannot build '/nix/store/00000000000000000000000000000000-darwin-system-26.11.drv'.\n       Reason: builder failed with exit code 1.\n" >&2
+              exit 1
+            fi
+            printf '{"disruption":{"schemaVersion":1,"status":"%s","fingerprint":"%s","effects":[]}}\n' \
+              "''${FAKE_DISRUPTION_STATUS:-safe}" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            exit 0
+            ;;
+        esac
+        case " $* " in
+          *" --expected-disruption aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "*) ;;
+          *) exit 65 ;;
         esac
         # nix-darwin's own refusal, reprinted the way nh reprints it: the
         # block arrives indented under nh's error, so a parser that only
@@ -329,6 +342,9 @@ let
               printf '   Mounted:                   No\n'
             else
               printf '   Mounted:                   Yes\n'
+            fi
+            if [ "''${FAKE_DISKUTIL_LONG_OUTPUT:-0}" = 1 ]; then
+              printf '%2097152s\n' 'Additional native disk metadata'
             fi
             rm -f "$table.next"
             exit 0

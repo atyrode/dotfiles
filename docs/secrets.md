@@ -35,6 +35,30 @@ Every host of [`fleet/hosts.nix`](../fleet/hosts.nix) is a clan machine;
 below. The portable `development-*` profiles are not: they run on machines
 the operator does not own, read no fleet secret and hold no machine key.
 
+## What a public clone can do
+
+A clone receives configuration, public machine and user recipients, encrypted
+values, public service addresses, and public SSH keys. It receives no private
+age identity, machine key, service token, provider credential, GitHub write
+authority, or Bitwarden session. The public binary cache is read-only and adds
+no authority beyond those same public sources.
+
+Applying a fixed host configuration to another computer can reproduce that
+configuration and even give the computer the same local label. It changes only
+that computer. Fleet membership is the reviewed registry in Git, not dynamic
+discovery: a clone cannot add a machine to this repository, make it appear in
+the generated fleet context, or alter an operator machine. Services remain
+separate trust boundaries. SSH accepts only the private halves of reviewed
+public keys; Manifold enrollment needs its owner key and yields a machine
+token; OMP, Babel, and provider access require their encrypted credentials. An
+unenrolled copy is therefore inert or rejected, not connected to the fleet.
+
+A clone becomes dangerous only after a separate authority is compromised: a
+private recipient or service token leaks, repository write access accepts its
+change, or an operator deliberately runs code from an untrusted fork. Those are
+credential, review, and supply-chain failures respectively; cloning alone is
+none of them.
+
 ## Operator devices
 
 **The operator identity** is one clan user per device the operator works
@@ -120,6 +144,9 @@ writes: the identity line is never printed.
    announced and neither carrying the key in argv -- and the activation that
    follows decrypts the machine's vars. A machine reached over SSH gets the
    same from `clan machines update <host>`.
+   If the local operator identity cannot decrypt that key, apply stops before
+   activation; an already registered operator device must instead run
+   `atyrode fleet apply <host>`.
 
 ## Declaring a secret
 

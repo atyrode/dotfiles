@@ -492,6 +492,11 @@ pkgs.runCommand "check-atyrode-apply"
     mkdir -p "''${machine_key%/*}"
     printf 'AGE-SECRET-KEY-1PLACED\n' > "$machine_key"
     machine_key_probe fixture-nixos ok ""
+    # Machine state wins over a stale conventional checkout. A remote apply
+    # may have placed the published key while ~/nix-dotfiles still predates it;
+    # that must not offer to mint a key which already exists.
+    rm -rf "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key"
+    machine_key_probe fixture-nixos ok ""
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key"
     unset _ATYRODE_TEST_IDENTITY_ROOT
     # This sandbox is itself a registered device from here on, as a real
@@ -1262,14 +1267,20 @@ pkgs.runCommand "check-atyrode-apply"
     machine_key="$machine_root/var/lib/sops-nix/key.txt"
     mkdir -p "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
     printf '{"data":"ENC[AES256_GCM,fixture]","sops":{"age":[]}}\n' > "$HOME/nix-dotfiles/sops/secrets/wsl-age.key/secret"
-    # Without a registered operator key on this device the step says which
-    # device can, and the switch still runs.
+    # Without a registered operator key on this device, applying must stop
+    # before the switch that would ask sops-nix for the absent machine key.
     mv "$operator_key" "$operator_key.aside"
-    rm -f "$TMPDIR/clan-args"
+    rm -f "$TMPDIR/clan-args" "$TMPDIR/nh-args"
+    set +e
     atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-nodevice.err"
-    grep -qF 'this device cannot decrypt the machine key; apply from a registered operator device or place it with: atyrode fleet apply wsl' \
+    nodevice_status="$?"
+    set -e
+    test "$nodevice_status" != 0
+    grep -qF "this device cannot decrypt wsl's machine key" "$TMPDIR/wsl-apply-nodevice.err"
+    grep -qF 'activation requires the machine key first; from a registered operator device run: atyrode fleet apply wsl' \
       "$TMPDIR/wsl-apply-nodevice.err"
     test ! -e "$TMPDIR/clan-args"
+    test ! -e "$TMPDIR/nh-args"
     test ! -e "$machine_key"
     mv "$operator_key.aside" "$operator_key"
     rm -f "$TMPDIR/nh-args"

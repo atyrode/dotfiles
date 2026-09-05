@@ -182,10 +182,9 @@ provisioning_unconfigured() { # id summary
 }
 
 # The doctor probe for the machine's own age key, the one clan vars are
-# decrypted with at activation. A host clan does not build cannot have one;
-# on a clan machine the key is first minted into the repository by an
-# operator device and then placed on the machine by apply, so the two
-# unfinished states name which of those two steps is owed.
+# decrypted with at activation. A host clan does not build cannot have one.
+# A placed key is conclusive machine state even when the conventional checkout
+# is stale; otherwise the repository says whether minting or placement is owed.
 probe_machine_key() {
   local host data
   host="$(resolve_host)"
@@ -195,19 +194,19 @@ probe_machine_key() {
       "portable profiles are not fleet members and read no secret" ""
     return 0
   fi
+  if machine_key_placed; then
+    provisioning_check_add machine-key ok "" \
+      "machine key placed; secrets are decrypted at activation" ""
+    return 0
+  fi
   if [[ ! -e "$(machine_key_repository_file "$host")" ]]; then
     provisioning_unconfigured machine-key \
       "no machine key in the repository; on any operator device run: clan vars generate $host"
     return 0
   fi
-  if ! machine_key_placed; then
-    provisioning_check_add machine-key degraded not-placed \
-      "the machine key is in the repository but not at $(machine_key_file); atyrode apply places it" \
-      "atyrode apply"
-    return 0
-  fi
-  provisioning_check_add machine-key ok "" \
-    "machine key placed; secrets are decrypted at activation" ""
+  provisioning_check_add machine-key degraded not-placed \
+    "the machine key is in the repository but not at $(machine_key_file); atyrode apply places it" \
+    "atyrode apply"
 }
 
 collect_provisioning_checks() {

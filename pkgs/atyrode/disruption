@@ -1032,12 +1032,23 @@ def resolve(path, what):
     return real
 
 
-def hold_lock(fd):
+def hold_lock(fd, lock_file):
     """Take an exclusive, non-blocking flock on a descriptor the caller opened
     and keeps open: the lock lives with the caller's open file description, so
-    it survives this process and ends when the caller closes the descriptor."""
+    it survives this process and ends when the caller closes the descriptor.
+    The descriptor must be the lock file itself -- a child handed a number by
+    its parent proves it by fstat, not by trust -- and a lock already held on
+    the same open file description is simply reacquired, which is what lets
+    a parent holding the lock delegate to a child without deadlocking."""
     import fcntl
 
+    try:
+        held = os.fstat(fd)
+        named = os.stat(lock_file)
+    except OSError as error:
+        raise SystemExit(f"atyrode-disruption: cannot verify descriptor {fd} against {lock_file}: {error.strerror}")
+    if (held.st_dev, held.st_ino) != (named.st_dev, named.st_ino):
+        raise SystemExit(f"atyrode-disruption: descriptor {fd} is not {lock_file}")
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -1129,6 +1140,7 @@ def main(argv):
     parser.add_argument("--scope", action="append", type=parse_scope, default=None)
     parser.add_argument("--policy", default="@service_protection@")
     parser.add_argument("--hold-lock-fd", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--lock-file", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--runtime", action="store_true", help="ask the native manager whether a protected unit the engine would touch is loaded at all")
     parser.add_argument("--systemctl", default="systemctl")
     parser.add_argument("--launchctl", default="/bin/launchctl")
@@ -1138,7 +1150,9 @@ def main(argv):
     args = parser.parse_args(argv)
 
     if args.hold_lock_fd is not None:
-        return hold_lock(args.hold_lock_fd)
+        if not args.lock_file:
+            parser.error("--hold-lock-fd requires --lock-file")
+        return hold_lock(args.hold_lock_fd, args.lock_file)
     if args.mutate:
         if not args.service:
             parser.error("--mutate requires --service scope:service")

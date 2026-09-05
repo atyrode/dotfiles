@@ -323,11 +323,12 @@ manifold_provision() {
   machine_name="$(manifold_node_name)"
   # Rotation revokes the credential the running process holds, so the agent
   # that follows a rotation is a restarted agent: whether that may happen is
-  # decided here, before the master is asked to revoke anything, because a
-  # revoked token with a refused restart is an agent fenced off its own hub.
-  if [[ "$rotate" == 1 && "$(manifold_service_snapshot)" == $'true\tactive\trunning' ]]; then
-    manifold_service_guard restart
-  fi
+  # decided here, before the vault is opened or the master asked to revoke
+  # anything, because a revoked token with a refused restart is an agent
+  # fenced off its own hub. Decided by the same reading every restart gets,
+  # not by a status sample: a manager that cannot answer does not clear the
+  # way to revoking what its agent holds.
+  [[ "$rotate" == 0 ]] || manifold_service_guard restart
 
   local scratch
   scratch="$(vault_secure_temp_dir atyrode-manifold)"
@@ -436,6 +437,7 @@ cmd_runtime_manifold() {
   case "$verb" in
     provision)
       guard_production_mutation "runtime provision manifold-agent"
+      activation_lock
       manifold_provision "$@" || return $?
       provisioning_clear_decline manifold-agent
       ;;
@@ -444,6 +446,7 @@ cmd_runtime_manifold() {
       ;;
     start | stop | restart)
       guard_production_mutation "runtime $verb manifold-agent"
+      activation_lock
       manifold_service "$verb"
       ;;
     *) die "$EX_USAGE" "manifold-agent expects provision, status, start, stop, or restart" ;;

@@ -89,22 +89,42 @@ candidate_link_path() { # host
   mktemp -u "$directory/candidate-$1.XXXXXXXX"
 }
 
-# One machine, one activation at a time. apply and rollback take this before
-# they read the current generation and hold it past the switch, so the
-# generation a report was computed against is the one still running when the
-# switch starts. The lock is an flock on a descriptor this shell keeps open:
-# taken by the analyzer, it lives with the open file description, which the
-# child leaves behind when it exits. /tmp because root's rollback and the
-# user's apply must contend for the same file, and because a lock a user
-# cannot see is not a lock.
+# One machine, one activation or service mutation at a time. apply and
+# rollback take this before they read the current generation and hold it
+# past the switch, so the generation a report was computed against is the one
+# still running when the switch starts; every manifold-agent start, stop,
+# restart and enrollment takes it too, so a report that found the owner
+# unloaded cannot be overtaken by a start, nor a transport restart by an
+# activation that changes its role. The lock is an flock on a descriptor
+# this shell keeps open: taken by the analyzer, it lives with the open file
+# description, which the child leaves behind when it exits. /tmp because
+# root's rollback and the user's apply must contend for the same file, and
+# because a lock a user cannot see is not a lock.
+#
+# apply hands work to a child atyrode (a provisioning offer runs `runtime
+# provision manifold-agent`) while it holds the lock, so the child must not
+# contend with its parent. It inherits the descriptor's number, and takes it
+# on proof rather than trust: the analyzer checks by fstat that the number
+# names the lock file and then flocks it, which a descriptor sharing the
+# parent's open file description reacquires and any other descriptor either
+# takes for real or is refused on. A number that proves nothing is ignored
+# and the lock is opened afresh.
+readonly activation_lock_file=/tmp/atyrode-activation.lock
 activation_lock_fd=""
 activation_lock() {
-  local lock=/tmp/atyrode-activation.lock
-  { : >>"$lock"; } 2>/dev/null || true
-  exec {activation_lock_fd}<"$lock" ||
-    die "$EX_UNAVAILABLE" "cannot open the activation lock $lock"
-  "$atyrode_disruption" --hold-lock-fd "$activation_lock_fd" ||
-    die "$EX_UNAVAILABLE" "another activation holds $lock (an apply or rollback is in progress); let it finish, or inspect it with: atyrode apply-status"
+  [[ -z "$activation_lock_fd" ]] || return 0
+  { : >>"$activation_lock_file"; } 2>/dev/null || true
+  local inherited="${ATYRODE_ACTIVATION_LOCK_FD:-}"
+  if [[ "$inherited" =~ ^[0-9]+$ && -e "/dev/fd/$inherited" ]] &&
+    "$atyrode_disruption" --hold-lock-fd "$inherited" --lock-file "$activation_lock_file" 2>/dev/null; then
+    activation_lock_fd="$inherited"
+  else
+    exec {activation_lock_fd}<"$activation_lock_file" ||
+      die "$EX_UNAVAILABLE" "cannot open the activation lock $activation_lock_file"
+    "$atyrode_disruption" --hold-lock-fd "$activation_lock_fd" --lock-file "$activation_lock_file" ||
+      die "$EX_UNAVAILABLE" "another activation or service mutation holds $activation_lock_file (an apply, rollback or manifold-agent operation is in progress); let it finish, or inspect it with: atyrode apply-status"
+  fi
+  export ATYRODE_ACTIVATION_LOCK_FD="$activation_lock_fd"
 }
 
 # The report, as JSON on stdout. A report is produced whenever the analyzer

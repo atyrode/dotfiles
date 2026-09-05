@@ -152,6 +152,12 @@ in
     setSocketVariable = true;
   };
 
+  # A file already at a path Home Manager now links -- the hand-placed
+  # Cloudflare token the cloudflare-dns var replaces, for one -- is moved
+  # aside as <name>.backup instead of failing the activation, as on the other
+  # classes. The apply that first places a var must not stop halfway because
+  # the machine had the value before the fleet did.
+  home-manager.backupFileExtension = "backup";
   home-manager.users.${username} = {
     imports = homeModules;
     home = {

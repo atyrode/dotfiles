@@ -225,6 +225,11 @@ pkgs.runCommand "check-atyrode-apply"
       _ATYRODE_TEST_HOSTNAME=alex-aarch64-darwin \
       atyrode apply --repo "$HOME/nix-dotfiles" --plan --json |
       jq -e '.host == "macbook" and .backend == "nh-darwin"' >/dev/null
+    printf '%s\n' '{"id":"alex-x86_64-linux-wsl"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    env _ATYRODE_TEST_SYSTEM=x86_64-linux _ATYRODE_TEST_USER=alex \
+      _ATYRODE_TEST_HOSTNAME=wsl \
+      atyrode context --json |
+      jq -e '.host.id == "wsl"' >/dev/null
     set +e
     ATYRODE_HOST=alex-aarch64-darwin atyrode apply --repo "$HOME/nix-dotfiles" --plan \
       > /dev/null 2> "$TMPDIR/unknown-host.err"

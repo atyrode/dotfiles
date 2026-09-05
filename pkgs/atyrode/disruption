@@ -241,6 +241,11 @@ def load_unit(directory, name):
     A missing base file with drop-ins is how NixOS expresses some template
     instances; the drop-ins alone then describe it."""
     base = os.path.join(directory, name)
+    # A /dev/null symlink is systemd's explicit mask, not an unreadable unit.
+    # Treat it as absent so mask/unmask transitions still use stop/start rules.
+    # Drop-ins cannot resurrect a masked base definition.
+    if os.path.islink(base) and os.path.realpath(base) == "/dev/null":
+        return None
     merged = {}
     origin = base
     if is_file(base):

@@ -8,8 +8,11 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
 
 ## Ownership split
 
-- **Git owns master discovery.** `fleet/manifold.json` declares
-  `masterUrl` and `masterHost`; repointing the fleet is a reviewed commit.
+- **Git owns master discovery.** `fleet/manifold.json` declares `masterUrl`;
+  repointing the fleet is a reviewed commit. The master is not a machine of
+  this fleet: it is the operator's Clever Cloud deployment of atyrode/manifold
+  (its ADR 0022, `manifold.tyrode.dev` since 2026-09-05), released by
+  `bun run release` there and never by an apply here.
   Vault write access can never redirect fleet terminals (the Bitwarden-based
   discovery alternative was rejected in #418 for exactly that reason).
 - **Nix owns the agent and its unit.** The `manifold-node` capability installs
@@ -54,20 +57,10 @@ reconciles away every session the newcomer does not advertise. Upgrades are
 therefore operator-timed:
 
 1. Upgrade the hub first (protocol compat accepts older agents; the reverse is
-   rejected loudly). The DB lives in the `manifold-data` named volume, in WAL
-   mode — never `cp` it live. Snapshot before any upgrade that applies a
-   schema migration, and stamp the build so `/healthz` proves what deployed:
-
-   ```sh
-   cd ~/manifold && git pull --ff-only
-   docker exec manifold-manifold-1 bun -e \
-     'import {Database} from "bun:sqlite";
-      new Database("/data/manifold.db").exec("VACUUM INTO '/data/pre-upgrade.db'")'
-   docker cp manifold-manifold-1:/data/pre-upgrade.db /srv/backups/
-   MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose build
-   MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose up -d
-   curl -s https://manifold.tyrode.dev/healthz   # build must equal the new rev
-   ```
+   rejected loudly). The hub is released upstream: `bun run release` in
+   atyrode/manifold publishes the tag, its `Deploy hub` workflow deploys the
+   operator's instance, and `curl -s https://manifold.tyrode.dev/healthz`
+   reports the tag as `build`.
 
 2. Bump the `manifold` pin (`./ci/update-pins.sh manifold`) and merge.
    Applying that generation restarts the agent on each machine as its unit
@@ -127,13 +120,23 @@ adopted as-is, never re-minted. `atyrode runtime status manifold-agent --json`
 is the proof it worked, reporting `enrolled: true` with `unit.present: true`
 and an active unit.
 
+## The development hub on dev-01
+
+`dev-01` is a spoke of the master like every machine here, and it also hosts
+the hub one iterates on: a compose stack the operator runs from a checkout on
+port 7912, which [`modules/nixos/manifold-dev-hub.nix`](../modules/nixos/manifold-dev-hub.nix)
+fronts as `dev.manifold.tyrode.dev` with Caddy and a Let's Encrypt
+certificate. That module is why the VPS opens 80 and 443 beside SSH. The
+stack itself is not declared: it is started by hand from the checkout, and a
+vhost whose upstream is down answers 502, which is what "not running" should
+look like.
+
 ## Master migration
 
-The master is a stateful pet: `manifold.db` in the `manifold-data` volume
-holds pads, scenes,
-principals, and hashed tokens. No backup engine covers it yet (ADR 0002 gates;
-SQLite online-backup class), so pads are not durable state.
-Migration is snapshot → restore on the new host → edit
-`fleet/manifold.json` → merge → `atyrode apply` fleet-wide. Never run two
-masters: agents hold one token for one hub, and two SQLite stores cannot be
+The master is a stateful pet: `manifold.db` holds containers, scenes,
+principals, and hashed tokens, replicated continuously to an S3-compatible
+store by the deployment itself (atyrode/manifold `docs/SELF-HOST.md`
+§Replicate the database). Migration is snapshot → restore on the new host →
+edit `fleet/manifold.json` → merge → apply fleet-wide. Never run two masters:
+agents hold one token for one hub, and two SQLite stores cannot be
 reconciled.

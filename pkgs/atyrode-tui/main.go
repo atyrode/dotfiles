@@ -948,30 +948,30 @@ func (m model) previewStatusRows(width int) []string {
 	rows := make([]string, 0, 10)
 	switch {
 	case m.phase == loadingPlan:
-		appendWrappedRow(&rows, clikit.StDim.Render("Loading apply plan…"), width)
+		appendWrappedRow(&rows, "Loading apply plan…", width, clikit.StDim)
 	case m.phase == applying:
-		appendWrappedRow(&rows, clikit.StWarn.Render("Apply is running in the terminal…"), width)
+		appendWrappedRow(&rows, "Apply is running in the terminal…", width, clikit.StWarn)
 	case m.previewLoading:
-		appendWrappedRow(&rows, titleStyle.Render("Running disruption check…"), width)
+		appendWrappedRow(&rows, "Running disruption check…", width, titleStyle)
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StDim.Render("The exact-revision dry build and service-effect analysis are running in the background."), width)
+		appendWrappedRow(&rows, "The exact-revision dry build and service-effect analysis are running in the background.", width, clikit.StDim)
 		appendWrappedRow(&rows, "Apply waits for a safe report. Press v to cancel.", width)
 	case m.previewErr != nil:
-		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Preview unavailable — activation refused"), width)
+		appendWrappedRow(&rows, "Preview unavailable — activation refused", width, clikit.StBrk.Bold(true))
 		rows = append(rows, "")
 		reason := strings.Split(stripTerminalControls(m.previewErr.Error()), "\n")
 		if len(reason) > maxErrorLines {
 			reason = reason[:maxErrorLines]
 		}
 		for _, line := range reason {
-			appendWrappedRow(&rows, clikit.StDim.Render(line), width)
+			appendWrappedRow(&rows, line, width, clikit.StDim)
 		}
 		rows = append(rows, "")
 		appendWrappedRow(&rows, "Press v to retry. Apply stays refused until the check succeeds.", width)
 	default:
-		appendWrappedRow(&rows, titleStyle.Render("Disruption check not run"), width)
+		appendWrappedRow(&rows, "Disruption check not run", width, titleStyle)
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StDim.Render("The validated exact-revision plan is ready, but activation requires a safe service-disruption report."), width)
+		appendWrappedRow(&rows, "The validated exact-revision plan is ready, but activation requires a safe service-disruption report.", width, clikit.StDim)
 		if m.inventoryLoading {
 			appendWrappedRow(&rows, "Capability inventory is loading. The check waits to avoid duplicate Nix evaluation.", width)
 		} else {
@@ -1009,38 +1009,38 @@ func (m model) capabilityRowsForWidth(width int) []string {
 	rows := make([]string, 0, 32)
 	switch {
 	case !m.inventoryRequested:
-		appendWrappedRow(&rows, titleStyle.Render("Inventory not loaded"), width)
+		appendWrappedRow(&rows, "Inventory not loaded", width, titleStyle)
 		rows = append(rows, "")
 		if m.previewLoading {
-			appendWrappedRow(&rows, clikit.StDim.Render("Cancel the running preview with v before loading capabilities."), width)
+			appendWrappedRow(&rows, "Cancel the running preview with v before loading capabilities.", width, clikit.StDim)
 		} else {
-			appendWrappedRow(&rows, clikit.StDim.Render("Press c to load exact-revision capability details."), width)
+			appendWrappedRow(&rows, "Press c to load exact-revision capability details.", width, clikit.StDim)
 		}
 		return rows
 	case m.inventoryLoading:
-		appendWrappedRow(&rows, clikit.StDim.Render("Loading exact-revision inventory…"), width)
+		appendWrappedRow(&rows, "Loading exact-revision inventory…", width, clikit.StDim)
 		return rows
 	case m.inventoryErr != nil:
-		appendWrappedRow(&rows, clikit.StBrk.Bold(true).Render("Inventory unavailable"), width)
+		appendWrappedRow(&rows, "Inventory unavailable", width, clikit.StBrk.Bold(true))
 		rows = append(rows, "")
 		reason := strings.TrimPrefix(m.inventoryErr.Error(), "inventory unavailable: ")
-		appendWrappedRow(&rows, clikit.StDim.Render(stripTerminalControls(reason)), width)
+		appendWrappedRow(&rows, stripTerminalControls(reason), width, clikit.StDim)
 		if m.inventoryDiagnostic != "" {
 			rows = append(rows, "")
 			if m.inventoryDetailsOpen {
-				appendWrappedRow(&rows, titleStyle.Render("Diagnostic detail"), width)
+				appendWrappedRow(&rows, "Diagnostic detail", width, titleStyle)
 				for _, line := range strings.Split(m.inventoryDiagnostic, "\n") {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render(line), width, 2)
+					appendIndentedWrappedRow(&rows, line, width, 2, clikit.StDim)
 				}
 			} else {
-				appendWrappedRow(&rows, clikit.StDim.Render("Press d to show bounded diagnostic detail."), width)
+				appendWrappedRow(&rows, "Press d to show bounded diagnostic detail.", width, clikit.StDim)
 			}
 		}
 		rows = append(rows, "")
 		appendWrappedRow(&rows, "The activation preview and apply confirmation remain available.", width)
 		return rows
 	case len(m.inventory.Capabilities) == 0:
-		appendWrappedRow(&rows, clikit.StDim.Render("No active capabilities were declared by this apply plan."), width)
+		appendWrappedRow(&rows, "No active capabilities were declared by this apply plan.", width, clikit.StDim)
 		return rows
 	}
 
@@ -1064,22 +1064,22 @@ func (m model) capabilityRowsForWidth(width int) []string {
 		if capability.Marker {
 			marker = "Intentional marker · no direct deliverables."
 		}
-		appendWrappedRow(&rows, clikit.StWarn.Render(marker), width)
+		appendWrappedRow(&rows, marker, width, clikit.StWarn)
 	} else {
 		for _, group := range deliverableGroups(capability.Deliverables) {
 			rows = append(rows, "")
-			appendWrappedRow(&rows, titleStyle.Render(fmt.Sprintf("%s (%d)", kindTitle(group.kind), len(group.items))), width)
+			appendWrappedRow(&rows, fmt.Sprintf("%s (%d)", kindTitle(group.kind), len(group.items)), width, titleStyle)
 			for _, item := range group.items {
 				appendIndentedWrappedRow(&rows, item.Description, width, 2)
 				secondary := strings.TrimSpace(strings.Join(nonEmpty(item.Name, item.Version, item.Source), "  ·  "))
 				if secondary != "" {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render(secondary), width, 4)
+					appendIndentedWrappedRow(&rows, secondary, width, 4, clikit.StDim)
 				}
 				if item.Delivery != "" {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render("via "+item.Delivery), width, 4)
+					appendIndentedWrappedRow(&rows, "via "+item.Delivery, width, 4, clikit.StDim)
 				}
 				if item.System != "" {
-					appendIndentedWrappedRow(&rows, clikit.StDim.Render("for "+item.System), width, 4)
+					appendIndentedWrappedRow(&rows, "for "+item.System, width, 4, clikit.StDim)
 				}
 			}
 		}
@@ -1098,8 +1098,8 @@ func (m model) capabilityRowsForWidth(width int) []string {
 			continue
 		}
 		rows = append(rows, "")
-		appendWrappedRow(&rows, clikit.StHead.Render(boundary.label), width)
-		appendIndentedWrappedRow(&rows, clikit.StDim.Render(boundary.value), width, 2)
+		appendWrappedRow(&rows, boundary.label, width, clikit.StHead)
+		appendIndentedWrappedRow(&rows, boundary.value, width, 2, clikit.StDim)
 	}
 	return rows
 }
@@ -1158,6 +1158,8 @@ func (m model) previewRows() []string {
 
 func (m model) previewRowsForWidth(width int) []string {
 	rows := make([]string, 0, 24)
+	m.appendDisruptionRows(&rows, width)
+	rows = append(rows, "")
 	revision := m.preview.ResolvedRevision
 	if len(revision) > 12 {
 		revision = revision[:12]
@@ -1174,20 +1176,19 @@ func (m model) previewRowsForWidth(width int) []string {
 	if m.preview.Status == "no-changes" {
 		status += " · no version or size changes"
 	}
-	appendWrappedRow(&rows, clikit.StOk.Render(status), width)
+	appendWrappedRow(&rows, status, width, clikit.StOk)
 	rows = append(rows, "")
-	m.appendDisruptionRows(&rows, width)
 	if m.details {
 		rows = append(rows, "")
-		appendWrappedRow(&rows, titleStyle.Render("Technical details"), width)
+		appendWrappedRow(&rows, "Technical details", width, titleStyle)
 		if generations := m.preview.Generations; generations != nil {
 			if generations.Previous != "" {
-				appendWrappedRow(&rows, clikit.StHead.Render("Previous generation"), width)
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(generations.Previous), width, 2)
+				appendWrappedRow(&rows, "Previous generation", width, clikit.StHead)
+				appendIndentedWrappedRow(&rows, generations.Previous, width, 2, clikit.StDim)
 			}
 			if generations.New != "" {
-				appendWrappedRow(&rows, clikit.StHead.Render("New generation"), width)
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(generations.New), width, 2)
+				appendWrappedRow(&rows, "New generation", width, clikit.StHead)
+				appendIndentedWrappedRow(&rows, generations.New, width, 2, clikit.StDim)
 			}
 		}
 		raw := make([]string, 0, len(m.preview.Technical))
@@ -1199,16 +1200,16 @@ func (m model) previewRowsForWidth(width int) []string {
 		}
 		if len(raw) > 0 {
 			rows = append(rows, "")
-			appendWrappedRow(&rows, titleStyle.Render("Normalized nh report"), width)
+			appendWrappedRow(&rows, "Normalized nh report", width, titleStyle)
 			for _, line := range raw {
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(line), width, 2)
+				appendIndentedWrappedRow(&rows, line, width, 2, clikit.StDim)
 			}
 		}
 		return rows
 	}
 
 	rows = append(rows, "")
-	appendWrappedRow(&rows, titleStyle.Render("Package diff"), width)
+	appendWrappedRow(&rows, "Package diff", width, titleStyle)
 	added, updated, removed := len(m.preview.Packages.Added), len(m.preview.Packages.Updated), len(m.preview.Packages.Removed)
 	var packageFacts []string
 	if added > 0 {
@@ -1252,11 +1253,11 @@ func (m model) previewRowsForWidth(width int) []string {
 			continue
 		}
 		rows = append(rows, "")
-		appendWrappedRow(&rows, group.style.Bold(true).Render(fmt.Sprintf("%s (%d)", group.name, len(group.changes))), width)
+		appendWrappedRow(&rows, fmt.Sprintf("%s (%d)", group.name, len(group.changes)), width, group.style.Bold(true))
 		for _, change := range group.changes {
-			appendIndentedWrappedRow(&rows, titleStyle.Render(change.Name), width, 2)
+			appendIndentedWrappedRow(&rows, change.Name, width, 2, titleStyle)
 			if secondary := packageSecondary(change); secondary != "" {
-				appendIndentedWrappedRow(&rows, clikit.StDim.Render(secondary), width, 4)
+				appendIndentedWrappedRow(&rows, secondary, width, 4, clikit.StDim)
 			}
 		}
 	}
@@ -1264,16 +1265,19 @@ func (m model) previewRowsForWidth(width int) []string {
 	return rows
 }
 
-func appendWrappedRow(rows *[]string, line string, width int) {
-	for _, wrapped := range strings.Split(ansi.Wrap(line, width, " "), "\n") {
-		*rows = append(*rows, wrapped)
-	}
+func appendWrappedRow(rows *[]string, line string, width int, style ...lipgloss.Style) {
+	appendIndentedWrappedRow(rows, line, width, 0, style...)
 }
 
-func appendIndentedWrappedRow(rows *[]string, line string, width, indent int) {
+func appendIndentedWrappedRow(rows *[]string, line string, width, indent int, style ...lipgloss.Style) {
 	contentWidth := max(1, width-indent)
 	prefix := strings.Repeat(" ", indent)
 	for _, wrapped := range strings.Split(ansi.Wrap(line, contentWidth, " "), "\n") {
+		// A viewport may show this row without its predecessor. Style after
+		// wrapping so every continuation carries its own complete SGR state.
+		if len(style) != 0 {
+			wrapped = style[0].Render(wrapped)
+		}
 		*rows = append(*rows, prefix+wrapped)
 	}
 }
@@ -1298,11 +1302,11 @@ func packageSecondary(change previewdata.PackageChange) string {
 // the package diff: which named services the candidate generation would
 // touch, which of them are protected, and why activation is or is not allowed.
 func (m model) appendDisruptionRows(rows *[]string, width int) {
-	appendWrappedRow(rows, titleStyle.Render("Service disruption"), width)
+	appendWrappedRow(rows, "Service disruption", width, titleStyle)
 	report := m.preview.Disruption
 	if report == nil {
-		appendWrappedRow(rows, clikit.StWarn.Bold(true).Render("?  No disruption report — activation refused"), width)
-		appendIndentedWrappedRow(rows, clikit.StDim.Render("This preview predates service-effect analysis. Only a safe report from the current backend can authorize apply."), width, 3)
+		appendWrappedRow(rows, "?  No disruption report — activation refused", width, clikit.StWarn.Bold(true))
+		appendIndentedWrappedRow(rows, "This preview predates service-effect analysis. Only a safe report from the current backend can authorize apply.", width, 3, clikit.StDim)
 		return
 	}
 	switch report.Status {
@@ -1320,20 +1324,20 @@ func (m model) appendDisruptionRows(rows *[]string, width int) {
 		case kept > 0:
 			verdict += fmt.Sprintf(" · %d service(s) keep running with updates pending", kept)
 		}
-		appendWrappedRow(rows, clikit.StOk.Render(verdict), width)
+		appendWrappedRow(rows, verdict, width, clikit.StOk)
 	case previewdata.DisruptionBlocked:
-		appendWrappedRow(rows, clikit.StBrk.Bold(true).Render("✗  Activation blocked — protected services would be disrupted"), width)
+		appendWrappedRow(rows, "✗  Activation blocked — protected services would be disrupted", width, clikit.StBrk.Bold(true))
 	default:
-		appendWrappedRow(rows, clikit.StWarn.Bold(true).Render("?  Service disruption unknown — activation refused"), width)
+		appendWrappedRow(rows, "?  Service disruption unknown — activation refused", width, clikit.StWarn.Bold(true))
 	}
 	for _, effect := range report.Effects {
 		appendIndentedWrappedRow(rows, disruptionEffectLine(effect), width, 3)
 		if effect.Reason != "" {
-			appendIndentedWrappedRow(rows, clikit.StDim.Render(effect.Reason), width, 6)
+			appendIndentedWrappedRow(rows, effect.Reason, width, 6, clikit.StDim)
 		}
 	}
 	for _, reason := range report.Reasons {
-		appendIndentedWrappedRow(rows, clikit.StWarn.Render("• ")+reason, width, 3)
+		appendIndentedWrappedRow(rows, "• "+reason, width, 3, clikit.StWarn)
 	}
 	if !m.details {
 		return

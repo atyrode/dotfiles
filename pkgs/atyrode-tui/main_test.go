@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,9 +17,26 @@ import (
 	ompkit "github.com/atyrode/cli-kit/omp"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 const testRevision = "feedfacefeedfacefeedfacefeedfacefeedface"
+
+func TestWrappedNoticeRowsRetainColorWhenScrolledIndependently(t *testing.T) {
+	renderer := lipgloss.NewRenderer(io.Discard)
+	renderer.SetColorProfile(termenv.TrueColor)
+	style := renderer.NewStyle().Foreground(lipgloss.Color("#ff8800"))
+	var rows []string
+	appendIndentedWrappedRow(&rows, "owner restart", 10, 2, style)
+	if got := []string{stripTerminalControls(rows[0]), stripTerminalControls(rows[1])}; !reflect.DeepEqual(got, []string{"  owner", "  restart"}) {
+		t.Fatalf("wrapped notice = %q", got)
+	}
+	for _, row := range rows {
+		if !strings.Contains(row, "38;2;255;136;0m") || !strings.HasSuffix(row, "\x1b[0m") {
+			t.Fatalf("independently scrolled row lost its foreground or reset: %q", row)
+		}
+	}
+}
 
 type runnerFunc func(context.Context, string, ...string) ([]byte, error)
 
@@ -53,10 +71,10 @@ func testPreviewDocument() previewdata.Document {
 		ResolvedRevision: testRevision,
 		Status:           "built",
 		Disruption: &previewdata.Disruption{
-			SchemaVersion: previewdata.DisruptionSchemaVersion,
-			Status: previewdata.DisruptionSafe,
+			SchemaVersion:       previewdata.DisruptionSchemaVersion,
+			Status:              previewdata.DisruptionSafe,
 			CandidateGeneration: "/nix/store/new-home-manager-generation",
-			Fingerprint: strings.Repeat("f", 64),
+			Fingerprint:         strings.Repeat("f", 64),
 		},
 		Packages: previewdata.PackageGroups{
 			Added: []previewdata.PackageChange{{Name: "gamma", ChangeKind: "added", NewVersion: "4.0", SizeDelta: "+2.00 MiB"}},
@@ -445,7 +463,7 @@ func TestApplyRequiresExplicitConfirmation(t *testing.T) {
 func TestUnsafePreviewCannotActivateEvenFromConfirmation(t *testing.T) {
 	for _, change := range []struct {
 		name string
-		set func(*model)
+		set  func(*model)
 	}{
 		{"missing", func(m *model) { m.preview.Disruption = nil }},
 		{"failed", func(m *model) { m.previewErr = errors.New("dry run failed") }},
@@ -467,10 +485,14 @@ func TestUnsafePreviewCannotActivateEvenFromConfirmation(t *testing.T) {
 			m.apply = func(string, ...string) tea.Cmd { t.Fatal("unsafe preview invoked activation"); return nil }
 			change.set(&m)
 			m = press(m, "enter")
-			if m.phase != ready { t.Fatal("unsafe preview entered confirmation") }
+			if m.phase != ready {
+				t.Fatal("unsafe preview entered confirmation")
+			}
 			m.phase = confirming
 			m = press(m, "y")
-			if m.phase != ready { t.Fatal("confirmation bypassed the safety gate") }
+			if m.phase != ready {
+				t.Fatal("confirmation bypassed the safety gate")
+			}
 		})
 	}
 }
@@ -549,8 +571,6 @@ func TestPreviewRepliesAreScopedToRevisionAndGeneration(t *testing.T) {
 		}
 	}
 }
-
-
 
 func TestSummaryOmitsEmptyGroupsAndUnreportedFacts(t *testing.T) {
 	m := newApplyTestModel("atyrode")

@@ -1494,6 +1494,128 @@ pkgs.runCommand "check-atyrode-apply"
     mv "$TMPDIR/nh-args.checkout" "$TMPDIR/nh-args"
     rm -rf "$fetched_tree" "$TMPDIR/bin/nix" "$TMPDIR/nix-args"
     unset ATYRODE_NIX
+
+    # The converge floor. `apply --unattended` is what the timer runs: it
+    # answers no question, builds nothing CI has not published, and ends in
+    # one receipt that doctor and the login shell read back. The launcher here
+    # runs an older revision than main, so every run also crosses the handoff
+    # and the receipt must still name what was running, not main's own CLI.
+    receipt="$XDG_STATE_HOME/atyrode/converge.json"
+    cat > "$TMPDIR/bin/converge-nix" <<EOF
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "\$*" >> "$TMPDIR/converge-nix-args"
+    case "\$*" in
+      'build --no-link --print-out-paths github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#atyrode')
+        printf '%s\n' ${targetAtyrode} ;;
+      'build --dry-run --no-link github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#nixosConfigurations.wsl.config.system.build.toplevel')
+        cat "$TMPDIR/converge-dry-run" ;;
+      *) exit 64 ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/converge-nix"
+    converge() { # env-assignments...
+      env _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_NIX="$TMPDIR/bin/converge-nix" "$@" \
+        ${launcherAtyrode}/bin/atyrode apply wsl --unattended
+    }
+    converge_outcome() { # outcome
+      jq -e --arg outcome "$1" '
+        .outcome == $outcome and .host == "wsl"
+        and .running == "1111111111111111111111111111111111111111"
+        and .target == "feedfacefeedfacefeedfacefeedfacefeedface"
+      ' "$receipt" >/dev/null || { echo "converge receipt is not $1: $(cat "$receipt")" >&2; exit 1; }
+    }
+    set +e
+    ${launcherAtyrode}/bin/atyrode apply wsl --unattended --repo "$HOME/nix-dotfiles" >/dev/null 2>&1
+    test "$?" = 64
+    ${launcherAtyrode}/bin/atyrode apply wsl --unattended --dry-run >/dev/null 2>&1
+    test "$?" = 64
+    _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ${launcherAtyrode}/bin/atyrode apply --unattended >/dev/null 2>"$TMPDIR/converge-portable.err"
+    test "$?" = 64
+    set -e
+    grep -qF 'portable profile, not a fleet member' "$TMPDIR/converge-portable.err"
+    test ! -e "$receipt"
+
+    # A timer cannot type a password: the hold comes before any build, and the
+    # only nix call made is the launcher fetching main's CLI.
+    rm -f "$TMPDIR/nh-activations" "$TMPDIR/converge-nix-args"
+    _ATYRODE_TEST_SUDO_NONINTERACTIVE=0 converge > "$TMPDIR/converge-sudo.out" 2>&1 \
+      || { cat "$TMPDIR/converge-sudo.out" >&2; exit 1; }
+    converge_outcome held
+    jq -e '.reason | contains("sudo asks for a password")' "$receipt" >/dev/null
+    jq -e '.remediation == "atyrode apply"' "$receipt" >/dev/null
+    grep -qF 'Converge held for' "$TMPDIR/converge-sudo.out"
+    test "$(wc -l < "$TMPDIR/converge-nix-args")" = 1
+    test ! -e "$TMPDIR/nh-activations"
+    # doctor is the deployed CLI, so it compares its own revision with main and
+    # reads the hold the run left; the shell says the same from the file alone.
+    ${launcherAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "convergence")
+      | .status == "degraded" and .code == "held" and .remediation == "atyrode apply"
+        and (.summary | contains("main is feedfacefeed") and contains("runs 111111111111"))
+    ' >/dev/null
+    # A hold is unfinished business: every new shell repeats it until the
+    # receipt changes.
+    ${launcherAtyrode}/bin/atyrode __converge-notice > "$TMPDIR/converge-notice.out"
+    grep -qF 'an update to feedfacefeed is waiting' "$TMPDIR/converge-notice.out"
+    grep -qF 'fix with: atyrode apply' "$TMPDIR/converge-notice.out"
+    grep -qF 'an update to feedfacefeed is waiting' <<<"$(${launcherAtyrode}/bin/atyrode __converge-notice)"
+
+    # Nothing CI has not built: a dry build that would compile anything holds.
+    printf 'these 3 derivations will be built:\n  /nix/store/fixture.drv\n' > "$TMPDIR/converge-dry-run"
+    rm -f "$TMPDIR/converge-nix-args"
+    _ATYRODE_TEST_SUDO_NONINTERACTIVE=1 converge > "$TMPDIR/converge-cache.out" 2>&1 \
+      || { cat "$TMPDIR/converge-cache.out" >&2; exit 1; }
+    converge_outcome held
+    jq -e '.reason | contains("has not published feedfacefeed")' "$receipt" >/dev/null
+    grep -qF 'build --dry-run --no-link' "$TMPDIR/converge-nix-args"
+    test ! -e "$TMPDIR/nh-activations"
+
+    # A disruption the operator would have to look at is a hold, not a retry.
+    : > "$TMPDIR/converge-dry-run"
+    _ATYRODE_TEST_SUDO_NONINTERACTIVE=1 _ATYRODE_TEST_CURRENT_SYSTEM=${ownerOld} ATYRODE_TEST_CANDIDATE=${ownerNew} \
+      converge > "$TMPDIR/converge-disruption.out" 2>&1 \
+      || { cat "$TMPDIR/converge-disruption.out" >&2; exit 1; }
+    converge_outcome held
+    jq -e '.reason | contains("was refused")' "$receipt" >/dev/null
+    test ! -e "$TMPDIR/nh-activations"
+
+    # A run that stops on an error leaves `failed`, with the error as reason.
+    set +e
+    env _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_NIX=${pkgs.coreutils}/bin/false \
+      ${launcherAtyrode}/bin/atyrode apply wsl --unattended >/dev/null 2>&1
+    failed_status="$?"
+    set -e
+    test "$failed_status" = 69
+    converge_outcome failed
+    jq -e '.reason | contains("could not build the apply CLI")' "$receipt" >/dev/null
+    grep -qF 'the update to feedfacefeed failed' <<<"$(${launcherAtyrode}/bin/atyrode __converge-notice)"
+
+    # Every precondition met: the switch happens with nobody at the keyboard,
+    # and main's CLI then reports the machine as current.
+    rm -f "$TMPDIR/nh-activations"
+    _ATYRODE_TEST_SUDO_NONINTERACTIVE=1 converge > "$TMPDIR/converge-switch.out" 2>&1 \
+      || { cat "$TMPDIR/converge-switch.out" >&2; exit 1; }
+    converge_outcome converged
+    test -e "$TMPDIR/nh-activations"
+    grep -qF 'Confirm CI published feedfacefeed to the cache' "$TMPDIR/converge-switch.out"
+    ! grep -qF '[y/N]' "$TMPDIR/converge-switch.out"
+    ${targetAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "convergence") | .status == "ok"
+    ' >/dev/null
+    # An update that landed is news: the first shell hears it, the next does
+    # not, and a machine found current has nothing to say.
+    grep -qF 'updated to feedfacefeed' <<<"$(${targetAtyrode}/bin/atyrode __converge-notice)"
+    test -z "$(${targetAtyrode}/bin/atyrode __converge-notice)"
+    rm -f "$TMPDIR/nh-activations" "$TMPDIR/converge-nix-args"
+    _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ${targetAtyrode}/bin/atyrode apply wsl --unattended > "$TMPDIR/converge-current.out" 2>&1 \
+      || { cat "$TMPDIR/converge-current.out" >&2; exit 1; }
+    jq -e '.outcome == "current" and .running == .target' "$receipt" >/dev/null
+    grep -qF 'Nothing to converge for' "$TMPDIR/converge-current.out"
+    test ! -e "$TMPDIR/nh-activations"
+    test ! -e "$TMPDIR/converge-nix-args"
+    test -z "$(${targetAtyrode}/bin/atyrode __converge-notice)"
+    rm -f "$receipt" "''${receipt%.json}.seen" "$TMPDIR/bin/converge-nix" "$TMPDIR/converge-dry-run"
+    unset -f converge converge_outcome
     # After the switch, the review names the host apply switched. The id
     # recorded under ~/.config is a Home Manager file that NixOS relinks from
     # a unit the activation only restarts; a stale one (here: the name the

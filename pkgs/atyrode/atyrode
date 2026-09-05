@@ -69,6 +69,8 @@ apply_job_worker=0
 . "$lib_dir/apply.sh"
 # shellcheck source=lib/disruption.sh
 . "$lib_dir/disruption.sh"
+# shellcheck source=lib/converge.sh
+. "$lib_dir/converge.sh"
 # shellcheck source=lib/lifecycle.sh
 . "$lib_dir/lifecycle.sh"
 # shellcheck source=lib/clean.sh
@@ -94,6 +96,7 @@ usage() {
   cat <<'EOF'
 Usage:
   atyrode apply [HOST] [--ref REF | --repo PATH | --candidate STOREPATH] [--git-auth-mode ssh|https-gh] [--plan|--dry-run|--preview-json] [--json] [--restart-shell] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
+  atyrode apply [HOST] --unattended
   atyrode apply-status [JOB] [--json]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
@@ -143,6 +146,11 @@ apply preview modes are non-activating: --plan resolves and validates the target
 then prints preflight metadata without invoking nh; --dry-run invokes the normal
 nh switch backend with --dry; --preview-json runs that dry backend and emits its
 normalized package/action preview as JSON.
+--unattended is the converge floor the per-machine timer runs: it resolves
+main, does nothing when this machine already runs it, holds -- with a receipt
+doctor and the login shell read -- when sudo would ask, when CI has not
+published the closure, or when the disruption report is not safe, and
+otherwise activates without a question. It never reads a checkout.
 apply builds the candidate closure first, then reads it against the generation
 this machine runs -- every systemd unit, including the Home Manager units a
 system generation embeds, and every launchd plist -- and reports what the
@@ -274,6 +282,7 @@ main() {
     apply) apply_config "$@" ;;
     apply-status) cmd_apply_status "$@" ;;
     __apply-job) run_apply_job_worker "$@" ;;
+    __converge-notice) converge_shell_notice ;;
     clean) cmd_clean "$@" ;;
     generations) cmd_generations "$@" ;;
     lifecycle) cmd_lifecycle "$@" ;;

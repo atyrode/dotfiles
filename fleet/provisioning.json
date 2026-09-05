@@ -9,7 +9,8 @@
     "babel-archive",
     "omp-auth-broker",
     "local-qwen",
-    "manifold-agent"
+    "manifold-agent",
+    "convergence"
   ],
   "surfaces": {
     "omp-seed": {
@@ -75,6 +76,13 @@
       "command": "atyrode runtime provision manifold-agent",
       "implies": "Starts the native managed agent for the machine token activation placed. The token is this machine's clan var, minted by `atyrode runtime enroll manifold-agent <host>` on an operator device that holds the hub's owner key as a clan var this machine never receives. No vault and no owner key on this machine.",
       "declinable": true,
+      "prerequisites": []
+    },
+    "convergence": {
+      "label": "convergence to main",
+      "command": "atyrode apply --unattended",
+      "implies": "Compares the revision this machine runs with the head of main and reads the last unattended run's receipt. Read-only here; the timer that converges is declared by the configuration, and this command is what it runs.",
+      "declinable": false,
       "prerequisites": []
     }
   },

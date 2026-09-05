@@ -333,6 +333,29 @@ selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.
 Activation shows a generation package diff.
 
+### Unattended
+
+```sh
+atyrode apply --unattended          # what the converge timer runs
+```
+
+The converge floor of ADR 0008. It resolves `main` to a commit, compares it
+with the revision this machine runs, and either does nothing (`current`),
+holds before building anything, or activates without a question. It holds
+when sudo would ask for a password (nix-darwin, or a NixOS host whose sudoers
+changed), when a dry build shows CI has not published the closure to the
+cache, when WSL's Windows interop PATH is not visible to the run, and when
+the disruption report is anything but safe. It takes no preview, restart or
+acknowledgement option and never reads a checkout. The receipt
+(`~/.local/state/atyrode/converge.json`: `current`, `converged`, `held` or
+`failed`, both revisions, the reason and its remedy) is what `doctor
+provisioning` reports under `convergence` and what the login shell reads as
+its inbox: `converged` is news, said once; `held` and `failed` repeat on every
+new shell until the receipt changes; `current` says nothing. The timers are
+declared in [`modules/home/atyrode`](../modules/home/atyrode/default.nix): a
+systemd user timer every six hours with `Persistent=`, a launchd calendar
+interval on macOS.
+
 ## Deploying another machine
 
 ```sh

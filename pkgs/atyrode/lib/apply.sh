@@ -37,7 +37,7 @@ apply_scratch_cleanup() {
 }
 apply_config() {
   local requested="" repo="" ref="" git_auth_mode="${ATYRODE_GIT_AUTH_MODE:-}" plan=0 dry=0 json=0 preview_json=0 restart=0
-  local expected_disruption="" candidate_path=""
+  local expected_disruption="" candidate_path="" unattended=0
   local -a scopes=()
   # Activation can succeed while a state apply owns is left unconverged. That
   # is not a clean apply, so it is carried to the exit code rather than being
@@ -102,6 +102,10 @@ apply_config() {
         candidate_path="$2"
         shift 2
         ;;
+      --unattended)
+        unattended=1
+        shift
+        ;;
       -h | --help)
         usage
         return
@@ -116,6 +120,15 @@ apply_config() {
     die "$EX_USAGE" "--candidate activates a closure already built and copied here; it cannot be combined with --repo or --ref"
   [[ -z "$expected_disruption" || "$expected_disruption" =~ ^[0-9a-f]{64}$ ]] ||
     die "$EX_USAGE" "--expected-disruption expects the 64-hex fingerprint printed by apply --preview-json"
+  if [[ "$unattended" == 1 ]]; then
+    [[ -z "$repo" && -z "$candidate_path" ]] ||
+      die "$EX_USAGE" "--unattended converges to the published revision only; it cannot take --repo or --candidate"
+    [[ "$plan" == 0 && "$dry" == 0 && "$preview_json" == 0 && "$restart" == 0 && -z "$expected_disruption" ]] ||
+      die "$EX_USAGE" "--unattended is a whole converge with its own receipt; it takes no preview, restart or acknowledgement option"
+    # From here no question is asked, whatever the terminal: an operator who
+    # runs this by hand sees exactly what the timer would have done.
+    NARRATE_UNATTENDED=1
+  fi
   local git_command=git
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_GIT:-}" ]]; then
     git_command="$ATYRODE_GIT"
@@ -129,6 +142,22 @@ apply_config() {
       [[ "$rev" =~ ^[0-9a-f]{40}$ ]] ||
         die "$EX_UNAVAILABLE" "cannot resolve $ref on $flake_remote_url; check the ref name and network"
       ref="$rev"
+    fi
+    if [[ "$unattended" == 1 ]]; then
+      converge_host="$(resolve_host "$requested")"
+      [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$converge_host")")" != runtime ]] ||
+        die "$EX_USAGE" "$converge_host is a portable profile, not a fleet member; --unattended converges registered machines only"
+      # The receipt names this run from here on: a die anywhere below writes
+      # `failed` against these two, and a hold or a switch replaces them. The
+      # comparison is against what runs, which after a handoff is not this CLI.
+      converge_target="$ref"
+      if [[ "$(converge_running_revision)" == "$ref" ]]; then
+        converge_record current "$converge_host" "$ref" "" ""
+        converge_target=""
+        converge_epilogue current "$converge_host" "this machine already runs ${ref:0:12}, which is main"
+        return 0
+      fi
+      export ATYRODE_CONVERGE_RUNNING="$(converge_running_revision)"
     fi
     # A published CLI is only the launcher for another revision. Its registry,
     # bootstrap and post-switch probes cannot govern a different generation.
@@ -249,6 +278,19 @@ apply_config() {
     nixos-wsl)
       backend="nh-os"
       mutation_boundary="NixOS activation followed by non-transactional native Windows reconciliation"
+      # WSL's apply ends in a WinGet phase that only a shell with the Windows
+      # interop PATH can run. A timer under the user manager may not have it;
+      # unattended, that is a hold with a name, not a preflight that dies.
+      local winget_probe=winget.exe
+      [[ "$test_hooks" != 1 || -z "${ATYRODE_WINGET:-}" ]] || winget_probe="$ATYRODE_WINGET"
+      if [[ "$unattended" == 1 ]] && ! command -v "$winget_probe" >/dev/null 2>&1; then
+        converge_record held "$host" "$ref" \
+          "winget.exe is not on this run's PATH, so the Windows phase that follows activation could not run" \
+          "atyrode apply"
+        converge_target=""
+        converge_epilogue held "$host" "main is ${ref:0:12}; run atyrode apply from a WSL shell, which carries the Windows interop PATH"
+        return 0
+      fi
       windows_preflight="$(windows_plan "$host")"
       ;;
     # A VPS converges itself the way WSL does when the operator sits on it:
@@ -289,6 +331,10 @@ apply_config() {
   # a machine interface and plans nothing, so it stays out of this.
   if [[ "$preview_json" == 0 ]]; then
     local -a planned=()
+    if [[ "$unattended" == 1 ]]; then
+      planned+=("Confirm $host can activate without an operator.")
+      planned+=("Confirm CI published ${ref:0:12} to the cache.")
+    fi
     [[ -n "$candidate_path" ]] || planned+=("Build the candidate closure of $host through $backend.")
     planned+=("Analyse what activating the candidate does to services.")
     if [[ "$dry" == 0 ]]; then
@@ -310,6 +356,44 @@ apply_config() {
     printf '\n%s\n' "$(paint 2 'No changes were made. Drop --plan to run this.')" >&2
     return 0
   }
+
+  # The floor holds rather than fails: a precondition that is not met today
+  # is met by the next timer or the next operator, and the receipt says which.
+  if [[ "$unattended" == 1 ]]; then
+    step_begin "Confirm $host can activate without an operator"
+    step_why 'a timer cannot type a password, so activation must elevate on its own or not at all'
+    if ! converge_can_elevate "$activation"; then
+      step_fail 'sudo needs a password here'
+      converge_record held "$host" "$ref" \
+        "activation elevates on this machine and sudo asks for a password no timer can type" \
+        "atyrode apply"
+      converge_target=""
+      step_abandon_plan
+      converge_epilogue held "$host" "main is ${ref:0:12}; run atyrode apply from a terminal to converge this machine"
+      return 0
+    fi
+    step_ok
+    step_begin "Confirm CI published ${ref:0:12} to the cache"
+    step_why 'the floor converges to closures CI built from green main, never to what a laptop would compile overnight'
+    local closure_installable
+    case "$activation" in
+      nix-darwin) closure_installable="$flake_ref/$ref#darwinConfigurations.$host.system" ;;
+      *) closure_installable="$flake_ref/$ref#nixosConfigurations.$host.config.system.build.toplevel" ;;
+    esac
+    local published_status=0
+    converge_published "$closure_installable" || published_status=$?
+    if [[ "$published_status" != 0 ]]; then
+      local hold_reason="CI has not published ${ref:0:12} for $host to the cache yet"
+      [[ "$published_status" != 2 ]] || hold_reason="the closure of $host at ${ref:0:12} does not evaluate on this machine"
+      step_fail "$hold_reason"
+      converge_record held "$host" "$ref" "$hold_reason" ""
+      converge_target=""
+      step_abandon_plan
+      converge_epilogue held "$host" "the next timer run tries again once main is green and published"
+      return 0
+    fi
+    step_ok
+  fi
 
   local activation_flake_source="$flake_source" adapter_dir="" adapter_source="$flake_source" candidate_link=""
   if [[ "$identity_mode" == runtime && -z "$candidate_path" ]]; then
@@ -445,6 +529,20 @@ apply_config() {
     apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host" "$apply_status"
     return 0
   fi
+  if [[ "$unattended" == 1 && "$(jq -r '.status' <<<"$report")" != safe ]]; then
+    # Unattended, a refused activation is a hold, not an error: the report is
+    # about live sessions or an unreadable generation, and both are for an
+    # operator to look at, not for the next timer to retry into.
+    local hold_reason
+    hold_reason="$(jq -r '[.status] + .reasons | join("; ")' <<<"$report")"
+    apply_scratch_cleanup
+    trap - EXIT
+    converge_record held "$host" "$ref" "activating ${ref:0:12} was refused: $hold_reason" "atyrode apply"
+    converge_target=""
+    step_abandon_plan
+    converge_epilogue held "$host" "main is ${ref:0:12}; drain what the report names, then atyrode apply"
+    return 0
+  fi
   disruption_enforce "$report" "$expected_disruption" "$candidate"
 
   case "$activation" in
@@ -481,6 +579,10 @@ apply_config() {
     die "$EX_SOFTWARE" "$backend failed while activating $host"
   }
   step_ok
+  if [[ "$unattended" == 1 ]]; then
+    converge_record converged "$host" "$ref" "" ""
+    converge_target=""
+  fi
   apply_scratch_cleanup
   trap - EXIT
   if [[ "$dry" == 0 ]]; then
@@ -745,13 +847,15 @@ place_machine_key() { # host flake_source
   local host="$1" repo key clan install_program
   key="$(machine_key_file)"
   step_begin 'Place the machine key'
+  # Machine state first: a placed key is conclusive, and answering from it
+  # spares every routine apply a fetch of the source tree it would not read.
+  if machine_key_placed; then
+    step_skip 'already placed'
+    return 0
+  fi
   repo="$(flake_source_tree "$2")"
   if [[ ! -e "$(machine_key_repository_file "$host" "$repo")" ]]; then
     step_skip "no machine key in the repository yet (clan vars generate $host on an operator device)"
-    return 0
-  fi
-  if machine_key_placed; then
-    step_skip 'already placed'
     return 0
   fi
   local user recipient

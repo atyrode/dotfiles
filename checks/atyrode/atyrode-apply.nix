@@ -10,14 +10,19 @@ let
   developmentAtyrode = atyrode.override { revision = "unknown"; };
   launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
   targetAtyrode = atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; };
-  serviceGeneration = name: service: command:
+  serviceGeneration =
+    name: service: command:
     pkgs.runCommand "${name}-home-manager-generation" { } ''
       mkdir -p "$out/home-files/.config/systemd/user"
       printf '[Unit]\nDescription=Fixture 1.0\n[Service]\nExecStart=%s\n' '${command}' \
         > "$out/home-files/.config/systemd/user/${service}.service"
     '';
-  ownerOld = serviceGeneration "owner-old" "manifold-agent" "/nix/store/fixture-manifold-1.0/bin/agent --old";
-  ownerNew = serviceGeneration "owner-new" "manifold-agent" "/nix/store/fixture-manifold-1.0/bin/agent --new";
+  ownerOld =
+    serviceGeneration "owner-old" "manifold-agent"
+      "/nix/store/fixture-manifold-1.0/bin/agent --old";
+  ownerNew =
+    serviceGeneration "owner-new" "manifold-agent"
+      "/nix/store/fixture-manifold-1.0/bin/agent --new";
   scopedOld = serviceGeneration "scoped-old" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --old";
   scopedNew = serviceGeneration "scoped-new" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --new";
   unknownCandidate = pkgs.runCommand "fixture-unknown-generation" { } ''mkdir "$out"'';
@@ -84,6 +89,8 @@ pkgs.runCommand "check-atyrode-apply"
     #!${pkgs.runtimeShell}
     case "$*" in
       *show-environment*) exit 0 ;;
+      *'show --property=LoadState,ActiveState -- manifold-agent.service')
+        printf 'LoadState=loaded\nActiveState=%s\n' "''${ATYRODE_TEST_OWNER_ACTIVE:-active}" ;;
       *is-active*)
         unit=""
         for arg in "$@"; do unit="$arg"; done
@@ -1005,6 +1012,7 @@ pkgs.runCommand "check-atyrode-apply"
     # Package-version output cannot authorize a service restart. These real
     # command-boundary cases inspect different immutable generation trees.
     (
+      export ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl"
       export ATYRODE_TEST_CANDIDATE=${ownerNew}
       ln -sfn ${ownerOld} "$XDG_STATE_HOME/home-manager/gcroots/current-home"
       rm -f "$TMPDIR/nh-activations"
@@ -1020,6 +1028,20 @@ pkgs.runCommand "check-atyrode-apply"
       test "$refused_status" = 69
       test ! -e "$TMPDIR/nh-activations"
       test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+
+      # An absence-based preview is stale if the owner returns before the locked apply.
+      inactive_preview="$(ATYRODE_TEST_OWNER_ACTIVE=inactive atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
+      inactive_fingerprint="$(jq -er '.disruption | select(.status == "safe") | .fingerprint' <<<"$inactive_preview")"
+      set +e
+      atyrode apply --repo "$HOME/nix-dotfiles" --expected-disruption "$inactive_fingerprint" >/dev/null 2>&1
+      returned_owner_status="$?"
+      set -e
+      test "$returned_owner_status" = 69
+      test ! -e "$TMPDIR/nh-activations"
+      ATYRODE_TEST_OWNER_ACTIVE=inactive atyrode apply --repo "$HOME/nix-dotfiles" \
+        --expected-disruption "$inactive_fingerprint" >/dev/null 2>&1
+      test -s "$TMPDIR/nh-activations"
+      rm "$TMPDIR/nh-activations"
 
       export ATYRODE_TEST_CANDIDATE=${scopedNew}
       ln -sfn ${scopedOld} "$XDG_STATE_HOME/home-manager/gcroots/current-home"
@@ -1474,11 +1496,6 @@ pkgs.runCommand "check-atyrode-apply"
     rm -f "$TMPDIR/bin/sudo" "$TMPDIR/bin/clan"
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
     unset ATYRODE_CLAN _ATYRODE_TEST_IDENTITY_ROOT
-    # NixOS and nix-darwin activate as root, and the backend elevates for that
-    # itself. Unannounced, the password prompt arrives mid-build from inside
-    # someone else's output, and reads as the dotfiles asking for root out of
-    # nowhere -- so the step names whose prompt it is before it can appear.
-    grep -qF 'so nh elevates: a sudo prompt below is its own' "$TMPDIR/wsl-apply.err"
     grep -Fx -- "os switch $ATYRODE_TEST_CANDIDATE --diff always" \
       "$TMPDIR/nh-args" >/dev/null
     grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \

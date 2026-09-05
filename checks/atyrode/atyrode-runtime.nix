@@ -2,6 +2,15 @@
 
 let
   fixtures = import ../lib/atyrode-fixtures.nix { inherit pkgs; };
+  manifoldGeneration =
+    owner:
+    pkgs.runCommand "fixture-manifold-${if owner then "owner" else "transport"}-system" { } ''
+      mkdir -p "$out/etc/systemd/user"
+      printf '[Unit]\nX-Atyrode-SessionOwner=%s\n[Service]\nExecStart=/fixture/manifold-agent\n' \
+        '${if owner then "true" else "false"}' > "$out/etc/systemd/user/manifold-agent.service"
+    '';
+  splitGeneration = manifoldGeneration false;
+  legacyGeneration = manifoldGeneration true;
 in
 pkgs.runCommand "check-atyrode-runtime"
   {
@@ -53,6 +62,9 @@ pkgs.runCommand "check-atyrode-runtime"
     # runner's user session or creating a row on the live hub.
     export ATYRODE_HOST=wsl
     export _ATYRODE_TEST_HOSTNAME=legacy-wsl
+    export _ATYRODE_TEST_CURRENT_SYSTEM=${splitGeneration}
+    mkdir -p "$XDG_CONFIG_HOME/systemd/user"
+    ln -sfn ${splitGeneration}/etc/systemd/user/manifold-agent.service "$XDG_CONFIG_HOME/systemd/user/manifold-agent.service"
     mkdir -p "$TMPDIR/manifold-bin"
     cat > "$TMPDIR/manifold-bin/bw" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -96,8 +108,12 @@ pkgs.runCommand "check-atyrode-runtime"
     EOF
     cat > "$TMPDIR/manifold-bin/systemctl" <<'EOF'
     #!${pkgs.runtimeShell}
+    if [[ "''${MANIFOLD_MANAGER_UNKNOWN:-0}" == 1 && "$*" == *show* ]]; then exit 1; fi
     case "$*" in
       '--user cat manifold-agent.service') exit 0 ;;
+      *'show --property=LoadState,ActiveState -- manifold-agent.service')
+        printf 'LoadState=loaded\n'
+        if [[ -e "$TMPDIR/manifold-active" ]]; then echo ActiveState=active; else echo ActiveState=inactive; fi ;;
       '--user show -P ActiveState manifold-agent.service')
         if [[ -e "$TMPDIR/manifold-active" ]]; then echo active; else echo inactive; fi ;;
       '--user show -P SubState manifold-agent.service')
@@ -152,6 +168,31 @@ pkgs.runCommand "check-atyrode-runtime"
     ATYRODE_BW=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
     test "$(cat "$token_file")" = minted-token
     atyrode runtime status manifold-agent --json | jq -e '.phase == "connected"' >/dev/null
+
+    # Legacy control and rotation must refuse BEFORE a manager stop or credential revocation.
+    export _ATYRODE_TEST_CURRENT_SYSTEM=${legacyGeneration}
+    ln -sfn ${legacyGeneration}/etc/systemd/user/manifold-agent.service "$XDG_CONFIG_HOME/systemd/user/manifold-agent.service"
+    actions_before="$(wc -l < "$TMPDIR/manifold-service-actions")"
+    enrollments_before="$(wc -l < "$MANIFOLD_ENROLL_LOG")"
+    for verb in stop restart; do
+      set +e
+      atyrode runtime "$verb" manifold-agent >/dev/null 2>&1
+      result="$?"
+      set -e
+      test "$result" -eq 69
+    done
+    for manager_unknown in 0 1; do
+      set +e
+      MANIFOLD_MANAGER_UNKNOWN="$manager_unknown" atyrode runtime provision manifold-agent --rotate-token >/dev/null 2>&1
+      result="$?"
+      set -e
+      test "$result" -eq 69
+      test "$(cat "$token_file")" = minted-token
+      test "$(wc -l < "$MANIFOLD_ENROLL_LOG")" -eq "$enrollments_before"
+    done
+    test "$(wc -l < "$TMPDIR/manifold-service-actions")" -eq "$actions_before"
+    export _ATYRODE_TEST_CURRENT_SYSTEM=${splitGeneration}
+    ln -sfn ${splitGeneration}/etc/systemd/user/manifold-agent.service "$XDG_CONFIG_HOME/systemd/user/manifold-agent.service"
 
     # A lost token against an existing row must refuse and name the recovery.
     rm "$token_file"
@@ -242,6 +283,7 @@ pkgs.runCommand "check-atyrode-runtime"
     unset ATYRODE_BW ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL MANIFOLD_ENROLL_LOG MANIFOLD_ROW_EXISTS ATYRODE_HOST
     export _ATYRODE_TEST_HOSTNAME=fixture-linux
     export _ATYRODE_TEST_SYSTEM=x86_64-linux
+    export _ATYRODE_TEST_CURRENT_SYSTEM="$ATYRODE_TEST_CURRENT"
 
     # The local model reserves its full maximum response plus tokenizer/tool
     # envelope headroom. Otherwise OMP's default 15% reserve compacts too late:

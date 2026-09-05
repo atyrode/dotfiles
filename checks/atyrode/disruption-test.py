@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,7 @@ def put(root, relative, content):
     return path
 
 
-def report(current, candidate, activation="home-manager", scope=None):
+def report(current, candidate, activation="home-manager", scope=None, extra=()):
     argv = [
         analyzer,
         "--host", "fixture",
@@ -38,6 +39,7 @@ def report(current, candidate, activation="home-manager", scope=None):
     ]
     if scope is not None:
         argv.extend(["--scope", scope])
+    argv.extend(extra)
     result = subprocess.run(argv, capture_output=True, text=True, check=True)
     value = json.loads(result.stdout)
     assert value["schemaVersion"] == 1, value
@@ -62,6 +64,56 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
         and effect["action"] in ("restart", "stop")
         for effect in changed["effects"]
     ), changed
+
+    # sd-switch reads the running unit's refusal flag, not a newly installed flag.
+    new_refusal = root / "new-refusal-generation"
+    put(new_refusal, agent, unit(new_exe).replace(
+        "[Service]", "RefuseManualStop=true\n[Service]"))
+    assert report(current, new_refusal)["status"] == "blocked"
+
+    # Retaining a combined process while declaring its slot replaceable is unsafe on
+    # the NEXT activation, even though this activation would keep the old process.
+    guarded = root / "guarded-generation"
+    split_generation = root / "split-generation"
+    put(guarded, agent, unit(old_exe, owner=True).replace(
+        "[Service]", "X-SwitchMethod=keep-old\nRefuseManualStop=true\n[Service]"))
+    put(split_generation, agent, unit(new_exe, owner=False))
+    assert report(guarded, split_generation)["status"] == "blocked"
+    manager = root / "systemctl"
+    def manager_answer(body):
+        manager.write_text(f"#!{sys.executable}\n{body}\n")
+        manager.chmod(0o755)
+    runtime = ("--runtime", "--systemctl", str(manager))
+    manager_answer("print('LoadState=loaded\\nActiveState=active')")
+    assert report(guarded, split_generation, extra=runtime)["status"] == "blocked"
+    manager_answer("print('LoadState=loaded\\nActiveState=inactive')")
+    stopped = report(guarded, split_generation, extra=runtime)
+    assert stopped["status"] == "safe", stopped
+    assert any(effect["action"] == "start" for effect in stopped["effects"]), stopped
+    manager_answer("raise SystemExit(1)")
+    assert report(guarded, split_generation, extra=runtime)["status"] == "unknown"
+    manager_answer("print('LoadState=loaded\\nActiveState=active')")
+    returned = report(guarded, split_generation, extra=runtime)
+    assert returned["status"] == "blocked", returned
+    assert returned["fingerprint"] != stopped["fingerprint"]
+
+    # A live definition cannot contradict the deployed role during direct service control.
+    mutation = report(guarded, guarded, extra=(
+        *runtime, "--mutate", "restart", "--service", "user:manifold-agent.service",
+        "--live", str(split_generation / agent)))
+    assert mutation["status"] == "unknown", mutation
+
+    # Home Manager folds config-side drop-ins even when the base file is unchanged.
+    dropin = root / "dropin-generation"
+    put(dropin, agent, unit(old_exe, "%H"))
+    put(dropin, agent + ".d/override.conf", "[Service]\nEnvironment=EXTRA=changed\n")
+    assert report(current, dropin)["status"] == "blocked"
+
+    # An unstatable ancestor is not an absent unit tree (ELOOP also fails under root).
+    inaccessible = root / "inaccessible-generation"
+    put(inaccessible, "home-files/.config/systemd/placeholder", "")
+    (inaccessible / units).symlink_to("user")
+    assert report(inaccessible, candidate)["status"] == "unknown"
 
     # Merely labelling a replacement as transport cannot remove the incumbent's protection.
     put(candidate, agent, unit(new_exe, owner=False))
@@ -116,6 +168,17 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
         and effect["action"] in ("stop", "restart")
         for effect in caddy["effects"]
     ), caddy
+
+    # sshd's listener restart can preserve sessions, but removal still closes access.
+    ssh = "etc/systemd/system/sshd.service"
+    for system, executable in ((old_system, "old"), (new_system, "new")):
+        put(system, ssh, f"[Service]\nKillMode=process\nExecStart=/fixture/{executable}-sshd\n")
+    assert report(old_system, new_system, "nixos")["status"] == "safe"
+    put(new_system, ssh, "[Service]\nKillMode=control-group\nExecStart=/fixture/new-sshd\n")
+    assert report(old_system, new_system, "nixos")["status"] == "blocked"
+    (new_system / ssh).unlink()
+    assert report(old_system, new_system, "nixos")["status"] == "blocked"
+    (old_system / ssh).unlink()
     put(candidate, agent, unit(new_exe, owner=True))
     embedded = report(old_system, new_system, "nixos")
     assert embedded["status"] == "blocked", embedded
@@ -142,8 +205,10 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     # The read-only preview fingerprint is bound to the exact transition, not a package label.
     put(candidate, host, unit(host_exe, owner=True))
     first = report(current, candidate)
-    put(candidate, units + "worker.service", unit("/nix/store/another-worker/bin/worker"))
-    second = report(current, candidate)
+    next_candidate = root / "another-home-manager-generation"
+    shutil.copytree(candidate, next_candidate)
+    put(next_candidate, units + "worker.service", unit("/nix/store/another-worker/bin/worker"))
+    second = report(current, next_candidate)
     assert first["fingerprint"] != second["fingerprint"], (first, second)
 
 print("disruption contract: same-version restart, ownership boundary, embedded units, scope, unknown state, and fingerprint passed")

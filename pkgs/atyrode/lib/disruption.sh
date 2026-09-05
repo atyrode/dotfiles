@@ -67,7 +67,7 @@ current_generation() { # activation user
 # runs under sudo with root's HOME and must still find the operator's.
 home_manager_gcroot() { # user
   local home="$HOME"
-  if [[ -n "$1" && "$1" != "$(id -un)" && "$1" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]; then
+  if [[ -n "$1" && "$1" != "$(actual_user)" && "$1" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]; then
     home="$(eval "printf '%s' ~$1")"
   fi
   if [[ "$home" == "$HOME" ]]; then

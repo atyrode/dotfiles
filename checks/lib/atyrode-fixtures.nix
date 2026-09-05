@@ -1,5 +1,15 @@
 { pkgs }:
 
+let
+  generation = name: pkgs.runCommand name { } ''
+    mkdir -p "$out/home-files/.config/systemd/user" \
+      "$out/etc/systemd/system" "$out/etc/systemd/user" \
+      "$out/Library/LaunchDaemons" "$out/Library/LaunchAgents"
+    printf '#!%s\nexit 0\n' '${pkgs.runtimeShell}' > "$out/activate"
+    chmod +x "$out/activate"
+  '';
+in
+
 {
   base = ''
     export HOME="$TMPDIR/home"
@@ -19,6 +29,11 @@
       "$TMPDIR/settled-login-shell.json" > "$TMPDIR/settled-login-shell.json.tmp"
     mv "$TMPDIR/settled-login-shell.json.tmp" "$TMPDIR/settled-login-shell.json"
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$TMPDIR/settled-login-shell.json"
+    export ATYRODE_TEST_CANDIDATE=${generation "fixture-candidate-home-manager-generation"}
+    export ATYRODE_TEST_CURRENT=${generation "fixture-current-home-manager-generation"}
+    export _ATYRODE_TEST_CURRENT_SYSTEM="$ATYRODE_TEST_CURRENT"
+    mkdir -p "$XDG_STATE_HOME/home-manager/gcroots"
+    ln -s "$ATYRODE_TEST_CURRENT" "$XDG_STATE_HOME/home-manager/gcroots/current-home"
   '';
 
   gitNh = ''
@@ -83,6 +98,20 @@
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" > "$TMPDIR/nh-args"
     printf '%s\n' "''${LC_ALL-}" > "$TMPDIR/nh-locale"
+    printf '%s\n' "$*" >> "$TMPDIR/nh-history"
+    output=""
+    previous=""
+    for argument in "$@"; do
+      [[ "$previous" != -o ]] || output="$argument"
+      previous="$argument"
+    done
+    if [[ -n "$output" ]]; then
+      [[ -d "$ATYRODE_TEST_CANDIDATE" ]] || exit 1
+      ln -sfn "$ATYRODE_TEST_CANDIDATE" "$output"
+    elif [[ "''${2:-}" == switch && "$*" != *" --dry"* ]]; then
+      [[ "''${3:-}" == /nix/store/* && -d "$3" ]] || exit 64
+      printf '%s\n' "$*" >> "$TMPDIR/nh-activations"
+    fi
     if [[ -n "''${ATYRODE_NH_DELAY:-}" ]]; then
       : > "$TMPDIR/nh-started"
       sleep "$ATYRODE_NH_DELAY"

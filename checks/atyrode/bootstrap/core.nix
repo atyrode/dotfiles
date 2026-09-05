@@ -106,6 +106,17 @@ mkScenario "core" ''
   test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
   test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
 
+  # An unattended bootstrap must not turn an unsafe preview into an apply.
+  for disruption_status in blocked unknown; do
+    new_fixture "disruption-$disruption_status"
+    export PATH="$managed_tools:$base_path"
+    FAKE_DISRUPTION_STATUS="$disruption_status" \
+      expect_failure "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host"
+    grep -F -- '--preview-json' "$FAKE_LOG" >/dev/null
+    ! grep -qF -- '--expected-disruption' "$FAKE_LOG"
+    test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
+  done
+
   # A clean checkout parked on another branch is returned to main by the
   # same --update path instead of demanding a manual git checkout, and the
   # branch it left keeps every commit.

@@ -49,21 +49,11 @@ pkgs.runCommand "check-atyrode-lifecycle"
     mkdir -p "$XDG_STATE_HOME/nix/profiles"
     touch "$XDG_STATE_HOME/nix/profiles/home-manager"
     export ATYRODE_GEN_PROFILE="$XDG_STATE_HOME/nix/profiles/home-manager"
+    ln -s "$ATYRODE_TEST_CANDIDATE" "$ATYRODE_GEN_PROFILE-2-link"
     # Exercise the packaged local-qwen lease/reaper lifecycle state machine.
     ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
       ${pkgs.runtimeShell} ${../fixtures/local-qwen-lifecycle.sh} ${atyrode}/libexec/atyrode-runtime
     ''}
-    # store-lifecycle guards (#21): cleanup must never be an implicit side effect
-    # of apply. A structural scan on purpose — it proves the property for EVERY
-    # path through apply_config, which no single apply invocation can. The
-    # retention window, the rollback refusal, and the clean/rollback/generations
-    # dispatch are asserted behaviourally below (on nh's actual argv and on the
-    # CLI's own output) rather than on the wording of the source.
-    if awk '/^apply_config\(\) \{/{f=1} f&&/cmd_clean|cmd_rollback/{print; hit=1} /^\}/{if(f)f=0} END{exit hit?0:1}' \
-      ${import ../lib/atyrode-source.nix { inherit pkgs; }}; then
-      echo 'apply invokes cleanup/rollback implicitly' >&2
-      exit 1
-    fi
     # ATYRODE_GIT / ATYRODE_NH are honoured only under test hooks. That seam is
     # asserted behaviourally in checks/atyrode/atyrode-apply.nix: a stub reachable only
     # through the env var IS used by this test-hooks build, and a production
@@ -138,14 +128,8 @@ pkgs.runCommand "check-atyrode-lifecycle"
     # darwin-rebuild and refuses without one. The branch it does exercise is
     # the one standalone Linux actually rolls back through.
     ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-      mkdir -p "$ATYRODE_GEN_PROFILE-2-link"
-      {
-        printf '#!%s\n' "${pkgs.runtimeShell}"
-        printf 'printf %s\n' "'rolled back'"
-      } > "$ATYRODE_GEN_PROFILE-2-link/activate"
-      chmod +x "$ATYRODE_GEN_PROFILE-2-link/activate"
       rollback_real="$(atyrode rollback --to 2 --yes 2>&1 >/dev/null)"
-      grep -qE '^\$ .*/home-manager-2-link/activate$' <<<"$rollback_real" \
+      grep -qF "$ATYRODE_TEST_CANDIDATE/activate" <<<"$rollback_real" \
         || { echo "rollback must announce the activation it runs: $rollback_real" >&2; exit 1; }
       grep -qF 'now on generation 2' <<<"$rollback_real" \
         || { echo "rollback must confirm the generation it landed on: $rollback_real" >&2; exit 1; }

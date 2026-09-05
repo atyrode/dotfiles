@@ -63,7 +63,7 @@ pkgs.runCommand "check-atyrode-credentials"
     printf '%s\n' "$*" >> "$TMPDIR/clan-args"
     case "''${1:-} ''${2:-}" in
       "vars check") [[ -z "''${ATYRODE_TEST_VARS_INCOMPLETE:-}" ]] || exit 1 ;;
-      "machines update") ;;
+      "vars upload") printf 'upload\n' >> "$TMPDIR/fleet-order" ;;
       *) exit 64 ;;
     esac
     EOF
@@ -77,6 +77,11 @@ pkgs.runCommand "check-atyrode-credentials"
           *) printf '%s\n' '/nix/store/test-fixture-nixos-system.drv' ;;
         esac
         ;;
+      build)
+        printf 'build\n' >> "$TMPDIR/fleet-order"
+        printf '%s\n' "$ATYRODE_TEST_CANDIDATE"
+        ;;
+      copy) printf 'copy\n' >> "$TMPDIR/fleet-order" ;;
       *) exit 64 ;;
     esac
     EOF
@@ -84,6 +89,18 @@ pkgs.runCommand "check-atyrode-credentials"
     #!${pkgs.runtimeShell}
     printf '%s\n' "$*" >> "$TMPDIR/fleet-ssh-args"
     [[ -z "''${ATYRODE_TEST_SSH_UNREACHABLE:-}" ]] || exit 255
+    if [[ "$*" == *'--preview-json'* ]]; then
+      printf 'preview\n' >> "$TMPDIR/fleet-order"
+      if [[ "''${ATYRODE_TEST_REMOTE_LEGACY:-0}" == 1 ]]; then
+        printf '{"schemaVersion":1}\n'
+      else
+        printf '{"disruption":{"schemaVersion":1,"status":"%s","fingerprint":"%s","effects":[],"reasons":[]}}\n' \
+          "''${ATYRODE_TEST_REMOTE_DISRUPTION:-safe}" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      fi
+    elif [[ "$*" == *'--expected-disruption'* ]]; then
+      [[ "$*" == *"--candidate $ATYRODE_TEST_CANDIDATE --expected-disruption aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]] || exit 65
+      printf 'activate\n' >> "$TMPDIR/fleet-order"
+    fi
     if [[ "$*" == *'atyrode doctor host --json'* ]]; then
       printf '%s\n' "{\"ok\":true,\"host\":\"''${ATYRODE_TEST_REPORTED_HOST:-fixture-nixos}\"}"
     fi
@@ -365,7 +382,7 @@ pkgs.runCommand "check-atyrode-credentials"
     grep -qF 'BatchMode=yes -o StrictHostKeyChecking=yes' "$TMPDIR/fleet-ssh-args"
     grep -qF 'alex@target.example true' "$TMPDIR/fleet-ssh-args"
     # A plan activates nothing, whatever else it reports.
-    ! grep -qF 'machines update' "$TMPDIR/clan-args"
+    test ! -e "$TMPDIR/fleet-order"
 
     # Vars that are not generated stop the deployment before it touches the
     # machine, and the remedy names the command that generates them.
@@ -376,7 +393,7 @@ pkgs.runCommand "check-atyrode-credentials"
       exit 1
     fi
     grep -qF 'clan vars generate fixture-nixos' "$TMPDIR/fleet-vars.err"
-    ! grep -qF 'machines update' "$TMPDIR/clan-args"
+    test ! -e "$TMPDIR/fleet-order"
 
     # An unreachable machine is a preflight failure, not a half-finished
     # deployment.
@@ -387,18 +404,32 @@ pkgs.runCommand "check-atyrode-credentials"
       exit 1
     fi
     grep -qF 'did not answer a strict-host-key SSH check' "$TMPDIR/fleet-unreachable.err"
-    ! grep -qF 'machines update' "$TMPDIR/clan-args"
+    test ! -e "$TMPDIR/fleet-order"
 
     fleet_apply="$("''${fleet_test_env[@]}" \
       atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
       2>"$TMPDIR/fleet-apply.err")"
     jq -e '.ok and .action == "apply" and .host == "fixture-nixos"
       and .targetHost == "alex@target.example" and .verified' <<<"$fleet_apply" >/dev/null
-    grep -qF "machines update fixture-nixos --flake $TMPDIR/repo" "$TMPDIR/clan-args"
-    grep -qF -- '--target-host alex@target.example --build-host localhost --upload-inputs --host-key-check strict' \
-      "$TMPDIR/clan-args"
-    grep -qF 'alex@target.example atyrode doctor host --json' "$TMPDIR/fleet-ssh-args"
-    grep -qE '^  \$ .*clan machines update fixture-nixos' "$TMPDIR/fleet-apply.err"
+    grep -qF "vars upload fixture-nixos --flake $TMPDIR/repo" "$TMPDIR/clan-args"
+    grep -qF "copy --to ssh-ng://alex@target.example --no-check-sigs $ATYRODE_TEST_CANDIDATE" \
+      "$TMPDIR/fleet-nix-args"
+    grep -qF 'atyrode doctor host --json' "$TMPDIR/fleet-ssh-args"
+    test "$(cat "$TMPDIR/fleet-order")" = "$(printf 'build\ncopy\npreview\nupload\nactivate')"
+
+    # --yes skips confirmation, never a missing or unsafe target report.
+    for remote_state in blocked unknown legacy; do
+      : > "$TMPDIR/fleet-order"
+      legacy=0
+      [[ "$remote_state" != legacy ]] || legacy=1
+      if "''${fleet_test_env[@]}" ATYRODE_TEST_REMOTE_DISRUPTION="$remote_state" \
+        ATYRODE_TEST_REMOTE_LEGACY="$legacy" atyrode fleet apply fixture-nixos \
+        --repo "$TMPDIR/repo" --yes --json >/dev/null 2>"$TMPDIR/fleet-refused.err"; then
+        echo "fleet activated a $remote_state report" >&2
+        exit 1
+      fi
+      test "$(cat "$TMPDIR/fleet-order")" = "$(printf 'build\ncopy\npreview')"
+    done
 
     # A machine that activated but answers as somebody else is a failure: the
     # deployment exited zero and the wrong closure is live.

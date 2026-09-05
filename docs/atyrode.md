@@ -474,6 +474,7 @@ atyrode runtime status local-qwen --json
 atyrode runtime provision local-qwen
 atyrode runtime run local-qwen
 atyrode runtime shortcut local-qwen
+atyrode runtime enroll manifold-agent HOST [--rotate-token]
 atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
 atyrode provision git

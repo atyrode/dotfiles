@@ -23,36 +23,65 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
   `fleet/manifold.json` declares the supported systems and every owned spoke:
   `macbook`, `wsl`, and `dev-01`. Portable development profiles do not enroll
   client machines into the fleet.
-- **The runtime layer owns machine state.** Enrollment and the machine token
-  live outside the Nix store, exactly like `local-qwen`.
+- **Clan owns the credentials.** The hub's owner key and each spoke's machine
+  token are clan vars ([secrets.md](secrets.md#declaring-a-secret)),
+  encrypted in the repository and placed by activation, exactly like Babel's
+  custody. The vault is not involved in Manifold at all.
 
 ## Enrollment
+
+Enrolling happens on an operator device, because it is an HTTP call that
+needs the hub's owner key, and no machine of the fleet holds that key:
+
+```sh
+clan vars generate <host> --generator manifold-custody   # once, fleet-wide
+atyrode runtime enroll manifold-agent <host>
+```
+
+The owner key is the shared var `manifold-custody/owner-key`
+([`modules/shared/manifold-agent.nix`](../modules/shared/manifold-agent.nix)):
+encrypted to the admins group and never deployed (`deploy = false`), so it
+exists only as an input the operator entered once. Enrolling reads it with
+`clan vars get`, POSTs the canonical fleet name to
+`/api/actions/core.machines.enroll`, reads the `ActionOutcome` envelope (a
+refusal is HTTP 200 with `ok: false` and the rule that refused), and stores
+the minted token as the machine's own var `manifold-agent/machine-token`
+with `clan vars set` over stdin, then names the commit clan made for review.
+The owner key travels through a 0600 curl config in a secure temp dir and
+never enters argv, logs, or a machine. When custody is missing, the CLI names
+the `clan vars generate` step above rather than guessing. A device that
+still holds its own token as a plain file, from before the token was a clan
+var, has that file adopted into clan rather than re-minted, so the cutover
+rotates nothing.
+
+On the machine, the token is what activation placed: sops-nix writes it to
+`/run/secrets/vars/manifold-agent/machine-token`, mode 0600 and owned by the
+account whose agent reads it, and Home Manager forces the link
+`~/.config/manifold/machine.token` onto it, so the native units and
+`atyrode runtime` read the path they always have. Until the var exists the
+link dangles, and a dangling link is the inert unenrolled state.
 
 ```sh
 atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
 ```
 
-After activation, `atyrode apply` offers enrollment when the installed
-capability has no token. It remains an authorized, interactive operation:
-it reads the owner key from the Bitwarden Secure Note named by `vaultItemName`
-(under the same unlock→fetch→lock discipline as `atyrode provision git`),
-POSTs the canonical fleet name to `/api/actions/core.machines.enroll`, and installs the minted
-token at `~/.config/manifold/machine.token` (0600, in a 0700 directory).
-The owner key never enters argv, logs, or disk outside the secure temp dir;
-the running agent never touches the vault.
+Provisioning on the machine never mints: it starts the agent for a placed
+token and otherwise fails naming the operator-device command. `doctor
+provisioning` reports an unenrolled spoke as degraded with that same
+remediation -- told, not offered, since the ceremony cannot run here. With a
+placed token, re-running neither contacts the master nor restarts an active
+agent: it starts an inactive managed service and fails if that start fails.
 
-Re-running with an existing token neither contacts the vault/master nor
-restarts an active agent. It starts an inactive managed service and fails if
-that start fails. A lost token is recovered explicitly with `--rotate-token`.
-Before touching the vault, hub or token, rotation proves that the managed agent
-is inactive or transport-only. A live legacy owner, an unreadable manager or a
-disagreement between deployed and loaded definitions refuses the operation.
-Never rotate merely to repair a protocol mismatch.
+A lost token is recovered explicitly with `--rotate-token`, again on an
+operator device. Rotation revokes the token the running agent holds, so it
+says what that ends before asking the hub; once the new value is stored, the
+machine needs `atyrode apply` to place it and `atyrode runtime restart
+manifold-agent` to load it. Never rotate merely to repair a protocol mismatch.
 
 The declared service waits for its token before starting. Linux uses
 `ConditionPathExists`; launchd uses `KeepAlive.PathState` and logs to
-`~/.local/state/manifold/agent.log`. Enrollment loads/starts the service in
+`~/.local/state/manifold/agent.log`. Provisioning loads/starts the service in
 the current user's session. Headless Linux machines need user lingering so
 the agent survives logout; managed NixOS owns that setting. The macOS agent
 lives in the logged-in user's GUI session, not a system daemon.

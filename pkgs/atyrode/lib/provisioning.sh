@@ -494,7 +494,7 @@ provisioning_run() { # id host
 # run on a device that is a member: any other device is told so rather than
 # handed clan's own refusal. Clan commits what it writes; the operator pushes.
 provision_machine_key() {
-  local host data user recipient checkout clan
+  local host data user recipient checkout
   host="$(resolve_host)"
   data="$(host_json "$host")"
   [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == fixed ]] ||
@@ -506,9 +506,10 @@ provision_machine_key() {
   checkout="$HOME/nix-dotfiles"
   [[ -d "$checkout/.git" ]] ||
     die "$EX_UNAVAILABLE" "no repository checkout at ~/nix-dotfiles to mint the key into"
-  clan="$(clan_program)"
+  local -a clan_write
+  mapfile -t clan_write < <(clan_write_command "$checkout")
   say "clan mints $host's key and encrypts it to group $operator_group; it commits the result, which is then pushed like any other change"
-  run_visible "$clan" vars generate "$host" --flake "$checkout" ||
+  run_visible "${clan_write[@]}" vars generate "$host" --flake "$checkout" ||
     die "$EX_SOFTWARE" "clan did not generate $host's vars"
   say "review the commit clan made in $checkout, then push it; apply on $host places the key"
 }

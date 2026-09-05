@@ -87,9 +87,23 @@ points `SOPS_AGE_KEY_FILE` at `~/.config/sops/age/keys.txt` so sops and clan
 read the file the ceremony writes on every platform (macOS would otherwise
 look under `~/Library`). Clan is told about the plugin
 (`secrets.age.plugins` in [`lib/configurations.nix`](../lib/configurations.nix))
-so its own `sops` calls can decrypt with the Mac's key; the plugin does build
-on Linux, but a Linux device never needs it, since it decrypts with its own
-key.
+so its own `sops` calls can decrypt with the Mac's key.
+
+A Linux operator device (`alex-dev-01`, `alex-wsl`) decrypts with its own
+plain key and needs no plugin for that. Writing is different: every value is
+encrypted to the whole group, one member of which is the Mac's enclave
+recipient, and sops can only wrap a data key for that recipient through
+`age-plugin-se`. The plugin does build on Linux, but its closure is a 2.1 GiB
+Swift runtime ([`modules/home/profiles/security.nix`](../modules/home/profiles/security.nix)),
+so no Linux profile carries it. Instead every clan write the CLI makes from a
+Linux device runs inside a transient `nix shell nixpkgs#age-plugin-se`
+(`clan_write_command` in [`pkgs/atyrode/lib/core.sh`](../pkgs/atyrode/lib/core.sh)),
+because clan's own plugin wrapping never reaches sops: the PATH clan
+computes for its cached store paths replaces the one its outer shell built,
+and launching clan itself inside the shell is what puts the plugin on the
+PATH clan copies. A `clan vars generate` or `clan vars set` typed by hand on
+a Linux device needs the same shell around it:
+`nix shell nixpkgs#age-plugin-se -c clan vars set ...`; a read never does.
 
 **A machine key** is the age key one machine decrypts with at activation.
 It is clan's: `clan vars generate <host>` mints it on whichever operator
@@ -170,7 +184,8 @@ path under `/run/secrets` at activation and never in the Nix store. The
 `host-registry` check asserts that the declared set is exactly the fleet's, so
 a new generator is a reviewed change rather than a side effect.
 
-The fleet declares four. The first, [`git-identity`](../modules/shared/git-identity.nix),
+The fleet declares four on every clan machine, and a pair more on every
+Manifold spoke. The first, [`git-identity`](../modules/shared/git-identity.nix),
 is on every clan machine: an authentication key and a signing key, ed25519, minted
 per machine and never shared, so retiring a machine deletes one registration
 instead of rotating a key the whole fleet uses. The private halves are secrets
@@ -237,6 +252,27 @@ is plain `nixos` declares this one too. A paste that is not a token fails at
 the operator's terminal, and the placed file is linked from
 `~/.config/cloudflare/api-token`, where the kit and any Cloudflare tool on the
 machine already read it.
+
+The pair on every spoke of [`fleet/manifold.json`](../fleet/manifold.json)
+is in [`manifold-agent`](../modules/shared/manifold-agent.nix), and it
+replaces the Bitwarden note that carried the hub's owner key
+([manifold.md](manifold.md#enrollment)). `manifold-custody` is shared and
+prompted: the hub's owner key, existing and never minted here, entered once
+with `clan vars generate <host> --generator manifold-custody`. Its one file
+is a secret that is never deployed (`deploy = false`): it is root on the
+hub, so it exists only as an input an operator device reads, and no machine
+of the fleet receives it. `manifold-agent` is per machine and holds the
+token the hub minted for that machine. A generator runs without a network,
+so it cannot mint the token itself; `atyrode runtime enroll manifold-agent
+<host>` on an operator device asks the hub with the custody key and stores
+the answer with `clan vars set`, and the prompt exists for an operator who
+has a token in hand and no CLI. sops-nix places it at
+`/run/secrets/vars/manifold-agent/machine-token`, mode 0600 and owned by the
+account whose agent reads it, and Home Manager forces the link
+`~/.config/manifold/machine.token` onto it, so the native units read the
+path they always have; until the value exists the link dangles, which the
+units read as "not enrolled". Rotation is `--rotate-token` on the same
+enroll command, then an apply and an agent restart on the machine.
 
 ## Revocation and rotation
 

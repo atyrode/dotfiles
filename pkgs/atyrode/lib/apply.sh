@@ -299,6 +299,7 @@ apply_config() {
     [[ -x "$atyrode_preview_parser" ]] || die "$EX_UNAVAILABLE" "atyrode preview parser is unavailable"
     local preview_file preview_output
     preview_file="$(mktemp)"
+    show_command env "LC_ALL=$nh_locale" "${nh_args[@]}"
     if ! LC_ALL="$nh_locale" "${nh_args[@]}" >"$preview_file" 2>&1; then
       cat "$preview_file" >&2
       rm -f "$preview_file"
@@ -579,7 +580,7 @@ flake_source_tree() { # flake_source
     return 0
   fi
   local tree
-  tree="$(tool_exec quiet ATYRODE_NIX nix flake prefetch --json "$1" | jq -r '.storePath // empty')" || tree=""
+  tree="$(tool_exec visible ATYRODE_NIX nix flake prefetch --json "$1" | jq -r '.storePath // empty')" || tree=""
   [[ -n "$tree" && -d "$tree" ]] ||
     die "$EX_UNAVAILABLE" "cannot fetch the source tree of $1 to read the machine key from"
   printf '%s\n' "$tree"
@@ -598,17 +599,26 @@ machine_key_system_root() {
   fi
 }
 
-# Whether the key is in place. Root holds it under a mode-700 directory, so an
-# unprivileged reader asks sudo without a password and treats a refusal as
-# not knowing, which for the caller means not placed.
+# A readable directory entry is enough to establish presence; the key itself
+# stays root-only. When directory traversal needs sudo, distinguish a refused
+# inspection from an absent key rather than offering to mint it again.
 machine_key_placed() {
-  local key
+  local key directory status=0
   key="$(machine_key_file)"
-  if [[ "$(id -u)" -eq 0 || -n "$(machine_key_system_root)" ]]; then
-    [[ -e "$key" ]]
-  else
-    sudo -n test -e "$key" 2>/dev/null
-  fi
+  [[ ! -e "$key" ]] || return 0
+  [[ "$(id -u)" -ne 0 ]] || return 1
+  directory="${key%/*}"
+  while [[ ! -e "$directory" && "$directory" != / ]]; do
+    directory="${directory%/*}"
+    [[ -n "$directory" ]] || directory=/
+  done
+  [[ ! -x "$directory" ]] || return 1
+  sudo -n sh -c 'if test -e "$1"; then exit 0; else exit 3; fi' sh "$key" 2>/dev/null || status=$?
+  case "$status" in
+    0) return 0 ;;
+    3) return 1 ;;
+    *) return 2 ;;
+  esac
 }
 
 place_machine_key() { # host flake_source

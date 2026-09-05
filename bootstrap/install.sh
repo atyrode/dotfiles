@@ -1593,7 +1593,7 @@ install_pinned_nix() {
     rm -rf "$temporary"
     return 1
   fi
-  if ! tar -xf "$archive" -C "$temporary"; then
+  if ! run_visible tar -xf "$archive" -C "$temporary"; then
     rm -rf "$temporary"
     return 1
   fi

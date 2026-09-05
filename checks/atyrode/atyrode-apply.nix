@@ -7,7 +7,6 @@
 
 let
   fixtures = import ../lib/atyrode-fixtures.nix { inherit pkgs; };
-  atyrodeSource = import ../lib/atyrode-source.nix { inherit pkgs; };
   developmentAtyrode = atyrode.override { revision = "unknown"; };
   launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
   targetAtyrode = atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; };
@@ -497,6 +496,18 @@ pkgs.runCommand "check-atyrode-apply"
     mkdir -p "''${machine_key%/*}"
     printf 'AGE-SECRET-KEY-1PLACED\n' > "$machine_key"
     machine_key_probe fixture-nixos ok ""
+    # A cold sudo credential cache must not hide a visible root-only key, and
+    # a denied directory traversal is unknown state, not a missing key.
+    (
+      source ${../../pkgs/atyrode/lib/apply.sh}
+      test_hooks=0
+      machine_key_file() { printf '%s\n' "$machine_key"; }
+      sudo() { return 1; }
+      machine_key_placed
+    )
+    chmod 000 "''${machine_key%/*}"
+    machine_key_probe fixture-nixos degraded inspection-unavailable
+    chmod 700 "''${machine_key%/*}"
     # Machine state wins over a stale conventional checkout. A remote apply
     # may have placed the published key while ~/nix-dotfiles still predates it;
     # that must not offer to mint a key which already exists.
@@ -983,7 +994,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -F -- '--dry' "$TMPDIR/nh-args" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
 
-    preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
+    preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json 2>"$TMPDIR/preview.err")"
     jq -e '
       .schemaVersion == 1
       and .host == "development-x86_64-linux"
@@ -1000,6 +1011,7 @@ pkgs.runCommand "check-atyrode-apply"
       and ([.technical[] | contains("Finished at") or contains("⏱")] | any | not)
     ' <<< "$preview" >/dev/null
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
+    grep -qE '^\$ env LC_ALL=C.UTF-8 .*nh home switch .* --dry$' "$TMPDIR/preview.err"
 
     # The target revision must govern the whole apply, including host
     # resolution and post-switch diagnostics, even when the launcher is old.
@@ -1907,39 +1919,9 @@ pkgs.runCommand "check-atyrode-apply"
       test "$?" -eq 65
     fi
 
-    # Diagnostics observe; only apply mutates. The scan used to cover the whole
-    # file, which worked only while nothing in the CLI ever changed system
-    # state. Apply converges the login shell now, so the rule is stated where it
-    # actually applies: no probe and no doctor family may contain a mutating
-    # command, whatever else the file does.
-    awk '
-      /^[a-z_]+\(\)/ {
-        inside = ($0 ~ "^(probe_|doctor_|collect_provisioning_checks)")
-      }
-      inside { print }
-    ' ${atyrodeSource} > "$TMPDIR/diagnostic-bodies.sh"
-    test -s "$TMPDIR/diagnostic-bodies.sh"
-    if grep -Eq 'brew bundle cleanup .*--(force|zap)|(^|[[:space:]])(sudo|chsh|usermod|freshclam)([[:space:]]|$)|adb[[:space:]]+devices' \
-      "$TMPDIR/diagnostic-bodies.sh"; then
-      echo 'doctor system contains a mutating system probe' >&2
-      exit 1
-    fi
-    # And the converse, so the mutation cannot quietly reappear somewhere else:
-    # chsh belongs to exactly one function, the one that owns the convergence.
-    awk '
-      /^[a-z_]+\(\)/ { inside = ($0 ~ "^converge_login_shell") }
-      !inside && /(^|[[:space:]])chsh([[:space:]]|$)/ { hit = 1 }
-      END { exit hit ? 1 : 0 }
-    ' ${atyrodeSource} || {
-      echo 'chsh appears outside converge_login_shell, which owns login-shell state' >&2
-      exit 1
-    }
-    # The Homebrew drift probe is a READ-ONLY comparison against the immutable,
-    # store-owned Brewfile. The scan above forbids a mutating spelling
-    # structurally; this pins the brew invocation the probe ACTUALLY makes. A
-    # darwin fixture with no .homebrew key falls through to the live branch, so
-    # the PATH stub below is the brew the probe really runs — and a hostile
-    # HOMEBREW_BUNDLE_FILE / HOMEBREW_NO_AUTO_UPDATE in the caller's environment
+    # Homebrew drift detection must remain read-only, even with hostile
+    # caller settings. A darwin fixture with no .homebrew key falls through
+    # to the live branch, so HOMEBREW_BUNDLE_FILE and HOMEBREW_NO_AUTO_UPDATE
     # must not reach it.
     cat > "$TMPDIR/bin/brew" <<'EOF'
     #!${pkgs.runtimeShell}

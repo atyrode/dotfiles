@@ -122,6 +122,12 @@ unlocks, syncs or writes an item, `nix-store --gc` and `nh clean`, every
 rollback that re-runs activation, the Clan deployment that activates a remote
 host, and the `curl` that enrolls this machine with a fleet master.
 
+Command narration is on by default, including captured preview builds, source
+prefetches, bootstrap archive extraction, and provisioning's key installation
+and agent loading. It goes to stderr, leaving structured stdout usable with
+`--json` and `--preview-json`. This is an action transcript, not shell tracing:
+`set -x` would expose secret-bearing expansions and is not a verbosity mode.
+
 Read-only probing stays silent: printing every `command -v` and `bw status`
 would bury the handful of commands that act. So does the shell's own
 bookkeeping — a `mkdir`, a `chmod`, the `mv` that installs a rendered file

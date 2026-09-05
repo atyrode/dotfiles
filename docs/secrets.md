@@ -144,6 +144,10 @@ decrypt it; the actual decryption must succeed before activation begins.
    what `atyrode apply` offers; `atyrode doctor provisioning` reports the
    `machine-key` surface: not applicable on a portable profile,
    not yet in the repository, in the repository but not placed, or placed.
+   A visible key is detected without reading its contents or requiring a
+   cached sudo authorization. If its directory cannot be traversed and sudo
+   cannot inspect it, placement is reported as unknown, never as absent and
+   never as a reason to mint another key.
 2. Push, and on the machine `atyrode apply`: its first step places the key at
    `/var/lib/sops-nix/key.txt` -- decrypted into a mode-600 file in a
    mode-700 scratch directory, installed from there as root, both commands

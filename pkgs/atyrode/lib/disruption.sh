@@ -208,7 +208,13 @@ disruption_mutation_guard() { # scope:service action live-path
   case "$(jq -r '.status' <<<"$report")" in
     safe) ;;
     blocked)
-      die "$EX_UNAVAILABLE" "$action refused: ${target#*:} holds the session-owner role and is loaded, so a $action ends every session it holds; drain it and stop it through the manager deliberately, then migrate it with atyrode apply"
+      local stop_command
+      case "$target" in
+        launchd:*) stop_command="launchctl bootout \"gui/\$(id -u)/${target#*:}\"" ;;
+        user:*) stop_command="systemctl --user stop ${target#*:}" ;;
+        *) stop_command="systemctl stop ${target#*:}" ;;
+      esac
+      die "$EX_UNAVAILABLE" "$action refused: ${target#*:} is a loaded session owner; close admission with core.machines.drain and finish every terminal, then perform deliberate legacy maintenance with: $stop_command; only then migrate with atyrode apply"
       ;;
     *)
       die "$EX_UNAVAILABLE" "$action refused: whether ${target#*:} may be disrupted could not be established (see the report above)"

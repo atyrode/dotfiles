@@ -18,12 +18,12 @@ and every explicit subcommand (`atyrode apply`, `atyrode doctor …`, JSON calls
 and the other command surfaces) continues through the Bash CLI even on a TTY.
 Existing scripts therefore do not enter the cockpit.
 
-The apply panel first resolves the requested branch to an exact commit, then
-loads both `atyrode apply --ref <commit> --preview-json` and `atyrode inventory
---ref <commit> --json` asynchronously. Its default activation preview
-summarizes package, store-path, and closure-size changes without showing raw
-generation paths; `d` toggles normalized technical details, where the previous
-and new generation paths remain available with labels.
+The apply panel resolves the requested branch to an exact commit. Press `v`
+(or request apply before checking) to load `atyrode apply --ref <commit>
+--preview-json` asynchronously. The service-disruption verdict comes first:
+affected services, their stop/restart/keep actions, and the reason a change
+is blocked. Package and closure-size changes follow; `d` exposes generation
+paths and the exact transition fingerprint.
 
 Press `c` to open or focus the active capability inventory. `[`/`]` (or
 left/right arrows) cycle in the apply plan's declared order, and `j`/`k` or
@@ -37,14 +37,16 @@ Capability details are read only from the exact-revision CLI manifest. The
 cockpit validates schema version, full revision, system/platform identity, and
 the planned host's canonical ID before showing purpose, active state,
 resolved deliverables, and ownership/security/mutable-state boundaries.
-Loading and inventory failures remain textual and never block confirmation or
-fall back to stale data.
+Capability inventory failures remain textual and do not substitute stale data.
+An absent, failed, loading, blocked, unknown, or stale activation preview
+refuses confirmation; a package build alone never authorizes activation.
 
-Startup and refresh perform no activation. The operator must open the
-confirmation step and accept it; the real apply uses that same exact commit, so
-the activated configuration cannot drift from the preview if the branch
-advances while the cockpit is open. The `ctrl+o` Ask overlay remains read-only
-and preserves the full cockpit state.
+Startup and refresh perform no activation. Confirmation is available only
+after a safe report. The real apply receives its fingerprint and rechecks
+the running-to-candidate transition before switching; an intervening change
+refuses rather than widening the request. CLI automation performs the same
+check without needing a cockpit or a human approval prompt. The `ctrl+o`
+Ask overlay remains read-only and preserves the full cockpit state.
 
 ## Applying a configuration
 
@@ -88,9 +90,34 @@ atyrode apply wsl --repo /home/alex/nix-dotfiles --plan
 ```
 
 Before calling `nh`, the CLI validates the host, user, system, backend, and
-revision. `--plan` performs no activation. `--dry-run` uses `nh`'s build-only
-path. A successful real activation records the canonical host atomically;
-failures and dry runs do not update state.
+revision. `--plan` performs no activation. Build/preview first produces an
+exact candidate closure; activation compares that closure against the
+current generation, including embedded Home Manager services, before any
+service stop is queued. It switches the inspected store path, not a newly
+evaluated branch. A successful activation records the canonical host;
+failures and dry runs do not update that receipt.
+
+The policy is `fleet/service-protection.json`. Session owners, SSH and Docker
+are protected; an owner can additionally declare `X-Atyrode-SessionOwner`.
+Protected stops, restarts and reloads, unknown effects, and changes outside
+an explicitly requested `--scope system:caddy.service` refuse. A retained
+owner (`keep`) stays running with its update pending. `--expected-disruption`
+binds automation to a particular safe preview; it cannot authorize a blocked
+report, and `--yes` is not a bypass. Apply, rollback and every Manifold agent
+mutation hold the same activation lock, including token rotation. A
+NixOS-global user unit is inactive only if every live user manager proves it;
+an inaccessible manager is unknown, not evidence of absence. Owner-to-transport
+role changes also refuse while the old owner remains loaded, even if this
+activation would retain it. The next activation must not inherit permission
+to kill a process that still owns sessions.
+
+Context rendering re-enters the inspected candidate's CLI, never an unrelated
+global profile. Runtime stop, restart and token rotation likewise compare the
+deployed role with the loaded definition before acting; rotation performs
+this check before contacting the vault or hub. The [Manifold migration
+runbook](manifold.md#upgrades) names the deliberate initial maintenance boundary.
+These checks prevent accidental disruption through supported tools, not raw
+commands run outside them by an unrestricted account.
 
 Activation success and apply completion are distinct. A failed requested
 provisioning ceremony, login-shell convergence, timer start, or context render
@@ -314,10 +341,11 @@ atyrode fleet apply dev-01          # build here, activate there, verify
 atyrode fleet apply dev-01 --json --yes
 ```
 
-`apply` converges the machine it runs on; `fleet apply` converges another one
-over SSH, which is the only difference between them. Clan builds the closure
-on this machine and activates it on the target, so the target needs no
-toolchain and no checkout. Where it is reached is the machine's own
+`apply` converges the machine it runs on; `fleet apply` transfers an exact
+built closure and asks the target's CLI to preview its local transition.
+Only a safe report permits vars upload and fingerprint-pinned activation
+of that same candidate. The target needs no checkout. Where it is reached
+is the machine's own
 `clan.core.networking.targetHost`: a deployment cannot be aimed somewhere the
 reviewed configuration does not name.
 

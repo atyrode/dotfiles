@@ -44,10 +44,11 @@ the running agent never touches the vault.
 
 Re-running with an existing token neither contacts the vault/master nor
 restarts an active agent. It starts an inactive managed service and fails if
-that start fails. A lost token is recovered explicitly with `--rotate-token`:
-this revokes the old token, fences its holder, and restarts a running managed
-agent to load the replacement. Never rotate merely to repair a protocol
-mismatch.
+that start fails. A lost token is recovered explicitly with `--rotate-token`.
+Before touching the vault, hub or token, rotation proves that the managed agent
+is inactive or transport-only. A live legacy owner, an unreadable manager or a
+disagreement between deployed and loaded definitions refuses the operation.
+Never rotate merely to repair a protocol mismatch.
 
 The declared service waits for its token before starting. Linux uses
 `ConditionPathExists`; launchd uses `KeepAlive.PathState` and logs to
@@ -78,11 +79,29 @@ anyone else's terminals**. It is not permission to replace a live PTY owner.
 The continuity architecture in manifold #278 separates the terminal host from
 the networking agent. The terminal host has its own service lifetime and a
 stable managed-profile command, so a transport pin update does not replace the
-running owner. Linux also keeps that owner across definition changes and
-refuses direct service stops; macOS keeps an unchanged loaded owner plist. Its
-first migration from a combined agent cannot preserve legacy PTY masters by
-magic: close admission, let those workloads finish, and perform deliberate
-maintenance. Do not stop or overlap the legacy owner to test the new topology.
+running owner. Linux also keeps the split terminal host across definition
+changes and refuses direct stops; macOS keeps an unchanged loaded owner plist.
+The legacy Linux combined agent is retained across activation too, but does
+not refuse a deliberate manager stop after its workloads have finished.
+
+The first migration cannot transfer existing PTY masters between processes.
+After promoting a compatible hub, close admission with `core.machines.drain`,
+then finish or deliberately close **every** legacy terminal. A legacy agent
+cannot acknowledge the new drain handshake; the hub still keeps admission
+closed. Once its inventory is empty, stop the legacy owner explicitly:
+
+```sh
+# Linux, as the enrolled user:
+systemctl --user stop manifold-agent.service
+# macOS, in the enrolled user's GUI session:
+launchctl bootout "gui/$(id -u)/org.nix-community.home.manifold-agent"
+```
+
+Then apply the split topology, verify the owner and transport, and cancel the
+drain. These raw manager commands are deliberate legacy maintenance, not an
+automatic bypass in `atyrode runtime`. Never overlap owners or test replacement
+with a production token. This initial maintenance boundary cannot be made
+lossless by CLI automation; subsequent transport updates retain the PTY owner.
 
 Release, promotion, pin publication and activation are distinct operations:
 

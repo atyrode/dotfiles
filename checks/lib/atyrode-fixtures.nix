@@ -1,13 +1,15 @@
 { pkgs }:
 
 let
-  generation = name: pkgs.runCommand name { } ''
-    mkdir -p "$out/home-files/.config/systemd/user" \
-      "$out/etc/systemd/system" "$out/etc/systemd/user" \
-      "$out/Library/LaunchDaemons" "$out/Library/LaunchAgents"
-    printf '#!%s\nexit 0\n' '${pkgs.runtimeShell}' > "$out/activate"
-    chmod +x "$out/activate"
-  '';
+  generation =
+    name:
+    pkgs.runCommand name { } ''
+      mkdir -p "$out/home-files/.config/systemd/user" \
+        "$out/etc/systemd/system" "$out/etc/systemd/user" \
+        "$out/Library/LaunchDaemons" "$out/Library/LaunchAgents"
+      printf '#!%s\nexit 0\n' '${pkgs.runtimeShell}' > "$out/activate"
+      chmod +x "$out/activate"
+    '';
 in
 
 {

@@ -32,7 +32,10 @@ in
 {
   home.packages = lib.optionals supported [ pkgs.manifold-agent ];
   assertions = lib.optional supported {
-    assertion = builtins.elem terminalHostProtocol [ 0 1 ];
+    assertion = builtins.elem terminalHostProtocol [
+      0
+      1
+    ];
     message = "Unsupported manifold terminal-host protocol; update the service topology before activating this pin.";
   };
 
@@ -53,7 +56,6 @@ in
     }
     // lib.optionalAttrs (!split) {
       "X-SwitchMethod" = "keep-old";
-      RefuseManualStop = true;
     }
     // lib.optionalAttrs split {
       Wants = [ "manifold-terminal-host.service" ];
@@ -67,7 +69,8 @@ in
         "MANIFOLD_SERVER_URL=${inventory.masterUrl}"
         "MANIFOLD_MACHINE_NAME=${machineName}"
         "MANIFOLD_MACHINE_TOKEN_FILE=%h/.config/manifold/machine.token"
-      ] ++ lib.optional split "MANIFOLD_TERMINAL_HOST_SOCKET=${terminalHostSocket}";
+      ]
+      ++ lib.optional split "MANIFOLD_TERMINAL_HOST_SOCKET=${terminalHostSocket}";
       Restart = "always";
       RestartSec = 3;
     };
@@ -75,23 +78,24 @@ in
   };
 
   systemd.user.services.manifold-terminal-host =
-    lib.mkIf (supported && split && pkgs.stdenv.hostPlatform.isLinux) {
-      Unit = {
-        Description = "manifold terminal owner";
-        ConditionPathExists = "%h/.config/manifold/machine.token";
-        "X-Atyrode-SessionOwner" = true;
-        "X-SwitchMethod" = "keep-old";
-        RefuseManualStop = true;
-        StartLimitIntervalSec = 0;
+    lib.mkIf (supported && split && pkgs.stdenv.hostPlatform.isLinux)
+      {
+        Unit = {
+          Description = "manifold terminal owner";
+          ConditionPathExists = "%h/.config/manifold/machine.token";
+          "X-Atyrode-SessionOwner" = true;
+          "X-SwitchMethod" = "keep-old";
+          RefuseManualStop = true;
+          StartLimitIntervalSec = 0;
+        };
+        Service = {
+          ExecStart = "${terminalHostCommand} --terminal-host";
+          Environment = [ "MANIFOLD_TERMINAL_HOST_SOCKET=${terminalHostSocket}" ];
+          Restart = "always";
+          RestartSec = 3;
+        };
+        Install.WantedBy = [ "default.target" ];
       };
-      Service = {
-        ExecStart = "${terminalHostCommand} --terminal-host";
-        Environment = [ "MANIFOLD_TERMINAL_HOST_SOCKET=${terminalHostSocket}" ];
-        Restart = "always";
-        RestartSec = 3;
-      };
-      Install.WantedBy = [ "default.target" ];
-    };
 
   # launchd's PathState is both the enrollment gate and the durable restart
   # contract: loading this plist without a token starts nothing, while placing
@@ -101,7 +105,6 @@ in
     enable = true;
     config = {
       ProgramArguments = [ darwinAgent ];
-      "X-Atyrode-SessionOwner" = !split;
       EnvironmentVariables = {
         MANIFOLD_SERVER_URL = inventory.masterUrl;
         MANIFOLD_MACHINE_TOKEN_FILE = tokenFile;
@@ -117,26 +120,31 @@ in
       ThrottleInterval = 3;
       StandardOutPath = logFile;
       StandardErrorPath = logFile;
-    };
+    }
+    // lib.optionalAttrs split { "X-Atyrode-SessionOwner" = false; };
   };
 
   # The plist uses no package-version path, so Home Manager leaves the loaded
   # owner alone when it replaces the transport's versioned plist. Explicit
   # owner-definition changes still pass through the disruption guard.
   launchd.agents.manifold-terminal-host =
-    lib.mkIf (supported && split && pkgs.stdenv.hostPlatform.isDarwin) {
-      enable = true;
-      config = {
-        ProgramArguments = [ terminalHostCommand "--terminal-host" ];
-        "X-Atyrode-SessionOwner" = true;
-        EnvironmentVariables.MANIFOLD_TERMINAL_HOST_SOCKET = terminalHostSocket;
-        KeepAlive.PathState."${tokenFile}" = true;
-        ProcessType = "Background";
-        ThrottleInterval = 3;
-        StandardOutPath = "${stateDirectory}/terminal-host.log";
-        StandardErrorPath = "${stateDirectory}/terminal-host.log";
+    lib.mkIf (supported && split && pkgs.stdenv.hostPlatform.isDarwin)
+      {
+        enable = true;
+        config = {
+          ProgramArguments = [
+            terminalHostCommand
+            "--terminal-host"
+          ];
+          "X-Atyrode-SessionOwner" = true;
+          EnvironmentVariables.MANIFOLD_TERMINAL_HOST_SOCKET = terminalHostSocket;
+          KeepAlive.PathState."${tokenFile}" = true;
+          ProcessType = "Background";
+          ThrottleInterval = 3;
+          StandardOutPath = "${stateDirectory}/terminal-host.log";
+          StandardErrorPath = "${stateDirectory}/terminal-host.log";
+        };
       };
-    };
 
   home.activation.createManifoldStateDirectory =
     lib.mkIf (supported && pkgs.stdenv.hostPlatform.isDarwin)

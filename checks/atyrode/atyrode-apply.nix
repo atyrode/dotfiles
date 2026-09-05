@@ -26,6 +26,10 @@ let
   scopedOld = serviceGeneration "scoped-old" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --old";
   scopedNew = serviceGeneration "scoped-new" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --new";
   unknownCandidate = pkgs.runCommand "fixture-unknown-generation" { } ''mkdir "$out"'';
+  contextCandidate = pkgs.runCommand "context-candidate-home-manager-generation" { } ''
+    mkdir -p "$out/home-files/.config/systemd/user"
+    ln -s ${targetAtyrode} "$out/home-path"
+  '';
 in
 pkgs.runCommand "check-atyrode-apply"
   {
@@ -630,6 +634,11 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'does not trust it yet' "$context_file"
     grep -qF 'No canonical clone root is declared for this host' "$context_file"
     grep -qF 'Never edit by hand.' "$context_file"
+    # A copied closure renders its own revision, not the invoking CLI's or an
+    # unrelated global profile's. This matters for standalone HM on NixOS.
+    atyrode apply development-x86_64-linux --candidate ${contextCandidate} \
+      > "$TMPDIR/candidate-context.out" 2> "$TMPDIR/candidate-context.err"
+    grep -qF 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
     # Under the session stubs exported above, every CLI is reported as it is:
     # the vault unlocked, clever logged in, gh (real, no account here) not --
     # and a missing session names the exact command that acquires it. A token
@@ -1144,11 +1153,16 @@ pkgs.runCommand "check-atyrode-apply"
     kill "$apply_caller"
     wait "$apply_caller" 2>/dev/null || true
     job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
-    for _ in $(seq 1 100); do
+    # Build and switch are separate backend calls, followed by the normal convergence probes.
+    for _ in $(seq 1 600); do
       [[ ! -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" ]] || break
       sleep 0.05
     done
-    test -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json"
+    if [[ ! -e "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" ]]; then
+      cat "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/output.log" >&2
+      echo 'detached worker did not publish its result within 30 seconds' >&2
+      exit 1
+    fi
     jq -e '.phase == "succeeded" and .exitCode == 0' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$job_id/result.json" >/dev/null
     apply_status="$(atyrode apply-status "$job_id" --json)"

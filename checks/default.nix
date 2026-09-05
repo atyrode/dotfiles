@@ -288,7 +288,7 @@ let
     };
     atyrode-disruption = import ./atyrode/atyrode-disruption.nix {
       inherit pkgs;
-      atyrode = pkgs.atyrode;
+      inherit (pkgs) atyrode;
     };
     atyrode-apply = import ./atyrode/atyrode-apply.nix {
       inherit pkgs;

@@ -37,6 +37,8 @@ def report(current, candidate, activation="home-manager", scope=None, extra=()):
         "--current", str(current),
         "--candidate", str(candidate),
     ]
+    if activation == "home-manager":
+        argv.extend(["--user", "fixture"])
     if scope is not None:
         argv.extend(["--scope", scope])
     argv.extend(extra)
@@ -83,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     def manager_answer(body):
         manager.write_text(f"#!{sys.executable}\n{body}\n")
         manager.chmod(0o755)
-    runtime = ("--runtime", "--systemctl", str(manager))
+    runtime = ("--runtime", "--systemctl", str(manager), "--manager-user", "fixture")
     manager_answer("print('LoadState=loaded\\nActiveState=active')")
     assert report(guarded, split_generation, extra=runtime)["status"] == "blocked"
     manager_answer("print('LoadState=loaded\\nActiveState=inactive')")
@@ -102,6 +104,37 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
         *runtime, "--mutate", "restart", "--service", "user:manifold-agent.service",
         "--live", str(split_generation / agent)))
     assert mutation["status"] == "unknown", mutation
+
+    # NixOS switches global user units in every live manager, not only ours.
+    global_old = root / "global-old-system"
+    global_new = root / "global-new-system"
+    for generation, executable in ((global_old, old_exe), (global_new, new_exe)):
+        put(generation, "etc/systemd/system/placeholder", "")
+        put(generation, "etc/systemd/user/manifold-agent.service", unit(executable, owner=True))
+    run_user = root / "run-user"
+    (run_user / "0").mkdir(parents=True)
+    (run_user / "123456").mkdir()
+    global_runtime = (
+        *runtime, "--manager-user", "root", "--manager-uid", "0",
+        "--run-user-dir", str(run_user),
+    )
+    manager_answer(
+        "import sys\n"
+        "state = 'active' if any(a.startswith('--machine=') for a in sys.argv) else 'inactive'\n"
+        "print('LoadState=loaded\\nActiveState=' + state)"
+    )
+    assert report(global_old, global_new, "nixos", extra=global_runtime)["status"] == "blocked"
+    manager_answer("print('LoadState=loaded\\nActiveState=inactive')")
+    assert report(global_old, global_new, "nixos", extra=global_runtime)["status"] == "safe"
+    manager_answer(
+        "import sys\n"
+        "if any(a.startswith('--machine=') for a in sys.argv): raise SystemExit(1)\n"
+        "print('LoadState=loaded\\nActiveState=inactive')"
+    )
+    assert report(global_old, global_new, "nixos", extra=global_runtime)["status"] == "unknown"
+    assert report(global_old, global_new, "nixos", extra=(
+        *global_runtime, "--manager-user", "fixture", "--manager-uid", "123456",
+    ))["status"] == "unknown"
 
     # Home Manager folds config-side drop-ins even when the base file is unchanged.
     dropin = root / "dropin-generation"

@@ -536,7 +536,7 @@ apply_config() {
     # render is what makes the file describe the machine apply leaves behind.
     step_begin "Render this machine's agent context"
     step_why 'every agent tool here reads this file, and the review above may have changed what is authenticated'
-    if apply_render_context; then
+    if apply_render_context "$candidate" "$expected_user"; then
       step_ok
     else
       step_fail 'the agent context was not rendered; run atyrode context render'

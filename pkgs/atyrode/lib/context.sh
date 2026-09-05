@@ -211,19 +211,15 @@ context_write() { # machine-json
   printf '%s\n' "$target"
 }
 
-# The atyrode an activation just installed, if the profile holds one. The
-# running copy may be the one activation replaced, and a context it rendered
-# would carry the old revision and read as stale to the new doctor; the
-# apply step renders through the new copy so the file matches the generation
-# it describes. Falls back to this copy when no profile is found, which is
-# every check fixture and a dry-run.
-activated_atyrode() {
-  local candidate user
-  user="$(id -un 2>/dev/null || true)"
+# Re-enter the inspected generation, not a mutable global profile: a standalone
+# Home Manager activation must not borrow a different system CLI. A generation
+# without a CLI keeps this invoking copy rather than selecting unrelated code.
+activated_atyrode() { # candidate user
+  local root="$1" user="$2" candidate
   for candidate in \
-    /run/current-system/sw/bin \
-    ${user:+"/etc/profiles/per-user/$user/bin"} \
-    "${HOME:-}/.nix-profile/bin"; do
+    "$root/home-path/bin" \
+    "$root/etc/profiles/per-user/$user/bin" \
+    "$root/sw/bin"; do
     [[ -x "$candidate/atyrode" ]] || continue
     printf '%s\n' "$candidate/atyrode"
     return 0
@@ -233,9 +229,9 @@ activated_atyrode() {
 
 # The apply step: announced by the name the operator types, run through the
 # copy activation just installed, and the file it produced named in prose.
-apply_render_context() {
+apply_render_context() { # candidate user
   local program
-  program="$(activated_atyrode)" || return "$EX_UNAVAILABLE"
+  program="$(activated_atyrode "$1" "$2")" || return "$EX_UNAVAILABLE"
   show_command atyrode context render
   log_event "atyrode resolved to $program"
   "$program" context render

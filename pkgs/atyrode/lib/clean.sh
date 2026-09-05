@@ -570,7 +570,7 @@ cmd_rollback() {
   [[ "$dry" == 1 ]] || activation_lock
   local running report host operator
   host="$(resolve_host "$requested")"
-  operator="${SUDO_USER:-$(id -un)}"
+  operator="${SUDO_USER:-$(actual_user)}"
   running="$(current_generation "$activation" "$operator")" ||
     die "$EX_UNAVAILABLE" "the generation running now cannot be named, so generation $target cannot be shown safe against it"
   report="$(disruption_analyze "$host" "$activation" "$running" "$genpath" "$operator" "${scopes[@]+"${scopes[@]}"}")" ||

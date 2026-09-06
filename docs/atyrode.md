@@ -111,7 +111,7 @@ shell-quoted so the line can be pasted back to repeat that step by hand. The
 contract covers every mutating verb, not just `apply`: the `nh` switch, the
 `git ls-remote` that resolves a ref, the `systemd-run` that hands the apply to
 a manager-owned unit, `chsh` and the `/etc/shells` edit, each provisioning
-ceremony and the interactive seed dialogue, `nix-store --gc` and `nh clean`,
+ceremony and the interactive seed dialogue, `nh clean`,
 every rollback that re-runs activation, the Clan deployment that activates a
 remote host, and the `curl` that enrolls this machine with a fleet master.
 

@@ -88,24 +88,6 @@ in
       printf 'ADDED\n[A+] gamma 4.0, +2.00 MiB\n\n'
       printf 'REMOVED\n[R-] delta 5.0, -7.00 MiB\n\n'
       printf 'PATHS: 7529 -> 7536 (+5054, -5047)\nSIZE: 1.50 GiB -> 1.49 GiB\nDIFF: -5.59 MiB\033[?25h\n'
-    elif [[ "''${ATYRODE_NH_NOISE:-0}" == 1 ]]; then
-      echo 'Welcome to nh clean'
-      echo 'legend:'
-      echo 'OK: path to be kept'
-      echo 'gcroots'
-      echo '- OK  /home/alex/.local/state/nix/profiles/profile-9-link'
-      echo '- DEL /nix/var/nix/profiles/per-user/root/channels-1-link'
-      echo '/home/alex/.local/state/nix/profiles/home-manager'
-      echo '- OK  /home/alex/.local/state/nix/profiles/home-manager-62-link'
-      echo '> Removing /nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd'
-      echo '! Failed to remove path="/nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd" err=Os { code: 13, kind: PermissionDenied, message: "Permission denied" } (nh/crates/nh-clean/src/clean.rs:606)'
-      echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
-      echo '! Failed to remove path="/nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8" err=Os { code: 13, kind: PermissionDenied, message: "Permission denied" } (nh/crates/nh-clean/src/clean.rs:606)'
-      echo '! Failed to remove path="/nix/store/genuine" err=Os { code: 2, kind: NotFound }' >&2
-    elif [[ "''${ATYRODE_NH_REAP:-0}" == 1 ]]; then
-      echo '- OK  /home/alex/.local/state/nix/profiles/profile-9-link'
-      echo '> Removing /nix/var/nix/gcroots/auto/lvi04m7mn76ymzgzcx5rrifj5019psvd'
-      echo '> Removing /nix/var/nix/gcroots/auto/phm61mw9l2zpvj3fj6pmmyk22b1l3qg8'
     fi
     [[ "''${ATYRODE_NH_FAIL:-0}" != 1 ]]
     EOF

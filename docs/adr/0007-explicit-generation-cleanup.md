@@ -35,9 +35,8 @@ See [atyrode.md](../atyrode.md).
   set; a test enforces this so the safety net cannot regress.
 - Activation never surprises the operator by reclaiming disk; disk pressure is
   surfaced by diagnostics, not resolved by silent deletion.
-- `atyrode clean` splits garbage collection out of `nh` (`--no-gc`) and runs it
-  itself with a progress indicator and a legible summary (reclaimed / kept /
-  removed), so the slow final phase is not an unexplained freeze.
-- Cleanup work the operator cannot do without elevation — such as reaping
-  root-owned auto GC roots — is reported honestly (a folded summary line) rather
-  than hidden or dressed up as an error.
+- `atyrode clean` is `nh clean` for the profiles this machine's activation
+  owns, with the retention window as arguments: nh removes the generations and
+  the GC roots that pinned them and collects the store, and nh's own plan and
+  confirmation are the preview. The cleanup nh cannot know about — stale macOS
+  app aliases a dropped package leaves behind — is the only work atyrode adds.

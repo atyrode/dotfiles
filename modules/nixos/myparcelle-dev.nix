@@ -6,8 +6,6 @@ _: {
     "myparcelle.tyrode.dev".extraConfig = ''
       encode zstd gzip
       header Cache-Control "no-store"
-      @storybook path /storybook /storybook/*
-      respond @storybook 404
       reverse_proxy 127.0.0.1:4173
     '';
     "auth.myparcelle.tyrode.dev".extraConfig = ''

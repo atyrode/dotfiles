@@ -1,6 +1,6 @@
-# Every owned machine is a declared spoke. Native service contracts must keep
-# unenrolled machines inert and credentials outside the Nix store while making
-# enrolled agents durable on both user managers.
+# Every machine that declares manifold-node is a spoke. Native service
+# contracts must keep unenrolled machines inert and credentials outside the
+# Nix store while making enrolled agents durable on both user managers.
 {
   hosts,
   lib,
@@ -13,7 +13,9 @@
 let
   inventory = builtins.fromJSON (builtins.readFile ../../fleet/manifold.json);
   supported = builtins.elem system inventory.supportedSystems;
-  spokesHere = lib.filter (name: hosts.${name}.system == system) inventory.spokes;
+  spokesHere = lib.filter (
+    name: hosts.${name}.system == system && builtins.elem "manifold-node" hosts.${name}.capabilities
+  ) (builtins.attrNames hosts);
   homeConfigs = lib.listToAttrs (
     map (
       name:
@@ -185,10 +187,6 @@ let
     ) "${name}: ~/.config/manifold/machine.token must be the forced link to the placed token";
     true;
 in
-assert lib.assertMsg (
-  lib.sort builtins.lessThan inventory.spokes == builtins.attrNames hosts
-) "every owned machine must appear in the Manifold spoke inventory";
-assert lib.all (name: builtins.elem "manifold-node" hosts.${name}.capabilities) inventory.spokes;
 assert lib.all lib.id (
   lib.mapAttrsToList (contract ((pkgs.manifold-agent.terminalHostProtocol or 0) == 1)) homeConfigs
 );

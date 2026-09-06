@@ -3,6 +3,7 @@
   hostId,
   homeModules,
   lib,
+  overlayDomain,
   pkgs,
   ...
 }:
@@ -81,7 +82,12 @@ in
 
   programs.zsh.enable = true;
 
-  # SSH access for remote management of the WSL instance.
+  # Reached only over the overlay: a WSL guest has no address of its own that
+  # the fleet could name, and the Windows side forwards nothing in. sshd
+  # exists for `atyrode fleet apply wsl` from the workshop and for the
+  # operator's own devices, so it answers the operator's key and nothing
+  # else; the overlay is what stands between it and the internet.
+  clan.core.networking.targetHost = "${username}@${host.hostname}.${overlayDomain}";
   services.openssh = {
     enable = true;
     startWhenNeeded = true;

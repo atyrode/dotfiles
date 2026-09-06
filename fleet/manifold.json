@@ -1,14 +1,9 @@
 {
   "schemaVersion": 1,
-  "comment": "Master declaration for the manifold fleet (#418). Git owns hub discovery: changing the master is a reviewed commit, so no credential store can repoint fleet terminals. The master is not a machine of this fleet since 2026-09-05: it is the operator's Clever Cloud deployment of atyrode/manifold (its ADR 0022), and every machine here, dev-01 included, is a spoke of it; dev-01 hosts only the development hub (modules/nixos/manifold-dev-hub.nix). The hub's owner key is the shared clan var manifold-custody/owner-key, encrypted to the operator's devices and deployed to no machine; each spoke's token is its clan var manifold-agent/machine-token, minted by `atyrode runtime enroll manifold-agent <host>` on an operator device and placed by activation (modules/shared/manifold-agent.nix). supportedSystems mirrors the release-asset platforms published by atyrode/manifold's Release workflow (pinned in pkgs/manifold-agent); widen it only as upstream publishes more assets. spokes names the fleet machines that must carry the manifold-node capability: checks/atyrode/manifold-node.nix refuses a registry entry that drops it, because a spoke that silently stops being one is exactly how dev-01 was almost applied without an agent (#538).",
+  "comment": "Hub declaration for the manifold fleet (#418). Which machines are spokes is not stated here: a spoke is a host that declares the manifold-node capability in fleet/hosts.nix, so fleet/hosts.nix stays the only place a machine is named. Git owns hub discovery: changing the master is a reviewed commit, so no credential store can repoint fleet terminals. The master is not a machine of this fleet since 2026-09-05: it is the operator's Clever Cloud deployment of atyrode/manifold (its ADR 0022), and every machine here, dev-01 included, is a spoke of it; dev-01 hosts only the development hub (modules/nixos/manifold-dev-hub.nix). The hub's owner key is the shared clan var manifold-custody/owner-key, encrypted to the operator's devices and deployed to no machine; each spoke's token is its clan var manifold-agent/machine-token, minted by `atyrode runtime enroll manifold-agent <host>` on an operator device and placed by activation (modules/shared/manifold-agent.nix). supportedSystems mirrors the release-asset platforms published by atyrode/manifold's Release workflow (pinned in pkgs/manifold-agent); widen it only as upstream publishes more assets. spokes names the fleet machines that must carry the manifold-node capability: checks/atyrode/manifold-node.nix refuses a registry entry that drops it, because a spoke that silently stops being one is exactly how dev-01 was almost applied without an agent (#538).",
   "masterUrl": "https://manifold.tyrode.dev",
   "supportedSystems": [
     "aarch64-darwin",
     "x86_64-linux"
-  ],
-  "spokes": [
-    "dev-01",
-    "macbook",
-    "wsl"
   ]
 }

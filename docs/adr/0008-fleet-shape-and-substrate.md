@@ -222,6 +222,28 @@ workshop fans out to the spokes. If SSO, ACLs or a mesh are ever wanted, NetBird
 self-hosted is the upgrade path with the same properties. Tailscale is not
 wrong; it is the least aligned with the constraints above.
 
+*(amended 2026-09-06)* Landed as clan's `wireguard` service, one instance
+named `fleet` in `lib/configurations.nix`: `dev-01` is the controller because
+it is the one machine with a public address, every other registered host is a
+peer, keys and ULA addresses are clan vars, and every machine resolves every
+other as `<name>.fleet`. `atyrode fleet apply wsl` targets that name; the
+public SSH port stays on the workshop alone. The overlay is substrate and
+nothing else: it exists for deployment to machines that expose no port and for
+the Data row's `localbackup`. It is deliberately **not** `manifold`'s
+transport and does not overlap it. `manifold` connects the same machines at
+the application layer — each agent dials out to a hub that is off this fleet
+by its own ADR 0022, the hub brokers every terminal and opens no
+machine-to-machine path — and it must stay reachable from a client machine on
+a portable profile, which the overlay never carries. The two therefore own
+different questions (what can reach what; what can I see and drive), neither
+reads the other's configuration, and shifting either into the other's
+repository was considered and rejected: `manifold` owning reachability would
+contradict its own no-VPN, agent-is-not-a-supervisor posture, and this
+repository owning terminals would be a second pane of glass. The one
+duplication between them, a spoke list in `fleet/manifold.json` beside the
+`manifold-node` capability in the host registry, was deleted in favour of the
+capability.
+
 ### Presentation
 
 *(amended 2026-09-06)* The Go terminal interface that bare `atyrode` used to

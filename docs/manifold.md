@@ -20,13 +20,23 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
   is not reproducible across machines, atyrode/manifold#51). Linux uses
   `systemd --user`; Apple Silicon macOS uses a Home Manager launchd agent.
   Both execute the immutable store binary against the committed master URL.
-  `fleet/manifold.json` declares the supported systems and every owned spoke:
-  `macbook`, `wsl`, and `dev-01`. Portable development profiles do not enroll
+  `fleet/manifold.json` declares the supported systems; which machines are
+  spokes is the `manifold-node` capability in `fleet/hosts.nix`, the one
+  place a machine is named. Portable development profiles do not enroll
   client machines into the fleet.
 - **Clan owns the credentials.** The hub's owner key and each spoke's machine
   token are clan vars ([secrets.md](secrets.md#declaring-a-secret)),
   encrypted in the repository and placed by activation, exactly like Babel's
   custody. The vault is not involved in Manifold at all.
+- **The overlay is not manifold's.** The fleet's WireGuard overlay (ADR 0008,
+  #582) is substrate: it lets `atyrode fleet apply` and the backup routine
+  reach machines that expose no port. Manifold neither uses nor knows it: the
+  agent dials the hub's public origin from wherever it is, the hub brokers
+  every terminal itself and never opens a machine-to-machine path, and it
+  stays off the overlay so that a client machine on a portable profile can be
+  a spoke too. Nothing in the overlay's configuration names manifold and
+  nothing here names the overlay; the two answer different questions (what
+  can I see and drive; what can reach what) and stay in their own repository.
 
 ## Enrollment
 

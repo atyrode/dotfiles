@@ -162,11 +162,12 @@ let
   # Every clan machine decrypts with the key `atyrode apply` places
   # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
   # to the admins group, and the declared generators are exactly the fleet's:
-  # a new one is a reviewed change, not a side effect. The fleet-wide six are
-  # on every machine, every one of which is a Manifold spoke; the VPS -- the
-  # one machine whose registry activation is plain `nixos` -- also holds the
-  # Cloudflare DNS token (modules/nixos/cloudflare-dns.nix), and no other
-  # machine may.
+  # a new one is a reviewed change, not a side effect. The fleet-wide eight
+  # are on every machine -- every one is a Manifold spoke and a member of the
+  # `fleet` WireGuard overlay, whose service mints a key pair and an address
+  # allocation per machine; the VPS -- the one machine whose registry
+  # activation is plain `nixos` -- also holds the Cloudflare DNS token
+  # (modules/nixos/cloudflare-dns.nix), and no other machine may.
   fleetGenerators = [
     "babel-archive"
     "babel-custody"
@@ -174,6 +175,8 @@ let
     "manifold-agent"
     "manifold-custody"
     "omp-auth-broker"
+    "wireguard-keys-fleet"
+    "wireguard-network-fleet"
   ];
   expectedGenerators =
     name:
@@ -194,7 +197,7 @@ let
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, and omp-auth-broker generators -- plus cloudflare-dns on the VPS alone";
+      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, manifold, omp-auth-broker, and wireguard generators -- plus cloudflare-dns on the VPS alone";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];

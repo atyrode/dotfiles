@@ -114,9 +114,13 @@ in
     hostName = host.hostname;
     inherit (machineAddress) domain;
     # The reviewed public-VPS exposure is TCP 22, and 80 + 443 for exactly the
-    # vhosts manifold-dev-hub.nix and myparcelle-dev.nix declare. mkForce keeps this
-    # authoritative over clan-core's recommended-defaults mDNS port (UDP
-    # 5353), which must never listen on a public uplink.
+    # vhosts manifold-dev-hub.nix and myparcelle-dev.nix declare, plus the UDP
+    # port of every WireGuard interface clan's service declares here: this
+    # machine is the overlay's controller, and a controller listens. mkForce
+    # keeps this authoritative over clan-core's recommended-defaults mDNS port
+    # (UDP 5353), which must never listen on a public uplink -- and over the
+    # wireguard service's own opening, which the list restates so that a
+    # reader of this file sees every port.
     firewall = {
       enable = true;
       allowedTCPPorts = lib.mkForce [
@@ -124,7 +128,9 @@ in
         80
         443
       ];
-      allowedUDPPorts = lib.mkForce [ ];
+      allowedUDPPorts = lib.mkForce (
+        lib.mapAttrsToList (_name: interface: interface.listenPort) config.networking.wireguard.interfaces
+      );
     };
   };
 

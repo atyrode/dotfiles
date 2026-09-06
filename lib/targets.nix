@@ -47,8 +47,6 @@ let
       inherit name;
       description = capabilityDescriptions.${name};
     }) knownCapabilities;
-  serverPolicy = builtins.fromJSON (builtins.readFile ../fleet/server-profile.json);
-  serverCapabilities = serverPolicy.capabilities;
   rawHosts = import ../fleet/hosts.nix;
   rawBootstrapProfiles = import ../fleet/bootstrap-profiles.nix;
 
@@ -61,15 +59,6 @@ let
     assert lib.assertMsg (builtins.elem system systems) "${name} uses unsupported system ${system}";
     assert lib.assertMsg (capabilities != [ ]) "${name} must select at least one capability";
     assert lib.assertMsg (builtins.elem "base" capabilities) "${name} must select the base capability";
-    assert lib.assertMsg (
-      !(builtins.elem "server" capabilities && builtins.elem "desktop" capabilities)
-    ) "${name} cannot combine server and desktop capabilities";
-    assert lib.assertMsg (
-      !(builtins.elem "server" capabilities && builtins.elem "development" capabilities)
-    ) "${name} cannot combine server and development capabilities";
-    assert lib.assertMsg (
-      !builtins.elem "server" capabilities || lib.hasSuffix "-linux" system
-    ) "${name} can select the server capability only on Linux";
     assert lib.assertMsg (
       builtins.length capabilities == builtins.length (lib.unique capabilities)
     ) "${name} declares duplicate capabilities";
@@ -288,8 +277,6 @@ in
     rawBootstrapProfiles
     rawHosts
     selectHomeManagerProfiles
-    serverCapabilities
-    serverPolicy
     systems
     targetRegistryJson
     validateBootstrapProfileRegistry

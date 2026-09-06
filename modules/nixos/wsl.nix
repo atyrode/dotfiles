@@ -2,7 +2,6 @@
   host,
   hostId,
   homeModules,
-  hostRegistry,
   lib,
   pkgs,
   ...
@@ -97,7 +96,6 @@ in
     ];
   };
 
-  atyrode.dotfiles.hostRegistry = hostRegistry;
   home-manager = {
     backupFileExtension = "backup";
     users.${username} = {

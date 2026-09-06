@@ -511,30 +511,7 @@ system_checks='[]'
 system_fixture='{}'
 
 system_check_add() {
-  local id="$1" owner="$2" required="$3" status="$4" code="$5"
-  local summary="$6" remediation="$7" expected="$8" actual="$9"
-
-  system_checks="$(jq -c \
-    --arg id "$id" \
-    --arg owner "$owner" \
-    --argjson required "$required" \
-    --arg status "$status" \
-    --arg code "$code" \
-    --arg summary "$summary" \
-    --arg remediation "$remediation" \
-    --argjson expected "$expected" \
-    --argjson actual "$actual" \
-    '. + [{
-      id: $id,
-      owner: $owner,
-      required: $required,
-      status: $status,
-      code: (if $code == "" then null else $code end),
-      summary: $summary,
-      remediation: (if $remediation == "" then null else $remediation end),
-      expected: $expected,
-      actual: $actual
-    }]' <<<"$system_checks")"
+  system_checks="$(jq -c --argjson row "$(check_row "$@")" '. + [$row]' <<<"$system_checks")"
 }
 
 load_system_fixture() {

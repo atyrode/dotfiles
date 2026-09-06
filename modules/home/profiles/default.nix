@@ -8,5 +8,4 @@
   media = ./media.nix;
   mobile = ./mobile.nix;
   security = ./security.nix;
-  server = ./server.nix;
 }

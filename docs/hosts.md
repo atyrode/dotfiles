@@ -103,19 +103,11 @@ Source delivery does not authorize activation: any future activation needs
 an independently reviewed service-disruption plan and the
 [terminal-preservation safeguards](manifold.md#upgrades).
 
-A client's production NixOS host is still not in this registry. Its
-infrastructure flake supplies identity and system facts while importing the
-same capability modules through the
-[portable profile contract](portable-profiles.md). Such a consumer declares
-`activation = "nixos"` and an exact non-secret `nixTrustedUsers` list including
-`root`; `atyrode doctor system` then checks the NixOS login-shell path and that
-host-specific daemon trust boundary instead of the Home Manager-only Linux
-defaults a portable profile gets.
-`wsl` is a deliberate local-workstation exception: this flake
-exports its complete `nixosConfigurations` entry and owns that WSL guest, while
-native Windows packages and state retain their separate WinGet/application
-boundary. The full Home Manager, nix-darwin, NixOS-WSL, and Windows ownership
-model is documented in [Home Manager and system boundary](system-boundary.md).
+`wsl` is a deliberate local-workstation exception: this flake exports its
+complete `nixosConfigurations` entry and owns that WSL guest, while native
+Windows packages and state retain their separate WinGet/application boundary.
+The full Home Manager, nix-darwin, NixOS-WSL, and Windows ownership model is
+documented in [Home Manager and system boundary](system-boundary.md).
 
 ## Adding a target
 

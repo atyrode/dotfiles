@@ -78,7 +78,6 @@
       clan-core,
       disko,
       home-manager,
-      nix-darwin,
       nix-homebrew,
       nixos-wsl,
       nixos-facter-modules,
@@ -93,18 +92,7 @@
       inherit (nixpkgs) lib;
 
       targets = import ./lib/targets.nix { inherit lib nix-index-database; };
-      inherit (targets)
-        capabilityDescriptions
-        capabilityModules
-        knownCapabilities
-        mkHostIdentityModule
-        publicBootstrapProfiles
-        publicHosts
-        publicTargets
-        selectHomeManagerProfiles
-        serverPolicy
-        systems
-        ;
+      inherit (targets) systems;
 
       forAllSystems = lib.genAttrs systems;
 
@@ -118,13 +106,7 @@
           targets
           ;
       };
-      inherit (packagesLib)
-        agentToolsOverlay
-        allowedUnfreePackages
-        mkPackageOverlay
-        repositoryPkgsFor
-        windowsPackageInventory
-        ;
+      inherit (packagesLib) repositoryPkgsFor;
 
       configurations = import ./lib/configurations.nix {
         inherit
@@ -147,12 +129,9 @@
         canonicalDarwinConfigs
         canonicalNixosConfigs
         clan
-        darwinModule
-        dotfilesHomeNixosModule
         fleetClosuresFor
         inventoryBySystem
         mkPortableHomeConfiguration
-        serverProfileManifests
         ;
 
       treefmtEval = forAllSystems (
@@ -192,34 +171,11 @@
       inventory = inventoryBySystem;
       capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
 
+      # The one output another flake reads: the adapter `atyrode apply` writes
+      # for a portable profile builds its Home Manager configuration from here.
       lib = {
-        inherit
-          allowedUnfreePackages
-          mkHostIdentityModule
-          mkPackageOverlay
-          mkPortableHomeConfiguration
-          selectHomeManagerProfiles
-          ;
-        bootstrapProfiles = publicBootstrapProfiles;
-        capabilities = knownCapabilities;
-        inherit capabilityDescriptions;
-        hostRegistry = publicHosts;
-        serverProfile = serverPolicy;
-        targetRegistry = publicTargets;
-        windowsPackages = windowsPackageInventory;
+        inherit mkPortableHomeConfiguration;
       };
-
-      overlays.default = agentToolsOverlay;
-
-      homeModules = {
-        # Nix's recognized community schema for reusable Home Manager modules.
-        agent-tools = import ./modules/home/agent-tools/contract.nix;
-        profiles = capabilityModules;
-      };
-
-      nixosModules.dotfiles-home = dotfilesHomeNixosModule;
-
-      darwinModules.default = darwinModule;
 
       packages = forAllSystems (
         system:
@@ -245,16 +201,12 @@
             lib.mapAttrsToList (name: path: { inherit name path; }) (fleetClosuresFor system)
           );
         }
-        // lib.optionalAttrs (lib.hasSuffix "-linux" system) {
-          server-profile-manifest = serverProfileManifests.${system};
-        }
       );
 
       checks = forAllSystems (
         system:
         import ./checks {
           inherit
-            self
             lib
             nixpkgs
             system
@@ -293,22 +245,10 @@
         {
           default = atyrodeApp;
           atyrode = atyrodeApp;
-          home-manager = {
-            type = "app";
-            program = "${home-manager.packages.${system}.home-manager}/bin/home-manager";
-            meta.description = "Run Home Manager configurations";
-          };
           refresh-model-facts = {
             type = "app";
             program = "${refreshModelFacts}/bin/refresh-model-facts";
             meta.description = "Refresh OMP model cost, context, and benchmark facts";
-          };
-        }
-        // lib.optionalAttrs (lib.hasSuffix "-darwin" system) {
-          darwin-rebuild = {
-            type = "app";
-            program = "${nix-darwin.packages.${system}.darwin-rebuild}/bin/darwin-rebuild";
-            meta.description = "Run nix-darwin configurations";
           };
         }
       );

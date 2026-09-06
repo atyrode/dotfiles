@@ -1,9 +1,8 @@
 # Per-system check registry and fixture assembly. Platform gating:
 # x86_64-linux carries the whole-tree lints and the Windows/WSL contract,
-# Linux carries the portable/server contracts, Darwin carries the evaluation
+# Linux carries the portable profile contract, Darwin carries the evaluation
 # and signature checks.
 {
-  self,
   lib,
   nixpkgs,
   system,
@@ -20,7 +19,6 @@ let
     hostsTsv
     publicTargets
     selectHomeManagerProfiles
-    serverPolicy
     targetRegistryJson
     ;
   inherit (packages) windowsPackageInventory;
@@ -32,31 +30,10 @@ let
     darwinHosts
     inventoryBySystem
     mkPortableHomeConfiguration
-    mkServerHomeConfig
-    serverHomeConfigs
-    serverProfileManifests
     ;
 
   isLinux = lib.hasSuffix "-linux" system;
   hostBudgets = (lib.importJSON ../fleet/host-budgets.json).budgets;
-  serverHomeConfig = if isLinux then serverHomeConfigs.${system} else null;
-  alternateServerHomeConfig =
-    if isLinux then
-      mkServerHomeConfig {
-        inherit system;
-        homeDirectory = "/home/second-fixture";
-        username = "second-fixture";
-      }
-    else
-      null;
-  externalServerFixture =
-    if isLinux then
-      import ./fixtures/nixos-server.nix {
-        dotfiles = self;
-        inherit nixpkgs system;
-      }
-    else
-      null;
   cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
     printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
   '';
@@ -250,7 +227,6 @@ let
                 and (.homeDirectory | startswith("/"))
               end
             ))
-          and ([.[].capabilities[]] | index("server") | not)
         ' ${registryFile} >/dev/null
         if ! diff ${pkgs.writeText "hosts-expected.tsv" hostsTsv} ${../fleet/hosts.tsv}; then
           echo 'fleet/hosts.tsv is out of date with fleet/hosts.nix and fleet/bootstrap-profiles.nix' >&2
@@ -291,7 +267,6 @@ let
         pkgs
         system
         ;
-      serverConfig = if isLinux then serverHomeConfig.config else null;
       nixosConfigs = canonicalNixosConfigs;
       darwinConfigs = canonicalDarwinConfigs;
     };
@@ -361,8 +336,6 @@ let
       inherit lib pkgs system;
       inventory = inventoryBySystem.${system};
       homeConfigs = systemHomeConfigs;
-      serverConfig = if isLinux then serverHomeConfig.config else null;
-      externalFixture = if isLinux then externalServerFixture else null;
       darwinConfigs = systemDarwinConfigs;
       nixosConfigs = systemNixosConfigs;
     };
@@ -408,26 +381,17 @@ let
     # Linux-only package), so it exists on Linux systems only.
     resource-guard = import ./atyrode/agent-resource-guard.nix { inherit lib pkgs; };
     portable-profile-contract = import ./fleet/portable-profile-contract.nix {
-      inherit lib mkPortableHomeConfiguration pkgs;
+      inherit
+        lib
+        mkPortableHomeConfiguration
+        pkgs
+        selectHomeManagerProfiles
+        ;
       profileName = "development-${system}";
       # No aarch64-linux host is registered, so the Linux fixed host stands
       # in for both Linux legs; the assertions only read its evaluated config.
       fixedHomeConfig = canonicalHomeConfigs.dev-01;
     };
-    portable-profiles = import ./fleet/portable-profiles.nix {
-      inherit
-        alternateServerHomeConfig
-        lib
-        pkgs
-        selectHomeManagerProfiles
-        serverHomeConfig
-        serverPolicy
-        system
-        ;
-      externalFixture = externalServerFixture;
-      serverProfileManifest = serverProfileManifests.${system};
-    };
-    server-profile = serverProfileManifests.${system};
     host-closure = import ./fleet/host-closure.nix {
       inherit lib pkgs system;
       budgets = hostBudgets;

@@ -134,27 +134,15 @@ boundary](system-boundary.md).
 
 The default inventory excludes transitive closures. Exact sizes vary by platform
 and nixpkgs revision and remain an explicit diagnostic. Measure a pinned
-machine closure without activating it, and build the portable server
-manifest for its separately enforced budget:
+machine closure without activating it:
 
 ```sh
 nix build --no-link .#nixosConfigurations.dev-01.config.system.build.toplevel
 nix path-info -Sh .#nixosConfigurations.dev-01.config.system.build.toplevel
-
-nix build .#server-profile-manifest
-jq . result/manifest.json
 ```
 
 Use the same commands for each canonical host before accepting a large package
 or capability. The shared Nix store deduplicates identical dependencies across
-hosts and workspaces; a binary cache can be added without changing ownership.
-
-At the current pinned nixpkgs revision, the portable x86_64-linux server
-profile delivers 66 top-level packages and measures 4,221,748,400 NAR bytes
-across 774 store paths. Its enforced ceilings are 72 packages, 5 GiB, and 850
-paths. The profile deliberately excludes development, containers, media,
-mobile, and desktop capabilities; it includes the shared security diagnostics
-but no antivirus software. The aarch64 ceilings are likewise 72 packages,
-5 GiB, and 850 paths and are enforced by the native CI runner. See
-[Portable Home Manager profiles](portable-profiles.md) for the manifest schema
-and pin/update workflow.
+hosts and workspaces. The headless hosts' Home Manager profiles carry ceilings
+in `fleet/host-budgets.json`, enforced by `checks/fleet/host-closure.nix`,
+which prints the measured numbers on every run.

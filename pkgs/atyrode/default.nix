@@ -4,7 +4,6 @@
   atyrode-preview,
   bubblewrap,
   capabilities,
-  catalog,
   claude-code,
   clever-tools,
   codex,
@@ -61,8 +60,7 @@ let
     '';
   };
 
-  capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
-  catalogInventory = builtins.toFile "atyrode-catalog.json" (builtins.toJSON catalog);
+  capabilityDescriptions = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
   agentsPolicy = ../../modules/home/agents/AGENTS.md;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
@@ -238,8 +236,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@atyrode_disruption@' "$out/libexec/atyrode-disruption" \
       --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
-      --replace-fail '@capabilities@' '${capabilityInventory}' \
-      --replace-fail '@catalog@' '${catalogInventory}' \
+      --replace-fail '@capabilities@' '${capabilityDescriptions}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
       --replace-fail '@git_allowed_signers@' '${gitAllowedSigners}' \
       --replace-fail '@homebrew_brewfile@' '${homebrewBrewfile}' \

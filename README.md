@@ -210,10 +210,6 @@ no compatibility aliases.
 [The `atyrode` CLI](docs/atyrode.md) documents deterministic application,
 machine-readable capability discovery, and diagnostics.
 
-[Package ownership](docs/package-ownership.md) records the checked agent
-baseline, optional capabilities, project-owned runtimes, harness boundaries,
-and closure review workflow.
-
 [Home Manager and system boundary](docs/system-boundary.md) records which
 layer owns login shells, the Nix daemon, containers, device access, antivirus,
 and Homebrew, plus the read-only operational readiness checks.
@@ -244,8 +240,8 @@ their declared user and home. See [Hosts and capabilities](docs/hosts.md).
 
 ### Add Packages
 
-Add the package to its owning module under `modules/home/profiles/`, update the checked
-package inventory, then run `atyrode apply`.
+Add the package to its owning module under `modules/home/profiles/`, then run
+`atyrode apply`.
 
 ### Add macOS Homebrew Apps
 

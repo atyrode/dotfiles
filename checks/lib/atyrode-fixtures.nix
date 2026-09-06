@@ -41,19 +41,6 @@ in
   gitNh = ''
     cat > "$TMPDIR/bin/git" <<'EOF'
     #!${pkgs.runtimeShell}
-    if [[ "$*" == *'worktree list --porcelain'* ]]; then
-      printf 'worktree %s\nworktree %s\n' "$TMPDIR/lifecycle-repo" "$HOME/.omp/wt/dirty"
-      exit 0
-    fi
-    if [[ "$*" == *'status --porcelain'* ]]; then
-      [[ "$*" == *'/malformed'* ]] && exit 1
-      [[ "$*" != *'/dirty'* ]] || printf ' M fixture\n'
-      exit 0
-    fi
-    if [[ "$*" == *'symbolic-ref --quiet --short HEAD'* ]]; then
-      [[ "$*" == *'/branch-live'* ]] && printf 'omp/live\n' && exit 0
-      exit 1
-    fi
     case "$*" in
       *rev-parse\ --is-inside-work-tree*) echo true ;;
       *rev-parse\ --short=12\ HEAD*) echo 0123456789ab ;;

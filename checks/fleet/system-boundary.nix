@@ -202,9 +202,9 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   boundary.homebrew.cleanup == "zap"
 ) "Homebrew cleanup must remove undeclared native state declaratively";
-assert lib.assertMsg (
-  lib.all (config: hasCapability "base" config) portableHomes
-) "every Home Manager configuration must select the base capability";
+assert lib.assertMsg (lib.all (
+  config: hasCapability "base" config
+) portableHomes) "every Home Manager configuration must select the base capability";
 assert lib.assertMsg (capabilityBounds "security" expectedSecurityPackages)
   "the security capability must be the only source of the reviewed network diagnostics and the secrets editor";
 assert lib.assertMsg (

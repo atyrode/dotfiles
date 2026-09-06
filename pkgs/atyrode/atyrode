@@ -119,9 +119,8 @@ Usage:
   atyrode doctor tools [--json]
   atyrode doctor provisioning [--json]
   atyrode host [HOST] [--json]
-  atyrode generations [--json] [--sizes]
   atyrode rollback [HOST] [--to N] [--dry-run] [--yes] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
-  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
+  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--yes]
   atyrode windows plan|apply [HOST] [--json]
 
 Fixed hosts keep registry-owned identity; portable bootstrap profiles bind the
@@ -196,20 +195,17 @@ the software key whose only copy is in Bitwarden, is a member of the group
 already and is never read here. A machine's own key, the one its vars are
 decrypted with at activation, is clan's: `clan vars generate <host>` mints it on
 an operator device and apply places it.
-generations lists the activation profile's generations (nix-darwin or NixOS
-system profile, otherwise standalone Home Manager); rollback activates an earlier
-one (previous by default, or --to N) after reading it against the running
-generation exactly as apply does -- --dry-run prints that report -- and
-confirming.
-clean reclaims disk from generations the
+rollback activates an earlier generation of the activation profile (nix-darwin
+or NixOS system profile, otherwise standalone Home Manager; previous by default,
+or --to N) after reading it against the running generation exactly as apply
+does -- --dry-run prints that report -- and confirming.
+clean is nh clean for this machine's activation (every profile on NixOS and
+nix-darwin, the user's on standalone Home Manager): it drops the generations the
 config no longer references, always keeping the current one and a rollback
-window (--keep / --keep-since); it previews the plan and asks before touching
-anything (--yes skips the prompt, --dry-run only previews), folds nh's verbose
-evaluation plan into its own summary (--verbose passes nh's full output through),
-and on macOS it also sweeps stale Home Manager Apps aliases. The auto GC roots that pin old
-generations are owned by the Nix daemon; a non-root clean cannot unlink them and
-prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
-self-elevates). Commands reserved for later issues: workspace and agent.
+window (--keep / --keep-since), and collects the store. nh shows its plan and
+asks first (--yes skips the prompt, --dry-run only previews); on macOS clean
+also sweeps stale Home Manager Apps aliases. Commands reserved for later issues:
+workspace and agent.
 windows treats WinGet as the native Windows package owner. plan is read-only;
 apply reconciles exact package IDs through WSL interop after refusing channel
 conflicts. Windows mutations are not part of a Nix generation or rollback.
@@ -248,7 +244,6 @@ main() {
     __apply-job) run_apply_job_worker "$@" ;;
     __converge-notice) converge_shell_notice ;;
     clean) cmd_clean "$@" ;;
-    generations) cmd_generations "$@" ;;
     rollback) cmd_rollback "$@" ;;
     runtime) cmd_runtime "$@" ;;
     fleet) cmd_fleet "$@" ;;

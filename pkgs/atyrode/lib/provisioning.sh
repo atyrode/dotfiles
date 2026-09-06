@@ -170,6 +170,7 @@ collect_provisioning_checks() {
   probe_operator_identity
   probe_agent_context
   probe_git_identity
+  probe_declared_inputs
   probe_babel_archive
   probe_babel_analysis
   probe_omp_auth_broker

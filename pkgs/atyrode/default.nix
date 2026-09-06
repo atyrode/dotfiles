@@ -215,6 +215,7 @@ stdenvNoCC.mkDerivation {
   libSrc = ./lib;
   runtimeSrc = ./runtime;
   disruptionSrc = ./disruption;
+  inputsSrc = ./inputs;
   nativeBuildInputs = [ makeWrapper ];
 
   dontUnpack = true;
@@ -230,6 +231,9 @@ stdenvNoCC.mkDerivation {
     substituteInPlace "$out/libexec/atyrode-disruption" \
       --replace-fail '@python3@' '${python3.interpreter}' \
       --replace-fail '@service_protection@' '${serviceProtection}'
+    install -D -m755 "$inputsSrc" "$out/libexec/atyrode-inputs"
+    substituteInPlace "$out/libexec/atyrode-inputs" \
+      --replace-fail '@python3@' '${python3.interpreter}'
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@agents_policy@' '${agentsPolicy}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe atyrode-preview}' \

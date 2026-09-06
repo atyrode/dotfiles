@@ -4,6 +4,7 @@
   homeConfigs,
   inventory,
   lib,
+  nixosConfigs ? { },
   pkgs,
   serverConfig ? null,
   system,
@@ -29,8 +30,11 @@ let
   darwinHomes = lib.concatMap (
     config: builtins.attrValues config.home-manager.users
   ) configuredDarwin;
+  nixosHomes = lib.concatMap (machine: builtins.attrValues machine.config.home-manager.users) (
+    builtins.attrValues nixosConfigs
+  );
   darwinHomePackages = lib.unique (lib.concatMap packageNames darwinHomes);
-  portableHomes = configuredHomes ++ serverHomes ++ externalHomes ++ darwinHomes;
+  portableHomes = configuredHomes ++ serverHomes ++ externalHomes ++ darwinHomes ++ nixosHomes;
 
   packageNames = config: lib.unique (map lib.getName (config.home.packages or [ ]));
   hasCapability =
@@ -240,6 +244,15 @@ assert lib.assertMsg (lib.all noClamAV portableHomes)
   "a portable Home Manager configuration unexpectedly installs ClamAV";
 assert lib.assertMsg (lib.all containerHomeMatchesPolicy containerHomes)
   "the containers capability does not match the platform-specific client policy";
+# The author has to survive whatever the identity blocks add under `user`: a
+# generation that renders the signing key but no name commits nothing (#590).
+assert lib.assertMsg (lib.all (
+  config:
+  let
+    user = config.programs.git.settings.user or { };
+  in
+  (user.name or "") != "" && (user.email or "") != ""
+) portableHomes) "a Home Manager configuration renders git without user.name or user.email";
 assert lib.assertMsg (
   externalFixture == null || externalSystem.programs.zsh.enable
 ) "the external NixOS consumer must own system Zsh enablement";

@@ -110,6 +110,26 @@ doctor_git() {
   git_check_add git-configuration home-manager true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
 
+  # Whether a commit can be made at all: git resolves the author from
+  # user.name and user.email, and a generation that renders the signing key
+  # while dropping those two (#590) signs nothing because nothing commits.
+  local author_name author_email author_resolves=false
+  author_name="$(git config --get user.name 2>/dev/null || true)"
+  author_email="$(git config --get user.email 2>/dev/null || true)"
+  [[ -z "$author_name" || -z "$author_email" ]] || author_resolves=true
+  expected='{"name":true,"email":true}'
+  actual="$(jq -nc --argjson name "$([[ -n "$author_name" ]] && echo true || echo false)" \
+    --argjson email "$([[ -n "$author_email" ]] && echo true || echo false)" '{name:$name,email:$email}')"
+  if [[ "$author_resolves" == true ]]; then
+    git_check_add author-identity home-manager true ok "" \
+      "commits are authored as $author_name <$author_email>" "" "$expected" "$actual"
+  else
+    git_check_add author-identity home-manager true failed author-unresolved \
+      "git cannot name a commit author: user.name or user.email is missing from the managed configuration" \
+      "apply the current Home Manager generation; the managed git configuration declares both" \
+      "$expected" "$actual"
+  fi
+
   # Identity is a placed private key, read directly by ssh-keygen -Y sign and
   # by ssh through IdentityFile, so no agent is consulted: a diagnostic that
   # depended on one would report a fresh login broken when nothing is. The key

@@ -446,6 +446,23 @@ apply_config() {
   fi
   disruption_enforce "$report" "$expected_disruption" "$candidate"
 
+  if [[ "$identity_mode" != runtime ]]; then
+    local inputs_manifest="$candidate/etc/atyrode/declared-inputs.json" inputs_result clan
+    # Older closures predate this projection. Report that limitation rather
+    # than misclassifying their declarations as empty.
+    step_begin 'Check declared generator sources before activation'
+    if [[ ! -r "$inputs_manifest" ]]; then
+      step_fail 'candidate input metadata is unavailable; use a current configuration to check declared inputs'
+      die "$EX_UNAVAILABLE" 'cannot establish candidate input readiness; apply the current configuration'
+    fi
+    clan="$(clan_program 2>/dev/null)" || clan=clan
+    inputs_result="$("$lib_dir/../../atyrode-inputs" "$inputs_manifest" --clan "$clan" --sources-only)" || {
+      step_fail "$(jq -r '[.findings[] | .subject + ": " + .code] | join("; ")' <<<"$inputs_result")"
+      die "$EX_UNAVAILABLE" "on an operator device run clan vars check $host and generate the named missing or invalid declarations with clan vars generate $host, then atyrode apply"
+    }
+    step_ok
+  fi
+
   case "$activation" in
     nix-darwin | nixos-wsl | nixos) [[ -n "$candidate_path" ]] || place_machine_key "$host" "$flake_source" ;;
   esac

@@ -16,8 +16,39 @@
 # Every value clan generates is encrypted to the admins group by default:
 # the group is the operator, one member per device the operator works from,
 # plus the break-glass recovery key.
-{ _class, lib, ... }:
 {
+  _class,
+  config,
+  lib,
+  ...
+}:
+let
+  # Clan owns source completeness and invalidation; this projection contains
+  # only the declarations needed to diagnose placement after activation.
+  manifest = builtins.toJSON {
+    schemaVersion = 1;
+    host = config.clan.core.settings.machine.name;
+    flake = toString config.clan.core.settings.directory;
+    generators = lib.mapAttrsToList (name: generator: {
+      inherit name;
+      files = lib.mapAttrsToList (name: file: {
+        inherit name;
+        path = if !file.deploy || (!file.secret && !file.exists) then null else file.path;
+      }) generator.files;
+    }) config.clan.core.vars.generators;
+    links = lib.concatLists (
+      lib.mapAttrsToList (
+        _: home:
+        lib.mapAttrsToList (_: file: {
+          link = "${home.home.homeDirectory}/${file.target}";
+          source = toString file.source;
+        }) (lib.filterAttrs (_: file: file.enable && file.source != null) home.home.file)
+      ) config.home-manager.users
+    );
+  };
+in
+{
+  environment.etc."atyrode/declared-inputs.json".text = manifest;
   sops.age = {
     keyFile = "/var/lib/sops-nix/key.txt";
     sshKeyPaths = [ ];

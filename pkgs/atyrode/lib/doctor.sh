@@ -1263,6 +1263,25 @@ probe_git_identity() {
     "this machine signs and authenticates with the keys activation placed" ""
 }
 
+probe_declared_inputs() {
+  local host result clan
+  host="$(resolve_host)"
+  if [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$host")")" == runtime ]]; then
+    provisioning_check_add declared-inputs not-applicable portable-profile \
+      "portable profiles have no clan generators" ""
+    return 0
+  fi
+  clan="$(clan_program 2>/dev/null)" || clan=clan
+  result="$("$lib_dir/../../atyrode-inputs" /etc/atyrode/declared-inputs.json --clan "$clan")" || true
+  if ! jq -e '.ready == true' <<<"$result" >/dev/null 2>&1; then
+    provisioning_check_add declared-inputs degraded input-readiness \
+      "$(jq -r '[.findings[] | .subject + ": " + .code + (if .path then " (link/path " + .path + " -> " + .target + ")" else "" end)] | join("; ")' <<<"$result")" \
+      "on an operator device: clan vars check $host, then clan vars generate $host for the named missing or invalid declarations; atyrode apply places the current configuration; unavailable inspection is not evidence of absence"
+    return 0
+  fi
+  provisioning_check_add declared-inputs ok "" "declared generator sources and managed links are ready" ""
+}
+
 # A success stamp describes an earlier run, not whether the files activation
 # placed are still usable. Check the archive's inputs before trusting it.
 probe_babel_archive() {

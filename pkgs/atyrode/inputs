@@ -1,0 +1,110 @@
+#!@python3@
+"""Read-only readiness: Clan checks sources; the filesystem checks placement."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+
+
+def inspect_path(path):
+    try:
+        resolved = Path(path).resolve(strict=True)
+        if not os.access(resolved, os.R_OK):
+            return "permission-unknown", str(resolved)
+        return "ok", str(resolved)
+    except FileNotFoundError:
+        try:
+            return "absent", str(Path(path).resolve(strict=False))
+        except (OSError, RuntimeError):
+            return "inspection-unavailable", str(path)
+    except (OSError, RuntimeError):
+        return "inspection-unavailable", str(path)
+
+
+def source_findings(manifest, clan, flake):
+    # check_vars calls vars_status, including store health and invalidation.
+    # Its diagnostic prose is not forwarded: only declared names may escape.
+    if not manifest["generators"]:
+        return []
+    try:
+        result = subprocess.run(
+            [clan, "vars", "check", manifest["host"], "--flake", flake],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return [{"code": "inspection-unavailable", "subject": "clan vars check"}]
+    if result.returncode == 0:
+        return []
+    output = result.stdout + result.stderr
+    findings = []
+    for generator in manifest["generators"]:
+        name = generator["name"]
+        for file in generator["files"]:
+            # Match the maintained check's named missing-file diagnostic, not
+            # exit 1: evaluation and permission failures can also exit 1.
+            pattern = (
+                rf"(?:Secret|Public) var '{re.escape(file['name'])}' for service "
+                rf"'{re.escape(name)}' in machine {re.escape(manifest['host'])} is missing\."
+            )
+            if re.search(pattern, output):
+                findings.append({"code": "generation-required", "subject": f"{name}/{file['name']}"})
+        if f"Generator '{name}' in machine {manifest['host']} has outdated invalidation hash." in output:
+            findings.append({"code": "generation-required", "subject": name})
+    return findings or [{"code": "inspection-unavailable", "subject": "clan vars check (source health or access unresolved)"}]
+
+
+def readiness(manifest, clan, flake=None, sources_only=False):
+    findings = source_findings(manifest, clan, flake or manifest["flake"])
+    if not sources_only:
+        for generator in manifest["generators"]:
+            for file in generator["files"]:
+                path = file["path"]
+                if path is None:
+                    continue
+                subject = f"{generator['name']}/{file['name']}"
+                if path == "/no-such-path":
+                    findings.append({"code": "generation-required", "subject": subject})
+                    continue
+                state, target = inspect_path(path)
+                if state != "ok":
+                    findings.append({"code": state, "subject": subject, "path": path, "target": target})
+        for file in manifest["links"]:
+            # Home Manager's source is itself a store symlink for an
+            # out-of-store file. Inspect it even when activation never placed
+            # the home link. Ordinary store-backed files need no extra probe.
+            source_state, target = inspect_path(file["source"])
+            if source_state == "ok" and target.startswith("/nix/store/"):
+                continue
+            state, placed_target = inspect_path(file["link"])
+            if source_state != "ok" or state != "ok" or target != placed_target:
+                findings.append({
+                    "code": source_state if source_state != "ok" else state if state != "ok" else "placement-required",
+                    "subject": "managed link", "path": file["link"], "target": target,
+                })
+    return {"ready": not findings, "findings": findings}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("manifest")
+    parser.add_argument("--clan", default="clan")
+    parser.add_argument("--flake")
+    parser.add_argument("--sources-only", action="store_true")
+    args = parser.parse_args()
+    try:
+        with open(args.manifest) as stream:
+            manifest = json.load(stream)
+        if manifest["schemaVersion"] != 1:
+            raise ValueError("unsupported manifest")
+        result = readiness(manifest, args.clan, args.flake, args.sources_only)
+    except (OSError, ValueError, KeyError, TypeError):
+        result = {"ready": False, "findings": [{"code": "inspection-unavailable", "subject": "declared input metadata"}]}
+    print(json.dumps(result))
+    return 0 if result["ready"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

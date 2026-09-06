@@ -48,6 +48,7 @@ pkgs.runCommand "check-atyrode-apply"
     ${fixtures.base}
     ${fixtures.gitNh}
     ${fixtures.identity}
+    ${pkgs.python3.interpreter} ${./declared-inputs.py} ${../../pkgs/atyrode/inputs}
 
     # Assertions here are bare `test` and `grep`, so without this a failure
     # exits silently and the build log ends mid-scenario with nothing to read.

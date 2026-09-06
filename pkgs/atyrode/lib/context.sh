@@ -105,9 +105,9 @@ context_machine_json() {
     [to_entries[].value | select(.id != $host)
       | {id, description, activation, platform, portable: ((.identityMode // "fixed") == "runtime")}]
     | sort_by(.portable, .id)' "$registry")"
-  # No registry field or inventory declares a clone root yet, and guessing one
-  # is exactly what this file exists to end; the dotfiles checkout is the one
-  # path this repository already treats as conventional (lifecycle probes it).
+  # No registry field declares a clone root yet, and guessing one is exactly
+  # what this file exists to end; the dotfiles checkout is the one path this
+  # repository already treats as conventional.
   [[ ! -d "$HOME/nix-dotfiles/.git" ]] || checkout="$HOME/nix-dotfiles"
   jq -nc \
     --arg generatedAt "$generated_at" \

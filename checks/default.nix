@@ -4,7 +4,6 @@
 # and signature checks.
 {
   lib,
-  nixpkgs,
   system,
   pkgs,
   targets,
@@ -28,7 +27,6 @@ let
     canonicalNixosConfigs
     clan
     darwinHosts
-    inventoryBySystem
     mkPortableHomeConfiguration
     ;
 
@@ -277,7 +275,7 @@ let
       # refusal then also covers the system mismatch.
       productionHost = if system == "aarch64-darwin" then "macbook" else "dev-01";
     };
-    atyrode-lifecycle = import ./atyrode/atyrode-lifecycle.nix {
+    atyrode-generations = import ./atyrode/atyrode-generations.nix {
       inherit pkgs;
       atyrode = systemDoctorAtyrode;
     };
@@ -298,10 +296,6 @@ let
     bootstrap-darwin-volumes = import ./atyrode/bootstrap/darwin-volumes.nix { inherit pkgs; };
     bootstrap-lint = import ./atyrode/bootstrap/lint.nix { inherit pkgs; };
     bootstrap-terminal = import ./atyrode/bootstrap/terminal.nix { inherit pkgs; };
-    catalog = import ./fleet/catalog.nix {
-      inherit lib nixpkgs pkgs;
-      hostConfigs = canonicalHomeConfigs;
-    };
     codex-seed = import ./omp/codex-seed.nix { inherit pkgs; };
     desktop-fonts = import ./fleet/desktop-fonts.nix {
       inherit lib pkgs;
@@ -319,17 +313,12 @@ let
     omp-isolated-writer = import ./omp/omp-isolated-writer.nix { inherit pkgs; };
     home-evaluation = homeEvaluation;
     host-registry = registryCheck;
-    package-ownership = import ./fleet/package-ownership.nix {
-      inherit pkgs;
-      inventory = inventoryBySystem.${system};
-    };
     shell-surface = import ./fleet/shell-surface.nix {
       inherit lib pkgs;
       hostConfigs = canonicalHomeConfigs;
     };
     system-boundary = import ./fleet/system-boundary.nix {
       inherit lib pkgs system;
-      inventory = inventoryBySystem.${system};
       homeConfigs = systemHomeConfigs;
       darwinConfigs = systemDarwinConfigs;
       nixosConfigs = systemNixosConfigs;

@@ -52,19 +52,17 @@ points; OMP profiles and Codex's `~/.codex` remain harness-specific mutable-stat
 - `server`: marks a Linux-only headless composition. The reviewed portable
   server selection combines it with `base` and `agent-tools`.
 
-The same descriptions are semantic annotations in
-`fleet/annotations.nix` (checked to cover the capability set exactly),
-surface in `atyrode capabilities list` — which marks the resolved host's active
+The same descriptions are one sentence each in `fleet/capabilities.nix`
+(checked to cover the capability set exactly), surface in
+`atyrode capabilities list` — which marks the resolved host's active
 capabilities — and in `atyrode capabilities show`, and export to flake consumers
-as `lib.capabilityDescriptions`. Evaluated package membership is available
-separately through `capabilityInventory.<system>.<capability>`.
-Adding a capability to a machine is a registry edit: extend the host's
-`capabilities` list, merge, and run
-`atyrode apply` on that machine.
+as `lib.capabilityDescriptions`. Adding a capability to a machine is a registry
+edit: extend the host's `capabilities` list, merge, and run `atyrode apply` on
+that machine.
 
 Project compilers and runtimes are owned by committed dev shells, `mise.toml`,
-and native manifests. See [Package ownership](package-ownership.md) for the
-checked evaluated inventory and harness boundaries.
+and native manifests; `checks/fleet/system-boundary.nix` holds the package
+assertions each capability must satisfy.
 
 Each activated Home Manager configuration exposes its target identity in
 `$ATYRODE_HOST`, its comma-separated capability set in

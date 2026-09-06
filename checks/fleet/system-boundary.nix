@@ -1,7 +1,6 @@
 {
   darwinConfigs ? { },
   homeConfigs,
-  inventory,
   lib,
   nixosConfigs ? { },
   pkgs,
@@ -12,7 +11,6 @@ let
   boundary = builtins.fromJSON (builtins.readFile ../../fleet/system-boundary.json);
   binaryCaches = import ../../modules/shared/binary-caches.nix;
   darwinCasks = import ../../modules/darwin/casks.nix;
-  knownCapabilities = builtins.attrNames (import ../../modules/home/profiles);
 
   sort = lib.sort builtins.lessThan;
   normaliseHome = value: value.config or value;
@@ -36,23 +34,22 @@ let
   noManagedShell = config: !((config.home.sessionVariables or { }) ? SHELL);
   noClamAV = config: !(builtins.elem "clamav" (packageNames config));
 
-  capabilityOwners = builtins.attrNames inventory.capabilities;
-  inventoryPackages = lib.concatMap (
-    capability:
-    map (item: item.name) (
-      lib.filter (item: item.kind == "package") inventory.capabilities.${capability}.deliverables
-    )
-  ) capabilityOwners;
-  inventoryCasks = map (item: item.name) (
-    lib.filter (item: item.kind == "application") inventory.capabilities.desktop.deliverables
-  );
-  packagesFor =
-    owner:
-    sort (
-      map (item: item.name) (
-        lib.filter (item: item.kind == "package") inventory.capabilities.${owner}.deliverables
-      )
-    );
+  # A capability's packages are what every home selecting it installs and no
+  # home without it does; that is what makes a capability a boundary rather
+  # than a label, and it is read from the evaluated homes rather than from a
+  # separate attribution.
+  capabilityBounds =
+    capability: expected:
+    lib.all (
+      config:
+      let
+        actual = packageNames config;
+      in
+      if hasCapability capability config then
+        hasAll expected actual
+      else
+        lib.intersectLists expected actual == [ ]
+    ) portableHomes;
 
   expectedContainerPackages =
     if lib.hasSuffix "-darwin" system then
@@ -80,14 +77,8 @@ let
       ]
     else
       [ "orbstack" ];
-  containerHomes = builtins.filter (hasCapability "containers") portableHomes;
-  containerHomeMatchesPolicy =
-    config:
-    let
-      actual = packageNames config;
-    in
-    hasAll expectedContainerPackages actual
-    && lib.intersectLists forbiddenContainerPackages actual == [ ];
+  noForbiddenContainerClient =
+    config: lib.intersectLists forbiddenContainerPackages (packageNames config) == [ ];
 
   expectedOrder = [
     "login-shell"
@@ -212,22 +203,10 @@ assert lib.assertMsg (
   boundary.homebrew.cleanup == "zap"
 ) "Homebrew cleanup must remove undeclared native state declaratively";
 assert lib.assertMsg (
-  sort capabilityOwners == sort knownCapabilities
-) "the evaluated inventory has missing or unknown capability owners";
-assert lib.assertMsg (
-  builtins.length inventoryPackages == builtins.length (lib.unique inventoryPackages)
-) "an evaluated package is assigned to more than one capability";
-assert lib.assertMsg (
-  packagesFor "containers" == sort expectedContainerPackages
-) "container clients are not assigned coherently";
-assert lib.assertMsg (packagesFor "security" == sort expectedSecurityPackages)
-  "the security capability must contain only the reviewed network diagnostics and the secrets editor";
-assert lib.assertMsg (
-  !(builtins.elem "clamav" inventoryPackages)
-) "ClamAV must remain absent until signature updates and scanning have a system owner";
-assert lib.assertMsg (
-  !lib.hasSuffix "-darwin" system || sort inventoryCasks == sort darwinCasks
-) "evaluated nix-darwin Homebrew casks differ from the reviewed module";
+  lib.all (config: hasCapability "base" config) portableHomes
+) "every Home Manager configuration must select the base capability";
+assert lib.assertMsg (capabilityBounds "security" expectedSecurityPackages)
+  "the security capability must be the only source of the reviewed network diagnostics and the secrets editor";
 assert lib.assertMsg (
   lib.intersectLists darwinCasks darwinHomePackages == [ ]
 ) "a Homebrew-owned Darwin cask is also installed by Home Manager";
@@ -235,8 +214,10 @@ assert lib.assertMsg (lib.all noManagedShell portableHomes)
   "Home Manager must not override SHELL; the account database owns the login shell";
 assert lib.assertMsg (lib.all noClamAV portableHomes)
   "a portable Home Manager configuration unexpectedly installs ClamAV";
-assert lib.assertMsg (lib.all containerHomeMatchesPolicy containerHomes)
-  "the containers capability does not match the platform-specific client policy";
+assert lib.assertMsg (
+  capabilityBounds "containers" expectedContainerPackages
+  && lib.all noForbiddenContainerClient portableHomes
+) "the containers capability does not match the platform-specific client policy";
 # The author has to survive whatever the identity blocks add under `user`: a
 # generation that renders the signing key but no name commits nothing (#590).
 assert lib.assertMsg (lib.all (

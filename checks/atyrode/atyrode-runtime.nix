@@ -464,50 +464,6 @@ pkgs.runCommand "check-atyrode-runtime"
     export _ATYRODE_TEST_USER="alex"
     unset _ATYRODE_TEST_HOME _ATYRODE_TEST_UID _ATYRODE_TEST_HOME_OWNER_UID \
       _ATYRODE_TEST_PASSWD_HOME
-    # Inventory is a stable JSON-only surface. The test hook substitutes an
-    # evaluated fixture without teaching production builds to trust environment
-    # data or requiring network access in the derivation sandbox.
-    cat > "$TMPDIR/inventory.json" <<'EOF'
-    {
-      "schemaVersion": 1,
-      "identity": {"revision":"0123456789abcdef","system":"x86_64-linux","platform":"linux"},
-      "authority": {"membership":"evaluated configurations","intent":"annotations","closureIncluded":false,"mutableStateIncluded":false},
-      "capabilities": {"base":{"name":"base","deliverables":[]}},
-      "hosts": {
-        "fixture-host": {
-          "id":"fixture-host",
-          "description":"fixture",
-          "homeDirectory":"/home/alex",
-          "hostname":null,
-          "platform":"linux",
-          "system":"x86_64-linux",
-          "username":"alex",
-          "capabilities":["base"],
-          "deliverables":[]
-        }
-      },
-      "boundaries": {}
-    }
-    EOF
-    export _ATYRODE_TEST_INVENTORY="$TMPDIR/inventory.json"
-    inventory_one="$(atyrode inventory --repo "$HOME/nix-dotfiles" --json)"
-    inventory_two="$(atyrode inventory --repo "$HOME/nix-dotfiles" --json)"
-    test "$inventory_one" = "$inventory_two" \
-      || { echo 'inventory JSON must be byte-stable for one evaluated manifest' >&2; exit 1; }
-    jq -e '.schemaVersion == 1 and .identity.revision == "0123456789abcdef"' \
-      <<<"$inventory_one" >/dev/null
-    host_inventory="$(atyrode inventory --repo "$HOME/nix-dotfiles" --host fixture-host --json)"
-    jq -e '.schemaVersion == 1 and .identity.system == "x86_64-linux"
-      and .host.id == "fixture-host" and .host.capabilities == ["base"]' \
-      <<<"$host_inventory" >/dev/null
-    if atyrode inventory --repo "$HOME/nix-dotfiles" --host absent --json >/dev/null 2>&1; then
-      echo 'inventory must reject hosts absent from the evaluated revision' >&2
-      exit 1
-    fi
-    if atyrode inventory --repo "$HOME/nix-dotfiles" >/dev/null 2>&1; then
-      echo 'inventory must require the explicit JSON contract' >&2
-      exit 1
-    fi
 
     mkdir "$out"
   ''

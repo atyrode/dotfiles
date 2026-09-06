@@ -33,10 +33,11 @@ doctor_host() {
 }
 
 doctor_git() {
-  local json=0
+  local json=0 online=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) json=1 ;;
+      --online) online=1 ;;
       *) die "$EX_USAGE" "unknown doctor git option: $1" ;;
     esac
     shift
@@ -317,6 +318,8 @@ doctor_git() {
   fi
   git_check_add remote-protocol git true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
+
+  doctor_git_authentication "$online"
 
   expected='{"storeHelperCount":0}'
   actual="$(jq -nc --argjson storeHelperCount "$store_helpers" '{storeHelperCount:$storeHelperCount}')"

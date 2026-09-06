@@ -292,8 +292,10 @@ file directly and needs no agent to do it; `commit.gpgsign` is enabled only
 when an identity exists, so a machine with no key signs nothing rather than
 signing with a key nobody reviewed. Git reaches the forges through
 `core.sshCommand`, an `ssh -i <auth-key> -o IdentitiesOnly=yes` scoped to Git
-alone, so a forge is offered exactly this machine's key and never one an agent
-happens to hold, and the account's own `~/.ssh/config` stays its own.
+alone. It explicitly selects the placed key and excludes unrelated agent
+identities, but the account's SSH configuration can add `IdentityFile` entries.
+The diagnostic reports the explicit selection, not proof of which identity
+an actual SSH connection will accept.
 Portable profiles are not fleet members: they have no identity, sign
 nothing, and `doctor git` reports the signing key as `not-fleet-member`. On
 Linux the user `ssh-agent` Home Manager supervises remains for interactive
@@ -309,6 +311,25 @@ git` reports `signing-key-unreviewed` for the same gap and
 repository's. Registering the public keys with GitHub and GitLab (the signing
 key as a signing key, the auth key as an authentication key) is the
 operator's step on the forge, done once per machine.
+
+`atyrode doctor git` keeps authentication separate from author identity and
+signing trust. Offline, `authentication-key` checks the key explicitly
+selected by the managed command shape. Other command shapes and environment
+overrides it cannot interpret are unknown; doctor never executes them.
+`atyrode doctor git --online` additionally reads the authenticated `gh`
+account's complete GitHub key lists when the current repository has a GitHub
+SSH remote. It needs `read:public_key`; `read:ssh_signing_key` permits the
+sharper signing-only diagnosis. GitHub aliases in SSH configuration are not
+guessed, and `GH_HOST` cannot redirect the lookup away from `github.com`.
+
+A key registered only for signing does not grant SSH authentication. A
+successful complete authentication-key list can establish missing
+registration; offline operation, denied access, unreachable GitHub and
+malformed responses cannot. Those remain unknown (`checked: false` and
+`registeredForAuthentication: null`), not instructions to generate a key.
+Registration is still the operator's forge operation, for example
+`gh ssh-key add PUBLIC_KEY_FILE --type authentication`; an apply cannot fix
+an external registration, and this diagnostic never changes one.
 
 `doctor provisioning` carries the `git-identity` surface: `not-applicable` on
 a portable profile, `degraded` with the generation the machine is owed (`clan

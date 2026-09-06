@@ -115,7 +115,7 @@ Usage:
   atyrode doctor [HOST] [--json]
   atyrode doctor host [HOST] [--json]
   atyrode doctor system [HOST] [--json]
-  atyrode doctor git [--json]
+  atyrode doctor git [--json] [--online]
   atyrode doctor tools [--json]
   atyrode doctor provisioning [--json]
   atyrode host [HOST] [--json]
@@ -179,9 +179,11 @@ machine-key and runtime enroll each commit into or build from a checkout the
 operator selected, report its revision and whether its tree is dirty, and
 never substitute a conventional ~/nix-dotfiles for it. Plain apply resolves the
 selected published revision; doctor inspects the source packaged with its CLI.
-doctor git is a read-only audit of SSH authentication, SSH signing, forge
-remotes, Git credential helpers, and GitHub CLI credential storage. It reports
-classifications only and never prints keys, tokens, helper arguments, or remotes.
+doctor git is an offline audit of SSH authentication, signing, forge remotes,
+credential helpers, and GitHub CLI storage. --online additionally checks the
+selected authentication key's registration with the gh account on github.com.
+It reports classifications, paths and fingerprints, never key material,
+tokens, helper arguments, or remotes.
 context renders this machine's agent context: the operator policy from
 modules/home/agents/AGENTS.md with a generated "This machine" section (host, fleet,
 which CLIs are authenticated and as whom, readable secrets by name, the fleet

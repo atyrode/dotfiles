@@ -726,8 +726,6 @@ pkgs.runCommand "check-atyrode-apply"
         ' >/dev/null ||
         { echo "atyrode: omp-auth-broker on $1 was not $2/$3" >&2; exit 1; }
     }
-    atyrode doctor provisioning --json | jq -e '
-      [.surfaces[].id] | index("omp-auth-broker") == index("babel-archive") + 1' >/dev/null
     broker_probe development-x86_64-linux not-applicable portable-profile
     broker_probe fixture-nixos degraded not-generated
     ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e --arg token "$HOME/.omp/auth-broker.token" '

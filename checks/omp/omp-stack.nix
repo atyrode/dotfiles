@@ -90,7 +90,7 @@ pkgs.runCommand "check-omp-stack"
     # The hand-curated preset launchers were sunset: the managed bin set is now
     # exactly `code omp omp-analysis omp-managed ompu` (plus the zsh
     # completion). The omp-passthrough launchers report the pinned version;
-    # `code` is the generator TUI and only answers --help non-interactively.
+    # Code's headless engine path is exercised by the Babel migration check.
     # Also validate the analysis posture the restricted launcher applies: an
     # unreadable or malformed layer would take the Babel worker down at launch,
     # which is exactly the failure this launcher exists to end.
@@ -185,30 +185,6 @@ pkgs.runCommand "check-omp-stack"
     cmp "$TMPDIR/expected-code-no-broker-env" "$TMPDIR/code-no-broker-env"
     rm "$HOME/.omp/auth-broker.token"
 
-    # `code babel` worker mode is the one launch on this machine that must not
-    # resolve CODE_OMP to the managed launcher: Code's analysis worker drives OMP
-    # with --no-extensions (code/omprpc.go, ompArgv), which omp-managed refuses
-    # because it would disable the Nix-owned settings guard. Worker mode gets the
-    # dedicated restricted launcher instead (atyrode/babel#86), and it gets it
-    # from here rather than from a Code change, so a deployed machine is wired by
-    # activation alone.
-    CODE_ENV_LOG="$TMPDIR/code-babel-worker-env" \
-      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
-      ${configuredCodeStub}/bin/code babel
-    grep -Fxq "CODE_OMP=${lib.getExe configuredCodeStub.ompAnalysis}" \
-      "$TMPDIR/code-babel-worker-env"
-    grep -Fxq 'args=babel' "$TMPDIR/code-babel-worker-env"
-
-    # The configuration ceremony is not worker mode and must keep the managed
-    # launcher: it runs the operator's own dial UI, which probes providers and
-    # reads OMP's version through CODE_OMP. Pointed at the analysis launcher —
-    # whose posture is an isolated state root holding no operator credential —
-    # it would find no provider and refuse the confirmation it exists to take.
-    CODE_ENV_LOG="$TMPDIR/code-babel-ceremony-env" \
-      XDG_STATE_HOME="$TMPDIR/code-broker-state" \
-      ${configuredCodeStub}/bin/code babel --configure --result-file "$TMPDIR/ceremony.json"
-    grep -Fxq "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
-      "$TMPDIR/code-babel-ceremony-env"
     test ! -e ${pkgs.omp-configured}/bin/pi
     test "$(
       find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -

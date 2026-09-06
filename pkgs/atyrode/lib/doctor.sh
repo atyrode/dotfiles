@@ -1259,14 +1259,10 @@ probe_git_identity() {
     "this machine signs and authenticates with the keys activation placed" ""
 }
 
-# The archive's storage document is a clan var placed by activation, so this
-# probe never offers a ceremony: a portable profile cannot have it, a clan
-# machine either has the placed document or is owed a generation on an
-# operator device, and a configured machine is judged by its last success.
-# `-f` follows the link Home Manager installs, so a document not yet placed
-# reads as absent exactly as it did before the value existed.
+# A success stamp describes an earlier run, not whether the files activation
+# placed are still usable. Check the archive's inputs before trusting it.
 probe_babel_archive() {
-  local host config_file stamp_file last="" last_epoch now
+  local host config_file payload_file password_file stamp_file file last="" last_epoch now
 
   host="$(resolve_host)"
   if [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$host")")" == runtime ]]; then
@@ -1275,11 +1271,26 @@ probe_babel_archive() {
     return 0
   fi
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
+  payload_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/payload-keys.json"
   stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
-  if [[ ! -f "$config_file" ]]; then
-    provisioning_check_add babel-archive degraded not-generated \
-      "no storage document at $config_file; the hourly timer archives nothing until activation places it" \
-      "clan vars generate $host (on an operator device), then atyrode apply"
+  for file in "$config_file" "$payload_file"; do
+    if [[ ! -f "$file" || ! -r "$file" || ! -s "$file" ]]; then
+      provisioning_check_add babel-archive degraded archive-input-unavailable \
+        "required archive file $file is missing, empty, or unreadable; an earlier success does not establish readiness" \
+        "check the declared babel vars on an operator device, then atyrode apply to place them; do not rotate existing keys"
+      return 0
+    fi
+  done
+  if ! password_file="$(jq -ers 'if length == 1 then .[0].password_file | strings | select(startswith("/")) else empty end' "$config_file" 2>/dev/null)"; then
+    provisioning_check_add babel-archive degraded archive-config-invalid \
+      "the archive storage document does not name an absolute repository password file" \
+      "apply the configuration that generates this archive storage document"
+    return 0
+  fi
+  if [[ ! -f "$password_file" || ! -r "$password_file" || ! -s "$password_file" ]]; then
+    provisioning_check_add babel-archive degraded archive-input-unavailable \
+      "the archive repository password file is missing, empty, or unreadable" \
+      "check the declared babel vars on an operator device, then atyrode apply to place them; do not rotate existing keys"
     return 0
   fi
   [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true

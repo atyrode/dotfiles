@@ -140,7 +140,7 @@ let
   # modules.
   darwinMachineModule = name: host: {
     _module.args = {
-      inherit homebrew-cask homebrew-core;
+      inherit host homebrew-cask homebrew-core;
       inherit (host) homeDirectory username;
       homeModules = modulesForHost name host;
     };
@@ -167,6 +167,10 @@ let
       inherit host;
       hostId = name;
       homeModules = modulesForHost name host;
+      # The only address this machine has that the fleet can name: a WSL guest
+      # sits behind Windows and the home NAT, so it is deployed over the
+      # overlay or not at all.
+      overlayDomain = overlayInstance;
     };
     imports = [
       nixos-wsl.nixosModules.default
@@ -216,9 +220,23 @@ let
 
   # The fleet layer. `fleet/hosts.nix` stays the only place a machine is
   # named: the inventory is a projection of it, tagged by activation and
-  # platform so a clan service can later select machines the way the
-  # registry already describes them. `self` is what the clan CLI reads the
-  # secrets and vars directories relative to.
+  # platform so a clan service can select machines the way the registry
+  # already describes them. `self` is what the clan CLI reads the secrets and
+  # vars directories relative to.
+  #
+  # The overlay (ADR 0008 "Identity and reachability", #582) is clan's
+  # wireguard service, one instance named `fleet`: the workshop is the
+  # controller because it is the one machine with a public address, and every
+  # other machine is a peer that dials it from behind whatever NAT it sits
+  # in. Keys and the ULA addresses are clan vars, minted by `clan vars
+  # generate` and placed at activation; every machine resolves every other as
+  # `<name>.fleet` through the hosts file the service writes. What the
+  # overlay is for is the substrate: `fleet apply` reaching a machine that
+  # exposes no port, and the backup routine reaching the disk at home. It is
+  # not manifold's transport -- the agent dials the hub's public origin from
+  # anywhere, overlay or not -- and manifold does not read it (docs/manifold.md).
+  overlayInstance = "fleet";
+  overlayController = "dev-01";
   clan = clan-core.lib.clan {
     inherit self;
     meta.name = "atyrode";
@@ -238,6 +256,18 @@ let
         host.platform
       ];
     }) clanHosts;
+    inventory.instances.${overlayInstance} = {
+      module = {
+        name = "wireguard";
+        input = "clan-core";
+      };
+      roles.controller.machines.${overlayController}.settings.endpoint = "${
+        hosts.${overlayController}.hostname
+      }.${(import (../fleet/machines + "/${overlayController}/address.nix")).domain}";
+      roles.peer.machines = lib.mapAttrs (_name: _host: { }) (
+        lib.filterAttrs (name: _host: name != overlayController) clanHosts
+      );
+    };
     machines = lib.mapAttrs (
       name: host:
       let

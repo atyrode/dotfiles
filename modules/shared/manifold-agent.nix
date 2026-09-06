@@ -26,17 +26,20 @@
 # adopts such a file into clan before the apply that replaces it.
 {
   config,
+  host,
   lib,
   _class,
   ...
 }:
 let
   user = lib.head (lib.attrNames config.home-manager.users);
-  machine = config.clan.core.settings.machine.name;
   group = if _class == "darwin" then "staff" else "users";
+  machine = config.clan.core.settings.machine.name;
 
-  inventory = lib.importJSON ../../fleet/manifold.json;
-  spoke = builtins.elem machine inventory.spokes;
+  # A spoke is a machine that declares the capability; fleet/manifold.json
+  # names the hub, never the machines, so the registry stays the one place a
+  # machine is named.
+  spoke = builtins.elem "manifold-node" host.capabilities;
 
   # Stated from sops-nix's fixed layout rather than read from clan, for the
   # reason babel-archive.nix gives; asserted against clan's answer once there

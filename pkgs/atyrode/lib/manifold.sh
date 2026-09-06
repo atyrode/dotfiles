@@ -319,8 +319,8 @@ manifold_enroll() { # host [--rotate-token]
   done
   [[ -n "$host" ]] || die "$EX_USAGE" "manifold-agent enroll needs the host to enroll: atyrode runtime enroll manifold-agent <host>"
   host="$(resolve_host "$host")"
-  jq -e --arg host "$host" '.spokes | index($host) != null' "$manifold_inventory" >/dev/null ||
-    die "$EX_USAGE" "$host is not a Manifold spoke in fleet/manifold.json"
+  jq -e '.capabilities | index("manifold-node") != null' <<<"$(host_json "$host")" >/dev/null ||
+    die "$EX_USAGE" "$host does not declare the manifold-node capability in fleet/hosts.nix, so it is not a spoke"
   local clan checkout master_url
   local -a clan_write
   clan="$(clan_program)"

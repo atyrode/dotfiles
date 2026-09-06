@@ -35,7 +35,11 @@ it to the target, has the target read it against its own running generation,
 and activates through the target's own `atyrode apply --candidate`, so the
 target needs no toolchain and no checkout. Where it is reached is the
 machine's own `clan.core.networking.targetHost`: a deployment cannot be aimed
-somewhere the reviewed configuration does not name.
+somewhere the reviewed configuration does not name. `dev-01` names its public
+address; `wsl` names `wsl.fleet`, its address on the fleet's WireGuard overlay
+(clan's `wireguard` service, `dev-01` as controller; ADR 0008), which is the
+only way in to a machine that exposes no port. Every machine resolves every
+other as `<name>.fleet` once it has applied a revision carrying the overlay.
 
 ### Knowing when to apply
 

@@ -110,55 +110,13 @@ doctor_git() {
   git_check_add git-configuration home-manager true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
 
-  local agent_socket=false agent_available=false agent_key_count=0 agent_status=0 agent_output=""
-  [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] && agent_socket=true
-  if command -v ssh-add >/dev/null 2>&1 && [[ "$agent_socket" == true ]]; then
-    agent_output="$(ssh-add -l 2>/dev/null)" || agent_status=$?
-    case "$agent_status" in
-      0)
-        agent_available=true
-        agent_key_count="$(jq -Rsc 'split("\n") | map(select(length > 0)) | length' <<<"$agent_output")"
-        ;;
-      1) agent_available=true ;;
-    esac
-  else
-    agent_status=2
-  fi
-  expected='{"available":true}'
-  actual="$(jq -nc --argjson socketPresent "$agent_socket" --argjson available "$agent_available" \
-    '{socketPresent:$socketPresent,available:$available}')"
-  if [[ "$agent_available" == true ]]; then
-    status=ok
-    code=""
-    summary="SSH agent is reachable"
-    remediation=""
-  else
-    status=failed
-    code=agent-unavailable
-    summary="SSH agent is unavailable"
-    remediation="start the platform SSH agent and export its socket (apply enables services.ssh-agent on Linux), then run 'atyrode provision git'; do not fall back to a plaintext HTTPS helper"
-  fi
-  git_check_add ssh-agent operator true "$status" "$code" "$summary" "$remediation" \
-    "$expected" "$actual"
-
-  expected='{"minimumKeyCount":1}'
-  actual="$(jq -nc --argjson keyCount "$agent_key_count" '{keyCount:$keyCount}')"
-  if [[ "$agent_available" == true && "$agent_key_count" -gt 0 ]]; then
-    status=ok
-    code=""
-    summary="SSH agent has at least one key loaded"
-    remediation=""
-  else
-    status=failed
-    code=no-agent-keys
-    summary="SSH agent has no usable keys"
-    remediation="run 'atyrode provision git' to load this machine's vault-backed authentication and signing keys into the agent"
-  fi
-  git_check_add ssh-agent-keys operator true "$status" "$code" "$summary" "$remediation" \
-    "$expected" "$actual"
-
+  # Identity is a placed private key, read directly by ssh-keygen -Y sign and
+  # by ssh through IdentityFile, so no agent is consulted: a diagnostic that
+  # depended on one would report a fresh login broken when nothing is. The key
+  # is judged as a private key -- readable by this account, by nobody else --
+  # and its public half, derived here, is what allowed-signers must name.
   local signing_config="" signing_path="" signing_mode="" signing_readable=false
-  local signing_permissions=false signing_public=false signing_valid=false key_type="" key_blob=""
+  local signing_permissions=false signing_valid=false key_type="" key_blob="" signing_public_line=""
   signing_config="$(git config --global --get user.signingKey 2>/dev/null || true)"
   if [[ -n "$signing_config" ]]; then
     signing_path="$(expand_home_path "$signing_config")"
@@ -167,38 +125,43 @@ doctor_git() {
     signing_readable=true
     signing_mode="$(stat -c '%a' -- "$signing_path" 2>/dev/null || true)"
     if [[ "$signing_mode" =~ ^[0-7]{3,4}$ ]] &&
-      (((8#$signing_mode & 8#022) == 0)); then
+      (((8#$signing_mode & 8#077) == 0)); then
       signing_permissions=true
     fi
-    IFS=' ' read -r key_type key_blob _ <"$signing_path" || true
-    case "$key_type" in
-      ssh-* | ecdsa-* | sk-*) signing_public=true ;;
-    esac
-    if [[ "$signing_public" == true ]] && ssh-keygen -lf "$signing_path" >/dev/null 2>&1; then
+    if signing_public_line="$(ssh-keygen -y -f "$signing_path" 2>/dev/null)"; then
       signing_valid=true
+      IFS=' ' read -r key_type key_blob _ <<<"$signing_public_line"
     fi
   fi
-  expected='{"configured":true,"readable":true,"publicKey":true,"valid":true,"permissionsSafe":true}'
+  expected='{"configured":true,"readable":true,"privateKey":true,"permissionsPrivate":true}'
   actual="$(jq -nc \
     --argjson configured "$([[ -n "$signing_config" ]] && echo true || echo false)" \
     --argjson readable "$signing_readable" \
-    --argjson publicKey "$signing_public" \
-    --argjson valid "$signing_valid" \
-    --argjson permissionsSafe "$signing_permissions" \
+    --argjson privateKey "$signing_valid" \
+    --argjson permissionsPrivate "$signing_permissions" \
     --arg mode "$signing_mode" \
-    '{configured:$configured,readable:$readable,publicKey:$publicKey,valid:$valid,
-      permissionsSafe:$permissionsSafe,mode:(if $mode == "" then null else $mode end)}')"
-  if [[ "$signing_readable" == true && "$signing_public" == true &&
-    "$signing_valid" == true && "$signing_permissions" == true ]]; then
+    '{configured:$configured,readable:$readable,privateKey:$privateKey,
+      permissionsPrivate:$permissionsPrivate,mode:(if $mode == "" then null else $mode end)}')"
+  if [[ "$signing_readable" == true && "$signing_valid" == true && "$signing_permissions" == true ]]; then
     status=ok
     code=""
-    summary="Configured SSH signing public key is readable, valid, and not writable by group or others"
+    summary="the signing key is a private key placed for this account alone"
+    remediation=""
+  elif [[ -z "$signing_config" ]]; then
+    status=not-applicable
+    code=not-fleet-member
+    summary="no signing key is configured: a portable profile is not a fleet member and signs nothing"
     remediation=""
   else
+    # resolve_host dies on a machine that is not registered, and an exit inside
+    # a command substitution ends the substitution before any `||` after it,
+    # so the fallback has to sit on this side of the assignment.
+    local identity_host
+    identity_host="$(resolve_host 2>/dev/null)" || identity_host='<host>'
     status=failed
     code=signing-key-invalid
-    summary="Configured SSH signing public key is missing, unreadable, invalid, or writable by group or others"
-    remediation="run 'atyrode provision git' to materialize the public signing key at user.signingKey with mode 0644 or stricter"
+    summary="the configured signing key is missing, unreadable, not a private key, or readable by group or others"
+    remediation="the key is a clan var placed by activation: on an operator device, clan vars generate $identity_host; then atyrode apply"
   fi
   git_check_add signing-key operator true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"
@@ -231,10 +194,20 @@ doctor_git() {
     code=""
     summary="allowed_signers matches managed content and authorizes the configured signing key"
     remediation=""
+  elif [[ "$signers_readable" == true && "$signers_match" == true && -z "$signing_config" ]]; then
+    status=ok
+    code=""
+    summary="allowed_signers matches managed content; this profile signs nothing, so there is no key to authorize"
+    remediation=""
+  elif [[ "$signers_readable" == true && "$signers_match" == true ]]; then
+    status=failed
+    code=signing-key-unreviewed
+    summary="allowed_signers matches managed content but does not name this machine's signing key"
+    remediation="add the public key through a reviewed commit to modules/home/git/allowed-signers, then apply"
   else
     status=failed
     code=allowed-signers-drift
-    summary="allowed_signers is missing, unreadable, drifting from managed content, or does not authorize the signing key"
+    summary="allowed_signers is missing, unreadable, or drifting from managed content"
     remediation="apply the current Home Manager configuration; do not edit allowed_signers manually"
   fi
   git_check_add allowed-signers home-manager true "$status" "$code" "$summary" "$remediation" \
@@ -1259,24 +1232,34 @@ probe_omp_seed() {
   fi
 }
 
-# Detection needs no vault and no network: a diagnostic that opens a vault
-# session would cost a password to answer a question about a password.
+# The Git identity is a clan var placed by activation, so this probe never
+# offers a ceremony: a portable profile cannot have one, a clan machine either
+# has the placed key or is owed a generation on an operator device. No vault,
+# no agent, no network: the key file is the whole answer.
 probe_git_identity() {
-  local signing_public reason=""
+  local host signing_config signing_path
 
-  signing_public="$(git config --global --get user.signingKey 2>/dev/null || true)"
-  if [[ -n "$signing_public" && ! -r "$(expand_home_path "$signing_public")" ]]; then
-    reason="the configured signing key is missing"
-  elif command -v ssh-add >/dev/null 2>&1 &&
-    [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] &&
-    ! ssh-add -l >/dev/null 2>&1; then
-    reason="the agent holds no keys"
+  host="$(resolve_host)"
+  if [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$host")")" == runtime ]]; then
+    provisioning_check_add git-identity not-applicable portable-profile \
+      "portable profiles are not fleet members and sign nothing" ""
+    return 0
   fi
-  if [[ -z "$reason" ]]; then
-    provisioning_check_add git-identity ok "" "this machine has a usable Git identity" ""
-  else
-    provisioning_unconfigured git-identity "Git identity incomplete: $reason"
+  signing_config="$(git config --global --get user.signingKey 2>/dev/null || true)"
+  if [[ -z "$signing_config" ]]; then
+    provisioning_check_add git-identity degraded not-configured \
+      "this configuration names no signing key; apply the current generation" "atyrode apply"
+    return 0
   fi
+  signing_path="$(expand_home_path "$signing_config")"
+  if [[ ! -r "$signing_path" ]]; then
+    provisioning_check_add git-identity degraded not-placed \
+      "the signing key is not placed at $signing_path; on an operator device: clan vars generate $host, then atyrode apply" \
+      "atyrode apply"
+    return 0
+  fi
+  provisioning_check_add git-identity ok "" \
+    "this machine signs and authenticates with the keys activation placed" ""
 }
 
 # The archive's storage document is a clan var placed by activation, so this

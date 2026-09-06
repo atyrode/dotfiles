@@ -114,7 +114,7 @@ to kill a process that still owns sessions.
 Context rendering re-enters the inspected candidate's CLI, never an unrelated
 global profile. Runtime stop, restart and token rotation likewise compare the
 deployed role with the loaded definition before acting; rotation performs
-this check before contacting the vault or hub. The [Manifold migration
+this check before contacting the hub. The [Manifold migration
 runbook](manifold.md#upgrades) names the deliberate initial maintenance boundary.
 These checks prevent accidental disruption through supported tools, not raw
 commands run outside them by an unrestricted account.
@@ -149,19 +149,18 @@ shell-quoted so the line can be pasted back to repeat that step by hand. The
 contract covers every mutating verb, not just `apply`: the `nh` switch, the
 `git ls-remote` that resolves a ref, the `systemd-run` that hands the apply to
 a manager-owned unit, `chsh` and the `/etc/shells` edit, each provisioning
-ceremony and the interactive seed dialogue, every Bitwarden call that logs in,
-unlocks, syncs or writes an item, `nix-store --gc` and `nh clean`, every
-rollback that re-runs activation, the Clan deployment that activates a remote
-host, and the `curl` that enrolls this machine with a fleet master.
+ceremony and the interactive seed dialogue, `nix-store --gc` and `nh clean`,
+every rollback that re-runs activation, the Clan deployment that activates a
+remote host, and the `curl` that enrolls this machine with a fleet master.
 
 Command narration is on by default, including captured preview builds, source
-prefetches, bootstrap archive extraction, and provisioning's key installation
-and agent loading. It goes to stderr, leaving structured stdout usable with
+prefetches, and bootstrap archive extraction. It goes to stderr, leaving
+structured stdout usable with
 `--json` and `--preview-json`. This is an action transcript, not shell tracing:
 `set -x` would expose secret-bearing expansions and is not a verbosity mode.
 
-Read-only probing stays silent: printing every `command -v` and `bw status`
-would bury the handful of commands that act. So does the shell's own
+Read-only probing stays silent: printing every `command -v` and `gh auth
+status` would bury the handful of commands that act. So does the shell's own
 bookkeeping — a `mkdir`, a `chmod`, the `mv` that installs a rendered file
 atomically. Where one of those writes something persistent, the path is named
 in prose instead, which is what an operator actually needs:
@@ -170,9 +169,9 @@ in prose instead, which is what an operator actually needs:
 Two commands are deliberately described rather than quoted. `systemd-run`
 carries the machine's whole forwarded `PATH`, so its argv would bury the run it
 introduces; the terminal gets the unit name and the log gets the argv. And no
-announcement may print a secret: a Bitwarden note body travels on stdin, a
-broker credential in a file, a bearer token in a mode-600 `curl` config, so
-what reaches the terminal is a verb, an id, and a path.
+announcement may print a secret: a broker credential travels in a file, a
+bearer token in a mode-600 `curl` config, so what reaches the terminal is a
+verb, an id, and a path.
 
 **Whose password prompt it is.** nix-darwin and NixOS activate as root, and the
 backend elevates for that itself. Unannounced, `sudo` interrupts the build from
@@ -250,7 +249,7 @@ depends on whether there is one:
 - Started from a terminal (stdin and stdout both a tty), the job is handed that
   terminal with `systemd-run --pty`. Activation output streams as `nh` produces
   it, and whatever the activation or the reviews below ask for — a `sudo`
-  password, the Bitwarden password behind a provisioning offer — is answerable
+  password, the elevation behind a provisioning offer — is answerable
   in place. The trade is that the job ends with the terminal instead of
   outliving it; its log records where the output went rather than a copy of it,
   so `apply-status` cannot claim a transcript it never captured.
@@ -272,61 +271,37 @@ never resolved automatically; skipping the review keeps every local value.
 apply also reports the provisioning surfaces this machine has left
 unconfigured: Babel session-archive health from the placed storage document
 and the stamp Babel's push wrapper writes (see
-[Agent tools](agent-tools.md#session-archive)), and an incomplete Git
-identity — a `user.signingKey` whose public file is missing, or a reachable
-agent holding no keys. Without a terminal each one prints the command that
-fixes it and nothing else. On a terminal a surface with a ceremony becomes an
-offer (`run atyrode provision git now?`), and accepting runs exactly that
-command in this terminal — what apply does and what the operator would have
-typed are the same thing. Declining prints the reminder unchanged. The archive
-has no ceremony to offer: its document is a clan var placed by the activation
-itself, so a machine without one is told which generation it is owed
-(`clan vars generate HOST` on an operator device, then apply), a configured
-machine that has never pushed successfully gets `babel archive status` and
-`babel archive push`, and an archive that has not succeeded within 48 hours
-is reported stale. None of this can fail the activation: a machine that
-declines to provision is still a machine that activated.
+[Agent tools](agent-tools.md#session-archive)), and a Git identity whose
+signing key activation has not placed yet. Without a terminal each one prints
+the command that fixes it and nothing else. On a terminal a surface with a
+ceremony becomes an offer (`run atyrode provision machine-key now?`), and
+accepting runs exactly that command in this terminal — what apply does and
+what the operator would have typed are the same thing. Declining prints the
+reminder unchanged. The archive and the Git identity have no ceremony to
+offer: each is a clan var placed by the activation itself, so a machine
+without one is told which generation it is owed (`clan vars generate HOST` on
+an operator device, then apply). A configured archive that has never pushed
+successfully gets `babel archive status` and `babel archive push`, and an
+archive that has not succeeded within 48 hours is reported stale. None of
+this can fail the activation: a machine that declines to provision is still a
+machine that activated.
 
-An offer resolves the prerequisites it knows about before asking about the
-surface, because a question is only fair if the answer can work. Prerequisites
-are declared once in `fleet/provisioning.json` as an ordered chain per
-surface -- the Git identity needs a Bitwarden session -- and each carries what
-is lost without it. On a terminal every unmet link becomes its own offer, in
-declared order:
-
-```
-Git identity is not configured: ...
-  Git identity needs a Bitwarden session, and without it no secret can be read on this machine, so nothing the vault holds can be configured
-atyrode: run atyrode vault login now? [y/N] y
-  $ atyrode vault login
-atyrode: run atyrode provision git for macbook now? [y/N]
-```
-
-Telling an operator who is sitting at the prompt to go and type a command this
-CLI owns wastes the one moment they are there to answer, and the ceremony would
-only fail on it again, one link further in and a password poorer. Each link is
-asked for separately because declining one makes every question after it moot,
-and because links are shared: every surface that wants the same session
-settles it once, and the next stops asking. Off a terminal the chain is stated
-instead, since there is nobody to answer.
-
-The session a link opens survives the rest of the run. `atyrode vault login`
-runs as its own process, so it hands its session key back through a private
-file the parent created and removes; the ceremony that follows inherits it and
-never asks for the master password a second time. The key itself is captured
-with `bw login --raw` and never displayed: a plain `bw login` ends by printing
-the key it minted as copy-paste advice, onto the terminal and into any
-transcript the operator shares.
-
-The vault command is `atyrode vault login`, which pins this fleet's EU server
-before logging in. A bare `bw login` reaches the US default and fails a first
-login with a misleading "invalid master password", so it is never the advice
-given.
+Every surface is declared once in `fleet/provisioning.json` with the command
+that configures it and what that command implies, and none of them declares a
+prerequisite: nothing on a machine needs a session opened before it can be
+configured, because every secret a surface needs is a clan var that activation
+placed. A surface is therefore either offered, when the command is a ceremony
+this CLI owns and runs here (`atyrode provision machine-key`, `atyrode
+operator init`, `atyrode runtime provision local-qwen`, `atyrode runtime
+provision manifold-agent`), or told, when the command runs on an operator
+device and this machine only reports what it is owed (the Git identity, the
+archive document, the broker token). Off a terminal both are stated without a
+question, since there is nobody to answer.
 
 When an accepted ceremony stops anyway, the reason is the ceremony's own and
 the follow-up says so: `clear what it reported above, then: atyrode provision
-git`. Naming the same command as a retry would send an operator to collect
-the identical failure.
+machine-key`. Naming the same command as a retry would send an operator to
+collect the identical failure.
 
 Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
 selected host and capabilities, installable, source, backend, revision,
@@ -409,14 +384,14 @@ job.
 The generated section carries the generation timestamp and the dotfiles
 revision the CLI came from; this host's registry identity, platform,
 activation owner, and capabilities; the other registered hosts by name and
-role; which CLIs are authenticated here and as whom (`gh`, `clever`, and the
-Bitwarden vault state), each missing session with the exact command that
-acquires it; the secrets readable here by name (none until ADR 0008 step 3,
-which the section says in so many words); the fleet cache substituter from the
-inventory and whether this machine's Nix daemon trusts it; and the canonical
-clone root, which no registry field declares yet, so the section says so
-rather than guess. It never contains a secret value: a session is reported by
-account name, a secret by its name and path.
+role; which CLIs are authenticated here and as whom (`gh` and `clever`), each
+missing session with the exact command that acquires it; the secrets readable
+here, which are the clan vars under `/run/secrets/vars` this account can read,
+listed by generator and file name with the path each is read from; the fleet
+cache substituter from the inventory and whether this machine's Nix daemon
+trusts it; and the canonical clone root, which no registry field declares yet,
+so the section says so rather than guess. It never contains a secret value: a
+session is reported by account name, a secret by its name and path.
 
 `doctor provisioning` carries the matching `agent-context` surface: `ok` when
 the file is fresh, `degraded` with remediation `atyrode context render` when
@@ -499,7 +474,7 @@ atyrode runtime shortcut local-qwen
 atyrode runtime enroll manifold-agent HOST [--rotate-token]
 atyrode runtime provision manifold-agent
 atyrode runtime status manifold-agent --json
-atyrode provision git
+atyrode provision machine-key
 atyrode auth broker status --json
 atyrode auth broker add-api-key PROVIDER
 atyrode inventory --json
@@ -514,9 +489,15 @@ atyrode doctor git --json
 atyrode doctor tools --json
 ```
 
-`provision git` reconciles this machine's Git SSH auth/signing keys against
-the Bitwarden vault (one-time, interactive); custody details live in
-[git-keys](git-keys.md).
+`provision machine-key` is the only `provision` verb left,
+described under [Machine key](#machine-key). The Git identity has no verb of
+its own: its authentication and signing keys are a clan var generated on an
+operator device and placed by activation, and Git and `ssh` read them
+directly; `doctor provisioning` reports the `git-identity` surface as
+`not-applicable` on a portable profile, `degraded` while the key is not placed
+(with `clan vars generate <host>` on an operator device, then `atyrode apply`,
+as the remedy), and `ok` once it is. The custody model is in
+[secrets.md](secrets.md#git-identity).
 
 Managed `local-qwen` OMP processes hold independent session leases. Ten minutes
 after the final session closes, the WSL idle reaper verifies that vLLM has no
@@ -578,15 +559,19 @@ so a machine that installed successfully years ago is re-examined on every
 check IDs, row schema, statuses, exits, and read-only probe contract are
 documented in [Home Manager and system boundary](system-boundary.md).
 `doctor git [--json]` is the matching user-side, read-only audit. Its ordered
-checks cover Git configuration readability, SSH-agent availability and loaded
-keys, the configured signing public key and permissions, exact managed
-`allowed_signers` content, the current repository's effective fetch/push
-protocols, plaintext Git helpers/files, the declarative `gh` helper, and `gh`
-token-storage classification. `failed` checks return 69; `warning` rows (for
-example, an HTTPS forge push with no recognized secure helper) remain visible
-without making the report fail. JSON uses schema version 1 and never includes
-keys, tokens, helper arguments, or remote URLs. Bootstrap, headless policy,
-rotation, revocation, recovery, and platform verification are documented in
-[Git SSH authentication and signing](git-keys.md).
+checks cover Git configuration readability; the configured signing key, which
+must be the private key activation placed, readable by this account and at
+mode 0600 or stricter (`signing-key-invalid`, or `not-fleet-member` on a
+portable profile); the managed `allowed_signers` file, which must match the
+repository's content exactly and name this machine's public signing key
+(`allowed-signers-drift`, `signing-key-unreviewed`); the current repository's
+effective fetch/push protocols; plaintext Git credential helpers and files;
+the declarative `gh` helper; and `gh` token-storage classification. It asks no
+agent anything, because Git signs with the placed key directly. `failed`
+checks return 69; `warning` rows (for example, an HTTPS forge push with no
+recognized secure helper) remain visible without making the report fail. JSON
+uses schema version 1 and never includes keys, tokens, helper arguments, or
+remote URLs. The key model, enrolment, and revocation are documented in
+[secrets.md](secrets.md#git-identity).
 The `workspace` and `agent` namespaces are reserved for their owning follow-up
 issues and currently fail clearly.

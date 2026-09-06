@@ -2,6 +2,16 @@
 
 let
   fixtures = import ../lib/atyrode-fixtures.nix { inherit pkgs; };
+  # A signing identity the check owns: the private key doctor git is pointed
+  # at, and a signer set that reviews it. The CLI under test is built against
+  # that set, so "authorized" is reachable without committing a fixture key to
+  # the fleet's own allowed-signers.
+  fixtureSigner = pkgs.runCommand "fixture-git-signer" { nativeBuildInputs = [ pkgs.openssh ]; } ''
+    mkdir -p "$out"
+    ssh-keygen -q -t ed25519 -N "" -C "alex@tyrode.dev (fixture signing)" -f "$out/signing-key"
+    printf 'alex@tyrode.dev %s\n' "$(cut -d' ' -f1,2 "$out/signing-key.pub")" > "$out/allowed-signers"
+  '';
+  signerAtyrode = atyrode.override { gitAllowedSigners = "${fixtureSigner}/allowed-signers"; };
 in
 pkgs.runCommand "check-atyrode-credentials"
   {
@@ -14,45 +24,6 @@ pkgs.runCommand "check-atyrode-credentials"
   ''
     ${fixtures.base}
     ${fixtures.gitNh}
-    cat > "$TMPDIR/bin/bw" <<'EOF'
-    #!${pkgs.runtimeShell}
-    printf '%s\n' "$*" >> "$TMPDIR/bw-args"
-    case "$*" in
-      status) printf '{"status":"%s"}\n' "''${ATYRODE_TEST_BW_STATUS:-unlocked}" ;;
-      login|'login --raw'|sync|lock) ;;
-      'config server') printf '%s\n' 'https://vault.bitwarden.com' ;;
-      'config server '*) ;;
-      'list items --search vault-existing')
-        printf '%s\n' '[{"id":"vault-existing-id","name":"vault-existing","type":2}]'
-        ;;
-      'list items --search vault-login')
-        printf '%s\n' '[{"id":"vault-login-id","name":"vault-login","type":1}]'
-        ;;
-      'list items --search vault-duplicate')
-        printf '%s\n' \
-          '[{"id":"duplicate-1","name":"vault-duplicate","type":2},{"id":"duplicate-2","name":"vault-duplicate","type":2}]'
-        ;;
-      'list items --search '*) printf '%s\n' '[]' ;;
-      'get template item')
-        printf '%s\n' '{"type":2,"name":"","notes":null,"secureNote":{"type":0}}'
-        ;;
-      'get item vault-existing-id')
-        printf '%s\n' '{"id":"vault-existing-id","name":"vault-existing","type":2,"notes":"VAULT-OLD-SECRET","secureNote":{"type":0}}'
-        ;;
-      'get item '*)
-        printf '%s\n' '{"id":"f0b39ebf-62ae-4198-808b-b4b200002e8c","name":"Tyrode Clan operator age identity","notes":"# created: 2026-08-25T00:00:00Z\n# public key: age1test\nAGE-SECRET-KEY-1TESTONLY"}'
-        ;;
-      encode)
-        tee "$TMPDIR/bw-encoded-input" >/dev/null
-        printf '%s\n' 'ENCODED'
-        ;;
-      'create item'|'edit item '*)
-        test "$(cat)" = ENCODED
-        printf '%s\n' '{"notes":"VAULT-WRITE-RESPONSE-MUST-NOT-PRINT"}'
-        ;;
-      *) exit 64 ;;
-    esac
-    EOF
     cat > "$TMPDIR/bin/age-keygen" <<'EOF'
     #!${pkgs.runtimeShell}
     [[ "''${1:-}" == -y ]] || exit 64
@@ -105,32 +76,31 @@ pkgs.runCommand "check-atyrode-credentials"
       printf '%s\n' "{\"ok\":true,\"host\":\"''${ATYRODE_TEST_REPORTED_HOST:-fixture-nixos}\"}"
     fi
     EOF
-    chmod +x "$TMPDIR/bin/bw" "$TMPDIR/bin/age-keygen" \
+    chmod +x "$TMPDIR/bin/age-keygen" \
       "$TMPDIR/bin/fleet-clan" "$TMPDIR/bin/fleet-nix" "$TMPDIR/bin/fleet-ssh"
     mkdir -p "$TMPDIR/repo"
     touch "$TMPDIR/repo/flake.nix"
     export PATH="$TMPDIR/bin:$PATH"
-    # doctor git is read-only and reports classifications only. The fixture
-    # gives it a real Git config, repository, SSH agent, and public key files;
-    # private fixture material remains inside TMPDIR.
+    # doctor git is read-only and reports classifications only. The identity it
+    # judges is a placed private key: readable by this account, by nobody else,
+    # and reviewed by the signer set the CLI was built with. No agent is
+    # consulted, so none is started.
     (
       export HOME="$TMPDIR/git-doctor-home"
       export XDG_CONFIG_HOME="$HOME/.config"
       export GH_CONFIG_DIR="$XDG_CONFIG_HOME/gh"
       export GIT_CONFIG_GLOBAL="$XDG_CONFIG_HOME/git/config"
       export GIT_CONFIG_NOSYSTEM=1
-      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-      mkdir -p "$HOME/.ssh" "$XDG_CONFIG_HOME/git" "$GH_CONFIG_DIR" "$TMPDIR/git-doctor-repo"
+      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN SSH_AUTH_SOCK
+      mkdir -p "$XDG_CONFIG_HOME/git" "$GH_CONFIG_DIR" "$TMPDIR/git-doctor-repo" "$TMPDIR/placed"
 
       git_doctor=${pkgs.gitMinimal}/bin/git
-      read -r _ signing_type signing_blob < ${../../modules/home/git/allowed-signers}
-      printf '%s %s fixture-signing-key\n' "$signing_type" "$signing_blob" \
-        > "$HOME/.ssh/id_ed25519_git_signing.pub"
-      chmod 0644 "$HOME/.ssh/id_ed25519_git_signing.pub"
-      cp ${../../modules/home/git/allowed-signers} "$XDG_CONFIG_HOME/git/allowed_signers"
+      doctor_git() { ${signerAtyrode}/bin/atyrode doctor git "$@"; }
+      install -m 0600 ${fixtureSigner}/signing-key "$TMPDIR/placed/signing-key"
+      cp ${fixtureSigner}/allowed-signers "$XDG_CONFIG_HOME/git/allowed_signers"
       chmod 0644 "$XDG_CONFIG_HOME/git/allowed_signers"
 
-      "$git_doctor" config --global user.signingKey "$HOME/.ssh/id_ed25519_git_signing.pub"
+      "$git_doctor" config --global user.signingKey "$TMPDIR/placed/signing-key"
       "$git_doctor" config --global gpg.format ssh
       "$git_doctor" config --global gpg.ssh.allowedSignersFile "$XDG_CONFIG_HOME/git/allowed_signers"
       "$git_doctor" config --global --add credential.https://github.com.helper ""
@@ -141,13 +111,8 @@ pkgs.runCommand "check-atyrode-credentials"
       "$git_doctor" -C "$TMPDIR/git-doctor-repo" remote add origin \
         https://github.com/atyrode/fixture.git
 
-      ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -f "$TMPDIR/agent-key"
-      eval "$(${pkgs.openssh}/bin/ssh-agent -s)" >/dev/null
-      trap '${pkgs.openssh}/bin/ssh-agent -k >/dev/null 2>&1 || true' EXIT
-      ${pkgs.openssh}/bin/ssh-add "$TMPDIR/agent-key" >/dev/null 2>&1
-
       cd "$TMPDIR/git-doctor-repo"
-      git_result="$(atyrode doctor git --json)"
+      git_result="$(doctor_git --json)"
       jq -e '
         .schemaVersion == 1
         and .command == "doctor git"
@@ -155,8 +120,6 @@ pkgs.runCommand "check-atyrode-credentials"
         and .mutationBoundary == "read-only probes"
         and (.checks | map(.id)) == [
           "git-configuration",
-          "ssh-agent",
-          "ssh-agent-keys",
           "signing-key",
           "allowed-signers",
           "remote-protocol",
@@ -165,17 +128,20 @@ pkgs.runCommand "check-atyrode-credentials"
           "gh-credential-helper",
           "gh-auth-storage"
         ]
+        and (.checks[] | select(.id == "signing-key") | .actual.privateKey and .actual.permissionsPrivate)
         and (.checks[] | select(.id == "allowed-signers") | .actual.signingKeyAuthorized)
         and (.checks[] | select(.id == "remote-protocol") | .actual.httpsFetchUrls) == 1
         and (.checks[] | select(.id == "remote-protocol") | .actual.sshPushUrls) == 1
         and (.checks[] | select(.id == "gh-credential-helper") | .status) == "ok"
         and (.checks[] | select(.id == "gh-auth-storage") | .status) == "not-applicable"
       ' <<<"$git_result" >/dev/null
+      # The report classifies; it never carries the key.
+      ! grep -qF 'PRIVATE KEY' <<<"$git_result"
 
       "$git_doctor" config --global --unset-all 'url.git@github.com:.pushInsteadOf'
       "$git_doctor" config --global --unset-all credential.https://github.com.helper
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-https.json"
+      doctor_git --json > "$TMPDIR/git-doctor-https.json"
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 69
@@ -190,7 +156,7 @@ pkgs.runCommand "check-atyrode-credentials"
 
       "$git_doctor" config --global credential.helper store
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-store.json"
+      doctor_git --json > "$TMPDIR/git-doctor-store.json"
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 69
@@ -201,7 +167,7 @@ pkgs.runCommand "check-atyrode-credentials"
 
       printf 'https://fixture:placeholder@github.com\n' > "$HOME/.git-credentials"
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-credential-file.json"
+      doctor_git --json > "$TMPDIR/git-doctor-credential-file.json"
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 69
@@ -210,27 +176,64 @@ pkgs.runCommand "check-atyrode-credentials"
       ' "$TMPDIR/git-doctor-credential-file.json" >/dev/null
       rm "$HOME/.git-credentials"
 
+      # Drift from the managed signer set is one failure; a managed set that
+      # does not name this machine's key is another, with the review as remedy.
       printf '# drift\n' >> "$XDG_CONFIG_HOME/git/allowed_signers"
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-signers.json"
+      doctor_git --json > "$TMPDIR/git-doctor-signers.json"
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 69
       jq -e '
-        (.checks[] | select(.id == "allowed-signers") | .status) == "failed"
+        (.checks[] | select(.id == "allowed-signers") | .code) == "allowed-signers-drift"
       ' "$TMPDIR/git-doctor-signers.json" >/dev/null
       cp ${../../modules/home/git/allowed-signers} "$XDG_CONFIG_HOME/git/allowed_signers"
-
-      chmod 0666 "$HOME/.ssh/id_ed25519_git_signing.pub"
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-key-mode.json"
+      atyrode doctor git --json > "$TMPDIR/git-doctor-unreviewed.json"
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 69
       jq -e '
-        (.checks[] | select(.id == "signing-key") | .actual.permissionsSafe) == false
+        (.checks[] | select(.id == "allowed-signers") | .code) == "signing-key-unreviewed"
+        and (.checks[] | select(.id == "allowed-signers") | .remediation | contains("reviewed commit"))
+      ' "$TMPDIR/git-doctor-unreviewed.json" >/dev/null
+      cp ${fixtureSigner}/allowed-signers "$XDG_CONFIG_HOME/git/allowed_signers"
+
+      # A private key another account can read is not private.
+      chmod 0644 "$TMPDIR/placed/signing-key"
+      set +e
+      doctor_git --json > "$TMPDIR/git-doctor-key-mode.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "signing-key") | .actual.permissionsPrivate) == false
       ' "$TMPDIR/git-doctor-key-mode.json" >/dev/null
-      chmod 0644 "$HOME/.ssh/id_ed25519_git_signing.pub"
+      chmod 0600 "$TMPDIR/placed/signing-key"
+
+      # A public key at user.signingKey was the vault-era shape; it is not a
+      # private key and cannot sign, so it is refused rather than passed.
+      "$git_doctor" config --global user.signingKey "${fixtureSigner}/signing-key.pub"
+      set +e
+      doctor_git --json > "$TMPDIR/git-doctor-public.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.checks[] | select(.id == "signing-key") | .code) == "signing-key-invalid"
+        and (.checks[] | select(.id == "signing-key") | .actual.privateKey) == false
+      ' "$TMPDIR/git-doctor-public.json" >/dev/null
+
+      # No key at all is a portable profile, which signs nothing and is not
+      # broken for it; the signer set is still judged on its own.
+      "$git_doctor" config --global --unset user.signingKey
+      unconfigured="$(doctor_git --json)"
+      jq -e '
+        .ok
+        and (.checks[] | select(.id == "signing-key") | .status) == "not-applicable"
+        and (.checks[] | select(.id == "allowed-signers") | .status) == "ok"
+      ' <<<"$unconfigured" >/dev/null
+      "$git_doctor" config --global user.signingKey "$TMPDIR/placed/signing-key"
 
       mkdir -p "$TMPDIR/git-doctor-bin"
     cat > "$TMPDIR/git-doctor-bin/gh" <<'EOF'
@@ -241,7 +244,7 @@ pkgs.runCommand "check-atyrode-credentials"
       export PATH="$TMPDIR/git-doctor-bin:$PATH"
       printf '%s\n' 'github.com:' '    users:' '        atyrode:' \
         > "$GH_CONFIG_DIR/hosts.yml"
-      keyring_result="$(atyrode doctor git --json)"
+      keyring_result="$(doctor_git --json)"
       jq -e '
         .ok
         and (.checks[] | select(.id == "gh-auth-storage") | .status) == "ok"
@@ -253,7 +256,7 @@ pkgs.runCommand "check-atyrode-credentials"
         oauth_token: fixture-token-must-not-appear
     EOF
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-gh-plaintext.json"
+      doctor_git --json > "$TMPDIR/git-doctor-gh-plaintext.json"
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 69
@@ -264,92 +267,24 @@ pkgs.runCommand "check-atyrode-credentials"
       ! grep -qF fixture-token-must-not-appear "$TMPDIR/git-doctor-gh-plaintext.json"
       rm "$GH_CONFIG_DIR/hosts.yml"
 
-      ${pkgs.openssh}/bin/ssh-agent -k >/dev/null
-      unset SSH_AUTH_SOCK SSH_AGENT_PID
-      trap - EXIT
       set +e
-      atyrode doctor git --json > "$TMPDIR/git-doctor-no-agent.json"
-      git_doctor_status="$?"
-      set -e
-      test "$git_doctor_status" = 69
-      jq -e '
-        (.checks[] | select(.id == "ssh-agent") | .status) == "failed"
-        and (.checks[] | select(.id == "ssh-agent-keys") | .status) == "failed"
-      ' "$TMPDIR/git-doctor-no-agent.json" >/dev/null
-
-      set +e
-      atyrode doctor git --unknown >/dev/null 2>&1
+      doctor_git --unknown >/dev/null 2>&1
       git_doctor_status="$?"
       set -e
       test "$git_doctor_status" = 64
     )
-    vault_test_env=(env ATYRODE_BW="$TMPDIR/bin/bw")
-    # Reading the vault says nothing: a status probe is not a mutation, and an
-    # operator wants the four commands that act, not the forty that look.
-    "''${vault_test_env[@]}" atyrode vault status --json \
-      >"$TMPDIR/vault-status-out" 2>"$TMPDIR/vault-status-err"
-    jq -e '.status == "unlocked"' "$TMPDIR/vault-status-out" >/dev/null
-    test ! -s "$TMPDIR/vault-status-err"
-    vault_get="$("''${vault_test_env[@]}" atyrode vault get vault-existing \
-      2>"$TMPDIR/vault-get-err")"
-    test "$vault_get" = VAULT-OLD-SECRET
-    # A sync pulls the vault over the network, so it is shown even on a read.
-    grep -qE '^\$ .*bw sync$' "$TMPDIR/vault-get-err"
 
-    printf '%s' VAULT-NEW-SECRET |
-      "''${vault_test_env[@]}" atyrode vault put vault-new \
-        >"$TMPDIR/vault-put-out" 2>"$TMPDIR/vault-put-err"
-    test ! -s "$TMPDIR/vault-put-out"
-    grep -qF 'created Bitwarden Secure Note vault-new' "$TMPDIR/vault-put-err"
-    jq -e '.name == "vault-new" and .type == 2 and .secureNote.type == 0
-      and .notes == "VAULT-NEW-SECRET"' "$TMPDIR/bw-encoded-input" >/dev/null
-    ! grep -qF 'VAULT-NEW-SECRET' "$TMPDIR/bw-args"
-    ! grep -qF 'VAULT-WRITE-RESPONSE-MUST-NOT-PRINT' \
-      "$TMPDIR/vault-put-out" "$TMPDIR/vault-put-err"
-    # Writing to the operator's live Bitwarden account is a mutation like any
-    # other, so it is announced -- and announcing means printing argv next to a
-    # secret, which is exactly why the printed line is checked for it. The note
-    # body reaches bw on stdin, so the announcement carries a verb and an id.
-    grep -qE '^\$ .*bw sync$' "$TMPDIR/vault-put-err"
-    grep -qE '^\$ .*bw create item$' "$TMPDIR/vault-put-err"
-    ! grep -qF 'VAULT-NEW-SECRET' "$TMPDIR/vault-put-err"
-
-    printf '%s' VAULT-UPDATED-SECRET |
-      "''${vault_test_env[@]}" atyrode vault put vault-existing \
-        >"$TMPDIR/vault-edit-out" 2>"$TMPDIR/vault-edit-err"
-    test ! -s "$TMPDIR/vault-edit-out"
-    grep -qF 'updated Bitwarden Secure Note vault-existing' "$TMPDIR/vault-edit-err"
-    jq -e '.id == "vault-existing-id" and .notes == "VAULT-UPDATED-SECRET"' \
-      "$TMPDIR/bw-encoded-input" >/dev/null
-    grep -qF 'edit item vault-existing-id' "$TMPDIR/bw-args"
-
-    if "''${vault_test_env[@]}" atyrode vault get vault-missing >/dev/null 2>&1; then
-      echo 'vault get must reject a missing Secure Note' >&2
-      exit 1
-    fi
-    if "''${vault_test_env[@]}" atyrode vault get vault-login >/dev/null 2>&1; then
-      echo 'vault get must reject a non-note item' >&2
-      exit 1
-    fi
-    if "''${vault_test_env[@]}" atyrode vault get vault-duplicate >/dev/null 2>&1; then
-      echo 'vault get must reject duplicate exact names' >&2
-      exit 1
-    fi
-    ! grep -qxF lock "$TMPDIR/bw-args"
-
-    # A first login on a fresh machine must pin the operator's EU server
-    # before authenticating: bw defaults to vault.bitwarden.com and then
-    # rejects the correct master password with a misleading error.
-    "''${vault_test_env[@]}" ATYRODE_TEST_BW_STATUS=unauthenticated _ATYRODE_TEST_TTY=1 \
-      atyrode vault login >/dev/null
-    grep -qxF 'config server https://vault.bitwarden.eu' "$TMPDIR/bw-args"
-    # --raw and nothing else: a plain login ends by printing the session key it
-    # minted as copy-paste advice, which puts the one secret this flow exists to
-    # protect into the terminal, the scrollback, and any captured transcript.
-    # The raw form emits only the key, on stdout, where it is captured and
-    # never shown.
-    grep -qxF 'login --raw' "$TMPDIR/bw-args"
-
+    # The vault verbs are gone with the ceremony they served (ADR 0008 step 6):
+    # every secret is a clan var, and a Bitwarden session is nothing atyrode
+    # asks for or knows how to open.
+    for retired in 'vault status' 'vault login' 'vault get x' 'provision git'; do
+      set +e
+      # shellcheck disable=SC2086
+      atyrode $retired >/dev/null 2>"$TMPDIR/retired.err"
+      retired_status="$?"
+      set -e
+      test "$retired_status" = 64 || { echo "atyrode $retired must be refused as unknown (exit $retired_status)" >&2; exit 1; }
+    done
     # --- fleet plan/apply: deploying a machine the operator is not sitting at -
     # The fixture host is a clan machine of this repository, so the whole
     # ceremony is this flake plus clan; no second repository, no vault, no
@@ -441,64 +376,6 @@ pkgs.runCommand "check-atyrode-credentials"
     fi
     grep -qF 'does not report itself as fixture-nixos' "$TMPDIR/fleet-mismatch.err"
 
-    # --- provision git (#8): vault-backed per-machine key custody -------------
-    # A stateful vault stub emulates Bitwarden storage, a REAL ssh-agent and
-    # ssh-keygen exercise the custody mechanics: generate on one home, recover
-    # on a second home from the vault alone, and prove the two homes hold the
-    # same identities while no private key ever lands on disk (memory default).
-    export VAULT_STORE="$TMPDIR/vault-store"
-    mkdir -p "$VAULT_STORE"
-    cat > "$TMPDIR/bin/vault-bw" <<'EOF'
-    #!${pkgs.runtimeShell}
-    set -eu
-    note_id() { printf 'note-%s\n' "$(printf '%s' "$1" | base64 -w0 | tr '+/=' '._-')"; }
-    case "$*" in
-      status) printf '{"status":"unlocked"}\n' ;;
-      sync|lock) ;;
-      'list items --search '*)
-        all="$*"
-        name="''${all#list items --search }"
-        id="$(note_id "$name")"
-        if [[ -f "$VAULT_STORE/$id" ]]; then
-          jq -nc --arg id "$id" --arg name "$name" '[{id:$id,name:$name,type:2}]'
-        else
-          printf '[]\n'
-        fi
-        ;;
-      'get template item')
-        printf '%s\n' '{"type":2,"name":"","notes":null,"secureNote":{"type":0}}'
-        ;;
-      'get item note-'*)
-        id="$3"
-        [[ -f "$VAULT_STORE/$id" ]] || exit 64
-        jq -nc --arg id "$id" --rawfile notes "$VAULT_STORE/$id" \
-          '{id:$id,type:2,secureNote:{type:0},notes:$notes}'
-        ;;
-      encode)
-        tee "$VAULT_STORE/.encode-last" >/dev/null
-        printf 'ENCODED\n'
-        ;;
-      'create item')
-        test "$(cat)" = ENCODED
-        name="$(jq -r '.name' "$VAULT_STORE/.encode-last")"
-        jq -rj '.notes' "$VAULT_STORE/.encode-last" > "$VAULT_STORE/$(note_id "$name")"
-        printf '{}\n'
-        ;;
-      'edit item '*)
-        test "$(cat)" = ENCODED
-        name="$(jq -r '.name' "$VAULT_STORE/.encode-last")"
-        jq -rj '.notes' "$VAULT_STORE/.encode-last" > "$VAULT_STORE/$(note_id "$name")"
-        printf '{}\n'
-        ;;
-      *) exit 64 ;;
-    esac
-    EOF
-    cat > "$TMPDIR/bin/gh-stub" <<'EOF'
-    #!${pkgs.runtimeShell}
-    printf '%s\n' "$*" >> "$TMPDIR/gh-args"
-    EOF
-    chmod +x "$TMPDIR/bin/vault-bw" "$TMPDIR/bin/gh-stub"
-
     cat > "$TMPDIR/bin/auth-systemctl" <<'EOF'
     #!${pkgs.runtimeShell}
     case "$*" in
@@ -530,52 +407,6 @@ pkgs.runCommand "check-atyrode-credentials"
     printf '{"entries":[{"provider":"deepseek","credential":{"type":"api_key","key":"redacted-in-test-response"}}]}\n' > "$output"
     EOF
     chmod +x "$TMPDIR/bin/auth-systemctl" "$TMPDIR/bin/auth-curl"
-
-    eval "$(${pkgs.openssh}/bin/ssh-agent -s)" >/dev/null
-    provision_env=(env ATYRODE_BW="$TMPDIR/bin/vault-bw" ATYRODE_GH="$TMPDIR/bin/gh-stub" \
-      _ATYRODE_TEST_HOSTNAME=fixture-host)
-
-    # No agent socket → fail closed, never downgrade.
-    if "''${provision_env[@]}" SSH_AUTH_SOCK= atyrode provision git --yes >/dev/null 2>&1; then
-      echo 'provision git unexpectedly ran without an ssh-agent' >&2
-      exit 1
-    fi
-
-    # Fresh machine: generate both identities, vault first, agent memory only.
-    "''${provision_env[@]}" atyrode provision git --yes 2> "$TMPDIR/provision-fresh.err"
-    test -f "$HOME/.ssh/id_ed25519.pub"
-    test -f "$HOME/.ssh/id_ed25519_git_signing.pub"
-    test ! -e "$HOME/.ssh/id_ed25519"
-    test ! -e "$HOME/.ssh/id_ed25519_git_signing"
-    test "$(${pkgs.openssh}/bin/ssh-add -l | wc -l)" = 2
-    test -f "$VAULT_STORE/$(printf 'note-%s' "$(printf '%s' 'Git SSH auth key (fixture-host)' | base64 -w0 | tr '+/=' '._-')")"
-    grep -qF -- 'ssh-key add' "$TMPDIR/gh-args"
-    grep -qF -- '--type signing' "$TMPDIR/gh-args"
-    grep -qF 'not yet in modules/home/git/allowed-signers' "$TMPDIR/provision-fresh.err"
-    auth_fingerprint="$(${pkgs.openssh}/bin/ssh-keygen -lf "$HOME/.ssh/id_ed25519.pub" | awk '{print $2}')"
-    signing_fingerprint="$(${pkgs.openssh}/bin/ssh-keygen -lf "$HOME/.ssh/id_ed25519_git_signing.pub" | awk '{print $2}')"
-    test "$auth_fingerprint" != "$signing_fingerprint"
-
-    # Re-run: reconciles against the vault without generating or minting.
-    "''${provision_env[@]}" atyrode provision git --yes 2> "$TMPDIR/provision-again.err"
-    gh_calls="$(grep -cF 'ssh-key add' "$TMPDIR/gh-args")"
-    if [[ "$gh_calls" != 2 ]]; then
-      echo "re-run minted new keys: $gh_calls gh registrations" >&2
-      cat "$TMPDIR/gh-args" >&2
-      cat "$TMPDIR/provision-again.err" >&2
-      exit 1
-    fi
-
-    # Blank-machine recovery: a second home materializes the same identities
-    # from the vault alone; --persist writes the 0600 private files.
-    recovery_home="$TMPDIR/recovery-home"
-    mkdir -p "$recovery_home"
-    HOME="$recovery_home" "''${provision_env[@]}" atyrode provision git --yes --persist >/dev/null 2>&1
-    test "$(${pkgs.openssh}/bin/ssh-keygen -lf "$recovery_home/.ssh/id_ed25519.pub" | awk '{print $2}')" = "$auth_fingerprint"
-    test "$(${pkgs.openssh}/bin/ssh-keygen -lf "$recovery_home/.ssh/id_ed25519_git_signing.pub" | awk '{print $2}')" = "$signing_fingerprint"
-    test "$(stat -c %a "$recovery_home/.ssh/id_ed25519")" = 600
-    test "$(stat -c %a "$recovery_home/.ssh/id_ed25519_git_signing")" = 600
-    ${pkgs.openssh}/bin/ssh-agent -k >/dev/null 2>&1 || true
 
     # --- shared OMP auth broker: placed token, status, API keys --------------
     # The bearer token is a shared clan var sops-nix places and Home Manager

@@ -766,7 +766,7 @@ place_machine_key() { # host flake_source
   clan="$(clan_program)"
   install_program="$(command -v install)"
   local scratch staged
-  scratch="$(vault_secure_temp_dir atyrode-machine-key)"
+  scratch="$(secure_temp_dir atyrode-machine-key)"
   staged="$scratch/key.txt"
   local -a elevate=()
   [[ "$(id -u)" -eq 0 ]] || elevate=(sudo --)

@@ -191,9 +191,8 @@ per machine and never shared, so retiring a machine deletes one registration
 instead of rotating a key the whole fleet uses. The private halves are secrets
 placed by sops-nix and owned by the account that uses them; the public halves
 are ordinary values in `vars/`, which is what keeps the signer set reviewable.
-A generated signing key is trusted only when a commit adds it to
-[`modules/home/git/allowed-signers`](../modules/home/git/allowed-signers), and
-the `git-identity` check fails while a generated key is missing from that file.
+How Git and `ssh` consume them is its own section, [Git identity](#git-identity),
+below.
 
 The second is the pair in
 [`babel-archive`](../modules/shared/babel-archive.nix), Babel's storage
@@ -273,6 +272,50 @@ account whose agent reads it, and Home Manager forces the link
 path they always have; until the value exists the link dangles, which the
 units read as "not enrolled". Rotation is `--rotate-token` on the same
 enroll command, then an apply and an agent restart on the machine.
+
+## Git identity
+
+A machine's Git identity is the `git-identity` var and nothing else: no vault,
+no agent, no key generated on the machine. `clan vars generate <host>` on an
+operator device mints the two ed25519 keys and commits them encrypted to the
+`admins` group and the machine; the next `atyrode apply` places the private
+halves at `/run/secrets/vars/git-identity/auth-key` and
+`/run/secrets/vars/git-identity/signing-key`, mode 0600 and owned by the
+account, and `atyrode apply` from a machine that is not an operator device
+reports which device owes the generation rather than trying to mint anything.
+
+[`modules/home/git/default.nix`](../modules/home/git/default.nix) reads both
+through `atyrode.gitIdentity.{authKey,signingKey}`. `user.signingKey` is the
+placed *private* signing key, because `ssh-keygen -Y sign` reads a private key
+file directly and needs no agent to do it; `commit.gpgsign` is enabled only
+when an identity exists, so a machine with no key signs nothing rather than
+signing with a key nobody reviewed. Git reaches the forges through
+`core.sshCommand`, an `ssh -i <auth-key> -o IdentitiesOnly=yes` scoped to Git
+alone, so a forge is offered exactly this machine's key and never one an agent
+happens to hold, and the account's own `~/.ssh/config` stays its own.
+Portable profiles are not fleet members: they have no identity, sign
+nothing, and `doctor git` reports the signing key as `not-fleet-member`. On
+Linux the user `ssh-agent` Home Manager supervises remains for interactive
+`ssh` convenience only; Git does not go through it.
+
+The public halves are ordinary values under `vars/`, and the signing key is
+trusted only when a reviewed commit adds it to
+[`modules/home/git/allowed-signers`](../modules/home/git/allowed-signers),
+with `alex@tyrode.dev` as the principal. `checks/fleet/git-identity.nix` fails
+while a generated key is missing from that file, and on the machine `doctor
+git` reports `signing-key-unreviewed` for the same gap and
+`allowed-signers-drift` when the linked `allowed_signers` differs from the
+repository's. Registering the public keys with GitHub and GitLab (the signing
+key as a signing key, the auth key as an authentication key) is the
+operator's step on the forge, done once per machine.
+
+`doctor provisioning` carries the `git-identity` surface: `not-applicable` on
+a portable profile, `degraded` with the generation the machine is owed (`clan
+vars generate <host>` on an operator device, then `atyrode apply`) while the
+key is not placed, and `ok` when it is. Losing a machine is handled under
+[Revocation and rotation](#revocation-and-rotation): the machine's key leaves
+the fleet and its vars with it, its two public keys leave the forges and
+`allowed-signers` in a reviewed commit, and no other machine's key changes.
 
 ## Revocation and rotation
 

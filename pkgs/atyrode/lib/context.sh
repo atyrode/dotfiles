@@ -16,7 +16,6 @@ context_target() {
 # it. Repeated in every "not authenticated" line so an agent never has to ask.
 readonly context_gh_login='gh auth login'
 readonly context_clever_login='clever login'
-readonly context_vault_login='atyrode vault login'
 
 # gh's own status report names each account and where its token lives, never
 # the token; only the login of a session gh could validate is taken from it,
@@ -58,18 +57,19 @@ context_clever_json() {
   fi
 }
 
-# Bitwarden is state only: the session is device-bound and the vault reports
-# whether it is logged in and whether it is unlocked, which is all an agent
-# needs to know before it reaches for `atyrode vault get`.
-context_bitwarden_json() {
-  local state
-  state="$(bw_cli status 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)"
-  jq -nc --arg state "$state" --arg acquire "$context_vault_login" '{
-    available: ($state != ""),
-    authenticated: ($state == "locked" or $state == "unlocked"),
-    vault: (if $state == "" then null else $state end),
-    acquire: $acquire
-  }'
+# The secrets this account can read are the clan vars sops-nix placed for it:
+# each is named by generator and file with the path it is readable at, never
+# its value (AGENTS.md invariant 9). A file the account cannot read is not
+# listed, because "readable here" is the question an agent asks.
+context_secrets_json() {
+  local root=/run/secrets/vars entry
+  if [[ -d "$root" ]]; then
+    find "$root" -mindepth 2 -maxdepth 2 -type f -readable 2>/dev/null | sort |
+      jq -Rnc --arg root "$root" '[inputs | select(length > 0)
+        | {name: (ltrimstr($root + "/")), path: .}]'
+  else
+    printf '[]\n'
+  fi
 }
 
 # The fleet cache is trusted when the daemon lists both its URL and its key,
@@ -117,14 +117,14 @@ context_machine_json() {
     --argjson fleet "$fleet" \
     --argjson gh "$(context_gh_json)" \
     --argjson clever "$(context_clever_json)" \
-    --argjson bitwarden "$(context_bitwarden_json)" \
+    --argjson secrets "$(context_secrets_json)" \
     --argjson fleetCache "$(context_fleet_cache_json)" \
     --argjson cloneRoot "$clone_root" \
     --arg checkout "$checkout" \
     '{schemaVersion:1,command:"context",generatedAt:$generatedAt,revision:$revision,target:$target,
       host:$host,fleet:$fleet,
-      authentication:{gh:$gh,clever:$clever,bitwarden:$bitwarden},
-      secrets:{readable:[],note:"none yet; secrets arrive with ADR 0008 step 3 (clan vars over sops-nix)"},
+      authentication:{gh:$gh,clever:$clever},
+      secrets:{readable:$secrets},
       fleetCache:$fleetCache,
       cloneRoot:$cloneRoot,
       dotfilesCheckout:(if $checkout == "" then null else $checkout end)}'
@@ -137,11 +137,7 @@ context_render_section() { # machine-json
   jq -r '
     def auth(name; entry; noun):
       if entry.authenticated then
-        "- `\(name)`: authenticated" +
-          (if entry.account then " as `\(entry.account)`" else "" end) +
-          (if entry.vault then ", vault \(entry.vault)" +
-            (if entry.vault == "locked" then " (unlock with `\(entry.acquire)`)" else "" end)
-           else "" end)
+        "- `\(name)`: authenticated" + (if entry.account then " as `\(entry.account)`" else "" end)
       elif entry.available then
         "- `\(name)`: not authenticated; acquire \(noun) with `\(entry.acquire)`"
       else
@@ -165,12 +161,13 @@ context_render_section() { # machine-json
     "",
     auth("gh"; .authentication.gh; "a GitHub session"),
     auth("clever"; .authentication.clever; "a Clever Cloud session"),
-    auth("bw"; .authentication.bitwarden; "a Bitwarden session"),
     "",
     "### Secrets readable here",
     "",
-    (if (.secrets.readable | length) == 0 then "None yet; secrets arrive with ADR 0008 step 3 (clan vars over sops-nix). Until then the vault is the only secret store and `atyrode vault get NAME` is the explicit secret-output boundary."
-     else (.secrets.readable[] | "- `\(.name)`: \(.path)") end),
+    "Every secret is a clan var placed by activation (ADR 0008 step 3); nothing here opens a vault. Named by generator and file, at the path this account reads it from; values are never written to this file.",
+    "",
+    (if (.secrets.readable | length) == 0 then "- None placed for this account."
+     else (.secrets.readable[] | "- `\(.name)`: `\(.path)`") end),
     "",
     "### Nix cache",
     "",

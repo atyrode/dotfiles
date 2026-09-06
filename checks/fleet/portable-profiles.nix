@@ -110,7 +110,7 @@ assert lib.assertMsg (
 assert lib.assertMsg serverConfig.xdg.configFile."git/hooks/pre-commit".executable
   "the managed pre-commit hook must be executable";
 assert lib.assertMsg serverConfig.services.ssh-agent.enable
-  "portable server must supervise a user ssh-agent for vault-backed git keys (#8)";
+  "portable server must supervise a user ssh-agent for interactive ssh (#8)";
 assert lib.assertMsg serverConfig.programs.fzf.enable "portable server must enable fzf";
 assert lib.assertMsg serverConfig.programs.zoxide.enable "portable server must enable zoxide";
 assert lib.assertMsg serverConfig.programs.direnv.nix-direnv.enable

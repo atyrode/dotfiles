@@ -197,7 +197,7 @@ clan_write_command() { # checkout
 
 # guard_production_mutation refuses to run a store-mutating command when a
 # test-only tool-substitution override is present on a production binary. Those
-# vars (including ATYRODE_BW, ATYRODE_CLAN, ATYRODE_AGE_KEYGEN, ATYRODE_AGE_PLUGIN_SE, ATYRODE_NIX, ATYRODE_SSH,
+# vars (including ATYRODE_CLAN, ATYRODE_AGE_KEYGEN, ATYRODE_AGE_PLUGIN_SE, ATYRODE_NIX, ATYRODE_SSH,
 # ATYRODE_GIT, ATYRODE_NH, ATYRODE_SYSTEMD_RUN, and store/profile overrides)
 # are honoured only under enableTestHooks;
 # a production build silently ignores them, so a caller who sets them expecting stubs would instead
@@ -226,7 +226,7 @@ tool_exec() { # quiet|visible override_variable program argv...
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_AGE_KEYGEN ATYRODE_AGE_PLUGIN_SE ATYRODE_BW ATYRODE_CLAN ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_SSH_KEYGEN ATYRODE_SSH_ADD ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
+  for v in ATYRODE_AGE_KEYGEN ATYRODE_AGE_PLUGIN_SE ATYRODE_CLAN ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done
@@ -241,4 +241,18 @@ optional_host_command() {
     candidate="${!variable}"
   fi
   command -v "$candidate" 2>/dev/null
+}
+
+# A directory for a secret in transit -- a decrypted key on its way to install(1),
+# a token on its way to clan -- that lives in memory where the machine has it
+# and is readable by this account alone. Callers remove it however they end.
+secure_temp_dir() { # prefix
+  local root
+  if [[ -d /dev/shm && -w /dev/shm ]]; then
+    root=/dev/shm
+  else
+    root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  fi
+  umask 077
+  mktemp -d "$root/$1.XXXXXX"
 }

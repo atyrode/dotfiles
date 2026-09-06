@@ -35,6 +35,25 @@ the target, so the target needs no toolchain and no checkout. Where it is
 reached is the machine's own `clan.core.networking.targetHost`: a deployment
 cannot be aimed somewhere the reviewed configuration does not name.
 
+### Knowing when to apply
+
+An update is a prompt, never something that happens behind your back: what
+changes on a machine is yours to time, read and watch. So the machinery is
+read-only. Every hour a per-machine timer runs `atyrode changelog --record`,
+which asks GitHub what `main` has that this machine does not, and every new
+interactive shell then prints one muted line while an update is waiting:
+
+```text
+atyrode: 3 commit(s) waiting on main (9d09992e6afc, CI green) -- read: atyrode changelog; take: atyrode apply
+```
+
+It repeats on every shell -- a shell an agent opened and closed must not be
+the one that dismissed it -- and stops the moment the machine runs `main`.
+`atyrode changelog` lists the commits, oldest first, and says whether CI has
+passed that head (green means the closures are already in the fleet cache, so
+`apply` downloads rather than builds). `atyrode doctor` reports the same
+drift. Then `atyrode apply`, in front of you.
+
 ## Asking a machine what is wrong
 
 ```sh

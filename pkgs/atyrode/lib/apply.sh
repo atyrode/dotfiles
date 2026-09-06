@@ -745,13 +745,15 @@ place_machine_key() { # host flake_source
   local host="$1" repo key clan install_program
   key="$(machine_key_file)"
   step_begin 'Place the machine key'
+  # Machine state first: a placed key is conclusive, and answering from it
+  # spares every routine apply a fetch of the source tree it would not read.
+  if machine_key_placed; then
+    step_skip 'already placed'
+    return 0
+  fi
   repo="$(flake_source_tree "$2")"
   if [[ ! -e "$(machine_key_repository_file "$host" "$repo")" ]]; then
     step_skip "no machine key in the repository yet (clan vars generate $host on an operator device)"
-    return 0
-  fi
-  if machine_key_placed; then
-    step_skip 'already placed'
     return 0
   fi
   local user recipient

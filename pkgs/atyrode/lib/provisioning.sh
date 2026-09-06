@@ -230,6 +230,7 @@ collect_provisioning_checks() {
   probe_omp_auth_broker
   probe_local_qwen
   probe_manifold_agent
+  probe_convergence
   jq -e --argjson expected "$(jq -c '.surfaceOrder' "$provisioning_policy")" \
     'map(.id) == $expected' <<<"$provisioning_checks" >/dev/null ||
     die "$EX_SOFTWARE" "provisioning diagnostics do not match the policy order"

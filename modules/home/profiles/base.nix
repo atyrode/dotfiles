@@ -25,6 +25,7 @@ let
 in
 {
   imports = [
+    ../atyrode
     ../git
     ../mise.nix
     ../ssh
@@ -40,7 +41,6 @@ in
 
   home.packages =
     (with pkgs; [
-      atyrode
       bat
       btopPackage
       curl

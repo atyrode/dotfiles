@@ -1494,6 +1494,83 @@ pkgs.runCommand "check-atyrode-apply"
     mv "$TMPDIR/nh-args.checkout" "$TMPDIR/nh-args"
     rm -rf "$fetched_tree" "$TMPDIR/bin/nix" "$TMPDIR/nix-args"
     unset ATYRODE_NIX
+
+    # An update is a prompt, never a background switch. `changelog` reads what
+    # main has that this machine does not, `--record` leaves that for the shell,
+    # and every new shell repeats one line until the machine runs main -- a shell
+    # an agent opened and closed must not be the one that dismissed it. Nothing
+    # here may touch nh.
+    receipt="$XDG_STATE_HOME/atyrode/update.json"
+    cat > "$TMPDIR/bin/changelog-fetch" <<EOF
+    #!${pkgs.runtimeShell}
+    printf '%s\n' "\$*" >> "$TMPDIR/changelog-fetch-args"
+    case "\$*" in
+      *'/compare/1111111111111111111111111111111111111111...feedfacefeedfacefeedfacefeedfacefeedface')
+        printf '%s\n' '{"status":"ahead","ahead_by":2,"commits":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit":{"message":"feat(atyrode): the shell reads main\n\nbody"}},{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","commit":{"message":"fix: retain manifold ingress"}}]}' ;;
+      *'/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs')
+        cat "$TMPDIR/changelog-check-runs" ;;
+      *) exit 22 ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/bin/changelog-fetch"
+    export ATYRODE_FETCH="$TMPDIR/bin/changelog-fetch"
+    rm -f "$TMPDIR/nh-activations" "$TMPDIR/nh-args"
+    # Current: main is what this CLI was built from; nothing is asked of GitHub.
+    ${targetAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-current.out" 2> "$TMPDIR/changelog-current.err" \
+      || { echo "changelog failed: $(cat "$TMPDIR/changelog-current.err")" >&2; exit 1; }
+    grep -qF 'runs feedfacefeed, which is main' "$TMPDIR/changelog-current.out" \
+      || { echo "changelog current output: $(cat "$TMPDIR/changelog-current.out")" >&2; exit 1; }
+    test ! -e "$TMPDIR/changelog-fetch-args"
+    ${targetAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "current" and .ahead == 0 and .commits == []' >/dev/null
+    # Behind, with a green main: both commits listed oldest first, the verdict
+    # names the cache, and the remedy is apply.
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"success"},{"name":"classify","status":"completed","conclusion":"success"}]}' \
+      > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-behind.out" 2> "$TMPDIR/changelog-behind.err" \
+      || { echo "changelog behind failed: $(cat "$TMPDIR/changelog-behind.err")" >&2; exit 1; }
+    grep -qF 'this machine runs 111111111111; main is feedfacefeed, 2 commit(s) ahead' "$TMPDIR/changelog-behind.out" \
+      || { echo "changelog behind output: $(cat "$TMPDIR/changelog-behind.out"); fetch args: $(cat "$TMPDIR/changelog-fetch-args" 2>/dev/null)" >&2; exit 1; }
+    grep -qF 'aaaaaaaaaaaa  feat(atyrode): the shell reads main' "$TMPDIR/changelog-behind.out"
+    ! grep -qF 'body' "$TMPDIR/changelog-behind.out"
+    grep -qF 'CI: green -- closures published to the fleet cache' "$TMPDIR/changelog-behind.out"
+    grep -qF 'take it with: atyrode apply' "$TMPDIR/changelog-behind.out"
+    # A red or unfinished main is said as such, never mistaken for green.
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"failure"}]}' > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "available" and .green == false and .ahead == 2' >/dev/null
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"in_progress","conclusion":null}]}' > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog --json | jq -e '.green == null' >/dev/null
+    # The record is what the shell reads: nothing without one, one line with
+    # one, the same line again on the next shell, and silence from a CLI that
+    # already runs the recorded target even before the next hourly look.
+    test -z "$(${launcherAtyrode}/bin/atyrode __update-notice)"
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"success"}]}' > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog --record >/dev/null
+    jq -e '.outcome == "available" and .target == "feedfacefeedfacefeedfacefeedfacefeedface" and .green == true' "$receipt" >/dev/null
+    ${launcherAtyrode}/bin/atyrode __update-notice > "$TMPDIR/update-notice.out"
+    grep -qF '2 commit(s) waiting on main (feedfacefeed, CI green) -- read: atyrode changelog; take: atyrode apply' "$TMPDIR/update-notice.out"
+    grep -qF '2 commit(s) waiting on main' <<<"$(${launcherAtyrode}/bin/atyrode __update-notice)"
+    test -z "$(${targetAtyrode}/bin/atyrode __update-notice)"
+    # doctor says the same from a live comparison, with the same two commands.
+    ${launcherAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "convergence")
+      | .status == "degraded" and .code == "behind"
+        and (.summary | contains("main is feedfacefeed") and contains("runs 111111111111"))
+        and .remediation == "atyrode changelog to read what changed, then atyrode apply"
+    ' >/dev/null
+    ${targetAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
+      .surfaces[] | select(.id == "convergence") | .status == "ok"
+    ' >/dev/null
+    # A development build has no revision to compare and says so.
+    set +e
+    atyrode changelog >/dev/null 2>"$TMPDIR/changelog-dev.err"
+    changelog_dev_status="$?"
+    set -e
+    test "$changelog_dev_status" = 69
+    grep -qF 'development build' "$TMPDIR/changelog-dev.err"
+    test ! -e "$TMPDIR/nh-activations"
+    test ! -e "$TMPDIR/nh-args"
+    rm -f "$receipt" "$TMPDIR/bin/changelog-fetch" "$TMPDIR/changelog-check-runs" "$TMPDIR/changelog-fetch-args"
+    unset ATYRODE_FETCH
     # After the switch, the review names the host apply switched. The id
     # recorded under ~/.config is a Home Manager file that NixOS relinks from
     # a unit the activation only restarts; a stale one (here: the name the

@@ -333,6 +333,28 @@ selected host and capabilities, installable, source, backend, revision,
 dirty-tree state, and mutation boundary. Add `--json` for automation.
 Activation shows a generation package diff.
 
+### What is waiting on main
+
+```sh
+atyrode changelog                   # commits main has that this machine does not, and CI's verdict
+atyrode changelog --json
+atyrode changelog --record          # what the hourly timer runs; the shell reads its record
+```
+
+`changelog` compares the revision this CLI was built from with the head of
+`main` (one `git ls-remote`), then reads GitHub's compare and check-runs for
+the commit list and whether `ci-gate` passed -- green means every system and
+closure built and the fleet cache holds them. Offline it says so rather than
+guessing; a development build has no revision to compare and refuses. Nothing
+is activated: an update is a prompt, and `atyrode apply` is the answer.
+
+`--record` writes `~/.local/state/atyrode/update.json`. Every new interactive
+shell on a terminal prints one muted line from that record while it names a
+revision this CLI is not, on every shell until the machine runs `main`;
+`doctor provisioning` reports the same drift under `convergence`. The hourly
+timer and the shell hook are declared in
+[`modules/home/atyrode`](../modules/home/atyrode/default.nix).
+
 ## Deploying another machine
 
 ```sh

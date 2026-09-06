@@ -129,11 +129,11 @@ atyrode_self() {
   printf '%s\n' "$self"
 }
 
-# effective_uid reports the caller's EUID so clean can tell whether it is able to
-# reap the daemon-owned auto GC roots: only root can unlink them, and atyrode
-# never self-elevates (see the elevation note in cmd_rollback) — a non-root clean
-# instead points at `sudo atyrode clean`. A test override exercises the privileged
-# branch without actually running as root.
+# effective_uid reports the caller's EUID so a NixOS rollback can refuse before
+# it starts rather than fail mid-activation: only root can switch the system
+# profile, and atyrode never self-elevates (see the elevation note in
+# cmd_rollback). A test override exercises the privileged branch without
+# actually running as root.
 effective_uid() {
   if [[ "$test_hooks" == 1 && -n "${_ATYRODE_TEST_EUID:-}" ]]; then
     printf '%s' "$_ATYRODE_TEST_EUID"
@@ -142,21 +142,8 @@ effective_uid() {
   printf '%s' "${EUID:-$(id -u)}"
 }
 
-# nix_store_path resolves nix-store to an absolute path so the reap hint names a
-# command that survives elevation. On a non-NixOS host root's sudoers secure_path
-# excludes every Nix profile directory, so a bare `nix-store` (like `atyrode` or
-# `nh`) is not found under elevation — but an absolute path is executed directly,
-# bypassing the PATH search entirely. Honours the test override.
-nix_store_path() {
-  if [[ "$test_hooks" == 1 && -n "${ATYRODE_NIX_STORE:-}" ]]; then
-    printf '%s' "$ATYRODE_NIX_STORE"
-    return
-  fi
-  command -v nix-store 2>/dev/null || printf 'nix-store'
-}
-
 # nix_env runs nix-env, honouring an ATYRODE_NIX_ENV override under test hooks
-# (mirrors ATYRODE_NH / ATYRODE_NIX_STORE) so generation reads are stubbable.
+# (mirrors ATYRODE_NH) so generation reads are stubbable.
 nix_env() {
   local cmd=nix-env
   [[ "$test_hooks" != 1 || -z "${ATYRODE_NIX_ENV:-}" ]] || cmd="$ATYRODE_NIX_ENV"
@@ -226,7 +213,7 @@ tool_exec() { # quiet|visible override_variable program argv...
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_AGE_KEYGEN ATYRODE_AGE_PLUGIN_SE ATYRODE_CLAN ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_STORE ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
+  for v in ATYRODE_AGE_KEYGEN ATYRODE_AGE_PLUGIN_SE ATYRODE_CLAN ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done

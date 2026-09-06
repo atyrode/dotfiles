@@ -1,6 +1,6 @@
 # ADR 0003: Layered package ownership
 
-- Status: Accepted
+- Status: Accepted; amended 2026-09-06 (#586)
 - Date: 2026-07-14
 
 ## Context
@@ -21,19 +21,22 @@ Every package has **one owning layer**, and the layer determines its scope:
 - **on-demand** — invoked transiently (e.g. via `nix run`), not installed.
 
 Ownership is computed from the real evaluated Home Manager and nix-darwin
-configurations. [`fleet/annotations.nix`](../../fleet/annotations.nix)
-records only semantic intent and boundaries that evaluation cannot derive.
+configurations. `modules/shared/capability-contract.nix` asserts that the
+home a host evaluates to carries exactly the capabilities the registry
+selected, and `checks/fleet/system-boundary.nix` asserts that a capability's
+packages appear on every home selecting it and on no home without it.
 
-The versioned `inventory.<system>` flake output attributes packages by comparing
-an identity-only baseline, `base`, and `base + capability` evaluations. It uses
-the evaluated Darwin configuration for Homebrew casks. The same manifest powers
-checks and the scriptable CLI; source parsing and committed package projections
-are not authorities. Repository revision, system, platform, capability
-composition, and host selection are part of the schema identity. Transitive
-closures and secret-bearing mutable state are deliberately outside the default
-manifest.
-
-See [package-ownership.md](../package-ownership.md).
+*Amendment (2026-09-06).* The first implementation also generated a
+narrative inventory: a versioned `inventory.<system>` flake output that
+attributed every package to a capability by diffing baseline, `base`, and
+`base + capability` evaluations, an annotations file recording each
+capability's consumer and security boundary, an `atyrode inventory` verb,
+and a document describing the manifest. Nothing consumed it but its own
+checks and the cockpit that read it, so it was retired: the evaluated
+configurations are the authority and the checks above read them directly.
+The on-demand layer is `comma` from `base` (`, <attribute>`); the catalog of
+reviewed entries that fronted it is a list in
+[day-to-day.md](../day-to-day.md#occasional-tools).
 
 ## Consequences
 
@@ -41,8 +44,7 @@ See [package-ownership.md](../package-ownership.md).
   catch-all bucket.
 - Capability packages compose with capability-based host composition (ADR 0001):
   turning a capability on brings its packages, off removes them.
-- An evaluation check rejects duplicate ownership, unknown annotations,
-  incomplete host attribution, invalid platform conditionals, and composition
-  drift.
+- Evaluation checks reject capability drift between the registry and the
+  evaluated home, and a capability package that leaks outside its capability.
 - On-demand tools stay out of the installed closure, keeping machines lean while
   remaining one command away.

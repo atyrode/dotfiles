@@ -108,7 +108,7 @@ plain-English line before it, or the `error: failed to build attribute` line.
 ## Test seams
 
 Every seam (`ATYRODE_BW`, `ATYRODE_NH`, `ATYRODE_GIT`, `ATYRODE_NIX_ENV`,
-`ATYRODE_NIX_STORE`, `ATYRODE_CLEVER`, `ATYRODE_GEN_PROFILE`, `_ATYRODE_TEST_TTY`,
+`ATYRODE_CLEVER`, `ATYRODE_GEN_PROFILE`, `_ATYRODE_TEST_TTY`,
 `_ATYRODE_TEST_COLOR`, `_ATYRODE_TEST_IDENTITY_ROOT`, …) is honoured only when
 the CLI is built with test hooks. The CLI wrapper prefixes its own tools onto
 `PATH` and `adopt_activated_path` appends, so a stub placed on `PATH` can

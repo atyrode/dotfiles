@@ -133,19 +133,19 @@ pkgs.runCommand "check-atyrode-apply"
     # A production binary must REFUSE a store-mutating command when a test-only
     # tool-substitution override is set: those seams are ignored in production, so
     # a stubbed-looking clean/apply/rollback would otherwise drive the real
-    # nh/nix-store against the live store. (Regression guard for a near-miss where
+    # nh/nix-env against the live store. (Regression guard for a near-miss where
     # the production binary was run with stub overrides during development.)
     for prod_cmd in clean apply rollback; do
       set +e
-      env -u ATYRODE_NH -u ATYRODE_NIX_ENV -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
-        ATYRODE_NIX_STORE=/bin/true \
+      env -u ATYRODE_NH -u ATYRODE_GIT -u ATYRODE_GEN_PROFILE \
+        ATYRODE_NIX_ENV=/bin/true \
         ${productionAtyrode}/bin/atyrode "$prod_cmd" --yes \
         > /dev/null 2> "$TMPDIR/prod-guard.err"
       prod_guard_status="$?"
       set -e
       test "$prod_guard_status" = 64 \
         || { echo "production $prod_cmd must refuse a tool override (exit $prod_guard_status): $(cat "$TMPDIR/prod-guard.err")" >&2; exit 1; }
-      grep -qF 'ATYRODE_NIX_STORE is set' "$TMPDIR/prod-guard.err" \
+      grep -qF 'ATYRODE_NIX_ENV is set' "$TMPDIR/prod-guard.err" \
         || { echo "production $prod_cmd refusal must name the offending override" >&2; exit 1; }
     done
     for override in ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL ATYRODE_FETCH; do
@@ -160,7 +160,7 @@ pkgs.runCommand "check-atyrode-apply"
     done
     # The guard is scoped to mutating verbs: a read-only command with the same
     # override present still runs (production simply ignores the var there).
-    env ATYRODE_NIX_STORE=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
+    env ATYRODE_NIX_ENV=/bin/true ${productionAtyrode}/bin/atyrode --help >/dev/null 2>&1 \
       || { echo 'production read-only commands must not be blocked by the mutation guard' >&2; exit 1; }
 
     # ATYRODE_GIT / ATYRODE_NH are tool-substitution seams honoured ONLY under
@@ -190,7 +190,7 @@ pkgs.runCommand "check-atyrode-apply"
       seam_var="''${seam##*:}"
       rm -f "$TMPDIR/seam/$seam_tool.used"
       set +e
-      ( unset ATYRODE_GIT ATYRODE_NH ATYRODE_NIX_ENV ATYRODE_NIX_STORE ATYRODE_GEN_PROFILE
+      ( unset ATYRODE_GIT ATYRODE_NH ATYRODE_NIX_ENV ATYRODE_GEN_PROFILE
         export "$seam_var=$TMPDIR/seam/$seam_tool"
         exec ${productionAtyrode}/bin/atyrode apply --plan
       ) > /dev/null 2> "$TMPDIR/prod-seam.err"
@@ -204,18 +204,6 @@ pkgs.runCommand "check-atyrode-apply"
         || { echo "a production build must never reach the $seam_var stub" >&2; exit 1; }
     done
 
-    # Bare invocation is additive: a TTY enters the cockpit and passes the
-    # installed Bash CLI through for shell-outs; the same invocation without a
-    # TTY remains the scriptable CLI help surface. makeWrapper renames that Bash
-    # payload to .atyrode-wrapped and puts the public launcher in front of it.
-    cockpit_dispatch="$(_ATYRODE_TEST_TTY=1 atyrode)"
-    case "$cockpit_dispatch" in
-      cockpit:*/bin/.atyrode-wrapped:0) ;;
-      *) echo "bare TTY did not pass the packaged CLI to the cockpit: $cockpit_dispatch" >&2; exit 1 ;;
-    esac
-    forced_tty_subcommand="$(_ATYRODE_TEST_TTY=1 atyrode capabilities list --json)"
-    jq -e 'type == "array" and length > 0' <<<"$forced_tty_subcommand" >/dev/null \
-      || { echo "explicit subcommand entered the cockpit under forced TTY: $forced_tty_subcommand" >&2; exit 1; }
     atyrode </dev/null | grep -qF 'Usage:'
 
     atyrode capabilities list --json | jq -e '

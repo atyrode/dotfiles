@@ -1473,7 +1473,7 @@ doctor_all() {
     # A family exits 69 when it has findings and its JSON is complete; that is
     # the common case on a real machine, not an error. Appending `null` to
     # output that was already printed produced `{...}null`, which is what made
-    # `doctor --json` -- and the cockpit that reads it -- fail on every host
+    # `doctor --json` -- and everything that reads it -- fail on every host
     # with a single finding while passing on the pristine fixtures.
     jq -nc \
       --argjson host "$(doctor_family_json doctor_host "$requested" 1)" \

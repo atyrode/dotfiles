@@ -2,7 +2,7 @@
 
 let
   # The whole tree, so links from Markdown to non-Markdown authority files (for
-  # example fleet/annotations.nix) can be resolved and verified.
+  # example fleet/hosts.nix) can be resolved and verified.
   src = lib.fileset.toSource {
     root = ../../.;
     fileset = ../../.;

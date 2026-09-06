@@ -11,7 +11,7 @@
 # terminal. Nothing in the diff, the package list or the commit said so; only
 # the two closures did. So the closures are what is read, by one analyzer
 # (libexec/atyrode-disruption), and its report is the single thing apply,
-# rollback, the fleet and the cockpit act on. The report is computed before
+# rollback and the fleet act on. The report is computed before
 # anything is queued for a stop, and an operator's acknowledgement of a
 # disruptive report -- `--expected-disruption` -- names the report's
 # fingerprint, which binds host, both generations and every effect: a

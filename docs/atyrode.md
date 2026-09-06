@@ -10,44 +10,6 @@ services that do not belong in a Nix generation. `atyrode runtime` can inspect,
 provision, start, and stop them; simply applying these dotfiles does not create
 their state, credentials, containers, or model downloads.
 
-## Interactive cockpit
-
-Running bare `atyrode` with both stdin and stdout attached to a terminal opens
-the interactive cockpit. A bare non-TTY invocation continues to print CLI help,
-and every explicit subcommand (`atyrode apply`, `atyrode doctor …`, JSON calls,
-and the other command surfaces) continues through the Bash CLI even on a TTY.
-Existing scripts therefore do not enter the cockpit.
-
-The apply panel resolves the requested branch to an exact commit. Press `v`
-(or request apply before checking) to load `atyrode apply --ref <commit>
---preview-json` asynchronously. The service-disruption verdict comes first:
-affected services, their stop/restart/keep actions, and the reason a change
-is blocked. Package and closure-size changes follow; `d` exposes generation
-paths and the exact transition fingerprint.
-
-Press `c` to open or focus the active capability inventory. `[`/`]` (or
-left/right arrows) cycle in the apply plan's declared order, and `j`/`k` or
-arrows scroll the focused pane. Wide terminals keep a 42-cell capability panel
-beside the preview and use `Tab` to change focus; medium terminals use a
-full-width capability view; narrow terminals stack the selection summary above
-the scrollable details. `c` or `esc` returns to the preview without losing
-selection or either scroll position.
-
-Capability details are read only from the exact-revision CLI manifest. The
-cockpit validates schema version, full revision, system/platform identity, and
-the planned host's canonical ID before showing purpose, active state,
-resolved deliverables, and ownership/security/mutable-state boundaries.
-Capability inventory failures remain textual and do not substitute stale data.
-An absent, failed, loading, blocked, unknown, or stale activation preview
-refuses confirmation; a package build alone never authorizes activation.
-
-Startup and refresh perform no activation. Confirmation is available only
-after a safe report. The real apply receives its fingerprint and rechecks
-the running-to-candidate transition before switching; an intervening change
-refuses rather than widening the request. CLI automation performs the same
-check without needing a cockpit or a human approval prompt. The `ctrl+o`
-Ask overlay remains read-only and preserves the full cockpit state.
-
 ## Applying a configuration
 
 ```sh
@@ -149,7 +111,7 @@ shell-quoted so the line can be pasted back to repeat that step by hand. The
 contract covers every mutating verb, not just `apply`: the `nh` switch, the
 `git ls-remote` that resolves a ref, the `systemd-run` that hands the apply to
 a manager-owned unit, `chsh` and the `/etc/shells` edit, each provisioning
-ceremony and the interactive seed dialogue, `nix-store --gc` and `nh clean`,
+ceremony and the interactive seed dialogue, `nh clean`,
 every rollback that re-runs activation, the Clan deployment that activates a
 remote host, and the `curl` that enrolls this machine with a fleet master.
 
@@ -476,12 +438,6 @@ atyrode runtime status manifold-agent --json
 atyrode provision machine-key
 atyrode auth broker status --json
 atyrode auth broker add-api-key PROVIDER
-atyrode inventory --json
-atyrode inventory --host wsl --json
-atyrode inventory --ref <branch-tag-or-commit> --json
-atyrode inventory --repo /absolute/path/to/checkout --json
-atyrode lifecycle
-atyrode lifecycle --json
 atyrode doctor host --json
 atyrode doctor system --json
 atyrode doctor git --json
@@ -507,38 +463,6 @@ deadline; stale leases from crashed processes are discarded.
 `manifold-agent` joins the machine to the self-hosted manifold hub declared in
 `fleet/manifold.json`; enrollment, upgrade discipline, replacing an unmanaged
 agent, and the master-migration runbook live in [manifold](manifold.md).
-
-`inventory` is a thin, read-only consumer of the flake's schema-versioned
-evaluated manifest. By default it evaluates the exact immutable revision baked
-into the installed CLI, so an older binary cannot accidentally describe its own
-packages while targeting a newer revision. `--ref` selects a published target
-revision and `--repo` selects a local checkout; they are mutually exclusive.
-`--host` resolves a canonical host name inside that evaluated revision.
-The command currently requires `--json`, returns compact key-sorted JSON, and
-does not inspect closures, credentials, sessions, or other mutable state.
-
-`lifecycle` is a local, read-only report rather than a cleanup command. It
-inspects only the Home Manager profile, native worktrees of the configured
-dotfiles checkout, OMP's default `~/.omp` state root (including session
-count/size), OMP's documented `~/.omp/wt` worktree root, and the named
-OMP/atyrode cache and state paths; it never recursively searches HOME. JSON rows
-carry a category, path, observed byte size (or `null`), evidence, owner, state,
-and conservative classification. The additive top-level `omp` object contains
-`stateRoot`, `sessions`, `worktreeRoot`, per-worktree reports, `caches`, and
-`dryRuns`. OMP worktrees with a dirty Git tree, checked-out branch, or
-lock/activity marker are `live` and `protected`; a worktree is `reclaimable`
-only when all of those liveness probes are quiet. Unreadable Git state remains
-protected as `unknown`.
-
-Decision record: [ADR-0007](adr/0007-explicit-generation-cleanup.md).
-
-When `omp` is available, the same `atyrode lifecycle` report captures the
-supported `omp gc` default dry-run and `omp worktree clear --dry-run` output.
-When it is absent, the command still exits successfully with the filesystem
-report and marks both dry-run probes `unavailable`. It never passes `--apply`,
-runs worktree clearing without `--dry-run`, deletes, prunes, installs timers, or
-modifies state. Applying OMP GC remains a deliberate manual operator action:
-review the report, then run `omp gc --apply` directly.
 
 Diagnostics use stable non-zero exits for invalid input, missing files or tools,
 identity mismatches, and activation failure. They do not expose credentials.

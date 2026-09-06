@@ -1,6 +1,5 @@
 # Home Manager, nix-darwin, NixOS-WSL, and portable/server configuration
-# constructors, plus the server fixtures/manifests and the per-system
-# inventory built from the evaluated configurations.
+# constructors, plus the server fixtures/manifests.
 {
   self,
   lib,
@@ -20,25 +19,17 @@
 let
   inherit (targets)
     bootstrapProfiles
-    capabilityModules
     hosts
-    inventoryAnnotations
     modulesForHost
     publicBootstrapProfile
     selectHomeManagerProfiles
-    systems
     ;
   inherit (packages)
     agentToolsOverlay
     allowedUnfreePackages
-    flakeInputPackageNames
-    inventoryRevision
     mkPackageOverlay
-    repositoryPackageNames
     repositoryPkgsFor
     ;
-
-  forAllSystems = lib.genAttrs systems;
 
   darwinModule = ../modules/darwin;
   clanMachineModules = [
@@ -219,7 +210,7 @@ let
     };
 
   # Every registered host is a clan machine, one class each; the Darwin
-  # subset is named because the inventory projects it separately.
+  # subset is named because the checks select their configurations by system.
   darwinHosts = lib.filterAttrs (_name: host: host.activation == "nix-darwin") hosts;
   clanHosts = hosts;
 
@@ -264,28 +255,6 @@ let
   canonicalDarwinConfigs = clan.config.darwinConfigurations;
   canonicalNixosConfigs = clan.config.nixosConfigurations;
 
-  inventoryBySystem = forAllSystems (
-    system:
-    import ../fleet {
-      inherit
-        capabilityModules
-        flakeInputPackageNames
-        home-manager
-        hosts
-        lib
-        repositoryPackageNames
-        system
-        ;
-      annotations = inventoryAnnotations;
-      pkgs = repositoryPkgsFor system;
-      revision = inventoryRevision;
-      homeConfigs = lib.filterAttrs (name: _: hosts.${name}.system == system) canonicalHomeConfigs;
-      darwinConfigs = lib.filterAttrs (
-        name: _: darwinHosts.${name}.system == system
-      ) canonicalDarwinConfigs;
-    }
-  );
-
   # Every host closure a given system can realise, keyed by host id, as the
   # artifact `atyrode apply` activates on that host: the system toplevel,
   # whose Home Manager profile is embedded rather than activated on its own.
@@ -312,7 +281,6 @@ in
     darwinModule
     dotfilesHomeNixosModule
     fleetClosuresFor
-    inventoryBySystem
     mkPortableHomeConfiguration
     ;
 }

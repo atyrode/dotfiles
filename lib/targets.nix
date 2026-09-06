@@ -35,14 +35,11 @@ let
     };
   };
   knownCapabilities = builtins.attrNames capabilityModules;
-  inventoryAnnotations = import ../fleet/annotations.nix;
-  capabilityDescriptions = lib.mapAttrs (
-    _: annotation: annotation.purpose
-  ) inventoryAnnotations.capabilities;
+  capabilityDescriptions = import ../fleet/capabilities.nix;
   capabilitySummary =
     assert lib.assertMsg (
       builtins.attrNames capabilityDescriptions == knownCapabilities
-    ) "capability annotations must cover the capability set exactly";
+    ) "fleet/capabilities.nix must describe the capability set exactly";
     map (name: {
       inherit name;
       description = capabilityDescriptions.${name};
@@ -265,7 +262,6 @@ in
     capabilitySummary
     hosts
     hostsTsv
-    inventoryAnnotations
     knownCapabilities
     mkHostIdentityModule
     modulesForHost

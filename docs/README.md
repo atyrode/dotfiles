@@ -12,7 +12,6 @@ not in a checklist.
 | [day-to-day.md](day-to-day.md) | Running the fleet: converging a machine, adding one, adding a device, and what `doctor` is for |
 | [system-boundary.md](system-boundary.md) | Home Manager vs system (nix-darwin) ownership and the Homebrew convergence policy |
 | [hosts.md](hosts.md) | The host registry (`fleet/hosts.nix`): identity, platform, and capabilities |
-| [package-ownership.md](package-ownership.md) | Evaluated capability/package inventory and its semantic authority boundaries |
 | [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
 | [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
 | [secrets.md](secrets.md) | Secrets and their audience: sops-nix, the operator and machine identities, enrolment and revocation |

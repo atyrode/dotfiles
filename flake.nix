@@ -130,7 +130,6 @@
         canonicalNixosConfigs
         clan
         fleetClosuresFor
-        inventoryBySystem
         mkPortableHomeConfiguration
         ;
 
@@ -168,8 +167,6 @@
       # (`clan machines update` reads `clanInternals.machines.<system>.<name>`).
       clan = clan.config;
       inherit (clan.config) clanInternals;
-      inventory = inventoryBySystem;
-      capabilityInventory = lib.mapAttrs (_: manifest: manifest.capabilities) inventoryBySystem;
 
       # The one output another flake reads: the adapter `atyrode apply` writes
       # for a portable profile builds its Home Manager configuration from here.
@@ -185,7 +182,7 @@
         {
           inherit (pkgs)
             atyrode
-            atyrode-tui
+            atyrode-preview
             code
             codex
             codex-seed
@@ -208,7 +205,6 @@
         import ./checks {
           inherit
             lib
-            nixpkgs
             system
             targets
             configurations

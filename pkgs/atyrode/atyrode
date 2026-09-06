@@ -13,8 +13,6 @@ shopt -s inherit_errexit
 
 readonly agents_policy='@agents_policy@'
 readonly registry='@registry@'
-readonly catalog='@catalog@'
-readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly atyrode_disruption='@atyrode_disruption@'
 readonly babel_clever='@babel_clever@'
@@ -71,12 +69,10 @@ apply_job_worker=0
 . "$lib_dir/disruption.sh"
 # shellcheck source=lib/changelog.sh
 . "$lib_dir/changelog.sh"
-# shellcheck source=lib/lifecycle.sh
-. "$lib_dir/lifecycle.sh"
+# shellcheck source=lib/apply-job.sh
+. "$lib_dir/apply-job.sh"
 # shellcheck source=lib/clean.sh
 . "$lib_dir/clean.sh"
-# shellcheck source=lib/catalog.sh
-. "$lib_dir/catalog.sh"
 # shellcheck source=lib/authbroker.sh
 . "$lib_dir/authbroker.sh"
 # shellcheck source=lib/manifold.sh
@@ -108,12 +104,10 @@ Usage:
   atyrode runtime autostart [local-qwen] on|off
   atyrode runtime boot
   atyrode runtime shortcut [local-qwen]
-  atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
   atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes] [--scope SCOPE:SERVICE]...
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
   atyrode provision machine-key
-  atyrode lifecycle [--json]
   atyrode context [show] [--json]
   atyrode context render
   atyrode operator show
@@ -125,11 +119,8 @@ Usage:
   atyrode doctor tools [--json]
   atyrode doctor provisioning [--json]
   atyrode host [HOST] [--json]
-  atyrode generations [--json] [--sizes]
   atyrode rollback [HOST] [--to N] [--dry-run] [--yes] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
-  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--all] [--yes] [--verbose] [--json]
-  atyrode run [--list] [--json]
-  atyrode run NAME [-- ARG...]
+  atyrode clean [--dry-run] [--keep N] [--keep-since DUR] [--yes]
   atyrode windows plan|apply [HOST] [--json]
 
 Fixed hosts keep registry-owned identity; portable bootstrap profiles bind the
@@ -152,8 +143,8 @@ switch starts, stops, restarts, reloads or retains. That report is the only
 authority on whether the switch may proceed: a stop, restart or reload of a
 protected service (fleet/service-protection.json, and any unit declaring
 X-Atyrode-SessionOwner=true) is refused, as is any impact that could not be
-read, in every entry path (apply, background jobs, rollback, fleet, bootstrap,
-the cockpit). --preview-json carries the report under `disruption` with a
+read, in every entry path (apply, background jobs, rollback, fleet and
+bootstrap). --preview-json carries the report under `disruption` with a
 fingerprint that binds host, both generations and every effect;
 --expected-disruption FINGERPRINT refuses to activate anything but that exact
 report, and --scope SCOPE:SERVICE (system, user or launchd) refuses any effect
@@ -172,9 +163,6 @@ cannot terminate the activation and apply-status reconnects to the durable
 result. On a terminal apply also offers an interactive keep-or-reset review
 after activation, and offers to run the provisioning command for each surface
 it finds unconfigured instead of only naming it.
-inventory evaluates the versioned manifest at this CLI's exact revision by
-default; --ref selects another published revision and --repo evaluates a local
-checkout. It is read-only and currently requires --json.
 fleet deploys a machine of this clan that the operator is not sitting at:
 apply converges the machine it runs on, fleet apply converges another one over
 SSH. plan checks that the machine's vars are generated, that it answers a
@@ -186,9 +174,6 @@ machine's own `atyrode apply --candidate`, bound to the fingerprint just shown
 -- and verifies the machine reports itself converged afterwards. Where it is
 reached is the machine's own clan.core.networking.targetHost, so a deployment
 cannot be aimed somewhere the reviewed configuration does not name.
-lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
-cache/state paths under the configured home. It is read-only, includes OMP's
-supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
 doctor git is a read-only audit of SSH authentication, SSH signing, forge
 remotes, Git credential helpers, and GitHub CLI credential storage. It reports
 classifications only and never prints keys, tokens, helper arguments, or remotes.
@@ -210,30 +195,17 @@ the software key whose only copy is in Bitwarden, is a member of the group
 already and is never read here. A machine's own key, the one its vars are
 decrypted with at activation, is clan's: `clan vars generate <host>` mints it on
 an operator device and apply places it.
-generations lists the activation profile's generations (nix-darwin or NixOS
-system profile, otherwise standalone Home Manager); rollback activates an earlier
-one (previous by default, or --to N) after reading it against the running
-generation exactly as apply does -- --dry-run prints that report -- and
-confirming.
-clean reclaims disk from generations the
+rollback activates an earlier generation of the activation profile (nix-darwin
+or NixOS system profile, otherwise standalone Home Manager; previous by default,
+or --to N) after reading it against the running generation exactly as apply
+does -- --dry-run prints that report -- and confirming.
+clean is nh clean for this machine's activation (every profile on NixOS and
+nix-darwin, the user's on standalone Home Manager): it drops the generations the
 config no longer references, always keeping the current one and a rollback
-window (--keep / --keep-since); it previews the plan and asks before touching
-anything (--yes skips the prompt, --dry-run only previews), folds nh's verbose
-evaluation plan into its own summary (--verbose passes nh's full output through),
-and on macOS it also sweeps stale Home Manager Apps aliases. The auto GC roots that pin old
-generations are owned by the Nix daemon; a non-root clean cannot unlink them and
-prints the exact `sudo … nix-store --gc` command to reap them (atyrode never
-self-elevates). Commands reserved for later issues: workspace and agent.
-run is the reviewed catalog of software worth having without keeping: each entry
-names a nixpkgs attribute, one sentence saying why, and the systems it runs on.
-With no name, or --list, it prints the catalog; --json emits it; with a name it
-launches that entry through nix run and passes any trailing arguments to it.
-Nothing is installed, declared, or recorded, so clean is the whole return path:
-the run leaves no GC root. Given a terminal the program is handed it and behaves
-exactly as the announced nix run would; without one the launch is detached so a
-windowed program outlives the surface that asked for it. An entry that does not
-claim this machine's system is refused rather than attempted, because macOS GUI
-software is declared as a Homebrew cask and no cask has an ephemeral form.
+window (--keep / --keep-since), and collects the store. nh shows its plan and
+asks first (--yes skips the prompt, --dry-run only previews); on macOS clean
+also sweeps stale Home Manager Apps aliases. Commands reserved for later issues:
+workspace and agent.
 windows treats WinGet as the native Windows package owner. plan is read-only;
 apply reconciles exact package IDs through WSL interop after refusing channel
 conflicts. Windows mutations are not part of a Nix generation or rollback.
@@ -249,10 +221,6 @@ main() {
   # predates activation; Home Manager session variables require a new login.
   export SOPS_AGE_KEY_FILE
   SOPS_AGE_KEY_FILE="$(operator_key_file)"
-  if [[ $# == 0 ]] && interactive; then
-    export ATYRODE_CLI="$0"
-    exec "$atyrode_tui"
-  fi
   local subcommand="${1:-help}"
   shift || true
   # A production binary must never mutate the store while a caller believes its
@@ -276,10 +244,7 @@ main() {
     __apply-job) run_apply_job_worker "$@" ;;
     __converge-notice) converge_shell_notice ;;
     clean) cmd_clean "$@" ;;
-    generations) cmd_generations "$@" ;;
-    lifecycle) cmd_lifecycle "$@" ;;
     rollback) cmd_rollback "$@" ;;
-    run) cmd_run "$@" ;;
     runtime) cmd_runtime "$@" ;;
     fleet) cmd_fleet "$@" ;;
     auth) cmd_auth "$@" ;;
@@ -302,7 +267,6 @@ main() {
       esac
       ;;
     host) local requested="" json=0; if [[ $# -gt 0 && "$1" != --json ]]; then requested="$1"; shift; fi; [[ "${1:-}" != --json ]] || json=1; doctor_host "$requested" "$json" ;;
-    inventory) inventory "$@" ;;
     windows) [[ "${1:-}" != apply ]] || guard_production_mutation "windows apply"; cmd_windows "$@" ;;
     workspace|agent) die "$EX_UNAVAILABLE" "$subcommand is reserved for a follow-up issue" ;;
     help|-h|--help) usage ;;

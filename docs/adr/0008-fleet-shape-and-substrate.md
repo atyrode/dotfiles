@@ -220,15 +220,19 @@ wrong; it is the least aligned with the constraints above.
 
 ### Presentation
 
-`pkgs/atyrode-tui` — a 5,880-line Bubble Tea cockpit on `cli-kit`, launched by
-bare `atyrode` on a terminal — becomes the **front door**. The bootstrap shell
-shrinks to the smallest thing that can install Nix (the Determinate installer,
-which owns `plan`, receipt, `repair` and `uninstall`), clone, register the
-machine's age key, and enter the cockpit. The three missing mechanics — a plan
-that is an object with a receipt, questions batched up front, an end-of-run
-recap — land in the Bash engine as `--json` contracts the cockpit renders. The
-engine is not rewritten; it shrinks. `narrate.sh` stays as the voice of what
-remains and receives no further investment.
+*(amended 2026-09-06)* The Go terminal interface that bare `atyrode` used to
+open on a terminal was the intended front door; it was deleted in #586 before
+it earned that role, because it reimplemented in a second language the
+presentation the Bash engine already had to offer scripts. Its one surviving
+piece is `pkgs/atyrode-preview`, the parser behind `atyrode apply
+--preview-json`. The front door is the CLI itself: the bootstrap shell shrinks
+to the smallest thing that can install Nix (the Determinate installer, which
+owns `plan`, receipt, `repair` and `uninstall`), clone, register the machine's
+age key, and hand over to `atyrode`. The three missing mechanics — a plan that
+is an object with a receipt, questions batched up front, an end-of-run recap —
+land in the Bash engine as `--json` contracts. The engine is not rewritten; it
+shrinks. `narrate.sh` stays as the voice of what remains and receives no
+further investment.
 
 ### What is deleted, and how success is measured
 
@@ -307,8 +311,8 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
    fate is open (below). `tyrode-ci-01` is deleted.
 6. **Delete.** Ceremonies, `vault.sh`, `install.sh` repairs, `infra.sh`,
    stale clones; measure the diff.
-7. **Front door.** Bootstrap enters the cockpit; plan/receipt/recap land as
-   `--json`; the shell engine keeps shrinking behind it.
+7. **Front door.** *(amended 2026-09-06)* Bootstrap hands over to `atyrode`;
+   plan/receipt/recap land as `--json`; the shell engine keeps shrinking.
 
 ## Amendment 2026-09-02: clan is the fleet layer, and the repository is reshaped
 

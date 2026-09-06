@@ -42,32 +42,7 @@ let
   ];
   homebrewCasks = import ../modules/darwin/casks.nix;
   windowsPackageInventory = import ../fleet/windows-packages.nix;
-  # Curated software the operator launches ephemerally; fleet/catalog.nix says
-  # why nothing in it is declared.
-  catalogEntries = import ../fleet/catalog.nix;
-
-  repositoryPackageNames = [
-    "atyrode"
-    "atyrode-tui"
-    "code"
-    "codex"
-    "atyrode-codex-seed"
-    "omp"
-    "omp-agents"
-    "omp-configured"
-    "atyrode-omp-seed"
-    "manifold-agent"
-  ];
-
-  # Packages this repository neither builds under pkgs/ nor takes from
-  # nixpkgs: they come from a pinned flake input. The inventory records them
-  # as such rather than claiming nixpkgs provides them.
-  flakeInputPackageNames = [
-    "babel"
-    "clan-cli"
-  ];
-
-  inventoryRevision = self.rev or self.dirtyRev or "dirty";
+  revision = self.rev or self.dirtyRev or "dirty";
 
   mkPackageOverlay =
     {
@@ -82,7 +57,7 @@ let
     in
     lib.composeManyExtensions [
       (final: _previous: {
-        atyrode-tui = final.callPackage ../pkgs/atyrode-tui { };
+        atyrode-preview = final.callPackage ../pkgs/atyrode-preview { };
         # Repository-owned on every platform: upstream releases outpace
         # nixpkgs, which also cannot build codex on aarch64-darwin.
         code = final.callPackage ../pkgs/code { };
@@ -108,10 +83,8 @@ let
         clan-cli = clan-core.packages.${final.stdenv.hostPlatform.system}.clan-cli;
         atyrode = final.callPackage ../pkgs/atyrode {
           capabilities = capabilitySummary;
-          catalog = catalogEntries;
-          inherit homebrewCasks;
+          inherit homebrewCasks revision;
           hostRegistry = publicRegistry // publicRuntimeProfiles;
-          revision = inventoryRevision;
           windowsPackages = windowsPackageInventory;
         };
       })
@@ -181,11 +154,8 @@ in
     agentToolsOverlay
     allowedUnfreePackages
     evaluationPkgsFor
-    flakeInputPackageNames
     homebrewCasks
-    inventoryRevision
     mkPackageOverlay
-    repositoryPackageNames
     repositoryPkgsFor
     windowsPackageInventory
     ;

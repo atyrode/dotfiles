@@ -1,85 +1,68 @@
 # The `atyrode` CLI
 
-`atyrode` is the shared, packaged interface for applying and inspecting these
-dotfiles. It reads the declarative registry described in [Hosts and
-capabilities](hosts.md); it does not infer a profile from the current directory
-or maintain a second mutable profile database.
-
-Runtime capabilities are a separate, opt-in layer for large machine-local
-services that do not belong in a Nix generation. `atyrode runtime` can inspect,
-provision, start, and stop them; simply applying these dotfiles does not create
-their state, credentials, containers, or model downloads.
+`atyrode` is the one front door to a machine: it applies and inspects these
+dotfiles from the registry in [Hosts and capabilities](hosts.md) and wraps
+`clan`, `nh` and `sops` so no machine needs a different command depending on
+what it is. `atyrode --help` is the syntax reference and is not repeated here;
+the commands of a normal week are in [Running the fleet](day-to-day.md). This
+page records what the CLI promises: what `apply` may and may not do to a
+running machine, what reaches the terminal, and where the identities and
+surfaces it manages come from. Runtime capabilities (`atyrode runtime`) are a
+separate, opt-in layer for large machine-local services that do not belong in
+a Nix generation; applying the dotfiles never creates their state,
+credentials, containers, or model downloads.
 
 ## Applying a configuration
 
-```sh
-atyrode apply            # activate the latest published main; no checkout needed
-atyrode apply --plan
-atyrode apply --dry-run
-atyrode apply --preview-json # stable schema for the read-only dry-run preview
-atyrode apply-status     # reconnect to the latest manager-owned apply job
-atyrode apply-status JOB --json
-```
-
 The default host comes from a registered `ATYRODE_HOST`, then the managed host
 identity file, then an unambiguous user/system/hostname match. Generated values
-can outlive a rename in an existing login or user manager: an unregistered
-environment value requires a current managed identity or an exact hostname match,
-never a guess from platform alone. An explicit host argument remains authoritative
-and an unknown argument is refused. Apply resolves the host before submitting its
-managed job and forwards that answer rather than rediscovering it in the worker.
+can outlive a rename in an existing login or user manager, so an unregistered
+environment value requires a current managed identity or an exact hostname
+match, never a guess from platform alone. An explicit host argument is
+authoritative and an unknown one is refused. Apply resolves the host before
+submitting its managed job and forwards that answer rather than rediscovering
+it in the worker.
 
 Without `--repo`, apply resolves the requested ref (default `main`) to an exact
-commit with `git ls-remote`. A published CLI whose revision differs first
-builds and invokes that commit's `atyrode`, before host resolution or job
-submission. The target revision owns bootstrap, activation and all follow-up
-probes; the replaced CLI never interprets the new generation.
+commit with `git ls-remote`, so no checkout is involved and an apply
+immediately after a merge selects that merge. A published CLI whose revision
+differs first builds and invokes that commit's `atyrode`, before host
+resolution or job submission: the target revision owns bootstrap, activation
+and every follow-up probe, and the replaced CLI never interprets the new
+generation. `--repo PATH` is for development -- activating work in progress
+before pushing -- and additionally validates the checkout and reports a dirty
+tree.
 
-No local checkout is involved. Pinning the resolved commit bypasses the flake
-tarball cache, so an apply immediately after a merge selects that merge.
-`--ref` selects a branch, tag, or full commit instead of `main`:
+### The mutation boundary
 
-```sh
-atyrode apply --ref feature-branch --plan
-```
-
-`--repo PATH` switches to a local checkout for development, for example to
-activate work in progress before pushing. It additionally validates the
-checkout and Git repository and reports a dirty tree:
-
-```sh
-atyrode apply wsl --repo /home/alex/nix-dotfiles --plan
-```
-
-Before calling `nh`, the CLI validates the host, user, system, backend, and
-revision. `--plan` performs no activation. Build/preview first produces an
-exact candidate closure; activation compares that closure against the
-current generation, including embedded Home Manager services, before any
-service stop is queued. It switches the inspected store path, not a newly
-evaluated branch. A successful activation records the canonical host;
-failures and dry runs do not update that receipt.
+Build and preview first produce an exact candidate closure. Activation
+compares that closure against the current generation, including the Home
+Manager units a system generation embeds, before any service stop is queued,
+and switches the inspected store path rather than a newly evaluated branch. A
+successful activation records the canonical host; failures and dry runs do not
+touch that receipt.
 
 The policy is `fleet/service-protection.json`. Session owners, SSH and Docker
-are protected; an owner can additionally declare `X-Atyrode-SessionOwner`.
-Protected stops, restarts and reloads, unknown effects, and changes outside
-an explicitly requested `--scope system:caddy.service` refuse. A retained
-owner (`keep`) stays running with its update pending. `--expected-disruption`
-binds automation to a particular safe preview; it cannot authorize a blocked
-report, and `--yes` is not a bypass. Apply, rollback and every Manifold agent
-mutation hold the same activation lock, including token rotation. A
-NixOS-global user unit is inactive only if every live user manager proves it;
-an inaccessible manager is unknown, not evidence of absence. Owner-to-transport
-role changes also refuse while the old owner remains loaded, even if this
-activation would retain it. The next activation must not inherit permission
-to kill a process that still owns sessions.
+are protected, and an owner can additionally declare
+`X-Atyrode-SessionOwner`. Protected stops, restarts and reloads, unknown
+effects, and changes outside an explicitly requested `--scope` refuse. A
+retained owner (`keep`) stays running with its update pending.
+`--expected-disruption` binds automation to a particular safe preview; it
+cannot authorize a blocked report, and `--yes` is not a bypass. Apply,
+rollback and every Manifold agent mutation hold the same activation lock,
+including token rotation. A NixOS-global user unit is inactive only if every
+live user manager proves it; an inaccessible manager is unknown, not evidence
+of absence. Owner-to-transport role changes refuse while the old owner remains
+loaded, even if this activation would retain it, because the next activation
+must not inherit permission to kill a process that still owns sessions.
 
 Context rendering re-enters the inspected candidate's CLI, never an unrelated
 global profile. Runtime stop, restart and token rotation likewise compare the
-deployed role with the loaded definition before acting; rotation performs
-this check before contacting the hub. The [Manifold migration
-runbook](manifold.md#upgrades) names the deliberate initial maintenance boundary.
-These checks prevent accidental disruption through supported tools, not raw
-commands run outside them by an unrestricted account.
+deployed role with the loaded definition before acting, and rotation performs
+that check before contacting the hub; the [Manifold migration
+runbook](manifold.md#upgrades) names the deliberate initial maintenance
+boundary. These checks prevent accidental disruption through supported tools,
+not raw commands run outside them by an unrestricted account.
 
 Activation success and apply completion are distinct. A failed requested
 provisioning ceremony, login-shell convergence, timer start, or context render
@@ -94,81 +77,37 @@ Every verb that changes this machine is a command an operator waits on, so it
 narrates itself rather than going quiet between builds. Five things reach the
 terminal.
 
-**A plan first.** The steps that will change this machine, numbered, before any
-of them run. `--plan` prints exactly that list and stops:
-
-```
-Plan
-  1. Rebuild and switch macbook through nh-darwin.
-  2. Record macbook as the activated host.
-  3. Converge the account login shell.
-  4. Review the provisioning surfaces this machine declares.
-```
+**A plan first.** The steps that will change this machine, numbered, before
+any of them run; `--plan` prints exactly that list and stops.
 
 **The argv of anything that acts.** Every command that changes the machine,
 reaches the network, prompts, or takes real time is printed before it runs,
-shell-quoted so the line can be pasted back to repeat that step by hand. The
-contract covers every mutating verb, not just `apply`: the `nh` switch, the
-`git ls-remote` that resolves a ref, the `systemd-run` that hands the apply to
-a manager-owned unit, `chsh` and the `/etc/shells` edit, each provisioning
-ceremony and the interactive seed dialogue, `nh clean`,
-every rollback that re-runs activation, the Clan deployment that activates a
-remote host, and the `curl` that enrolls this machine with a fleet master.
+shell-quoted so the line can be pasted back to repeat that step by hand, for
+every mutating verb from the `nh` switch and the `git ls-remote` that resolves
+a ref to each provisioning ceremony, every rollback, the Clan deployment of a
+remote host and the `curl` that enrolls this machine with a fleet master.
+Narration goes to stderr, leaving structured stdout usable with `--json` and
+`--preview-json`. It is an action transcript, not shell tracing: `set -x`
+would expose secret-bearing expansions and is not a verbosity mode.
 
-Command narration is on by default, including captured preview builds, source
-prefetches, and bootstrap archive extraction. It goes to stderr, leaving
-structured stdout usable with
-`--json` and `--preview-json`. This is an action transcript, not shell tracing:
-`set -x` would expose secret-bearing expansions and is not a verbosity mode.
-
-Read-only probing stays silent: printing every `command -v` and `gh auth
-status` would bury the handful of commands that act. So does the shell's own
-bookkeeping — a `mkdir`, a `chmod`, the `mv` that installs a rendered file
-atomically. Where one of those writes something persistent, the path is named
-in prose instead, which is what an operator actually needs:
-`rendered ~/.ssh/authorized_keys with 4 granted key(s)`.
-
-Two commands are deliberately described rather than quoted. `systemd-run`
-carries the machine's whole forwarded `PATH`, so its argv would bury the run it
-introduces; the terminal gets the unit name and the log gets the argv. And no
-announcement may print a secret: a broker credential travels in a file, a
-bearer token in a mode-600 `curl` config, so what reaches the terminal is a
+Read-only probing stays silent, because printing every `command -v` would bury
+the handful of commands that act. So does the shell's own bookkeeping -- a
+`mkdir`, a `chmod`, the `mv` that installs a rendered file atomically -- and
+where one of those writes something persistent, the path is named in prose
+instead. Two commands are deliberately described rather than quoted:
+`systemd-run` carries the machine's whole forwarded `PATH`, so the terminal
+gets the unit name and the log gets the argv; and no announcement may print a
+secret, so a credential travels in a file and what reaches the terminal is a
 verb, an id, and a path.
 
-**Whose password prompt it is.** nix-darwin and NixOS activate as root, and the
-backend elevates for that itself. Unannounced, `sudo` interrupts the build from
-inside someone else's output and reads as the dotfiles asking for root out of
-nowhere, so the step says so first:
-
-```
-1/5 Rebuild and switch macbook through nh-darwin
-  activation writes system state, so nh elevates: a sudo prompt below is its own
-  $ env LC_ALL=en_US.UTF-8 nh darwin switch ...
-```
+**Whose password prompt it is.** nix-darwin and NixOS activate as root and the
+backend elevates for that itself; the step says so before the backend runs,
+so a `sudo` prompt never reads as the dotfiles asking for root out of nowhere.
 
 **A verdict per step**, with the declaration or diagnosis that made it
-necessary. A step never ends in silence, because a silent step is
-indistinguishable from a hung one:
-
-```
-3/5 Converge the account login shell
-  why fleet/system-boundary.json declares /run/current-system/sw/bin/zsh
-  ok already the account login shell
-
-4/5 Review the provisioning surfaces this machine declares
-  why fleet/provisioning.json declares 6 surfaces for this machine
-  ok 4 ok, 1 not-applicable, 1 incomplete -- still to configure: babel-archive
-
-5/5 Render this machine's agent context
-  why every agent tool here reads this file, and the review above may have changed what is authenticated
-  $ atyrode context render
-wrote /Users/alex/.config/agents/AGENTS.md
-  ok
-```
-
-A run that aborts still owes a verdict on the steps it promised. Without one,
-a failure at step 1 of 5 leaves steps 2 through 5 missing from the terminal,
-which reads as though they ran and said nothing:
+necessary (`why fleet/system-boundary.json declares ...`). A step never ends in
+silence, because a silent step is indistinguishable from a hung one, and a run
+that aborts still owes a verdict on the steps it promised:
 
 ```
 1/5 Rebuild and switch macbook through nh-darwin
@@ -183,176 +122,118 @@ That verdict is read rather than guessed. The backend builds the closure
 before it switches, so most failures there never reached the machine at all;
 the profile link says which happened, and an exit code cannot.
 
-**A durable log.** Every run of a mutating verb — `apply`, `provision`,
-`clean`, `rollback` — writes a timestamped, mode-600 transcript of the same
-story to `$XDG_STATE_HOME/atyrode/logs/<UTC>-<verb>.log`, named in the closing
-summary and again on any failure. The terminal is for the operator watching;
-the log is for the diagnosis three weeks later. It is the same contract, and
-the same file layout, as the bootstrap's own run log (see
-[bootstrap.md](bootstrap.md)), because the two narrate the same machine.
+**A durable log.** Every run of a mutating verb writes a timestamped, mode-600
+transcript of the same story to
+`$XDG_STATE_HOME/atyrode/logs/<UTC>-<verb>.log`, named in the closing summary
+and again on any failure. The terminal is for the operator watching; the log
+is for the diagnosis three weeks later. It is the same contract and file
+layout as the bootstrap's own run log ([bootstrap.md](bootstrap.md#run-logs)),
+because the two narrate the same machine. A supervised apply writes two, and
+the pair is the chain: the submitting shell's `-apply.log` records the
+handoff, including the `systemd-run` argv kept off the terminal, and the
+worker's `-apply-job.log` records the run itself.
 
-A supervised apply (below) writes two, and the pair is the chain: the
-submitting shell's `-apply.log` records the handoff, including the full
-`systemd-run` argv that is deliberately kept off the terminal, and the
-worker's `-apply-job.log` records the run itself. The summary names the one
-that holds the story.
+### Supervised applies
 
-Narration is on stderr and the data is on stdout, so `--json` and
-`--preview-json` stay machine-readable while the story still reaches a
-terminal beside them.
+On Linux with a systemd user manager, a mutating apply runs in a transient
+service so that replacing a terminal-hosting service cannot terminate the
+activation; job metadata, output, and the atomic final result live under
+`$XDG_STATE_HOME/atyrode/apply-jobs`, and the CLI exits with the activation's
+own status. From a terminal the job is handed that terminal, so every prompt
+is answerable in place; the trade is that the job ends with the terminal, and
+its log records where the output went rather than a copy, so `apply-status`
+cannot claim a transcript it never captured. Read-only plans and dry runs stay
+terminal-bound, and platforms without a user manager keep the direct,
+interactive activation path.
 
-On Linux with an available systemd user manager, a mutating apply runs in a
-transient service rather than as a child of the invoking terminal. Job
-metadata, output, and the atomic final result live under
-`$XDG_STATE_HOME/atyrode/apply-jobs` (or `~/.local/state/atyrode/apply-jobs`),
-and the CLI exits with the activation's own status. What the operator gets
-depends on whether there is one:
+### After activation
 
-- Started from a terminal (stdin and stdout both a tty), the job is handed that
-  terminal with `systemd-run --pty`. Activation output streams as `nh` produces
-  it, and whatever the activation or the reviews below ask for — a `sudo`
-  password, the elevation behind a provisioning offer — is answerable
-  in place. The trade is that the job ends with the terminal instead of
-  outliving it; its log records where the output went rather than a copy of it,
-  so `apply-status` cannot claim a transcript it never captured.
-- Without a terminal (CI, a pipe, a timer), the job is detached: the CLI prints
-  the durable job ID, waits quietly, replays the captured output at the end,
-  and exits. Closing the terminal does not terminate the activation; reconnect
-  with `atyrode apply-status [JOB]`.
-
-Read-only plans and dry runs remain terminal-bound. Platforms without a systemd
-user manager retain the direct activation path, which is live and interactive by
-construction.
-
-After a successful activation, apply reports plain-omp settings that drifted
-from the seeded repository defaults (see
-[Agent tools](agent-tools.md#seeded-plain-omp-defaults)) and, when running on
-a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
+Apply reports plain-omp settings that drifted from the seeded repository
+defaults (see [Agent tools](agent-tools.md#seeded-plain-omp-defaults)) and,
+on a terminal without `--json`, offers a per-key keep-or-reset review. Drift is
 never resolved automatically; skipping the review keeps every local value.
 
-apply also reports the provisioning surfaces this machine has left
-unconfigured: Babel session-archive health from the placed storage document
-and the stamp Babel's push wrapper writes (see
-[Agent tools](agent-tools.md#session-archive)), and a Git identity whose
-signing key activation has not placed yet. Without a terminal each one prints
-the command that fixes it and nothing else. On a terminal a surface with a
-ceremony becomes an offer (`run atyrode provision machine-key now?`), and
-accepting runs exactly that command in this terminal — what apply does and
-what the operator would have typed are the same thing. Declining prints the
-reminder unchanged. The archive and the Git identity have no ceremony to
-offer: each is a clan var placed by the activation itself, so a machine
-without one is told which generation it is owed (`clan vars generate HOST` on
-an operator device, then apply). A configured archive that has never pushed
-successfully gets `babel archive status` and `babel archive push`, and an
-archive that has not succeeded within 48 hours is reported stale. None of
-this can fail the activation: a machine that declines to provision is still a
-machine that activated.
-
-Every surface is declared once in `fleet/provisioning.json` with the command
-that configures it and what that command implies. Nothing on a machine needs a
-session opened before a surface can be configured, because every secret a
-surface needs is a clan var that activation placed. A surface is therefore
-either offered, when the command is a ceremony this CLI owns and runs here
-(`atyrode provision machine-key`, `atyrode operator init`, `atyrode runtime
-provision local-qwen`, `atyrode runtime provision manifold-agent`), or told,
-when the command runs on an operator device and this machine only reports what
-it is owed (the Git identity, the archive document, the broker token). Off a
-terminal both are stated without a question, since there is nobody to answer.
+Apply then reviews the provisioning surfaces this machine has left
+unconfigured. Every surface is declared once in `fleet/provisioning.json` with
+the command that configures it and what that command implies, and nothing on
+a machine needs a session opened before a surface can be configured, because
+every secret a surface needs is a clan var that activation placed. A surface
+is therefore either *offered*, when the command is a ceremony this CLI owns
+and runs here, or *told*, when the command runs on an operator device and this
+machine only reports what it is owed (`clan vars generate HOST` there, then
+apply). Accepting an offer runs exactly the command it named in this terminal,
+so what apply does and what the operator would have typed are the same thing.
+Declining a surface marked `declinable` is recorded per machine and per
+surface, so it is not offered again -- asking twice is how a prompt becomes
+noise -- and the way back in is the command the offer named, which clears the
+record as a side effect of the surface becoming configured; declining any
+other surface prints the reminder unchanged. Off a terminal both are stated
+without a question, since there is nobody to answer. A configured Babel
+archive that has never pushed successfully, or has not within 48 hours, is
+reported with the `babel archive` commands that show why (see [Agent
+tools](agent-tools.md#session-archive)). None of this can fail the activation:
+a machine that declines to provision is still a machine that activated.
 
 When an accepted ceremony stops anyway, the reason is the ceremony's own and
-the follow-up says so: `clear what it reported above, then: atyrode provision
-machine-key`. Naming the same command as a retry would send an operator to
+the follow-up says so (`clear what it reported above, then: atyrode provision
+machine-key`). Naming the same command as a retry would send an operator to
 collect the identical failure.
-
-Linux uses `nh home switch`; macOS uses `nh darwin switch`. Plans name the
-selected host and capabilities, installable, source, backend, revision,
-dirty-tree state, and mutation boundary. Add `--json` for automation.
-Activation shows a generation package diff.
 
 ### What is waiting on main
 
-```sh
-atyrode changelog                   # commits main has that this machine does not, and CI's verdict
-atyrode changelog --json
-atyrode changelog --record          # what the hourly timer runs; the shell reads its record
-```
-
-`changelog` compares the revision this CLI was built from with the head of
-`main` (one `git ls-remote`), then reads GitHub's compare and check-runs for
-the commit list and whether `ci-gate` passed -- green means every system and
-closure built and the fleet cache holds them. Offline it says so rather than
-guessing; a development build has no revision to compare and refuses. Nothing
-is activated: an update is a prompt, and `atyrode apply` is the answer.
-
-`--record` writes `~/.local/state/atyrode/update.json`. Every new interactive
-shell on a terminal prints one muted line from that record while it names a
-revision this CLI is not, on every shell until the machine runs `main`;
-`doctor provisioning` reports the same drift under `convergence`. The hourly
-timer and the shell hook are declared in
+`atyrode changelog` compares the revision this CLI was built from with the
+head of `main` (one `git ls-remote`), then reads GitHub's compare and
+check-runs for the commit list and whether `ci-gate` passed: green means every
+system and closure built and the fleet cache holds them, so `apply` downloads
+rather than builds. Offline it says so rather than guessing; a development
+build has no revision to compare and refuses. Nothing is activated: an update
+is a prompt, and `atyrode apply` is the answer. `--record` writes
+`~/.local/state/atyrode/update.json`, and every new interactive shell on a
+terminal prints one muted line from that record while it names a revision this
+CLI is not, on every shell until the machine runs `main`; `doctor
+provisioning` reports the same drift under `convergence`. The hourly timer and
+the shell hook are declared in
 [`modules/home/atyrode`](../modules/home/atyrode/default.nix).
 
 ## Deploying another machine
 
-```sh
-atyrode fleet plan dev-01           # vars, reachability, evaluation; activates nothing
-atyrode fleet apply dev-01          # build here, activate there, verify
-atyrode fleet apply dev-01 --json --yes
-```
-
 `apply` converges the machine it runs on; `fleet apply` transfers an exact
-built closure and asks the target's CLI to preview its local transition.
-Only a safe report permits vars upload and fingerprint-pinned activation
-of that same candidate. The target needs no checkout. Where it is reached
-is the machine's own
-`clan.core.networking.targetHost`: a deployment cannot be aimed somewhere the
-reviewed configuration does not name.
-
-Both verbs refuse a machine clan does not deploy -- a portable profile has no
-system closure -- and say which command converges it instead. The
-run stops before touching the machine when its vars are not generated (the
-remedy names `clan vars generate <host>`) or when it does not answer a
-strict-host-key check. After activation the machine is asked who it is, and a
+built closure and asks the target's CLI to preview its local transition. Only
+a safe report permits vars upload and fingerprint-pinned activation of that
+same candidate, and after activation the machine is asked who it is, so a
 deployment that activated the wrong closure fails there rather than exiting
-zero.
+zero. The target needs no checkout. Both verbs refuse a machine clan does not
+deploy -- a portable profile has no system closure -- and say which command
+converges it instead; the run stops before touching the machine when its vars
+are not generated (the remedy names `clan vars generate <host>`) or when it
+does not answer a strict-host-key check.
 
 Deploying reaches outside this repository for nothing: the machines are this
-flake's, the operator identity is the device's own age key rather than a vault
-session opened per run, and where a machine is reached is its own declaration
-rather than a separate enrollment inventory.
+flake's, the operator identity is the device's own age key rather than a
+session opened per run, and where a machine is reached is its own
+`clan.core.networking.targetHost` rather than a separate enrollment
+inventory.
 
 ## Agent context
 
-```sh
-atyrode context render   # write ~/.config/agents/AGENTS.md and name the path
-atyrode context show     # print what render would write
-atyrode context --json   # the generated machine section as data
-```
-
 Every agent on a machine starts from one file: the operator policy kept in
-`modules/home/agents/AGENTS.md`, followed by a generated `## This machine` section.
-`context render` writes it to `${XDG_CONFIG_HOME:-~/.config}/agents/AGENTS.md`
-(mode 0644, written whole and moved into place), and Home Manager makes
-`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.omp/agent/AGENTS.md`
-out-of-store symlinks to it, so every tool reads the same bytes and no
-tool-specific instruction file is maintained by hand. Activation renders it
-(`modules/home/agents/default.nix`) and `atyrode apply` renders it again as its last step, after
-the provisioning review may have opened sessions, so the file describes the
-machine apply leaves behind. This is
+`modules/home/agents/AGENTS.md`, followed by a generated `## This machine`
+section. `context render` writes it whole and moves it into place, and Home
+Manager makes every tool's instruction file an out-of-store symlink to it, so
+every tool reads the same bytes and none is maintained by hand. Activation
+renders it (`modules/home/agents/default.nix`) and `atyrode apply` renders it
+again as its last step, after the provisioning review may have changed what is
+authenticated, so the file describes the machine apply leaves behind. This is
 [ADR 0008](adr/0008-fleet-shape-and-substrate.md) step 2 and invariant 9 of
-the repository's own `AGENTS.md`: context propagation is this repository's
-job.
+the repository's own `AGENTS.md`.
 
-The generated section carries the generation timestamp and the dotfiles
-revision the CLI came from; this host's registry identity, platform,
-activation owner, and capabilities; the other registered hosts by name and
-role; which CLIs are authenticated here and as whom (`gh` and `clever`), each
-missing session with the exact command that acquires it; the secrets readable
-here, which are the clan vars under `/run/secrets/vars` this account can read,
-listed by generator and file name with the path each is read from; the fleet
-cache substituter from the inventory and whether this machine's Nix daemon
-trusts it; and the canonical clone root, which no registry field declares yet,
-so the section says so rather than guess. It never contains a secret value: a
-session is reported by account name, a secret by its name and path.
+The generated section is machine state, never a value: the revision the CLI
+came from and when it rendered, this host and the other registered ones, which
+CLIs are authenticated here and as whom with the exact command that acquires
+each missing session, the clan vars under `/run/secrets/vars` this account can
+read by name and path, the fleet cache and whether the Nix daemon trusts it,
+and the canonical clone root -- which no registry field declares yet, so the
+section says so rather than guess.
 
 `doctor provisioning` carries the matching `agent-context` surface: `ok` when
 the file is fresh, `degraded` with remediation `atyrode context render` when
@@ -361,140 +242,63 @@ older than seven days, or carries no generation stamp, and `incomplete` when
 it is absent. The file is never edited by hand: if it is wrong, `doctor` is
 wrong.
 
-## Machine key
+## Identities
 
-The machine key is the age key clan vars are decrypted with at activation,
-this machine's own and never the operator's. It is clan's: `clan vars
-generate <host>` mints it on an operator device, keeps the private half in
-the repository under `sops/secrets/<host>-age.key` encrypted to the `admins`
-group, and records the public half under `sops/machines/<host>/key.json`.
-`apply` places it at `/var/lib/sops-nix/key.txt` -- the path
-[`modules/shared/clan-machine.nix`](../modules/shared/clan-machine.nix) hands
-sops-nix on both classes -- as its first step on a clan machine, before the
-switch, so the activation that follows decrypts the machine's vars. Both
-commands the step runs are announced: `clan secrets get <host>-age.key` into
-a mode-600 file in a mode-700 scratch directory, then
-`sudo install -D -m 0600 -o root` from there to the key's path, the scratch
-directory going with the step whatever its outcome. The key never reaches
-argv, a terminal, or the run log. On a device with no registered operator
-key the step says which device can place it instead.
-
-```sh
-atyrode provision machine-key   # clan vars generate <host>, from the machine itself when it is an operator device
-```
-
-`apply` offers that on a clan machine whose key is not in the repository, and
-`doctor provisioning` carries the `machine-key` surface: `not-applicable` on
-a portable profile, `incomplete` while the
-repository holds no key, `degraded` when it does but the machine has not been
-applied since, and `ok` when placed. The model, enrolment, and revocation are
-in [secrets.md](secrets.md).
-
-## Operator identity
-
-```sh
-atyrode operator show     # this device's public age recipient, and whether clan registers it
-atyrode operator init     # mint the key if absent; print the two clan commands that register it
-```
-
-The operator identity is the age key that edits secrets: one per device the
-operator works from, registered as clan user `alex-<host>` in the `admins`
-group every value is encrypted to. On a Mac it is minted by `age-plugin-se`
-inside the Secure Enclave, unlocked by Touch ID (or the login passcode) on
-every use, and by construction impossible to copy off the machine; anywhere
-else it is a plain age key written by `age-keygen`. Both verbs apply on every
-fixed host and refuse on a portable profile with exit 65 and one sentence;
-the platform branch reads the host registry's system, not `uname`, so the
-check drives the Mac's ceremony from a Linux sandbox. `init` writes
-`~/.config/sops/age/keys.txt` (mode 0600 under a mode-0700 directory),
-announces the one generator command it runs, and prints the two commands
-that register the result (`clan secrets users add alex-<host> age1...` and
-`clan secrets groups add-user admins alex-<host>`). It never replaces an
-existing `keys.txt`: a key there is kept and its registration repeated, and
-a file without a `# public key:` line is refused with the way out said. Only
-that comment line is ever read; the identity line never reaches the
-terminal, argv, or the run log.
-
-`apply` offers `operator init` on a device that has no key, and `doctor
-provisioning` carries the `operator-identity` surface right after
-`machine-key`: `not-applicable` on a portable profile, `incomplete` with no
-usable key, `degraded` with the exact registration commands when the key
-exists but clan does not register it in the group, and `ok` when registered.
-The per-device model and what a lost device costs are in
+Two age keys pass through the CLI and neither is ever printed, placed in argv,
+or written to the run log. The **machine key** is the one clan vars are
+decrypted with at activation, this machine's own and never the operator's;
+`clan vars generate <host>` mints it on an operator device and `apply` places
+it as its first step on a clan machine, before the switch, so the activation
+that follows decrypts the machine's vars. `provision machine-key` is the same
+generation run from the machine itself when it is an operator device, and the
+only `provision` verb. The **operator identity** is the key that edits
+secrets, one per device, minted where it is used (inside the Secure Enclave on
+a Mac) by `operator init`, which never replaces an existing
+`~/.config/sops/age/keys.txt`; both `operator` verbs refuse on a portable
+profile with exit 65, and the platform branch reads the registry's system
+rather than `uname`, so the Mac's ceremony is exercised from a Linux sandbox.
+`apply` offers whichever of the two a machine lacks, and `doctor provisioning`
+carries them as the `machine-key` and `operator-identity` surfaces
+(`not-applicable` on a portable profile; `incomplete` with no key; `degraded`
+when the key exists but is not placed, or not registered, with the exact
+commands as the remedy; `ok` otherwise). The custody model, both enrolment
+ceremonies step by step, and what a lost device costs are in
 [secrets.md](secrets.md).
 
 ## Inspection and diagnostics
 
-```sh
-atyrode capabilities list --json
-atyrode capabilities show wsl --json
-atyrode runtime status local-qwen --json
-atyrode runtime provision local-qwen
-atyrode runtime run local-qwen
-atyrode runtime shortcut local-qwen
-atyrode runtime enroll manifold-agent HOST [--rotate-token]
-atyrode runtime provision manifold-agent
-atyrode runtime status manifold-agent --json
-atyrode provision machine-key
-atyrode auth broker status --json
-atyrode auth broker add-api-key PROVIDER
-atyrode doctor host --json
-atyrode doctor system --json
-atyrode doctor git --json
-atyrode doctor tools --json
-```
+The Git identity has no verb of its own: its authentication and signing keys
+are a clan var generated on an operator device and placed by activation, and
+Git and `ssh` read them directly; `doctor provisioning` reports the
+`git-identity` surface as `not-applicable` on a portable profile, `degraded`
+while the key is not placed (with `clan vars generate <host>` on an operator
+device, then `atyrode apply`, as the remedy), and `ok` once it is. The custody
+model is in [secrets.md](secrets.md#git-identity).
 
-`provision machine-key` is the only `provision` verb left,
-described under [Machine key](#machine-key). The Git identity has no verb of
-its own: its authentication and signing keys are a clan var generated on an
-operator device and placed by activation, and Git and `ssh` read them
-directly; `doctor provisioning` reports the `git-identity` surface as
-`not-applicable` on a portable profile, `degraded` while the key is not placed
-(with `clan vars generate <host>` on an operator device, then `atyrode apply`,
-as the remedy), and `ok` once it is. The custody model is in
-[secrets.md](secrets.md#git-identity).
-
-Managed `local-qwen` OMP processes hold independent session leases. Ten minutes
-after the final session closes, the WSL idle reaper verifies that vLLM has no
-active or queued requests and no new token activity, then stops the container
-and releases its GPU memory. A new session or direct API activity resets the
-deadline; stale leases from crashed processes are discarded.
-
+Managed `local-qwen` OMP processes hold independent session leases. Ten
+minutes after the final session closes, the WSL idle reaper verifies that vLLM
+has no active or queued requests and no new token activity, then stops the
+container and releases its GPU memory. A new session or direct API activity
+resets the deadline; stale leases from crashed processes are discarded.
 `manifold-agent` joins the machine to the self-hosted manifold hub declared in
 `fleet/manifold.json`; enrollment, upgrade discipline, replacing an unmanaged
 agent, and the master-migration runbook live in [manifold](manifold.md).
 
-Diagnostics use stable non-zero exits for invalid input, missing files or tools,
-identity mismatches, and activation failure. They do not expose credentials.
-`doctor system [HOST] [--json]` audits the boundary that package installation
-alone cannot satisfy: the real login shell, Nix daemon and trust policy,
-container engine, antivirus ownership, Android device policy, Homebrew drift,
-and, on macOS, the residue of an interrupted or superseded Nix installation.
-That last one is the state
-[`bootstrap/install.sh`](../bootstrap/install.sh) repairs before Nix exists --
-a shell rc backup that was never restored, an `/etc` profile file the
-installer wrote where nix-darwin expects to own a link, an `/etc` link into a
-store path that is gone, a TLS anchor Nix cannot read, an `fstab` line
-mounting `/nix` from a volume that no longer resolves. Repair has to run
-before Nix exists and stays in the installer; detection is shared knowledge,
-so a machine that installed successfully years ago is re-examined on every
-`atyrode doctor` and told which command repairs what it carries. Its stable
-check IDs, row schema, statuses, exits, and read-only probe contract are
-documented in [Home Manager and system boundary](system-boundary.md).
-`doctor git [--json]` is the matching user-side, read-only audit. Its ordered
-checks cover Git configuration readability; the configured signing key, which
-must be the private key activation placed, readable by this account and at
-mode 0600 or stricter (`signing-key-invalid`, or `not-fleet-member` on a
-portable profile); the managed `allowed_signers` file, which must match the
-repository's content exactly and name this machine's public signing key
-(`allowed-signers-drift`, `signing-key-unreviewed`); the current repository's
-effective fetch/push protocols; plaintext Git credential helpers and files;
-the declarative `gh` helper; and `gh` token-storage classification. It asks no
-agent anything, because Git signs with the placed key directly. `failed`
-checks return 69; `warning` rows (for example, an HTTPS forge push with no
-recognized secure helper) remain visible without making the report fail. JSON
-uses schema version 1 and never includes keys, tokens, helper arguments, or
-remote URLs. The key model, enrolment, and revocation are documented in
+Diagnostics use stable non-zero exits for invalid input, missing files or
+tools, identity mismatches, and activation failure, and never expose
+credentials. `doctor system` audits the boundary that package installation
+alone cannot satisfy, including on macOS the residue of an interrupted or
+superseded Nix installation: that is the state
+[`bootstrap/install.sh`](../bootstrap/install.sh) repairs before Nix exists,
+so repair stays in the installer while detection is shared, and a machine that
+installed successfully years ago is re-examined on every `atyrode doctor` and
+told which command repairs what it carries. Its check IDs, row schema,
+statuses, exits, and read-only probe contract are in [Home Manager and system
+boundary](system-boundary.md). `doctor git` is the matching user-side audit
+of the placed signing key, the managed `allowed_signers` file, forge
+protocols, credential helpers and `gh` token storage; it asks no agent
+anything, because Git signs with the placed key directly, `failed` checks
+return 69 while `warning` rows stay visible without failing the report, and
+its JSON never includes keys, tokens, helper arguments, or remote URLs. Its
+codes are explained with the identity they audit in
 [secrets.md](secrets.md#git-identity).
-The `workspace` and `agent` namespaces are reserved for their owning follow-up
-issues and currently fail clearly.

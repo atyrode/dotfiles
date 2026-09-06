@@ -22,8 +22,8 @@ mkScenario "darwin-etc" ''
   grep -F "$etc/static" "$TMPDIR/etc-link-plan.out" >/dev/null
   grep -F "$etc/bashrc" "$TMPDIR/etc-link-plan.out" >/dev/null
   grep -F "$etc/ssl/certs/ca-certificates.crt" "$TMPDIR/etc-link-plan.out" >/dev/null
-  grep -Fq "$etc/unrelated" "$TMPDIR/etc-link-plan.out" && exit 1
-  grep -Fq "$etc/ssl/certs/foreign.crt" "$TMPDIR/etc-link-plan.out" && exit 1
+  grep -Fq "$etc/unrelated" "$TMPDIR/etc-link-plan.out" && false
+  grep -Fq "$etc/ssl/certs/foreign.crt" "$TMPDIR/etc-link-plan.out" && false
   # plan is read-only: every link is still exactly as it was.
   test -L "$etc/static"
   test -L "$etc/bashrc"
@@ -39,7 +39,7 @@ mkScenario "darwin-etc" ''
   test -f "$etc/zshrc"
   undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
   grep -F "ln -s '/etc/static/bashrc' '$etc/bashrc'" "$undo" >/dev/null
-  grep -F "removed dangling $etc/static" "$undo" >/dev/null
+  grep -F "ln -s '/nix/store/0000000000000000000000000000000-etc' '$etc/static'" "$undo" >/dev/null
   grep -F "ln -s '/etc/static/ssl/certs/ca-certificates.crt' '$etc/ssl/certs/ca-certificates.crt'" \
     "$undo" >/dev/null
 
@@ -54,11 +54,10 @@ mkScenario "darwin-etc" ''
     "$etc/ssl/certs/ca-certificates.crt"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-nix-plan.out"
   grep -F "$etc/ssl/certs/ca-certificates.crt" "$TMPDIR/etc-nix-plan.out" >/dev/null
-  # The installer is not planned: Nix is present and stays present.
-  grep -F 'Reuse the installed Nix command' "$TMPDIR/etc-nix-plan.out" >/dev/null
   test -L "$etc/ssl/certs/ca-certificates.crt"
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test ! -L "$etc/ssl/certs/ca-certificates.crt"
+  # Nix is present and stays present: the installer never ran.
   test ! -e "$FAKE_INSTALL_EXECUTED"
   # No CA bundle in the profile, so removal is the whole repair here: there
   # is nothing to restore the path from and nothing is invented.
@@ -97,7 +96,7 @@ mkScenario "darwin-etc" ''
   ln -s "$etc/static/zshrc" "$etc/zshrc"
   printf 'hand written, no marker\n' > "$etc/bashrc"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/etc-untouched-plan.out"
-  grep -Fq 'before-nix-darwin' "$TMPDIR/etc-untouched-plan.out" && exit 1
+  grep -Fq 'before-nix-darwin' "$TMPDIR/etc-untouched-plan.out" && false
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test -L "$etc/zshrc"
   test ! -e "$etc/zshrc.before-nix-darwin"

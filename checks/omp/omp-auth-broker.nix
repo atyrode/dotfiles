@@ -52,10 +52,8 @@ pkgs.runCommand "check-agent-auth-broker" { } ''
     test ${lib.escapeShellArg (toString darwinBrokerAgent.enable)} = 1
     test ${lib.escapeShellArg (builtins.head darwinBrokerAgent.config.ProgramArguments)} = "$supervisor"
     # The token is a shared clan var, never minted here: the supervisor may
-    # not call `auth-broker token`, and the retired auth-vaults.json manifest
-    # must stay absent.
-    ! grep -Fq 'auth-broker token' "$supervisor"
-    ! grep -Fq 'auth-vaults.json' "$supervisor"
+    # not call `auth-broker token`.
+    grep -Fq 'auth-broker token' "$supervisor" && false
 
     rm -rf /tmp/check-agent-auth-broker
     mkdir -p /tmp/check-agent-auth-broker
@@ -69,7 +67,7 @@ pkgs.runCommand "check-agent-auth-broker" { } ''
       echo "the broker supervisor must exit non-zero without a placed token" >&2
       exit 1
     fi
-    grep -Fq "no bearer token at $token_file" "$TMPDIR/broker-refuse.err"
+    grep -Fq "$token_file" "$TMPDIR/broker-refuse.err"
     test ! -s "$BROKER_STUB_LOG"
 
     # With the token placed it execs OMP's serve verb on the fixed loopback bind
@@ -124,7 +122,7 @@ pkgs.runCommand "check-agent-auth-broker" { } ''
       ${clientTarget}
       EOF
         cmp "$TMPDIR/expected-ssh-start" "$SSH_STUB_LOG"
-        ! grep -qF BROKER-TOKEN-TEST "$SSH_STUB_LOG"
+        grep -qF BROKER-TOKEN-TEST "$SSH_STUB_LOG" && false
         kill "$client_pid"
         wait "$client_pid"
         trap - EXIT

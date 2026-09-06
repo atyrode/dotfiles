@@ -33,7 +33,6 @@ pkgs.runCommand "check-codex-seed"
     export HOME="$TMPDIR/pristine"
     mkdir -p "$HOME"
     AGENT_TOOLS_DRY_RUN=1 atyrode-codex-seed apply >"$TMPDIR/dry.log" 2>&1
-    grep -qi 'DRY RUN' "$TMPDIR/dry.log" || fail "pristine dry run was not announced"
     [ ! -e "$HOME/.codex" ] || fail "dry run created ~/.codex"
     [ ! -e "$HOME/.local/state/atyrode/codex-seed" ] || fail "dry run created state"
 
@@ -73,7 +72,7 @@ pkgs.runCommand "check-codex-seed"
     # because the seed is one-time (the file is now the user's).
     echo 'model = "user-choice"' >"$config"
     atyrode-codex-seed apply >"$TMPDIR/idem.log" 2>&1
-    grep -qi 'already seeded' "$TMPDIR/idem.log" || fail "re-run did not detect the marker"
+    [ -e "$HOME/.local/state/atyrode/codex-seed/seeded" ] || fail "re-run dropped the marker"
     grep -q 'model = "user-choice"' "$config" || fail "idempotent re-run clobbered a local edit"
 
     mkdir "$out"

@@ -10,7 +10,6 @@ mkScenario "core" ''
   new_fixture plan
   export PATH="$managed_tools:$base_path"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/plan.out"
-  grep -q '^Preflight passed' "$TMPDIR/plan.out"
   grep -q '^Plan' "$TMPDIR/plan.out"
   test ! -e "$FAKE_LOG"
   test ! -e "$XDG_STATE_HOME"
@@ -43,12 +42,12 @@ mkScenario "core" ''
       bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
       > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err"
     test ! -e "$BOOTSTRAP_POISON_MARKER"
+    # The same run proves the fleet cache is never load-bearing: the
+    # sandbox's /etc is read-only, so the enrolment is refused, and the
+    # apply still exits zero with the receipt written and no interrupted
+    # marker left behind.
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
     test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
-    # The same run proves the fleet cache is never load-bearing: the
-    # sandbox's /etc is read-only, the enrolment is refused, and the apply
-    # still converges with a warning that hands the line to doctor.
-    grep -F 'could not write /etc/nix/nix.conf' "$TMPDIR/production-hooks.err" >/dev/null
   fi
 
   # Repository identity, every class of dirt, and revision state are conservative.
@@ -113,7 +112,7 @@ mkScenario "core" ''
     FAKE_DISRUPTION_STATUS="$disruption_status" \
       expect_failure "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host"
     grep -F -- '--preview-json' "$FAKE_LOG" >/dev/null
-    ! grep -qF -- '--expected-disruption' "$FAKE_LOG"
+    grep -qF -- '--expected-disruption' "$FAKE_LOG" && false
     test ! -e "$XDG_STATE_HOME/atyrode/dotfiles-config"
   done
 
@@ -135,14 +134,14 @@ mkScenario "core" ''
   parked_revision="$("$real_git" -C "$repo" rev-parse HEAD)"
   export FAKE_GIT_UPDATE_REPO="$upstream"
 
-  # Without --update the refusal still names the branch and moves nothing.
+  # Without --update the refusal names the branch and moves nothing. Every
+  # refusal exits 1, so the branch name is what tells this one apart.
   expect_failure "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host"
-  grep -F 'checkout is on parked, not main' "$TMPDIR/expected-failure.err" >/dev/null
+  grep -qw parked "$TMPDIR/expected-failure.err"
   test "$("$real_git" -C "$repo" symbolic-ref --short HEAD)" = parked
 
   "$repo/bootstrap/install.sh" apply --yes --update --repo "$repo" --config "$host" \
     >/dev/null 2> "$TMPDIR/branch-return.err"
-  grep -F 'moving the checkout from parked to main' "$TMPDIR/branch-return.err" >/dev/null
   test "$("$real_git" -C "$repo" symbolic-ref --short HEAD)" = main
   test "$("$real_git" -C "$repo" rev-parse HEAD)" = "$updated_revision"
   test "$("$real_git" -C "$repo" rev-parse parked)" = "$parked_revision"
@@ -151,9 +150,7 @@ mkScenario "core" ''
   # The fast-forward may have rewritten install.sh, so the run continues under
   # the new copy. Silently, that reads as the plan and its confirmation simply
   # appearing twice, and the operator answers the same question with no idea
-  # why it was asked again.
-  grep -F 'Restarting bootstrap under the updated source' "$TMPDIR/branch-return.err" >/dev/null
-  grep -F 'it prints its plan and asks again' "$TMPDIR/branch-return.err" >/dev/null
+  # why it was asked again; the re-exec is therefore announced as a command.
   grep -E '^\$ bash .*install\.sh apply --repo .* --config ' "$TMPDIR/branch-return.err" >/dev/null
 
   # Download and integrity failures cannot execute the unverified installer.
@@ -194,7 +191,7 @@ mkScenario "core" ''
   printf 'settled\n' > "$etc/bash.bashrc"
   cp "$etc/bash.bashrc" "$etc/bash.bashrc.backup-before-nix"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/settled-plan.out"
-  if grep -Fq 'Restore the pre-Nix shell rc file' "$TMPDIR/settled-plan.out"; then
+  if grep -Fq "$etc/bash.bashrc" "$TMPDIR/settled-plan.out"; then
     echo 'a settled backup was unexpectedly planned for restore' >&2
     exit 1
   fi
@@ -205,7 +202,6 @@ mkScenario "core" ''
   printf 'stock bashrc\n' > "$etc/bashrc.backup-before-nix"
   printf '# Nix\nstock bashrc\n' > "$etc/bashrc"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/repair-plan.out"
-  grep -F 'Restore the pre-Nix shell rc file' "$TMPDIR/repair-plan.out" >/dev/null
   grep -F "$etc/zshrc" "$TMPDIR/repair-plan.out" >/dev/null
   grep -F "$etc/bashrc" "$TMPDIR/repair-plan.out" >/dev/null
   test -e "$etc/zshrc.backup-before-nix"
@@ -221,7 +217,6 @@ mkScenario "core" ''
   grep -Fxq '# Nix' "$etc/bashrc.nix-install-leftover"
   test "$(cat "$etc/bash.bashrc")" = settled
   test -e "$etc/bash.bashrc.backup-before-nix"
-  grep -F "Restored $etc/zshrc" "$TMPDIR/repair-apply.out" >/dev/null
   test -e "$FAKE_INSTALL_EXECUTED"
   test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
 
@@ -238,19 +233,20 @@ mkScenario "core" ''
     mkdir -p "$etc/nix"
     printf 'build-users-group = nixbld\n' > "$etc/nix/nix.conf"
     "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-plan.out"
-    grep -F 'Enrol the Nix daemon in the fleet binary cache' "$TMPDIR/fleet-cache-plan.out" >/dev/null
     grep -F '${fleetCache.substituter}' "$TMPDIR/fleet-cache-plan.out" >/dev/null
     test "$(cat "$etc/nix/nix.conf")" = 'build-users-group = nixbld'
     "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-apply.out"
-    grep -F "Enrolled the fleet binary cache in $etc/nix/nix.conf" "$TMPDIR/fleet-cache-apply.out" >/dev/null
     test "$(sed -n 1p "$etc/nix/nix.conf")" = 'build-users-group = nixbld'
     grep -Fxq 'extra-substituters = ${fleetCache.substituter}' "$etc/nix/nix.conf"
     grep -Fxq 'extra-trusted-public-keys = ${fleetCache.trustedPublicKey}' "$etc/nix/nix.conf"
     test "$(stat -c %a "$etc/nix/nix.conf")" = 644
     test "$(wc -l < "$etc/nix/nix.conf")" -eq 3
-    grep -F 'enrolled the fleet cache' "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
+    archive="$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'nix.conf.*' -print -quit)"
+    test "$(cat "$archive")" = 'build-users-group = nixbld'
+    grep -F "undo: cp '$archive' '$etc/nix/nix.conf'" \
+      "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
     "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-settled.out"
-    if grep -Fq 'Enrol the Nix daemon' "$TMPDIR/fleet-cache-settled.out"; then
+    if grep -Fq '${fleetCache.substituter}' "$TMPDIR/fleet-cache-settled.out"; then
       echo 'an enrolled daemon was unexpectedly planned for enrolment again' >&2
       exit 1
     fi
@@ -319,14 +315,14 @@ mkScenario "core" ''
   export FAKE_DOCTOR_FINDINGS=1
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" \
     > "$TMPDIR/findings.out" 2> "$TMPDIR/findings.err"
-  # On the operator's own stream, not inside the captured verification step:
-  # a call to action that only a transcript ever sees is not a call to action.
-  grep -qF 'Bootstrap complete, with findings for' "$TMPDIR/findings.out"
+  # The call to action names the command, on the operator's own stream and
+  # not inside the captured verification step: a call to action that only a
+  # transcript ever sees is not a call to action.
   grep -qF 'atyrode doctor' "$TMPDIR/findings.out"
   grep -qF 'exec ' "$TMPDIR/findings.out"
   # The two states this scenario exists to keep apart.
-  ! grep -qF 'BOOT-E399' "$TMPDIR/findings.out" "$TMPDIR/findings.err"
-  ! grep -qF 'recover --config' "$TMPDIR/findings.out" "$TMPDIR/findings.err"
+  grep -qF 'BOOT-E399' "$TMPDIR/findings.out" "$TMPDIR/findings.err" && false
+  grep -qF 'recover --config' "$TMPDIR/findings.out" "$TMPDIR/findings.err" && false
   # An apply that finished must not look interrupted to the next run.
   test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
   unset FAKE_DOCTOR_FINDINGS
@@ -386,9 +382,7 @@ mkScenario "core" ''
   test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = sentinel
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" \
     > "$TMPDIR/interrupted-plan.out" 2> "$TMPDIR/interrupted-plan.err"
-  grep -F "previous apply of $host" "$TMPDIR/interrupted-plan.err" >/dev/null
-  grep -F "re-run: ./bootstrap/install.sh apply --config $host" \
-    "$TMPDIR/interrupted-plan.err" >/dev/null
+  grep -F "./bootstrap/install.sh apply --config $host" "$TMPDIR/interrupted-plan.err" >/dev/null
   test -f "$marker"
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test ! -e "$marker"

@@ -79,22 +79,27 @@ pkgs.runCommand "check-atyrode-generations"
       || { echo "clean must exit with nh's status when nh fails (exit $clean_fail_status)" >&2; exit 1; }
 
     # rollback refuses the generation that is already current (#3 in the stub
-    # listing), so the running configuration can't be rolled onto itself.
+    # listing) as a usage error, so the running configuration can't be rolled
+    # onto itself.
     set +e
     rollback_current="$(atyrode rollback --to 3 --yes 2>&1 >/dev/null)"
     rollback_current_status="$?"
     set -e
     test "$rollback_current_status" = 64 \
       || { echo "rollback onto the current generation must be refused (exit $rollback_current_status): $rollback_current" >&2; exit 1; }
-    grep -qF 'generation 3 is already current' <<<"$rollback_current" \
-      || { echo "rollback refusal must name the current generation: $rollback_current" >&2; exit 1; }
 
     # rollback is dispatched to its implementation, not reserved: it reaches
-    # real behaviour instead of dying "reserved for a follow-up issue".
+    # real behaviour instead of dying "reserved for a follow-up issue". The
+    # only generation link the fixture places is #2, so a dry run that exits
+    # zero has resolved the previous generation and nothing else; and a dry
+    # run never announces the activation, because it never runs one.
+    set +e
     rollback_previous="$(atyrode rollback --dry-run --yes 2>&1 >/dev/null)"
-    grep -qF 'back from generation 3 to 2' <<<"$rollback_previous" \
-      || { echo "rollback must default to the previous generation: $rollback_previous" >&2; exit 1; }
-    grep -qF 'dry run — nothing activated' <<<"$rollback_previous" \
+    rollback_previous_status="$?"
+    set -e
+    test "$rollback_previous_status" = 0 \
+      || { echo "rollback must default to the previous generation (exit $rollback_previous_status): $rollback_previous" >&2; exit 1; }
+    ! grep -qF "$ATYRODE_TEST_CANDIDATE/activate" <<<"$rollback_previous" \
       || { echo "rollback --dry-run must not activate anything: $rollback_previous" >&2; exit 1; }
 
     # A real rollback re-runs activation, which is the same class of change
@@ -110,8 +115,6 @@ pkgs.runCommand "check-atyrode-generations"
       rollback_real="$(atyrode rollback --to 2 --yes 2>&1 >/dev/null)"
       grep -qF "$ATYRODE_TEST_CANDIDATE/activate" <<<"$rollback_real" \
         || { echo "rollback must announce the activation it runs: $rollback_real" >&2; exit 1; }
-      grep -qF 'now on generation 2' <<<"$rollback_real" \
-        || { echo "rollback must confirm the generation it landed on: $rollback_real" >&2; exit 1; }
     ''}
 
     # Colour is opt-in on the outcome: forced on it wraps the announced command

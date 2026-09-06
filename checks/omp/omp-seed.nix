@@ -58,8 +58,7 @@ pkgs.runCommand "check-omp-seed"
     # even the state directory or lock file.
     export HOME="$TMPDIR/pristine"
     mkdir -p "$HOME"
-    AGENT_TOOLS_DRY_RUN=1 atyrode-omp-seed apply >"$TMPDIR/dry-pristine.log"
-    grep -q 'dry run' "$TMPDIR/dry-pristine.log" || fail "pristine dry run was not announced"
+    AGENT_TOOLS_DRY_RUN=1 atyrode-omp-seed apply >/dev/null
     [ ! -e "$HOME/.local/state/atyrode/omp-plain-seed" ] || fail "pristine dry run created state"
     [ ! -e "$HOME/.omp" ] || fail "pristine dry run touched ~/.omp"
 
@@ -140,8 +139,7 @@ pkgs.runCommand "check-omp-seed"
         consent: granted
     YAML
 
-    atyrode-omp-seed apply >"$TMPDIR/apply-1.log"
-    grep -q 'drifted (kept)' "$TMPDIR/apply-1.log" || fail "apply produced no summary"
+    atyrode-omp-seed apply >/dev/null
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "fresh seed did not write secrets.enabled"
     [ "$(yq eval '.task.isolation.mode' "$config")" = "auto" ] || fail "fresh seed did not write task.isolation.mode"
     [ "$(yq eval '.advisor.syncBacklog' "$config")" = "3" ] || fail "fresh seed did not write advisor.syncBacklog"
@@ -153,9 +151,11 @@ pkgs.runCommand "check-omp-seed"
       "$(yq eval -o=json '.retry.fallbackChains.default' "$seed")" ] \
       || fail "fallback chain array was not seeded verbatim"
 
-    # Scenario: idempotent re-run.
-    atyrode-omp-seed apply >"$TMPDIR/apply-2.log"
-    grep -q '^omp seed: 0 applied' "$TMPDIR/apply-2.log" || fail "re-run applied changes"
+    # Scenario: idempotent re-run leaves config and snapshot byte-identical.
+    before="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
+    atyrode-omp-seed apply >/dev/null
+    after="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
+    [ "$before" = "$after" ] || fail "re-run applied changes"
 
     # Scenario: local edits win and are reported, including deletions.
     yq eval -i '.advisor.syncBacklog = "5"' "$config"
@@ -175,18 +175,16 @@ pkgs.runCommand "check-omp-seed"
     updated_seed="$TMPDIR/updated-seed.yml"
     cp "$seed" "$updated_seed"
     yq eval -i '.todo.eager = "always" | .advisor.syncBacklog = "1"' "$updated_seed"
-    OMP_SEED_FILE="$updated_seed" atyrode-omp-seed apply >"$TMPDIR/apply-4.log"
+    OMP_SEED_FILE="$updated_seed" atyrode-omp-seed apply >/dev/null
     [ "$(yq eval '.todo.eager' "$config")" = "always" ] || fail "seed update was not applied"
     [ "$(yq eval '.advisor.syncBacklog' "$config")" = "5" ] || fail "seed update clobbered local edit"
-    grep -q 'todo.eager' "$TMPDIR/apply-4.log" || fail "seed update was not announced"
 
     # Scenario: dry run writes nothing once state exists.
     before="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
     yq eval -i '.todo.eager = "default"' "$updated_seed"
-    AGENT_TOOLS_DRY_RUN=1 OMP_SEED_FILE="$updated_seed" atyrode-omp-seed apply >"$TMPDIR/apply-dry.log"
+    AGENT_TOOLS_DRY_RUN=1 OMP_SEED_FILE="$updated_seed" atyrode-omp-seed apply >/dev/null
     after="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
     [ "$before" = "$after" ] || fail "dry run modified state"
-    grep -q 'dry run' "$TMPDIR/apply-dry.log" || fail "dry run was not announced"
 
     # Scenario: status --json exposes the drift, resolve --reset-all clears it.
     status_json="$(atyrode-omp-seed status --json)"

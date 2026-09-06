@@ -182,15 +182,16 @@ pkgs.runCommand "check-atyrode-runtime"
     grep -qF 'clan vars generate wsl --generator manifold-custody' "$TMPDIR/manifold-nocustody.err"
     test ! -e "$MANIFOLD_ENROLL_LOG"
 
-    # Action refusals arrive with HTTP 200; they must not store a credential
-    # or be confused with an idempotent existing machine lacking a new token.
-    if MANIFOLD_ENROLL_REFUSED=1 atyrode runtime enroll manifold-agent wsl > /dev/null 2>"$TMPDIR/manifold-refused.err"; then
-      echo 'refused enrollment was accepted' >&2
-      exit 1
-    fi
-    grep -qF 'enrollment denied' "$TMPDIR/manifold-refused.err"
+    # Action refusals arrive with HTTP 200; they are the hub being unavailable
+    # to this machine, must not store a credential, and must not be confused
+    # with an idempotent existing machine lacking a new token.
+    set +e
+    MANIFOLD_ENROLL_REFUSED=1 atyrode runtime enroll manifold-agent wsl > /dev/null 2>"$TMPDIR/manifold-refused.err"
+    result="$?"
+    set -e
+    test "$result" -eq 69
     test ! -e "$MANIFOLD_CLAN_STORE/wsl"
-    ! grep -q -- '--rotate-token' "$TMPDIR/manifold-refused.err"
+    grep -q -- '--rotate-token' "$TMPDIR/manifold-refused.err" && false
 
     # A fresh enrollment stores the minted token as wsl's var, and the two
     # secrets appear in no announced line and no argv.
@@ -198,8 +199,8 @@ pkgs.runCommand "check-atyrode-runtime"
     test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = minted-token
     jq -e '.name == "wsl" and (has("rotateToken") | not)' "$MANIFOLD_ENROLL_LOG" >/dev/null
     grep -qF 'vars set wsl manifold-agent/machine-token' "$MANIFOLD_CLAN_LOG"
-    ! grep -qF 'fixture-owner-key' "$TMPDIR/manifold-enroll.err" "$MANIFOLD_CLAN_LOG"
-    ! grep -qF 'minted-token' "$TMPDIR/manifold-enroll.err" "$MANIFOLD_CLAN_LOG"
+    grep -qF 'fixture-owner-key' "$TMPDIR/manifold-enroll.err" "$MANIFOLD_CLAN_LOG" && false
+    grep -qF 'minted-token' "$TMPDIR/manifold-enroll.err" "$MANIFOLD_CLAN_LOG" && false
     test ! -e "$token_file"
 
     # A token this device holds as a plain file, from before it was a var, is
@@ -339,7 +340,7 @@ pkgs.runCommand "check-atyrode-runtime"
       exit 1
     fi
     ATYRODE_CLAN=/bin/false ATYRODE_FETCH=/bin/false atyrode runtime provision manifold-agent >/dev/null 2>&1
-    ! grep -qF 'mac-token' "$TMPDIR/manifold-mac.err"
+    grep -qF 'mac-token' "$TMPDIR/manifold-mac.err" && false
     rm -rf "$HOME/.config/manifold" "$HOME/.local/state/manifold" "$TMPDIR/run-secrets" "$MANIFOLD_CLAN_STORE" "$MANIFOLD_CLAN_LOG"
     rm "$TMPDIR/bin/manifold-agent"
     unset ATYRODE_CLAN ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL MANIFOLD_ENROLL_LOG MANIFOLD_CLAN_LOG MANIFOLD_CLAN_STORE MANIFOLD_ROW_EXISTS ATYRODE_HOST

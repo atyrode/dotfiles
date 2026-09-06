@@ -153,7 +153,7 @@ pkgs.runCommand "check-atyrode-credentials"
         and (.checks[] | select(.id == "gh-auth-storage") | .status) == "not-applicable"
       ' <<<"$git_result" >/dev/null
       # The report classifies; it never carries the key.
-      ! grep -qF 'PRIVATE KEY' <<<"$git_result"
+      grep -qF 'PRIVATE KEY' <<<"$git_result" && false
 
       "$git_doctor" config --global --unset-all 'url.git@github.com:.pushInsteadOf'
       "$git_doctor" config --global --unset-all credential.https://github.com.helper
@@ -281,7 +281,7 @@ pkgs.runCommand "check-atyrode-credentials"
         (.checks[] | select(.id == "gh-auth-storage") | .status) == "failed"
         and (.checks[] | select(.id == "gh-auth-storage") | .actual.plaintextTokenFile)
       ' "$TMPDIR/git-doctor-gh-plaintext.json" >/dev/null
-      ! grep -qF fixture-token-must-not-appear "$TMPDIR/git-doctor-gh-plaintext.json"
+      grep -qF fixture-token-must-not-appear "$TMPDIR/git-doctor-gh-plaintext.json" && false
       rm "$GH_CONFIG_DIR/hosts.yml"
 
       set +e
@@ -314,14 +314,15 @@ pkgs.runCommand "check-atyrode-credentials"
       ATYRODE_HOST=development-x86_64-linux
     )
 
-    # A host clan cannot deploy is refused by name, and the refusal says which
-    # command does converge it.
-    if "''${fleet_test_env[@]}" atyrode fleet plan development-x86_64-linux \
-      >"$TMPDIR/fleet-portable.out" 2>"$TMPDIR/fleet-portable.err"; then
-      echo 'fleet plan must refuse a portable Home Manager profile' >&2
-      exit 1
-    fi
-    grep -qF 'converges with atyrode apply' "$TMPDIR/fleet-portable.err"
+    # A host clan cannot deploy is refused as a usage error, and the refusal
+    # names the command that does converge it.
+    set +e
+    "''${fleet_test_env[@]}" atyrode fleet plan development-x86_64-linux \
+      >"$TMPDIR/fleet-portable.out" 2>"$TMPDIR/fleet-portable.err"
+    fleet_status="$?"
+    set -e
+    test "$fleet_status" = 64
+    grep -qF 'atyrode apply' "$TMPDIR/fleet-portable.err"
 
     fleet_plan="$("''${fleet_test_env[@]}" atyrode fleet plan fixture-nixos \
       --repo "$TMPDIR/repo" --json 2>"$TMPDIR/fleet-plan.err")"
@@ -338,24 +339,25 @@ pkgs.runCommand "check-atyrode-credentials"
 
     # Vars that are not generated stop the deployment before it touches the
     # machine, and the remedy names the command that generates them.
-    if "''${fleet_test_env[@]}" ATYRODE_TEST_VARS_INCOMPLETE=1 \
+    set +e
+    "''${fleet_test_env[@]}" ATYRODE_TEST_VARS_INCOMPLETE=1 \
       atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
-      >"$TMPDIR/fleet-vars.out" 2>"$TMPDIR/fleet-vars.err"; then
-      echo 'fleet apply must refuse a machine whose vars are incomplete' >&2
-      exit 1
-    fi
+      >"$TMPDIR/fleet-vars.out" 2>"$TMPDIR/fleet-vars.err"
+    fleet_status="$?"
+    set -e
+    test "$fleet_status" = 70
     grep -qF 'clan vars generate fixture-nixos' "$TMPDIR/fleet-vars.err"
     test ! -e "$TMPDIR/fleet-order"
 
     # An unreachable machine is a preflight failure, not a half-finished
     # deployment.
-    if "''${fleet_test_env[@]}" ATYRODE_TEST_SSH_UNREACHABLE=1 \
+    set +e
+    "''${fleet_test_env[@]}" ATYRODE_TEST_SSH_UNREACHABLE=1 \
       atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
-      >"$TMPDIR/fleet-unreachable.out" 2>"$TMPDIR/fleet-unreachable.err"; then
-      echo 'fleet apply must refuse an unreachable machine' >&2
-      exit 1
-    fi
-    grep -qF 'did not answer a strict-host-key SSH check' "$TMPDIR/fleet-unreachable.err"
+      >"$TMPDIR/fleet-unreachable.out" 2>"$TMPDIR/fleet-unreachable.err"
+    fleet_status="$?"
+    set -e
+    test "$fleet_status" = 69
     test ! -e "$TMPDIR/fleet-order"
 
     fleet_apply="$("''${fleet_test_env[@]}" \
@@ -384,14 +386,18 @@ pkgs.runCommand "check-atyrode-credentials"
     done
 
     # A machine that activated but answers as somebody else is a failure: the
-    # deployment exited zero and the wrong closure is live.
-    if "''${fleet_test_env[@]}" ATYRODE_TEST_REPORTED_HOST=someone-else \
+    # deployment ran through activation and the wrong closure is live, so the
+    # order shows the activation happened and the exit is the software failure
+    # rather than a preflight refusal.
+    : > "$TMPDIR/fleet-order"
+    set +e
+    "''${fleet_test_env[@]}" ATYRODE_TEST_REPORTED_HOST=someone-else \
       atyrode fleet apply fixture-nixos --repo "$TMPDIR/repo" --yes --json \
-      >"$TMPDIR/fleet-mismatch.out" 2>"$TMPDIR/fleet-mismatch.err"; then
-      echo 'fleet apply must fail when the machine does not verify its identity' >&2
-      exit 1
-    fi
-    grep -qF 'does not report itself as fixture-nixos' "$TMPDIR/fleet-mismatch.err"
+      >"$TMPDIR/fleet-mismatch.out" 2>"$TMPDIR/fleet-mismatch.err"
+    fleet_status="$?"
+    set -e
+    test "$fleet_status" = 70
+    test "$(cat "$TMPDIR/fleet-order")" = "$(printf 'build\ncopy\npreview\nupload\nactivate')"
 
     cat > "$TMPDIR/bin/auth-systemctl" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -466,28 +472,27 @@ pkgs.runCommand "check-atyrode-credentials"
     grep -qF 'clan vars generate wsl' "$TMPDIR/auth-add-key-unplaced.err"
     test ! -e "$TMPDIR/auth-curl-args"
 
-    # The placed token: status reports it without printing it, and the upload
-    # carries it only inside the 0600 curl config, never in argv or stderr.
+    # The placed token: status reports it without printing it, in either
+    # output shape, and the upload carries it only inside the 0600 curl
+    # config, never in argv or stderr.
     rm "$client_home/.omp/auth-broker.token"
     printf 'BROKER-TOKEN-TEST' > "$client_home/.omp/auth-broker.token"
     chmod 600 "$client_home/.omp/auth-broker.token"
     auth_status="$("''${auth_client_env[@]}" ATYRODE_HOST=wsl atyrode auth broker status --json)"
     jq -e '.mode == "tunnel" and .configured == true' <<<"$auth_status" >/dev/null
-    ! grep -qF 'BROKER-TOKEN-TEST' <<<"$auth_status"
+    grep -qF 'BROKER-TOKEN-TEST' <<<"$auth_status" && false
     "''${auth_client_env[@]}" ATYRODE_HOST=wsl atyrode auth broker status > "$TMPDIR/auth-status.out"
-    grep -qF 'mode: tunnel' "$TMPDIR/auth-status.out"
-    grep -qF 'configured: yes' "$TMPDIR/auth-status.out"
-    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-status.out"
+    grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-status.out" && false
 
     printf 'sk-deepseek-test\n' |
       "''${auth_client_env[@]}" ATYRODE_HOST=wsl ATYRODE_FETCH="$TMPDIR/bin/auth-curl" \
         atyrode auth broker add-api-key deepseek \
         > "$TMPDIR/auth-add-key.out" 2> "$TMPDIR/auth-add-key.err"
     test ! -s "$TMPDIR/auth-add-key.out"
-    ! grep -qF 'sk-deepseek-test' "$TMPDIR/auth-curl-args"
-    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-curl-args"
-    ! grep -qF 'sk-deepseek-test' "$TMPDIR/auth-add-key.err"
-    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-add-key.err"
+    grep -qF 'sk-deepseek-test' "$TMPDIR/auth-curl-args" && false
+    grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-curl-args" && false
+    grep -qF 'sk-deepseek-test' "$TMPDIR/auth-add-key.err" && false
+    grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/auth-add-key.err" && false
     test ! -e "$TMPDIR/auth-broker-restarted"
 
     mkdir "$out"

@@ -1210,7 +1210,7 @@ doctor_system() {
 }
 
 probe_omp_seed() {
-  local seed_status drift_count
+  local seed_status drift_count pending_count accepted_count drift_keys
 
   if ! command -v atyrode-omp-seed >/dev/null 2>&1; then
     provisioning_check_add omp-seed not-applicable capability-not-selected \
@@ -1218,17 +1218,25 @@ probe_omp_seed() {
     return 0
   fi
   if ! seed_status="$(atyrode-omp-seed status --json 2>/dev/null)" ||
-    ! drift_count="$(jq -er '.drift | length' <<<"$seed_status" 2>/dev/null)"; then
+    ! jq -e '(.drift | type == "array") and (.pending | type == "array")' <<<"$seed_status" >/dev/null 2>&1; then
     provisioning_check_add omp-seed degraded seed-status-unreadable \
       "the omp seeder is installed but its status could not be read" \
       "atyrode-omp-seed status"
     return 0
   fi
-  if [[ "$drift_count" == 0 ]]; then
-    provisioning_check_add omp-seed ok "" "omp settings match the repository defaults" ""
+  drift_count="$(jq -r '.drift | length' <<<"$seed_status")"
+  pending_count="$(jq -r '.pending | length' <<<"$seed_status")"
+  accepted_count="$(jq -r '(.accepted // []) | length' <<<"$seed_status")"
+  if [[ "$drift_count" == 0 && "$pending_count" == 0 ]]; then
+    provisioning_check_add omp-seed ok "" \
+      "omp settings are settled ($accepted_count accepted local choices)" ""
+  elif [[ "$drift_count" == 0 ]]; then
+    provisioning_check_add omp-seed degraded seed-pending \
+      "$pending_count omp default(s) await seeding" "atyrode-omp-seed apply"
   else
+    drift_keys="$(jq -r '.drift | map(.key + " [" + .reason + "]") | join(", ")' <<<"$seed_status")"
     provisioning_check_add omp-seed degraded seed-drift \
-      "$drift_count omp setting(s) kept over the repository defaults" \
+      "$drift_count omp setting(s) need review in $(jq -r '.config' <<<"$seed_status") against $(jq -r '.seed' <<<"$seed_status"): $drift_keys" \
       "atyrode-omp-seed resolve"
   fi
 }
@@ -1264,7 +1272,7 @@ probe_git_identity() {
 }
 
 probe_declared_inputs() {
-  local host result clan
+  local host result clan remediation=""
   host="$(resolve_host)"
   if [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$host")")" == runtime ]]; then
     provisioning_check_add declared-inputs not-applicable portable-profile \
@@ -1274,9 +1282,19 @@ probe_declared_inputs() {
   clan="$(clan_program 2>/dev/null)" || clan=clan
   result="$("$lib_dir/../../atyrode-inputs" /etc/atyrode/declared-inputs.json --clan "$clan")" || true
   if ! jq -e '.ready == true' <<<"$result" >/dev/null 2>&1; then
+    if jq -e 'any(.findings[]; .code == "generation-required")' <<<"$result" >/dev/null 2>&1; then
+      remediation="on an operator device: clan vars generate $host for the named missing or invalidated sources; "
+    fi
+    if jq -e 'any(.findings[]; .code == "absent" or .code == "placement-required")' <<<"$result" >/dev/null 2>&1; then
+      remediation+="atyrode apply restores declared placement and ownership; "
+    fi
+    if jq -e 'any(.findings[]; .code == "inspection-unavailable" or .code == "permission-unknown")' <<<"$result" >/dev/null 2>&1 ||
+      [[ -z "$remediation" ]]; then
+      remediation+="restore authorization for metadata inspection and clan vars check $host, then rerun atyrode doctor; uncertainty is not evidence that sources need regeneration"
+    fi
     provisioning_check_add declared-inputs degraded input-readiness \
       "$(jq -r '[.findings[] | .subject + ": " + .code + (if .path then " (link/path " + .path + " -> " + .target + ")" else "" end)] | join("; ")' <<<"$result")" \
-      "on an operator device: clan vars check $host, then clan vars generate $host for the named missing or invalid declarations; atyrode apply places the current configuration; unavailable inspection is not evidence of absence"
+      "${remediation%; }"
     return 0
   fi
   provisioning_check_add declared-inputs ok "" "declared generator sources and managed links are ready" ""

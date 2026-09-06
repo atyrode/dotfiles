@@ -4,13 +4,28 @@
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
+windows_environment() {
+  [[ "$test_hooks" != 1 || -z "${ATYRODE_WINGET:-}" ]] || return 0
+  if [[ -n "${WSLPATH:-}" ]] && command -v cmd.exe >/dev/null 2>&1; then return 0; fi
+  local windows_path
+  windows_path="$("$lib_dir/../../atyrode-wsl-path")" ||
+    die "$EX_UNAVAILABLE" "could not restore this service-launched shell's Windows PATH; check Windows mounts and WSL interop before retrying"
+  export WSLPATH="$windows_path"
+  export PATH="$PATH:$windows_path"
+}
+
 windows_winget() {
   local candidate=winget.exe resolved
   if [[ "$test_hooks" == 1 && -n "${ATYRODE_WINGET:-}" ]]; then
     candidate="$ATYRODE_WINGET"
+  else
+    command -v cmd.exe >/dev/null 2>&1 ||
+      die "$EX_UNAVAILABLE" "Windows PATH context is unavailable in this shell; the managed WSL shell environment has not discovered Windows executables (not evidence that App Installer is missing)"
+    cmd.exe /d /c exit 0 </dev/null >/dev/null 2>&1 ||
+      die "$EX_UNAVAILABLE" "Windows executables are discoverable but WSL interop execution failed; check the WSL runtime and this shell's WSL_INTEROP context"
   fi
   resolved="$(command -v "$candidate" 2>/dev/null)" ||
-    die "$EX_UNAVAILABLE" "winget.exe is unavailable through WSL interop; repair Windows App Installer and WSL PATH interop"
+    die "$EX_UNAVAILABLE" "Windows interop works, but winget.exe is not on Windows PATH; repair Windows App Installer or its App Execution Alias"
   printf '%s\n' "$resolved"
 }
 
@@ -38,6 +53,7 @@ windows_plan() {
     die "$EX_USAGE" "Windows reconciliation is owned only by a registered nixos-wsl host"
   is_wsl ||
     die "$EX_UNAVAILABLE" "Windows reconciliation requires a live WSL session"
+  windows_environment
   jq -e '
     .schemaVersion == 2
     and (.packages | type == "array" and length > 0)

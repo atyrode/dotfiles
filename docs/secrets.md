@@ -339,6 +339,20 @@ key is not placed, and `ok` when it is. Losing a machine is handled under
 the fleet and its vars with it, its two public keys leave the forges and
 `allowed-signers` in a reviewed commit, and no other machine's key changes.
 
+## Declared input readiness
+
+Activation exports each secret's declared owner, group, and mode alongside its
+deployed path. `doctor provisioning` checks placement against that consumer,
+not whether the interactive account can read the file: a correctly placed
+root-only service key is healthy. These probes inspect metadata only and
+never open secret contents or widen permissions. Public files and managed
+home links retain the account-readability check.
+
+If ordinary metadata inspection is denied, the probe tries a noninteractive,
+isolated privileged metadata query. Unavailable authorization remains unknown,
+not absent. Regeneration is recommended only when Clan identifies a missing
+or invalidated source; misplaced files or ownership are repaired by activation.
+
 ## Revocation and rotation
 
 Three different things happen when a key is gone.

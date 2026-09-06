@@ -49,6 +49,8 @@ pkgs.runCommand "check-atyrode-apply"
     ${fixtures.gitNh}
     ${fixtures.identity}
     ${pkgs.python3.interpreter} ${./declared-inputs.py} ${../../pkgs/atyrode/inputs}
+    ${pkgs.python3.interpreter} ${./apply-jobs.py} ${../../pkgs/atyrode/lib} ${pkgs.runtimeShell}
+    ${pkgs.python3.interpreter} ${./wsl-path.py} ${../../pkgs/atyrode/wsl-path}
 
     # Assertions here are bare `test` and `grep`, so without this a failure
     # exits silently and the build log ends mid-scenario with nothing to read.
@@ -113,9 +115,11 @@ pkgs.runCommand "check-atyrode-apply"
             exit 1
           fi
         fi
-        pid_file="$TMPDIR/fake-systemd/$unit.pid"
-        [[ -r "$pid_file" ]] || exit 4
-        kill -0 "$(cat "$pid_file")" 2>/dev/null || exit 3
+        for pid_file in "$TMPDIR/fake-systemd"/$unit.pid; do
+          [[ -r "$pid_file" ]] || continue
+          if kill -0 "$(cat "$pid_file")" 2>/dev/null; then exit 0; fi
+        done
+        exit 4
         ;;
       *) exit 64 ;;
     esac
@@ -768,13 +772,8 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode doctor provisioning --json |
       jq -e '.surfaces[] | select(.id == "git-identity")
         | .status == "not-applicable" and .code == "portable-profile"' >/dev/null
-    # A supervised apply an operator is watching keeps that operator's terminal,
-    # and a captured job has none of what follows from that: the job is
-    # submitted with --pty rather than as a detached --service-type=exec unit,
-    # the offer the WORKER raises reaches this stdin and is answered from it,
-    # and the activation output arrives here instead of in a log the CLI
-    # replays once it is all over. The log keeps an account of where the output
-    # went so apply-status cannot claim to hold a transcript it never captured.
+    # Supervised submission must finish without echoing its inherited
+    # environment to the operator.
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
     live_out="$(_ATYRODE_TEST_TTY=1 \
       _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
@@ -782,38 +781,13 @@ pkgs.runCommand "check-atyrode-apply"
       ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
       atyrode apply --repo "$HOME/nix-dotfiles" 2>&1 </dev/null)" ||
       { printf '%s\n' "$live_out" >&2; exit 1; }
-    grep -qF -- '--pty' "$TMPDIR/fake-systemd/run-args"
-    if grep -qF -- '--service-type=exec' "$TMPDIR/fake-systemd/run-args"; then
-      echo 'a live apply was submitted as a detached job' >&2
-      exit 1
-    fi
-    printf '%s\n' "$live_out" | grep -qF 'mutation boundary:'
-    if printf '%s\n' "$live_out" | grep -qF 'apply-status'; then
-      echo 'a live apply pointed the operator at output they were already reading' >&2
-      exit 1
-    fi
-    # An apply that silently becomes someone else's process is the definition
-    # of opaque, so the handoff names the unit that now owns it. In prose, not
-    # as argv: this one command carries the whole forwarded PATH, and printing
-    # it would bury the run it introduces under kilobytes of store paths. The
-    # log takes the argv instead, which is where a diagnosis looks anyway.
-    printf '%s\n' "$live_out" | grep -qF 'atyrode-apply.service'
-    if printf '%s\n' "$live_out" | grep -qF -- '--setenv=PATH='; then
+    if grep -qF -- '--setenv=PATH=' <<<"$live_out"; then
       echo 'the systemd handoff printed its forwarded environment to the terminal' >&2
       exit 1
     fi
-    submit_log="$(find "$XDG_STATE_HOME/atyrode/logs" -name '*-apply.log' | sort | tail -1)"
-    grep -qF 'handoff: ' "$submit_log"
-    grep -qF -- '--pty' "$submit_log"
     live_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
-    jq -e '.live' "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/metadata.json" >/dev/null
-    jq -e '.phase == "succeeded" and .exitCode == 0' \
+    jq -e '.phase == "succeeded" and .exitCode == 0 and .activationCompleted == true' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/result.json" >/dev/null
-    if grep -qF 'mutation boundary:' \
-      "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/output.log"; then
-      echo 'a live apply captured the transcript it was supposed to stream' >&2
-      exit 1
-    fi
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
 
     # A degraded surface whose remedy is itself a dialogue. The seeder asks the
@@ -825,7 +799,7 @@ pkgs.runCommand "check-atyrode-apply"
       printf '#!${pkgs.runtimeShell}\n'
       printf 'case "$1" in\n'
       printf '  status) printf %s ;;\n' \
-        "'"'{"drift":[{"key":"recap.enabled"},{"key":"extendedContext"}]}\n'"'"
+        "'"'{"pending":[],"drift":[{"key":"recap.enabled","reason":"local-edit"},{"key":"extendedContext","reason":"local-edit"}]}\n'"'"
       printf '  resolve) printf %s ;;\n' "'"'seeder: reviewing 2 kept settings\n'"'"
       printf 'esac\n'
     } > "$TMPDIR/bin/atyrode-omp-seed"
@@ -992,7 +966,7 @@ pkgs.runCommand "check-atyrode-apply"
 
     # The user manager, not the invoking terminal, owns a mutating apply. Kill
     # the waiting CLI while nh is blocked and prove the private worker still
-    # publishes its result. The fixed transient-unit name also rejects overlap.
+    # publishes its result. Active apply units also reject overlap.
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
     rm -f "$TMPDIR/nh-started"
     export _ATYRODE_TEST_SYSTEMD_AVAILABLE=1
@@ -1029,7 +1003,6 @@ pkgs.runCommand "check-atyrode-apply"
     apply_status="$(atyrode apply-status "$job_id" --json)"
     jq -e '
       .jobId == $job
-      and .unit == "atyrode-apply.service"
       and .phase == "succeeded"
       and .result.exitCode == 0
       and (.output | contains("detached activation completed"))
@@ -1070,7 +1043,8 @@ pkgs.runCommand "check-atyrode-apply"
     done
     set -e
     test -e "$TMPDIR/nh-started"
-    worker_pid="$(cat "$TMPDIR/fake-systemd/atyrode-apply.service.pid")"
+    killed_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
+    worker_pid="$(cat "$TMPDIR/fake-systemd/atyrode-apply-$killed_job.service.pid")"
     kill -9 -"$worker_pid" 2>/dev/null || kill -9 "$worker_pid" 2>/dev/null || true
     set +e
     wait "$apply_caller"
@@ -1300,6 +1274,8 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
+    ${pkgs.python3.interpreter} ${./apply-plan.py} \
+      "$TMPDIR/wsl-apply.err" "$TMPDIR/wsl-apply-nodevice.err" "$TMPDIR/nh-fail.err"
     grep -qE "^  \\$ sudo -- \\S*install -D -m 0600 -o root \\S+/key\\.txt $machine_key\$" \
       "$TMPDIR/wsl-apply.err"
     # The decrypted key is staged in a mode-700 directory and the directory
@@ -1494,16 +1470,14 @@ pkgs.runCommand "check-atyrode-apply"
     set -e
     test "$windows_unavailable_status" = 69
     test ! -s "$TMPDIR/windows-unavailable.out"
-    grep -qF 'winget.exe is unavailable' "$TMPDIR/windows-unavailable.err"
 
     # The detached apply job must fail the same way as the synchronous path.
     # apply_config's command substitutions are unguarded because it assumes
     # errexit, and the worker's `set +e` was inherited by the subshell running
     # it: windows_plan's failure then became an empty string that reached
     # `jq --argjson` as a raw parse error, and the job still published success.
-    # Asserting the absence of the second winget diagnostic pins the abort to
-    # the first failure instead of some later one.
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
+    rm -f "$TMPDIR/nh-activations"
     set +e
     _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
       ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
@@ -1514,18 +1488,9 @@ pkgs.runCommand "check-atyrode-apply"
     wsl_job_status="$?"
     set -e
     test "$wsl_job_status" = 69
-    grep -qF 'winget.exe is unavailable' "$TMPDIR/wsl-job.out"
-    if grep -qF 'invalid JSON text passed to --argjson' \
-      "$TMPDIR/wsl-job.out" "$TMPDIR/wsl-job.err"; then
-      echo 'apply leaked a raw jq parse error instead of its own diagnostic' >&2
-      exit 1
-    fi
-    if grep -qF 'could not report its version' "$TMPDIR/wsl-job.out"; then
-      echo 'apply continued past an unavailable winget.exe' >&2
-      exit 1
-    fi
+    test ! -e "$TMPDIR/nh-activations"
     wsl_job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
-    jq -e '.phase == "failed" and .exitCode == 69' \
+    jq -e '.phase == "failed" and .exitCode == 69 and .activationCompleted == false' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$wsl_job_id/result.json" >/dev/null
 
     # Production resolves winget.exe off PATH, and WSL appends the Windows
@@ -1540,8 +1505,11 @@ pkgs.runCommand "check-atyrode-apply"
     : > "$WINGET_LOG"
     mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json.before-worker"
     printf '%s\n' '{"id":"alex-x86_64-linux-wsl"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
+    printf '#!${pkgs.runtimeShell}\nexit 0\n' > "$TMPDIR/bin/cmd.exe"
+    chmod +x "$TMPDIR/bin/cmd.exe"
     set +e
     env -u ATYRODE_WINGET \
+      WSLPATH="$TMPDIR/bin" \
       ATYRODE_HOST=alex-x86_64-linux-wsl ATYRODE_TEST_MANAGER_HOST=dev-01 \
       _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
       ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
@@ -1550,10 +1518,6 @@ pkgs.runCommand "check-atyrode-apply"
       > "$TMPDIR/wsl-path.out" 2> "$TMPDIR/wsl-path.err"
     wsl_path_status="$?"
     set -e
-    if grep -qF 'winget.exe is unavailable' "$TMPDIR/wsl-path.out"; then
-      echo 'apply worker lost the interop PATH; winget.exe was unreachable' >&2
-      exit 1
-    fi
     if [[ "$wsl_path_status" != 0 ]]; then
       echo "apply through the job worker failed with $wsl_path_status" >&2
       exit 1

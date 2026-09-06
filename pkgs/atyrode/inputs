@@ -2,11 +2,15 @@
 """Read-only readiness: Clan checks sources; the filesystem checks placement."""
 
 import argparse
+import grp
 import json
 import os
 from pathlib import Path
+import pwd
 import re
+import stat
 import subprocess
+import sys
 
 
 def inspect_path(path):
@@ -22,6 +26,128 @@ def inspect_path(path):
             return "inspection-unavailable", str(path)
     except (OSError, RuntimeError):
         return "inspection-unavailable", str(path)
+
+
+def input_metadata(path):
+    try:
+        resolved = Path(path).resolve(strict=True)
+        return resolved, resolved.stat()
+    except PermissionError:
+        # Like machine_key_placed, escalate only denied metadata inspection,
+        # never prompt or turn unavailable authorization into absence. -I
+        # keeps caller-controlled Python startup code out of the root probe.
+        script = (
+            "import json,os,sys\n"
+            "from pathlib import Path\n"
+            "try:\n"
+            " p=Path(sys.argv[1]).resolve(strict=True)\n"
+            " print(json.dumps([str(p),list(p.stat())]))\n"
+            "except FileNotFoundError: sys.exit(3)\n"
+            "except NotADirectoryError: sys.exit(4)\n"
+            "except (OSError,RuntimeError): sys.exit(2)\n"
+        )
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", sys.executable, "-I", "-c", script, path],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise PermissionError from error
+        if result.returncode == 3:
+            raise FileNotFoundError
+        if result.returncode == 4:
+            raise NotADirectoryError
+        if result.returncode != 0:
+            raise PermissionError
+        try:
+            target, metadata = json.loads(result.stdout)
+            return Path(target), os.stat_result(metadata)
+        except (ValueError, TypeError) as error:
+            raise PermissionError from error
+
+
+def inspect_input(file):
+    path = file["path"]
+    access = file["access"]
+    if access is None:
+        state, target = inspect_path(path)
+        if state == "ok" and not Path(target).is_file():
+            state = "placement-required"
+        return state, target
+    target = path
+    try:
+        resolved, metadata = input_metadata(path)
+        target = str(resolved)
+        owner = access["owner"]
+        group = access["group"]
+        uid = int(owner) if owner.isdecimal() else pwd.getpwnam(owner).pw_uid
+        gid = int(group) if group.isdecimal() else grp.getgrnam(group).gr_gid
+        mode = int(access["mode"], 8)
+        # Clan's owner is the consumer (including root loading service
+        # credentials). Operator readability would reject correct private keys.
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != uid
+            or metadata.st_gid != gid
+            or stat.S_IMODE(metadata.st_mode) != mode
+            or not mode & stat.S_IRUSR
+        ):
+            return "placement-required", target
+        if uid != 0:
+            account = pwd.getpwuid(uid)
+            groups = os.getgrouplist(account.pw_name, account.pw_gid)
+            # Check both the declared route and the resolved route: sops-nix
+            # uses generation symlinks, and Darwin also aliases /var.
+            for parent in (*Path(path).parents, *resolved.parents):
+                directory = parent.stat()
+                bit = (
+                    stat.S_IXUSR if directory.st_uid == uid
+                    else stat.S_IXGRP if directory.st_gid in groups
+                    else stat.S_IXOTH
+                )
+                if not directory.st_mode & bit:
+                    return "permission-unknown", target
+        return "ok", target
+    except FileNotFoundError:
+        try:
+            return "absent", str(Path(path).resolve(strict=False))
+        except (OSError, RuntimeError):
+            return "absent", target
+    except NotADirectoryError:
+        return "placement-required", target
+    except (OSError, RuntimeError, KeyError):
+        return "inspection-unavailable", target
+
+
+def validate_manifest(manifest):
+    if manifest["schemaVersion"] != 2:
+        raise ValueError("unsupported manifest")
+    for value in (manifest["host"], manifest["flake"]):
+        if not isinstance(value, str) or not value:
+            raise ValueError("invalid source metadata")
+    if not isinstance(manifest["generators"], list) or not isinstance(manifest["links"], list):
+        raise ValueError("invalid declarations")
+    for generator in manifest["generators"]:
+        if not isinstance(generator["name"], str) or not generator["name"]:
+            raise ValueError("invalid generator")
+        if not isinstance(generator["files"], list):
+            raise ValueError("invalid files")
+        for file in generator["files"]:
+            if not isinstance(file["name"], str) or not file["name"]:
+                raise ValueError("invalid file")
+            if file["path"] is not None and (
+                not isinstance(file["path"], str) or not file["path"].startswith("/")
+            ):
+                raise ValueError("invalid deployed path")
+            access = file["access"]
+            if access is not None:
+                if any(not isinstance(access[key], str) or not access[key] for key in ("owner", "group")):
+                    raise ValueError("invalid consumer")
+                if not isinstance(access["mode"], str) or not re.fullmatch(r"[0-7]{4}", access["mode"]):
+                    raise ValueError("invalid mode")
+    for file in manifest["links"]:
+        if any(not isinstance(file[key], str) or not file[key].startswith("/") for key in ("source", "link")):
+            raise ValueError("invalid managed link")
 
 
 def source_findings(manifest, clan, flake):
@@ -57,6 +183,7 @@ def source_findings(manifest, clan, flake):
 
 
 def readiness(manifest, clan, flake=None, sources_only=False):
+    validate_manifest(manifest)
     findings = source_findings(manifest, clan, flake or manifest["flake"])
     if not sources_only:
         for generator in manifest["generators"]:
@@ -68,7 +195,7 @@ def readiness(manifest, clan, flake=None, sources_only=False):
                 if path == "/no-such-path":
                     findings.append({"code": "generation-required", "subject": subject})
                     continue
-                state, target = inspect_path(path)
+                state, target = inspect_input(file)
                 if state != "ok":
                     findings.append({"code": state, "subject": subject, "path": path, "target": target})
         for file in manifest["links"]:
@@ -97,8 +224,6 @@ def main():
     try:
         with open(args.manifest) as stream:
             manifest = json.load(stream)
-        if manifest["schemaVersion"] != 1:
-            raise ValueError("unsupported manifest")
         result = readiness(manifest, args.clan, args.flake, args.sources_only)
     except (OSError, ValueError, KeyError, TypeError):
         result = {"ready": False, "findings": [{"code": "inspection-unavailable", "subject": "declared input metadata"}]}

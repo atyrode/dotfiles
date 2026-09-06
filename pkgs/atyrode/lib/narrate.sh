@@ -122,12 +122,15 @@ refuse() { # program text
 confirm() { # question
   local reply
   interactive || return 1
+  if declare -F apply_job_waiting >/dev/null; then apply_job_waiting "$1"; fi
   printf '%s %s %s ' "$(paint 1 "${NARRATE_NAME:-atyrode}:")" \
     "$(paint 1 "$1")" "$(paint 2 '[y/N]')" >&2
   read -r reply || {
+    if declare -F apply_job_resumed >/dev/null; then apply_job_resumed; fi
     [[ -t 0 ]] || printf '\n' >&2
     return 1
   }
+  if declare -F apply_job_resumed >/dev/null; then apply_job_resumed; fi
   [[ -t 0 ]] || printf '\n' >&2
   [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]]
 }
@@ -188,6 +191,7 @@ step_begin() { # label
   printf '\n%s %s\n' \
     "$(paint '1;36' "$STEP_INDEX/$STEP_TOTAL")" "$(paint 1 "$1")" >&2
   narrate_log "step $STEP_INDEX/$STEP_TOTAL: $1"
+  if declare -F apply_job_progress >/dev/null; then apply_job_progress "$1"; fi
 }
 
 # Why this step exists, in the vocabulary of the thing that decided it: a

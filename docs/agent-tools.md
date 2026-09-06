@@ -201,12 +201,18 @@ environment never redirects that root, and named profile roots are never
 seeded.
 
 - A key the operator never touched is written and follows repository updates.
-- A key the operator changed or deleted is left alone and reported as drift.
+- A key the operator changed or deleted is left alone and reported until reviewed.
 - Unmanaged keys are never modified.
 
 `atyrode apply` reports drift after activation and, on a terminal, offers a
 per-key keep-or-reset review. Direct commands are `atyrode-omp-seed status
 [--json]` and `atyrode-omp-seed resolve [--reset-all]`.
+Keeping a value records that exact local choice and default privately in
+`kept.json` beside the last-applied seed; it does not make the local value
+follow future repository updates. Unchanged choices appear under `accepted`
+in JSON status and do not prompt again. A changed local value or default
+requires another review. Quit and EOF leave remaining choices unreviewed;
+`--reset-all` also resets previously accepted choices.
 `AGENT_TOOLS_DRY_RUN=1` prints the plan without writing, and
 `ATYRODE_SEED_REVIEW=0` suppresses apply-time interactive review for
 PTY-backed automation.
@@ -224,6 +230,9 @@ After upgrading from the startup-snapshot guard, restart existing managed
 sessions before reviewing drift: an already-running session still has the old
 extension loaded and can undo a reset. The replacement guard does not require
 further reset/restart cycles.
+Apply re-reads the state after review and names any remaining keys. If a reset
+summary is followed by renewed drift, restart those older sessions before
+resolving again rather than repeatedly resetting under the old watcher.
 
 ## Babel analysis profile migration
 

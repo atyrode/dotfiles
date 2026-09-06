@@ -205,5 +205,45 @@ pkgs.runCommand "check-omp-seed"
     printf 'k\nq\n' | atyrode-omp-seed resolve >"$TMPDIR/resolve-3.log"
     [ "$(yq eval '.advisor.syncBacklog' "$config")" = "5" ] || fail "interactive keep reset the value"
 
+    export HOME="$TMPDIR/review-decisions"
+    export OMP_SEED_FILE="$TMPDIR/review-seed.yml"
+    mkdir -p "$HOME/.omp/agent"
+    config="$HOME/.omp/agent/config.yml"
+    printf '%s\n' 'choice: repository' 'nested:' '  leaf: default' >"$OMP_SEED_FILE"
+    printf '%s\n' 'choice: local' 'nested: null' >"$config"
+    atyrode-omp-seed apply >/dev/null
+    atyrode-omp-seed status --json | jq -e '
+      .drift | any(.key == "nested.leaf" and .reason == "blocked-by-local-value")
+    ' >/dev/null || fail "explicit null was mistaken for a missing mapping"
+    printf 'a\n' | atyrode-omp-seed resolve >/dev/null
+    atyrode-omp-seed apply >/dev/null
+    atyrode-omp-seed status --json | jq -e '
+      (.drift == []) and (.accepted | length == 2)
+    ' >/dev/null || fail "kept decisions prompted again unchanged"
+    [ "$(yq '.nested' "$config")" = null ] || fail "kept null blocker was overwritten"
+
+    yq -i '.choice = "changed"' "$OMP_SEED_FILE"
+    printf 'q\n' | atyrode-omp-seed resolve >/dev/null
+    atyrode-omp-seed resolve </dev/null >/dev/null
+    atyrode-omp-seed status --json | jq -e '
+      ([.drift[].key] == ["choice"]) and (.accepted | length == 1)
+    ' >/dev/null || fail "changed default was accepted by quit or EOF"
+    [ "$(yq '.choice' "$config")" = local ] || fail "changed default overwrote a kept local value"
+
+    # Agreement with an intermediate release does not surrender a local choice.
+    yq -i '.choice = "local"' "$OMP_SEED_FILE"
+    atyrode-omp-seed apply >/dev/null
+    yq -i '.choice = "later"' "$OMP_SEED_FILE"
+    atyrode-omp-seed apply >/dev/null
+    [ "$(yq '.choice' "$config")" = local ] || fail "temporary agreement erased the local decision"
+    printf 'k\n' | atyrode-omp-seed resolve >/dev/null
+    yq -i '.choice = "another local choice"' "$config"
+    atyrode-omp-seed status --json | jq -e '
+      [.drift[].key] == ["choice"]
+    ' >/dev/null || fail "changed local value inherited an old keep decision"
+    atyrode-omp-seed resolve --reset-all >/dev/null
+    [ "$(yq '.choice' "$config")" = later ] || fail "reset-all omitted an unreviewed local change"
+    [ "$(yq '.nested.leaf' "$config")" = default ] || fail "reset-all omitted an accepted null blocker"
+
     touch "$out"
   ''

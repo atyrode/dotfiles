@@ -8,7 +8,7 @@ let
         "$out/etc/systemd/system" "$out/etc/systemd/user" \
         "$out/Library/LaunchDaemons" "$out/Library/LaunchAgents"
       mkdir -p "$out/etc/atyrode"
-      printf '%s\n' '{"schemaVersion":1,"host":"fixture","flake":".","generators":[],"links":[]}' \
+      printf '%s\n' '{"schemaVersion":2,"host":"fixture","flake":".","generators":[],"links":[]}' \
         > "$out/etc/atyrode/declared-inputs.json"
       printf '#!%s\nexit 0\n' '${pkgs.runtimeShell}' > "$out/activate"
       chmod +x "$out/activate"

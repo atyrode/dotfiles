@@ -26,13 +26,14 @@ let
   # Clan owns source completeness and invalidation; this projection contains
   # only the declarations needed to diagnose placement after activation.
   manifest = builtins.toJSON {
-    schemaVersion = 1;
+    schemaVersion = 2;
     host = config.clan.core.settings.machine.name;
     flake = toString config.clan.core.settings.directory;
     generators = lib.mapAttrsToList (name: generator: {
       inherit name;
       files = lib.mapAttrsToList (name: file: {
         inherit name;
+        access = if file.secret then { inherit (file) owner group mode; } else null;
         path = if !file.deploy || (!file.secret && !file.exists) then null else file.path;
       }) generator.files;
     }) config.clan.core.vars.generators;

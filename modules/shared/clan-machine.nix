@@ -33,16 +33,17 @@ let
       inherit name;
       files = lib.mapAttrsToList (name: file: {
         inherit name;
-        path =
-          if !file.deploy || (!file.secret && !file.exists) then null else file.path;
+        path = if !file.deploy || (!file.secret && !file.exists) then null else file.path;
       }) generator.files;
     }) config.clan.core.vars.generators;
     links = lib.concatLists (
-      lib.mapAttrsToList (_: home: lib.mapAttrsToList (_: file: {
-        link = "${home.home.homeDirectory}/${file.target}";
-        source = toString file.source;
-      }) (lib.filterAttrs (_: file: file.enable && file.source != null) home.home.file))
-        config.home-manager.users
+      lib.mapAttrsToList (
+        _: home:
+        lib.mapAttrsToList (_: file: {
+          link = "${home.home.homeDirectory}/${file.target}";
+          source = toString file.source;
+        }) (lib.filterAttrs (_: file: file.enable && file.source != null) home.home.file)
+      ) config.home-manager.users
     );
   };
 in

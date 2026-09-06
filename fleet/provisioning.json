@@ -80,8 +80,8 @@
     },
     "convergence": {
       "label": "convergence to main",
-      "command": "atyrode apply --unattended",
-      "implies": "Compares the revision this machine runs with the head of main and reads the last unattended run's receipt. Read-only here; the timer that converges is declared by the configuration, and this command is what it runs.",
+      "command": "atyrode changelog",
+      "implies": "Compares the revision this machine runs with the head of main. Read-only: nothing is activated here or by the hourly timer that records the same comparison for the shell; taking the update is atyrode apply, run by an operator.",
       "declinable": false,
       "prerequisites": []
     }

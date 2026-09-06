@@ -35,25 +35,24 @@ the target, so the target needs no toolchain and no checkout. Where it is
 reached is the machine's own `clan.core.networking.targetHost`: a deployment
 cannot be aimed somewhere the reviewed configuration does not name.
 
-### Machines left alone
+### Knowing when to apply
 
-A fleet member converges on its own: every six hours a per-machine timer runs
-`atyrode apply --unattended` against the published `main`, and a machine that
-slept through a slot runs it when it wakes. Unattended, apply asks nothing
-and builds nothing CI has not published. It does nothing when the machine
-already runs `main`, activates when the disruption report is safe and
-activation can elevate without a password (dev-01, WSL), and otherwise
-**holds** and says why -- on a Mac, always, because nix-darwin's switch asks
-for sudo. Every run leaves one receipt, `~/.local/state/atyrode/converge.json`.
+An update is a prompt, never something that happens behind your back: what
+changes on a machine is yours to time, read and watch. So the machinery is
+read-only. Every hour a per-machine timer runs `atyrode changelog --record`,
+which asks GitHub what `main` has that this machine does not, and every new
+interactive shell then prints one muted line while an update is waiting:
 
-The login shell reads that receipt as an inbox. An update that landed while
-you were away is news: the first new shell says so, once. An update that is
-waiting on you, or a run that failed, is unfinished business: every new shell
-repeats it, with the command that clears it, until the receipt changes. A
-machine found current says nothing. `atyrode doctor` compares the revision
-this machine runs with `main` and reports the drift with the receipt's own
-remedy. `atyrode apply` from a terminal is the manual "now"; the timer is the
-floor beneath it.
+```text
+atyrode: 3 commit(s) waiting on main (9d09992e6afc, CI green) -- read: atyrode changelog; take: atyrode apply
+```
+
+It repeats on every shell -- a shell an agent opened and closed must not be
+the one that dismissed it -- and stops the moment the machine runs `main`.
+`atyrode changelog` lists the commits, oldest first, and says whether CI has
+passed that head (green means the closures are already in the fleet cache, so
+`apply` downloads rather than builds). `atyrode doctor` reports the same
+drift. Then `atyrode apply`, in front of you.
 
 ## Asking a machine what is wrong
 

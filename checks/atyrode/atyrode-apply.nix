@@ -1495,127 +1495,82 @@ pkgs.runCommand "check-atyrode-apply"
     rm -rf "$fetched_tree" "$TMPDIR/bin/nix" "$TMPDIR/nix-args"
     unset ATYRODE_NIX
 
-    # The converge floor. `apply --unattended` is what the timer runs: it
-    # answers no question, builds nothing CI has not published, and ends in
-    # one receipt that doctor and the login shell read back. The launcher here
-    # runs an older revision than main, so every run also crosses the handoff
-    # and the receipt must still name what was running, not main's own CLI.
-    receipt="$XDG_STATE_HOME/atyrode/converge.json"
-    cat > "$TMPDIR/bin/converge-nix" <<EOF
+    # An update is a prompt, never a background switch. `changelog` reads what
+    # main has that this machine does not, `--record` leaves that for the shell,
+    # and every new shell repeats one line until the machine runs main -- a shell
+    # an agent opened and closed must not be the one that dismissed it. Nothing
+    # here may touch nh.
+    receipt="$XDG_STATE_HOME/atyrode/update.json"
+    cat > "$TMPDIR/bin/changelog-fetch" <<EOF
     #!${pkgs.runtimeShell}
-    printf '%s\n' "\$*" >> "$TMPDIR/converge-nix-args"
+    printf '%s\n' "\$*" >> "$TMPDIR/changelog-fetch-args"
     case "\$*" in
-      'build --no-link --print-out-paths github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#atyrode')
-        printf '%s\n' ${targetAtyrode} ;;
-      'build --dry-run --no-link github:atyrode/dotfiles/feedfacefeedfacefeedfacefeedfacefeedface#nixosConfigurations.wsl.config.system.build.toplevel')
-        cat "$TMPDIR/converge-dry-run" ;;
-      *) exit 64 ;;
+      *'/compare/1111111111111111111111111111111111111111...feedfacefeedfacefeedfacefeedfacefeedface')
+        printf '%s\n' '{"status":"ahead","ahead_by":2,"commits":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit":{"message":"feat(atyrode): the shell reads main\n\nbody"}},{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","commit":{"message":"fix: retain manifold ingress"}}]}' ;;
+      *'/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs')
+        cat "$TMPDIR/changelog-check-runs" ;;
+      *) exit 22 ;;
     esac
     EOF
-    chmod +x "$TMPDIR/bin/converge-nix"
-    converge() { # env-assignments...
-      env _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_NIX="$TMPDIR/bin/converge-nix" "$@" \
-        ${launcherAtyrode}/bin/atyrode apply wsl --unattended
-    }
-    converge_outcome() { # outcome
-      jq -e --arg outcome "$1" '
-        .outcome == $outcome and .host == "wsl"
-        and .running == "1111111111111111111111111111111111111111"
-        and .target == "feedfacefeedfacefeedfacefeedfacefeedface"
-      ' "$receipt" >/dev/null || { echo "converge receipt is not $1: $(cat "$receipt")" >&2; exit 1; }
-    }
-    set +e
-    ${launcherAtyrode}/bin/atyrode apply wsl --unattended --repo "$HOME/nix-dotfiles" >/dev/null 2>&1
-    test "$?" = 64
-    ${launcherAtyrode}/bin/atyrode apply wsl --unattended --dry-run >/dev/null 2>&1
-    test "$?" = 64
-    _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ${launcherAtyrode}/bin/atyrode apply --unattended >/dev/null 2>"$TMPDIR/converge-portable.err"
-    test "$?" = 64
-    set -e
-    grep -qF 'portable profile, not a fleet member' "$TMPDIR/converge-portable.err"
-    test ! -e "$receipt"
-
-    # A timer cannot type a password: the hold comes before any build, and the
-    # only nix call made is the launcher fetching main's CLI.
-    rm -f "$TMPDIR/nh-activations" "$TMPDIR/converge-nix-args"
-    _ATYRODE_TEST_SUDO_NONINTERACTIVE=0 converge > "$TMPDIR/converge-sudo.out" 2>&1 \
-      || { cat "$TMPDIR/converge-sudo.out" >&2; exit 1; }
-    converge_outcome held
-    jq -e '.reason | contains("sudo asks for a password")' "$receipt" >/dev/null
-    jq -e '.remediation == "atyrode apply"' "$receipt" >/dev/null
-    grep -qF 'Converge held for' "$TMPDIR/converge-sudo.out"
-    test "$(wc -l < "$TMPDIR/converge-nix-args")" = 1
-    test ! -e "$TMPDIR/nh-activations"
-    # doctor is the deployed CLI, so it compares its own revision with main and
-    # reads the hold the run left; the shell says the same from the file alone.
+    chmod +x "$TMPDIR/bin/changelog-fetch"
+    export ATYRODE_FETCH="$TMPDIR/bin/changelog-fetch"
+    rm -f "$TMPDIR/nh-activations" "$TMPDIR/nh-args"
+    # Current: main is what this CLI was built from; nothing is asked of GitHub.
+    ${targetAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-current.out" 2> "$TMPDIR/changelog-current.err" \
+      || { echo "changelog failed: $(cat "$TMPDIR/changelog-current.err")" >&2; exit 1; }
+    grep -qF 'runs feedfacefeed, which is main' "$TMPDIR/changelog-current.out" \
+      || { echo "changelog current output: $(cat "$TMPDIR/changelog-current.out")" >&2; exit 1; }
+    test ! -e "$TMPDIR/changelog-fetch-args"
+    ${targetAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "current" and .ahead == 0 and .commits == []' >/dev/null
+    # Behind, with a green main: both commits listed oldest first, the verdict
+    # names the cache, and the remedy is apply.
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"success"},{"name":"classify","status":"completed","conclusion":"success"}]}' \
+      > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-behind.out" 2> "$TMPDIR/changelog-behind.err" \
+      || { echo "changelog behind failed: $(cat "$TMPDIR/changelog-behind.err")" >&2; exit 1; }
+    grep -qF 'this machine runs 111111111111; main is feedfacefeed, 2 commit(s) ahead' "$TMPDIR/changelog-behind.out" \
+      || { echo "changelog behind output: $(cat "$TMPDIR/changelog-behind.out"); fetch args: $(cat "$TMPDIR/changelog-fetch-args" 2>/dev/null)" >&2; exit 1; }
+    grep -qF 'aaaaaaaaaaaa  feat(atyrode): the shell reads main' "$TMPDIR/changelog-behind.out"
+    ! grep -qF 'body' "$TMPDIR/changelog-behind.out"
+    grep -qF 'CI: green -- closures published to the fleet cache' "$TMPDIR/changelog-behind.out"
+    grep -qF 'take it with: atyrode apply' "$TMPDIR/changelog-behind.out"
+    # A red or unfinished main is said as such, never mistaken for green.
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"failure"}]}' > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "available" and .green == false and .ahead == 2' >/dev/null
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"in_progress","conclusion":null}]}' > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog --json | jq -e '.green == null' >/dev/null
+    # The record is what the shell reads: nothing without one, one line with
+    # one, the same line again on the next shell, and silence from a CLI that
+    # already runs the recorded target even before the next hourly look.
+    test -z "$(${launcherAtyrode}/bin/atyrode __update-notice)"
+    printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"success"}]}' > "$TMPDIR/changelog-check-runs"
+    ${launcherAtyrode}/bin/atyrode changelog --record >/dev/null
+    jq -e '.outcome == "available" and .target == "feedfacefeedfacefeedfacefeedfacefeedface" and .green == true' "$receipt" >/dev/null
+    ${launcherAtyrode}/bin/atyrode __update-notice > "$TMPDIR/update-notice.out"
+    grep -qF '2 commit(s) waiting on main (feedfacefeed, CI green) -- read: atyrode changelog; take: atyrode apply' "$TMPDIR/update-notice.out"
+    grep -qF '2 commit(s) waiting on main' <<<"$(${launcherAtyrode}/bin/atyrode __update-notice)"
+    test -z "$(${targetAtyrode}/bin/atyrode __update-notice)"
+    # doctor says the same from a live comparison, with the same two commands.
     ${launcherAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
       .surfaces[] | select(.id == "convergence")
-      | .status == "degraded" and .code == "held" and .remediation == "atyrode apply"
+      | .status == "degraded" and .code == "behind"
         and (.summary | contains("main is feedfacefeed") and contains("runs 111111111111"))
+        and .remediation == "atyrode changelog to read what changed, then atyrode apply"
     ' >/dev/null
-    # A hold is unfinished business: every new shell repeats it until the
-    # receipt changes.
-    ${launcherAtyrode}/bin/atyrode __converge-notice > "$TMPDIR/converge-notice.out"
-    grep -qF 'an update to feedfacefeed is waiting' "$TMPDIR/converge-notice.out"
-    grep -qF 'fix with: atyrode apply' "$TMPDIR/converge-notice.out"
-    grep -qF 'an update to feedfacefeed is waiting' <<<"$(${launcherAtyrode}/bin/atyrode __converge-notice)"
-
-    # Nothing CI has not built: a dry build that would compile anything holds.
-    printf 'these 3 derivations will be built:\n  /nix/store/fixture.drv\n' > "$TMPDIR/converge-dry-run"
-    rm -f "$TMPDIR/converge-nix-args"
-    _ATYRODE_TEST_SUDO_NONINTERACTIVE=1 converge > "$TMPDIR/converge-cache.out" 2>&1 \
-      || { cat "$TMPDIR/converge-cache.out" >&2; exit 1; }
-    converge_outcome held
-    jq -e '.reason | contains("has not published feedfacefeed")' "$receipt" >/dev/null
-    grep -qF 'build --dry-run --no-link' "$TMPDIR/converge-nix-args"
-    test ! -e "$TMPDIR/nh-activations"
-
-    # A disruption the operator would have to look at is a hold, not a retry.
-    : > "$TMPDIR/converge-dry-run"
-    _ATYRODE_TEST_SUDO_NONINTERACTIVE=1 _ATYRODE_TEST_CURRENT_SYSTEM=${ownerOld} ATYRODE_TEST_CANDIDATE=${ownerNew} \
-      converge > "$TMPDIR/converge-disruption.out" 2>&1 \
-      || { cat "$TMPDIR/converge-disruption.out" >&2; exit 1; }
-    converge_outcome held
-    jq -e '.reason | contains("was refused")' "$receipt" >/dev/null
-    test ! -e "$TMPDIR/nh-activations"
-
-    # A run that stops on an error leaves `failed`, with the error as reason.
-    set +e
-    env _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_NIX=${pkgs.coreutils}/bin/false \
-      ${launcherAtyrode}/bin/atyrode apply wsl --unattended >/dev/null 2>&1
-    failed_status="$?"
-    set -e
-    test "$failed_status" = 69
-    converge_outcome failed
-    jq -e '.reason | contains("could not build the apply CLI")' "$receipt" >/dev/null
-    grep -qF 'the update to feedfacefeed failed' <<<"$(${launcherAtyrode}/bin/atyrode __converge-notice)"
-
-    # Every precondition met: the switch happens with nobody at the keyboard,
-    # and main's CLI then reports the machine as current.
-    rm -f "$TMPDIR/nh-activations"
-    _ATYRODE_TEST_SUDO_NONINTERACTIVE=1 converge > "$TMPDIR/converge-switch.out" 2>&1 \
-      || { cat "$TMPDIR/converge-switch.out" >&2; exit 1; }
-    converge_outcome converged
-    test -e "$TMPDIR/nh-activations"
-    grep -qF 'Confirm CI published feedfacefeed to the cache' "$TMPDIR/converge-switch.out"
-    ! grep -qF '[y/N]' "$TMPDIR/converge-switch.out"
     ${targetAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
       .surfaces[] | select(.id == "convergence") | .status == "ok"
     ' >/dev/null
-    # An update that landed is news: the first shell hears it, the next does
-    # not, and a machine found current has nothing to say.
-    grep -qF 'updated to feedfacefeed' <<<"$(${targetAtyrode}/bin/atyrode __converge-notice)"
-    test -z "$(${targetAtyrode}/bin/atyrode __converge-notice)"
-    rm -f "$TMPDIR/nh-activations" "$TMPDIR/converge-nix-args"
-    _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ${targetAtyrode}/bin/atyrode apply wsl --unattended > "$TMPDIR/converge-current.out" 2>&1 \
-      || { cat "$TMPDIR/converge-current.out" >&2; exit 1; }
-    jq -e '.outcome == "current" and .running == .target' "$receipt" >/dev/null
-    grep -qF 'Nothing to converge for' "$TMPDIR/converge-current.out"
+    # A development build has no revision to compare and says so.
+    set +e
+    atyrode changelog >/dev/null 2>"$TMPDIR/changelog-dev.err"
+    changelog_dev_status="$?"
+    set -e
+    test "$changelog_dev_status" = 69
+    grep -qF 'development build' "$TMPDIR/changelog-dev.err"
     test ! -e "$TMPDIR/nh-activations"
-    test ! -e "$TMPDIR/converge-nix-args"
-    test -z "$(${targetAtyrode}/bin/atyrode __converge-notice)"
-    rm -f "$receipt" "''${receipt%.json}.seen" "$TMPDIR/bin/converge-nix" "$TMPDIR/converge-dry-run"
-    unset -f converge converge_outcome
+    test ! -e "$TMPDIR/nh-args"
+    rm -f "$receipt" "$TMPDIR/bin/changelog-fetch" "$TMPDIR/changelog-check-runs" "$TMPDIR/changelog-fetch-args"
+    unset ATYRODE_FETCH
     # After the switch, the review names the host apply switched. The id
     # recorded under ~/.config is a Home Manager file that NixOS relinks from
     # a unit the activation only restarts; a stale one (here: the name the

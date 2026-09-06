@@ -423,6 +423,40 @@ in
         };
 
         home.activation = lib.mkMerge [
+          {
+            # The activating generation owns this transition, even when an old
+            # atyrode invoked apply. Import immutable profiles before Babel
+            # validates its configured wrappers; never select replacement refs.
+            migrateBabelAnalysisRuntime =
+              lib.hm.dag.entryAfter
+                [
+                  "installPackages"
+                  "linkGeneration"
+                ]
+                ''
+                  legacy_profiles="''${CODE_BABEL_PROFILE_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/code/babel/profiles}"
+                  if [[ -e "$legacy_profiles" || -L "$legacy_profiles" ]]; then
+                    if [[ -v DRY_RUN ]]; then
+                      echo "(dry run) would import Code profiles from $legacy_profiles"
+                    else
+                      echo "agent-tools: importing legacy Code profiles from $legacy_profiles (source retained)..."
+                      if ! ${pkgs.code}/bin/code engine --import-profiles "$legacy_profiles"; then
+                        echo "agent-tools: Code profile import failed; Babel settings were not migrated" >&2
+                        exit 1
+                      fi
+                    fi
+                  fi
+                  if [[ -v DRY_RUN ]]; then
+                    echo "(dry run) would migrate Babel analysis launches and validate configured profile references"
+                  else
+                    echo "agent-tools: migrating Babel analysis launches and validating configured profile references..."
+                    if ! PATH="${cfg.ompPackage}/bin:$PATH" ${pkgs.babel}/bin/babel analysis migrate; then
+                      echo "agent-tools: Babel analysis migration failed; resolve the reported settings or profile conflict and apply again" >&2
+                      exit 1
+                    fi
+                  fi
+                '';
+          }
           (lib.mkIf cfg.seedPlainConfig {
             # Seeding is a convenience: a failure (for example unparseable
             # operator YAML) warns instead of failing the whole activation.

@@ -8,11 +8,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1788698954,
-        "narHash": "sha256-0Y+bGYoBE8moZOugjIQdZO1aOhz37CBs6IhqgnRpDeo=",
+        "lastModified": 1788715008,
+        "narHash": "sha256-mnJt7p3+7lInba+s6DMRZHu5dvGxwFSZXN6uiOAf3xE=",
         "owner": "atyrode",
         "repo": "babel",
-        "rev": "c9fe8c1d5b115cd71ee18e8784a534bc25b909eb",
+        "rev": "6a5d1eb59d1f85bdc78a5dc661710c4ac852fcdd",
         "type": "github"
       },
       "original": {

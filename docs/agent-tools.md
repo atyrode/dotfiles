@@ -225,6 +225,38 @@ sessions before reviewing drift: an already-running session still has the old
 extension loaded and can undo a reset. The replacement guard does not require
 further reset/restart cycles.
 
+## Babel analysis profile migration
+
+The managed `code` launcher forwards `code engine` headlessly to Code's native
+RPC engine and keeps its sessions on the restricted `omp-analysis` launcher.
+The explicit `--configure` ceremony retains the interactive managed launcher.
+
+Home Manager's `migrateBabelAnalysisRuntime` activation runs after `installPackages`
+and `linkGeneration`, using the activating generation's Code and Babel
+executables even when an older `atyrode` invoked apply. It first runs
+`code engine --import-profiles` on
+`${CODE_BABEL_PROFILE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/code/babel/profiles}`
+when that source exists, retaining the original store. It then runs
+`babel analysis migrate`, which removes only the trailing legacy `babel`
+worker mode argument and validates configured immutable profile references
+offline through the configured workers before saving settings.
+
+Custom worker wrappers, profile IDs and revisions, account choices, and
+unrelated settings remain unchanged. Unconfigured analysis creates no settings.
+The owner commands neither contact providers nor start analysis or restart
+services; retained wrappers keep their normal environment setup. A dry-run
+only announces the operations. Import conflicts or invalid settings stop
+activation with the owning command's error rather than being hidden or
+replaced with a new profile selection.
+
+`atyrode doctor provisioning` reports the `babel-analysis` surface using
+`babel analysis migrate --check --json`: unconfigured workers are
+`not-applicable`, pending migration or unresolved references are `degraded`,
+and canonical launches whose references resolve offline are `ok`. The probe
+does not migrate anything; `atyrode apply` owns convergence. To inspect a
+failure directly, run the same read-only Babel command, resolve its reported
+conflict, and apply again.
+
 ## Session archive
 
 Every managed machine continuously archives its agent session histories — omp

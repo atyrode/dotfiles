@@ -1290,8 +1290,8 @@ let
     gitMinimal
   ];
 
-  # omp-analysis: the dedicated restricted launcher for Babel's analysis worker
-  # (atyrode/babel#86). Code's worker resolves the OMP it drives through
+  # omp-analysis: the dedicated restricted launcher for Code's native RPC
+  # engine. Code resolves the OMP it drives through
   # CODE_OMP and invokes it as
   #
   #   omp --mode rpc --no-tools --no-lsp --no-session --no-extensions \
@@ -1340,8 +1340,8 @@ let
   #   private home, the job secrets dropped, and the run's own auth-broker
   #   credential added (withAuthEnv) — and wiping it would delete exactly the
   #   credential the run legitimately needs. What is removed instead is every
-  #   ambient credential-shaped variable except those four broker keys, so an
-  #   analysis run authenticates through the account pool Babel recorded and
+  #   ambient credential-shaped variable except those four broker keys, so a
+  #   run authenticates through the account pool the operator selected and
   #   never through a provider key that happened to be exported. The
   #   environment-resolved model dials (PI_SMOL_MODEL, PI_SLOW_MODEL,
   #   PI_PLAN_MODEL) go with them: an env-resolved dial is precisely the silent
@@ -1553,6 +1553,7 @@ let
           '  code session reap    retire sessions (dry run unless --yes)' \
           '  code wt              list and clean session worktrees' \
           '  code generate        re-render the profile catalog' \
+          '  code engine          native OMP RPC and immutable profiles' \
           "" \
           'In the generator: type a prompt or adjust the dials, v opens the' \
           'account manager, w toggles an isolated git worktree, and ? shows' \
@@ -1570,35 +1571,20 @@ let
       # 'code ls'`, which is exactly when no tty is attached; only the
       # generator below needs one.
       #
-      # `babel` is here because it is the analysis-worker protocol Babel
-      # supervises over stdin/stdout: there is never a terminal, and Babel
-      # runs it through this launcher rather than the raw binary precisely so
-      # the worker inherits the operator's own generator dials
-      # (CODE_SELECTION_STATE) and broker configuration instead of falling
-      # back to compiled defaults.
-      #
-      # Worker mode is also the one launch on this machine that must not go
-      # through omp-managed: it drives OMP with --no-extensions, which the
-      # managed launcher refuses because it would disable the Nix-owned
-      # settings guard. So worker mode — and only worker mode — resolves
-      # CODE_OMP to the dedicated restricted launcher (atyrode/babel#86).
-      #
-      # The configuration ceremony keeps the managed launcher. `code babel
-      # --configure` runs the operator's own dial UI, which probes providers
-      # and reads OMP's version through CODE_OMP; pointed at the analysis
-      # launcher — whose whole posture is an isolated state root with no
-      # operator credential in it — the ceremony would find no provider and
-      # refuse the confirmation it exists to take.
+      # Native engine sessions keep the restricted launcher: their
+      # --no-extensions posture must not disable omp-managed's settings guard.
+      # The explicit configuration ceremony keeps the managed launcher because
+      # its dial UI discovers providers from the operator's own environment.
       case "''${1:-}" in
-        babel)
-          babel_configure=false
+        engine)
+          engine_configure=false
           for arg in "$@"; do
             if [[ "$arg" == --configure ]]; then
-              babel_configure=true
+              engine_configure=true
               break
             fi
           done
-          if [[ "$babel_configure" == false ]]; then
+          if [[ "$engine_configure" == false ]]; then
             export CODE_OMP=${lib.getExe ompAnalysis}
           fi
           exec ${lib.getExe code} "$@"
@@ -1627,10 +1613,8 @@ runCommand "omp-configured-${lib.getVersion omp}"
       # checks/omp/omp-managed-keys.nix can prove they still mirror the YAML they
       # gate. Drift there makes `omp config set` silently accept a key Nix
       # overrides.
-      # ompAnalysis/ompManagedDefault are exposed so checks/omp/omp-stack.nix can
-      # name the exact launcher each `code` mode is expected to resolve CODE_OMP
-      # to, against a stub-built package rather than a store path guessed from
-      # the released one.
+      # ompManagedDefault is exposed for the broker-launch checks in
+      # checks/omp/omp-stack.nix.
       inherit
         goplsCommand
         analysisConfig
@@ -1638,7 +1622,6 @@ runCommand "omp-configured-${lib.getVersion omp}"
         enforcedPolicyPaths
         managedDefaultPaths
         neutralRoot
-        ompAnalysis
         ompManagedDefault
         platformRoot
         policyConfig

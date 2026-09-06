@@ -254,6 +254,10 @@ let
       inherit lib pkgs;
       clanMachine = canonicalNixosConfigs.dev-01.config;
     };
+    babel-analysis = import ./atyrode/babel-analysis.nix {
+      inherit lib pkgs;
+      atyrode = systemDoctorAtyrode;
+    };
   }
   // {
     manifold-node = import ./atyrode/manifold-node.nix {

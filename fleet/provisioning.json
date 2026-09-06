@@ -7,6 +7,7 @@
     "agent-context",
     "git-identity",
     "babel-archive",
+    "babel-analysis",
     "omp-auth-broker",
     "local-qwen",
     "manifold-agent",
@@ -47,6 +48,12 @@
       "label": "Babel session archive",
       "command": "clan vars generate <host>",
       "implies": "Generates this machine's storage document on an operator device from the repository password, the add-on credentials, and the payload key ring typed once; the next apply places them and arms the hourly timer that publishes sessions. No vault and no provider session on this machine.",
+      "declinable": false
+    },
+    "babel-analysis": {
+      "label": "Babel analysis worker profiles",
+      "command": "atyrode apply",
+      "implies": "Home Manager imports legacy Code profiles without changing their IDs or revisions, retains the source store, and asks Babel to migrate and validate configured worker launches offline. Preserves custom wrappers and account choices; no analysis, model calls, credentials, or service restart.",
       "declinable": false
     },
     "omp-auth-broker": {

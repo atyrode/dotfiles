@@ -60,6 +60,12 @@ let
     platformPkgs: extraAgentTools:
     (lib.evalModules {
       specialArgs.pkgs = platformPkgs;
+      specialArgs.lib = lib // {
+        hm.dag.entryAfter = after: data: {
+          inherit after data;
+          before = [ ];
+        };
+      };
       modules = [
         (
           { lib, ... }:

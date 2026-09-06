@@ -14,7 +14,7 @@
 }:
 
 let
-  version = "0.12.0";
+  version = "0.13.0";
   # The pin refresh reads this capability from the exact release's protocol
   # source. Zero names the deployed combined agent, not a guessed semver range.
   terminalHostProtocol = 1;

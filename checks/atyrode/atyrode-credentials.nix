@@ -9,9 +9,27 @@ let
   fixtureSigner = pkgs.runCommand "fixture-git-signer" { nativeBuildInputs = [ pkgs.openssh ]; } ''
     mkdir -p "$out"
     ssh-keygen -q -t ed25519 -N "" -C "alex@tyrode.dev (fixture signing)" -f "$out/signing-key"
+    ssh-keygen -q -t ed25519 -N "" -C "fixture authentication" -f "$out/auth-key"
     printf 'alex@tyrode.dev %s\n' "$(cut -d' ' -f1,2 "$out/signing-key.pub")" > "$out/allowed-signers"
   '';
   signerAtyrode = atyrode.override { gitAllowedSigners = "${fixtureSigner}/allowed-signers"; };
+  githubProbe = pkgs.writeShellScript "fixture-github-keys" ''
+    [[ "$1" == api ]] || exit 1
+    printf '%s\n' "$*" >> "$GH_PROBE_LOG"
+    case "$ATYRODE_GH_CASE" in
+      denied) exit 1 ;;
+      malformed) printf '{"message":"unavailable"}\n'; exit ;;
+      invalid-key) printf '[{"key":"not-a-key"}]\n'; exit ;;
+      unregistered) printf '[]\n'; exit ;;
+    esac
+    if [[ "''${*: -1}" == user/keys ]]; then
+      jq -nc --arg key "$SIGNING_PUBLIC" '[{key:$key}]'
+      [[ "$ATYRODE_GH_CASE" != registered ]] ||
+        jq -nc --arg key "$AUTH_PUBLIC" '[{key:$key}]'
+    else
+      jq -nc --arg key "$AUTH_PUBLIC" '[{key:$key}]'
+    fi
+  '';
 in
 pkgs.runCommand "check-atyrode-credentials"
   {
@@ -95,12 +113,15 @@ pkgs.runCommand "check-atyrode-credentials"
       export GH_CONFIG_DIR="$XDG_CONFIG_HOME/gh"
       export GIT_CONFIG_GLOBAL="$XDG_CONFIG_HOME/git/config"
       export GIT_CONFIG_NOSYSTEM=1
-      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN SSH_AUTH_SOCK
+      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND
       mkdir -p "$XDG_CONFIG_HOME/git" "$GH_CONFIG_DIR" "$TMPDIR/git-doctor-repo" "$TMPDIR/placed"
 
       git_doctor=${pkgs.gitMinimal}/bin/git
       doctor_git() { ${signerAtyrode}/bin/atyrode doctor git "$@"; }
       install -m 0600 ${fixtureSigner}/signing-key "$TMPDIR/placed/signing-key"
+      install -m 0600 ${fixtureSigner}/auth-key "$TMPDIR/placed/auth-key"
+      managed_ssh="ssh -i $TMPDIR/placed/auth-key -o IdentitiesOnly=yes"
+      "$git_doctor" config --global core.sshCommand "$managed_ssh"
       cp ${fixtureSigner}/allowed-signers "$XDG_CONFIG_HOME/git/allowed_signers"
       chmod 0644 "$XDG_CONFIG_HOME/git/allowed_signers"
 
@@ -137,17 +158,6 @@ pkgs.runCommand "check-atyrode-credentials"
         and .command == "doctor git"
         and .ok
         and .mutationBoundary == "read-only probes"
-        and (.checks | map(.id)) == [
-          "git-configuration",
-          "author-identity",
-          "signing-key",
-          "allowed-signers",
-          "remote-protocol",
-          "credential-helper-plaintext",
-          "credential-file-plaintext",
-          "gh-credential-helper",
-          "gh-auth-storage"
-        ]
         and (.checks[] | select(.id == "author-identity") | .status == "ok")
         and (.checks[] | select(.id == "signing-key") | .actual.privateKey and .actual.permissionsPrivate)
         and (.checks[] | select(.id == "allowed-signers") | .actual.signingKeyAuthorized)
@@ -158,6 +168,79 @@ pkgs.runCommand "check-atyrode-credentials"
       ' <<<"$git_result" >/dev/null
       # The report classifies; it never carries the key.
       grep -qF 'PRIVATE KEY' <<<"$git_result" && false
+
+      export AUTH_PUBLIC="$(cat ${fixtureSigner}/auth-key.pub)"
+      export SIGNING_PUBLIC="$(cat ${fixtureSigner}/signing-key.pub)"
+      export ATYRODE_GH=${githubProbe}
+      export ATYRODE_GH_CASE=registered
+      export GH_PROBE_LOG="$TMPDIR/git-gh.log"
+      auth_probe() {
+        local expected_exit="$1" actual_exit
+        shift
+        set +e
+        doctor_git "$@" --json > "$TMPDIR/git-auth.json" 2> "$TMPDIR/git-auth.err"
+        actual_exit="$?"
+        set -e
+        test "$actual_exit" = "$expected_exit"
+        grep -qF 'PRIVATE KEY' "$TMPDIR/git-auth.json" "$TMPDIR/git-auth.err" && false
+        return 0
+      }
+
+      auth_probe 0
+      test ! -e "$GH_PROBE_LOG"
+      jq -e '.checks[] | select(.id == "authentication-registration") |
+        .code == "offline" and .actual.registeredForAuthentication == null' \
+        "$TMPDIR/git-auth.json" >/dev/null
+
+      auth_probe 0 --online
+      jq -e '.checks[] | select(.id == "authentication-registration") |
+        .status == "ok" and .actual.registeredForAuthentication' "$TMPDIR/git-auth.json" >/dev/null
+
+      ATYRODE_GH_CASE=signing-only auth_probe 69 --online
+      jq -e '(.checks[] | select(.id == "signing-key") | .status == "ok")
+        and (.checks[] | select(.id == "authentication-registration") |
+          .code == "authentication-key-signing-only" and .actual.registeredAsSigningOnly
+          and .actual.signingKeyRegisteredForAuthentication)' "$TMPDIR/git-auth.json" >/dev/null
+      ATYRODE_GH_CASE=unregistered auth_probe 69 --online
+      jq -e '.checks[] | select(.id == "authentication-registration") |
+        .code == "authentication-key-unregistered" and .actual.checked' "$TMPDIR/git-auth.json" >/dev/null
+
+      for response in denied malformed invalid-key; do
+        ATYRODE_GH_CASE="$response" auth_probe 0 --online
+        jq -e '.checks[] | select(.id == "authentication-registration") |
+          .status == "warning" and .code == "registration-unverified"
+          and (.actual.checked | not) and .actual.registeredForAuthentication == null' \
+          "$TMPDIR/git-auth.json" >/dev/null
+      done
+
+      "$git_doctor" config --global --unset core.sshCommand
+      auth_probe 69
+      jq -e '(.checks[] | select(.id == "signing-key") | .status == "ok")
+        and (.checks[] | select(.id == "authentication-key") |
+          .code == "authentication-key-unselected")' "$TMPDIR/git-auth.json" >/dev/null
+      "$git_doctor" config --global core.sshCommand "$managed_ssh"
+
+      { printf '#!${pkgs.runtimeShell}\n'; printf 'touch "%s"\n' "$TMPDIR/ssh-executed"; } > "$TMPDIR/custom-ssh"
+      chmod +x "$TMPDIR/custom-ssh"
+      rm "$GH_PROBE_LOG"
+      GIT_SSH_COMMAND="$TMPDIR/custom-ssh" auth_probe 0 --online
+      jq -e '.checks[] | select(.id == "authentication-key") |
+        .code == "ssh-command-unexamined"' "$TMPDIR/git-auth.json" >/dev/null
+      test ! -e "$TMPDIR/ssh-executed"
+      test ! -e "$GH_PROBE_LOG"
+      "$git_doctor" config --local core.sshCommand "$managed_ssh"$'\n'"$TMPDIR/custom-ssh"
+      auth_probe 0 --online
+      jq -e '.checks[] | select(.id == "authentication-key") |
+        .code == "ssh-command-unexamined"' "$TMPDIR/git-auth.json" >/dev/null
+      test ! -e "$TMPDIR/ssh-executed"
+      test ! -e "$GH_PROBE_LOG"
+      "$git_doctor" config --local --unset core.sshCommand
+
+      "$git_doctor" remote set-url origin git@gitlab.com:fixture/project.git
+      auth_probe 0 --online
+      test ! -e "$GH_PROBE_LOG"
+      "$git_doctor" remote set-url origin https://github.com/atyrode/fixture.git
+      unset ATYRODE_GH ATYRODE_GH_CASE
 
       "$git_doctor" config --global --unset-all 'url.git@github.com:.pushInsteadOf'
       "$git_doctor" config --global --unset-all credential.https://github.com.helper
@@ -259,13 +342,17 @@ pkgs.runCommand "check-atyrode-credentials"
       mkdir -p "$TMPDIR/git-doctor-bin"
     cat > "$TMPDIR/git-doctor-bin/gh" <<'EOF'
     #!${pkgs.runtimeShell}
+    printf 'called\n' >> "$TMPDIR/gh-status-called"
     printf '%s\n' '{"hosts":{"github.com":[{"tokenSource":"keyring"}]}}'
     EOF
       chmod +x "$TMPDIR/git-doctor-bin/gh"
       export PATH="$TMPDIR/git-doctor-bin:$PATH"
       printf '%s\n' 'github.com:' '    users:' '        atyrode:' \
         > "$GH_CONFIG_DIR/hosts.yml"
-      keyring_result="$(doctor_git --json)"
+      doctor_git --json | jq -e '.checks[] | select(.id == "gh-auth-storage") |
+        .status == "warning" and .code == "gh-storage-unverified"' >/dev/null
+      test ! -e "$TMPDIR/gh-status-called"
+      keyring_result="$(doctor_git --json --online)"
       jq -e '
         .ok
         and (.checks[] | select(.id == "gh-auth-storage") | .status) == "ok"

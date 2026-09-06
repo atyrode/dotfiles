@@ -303,11 +303,16 @@ so repair stays in the installer while detection is shared, and a machine that
 installed successfully years ago is re-examined on every `atyrode doctor` and
 told which command repairs what it carries. Its check IDs, row schema,
 statuses, exits, and read-only probe contract are in [Home Manager and system
-boundary](system-boundary.md). `doctor git` is the matching user-side audit
-of the placed signing key, the managed `allowed_signers` file, forge
-protocols, credential helpers and `gh` token storage; it asks no agent
-anything, because Git signs with the placed key directly, `failed` checks
-return 69 while `warning` rows stay visible without failing the report, and
-its JSON never includes keys, tokens, helper arguments, or remote URLs. Its
-codes are explained with the identity they audit in
-[secrets.md](secrets.md#git-identity).
+boundary](system-boundary.md). `doctor git` separately audits author identity,
+signing trust, SSH key selection, forge protocols, credential helpers and
+`gh` token storage. It stays offline unless invoked as `atyrode doctor git
+--online`, which checks the selected authentication key against the `gh`
+account's GitHub registrations. An unavailable or malformed API response is
+unknown, never proof that registration is missing. Custom SSH commands are
+not executed. `failed` checks return 69; `warning` rows remain visible without
+failing the report. JSON contains classifications, paths and fingerprints,
+never key material, tokens, helper arguments or remote URLs. See
+[secrets.md](secrets.md#git-identity) for the diagnostic boundaries.
+
+With `--online`, the token-storage check may also ask `gh auth status` about
+github.com; offline it only inspects local files and environment metadata.

@@ -12,10 +12,10 @@ not in a checklist.
 | [day-to-day.md](day-to-day.md) | Running the fleet: converging a machine, adding one, adding a device, and what `doctor` is for |
 | [system-boundary.md](system-boundary.md) | Home Manager vs system (nix-darwin) ownership and the Homebrew convergence policy |
 | [hosts.md](hosts.md) | The host registry (`fleet/hosts.nix`): identity, platform, and capabilities |
-| [bootstrap.md](bootstrap.md) | The supported path from an unmanaged machine to a managed one, and activation |
-| [atyrode.md](atyrode.md) | The `atyrode` CLI — applying and inspecting the configuration |
+| [bootstrap.md](bootstrap.md) | The only supported path from an unmanaged machine to a registered host: what bootstrap owns before it relays to `atyrode apply`, repairs, failure codes, recovery |
+| [atyrode.md](atyrode.md) | What the `atyrode` CLI promises: the mutation boundary, what reaches the terminal, and where its identities and surfaces come from (`atyrode --help` is the syntax) |
 | [secrets.md](secrets.md) | Secrets and their audience: sops-nix, the operator and machine identities, enrolment and revocation |
-| [manifold.md](manifold.md) | The `manifold-node` fleet spoke: enrollment, operator-timed agent upgrades, and master migration |
+| [manifold.md](manifold.md) | The `manifold-node` capability: a spoke of the self-hosted hub, its enrollment, operator-timed agent upgrades, and master migration |
 | [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
@@ -29,6 +29,6 @@ that had real alternatives, it links to the ADR rather than re-arguing it.
 
 ## Adding a machine
 
-Register the host in [`fleet/hosts.nix`](../fleet/hosts.nix) (see
-[hosts.md](hosts.md)), then follow [bootstrap.md](bootstrap.md). The
-documentation above is intended to be sufficient without chat history.
+[day-to-day.md](day-to-day.md#adding-a-machine) has the four steps; a machine
+with no Nix at all starts one step earlier, with [bootstrap.md](bootstrap.md).
+The documentation above is intended to be sufficient without chat history.

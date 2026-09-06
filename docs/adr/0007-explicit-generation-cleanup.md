@@ -27,7 +27,8 @@ Cleanup is **explicit and policy-driven**:
 - **Cleanup never runs as a side effect of `atyrode apply`** — it is a separate,
   dry-run-and-confirmation command.
 
-See [atyrode.md](../atyrode.md).
+The verbs and their flags are `atyrode --help`; the rollback story is in
+[day-to-day.md](../day-to-day.md#keeping-the-machine-small).
 
 ## Consequences
 

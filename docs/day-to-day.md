@@ -30,10 +30,12 @@ atyrode fleet plan dev-01     # vars, reachability, evaluation; activates nothin
 atyrode fleet apply dev-01    # build here, activate there, verify
 ```
 
-Clan builds the closure on the machine running the command and activates it on
-the target, so the target needs no toolchain and no checkout. Where it is
-reached is the machine's own `clan.core.networking.targetHost`: a deployment
-cannot be aimed somewhere the reviewed configuration does not name.
+`fleet apply` builds the closure on the machine running the command, copies
+it to the target, has the target read it against its own running generation,
+and activates through the target's own `atyrode apply --candidate`, so the
+target needs no toolchain and no checkout. Where it is reached is the
+machine's own `clan.core.networking.targetHost`: a deployment cannot be aimed
+somewhere the reviewed configuration does not name.
 
 ### Knowing when to apply
 
@@ -147,7 +149,6 @@ broker token, or any other secret lives there any more; those are clan vars.
 ## Keeping the machine small
 
 ```sh
-atyrode generations      # what the activation profile holds
 atyrode clean --yes      # collect what nothing points at
 atyrode rollback         # the previous generation, activated
 ```

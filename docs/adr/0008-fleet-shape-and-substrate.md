@@ -1,7 +1,8 @@
 # ADR 0008: Fleet shape, substrate, and the road there
 
 - Status: Accepted
-- Date: 2026-09-01, accepted 2026-09-02, amended 2026-09-02 (clan, layout)
+- Date: 2026-09-01, accepted 2026-09-02, amended 2026-09-02 (clan, layout,
+  one operator key per device), 2026-09-05 (flow), 2026-09-06 (front door)
 - Supersedes: [0005](0005-no-declarative-secret-manager.md) — its stated
   trigger ("a concrete secret must be delivered declaratively") has fired.
 
@@ -103,7 +104,7 @@ Applications stop inventing cross-machine glue because the fleet provides it:
 | Concern | Substrate | Replaces |
 | --- | --- | --- |
 | Configuration | one repository, this one, for every machine including the server; **clan** (clan-core, pinned) is the fleet layer inside it and `atyrode` the single front door that wraps it — *amended 2026-09-02, below* | a second repository carrying a second convergence engine |
-| Secrets and their audience | **clan vars over sops-nix**: generators mint per-machine values encrypted to the machines that may read them; each machine mints its own age key on the machine and clan records only the public half; the operator's daily identity is hardware-bound in the Mac's Secure Enclave and the existing software key is the recovery recipient — *amended 2026-09-02* | the Bitwarden ceremony, `vault.sh`, provisioning ceremonies that only existed to fetch a value, hand-encrypted `secrets/*.yaml` |
+| Secrets and their audience | **clan vars over sops-nix**: generators mint per-machine values encrypted to the machines that may read them; `clan vars generate` mints each machine's age key on an operator device and keeps it in the repository encrypted to the `admins` group; the operator's identity is one key per device, Secure Enclave-backed where that hardware exists, plus a software recovery recipient — *amended 2026-09-02, below* | the Bitwarden ceremony, `vault.sh`, provisioning ceremonies that only existed to fetch a value, hand-encrypted `secrets/*.yaml` |
 | Identity and reachability | plain WireGuard through clan's `wireguard` service: controller on the workshop, peers elsewhere, keys and addresses generated, never typed — *amended 2026-09-02* | SSH key distribution, per-app auth protocols, a hand-written peer list |
 | Built artifacts | CI builds every host closure and pushes to a **Cellar** bucket (already paid for, S3 to write, plain HTTPS to read, no server) | every machine rebuilding what CI already built |
 | Agent context | a **generated** `AGENTS.md` deployed by this repository to every machine (see below) | telling every agent on every machine what is authenticated where |
@@ -115,13 +116,16 @@ other. The only device-bound session in the fleet is Bitwarden's, and it leaves
 the daily path: Bitwarden becomes the break-glass copy of the operator's
 recovery age identity, a value read by hand once and never by a timer.
 
-**Two operator identities, decided.** The key the operator edits secrets with
-day to day lives in the Mac's Secure Enclave (`age-plugin-se`, Touch ID on
-every edit) and cannot be copied off it; the software key that exists today
-becomes the recovery recipient, its only copy the Bitwarden note. Losing the
-Mac costs a re-encryption with the recovery key and rotates nothing, because
-nothing could have left the enclave. The cost accepted is that secrets are
-edited from the Mac.
+**One operator identity per device, decided.** *(as amended 2026-09-02; the
+record as accepted named the Mac's Secure Enclave alone.)* The key the
+operator edits secrets with is one clan user per operator device
+(`alex-<host>`), every one a member of the `admins` group that every value is
+encrypted to, plus `alex-recovery`, the software key whose only copy is the
+Bitwarden note. The Mac's key is Secure Enclave-backed (`age-plugin-se`,
+Touch ID on every edit) because that hardware exists there, and it grants
+nothing the others lack; a Linux device's key is a plain age file. Nothing
+about the fleet depends on any one device: losing one costs removing that
+user from the group, and clan re-encrypts every value without it.
 
 **Publishing ciphertext is decided.** `secrets/*.yaml` is age-encrypted to
 named recipients; a reader of the public repository learns the *names* of
@@ -288,21 +292,21 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
    symlinks. This repository's own `AGENTS.md` is written at the same time.
 3. **Secrets.** *(amended 2026-09-02)* The repository is restructured first
    (below), then becomes a clan whose machines are the workshop, the Mac and
-   WSL; each machine mints its own age key and clan records the public half;
-   the operator's two identities are registered as clan users; the first
-   surface moves (`git-identity`) as a clan var, then `clever` and Cellar
-   tokens as values, then babel. Each surface leaves Bitwarden only when its
-   clan path works; `vault.sh` dies last.
-4. **Overlay and flow.** *(amended 2026-09-02)* clan's `wireguard` service
-   with the workshop as controller, push-on-green from CI, the converge
-   floor, `atyrode fleet apply` wrapping `clan machines update`, drift in
-   `doctor` and the shell. *(2026-09-05: drift landed as `atyrode changelog`,
-   an hourly record and one shell line until the update is taken, plus the
-   `convergence` doctor surface. The converge floor is deliberately not an
-   unattended switch: an update is a prompt on a machine someone sits at, and
-   every machine here is one. `fleet apply` copies the closure itself rather
-   than wrapping `clan machines update`; push-on-green is #581, the overlay
-   #582.)*
+   WSL; `clan vars generate` mints each machine's key on an operator device
+   and keeps it in the repository encrypted to the group; the operator's
+   identities are registered as clan users, one per device; the first surface
+   moves (`git-identity`) as a clan var, then `clever` and Cellar tokens as
+   values, then babel. Each surface leaves Bitwarden only when its clan path
+   works; `vault.sh` dies last.
+4. **Overlay and flow.** *(amended 2026-09-02 and 2026-09-05)* clan's
+   `wireguard` service with the workshop as controller (#582); push-on-green
+   from CI (#581); the converge floor, which is deliberately not an unattended
+   switch — an update is a prompt on a machine someone sits at, and every
+   machine here is one — so it landed as `atyrode changelog`, an hourly
+   record, one shell line until the update is taken, and the `convergence`
+   doctor surface; and `atyrode fleet apply`, which builds here, copies the
+   closure itself and activates through the target's own `atyrode apply
+   --candidate` rather than wrapping `clan machines update`.
 5. **The server joins this repository.** *(amended 2026-09-02)* `dev-01`
    moves in as a clan machine with its disko, boot, network and policy
    modules (about a thousand lines); its public address becomes a value, not
@@ -357,9 +361,13 @@ push-on-green stay this repository's. Its darwin support is young: the machine
 class exists, one service is darwin-aware. Standalone Home Manager hosts are
 invisible to it, which under this record is fine. It is pre-1.0 and carries
 deprecation notices; the pin bot and a red pull request are the tax. Its
-default machine-key flow copies a private key over SSH; the fleet takes the
-path clan tolerates instead — the machine mints its key, clan records the
-public half — so no private key ever travels.
+default machine-key flow — `clan vars generate` mints a machine's key on an
+operator device and keeps the private half in the repository encrypted to the
+group, which `atyrode apply` then places — is taken as is: a mint-on-machine
+ceremony (`atyrode identity init`) was built and then deleted,
+because whoever holds the operator key can already read every value, so a
+machine key encrypted to that same key added nothing but a ceremony, and a
+rebuilt machine now needs no re-registration.
 
 **The repository is reshaped first.** The same sweep restructures this
 repository by role rather than by tool, so the fold lands on a clean layout
@@ -398,10 +406,12 @@ is evaluated then.
 5. Step 0's inventory — **begun immediately**, read-only, producing a manifest
    for review, because nothing may be deleted before every secret has a new
    home.
-6. Where the operator's key lives — **the Mac's Secure Enclave**, with the
-   existing software key as recovery, because a key that cannot be copied off
-   the hardware turns a lost device into a re-encryption rather than a
-   rotation. *(Revised by the sub-amendment below.)*
+6. Where the operator's key lives — **one key per operator device**, the
+   Mac's inside its Secure Enclave and a plain age file elsewhere, with the
+   existing software key as recovery, because nothing about the fleet may
+   depend on any one device — which is what the record as accepted ("the Mac's
+   Secure Enclave") had quietly undone. *(Revised 2026-09-02 from the Mac
+   alone.)*
 7. The unpushed `manifold` work — **stays on the old box for now**; the
    runbook lists it as the first thing that must leave before anything is
    deleted.
@@ -414,23 +424,3 @@ is evaluated then.
 10. The runner platform's fate — **open**, decided after the server has moved,
     by 2026-10-01, because only the deleted qualification VM consumed it and
     the fleet has no other claim on it yet.
-
-### Sub-amendment 2026-09-02: one operator key per device
-
-Decision 6 is revised. The operator's identity is **one clan user per operator
-device** (`alex-<host>`), every one a member of the `admins` group
-that every value is encrypted to, plus `alex-recovery` in Bitwarden. The
-Mac's key is Secure Enclave-backed because that hardware exists there, and
-it grants nothing the others lack; a Linux device's key is a plain age file.
-Nothing about the fleet depends on any one device, which is what "the Mac's
-Secure Enclave" had quietly undone.
-
-Machine keys follow **clan's default**: `clan vars generate` mints a
-machine's key on an operator device and keeps its private half in the
-repository encrypted to the group; `atyrode apply` places it on the machine
-the operator sits on and `clan machines update` on one reached over SSH.
-The mint-on-machine ceremony (`atyrode identity init`) is deleted: whoever
-holds the operator key can already read every value, so a machine key
-encrypted to that same key added nothing but a ceremony, and a rebuilt
-machine now needs no re-registration.
-

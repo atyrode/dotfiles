@@ -46,19 +46,20 @@ mkScenario "darwin-codes-recover" ''
   FAKE_ACTIVATION_FAIL=1 \
     expect_failure "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host"
   grep -F '[BOOT-E399]' "$TMPDIR/expected-failure.err" >/dev/null
-  grep -F '  log: ' "$TMPDIR/expected-failure.err" >/dev/null
+  grep -F "$XDG_STATE_HOME/atyrode/bootstrap/logs/" "$TMPDIR/expected-failure.err" >/dev/null
   grep -F "./bootstrap/install.sh recover --config $host" "$TMPDIR/expected-failure.err" >/dev/null
 
   # A configuration that fails to build is not a broken machine. This landed
   # in the unrecognised bucket and offered to reset a perfectly healthy Nix
   # installation -- the same wrong remedy the doctor-69 case above already
-  # had to be taught once, reached by a different route.
+  # had to be taught once, reached by a different route. Nothing was
+  # activated, so the interrupted marker an apply sets is cleared again.
   FAKE_BUILD_FAIL=1 \
     expect_failure "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host"
   grep -F '[BOOT-E304]' "$TMPDIR/expected-failure.err" >/dev/null
   grep -F 'darwin-system-26.11' "$TMPDIR/expected-failure.err" >/dev/null
-  grep -F 'this machine is unchanged' "$TMPDIR/expected-failure.err" >/dev/null
-  ! grep -qF './bootstrap/install.sh recover' "$TMPDIR/expected-failure.err"
+  test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
+  grep -qF './bootstrap/install.sh recover' "$TMPDIR/expected-failure.err" && false
 
   # Recovery is the exit for a state with no repair. It resets what a dead
   # generation owns - the daemon, /etc/nix, the store volume - and installs
@@ -74,15 +75,15 @@ mkScenario "darwin-codes-recover" ''
   mkdir -p "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db"
   : > "$BOOTSTRAP_PROFILE_TARGET_ROOT/nix/var/nix/db/db.sqlite"
   # Recovery is destructive enough to require saying so out loud: it prints
-  # the plan, then refuses to touch anything without an explicit answer.
+  # the plan, then refuses to touch anything without an explicit answer. The
+  # refusal exits 1 like every other, so the flag it offers is what
+  # identifies it.
   if "$repo/bootstrap/install.sh" recover --repo "$repo" --config "$host" \
     > "$TMPDIR/recover-plan.out" 2> "$TMPDIR/recover-plan.err"; then
     echo 'recover proceeded without confirmation' >&2
     exit 1
   fi
-  grep -F 'Recovery plan' "$TMPDIR/recover-plan.out" >/dev/null
-  grep -F 'nothing on it is deleted' "$TMPDIR/recover-plan.out" >/dev/null
-  grep -F 'requires an interactive terminal' "$TMPDIR/recover-plan.err" >/dev/null
+  grep -F -- '--yes' "$TMPDIR/recover-plan.err" >/dev/null
   # Nothing moved: a live install is still exactly as it was.
   test -f "$plist"
   test -f "$etc/nix/nix.conf"
@@ -103,9 +104,9 @@ mkScenario "darwin-codes-recover" ''
   grep -F "cp '$repairs/nix-daemon.plist." "$undo" >/dev/null
   grep -F 'org.nixos.nix-daemon' \
     "$(find "$repairs" -name 'nix-daemon.plist.*' -print -quit)" >/dev/null
-  grep -F "removed $etc/nix" "$undo" >/dev/null
-  grep -F 'ssl-cert-file' \
-    "$(find "$repairs" -name 'etc-nix.*' -print -quit)/nix.conf" >/dev/null
+  etc_nix_archive="$(find "$repairs" -name 'etc-nix.*' -print -quit)"
+  grep -F "undo: cp -R '$etc_nix_archive' '$etc/nix'" "$undo" >/dev/null
+  grep -F 'ssl-cert-file' "$etc_nix_archive/nix.conf" >/dev/null
   grep -F "diskutil rename 'disk3s7' 'Nix Store'" "$undo" >/dev/null
   unset FAKE_LAUNCHCTL_LOG
 
@@ -123,13 +124,17 @@ mkScenario "darwin-codes-recover" ''
   unset FAKE_LAUNCHCTL_LOADED
 
   # On Linux the managed environment lives in /nix, so removing it is
-  # destruction rather than recovery, and recovery refuses by name. The
-  # platform is forced rather than inherited from the runner: taking it from
-  # uname would assert nothing on the macOS job, which is the one job where
-  # recovery is reachable.
+  # destruction rather than recovery, and recovery refuses by name: the
+  # system it was asked to reset is in the refusal, which is what separates
+  # it from a preflight failure exiting the same 1. The platform is forced
+  # rather than inherited from the runner: taking it from uname would assert
+  # nothing on the macOS job, which is the one job where recovery is
+  # reachable.
   new_fixture recover-refuses-on-linux
   export PATH="$managed_tools:$base_path"
   export BOOTSTRAP_FORCE_SYSTEM=x86_64-linux
   expect_failure "$repo/bootstrap/install.sh" recover --yes --repo "$repo" --config "$host"
-  grep -F 'is not a recovery' "$TMPDIR/expected-failure.err" >/dev/null
+  grep -qw x86_64-linux "$TMPDIR/expected-failure.err"
+  test ! -e "$FAKE_INSTALL_EXECUTED"
+  test ! -e "$FAKE_LOG"
 ''

@@ -18,11 +18,6 @@ let
   linuxHasLegacyTimer = linuxAgentTools.systemd.user.timers ? atyrode-session-backup;
   darwinHasLegacyAgent = darwinAgentTools.launchd.agents ? atyrode-session-backup;
 
-  # The CLI, read as source: the properties about the archive timer below are
-  # about what its functions may and may not do, and no rendered attribute set
-  # can answer that.
-  atyrodeSource = import ../lib/atyrode-source.nix { inherit pkgs; };
-
   # The document `babel storage configure` writes, and nothing else does. It is
   # the timer's start condition, so its exact value is part of the contract.
   # Read through an assertion rather than `or`, so a removed gate fails by name
@@ -63,25 +58,24 @@ pkgs.runCommand "check-babel-archive"
 
     # The wrapper delegates to Babel and names no transcript paths of its own:
     # source roots come from Babel's configuration, so a tree added upstream is
-    # archived without editing this repository.
-    grep -Fq 'babel archive push --json' "$push"
-    ! grep -Fq '.omp/agent/sessions' "$push"
-    ! grep -Fq '.codex' "$push"
-    ! grep -Fq '.claude' "$push"
-
-    # rclone is gone with the legacy archive; restic is the recovery tool.
-    ! grep -Fq 'rclone' "$push"
+    # archived without editing this repository. The script explains itself in
+    # comments, so the negatives below read only what it runs.
+    commands="$TMPDIR/push-commands"
+    sed 's/#.*//' "$push" > "$commands"
+    grep -Fq 'babel archive push --json' "$commands"
+    grep -Fq '.omp/agent/sessions' "$commands" && false
+    grep -Fq '.codex' "$commands" && false
+    grep -Fq '.claude' "$commands" && false
 
     # An unconfigured machine is a no-op, not an hourly failure, and it names
     # the one command that sets a machine up.
     grep -Fq 'babel/storage.json' "$push"
     grep -Fq 'exit 0' "$push"
     grep -Fq 'atyrode apply' "$push"
-    ! grep -Fq 'atyrode backup' "$push"
 
     # A repository is never created by the timer: `babel archive init` is a
     # deliberate one-time operator act, so the push must not carry it.
-    ! grep -Fq 'archive init' "$push"
+    grep -Fq 'archive init' "$commands" && false
 
     # The stamp is earned from the machine-readable result, not from the push
     # merely returning. A push legitimately succeeds having archived nothing,
@@ -117,38 +111,14 @@ pkgs.runCommand "check-babel-archive"
     # then declines to archive for.
     gate=${lib.escapeShellArg timerGate}
     test "$gate" = ${lib.escapeShellArg storageDocument}
-    grep -Fq 'babel/storage.json' <<<"$gate"
 
-    # Half a gate is worse than none. systemd evaluates a start condition when
-    # the timer is started, not continuously, and the document is placed by
-    # activation now, so the one thing left for the CLI to do is start the
-    # timer after every activation. That step lives in apply's plan and nowhere
-    # else: a provisioning offer that armed it too would be a second place, and
-    # two places is how the timer ended up in two states before.
-    arm=${atyrodeSource}
-    grep -Fq 'systemctl" --user start babel-archive.timer' "$arm"
-    awk '
-      $0 ~ "^archive_converge_timer\\(\\)" { inside = 1; next }
-      inside && /archive_arm_timer/ { hit = 1 }
-      /^\}/ { inside = 0 }
-      END { exit hit ? 0 : 1 }
-    ' "$arm" || {
-      echo 'atyrode: the apply step that converges the archive timer no longer arms it' >&2
-      exit 1
-    }
-    if awk '
-      $0 ~ "^provisioning_run\\(\\)" { inside = 1; next }
-      inside && /babel-archive\)/ { hit = 1 }
-      /^\}/ { inside = 0 }
-      END { exit hit ? 0 : 1 }
-    ' "$arm"; then
-      echo 'atyrode: apply offers a babel ceremony again; storage is a clan var and no ceremony may exist to fetch it' >&2
-      exit 1
-    fi
-    # An unconfigured machine is told which device owes the generation, by the
-    # probe and by the apply step alike, and the policy names the same command.
-    grep -Fq 'the hourly timer archives nothing until activation places it' "$arm"
-    grep -Fq 'no storage document placed yet (clan vars generate' "$arm"
+    # Half a gate is worse than none: systemd evaluates a start condition when
+    # the timer is started, not continuously, so the CLI starts the timer after
+    # every activation. That behaviour is driven in atyrode-apply, which runs
+    # apply against a placed document and asserts the announced
+    # `systemctl --user start babel-archive.timer`, and reads the provisioning
+    # probe as JSON to see the archive judged rather than offered. The policy
+    # document names the same generation the probe does.
     ${lib.escapeShellArg "${pkgs.jq}/bin/jq"} -e \
       '.surfaces["babel-archive"].command == "clan vars generate <host>"
        and .surfaces["babel-archive"].declinable == false

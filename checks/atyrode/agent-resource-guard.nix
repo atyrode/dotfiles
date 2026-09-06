@@ -24,7 +24,7 @@ pkgs.runCommand "check-agent-resource-guard" { } ''
   # this workload parked the whole slice in swap thrash - millions of throttle
   # events and tens of minutes of full stall - while never once preventing an
   # OOM. It wedged agent sessions unrecoverably and protected nothing.
-  ! grep -Fq 'MemoryHigh' <<<"$dropIn"
+  grep -Fq 'MemoryHigh' <<<"$dropIn" && false
 
   # earlyoom backstops host-wide exhaustion and must stay unprivileged:
   # Nice=/OOMScoreAdjust= are what upstream recommends for its *root* unit,
@@ -50,7 +50,7 @@ pkgs.runCommand "check-agent-resource-guard" { } ''
   done
   for protected in omp; do
     grep -Fq "$protected" <<<"$avoidList"
-    ! grep -Fq "$protected" <<<"$preferList"
+    grep -Fq "$protected" <<<"$preferList" && false
   done
   test ${if linuxEarlyoomService.Service ? Nice then "1" else "0"} = 0
   test ${if linuxEarlyoomService.Service ? OOMScoreAdjust then "1" else "0"} = 0

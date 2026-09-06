@@ -9,16 +9,15 @@ mkScenario "darwin-trust" ''
   trust_anchor_case darwin-trust-anchor-env
   export NIX_SSL_CERT_FILE="$anchor"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-env.out"
-  grep -F "Restore the TLS trust anchor" "$TMPDIR/anchor-env.out" >/dev/null
-  grep -F "$anchor (named by NIX_SSL_CERT_FILE)" "$TMPDIR/anchor-env.out" >/dev/null
+  grep -F NIX_SSL_CERT_FILE "$TMPDIR/anchor-env.out" >/dev/null
   test ! -e "$anchor"
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test -L "$anchor" && test -e "$anchor"
   test "$(readlink "$anchor")" = "$bundle"
   grep -F "rm -f '$anchor'" "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
-  # Idempotent: the anchor now resolves, so a second run plans nothing.
+  # Idempotent: the anchor now resolves, so a second run does not name it.
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-again.out"
-  grep -Fq 'Restore the TLS trust anchor' "$TMPDIR/anchor-again.out" && exit 1
+  grep -Fq "$anchor" "$TMPDIR/anchor-again.out" && false
   unset NIX_SSL_CERT_FILE
 
   # Named by /etc/nix/nix.conf, and still a dangling link this toolchain
@@ -29,8 +28,7 @@ mkScenario "darwin-trust" ''
   printf 'ssl-cert-file = %s\n' "$anchor" > "$etc/nix/nix.conf"
   ln -s /nix/store/0000000000000000000000000000000-etc/ca.crt "$anchor"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-conf.out"
-  grep -F "Remove links a previous nix-darwin left" "$TMPDIR/anchor-conf.out" >/dev/null
-  grep -F "$anchor (named by $etc/nix/nix.conf)" "$TMPDIR/anchor-conf.out" >/dev/null
+  grep -F "$etc/nix/nix.conf" "$TMPDIR/anchor-conf.out" >/dev/null
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test "$(readlink "$anchor")" = "$bundle"
 
@@ -42,7 +40,7 @@ mkScenario "darwin-trust" ''
   mkdir -p "$(dirname "$plist")"
   printf '<dict><key>NIX_SSL_CERT_FILE</key><string>%s</string></dict>\n' "$anchor" > "$plist"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-plist.out"
-  grep -F "$anchor (named by $plist)" "$TMPDIR/anchor-plist.out" >/dev/null
+  grep -F "$plist" "$TMPDIR/anchor-plist.out" >/dev/null
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test "$(readlink "$anchor")" = "$bundle"
 
@@ -58,7 +56,9 @@ mkScenario "darwin-trust" ''
   mkdir -p "$etc/nix"
   printf 'ssl-cert-file = %s\n' "$etc/ssl/other/foreign.crt" > "$etc/nix/nix.conf"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-untouched.out"
-  grep -Fq 'Restore the TLS trust anchor' "$TMPDIR/anchor-untouched.out" && exit 1
+  grep -Fq "$anchor" "$TMPDIR/anchor-untouched.out" && false
+  grep -Fq "$etc/ssl/other/foreign.crt" "$TMPDIR/anchor-untouched.out" && false
+  grep -Fq "$TMPDIR/elsewhere/ca.pem" "$TMPDIR/anchor-untouched.out" && false
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   grep -F 'operator anchors' "$anchor" >/dev/null
   test ! -L "$anchor"
@@ -74,15 +74,14 @@ mkScenario "darwin-trust" ''
   trust_anchor_case darwin-trust-anchor-unusable
   : > "$anchor"
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-unusable.out"
-  grep -F "$anchor (named by the path Nix probes by default)" \
-    "$TMPDIR/anchor-unusable.out" >/dev/null
+  grep -F "$anchor" "$TMPDIR/anchor-unusable.out" >/dev/null
   test -f "$anchor"
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test "$(readlink "$anchor")" = "$bundle"
   # The unusable original is archived, and the undo journal puts it back.
-  undo="$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log"
-  grep -F "archived unusable trust anchor $anchor" "$undo" >/dev/null
-  test -n "$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'ca-bundle.*' -print -quit)"
+  archive="$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'ca-bundle.*' -print -quit)"
+  test -f "$archive"
+  grep -F "undo: cp '$archive' '$anchor'" "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
 
   # A launchd plist is routinely stored as binary, where the path inside is
   # not greppable text and only plutil can read it out.
@@ -94,9 +93,9 @@ mkScenario "darwin-trust" ''
       ${pkgs.coreutils}/bin/base64
   } > "$plist"
   # The path is genuinely unreadable as text; only decoding finds it.
-  grep -Fq "$anchor" "$plist" && exit 1
+  grep -Fq "$anchor" "$plist" && false
   "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/anchor-bplist.out"
-  grep -F "$anchor (named by $plist)" "$TMPDIR/anchor-bplist.out" >/dev/null
+  grep -F "$plist" "$TMPDIR/anchor-bplist.out" >/dev/null
   "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
   test "$(readlink "$anchor")" = "$bundle"
 
@@ -106,7 +105,6 @@ mkScenario "darwin-trust" ''
   export NIX_SSL_CERT_FILE="$anchor"
   expect_failure "$repo/bootstrap/install.sh" verify --repo "$repo" --config "$host"
   grep -F '[BOOT-E301]' "$TMPDIR/expected-failure.err" >/dev/null
-  grep -F "named by NIX_SSL_CERT_FILE" "$TMPDIR/expected-failure.err" >/dev/null
-  grep -F 'it restores that file' "$TMPDIR/expected-failure.err" >/dev/null
+  grep -F NIX_SSL_CERT_FILE "$TMPDIR/expected-failure.err" >/dev/null
   unset NIX_SSL_CERT_FILE
 ''

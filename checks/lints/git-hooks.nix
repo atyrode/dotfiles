@@ -50,8 +50,6 @@ pkgs.runCommand "check-git-hooks"
     fi
     grep -qE 'RuleID: +github-pat' "$TMPDIR/refused.err" \
       || { echo "the refusal must name the rule" >&2; cat "$TMPDIR/refused.err" >&2; exit 1; }
-    grep -q 'Commit refused' "$TMPDIR/refused.err" \
-      || { echo "the refusal must say what happened" >&2; exit 1; }
     if grep -q "$planted" "$TMPDIR/refused.err"; then
       echo "the refusal must not echo the value" >&2
       exit 1

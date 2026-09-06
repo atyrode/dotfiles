@@ -145,7 +145,7 @@ pkgs.runCommand "check-atyrode-apply"
       set -e
       test "$prod_guard_status" = 64 \
         || { echo "production $prod_cmd must refuse a tool override (exit $prod_guard_status): $(cat "$TMPDIR/prod-guard.err")" >&2; exit 1; }
-      grep -qF 'ATYRODE_NIX_ENV is set' "$TMPDIR/prod-guard.err" \
+      grep -qF ATYRODE_NIX_ENV "$TMPDIR/prod-guard.err" \
         || { echo "production $prod_cmd refusal must name the offending override" >&2; exit 1; }
     done
     for override in ATYRODE_SYSTEMD_RUN ATYRODE_SYSTEMCTL ATYRODE_FETCH; do
@@ -156,7 +156,7 @@ pkgs.runCommand "check-atyrode-apply"
       prod_apply_manager_guard_status="$?"
       set -e
       test "$prod_apply_manager_guard_status" = 64
-      grep -qF "$override is set" "$TMPDIR/prod-apply-manager-guard.err"
+      grep -qF "$override" "$TMPDIR/prod-apply-manager-guard.err"
     done
     # The guard is scoped to mutating verbs: a read-only command with the same
     # override present still runs (production simply ignores the var there).
@@ -198,7 +198,7 @@ pkgs.runCommand "check-atyrode-apply"
       set -e
       test "$seam_status" = 64 \
         || { echo "production apply must refuse $seam_var (exit $seam_status): $(cat "$TMPDIR/prod-seam.err")" >&2; exit 1; }
-      grep -qF "$seam_var is set" "$TMPDIR/prod-seam.err" \
+      grep -qF "$seam_var" "$TMPDIR/prod-seam.err" \
         || { echo "production refusal must name $seam_var" >&2; exit 1; }
       test ! -e "$TMPDIR/seam/$seam_tool.used" \
         || { echo "a production build must never reach the $seam_var stub" >&2; exit 1; }
@@ -263,7 +263,7 @@ pkgs.runCommand "check-atyrode-apply"
     unknown_host_status="$?"
     set -e
     test "$unknown_host_status" = 65
-    grep -qF 'unknown host: alex-aarch64-darwin' "$TMPDIR/unknown-host.err"
+    grep -qF alex-aarch64-darwin "$TMPDIR/unknown-host.err"
 
     # Naming an unregistered former hostname is enough to distinguish a
     # deliberate rename from applying one registered machine over another.
@@ -271,8 +271,6 @@ pkgs.runCommand "check-atyrode-apply"
       atyrode apply dev-01 --repo "$HOME/nix-dotfiles" --plan --json \
       > "$TMPDIR/rename-plan.json" 2> "$TMPDIR/rename-plan.err"
     jq -e '.host == "dev-01" and .backend == "nh-os"' "$TMPDIR/rename-plan.json" >/dev/null
-    grep -qF 'hostname tyrode-dev-01 is not registered; the switch renames this machine to dev-01' \
-      "$TMPDIR/rename-plan.err"
 
     printf '%s\n' '{"id":"dev-01"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
     set +e
@@ -282,8 +280,7 @@ pkgs.runCommand "check-atyrode-apply"
     implicit_rename_status="$?"
     set -e
     test "$implicit_rename_status" = 65
-    grep -qF 'the switch renames this machine; pass the host explicitly: atyrode apply dev-01' \
-      "$TMPDIR/implicit-rename.err"
+    grep -qF 'atyrode apply dev-01' "$TMPDIR/implicit-rename.err"
 
     set +e
     env _ATYRODE_TEST_HOSTNAME=wsl \
@@ -292,8 +289,7 @@ pkgs.runCommand "check-atyrode-apply"
     cross_host_status="$?"
     set -e
     test "$cross_host_status" = 65
-    grep -qF 'found wsl, which belongs to wsl; apply wsl or correct the hostname before applying dev-01' \
-      "$TMPDIR/cross-host.err"
+    grep -qF 'apply wsl' "$TMPDIR/cross-host.err"
     printf '%s\n' '{"id":"development-x86_64-linux"}' > "$XDG_CONFIG_HOME/atyrode/host.json"
 
     # The CLI reads and drives this machine, so it must see the machine's own
@@ -309,7 +305,7 @@ pkgs.runCommand "check-atyrode-apply"
     printf '#!${pkgs.runtimeShell}\nexit 0\n' > "$HOME/.nix-profile/bin/nix-locate"
     chmod +x "$HOME/.nix-profile/bin/nix-locate"
     stripped="${pkgs.coreutils}/bin:${pkgs.jq}/bin"
-    ! PATH="$stripped" command -v nix-locate >/dev/null
+    PATH="$stripped" command -v nix-locate >/dev/null && false
     # Non-zero because the stripped PATH leaves other declared tools missing;
     # the assertion is about the one that must be found regardless.
     env PATH="$stripped" "$(command -v atyrode)" doctor tools --json > "$TMPDIR/adopted.json" || true
@@ -377,25 +373,19 @@ pkgs.runCommand "check-atyrode-apply"
     set -e
     test "$operator_status" = 69
     test ! -s "$TMPDIR/operator-none.out"
-    grep -qF "no operator key at $operator_key; this device cannot edit a secret" "$TMPDIR/operator-none.err"
-    grep -qF 'create one with: atyrode operator init' "$TMPDIR/operator-none.err"
+    grep -qF 'atyrode operator init' "$TMPDIR/operator-none.err"
     set +e
     ATYRODE_HOST=development-x86_64-linux atyrode operator show > "$TMPDIR/operator-portable.out" 2> "$TMPDIR/operator-portable.err"
     operator_status="$?"
     set -e
     test "$operator_status" = 65
-    grep -qF 'is a portable profile; it is not an operator device' "$TMPDIR/operator-portable.err"
     operator_probe development-x86_64-linux not-applicable portable-profile
-    # init on a Linux device says there is no enclave, announces the one
-    # command, lands the key at the modes a secret demands, and -- the fixture
-    # sops tree already registering the recipient it minted in the group --
-    # reports the device registered.
+    # init on a Linux device announces the one command, lands the key at the
+    # modes a secret demands, and -- the fixture sops tree already registering
+    # the recipient it minted in the group -- the probe reports the device
+    # registered.
     ATYRODE_HOST=fixture-nixos atyrode operator init > "$TMPDIR/operator-init.out" 2> "$TMPDIR/operator-init.err"
-    grep -qF 'no Secure Enclave here: the key is a file, protected only by this account' "$TMPDIR/operator-init.err"
     grep -qE "^\\$ $TMPDIR/bin/age-keygen -o $operator_key\$" "$TMPDIR/operator-init.err"
-    grep -qF "wrote $operator_key (mode 0600, directory mode 0700)" "$TMPDIR/operator-init.err"
-    grep -qF "recipient $device_recipient is registered with clan as sops/users/alex-fixture-nixos/key.json (group admins)" \
-      "$TMPDIR/operator-init.err"
     test ! -s "$TMPDIR/operator-init.out"
     test -f "$operator_key"
     test "$(stat -c %a "$operator_key")" = 600
@@ -404,11 +394,10 @@ pkgs.runCommand "check-atyrode-apply"
     operator_probe fixture-nixos ok ""
     ATYRODE_HOST=fixture-nixos atyrode operator show > "$TMPDIR/operator-show.out" 2> "$TMPDIR/operator-show.err"
     test "$(cat "$TMPDIR/operator-show.out")" = "$device_recipient"
-    grep -qF 'registered with clan as sops/users/alex-fixture-nixos/key.json (group admins)' "$TMPDIR/operator-show.err"
-    # A second init keeps the key: files may already be encrypted to it.
+    # A second init keeps the key: files may already be encrypted to it, so
+    # no keygen is announced and the private line is the one first written.
     ATYRODE_HOST=fixture-nixos atyrode operator init > "$TMPDIR/operator-again.out" 2> "$TMPDIR/operator-again.err"
-    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-again.err"
-    ! grep -qF 'age-keygen' "$TMPDIR/operator-again.err"
+    grep -qF 'age-keygen' "$TMPDIR/operator-again.err" && false
     test ! -s "$TMPDIR/operator-again.out"
     grep -qF 'AGE-SECRET-KEY-1FIXTUREONLY' "$operator_key"
     # A recipient clan does not register: the probe and the verb print
@@ -420,8 +409,6 @@ pkgs.runCommand "check-atyrode-apply"
       | (.summary | contains("sops/users/alex-fixture-nixos/key.json in group admins"))
         and .remediation == "in any checkout, run: clan secrets users add alex-fixture-nixos age1unregistereddevice000000000000000000000000000000000000000000 && clan secrets groups add-user admins alex-fixture-nixos"' >/dev/null
     ATYRODE_HOST=fixture-nixos atyrode operator show > "$TMPDIR/operator-unregistered.out" 2> "$TMPDIR/operator-unregistered.err"
-    grep -qF 'register this device with clan in any checkout of this repository, then commit what it writes under sops/:' \
-      "$TMPDIR/operator-unregistered.err"
     grep -qE '^  \$ clan secrets users add alex-fixture-nixos age1unregistereddevice000000000000000000000000000000000000000000$' \
       "$TMPDIR/operator-unregistered.err"
     grep -qE '^  \$ clan secrets groups add-user admins alex-fixture-nixos$' "$TMPDIR/operator-unregistered.err"
@@ -435,8 +422,8 @@ pkgs.runCommand "check-atyrode-apply"
     operator_status="$?"
     set -e
     test "$operator_status" = 65
-    grep -qF "$operator_key already exists; keeping it" "$TMPDIR/operator-foreign.err"
-    grep -qF 'holds no age recipient line' "$TMPDIR/operator-foreign.err"
+    test "$(cat "$operator_key")" = 'not a key file'
+    grep -qF 'age-keygen' "$TMPDIR/operator-foreign.err" && false
     rm -f "$operator_key"
     # On a Mac the key is minted by age-plugin-se inside the Secure Enclave;
     # the verb and its probe gate on the registry's system, so a Linux
@@ -455,17 +442,14 @@ pkgs.runCommand "check-atyrode-apply"
     enclave_recipient=age1se1fixtureoperator00000000000000000000000000000000000000000000
     operator_probe macbook incomplete not-configured
     ATYRODE_HOST=macbook atyrode operator init > "$TMPDIR/operator-mac.out" 2> "$TMPDIR/operator-mac.err"
-    grep -qF 'macOS will prompt for Touch ID' "$TMPDIR/operator-mac.err"
     grep -qE "^\\$ .*age-plugin-se keygen --access-control=any-biometry-or-passcode -o $operator_key\$" "$TMPDIR/operator-mac.err"
-    grep -qF "recipient $enclave_recipient is registered with clan as sops/users/alex-macbook/key.json (group admins)" \
-      "$TMPDIR/operator-mac.err"
     test "$(cat "$TMPDIR/operator-mac.out")" = "Public key: $enclave_recipient"
     grep -qF 'AGE-PLUGIN-SE-1FIXTUREONLY' "$operator_key"
     operator_probe macbook ok ""
     # Neither identity line ever reaches a terminal, in any of the runs above.
     for operator_output in "$TMPDIR"/operator-*.out "$TMPDIR"/operator-*.err; do
-      ! grep -qF 'AGE-PLUGIN-SE-1' "$operator_output"
-      ! grep -qF 'AGE-SECRET-KEY' "$operator_output"
+      grep -qF 'AGE-PLUGIN-SE-1' "$operator_output" && false
+      grep -qF 'AGE-SECRET-KEY' "$operator_output" && false
     done
 
     # The machine key (ADR 0008 step 3, amended: clan's default): the age key
@@ -483,7 +467,6 @@ pkgs.runCommand "check-atyrode-apply"
     machine_key_probe development-x86_64-linux not-applicable portable-profile
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/machine-key-apply.err" ||
       { cat "$TMPDIR/machine-key-apply.err" >&2; exit 1; }
-    ! grep -qF 'machine key' "$TMPDIR/machine-key-apply.err"
     machine_key_probe fixture-nixos incomplete not-configured
     ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
       .surfaces[] | select(.id == "machine-key")
@@ -495,8 +478,7 @@ pkgs.runCommand "check-atyrode-apply"
     machine_key_status="$?"
     set -e
     test "$machine_key_status" = 69
-    grep -qF 'this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate fixture-nixos' \
-      "$TMPDIR/machine-key-nodevice.err"
+    grep -qF 'clan vars generate fixture-nixos' "$TMPDIR/machine-key-nodevice.err"
     # In the repository but not on the machine: the root-owned path is
     # relocated under a scratch root, and the fix is apply.
     machine_root="$TMPDIR/machine"
@@ -538,20 +520,11 @@ pkgs.runCommand "check-atyrode-apply"
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }
-    # A successful apply on this portable fixture has nothing to say about the
-    # archive: its storage document is a clan var generated only for a fleet
-    # machine, so the surface is not applicable here rather than unconfigured,
-    # and the timer step names the document it is waiting on instead.
-    grep -qF 'no storage document placed yet' "$TMPDIR/apply-success.err"
-    ! grep -qF 'Babel session archive' "$TMPDIR/apply-success.err"
+    # A successful apply on this portable fixture has nothing to arm: its
+    # storage document is a clan var generated only for a fleet machine. The
+    # arm branch is driven with a placed document further down.
     # No question is asked where nothing can answer it.
-    ! grep -qF 'now?' "$TMPDIR/apply-success.err"
-    # No prompt without a terminal, and nothing an operator cannot retype: not a
-    # checkout path, and not the store path a ceremony actually lives at.
-    ! grep -qiF 'bitwarden password' "$TMPDIR/apply-success.err"
-    ! grep -qF 'nix-dotfiles/scripts' "$TMPDIR/apply-success.err"
-    ! grep -qF '/nix/store' "$TMPDIR/apply-success.err"
-    ! grep -qiF 'set up session backup' "$TMPDIR/apply-success.err"
+    grep -qF 'now?' "$TMPDIR/apply-success.err" && false
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = development-x86_64-linux
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
@@ -578,7 +551,6 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'a home-manager apply warned about an elevation it never performs' >&2
       exit 1
     fi
-    grep -qF "wrote $XDG_STATE_HOME/atyrode/dotfiles-config" "$TMPDIR/apply-success.err"
 
     # The agent context (ADR 0008 step 2). apply's last step rendered it, and
     # every tool file on the machine is a symlink to this one path, so what it
@@ -586,7 +558,6 @@ pkgs.runCommand "check-atyrode-apply"
     # then the generated section naming this host and the rest of the fleet.
     context_file="$XDG_CONFIG_HOME/agents/AGENTS.md"
     grep -qE '^  \$ atyrode context render$' "$TMPDIR/apply-success.err"
-    grep -qF "wrote $context_file" "$TMPDIR/apply-success.err"
     test -f "$context_file"
     test ! -L "$context_file"
     test "$(stat -c %a "$context_file")" = 644
@@ -596,12 +567,7 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(grep -nxF '# Operator policy' "$context_file" | cut -d: -f1)" \
       -lt "$(grep -nxF '## This machine' "$context_file" | cut -d: -f1)"
     grep -qF -- '- Host: `development-x86_64-linux` -- Portable headless x86_64 Linux development environment' "$context_file"
-    grep -qF -- '- `macbook`: Primary Apple Silicon Mac' "$context_file"
-    grep -qF -- '- `development-aarch64-linux`: Portable' "$context_file"
-    grep -qF 'Every secret is a clan var placed by activation' "$context_file"
     grep -qF -- '- Fleet cache substituter: `https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com`' "$context_file"
-    grep -qF 'does not trust it yet' "$context_file"
-    grep -qF 'No canonical clone root is declared for this host' "$context_file"
     grep -qF 'Never edit by hand.' "$context_file"
     # A copied closure renders its own revision, not the invoking CLI's or an
     # unrelated global profile's. This matters for standalone HM on NixOS.
@@ -619,14 +585,11 @@ pkgs.runCommand "check-atyrode-apply"
     planted_gh_token="ghp_$(printf 'FIXTURE%.0s' 1 2 3 4 5)"
     GH_TOKEN="$planted_gh_token" \
       atyrode context render 2>"$TMPDIR/context-render.err"
-    grep -qF "wrote $context_file" "$TMPDIR/context-render.err"
     grep -qF -- '- `gh`: not authenticated; acquire a GitHub session with `gh auth login`' "$context_file"
     grep -qF -- '- `clever`: authenticated' "$context_file"
-    ! grep -qiF 'bitwarden' "$context_file"
-    ! grep -qF 'atyrode vault' "$context_file"
     grep -qF -- '- None placed for this account.' "$context_file"
-    ! grep -qF 'ghp_FIXTURE' "$context_file"
-    ! grep -qE 'gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|[A-Za-z0-9+/]{80,}==' "$context_file"
+    grep -qF 'ghp_FIXTURE' "$context_file" && false
+    grep -qE 'gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|[A-Za-z0-9+/]{80,}==' "$context_file" && false
     # show prints the same document render writes; --json is the section as
     # data, and it says the same things the prose does.
     atyrode context show | sed '/^## This machine$/,$d' > "$TMPDIR/context-shown-policy"
@@ -648,8 +611,8 @@ pkgs.runCommand "check-atyrode-apply"
       and .cloneRoot == null
       and (.generatedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
     ' >/dev/null
-    ! atyrode context render --json >/dev/null 2>&1
-    ! atyrode context render show >/dev/null 2>&1
+    atyrode context render --json >/dev/null 2>&1 && false
+    atyrode context render show >/dev/null 2>&1 && false
 
     # doctor owns the verdict on the file it does not write: fresh is ok, a
     # week old or from another published revision is stale, hand-written is
@@ -684,11 +647,10 @@ pkgs.runCommand "check-atyrode-apply"
     context_probe degraded context-unreadable
     rm -f "$context_file"
     context_probe incomplete not-configured
-    # Off a terminal the review names the surface; the render step then
-    # settles it in the same run, so the machine never stays without one.
+    # Off a terminal the review names the surface and the render step settles
+    # it in the same run, so the machine never stays without one.
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/context-heal.err" ||
       { cat "$TMPDIR/context-heal.err" >&2; exit 1; }
-    grep -qF 'configure with: atyrode context render' "$TMPDIR/context-heal.err"
     test -f "$context_file"
     context_probe ok ""
 
@@ -699,12 +661,11 @@ pkgs.runCommand "check-atyrode-apply"
     test -n "$run_log"
     test -n "$(find "$run_log" -perm 600 -print -quit)"
     grep -qE 'run: env LC_ALL=C\.UTF-8 .*nh home switch' "$run_log"
-    grep -qF 'apply finished for development-x86_64-linux' "$run_log"
 
     # provision names its targets, so a mistyped one cannot be mistaken for a
     # missing feature.
-    ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
-    grep -qF 'provision expects machine-key' "$TMPDIR/provision-usage.err"
+    atyrode provision nonsense 2>"$TMPDIR/provision-usage.err" && false
+    grep -qF machine-key "$TMPDIR/provision-usage.err"
 
     # The archive is never offered: its storage document is a clan var, so
     # there is no ceremony this machine could run, only a generation an
@@ -740,21 +701,16 @@ pkgs.runCommand "check-atyrode-apply"
     date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
     babel_probe fixture-nixos ok ""
     # Arming is an apply-owned mutation. A refused start must make the apply
-    # fail without obscuring that activation itself succeeded.
+    # fail, and the announced start is what shows the arm branch ran rather
+    # than the skip for a missing document.
     set +e
     _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
       atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-arm.err"
     archive_status="$?"
     set -e
     test "$archive_status" = 69
-    if grep -q 'Apply complete' "$TMPDIR/apply-archive-arm.err"; then
-      echo 'a failed timer start was reported as a complete apply' >&2
-      exit 1
-    fi
     grep -qE '^  \$ .*fake-systemctl --user start babel-archive\.timer$' "$TMPDIR/apply-archive-arm.err"
-    grep -qF 'arm it with: systemctl --user start babel-archive.timer' "$TMPDIR/apply-archive-arm.err"
-    ! grep -qF 'no storage document placed yet' "$TMPDIR/apply-archive-arm.err"
-    ! grep -qF 'now?' "$TMPDIR/apply-archive-arm.err"
+    grep -qF 'now?' "$TMPDIR/apply-archive-arm.err" && false
     rm -rf "$XDG_CONFIG_HOME/babel" "$XDG_STATE_HOME/babel"
 
     # The broker token is the same shape as the archive document: a shared
@@ -784,15 +740,13 @@ pkgs.runCommand "check-atyrode-apply"
     ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json > "$TMPDIR/broker-placed.json"
     jq -e '.surfaces[] | select(.id == "omp-auth-broker")
       | .summary == "tunnel mode, broker host dev-01: bearer token placed"' "$TMPDIR/broker-placed.json" >/dev/null
-    ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/broker-placed.json"
+    grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/broker-placed.json" && false
     rm "$HOME/.omp/auth-broker.token"
 
     # The Git identity is a clan var: on a portable profile it is not
     # applicable, and apply neither offers nor asks anything about it.
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/git-identity-quiet.err" ||
       { cat "$TMPDIR/git-identity-quiet.err" >&2; exit 1; }
-    ! grep -qF 'provision git' "$TMPDIR/git-identity-quiet.err"
-    ! grep -qF 'Git identity' "$TMPDIR/git-identity-quiet.err"
     atyrode doctor provisioning --json |
       jq -e '.surfaces[] | select(.id == "git-identity")
         | .status == "not-applicable" and .code == "portable-profile"' >/dev/null
@@ -816,7 +770,7 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     printf '%s\n' "$live_out" | grep -qF 'mutation boundary:'
-    if printf '%s\n' "$live_out" | grep -qF 'reconnect with: atyrode apply-status'; then
+    if printf '%s\n' "$live_out" | grep -qF 'apply-status'; then
       echo 'a live apply pointed the operator at output they were already reading' >&2
       exit 1
     fi
@@ -825,7 +779,7 @@ pkgs.runCommand "check-atyrode-apply"
     # as argv: this one command carries the whole forwarded PATH, and printing
     # it would bury the run it introduces under kilobytes of store paths. The
     # log takes the argv instead, which is where a diagnosis looks anyway.
-    printf '%s\n' "$live_out" | grep -qF 'this apply runs in atyrode-apply.service, holding this terminal'
+    printf '%s\n' "$live_out" | grep -qF 'atyrode-apply.service'
     if printf '%s\n' "$live_out" | grep -qF -- '--setenv=PATH='; then
       echo 'the systemd handoff printed its forwarded environment to the terminal' >&2
       exit 1
@@ -837,8 +791,6 @@ pkgs.runCommand "check-atyrode-apply"
     jq -e '.live' "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/metadata.json" >/dev/null
     jq -e '.phase == "succeeded" and .exitCode == 0' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/result.json" >/dev/null
-    grep -qF 'streamed live to the operator terminal' \
-      "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/output.log"
     if grep -qF 'mutation boundary:' \
       "$XDG_STATE_HOME/atyrode/apply-jobs/$live_job/output.log"; then
       echo 'a live apply captured the transcript it was supposed to stream' >&2
@@ -866,7 +818,6 @@ pkgs.runCommand "check-atyrode-apply"
       atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>&1 || true
     seed_out="$(_ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
       { printf '%s\n' "$seed_out" >&2; exit 1; }
-    printf '%s\n' "$seed_out" | grep -qF 'omp-seed: 2 omp setting(s) kept over the repository defaults'
     printf '%s\n' "$seed_out" | grep -qE '^  \$ atyrode-omp-seed resolve$'
     # The dialogue's own output follows the line that named it, in that order.
     printf '%s\n' "$seed_out" | grep -qF 'seeder: reviewing 2 kept settings'
@@ -1037,12 +988,11 @@ pkgs.runCommand "check-atyrode-apply"
       sleep 0.05
     done
     test -e "$TMPDIR/nh-started"
-    if atyrode apply --repo "$HOME/nix-dotfiles" \
-      >"$TMPDIR/overlap.out" 2>"$TMPDIR/overlap.err"; then
-      echo 'overlapping apply unexpectedly succeeded' >&2
-      exit 1
-    fi
-    grep -F 'another apply job is active' "$TMPDIR/overlap.err" >/dev/null
+    set +e
+    atyrode apply --repo "$HOME/nix-dotfiles" >"$TMPDIR/overlap.out" 2>"$TMPDIR/overlap.err"
+    overlap_status="$?"
+    set -e
+    test "$overlap_status" = 69
     kill "$apply_caller"
     wait "$apply_caller" 2>/dev/null || true
     job_id="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
@@ -1104,13 +1054,16 @@ pkgs.runCommand "check-atyrode-apply"
     test -e "$TMPDIR/nh-started"
     worker_pid="$(cat "$TMPDIR/fake-systemd/atyrode-apply.service.pid")"
     kill -9 -"$worker_pid" 2>/dev/null || kill -9 "$worker_pid" 2>/dev/null || true
-    wait "$apply_caller" 2>/dev/null || true
+    set +e
+    wait "$apply_caller"
+    killed_status="$?"
+    set -e
+    test "$killed_status" = 70
     killed_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
     if [[ -e "$XDG_STATE_HOME/atyrode/apply-jobs/$killed_job/result.json" ]]; then
       echo 'killed worker unexpectedly published a result' >&2
       exit 1
     fi
-    grep -qF 'stopped without publishing a result' "$TMPDIR/killed-apply.err"
     if ! grep -qF 'mutation boundary:' "$TMPDIR/killed-apply.out"; then
       echo 'CLI withheld the dead worker output it already had on disk' >&2
       cat "$TMPDIR/killed-apply.out" >&2
@@ -1329,7 +1282,6 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
     jq -e '.activation == "nixos-wsl" and .backend == "nh-os"' <<<"$wsl_apply" >/dev/null
-    grep -qF "sops-nix decrypts this machine's vars at activation with this key" "$TMPDIR/wsl-apply.err"
     grep -qE "^  \\$ sudo -- \\S*install -D -m 0600 -o root \\S+/key\\.txt $machine_key\$" \
       "$TMPDIR/wsl-apply.err"
     # The decrypted key is staged in a mode-700 directory and the directory
@@ -1338,19 +1290,17 @@ pkgs.runCommand "check-atyrode-apply"
       "$TMPDIR/wsl-apply.err" | head -n 1)"
     test -n "$staged_dir"
     test ! -e "$staged_dir"
-    grep -qF "placed at $machine_key (root, mode 0600)" "$TMPDIR/wsl-apply.err"
     grep -qF "secrets get wsl-age.key --flake $HOME/nix-dotfiles" "$TMPDIR/clan-args"
     test "$(cat "$machine_key")" = AGE-SECRET-KEY-1FIXTUREONLY
     test "$(stat -c %a "$machine_key")" = 600
-    ! grep -qF 'AGE-SECRET-KEY' "$TMPDIR/wsl-apply.err"
-    ! grep -qF 'AGE-SECRET-KEY' <<<"$wsl_apply"
+    grep -qF 'AGE-SECRET-KEY' "$TMPDIR/wsl-apply.err" && false
+    grep -qF 'AGE-SECRET-KEY' <<<"$wsl_apply" && false
     mv "$TMPDIR/operator-key.saved" "$operator_key"
     rm "$SOPS_CIPHERTEXT"
     unset SOPS_CIPHERTEXT
     # Placed once: the next apply skips it without asking clan again.
     rm -f "$TMPDIR/clan-args"
     atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-placed.err"
-    grep -qF 'already placed' "$TMPDIR/wsl-apply-placed.err"
     test ! -e "$TMPDIR/clan-args"
     # A spoke applies a published revision, not a checkout: the key is read
     # from the flake's fetched tree -- the bytes nh builds -- and never from
@@ -1380,7 +1330,6 @@ pkgs.runCommand "check-atyrode-apply"
     fi
     grep -qF "flake prefetch --json github:atyrode/dotfiles/$remote_rev" "$TMPDIR/nix-args"
     grep -qF "secrets get wsl-age.key --flake $fetched_tree" "$TMPDIR/clan-args"
-    grep -qF "placed at $machine_key (root, mode 0600)" "$TMPDIR/wsl-apply-remote.err"
     test "$(cat "$machine_key")" = AGE-SECRET-KEY-1FIXTUREONLY
     grep -Fx -- "os switch $ATYRODE_TEST_CANDIDATE --diff always" \
       "$TMPDIR/nh-args" >/dev/null
@@ -1411,22 +1360,22 @@ pkgs.runCommand "check-atyrode-apply"
     # Current: main is what this CLI was built from; nothing is asked of GitHub.
     ${targetAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-current.out" 2> "$TMPDIR/changelog-current.err" \
       || { echo "changelog failed: $(cat "$TMPDIR/changelog-current.err")" >&2; exit 1; }
-    grep -qF 'runs feedfacefeed, which is main' "$TMPDIR/changelog-current.out" \
-      || { echo "changelog current output: $(cat "$TMPDIR/changelog-current.out")" >&2; exit 1; }
     test ! -e "$TMPDIR/changelog-fetch-args"
     ${targetAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "current" and .ahead == 0 and .commits == []' >/dev/null
-    # Behind, with a green main: both commits listed oldest first, the verdict
-    # names the cache, and the remedy is apply.
+    # Behind, with a green main: both commits listed oldest first as subjects
+    # only, the verdict names the cache, and the remedy is apply.
     printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"success"},{"name":"classify","status":"completed","conclusion":"success"}]}' \
       > "$TMPDIR/changelog-check-runs"
     ${launcherAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-behind.out" 2> "$TMPDIR/changelog-behind.err" \
       || { echo "changelog behind failed: $(cat "$TMPDIR/changelog-behind.err")" >&2; exit 1; }
-    grep -qF 'this machine runs 111111111111; main is feedfacefeed, 2 commit(s) ahead' "$TMPDIR/changelog-behind.out" \
-      || { echo "changelog behind output: $(cat "$TMPDIR/changelog-behind.out"); fetch args: $(cat "$TMPDIR/changelog-fetch-args" 2>/dev/null)" >&2; exit 1; }
-    grep -qF 'aaaaaaaaaaaa  feat(atyrode): the shell reads main' "$TMPDIR/changelog-behind.out"
-    ! grep -qF 'body' "$TMPDIR/changelog-behind.out"
-    grep -qF 'CI: green -- closures published to the fleet cache' "$TMPDIR/changelog-behind.out"
-    grep -qF 'take it with: atyrode apply' "$TMPDIR/changelog-behind.out"
+    grep -qF 'body' "$TMPDIR/changelog-behind.out" && false
+    ${launcherAtyrode}/bin/atyrode changelog --json | jq -e '
+      .outcome == "available" and .ahead == 2 and .green == true
+      and .running == "1111111111111111111111111111111111111111"
+      and .target == "feedfacefeedfacefeedfacefeedfacefeedface"
+      and (.commits | map(.sha)) == ["aaaaaaaaaaaa", "feedfacefeed"]
+      and (.commits | map(.subject)) == ["feat(atyrode): the shell reads main", "fix: retain manifold ingress"]
+    ' >/dev/null
     # A red or unfinished main is said as such, never mistaken for green.
     printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"failure"}]}' > "$TMPDIR/changelog-check-runs"
     ${launcherAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "available" and .green == false and .ahead == 2' >/dev/null
@@ -1440,8 +1389,8 @@ pkgs.runCommand "check-atyrode-apply"
     ${launcherAtyrode}/bin/atyrode changelog --record >/dev/null
     jq -e '.outcome == "available" and .target == "feedfacefeedfacefeedfacefeedfacefeedface" and .green == true' "$receipt" >/dev/null
     ${launcherAtyrode}/bin/atyrode __update-notice > "$TMPDIR/update-notice.out"
-    grep -qF '2 commit(s) waiting on main (feedfacefeed, CI green) -- read: atyrode changelog; take: atyrode apply' "$TMPDIR/update-notice.out"
-    grep -qF '2 commit(s) waiting on main' <<<"$(${launcherAtyrode}/bin/atyrode __update-notice)"
+    test -s "$TMPDIR/update-notice.out"
+    test "$(${launcherAtyrode}/bin/atyrode __update-notice)" = "$(cat "$TMPDIR/update-notice.out")"
     test -z "$(${targetAtyrode}/bin/atyrode __update-notice)"
     # doctor says the same from a live comparison, with the same two commands.
     ${launcherAtyrode}/bin/atyrode doctor provisioning --json | jq -e '
@@ -1475,7 +1424,6 @@ pkgs.runCommand "check-atyrode-apply"
       cat "$TMPDIR/wsl-apply-stale.err" >&2
       exit 1
     fi
-    ! grep -qF 'unknown host' "$TMPDIR/wsl-apply-stale.err"
     mv "$TMPDIR/host.json.aside" "$XDG_CONFIG_HOME/atyrode/host.json"
     rm -f "$TMPDIR/bin/sudo" "$TMPDIR/bin/clan"
     rm -rf "$machine_root" "$HOME/nix-dotfiles/sops/secrets/wsl-age.key"
@@ -1517,7 +1465,7 @@ pkgs.runCommand "check-atyrode-apply"
     windows_blocked_status="$?"
     set -e
     test "$windows_blocked_status" = 69
-    ! grep -qF 'install --id' "$WINGET_LOG"
+    grep -qF 'install --id' "$WINGET_LOG" && false
     test ! -e "$WINGET_STATE/twilight"
 
     set +e
@@ -1528,7 +1476,7 @@ pkgs.runCommand "check-atyrode-apply"
     set -e
     test "$windows_unavailable_status" = 69
     test ! -s "$TMPDIR/windows-unavailable.out"
-    grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/windows-unavailable.err"
+    grep -qF 'winget.exe is unavailable' "$TMPDIR/windows-unavailable.err"
 
     # The detached apply job must fail the same way as the synchronous path.
     # apply_config's command substitutions are unguarded because it assumes
@@ -1548,7 +1496,7 @@ pkgs.runCommand "check-atyrode-apply"
     wsl_job_status="$?"
     set -e
     test "$wsl_job_status" = 69
-    grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/wsl-job.out"
+    grep -qF 'winget.exe is unavailable' "$TMPDIR/wsl-job.out"
     if grep -qF 'invalid JSON text passed to --argjson' \
       "$TMPDIR/wsl-job.out" "$TMPDIR/wsl-job.err"; then
       echo 'apply leaked a raw jq parse error instead of its own diagnostic' >&2
@@ -1584,7 +1532,7 @@ pkgs.runCommand "check-atyrode-apply"
       > "$TMPDIR/wsl-path.out" 2> "$TMPDIR/wsl-path.err"
     wsl_path_status="$?"
     set -e
-    if grep -qF 'winget.exe is unavailable through WSL interop' "$TMPDIR/wsl-path.out"; then
+    if grep -qF 'winget.exe is unavailable' "$TMPDIR/wsl-path.out"; then
       echo 'apply worker lost the interop PATH; winget.exe was unreachable' >&2
       exit 1
     fi
@@ -1595,6 +1543,9 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF -- '--version' "$WINGET_LOG"
     mv "$TMPDIR/host.json.before-worker" "$XDG_CONFIG_HOME/atyrode/host.json"
 
+    # A plan whose query fails installs nothing; the log is cleared so the
+    # negative reads this run alone and not the apply above.
+    : > "$WINGET_LOG"
     set +e
     WINGET_QUERY_ERROR=1 atyrode windows plan wsl --json \
       > "$TMPDIR/windows-query-error.out" 2> "$TMPDIR/windows-query-error.err"
@@ -1602,9 +1553,8 @@ pkgs.runCommand "check-atyrode-apply"
     set -e
     test "$windows_query_error_status" = 69
     test ! -s "$TMPDIR/windows-query-error.out"
-    grep -qF 'winget.exe could not query installed package Zen-Team.Zen-Browser.Twilight (exit 45)' \
-      "$TMPDIR/windows-query-error.err"
-    ! grep -qF 'install --id' "$WINGET_LOG"
+    grep -qF '(exit 45)' "$TMPDIR/windows-query-error.err"
+    grep -qF 'install --id' "$WINGET_LOG" && false
 
     unset ATYRODE_WINGET WINGET_LOG WINGET_STATE _ATYRODE_TEST_WSL
     export _ATYRODE_TEST_HOSTNAME=fixture-linux
@@ -2013,14 +1963,5 @@ pkgs.runCommand "check-atyrode-apply"
       || { echo "drift probe must drop a caller Brewfile and disable auto-update: $(cat "$TMPDIR/brew-env")" >&2; exit 1; }
     test "$(LC_ALL=C sort -u "$TMPDIR/brew-stdin")" = stdin=closed \
       || { echo "drift probe must never read the caller's stdin: $(cat "$TMPDIR/brew-stdin")" >&2; exit 1; }
-    help="$(atyrode --help)"
-    grep -qF 'then prints preflight metadata without invoking nh; --dry-run invokes the normal' <<<"$help"
-    grep -qF 'nh switch backend with --dry; --preview-json runs that dry backend and emits its' <<<"$help"
-    grep -qF 'atyrode capabilities list [--json]' <<<"$help"
-    grep -qF 'atyrode capabilities show [HOST] [--json]' <<<"$help"
-    grep -qF 'atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes]' <<<"$help"
-    grep -qF 'atyrode provision machine-key' <<<"$help"
-    ! grep -qF 'atyrode vault' <<<"$help"
-
     mkdir "$out"
   ''

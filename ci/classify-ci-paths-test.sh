@@ -19,7 +19,7 @@ assert_classification $'code=false\ndarwin=false' README.md docs/guide.md
 assert_classification $'code=true\ndarwin=true' modules/darwin/default.nix
 assert_classification $'code=true\ndarwin=true' flake.nix flake.lock
 assert_classification $'code=true\ndarwin=true' modules/shared/capability-contract.nix
-assert_classification $'code=true\ndarwin=true' pkgs/atyrode-tui/main.go
+assert_classification $'code=true\ndarwin=true' pkgs/atyrode-preview/preview/parser.go
 assert_classification $'code=true\ndarwin=true' checks/lints/docs-links.nix
 assert_classification $'code=true\ndarwin=true' fleet/hosts.tsv
 assert_classification $'code=true\ndarwin=true' .github/workflows/nix.yml

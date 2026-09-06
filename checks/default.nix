@@ -34,9 +34,6 @@ let
 
   isLinux = lib.hasSuffix "-linux" system;
   hostBudgets = (lib.importJSON ../fleet/host-budgets.json).budgets;
-  cockpitStub = pkgs.writeShellScriptBin "atyrode-tui" ''
-    printf 'cockpit:%s:%s\n' "$ATYRODE_CLI" "$#"
-  '';
   # The committed sops tree registers this development machine and the
   # recovery recipient alone, so the registered state of the operator probe
   # on any fixture host is unreachable through it. The check CLI reads this
@@ -68,8 +65,6 @@ let
       '';
   systemDoctorAtyrode = pkgs.atyrode.override {
     enableTestHooks = true;
-    atyrode-tui = cockpitStub;
-    atyrodeTuiPackage = pkgs.atyrode-tui;
     sopsDirectory = fixtureSopsDirectory;
     hostRegistry = publicTargets // {
       fixture-nixos = {

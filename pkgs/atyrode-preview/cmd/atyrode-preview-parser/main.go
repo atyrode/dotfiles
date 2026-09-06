@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"atyrode-tui/preview"
+	"atyrode-preview/preview"
 )
 
 func main() {

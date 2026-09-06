@@ -157,6 +157,9 @@ let
   systemDarwinConfigs = lib.filterAttrs (
     name: _config: darwinHosts.${name}.system == system
   ) canonicalDarwinConfigs;
+  systemNixosConfigs = lib.filterAttrs (
+    name: _config: hosts.${name}.system == system
+  ) canonicalNixosConfigs;
   homeEvaluationPaths = lib.mapAttrsToList (
     _name: config: config.activationPackage.drvPath
   ) systemHomeConfigs;
@@ -361,6 +364,7 @@ let
       serverConfig = if isLinux then serverHomeConfig.config else null;
       externalFixture = if isLinux then externalServerFixture else null;
       darwinConfigs = systemDarwinConfigs;
+      nixosConfigs = systemNixosConfigs;
     };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {

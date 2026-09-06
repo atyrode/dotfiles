@@ -112,6 +112,21 @@ pkgs.runCommand "check-atyrode-credentials"
         https://github.com/atyrode/fixture.git
 
       cd "$TMPDIR/git-doctor-repo"
+      # A signing key without an author is #590's shape: nothing can commit, so
+      # the report must fail on that alone before anything else is judged.
+      set +e
+      doctor_git --json > "$TMPDIR/git-doctor-no-author.json"
+      git_doctor_status="$?"
+      set -e
+      test "$git_doctor_status" = 69
+      jq -e '
+        (.ok | not)
+        and (.checks[] | select(.id == "author-identity") | .status == "failed" and .code == "author-unresolved")
+        and (.checks[] | select(.id == "author-identity") | .actual == {name:false,email:false})
+      ' "$TMPDIR/git-doctor-no-author.json" >/dev/null
+      "$git_doctor" config --global user.name "Fixture Operator"
+      "$git_doctor" config --global user.email fixture@example.invalid
+
       git_result="$(doctor_git --json)"
       jq -e '
         .schemaVersion == 1
@@ -120,6 +135,7 @@ pkgs.runCommand "check-atyrode-credentials"
         and .mutationBoundary == "read-only probes"
         and (.checks | map(.id)) == [
           "git-configuration",
+          "author-identity",
           "signing-key",
           "allowed-signers",
           "remote-protocol",
@@ -128,6 +144,7 @@ pkgs.runCommand "check-atyrode-credentials"
           "gh-credential-helper",
           "gh-auth-storage"
         ]
+        and (.checks[] | select(.id == "author-identity") | .status == "ok")
         and (.checks[] | select(.id == "signing-key") | .actual.privateKey and .actual.permissionsPrivate)
         and (.checks[] | select(.id == "allowed-signers") | .actual.signingKeyAuthorized)
         and (.checks[] | select(.id == "remote-protocol") | .actual.httpsFetchUrls) == 1

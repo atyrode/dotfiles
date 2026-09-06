@@ -42,54 +42,58 @@ in
     programs.git = {
       enable = true;
 
-      settings = {
-        user.name = "Alex TYRODE";
-        user.email = "alex@tyrode.dev";
+      # mkMerge, not //: the optional blocks below add keys under `user` and
+      # `core`, and a shallow merge would replace those sections whole (#590).
+      settings = lib.mkMerge [
+        {
+          user.name = "Alex TYRODE";
+          user.email = "alex@tyrode.dev";
 
-        # Authentication and commit signing are independent. SSH-first hosts use
-        # push-only rewrites; external-auth runtimes keep HTTPS so the declared gh
-        # credential helper can serve Git without an additional authentication key.
-        # ssh-keygen -Y sign reads the private key file directly, so signing
-        # needs no agent and no passphrase: the key is placed 0600 for this
-        # account by activation, and the machine signs the moment it is up.
-        gpg.format = "ssh";
-        gpg.ssh.allowedSignersFile = "${config.xdg.configHome}/git/allowed_signers";
-        core.hooksPath = "${config.xdg.configHome}/git/hooks";
-        # Useful defaults
-        init.defaultBranch = "main";
-        pull.rebase = false;
-        push.autoSetupRemote = true;
-        fetch.prune = true;
-        commit.gpgsign = hasIdentity;
+          # Authentication and commit signing are independent. SSH-first hosts use
+          # push-only rewrites; external-auth runtimes keep HTTPS so the declared gh
+          # credential helper can serve Git without an additional authentication key.
+          # ssh-keygen -Y sign reads the private key file directly, so signing
+          # needs no agent and no passphrase: the key is placed 0600 for this
+          # account by activation, and the machine signs the moment it is up.
+          gpg.format = "ssh";
+          gpg.ssh.allowedSignersFile = "${config.xdg.configHome}/git/allowed_signers";
+          core.hooksPath = "${config.xdg.configHome}/git/hooks";
+          # Useful defaults
+          init.defaultBranch = "main";
+          pull.rebase = false;
+          push.autoSetupRemote = true;
+          fetch.prune = true;
+          commit.gpgsign = hasIdentity;
 
-        includeIf."gitdir/i:**/gitlab.alouette.dev/**".path = "~/.gitconfigs/.alouette.config";
+          includeIf."gitdir/i:**/gitlab.alouette.dev/**".path = "~/.gitconfigs/.alouette.config";
 
-        # Better diff/merge tools
-        diff.colorMoved = "default";
-        merge.conflictstyle = "diff3";
+          # Better diff/merge tools
+          diff.colorMoved = "default";
+          merge.conflictstyle = "diff3";
 
-        # Git aliases
-        alias.st = "status";
-        alias.co = "checkout";
-        alias.br = "branch";
-        alias.ci = "commit";
-        alias.unstage = "reset HEAD --";
-        alias.last = "log -1 HEAD";
-        alias.visual = "!gitk";
-      }
-      // lib.optionalAttrs hasIdentity { user.signingKey = identity.signingKey; }
-      # Git alone reaches the forges with the placed auth key, and with that key
-      # only: IdentitiesOnly keeps ssh from offering every key an agent holds,
-      # which is how a forge ends up authenticating a machine as someone else.
-      # Scoped to git rather than written into ~/.ssh/config, so the account's
-      # own ssh configuration -- other hosts, other keys -- stays its own.
-      // lib.optionalAttrs (useSshAuth && identity.authKey != null) {
-        core.sshCommand = "${lib.getExe pkgs.openssh} -i ${identity.authKey} -o IdentitiesOnly=yes";
-      }
-      // lib.optionalAttrs useSshAuth {
-        url."git@github.com:".pushInsteadOf = "https://github.com/";
-        url."git@gitlab.com:".pushInsteadOf = "https://gitlab.com/";
-      };
+          # Git aliases
+          alias.st = "status";
+          alias.co = "checkout";
+          alias.br = "branch";
+          alias.ci = "commit";
+          alias.unstage = "reset HEAD --";
+          alias.last = "log -1 HEAD";
+          alias.visual = "!gitk";
+        }
+        (lib.mkIf hasIdentity { user.signingKey = identity.signingKey; })
+        # Git alone reaches the forges with the placed auth key, and with that key
+        # only: IdentitiesOnly keeps ssh from offering every key an agent holds,
+        # which is how a forge ends up authenticating a machine as someone else.
+        # Scoped to git rather than written into ~/.ssh/config, so the account's
+        # own ssh configuration -- other hosts, other keys -- stays its own.
+        (lib.mkIf (useSshAuth && identity.authKey != null) {
+          core.sshCommand = "${lib.getExe pkgs.openssh} -i ${identity.authKey} -o IdentitiesOnly=yes";
+        })
+        (lib.mkIf useSshAuth {
+          url."git@github.com:".pushInsteadOf = "https://github.com/";
+          url."git@gitlab.com:".pushInsteadOf = "https://gitlab.com/";
+        })
+      ];
     };
 
     # Neither signing nor forge authentication needs an agent any more: both

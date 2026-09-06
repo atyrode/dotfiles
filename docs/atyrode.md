@@ -10,44 +10,6 @@ services that do not belong in a Nix generation. `atyrode runtime` can inspect,
 provision, start, and stop them; simply applying these dotfiles does not create
 their state, credentials, containers, or model downloads.
 
-## Interactive cockpit
-
-Running bare `atyrode` with both stdin and stdout attached to a terminal opens
-the interactive cockpit. A bare non-TTY invocation continues to print CLI help,
-and every explicit subcommand (`atyrode apply`, `atyrode doctor …`, JSON calls,
-and the other command surfaces) continues through the Bash CLI even on a TTY.
-Existing scripts therefore do not enter the cockpit.
-
-The apply panel resolves the requested branch to an exact commit. Press `v`
-(or request apply before checking) to load `atyrode apply --ref <commit>
---preview-json` asynchronously. The service-disruption verdict comes first:
-affected services, their stop/restart/keep actions, and the reason a change
-is blocked. Package and closure-size changes follow; `d` exposes generation
-paths and the exact transition fingerprint.
-
-Press `c` to open or focus the active capability inventory. `[`/`]` (or
-left/right arrows) cycle in the apply plan's declared order, and `j`/`k` or
-arrows scroll the focused pane. Wide terminals keep a 42-cell capability panel
-beside the preview and use `Tab` to change focus; medium terminals use a
-full-width capability view; narrow terminals stack the selection summary above
-the scrollable details. `c` or `esc` returns to the preview without losing
-selection or either scroll position.
-
-Capability details are read only from the exact-revision CLI manifest. The
-cockpit validates schema version, full revision, system/platform identity, and
-the planned host's canonical ID before showing purpose, active state,
-resolved deliverables, and ownership/security/mutable-state boundaries.
-Capability inventory failures remain textual and do not substitute stale data.
-An absent, failed, loading, blocked, unknown, or stale activation preview
-refuses confirmation; a package build alone never authorizes activation.
-
-Startup and refresh perform no activation. Confirmation is available only
-after a safe report. The real apply receives its fingerprint and rechecks
-the running-to-candidate transition before switching; an intervening change
-refuses rather than widening the request. CLI automation performs the same
-check without needing a cockpit or a human approval prompt. The `ctrl+o`
-Ask overlay remains read-only and preserves the full cockpit state.
-
 ## Applying a configuration
 
 ```sh

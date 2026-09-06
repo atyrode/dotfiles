@@ -13,7 +13,7 @@
 # other end. Now the copied closure is handed to the target's own `atyrode
 # apply --candidate`, which reads it against the generation running there and
 # refuses on the same terms as a local apply: the fleet has no weaker path.
-# The report crosses back as the same JSON the cockpit reads, and the
+# The report crosses back as the same JSON `--preview-json` prints, and the
 # activation that follows is bound to its fingerprint.
 #
 # This replaced a ceremony that drove a second repository through `nix

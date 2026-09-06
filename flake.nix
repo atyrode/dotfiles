@@ -185,7 +185,7 @@
         {
           inherit (pkgs)
             atyrode
-            atyrode-tui
+            atyrode-preview
             code
             codex
             codex-seed

@@ -1,8 +1,7 @@
 {
   age,
   age-plugin-se,
-  atyrode-tui,
-  atyrodeTuiPackage ? atyrode-tui,
+  atyrode-preview,
   bubblewrap,
   capabilities,
   catalog,
@@ -235,8 +234,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@service_protection@' '${serviceProtection}'
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@agents_policy@' '${agentsPolicy}' \
-      --replace-fail '@atyrode_tui@' '${lib.getExe atyrode-tui}' \
-      --replace-fail '@atyrode_preview_parser@' '${lib.getExe' atyrodeTuiPackage "atyrode-preview-parser"}' \
+      --replace-fail '@atyrode_preview_parser@' '${lib.getExe atyrode-preview}' \
       --replace-fail '@atyrode_disruption@' "$out/libexec/atyrode-disruption" \
       --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \

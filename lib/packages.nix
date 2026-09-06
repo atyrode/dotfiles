@@ -48,7 +48,7 @@ let
 
   repositoryPackageNames = [
     "atyrode"
-    "atyrode-tui"
+    "atyrode-preview"
     "code"
     "codex"
     "atyrode-codex-seed"
@@ -82,7 +82,7 @@ let
     in
     lib.composeManyExtensions [
       (final: _previous: {
-        atyrode-tui = final.callPackage ../pkgs/atyrode-tui { };
+        atyrode-preview = final.callPackage ../pkgs/atyrode-preview { };
         # Repository-owned on every platform: upstream releases outpace
         # nixpkgs, which also cannot build codex on aarch64-darwin.
         code = final.callPackage ../pkgs/code { };

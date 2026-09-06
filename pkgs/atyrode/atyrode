@@ -14,7 +14,6 @@ shopt -s inherit_errexit
 readonly agents_policy='@agents_policy@'
 readonly registry='@registry@'
 readonly catalog='@catalog@'
-readonly atyrode_tui='@atyrode_tui@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly atyrode_disruption='@atyrode_disruption@'
 readonly babel_clever='@babel_clever@'
@@ -152,8 +151,8 @@ switch starts, stops, restarts, reloads or retains. That report is the only
 authority on whether the switch may proceed: a stop, restart or reload of a
 protected service (fleet/service-protection.json, and any unit declaring
 X-Atyrode-SessionOwner=true) is refused, as is any impact that could not be
-read, in every entry path (apply, background jobs, rollback, fleet, bootstrap,
-the cockpit). --preview-json carries the report under `disruption` with a
+read, in every entry path (apply, background jobs, rollback, fleet and
+bootstrap). --preview-json carries the report under `disruption` with a
 fingerprint that binds host, both generations and every effect;
 --expected-disruption FINGERPRINT refuses to activate anything but that exact
 report, and --scope SCOPE:SERVICE (system, user or launchd) refuses any effect
@@ -249,10 +248,6 @@ main() {
   # predates activation; Home Manager session variables require a new login.
   export SOPS_AGE_KEY_FILE
   SOPS_AGE_KEY_FILE="$(operator_key_file)"
-  if [[ $# == 0 ]] && interactive; then
-    export ATYRODE_CLI="$0"
-    exec "$atyrode_tui"
-  fi
   local subcommand="${1:-help}"
   shift || true
   # A production binary must never mutate the store while a caller believes its

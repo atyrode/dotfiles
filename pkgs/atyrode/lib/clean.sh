@@ -300,7 +300,7 @@ cmd_clean() {
       --all) scope=all ;; # also the system profile (nix-darwin); needs elevation
       -y | --yes) assume_yes=1 ;;
       -v | --verbose) verbose=1 ;; # pass nh clean's full evaluation plan through
-      --json) json=1 ;;            # machine-readable reclaim summary on stdout (cockpit)
+      --json) json=1 ;;            # machine-readable reclaim summary on stdout
       *) die "$EX_USAGE" "unknown clean option: $1" ;;
     esac
     shift || true
@@ -312,7 +312,7 @@ cmd_clean() {
 
   # Guard an accidental interactive run: show the plan and require confirmation.
   # --dry-run previews without touching anything, --yes/--json are the explicit
-  # non-interactive paths (scripts, cockpit), so none of them prompt.
+  # non-interactive paths for scripts, so none of them prompt.
   if [[ "$dry" == 0 && "$assume_yes" == 0 && "$json" == 0 ]] && interactive; then
     clean_preview "$scope" "$keep" "$keep_since"
     confirm "proceed and reclaim now?" ||
@@ -364,7 +364,7 @@ cmd_clean() {
   [[ "$json" == 0 ]] || clean_summary_json "$scope" "$keep" "$keep_since" "$dry"
 }
 
-# clean_summary_json prints a machine-readable reclaim summary for the cockpit:
+# clean_summary_json prints a machine-readable reclaim summary for scripts:
 # the parameters and the generations that are reclaim CANDIDATES — every
 # generation beyond the newest <keep>, excluding the current one (nh additionally
 # keeps any newer than --keep-since, so this is an upper bound on what it prunes).

@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-import pty
 import select
 import shlex
 import signal
@@ -68,18 +67,23 @@ apply_config() {{
         unit = f"atyrode-apply-{job}.service"
         (directory / "metadata.json").write_text(json.dumps({"jobId": job, "unit": unit, "live": True, "originTty": "fixture terminal"}))
         (directory / "output.log").touch()
-        pid, terminal = pty.fork()
-        if pid == 0:
-            os.execve(bash, [bash, "-c", setup + '\nrun_apply_job_worker "$1"', "fixture", str(directory)], env)
-        children.append((pid, terminal))
-        (root / unit).write_text(str(pid))
+        terminal, slave = os.openpty()
+        try:
+            process = subprocess.Popen(
+                [bash, "-c", setup + '\nrun_apply_job_worker "$1"', "fixture", str(directory)],
+                env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+            )
+        finally:
+            os.close(slave)
+        children.append((process, terminal))
+        (root / unit).write_text(str(process.pid))
         transcript = b""
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if select.select([terminal], [], [], 0.05)[0]:
                 transcript += os.read(terminal, 65536)
             if b"Keep this fixture?" in transcript:
-                return job, directory, pid, terminal, transcript
+                return job, directory, process, terminal, transcript
         raise AssertionError(f"fixture never reached terminal prompt: {transcript!r}")
 
     def status(job, *arguments, check=True):
@@ -87,7 +91,7 @@ apply_config() {{
                               env=env, text=True, capture_output=True, check=check, timeout=10)
 
     try:
-        job, directory, pid, terminal, transcript = start_job(1)
+        job, directory, process, terminal, transcript = start_job(1)
         observed = json.loads(status(job, "--json").stdout)
         assert observed["phase"] == "waiting", observed
         assert observed["progress"]["step"] == "Review fixture", observed
@@ -96,29 +100,29 @@ apply_config() {{
         assert "fixture terminal" in text and f"{job} --cancel" in text, text
         assert b"2/2 Review fixture" in transcript, transcript
         status(job, "--cancel")
-        _, result = os.waitpid(pid, 0)
-        assert os.WIFSIGNALED(result), result
+        result = process.wait(timeout=10)
+        assert result == -signal.SIGTERM, result
         cancelled = json.loads(status(job, "--json", check=False).stdout)
         assert cancelled["phase"] == "cancelled" and cancelled["result"]["activationCompleted"], cancelled
-        children.remove((pid, terminal))
+        children.remove((process, terminal))
         os.close(terminal)
 
-        next_job, next_directory, next_pid, next_terminal, _ = start_job(2)
+        next_job, next_directory, next_process, next_terminal, _ = start_job(2)
         (root / "stopped").unlink()
         status(job, "--cancel")
         assert not (root / "stopped").exists(), "historical cancellation stopped a newer job"
         os.write(next_terminal, b"n\n")
-        _, result = os.waitpid(next_pid, 0)
-        assert os.waitstatus_to_exitcode(result) == 0, result
+        result = next_process.wait(timeout=10)
+        assert result == 0, result
         assert json.loads((next_directory / "result.json").read_text())["phase"] == "succeeded"
-        children.remove((next_pid, next_terminal))
+        children.remove((next_process, next_terminal))
         os.close(next_terminal)
         print("apply job PTY: waiting status, explicit cancellation, stale-id safety, and subsequent completion passed")
     finally:
-        for pid, terminal in children:
+        for process, terminal in children:
             try:
-                os.killpg(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
             except ProcessLookupError:
                 pass
             os.close(terminal)

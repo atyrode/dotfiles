@@ -45,7 +45,7 @@ needs the hub's owner key, and no machine of the fleet holds that key:
 
 ```sh
 clan vars generate <host> --generator manifold-custody   # once, fleet-wide
-atyrode runtime enroll manifold-agent <host>
+atyrode runtime enroll manifold-agent <host> --repo ~/nix-dotfiles
 ```
 
 The owner key is the shared var `manifold-custody/owner-key`
@@ -157,7 +157,7 @@ Release, promotion, pin publication and activation are distinct operations:
    an allowed transport replacement.
 
 On dev-01, `atyrode apply` converges that local machine; `atyrode fleet apply
-dev-01` requests convergence from another operator device. Both paths must obey
+dev-01 --repo PATH` requests convergence from another operator device. Both paths must obey
 the same activation safety contract.
 
 The pin refresh enforces hub compatibility. `ci/update-pins.sh` carries a

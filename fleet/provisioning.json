@@ -22,7 +22,7 @@
     },
     "machine-key": {
       "label": "machine key",
-      "command": "atyrode provision machine-key",
+      "command": "atyrode provision machine-key --repo PATH",
       "implies": "Mints this machine's age key on an operator device and stores it in the repository encrypted to the admins group; atyrode apply places it.",
       "declinable": false
     },

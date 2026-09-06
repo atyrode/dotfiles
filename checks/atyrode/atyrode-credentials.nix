@@ -80,6 +80,10 @@ pkgs.runCommand "check-atyrode-credentials"
       "$TMPDIR/bin/fleet-clan" "$TMPDIR/bin/fleet-nix" "$TMPDIR/bin/fleet-ssh"
     mkdir -p "$TMPDIR/repo"
     touch "$TMPDIR/repo/flake.nix"
+    ${pkgs.gitMinimal}/bin/git -C "$TMPDIR/repo" init -q
+    ${pkgs.gitMinimal}/bin/git -C "$TMPDIR/repo" add flake.nix
+    ${pkgs.gitMinimal}/bin/git -C "$TMPDIR/repo" -c user.name=Fixture \
+      -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm fixture
     export PATH="$TMPDIR/bin:$PATH"
     # doctor git is read-only and reports classifications only. The identity it
     # judges is a placed private key: readable by this account, by nobody else,
@@ -311,6 +315,7 @@ pkgs.runCommand "check-atyrode-credentials"
       ATYRODE_CLAN="$TMPDIR/bin/fleet-clan"
       ATYRODE_NIX="$TMPDIR/bin/fleet-nix"
       ATYRODE_SSH="$TMPDIR/bin/fleet-ssh"
+      ATYRODE_GIT=${pkgs.gitMinimal}/bin/git
       ATYRODE_HOST=development-x86_64-linux
     )
 
@@ -324,9 +329,21 @@ pkgs.runCommand "check-atyrode-credentials"
     test "$fleet_status" = 64
     grep -qF 'atyrode apply' "$TMPDIR/fleet-portable.err"
 
+    # A conventional checkout is not consent to select a deployment source.
+    if "''${fleet_test_env[@]}" atyrode fleet plan fixture-nixos --json \
+      >"$TMPDIR/fleet-implicit.out" 2>"$TMPDIR/fleet-implicit.err"; then
+      echo 'fleet plan implicitly selected a checkout' >&2
+      exit 1
+    fi
+    test ! -e "$TMPDIR/fleet-ssh-args"
+    test ! -e "$TMPDIR/clan-args"
+
     fleet_plan="$("''${fleet_test_env[@]}" atyrode fleet plan fixture-nixos \
       --repo "$TMPDIR/repo" --json 2>"$TMPDIR/fleet-plan.err")"
-    jq -e '.ok and .action == "plan" and .host == "fixture-nixos"
+    jq -e --arg repo "$TMPDIR/repo" \
+      --arg revision "$(${pkgs.gitMinimal}/bin/git -C "$TMPDIR/repo" rev-parse HEAD)" \
+      '.ok and .action == "plan" and .host == "fixture-nixos"
+      and .repository == $repo and .resolvedRevision == $revision and .dirty == false
       and .targetHost == "alex@target.example" and .hostKeyCheck == "strict"
       and .buildHost == "localhost"
       and .drvPath == "/nix/store/test-fixture-nixos-system.drv"
@@ -336,6 +353,9 @@ pkgs.runCommand "check-atyrode-credentials"
     grep -qF 'alex@target.example true' "$TMPDIR/fleet-ssh-args"
     # A plan activates nothing, whatever else it reports.
     test ! -e "$TMPDIR/fleet-order"
+    printf '# changed\n' >> "$TMPDIR/repo/flake.nix"
+    "''${fleet_test_env[@]}" atyrode fleet plan fixture-nixos --repo "$TMPDIR/repo" --json \
+      2>"$TMPDIR/fleet-dirty.err" | jq -e '.dirty' >/dev/null
 
     # Vars that are not generated stop the deployment before it touches the
     # machine, and the remedy names the command that generates them.

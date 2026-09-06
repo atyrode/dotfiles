@@ -224,13 +224,12 @@ apply_config() {
     installable="$candidate_path"
   elif [[ -n "$repo" ]]; then
     source="local"
-    [[ "$repo" == /* ]] || die "$EX_USAGE" "repository path must be absolute: $repo"
-    [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
-    "$git_command" -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$EX_DATAERR" "repository is not a Git checkout: $repo"
-    revision="$("$git_command" -C "$repo" rev-parse --short=12 HEAD)"
-    resolved_revision="$("$git_command" -C "$repo" rev-parse HEAD)"
-    dirty=false
-    "$git_command" -C "$repo" diff --quiet --ignore-submodules HEAD -- || dirty=true
+    repo="$(fleet_repository "$repo")"
+    local source_state
+    source_state="$(fleet_repository_state "$repo")"
+    revision="$(jq -r '.revision' <<<"$source_state")"
+    resolved_revision="$(jq -r '.resolvedRevision' <<<"$source_state")"
+    dirty="$(jq -r '.dirty' <<<"$source_state")"
     repository="$repo"
     flake_source="$repo"
     installable="$repo#$host"
@@ -529,7 +528,10 @@ apply_config() {
   step_begin 'Arm the hourly archive timer'
   archive_converge_timer "$host" || apply_status="$EX_UNAVAILABLE"
   step_begin 'Review the provisioning surfaces this machine declares'
-  review_provisioning "$json" "$host" || apply_status="$EX_UNAVAILABLE"
+  # The checkout this apply built from is the only writable source it knows;
+  # a published revision or a copied closure is nothing a ceremony can commit
+  # into, and the review says so rather than picking one.
+  review_provisioning "$json" "$host" "${repo:-}" || apply_status="$EX_UNAVAILABLE"
   # Last, because the review may have just opened the sessions this file
   # reports: activation already rendered it with the new CLI, and this
   # render is what makes the file describe the machine apply leaves behind.
@@ -674,15 +676,15 @@ converge_login_shell() { # host
 # macOS -- it stats the source twice and reports the pipe as replaced while
 # being copied -- and because ownership then stays an argument of the
 # elevated program rather than a shell fragment.
+#
+# Where the key is looked for is the source given, or else the sops tree this
+# CLI was built with: the published revision it belongs to, immutable and the
+# same on every device. No other checkout on the device is consulted, so a
+# stale or unrelated ~/nix-dotfiles cannot make a published key vanish or an
+# unpushed one appear in a diagnostic.
 machine_key_repository_file() { # host [repo]
   local directory="$sops_directory/secrets"
-  if [[ -n "${2:-}" ]]; then
-    directory="$2/sops/secrets"
-  elif [[ -f "$HOME/nix-dotfiles/sops/secrets/$1-age.key/secret" ]]; then
-    # A newly minted key can precede the installed CLI, but a stale checkout
-    # cannot make a key already published with this CLI disappear.
-    directory="$HOME/nix-dotfiles/sops/secrets"
-  fi
+  [[ -z "${2:-}" ]] || directory="$2/sops/secrets"
   printf '%s/%s-age.key/secret\n' "$directory" "$1"
 }
 

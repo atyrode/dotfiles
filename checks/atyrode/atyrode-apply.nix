@@ -10,6 +10,9 @@ let
   developmentAtyrode = atyrode.override { revision = "unknown"; };
   launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
   targetAtyrode = atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; };
+  publishedKeyAtyrode = atyrode.override {
+    sopsDirectory = pkgs.writeTextDir "secrets/fixture-nixos-age.key/secret" "{}";
+  };
   serviceGeneration =
     name: service: command:
     pkgs.runCommand "${name}-home-manager-generation" { } ''
@@ -456,41 +459,37 @@ pkgs.runCommand "check-atyrode-apply"
     # a machine decrypts its vars with is minted into the repository by an
     # operator device and placed on the machine by apply. The probe names
     # which of the two steps is owed; a host clan does not build has neither.
-    machine_key_probe() { # host status code
-      ATYRODE_HOST="$1" atyrode doctor provisioning --json |
+    machine_key_probe() { # host status code [cli]
+      ATYRODE_HOST="$1" "''${4:-atyrode}" doctor provisioning --json |
         jq -e --arg status "$2" --arg code "$3" '
           .surfaces[] | select(.id == "machine-key")
           | .status == $status and (.code // "") == $code
-            and .command == "atyrode provision machine-key" and .declinable == false
         ' >/dev/null
     }
     machine_key_probe development-x86_64-linux not-applicable portable-profile
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/machine-key-apply.err" ||
       { cat "$TMPDIR/machine-key-apply.err" >&2; exit 1; }
     machine_key_probe fixture-nixos incomplete not-configured
-    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
-      .surfaces[] | select(.id == "machine-key")
-      | .summary == "no machine key in the repository; on any operator device run: clan vars generate fixture-nixos"' >/dev/null
     # Minting needs a registered operator key on this device; without one the
     # ceremony says which device can, rather than handing over clan's refusal.
     set +e
-    ATYRODE_HOST=fixture-nixos atyrode provision machine-key > "$TMPDIR/machine-key-nodevice.out" 2> "$TMPDIR/machine-key-nodevice.err"
+    ATYRODE_HOST=fixture-nixos atyrode provision machine-key --repo "$HOME/nix-dotfiles" > "$TMPDIR/machine-key-nodevice.out" 2> "$TMPDIR/machine-key-nodevice.err"
     machine_key_status="$?"
     set -e
     test "$machine_key_status" = 69
     grep -qF 'clan vars generate fixture-nixos' "$TMPDIR/machine-key-nodevice.err"
-    # In the repository but not on the machine: the root-owned path is
-    # relocated under a scratch root, and the fix is apply.
+    # A conflicting conventional checkout must not replace the published source.
     machine_root="$TMPDIR/machine"
     export _ATYRODE_TEST_IDENTITY_ROOT="$machine_root"
     machine_key="$machine_root/var/lib/sops-nix/key.txt"
     mkdir -p "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key"
     printf '{"data":"ENC[AES256_GCM,fixture]","sops":{"age":[]}}\n' > "$HOME/nix-dotfiles/sops/secrets/fixture-nixos-age.key/secret"
-    machine_key_probe fixture-nixos degraded not-placed
-    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e --arg key "$machine_key" '
-      .surfaces[] | select(.id == "machine-key")
-      | .summary == "the machine key is in the repository but not at " + $key + "; atyrode apply places it"
-        and .remediation == "atyrode apply"' >/dev/null
+    machine_key_probe fixture-nixos incomplete not-configured
+    machine_key_probe fixture-nixos degraded not-placed ${publishedKeyAtyrode}/bin/atyrode
+    # Removing the conventional checkout cannot hide a published key either.
+    mv "$HOME/nix-dotfiles" "$HOME/conventional-checkout-aside"
+    machine_key_probe fixture-nixos degraded not-placed ${publishedKeyAtyrode}/bin/atyrode
+    mv "$HOME/conventional-checkout-aside" "$HOME/nix-dotfiles"
     mkdir -p "''${machine_key%/*}"
     printf 'AGE-SECRET-KEY-1PLACED\n' > "$machine_key"
     machine_key_probe fixture-nixos ok ""
@@ -517,6 +516,12 @@ pkgs.runCommand "check-atyrode-apply"
     # operator machine would be after its first apply, so the clan scenarios
     # below find a key where they expect one.
     printf '# created: fixture\n# public key: %s\nAGE-SECRET-KEY-1DEVICEONLY\n' "$device_recipient" > "$operator_key"
+    set +e
+    ATYRODE_HOST=fixture-nixos atyrode provision machine-key \
+      >"$TMPDIR/machine-key-source.out" 2>"$TMPDIR/machine-key-source.err"
+    machine_key_status="$?"
+    set -e
+    test "$machine_key_status" = 64
 
     LC_CTYPE=UTF-8 atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-success.err" ||
       { cat "$TMPDIR/apply-success.err" >&2; exit 1; }

@@ -26,8 +26,8 @@ one verdict. Nothing else is expected to be run by hand on a normal day.
 A machine the operator is not sitting at is the same operation over SSH:
 
 ```sh
-atyrode fleet plan dev-01     # vars, reachability, evaluation; activates nothing
-atyrode fleet apply dev-01    # build here, activate there, verify
+atyrode fleet plan dev-01 --repo ~/nix-dotfiles     # vars, reachability, evaluation
+atyrode fleet apply dev-01 --repo ~/nix-dotfiles    # build here, activate there, verify
 ```
 
 `fleet apply` builds the closure on the machine running the command, copies
@@ -88,10 +88,10 @@ that is not configured is offered rather than merely reported.
    what it compiled, so the machine downloads rather than builds.
 3. On an operator device, in a checkout: `clan vars generate <name>`. This
    mints the machine's age key and its declared secrets, encrypts them to the
-   `admins` group, and commits. `atyrode provision machine-key` is the same
-   thing run from the machine itself when it is already an operator device.
-4. On the machine, `atyrode apply` — or `atyrode fleet apply <name>` from
-   elsewhere. The first step places the machine key so the activation that
+   `admins` group, and commits. `atyrode provision machine-key --repo PATH`
+   runs it from an explicitly selected checkout on an operator device.
+4. On the machine, `atyrode apply` — or `atyrode fleet apply <name> --repo PATH`
+   from elsewhere. The first step places the machine key so the activation that
    follows can decrypt the machine's vars.
 
 A machine with no Nix at all starts one step earlier, with

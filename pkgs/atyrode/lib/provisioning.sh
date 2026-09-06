@@ -126,8 +126,9 @@ provisioning_unconfigured() { # id summary
 
 # The doctor probe for the machine's own age key, the one clan vars are
 # decrypted with at activation. A host clan does not build cannot have one.
-# A placed key is conclusive machine state even when the conventional checkout
-# is stale; otherwise the repository says whether minting or placement is owed.
+# A placed key is conclusive machine state; otherwise the sops tree this CLI
+# was built with -- the published revision, not any checkout lying around on
+# the device -- says whether minting or placement is owed.
 probe_machine_key() {
   local host data key_status=0
   host="$(resolve_host)"
@@ -152,7 +153,7 @@ probe_machine_key() {
   esac
   if [[ ! -e "$(machine_key_repository_file "$host")" ]]; then
     provisioning_unconfigured machine-key \
-      "no machine key in the repository; on any operator device run: clan vars generate $host"
+      "no machine key published for $host at this CLI's revision; on an operator device run: clan vars generate $host"
     return 0
   fi
   provisioning_check_add machine-key degraded not-placed \
@@ -200,8 +201,8 @@ run_self_visible() { # argv...
   "$self" "$@"
 }
 
-provision_now() { # target
-  run_self_visible provision "$1"
+provision_now() { # target argv...
+  run_self_visible provision "$@"
 }
 
 # Where clever comes from. A workstation rarely carries clever-tools itself,
@@ -240,8 +241,8 @@ clever_logged_out() {
 #
 # Declining an optional surface is not an activation failure. Accepting a
 # ceremony that then fails is an incomplete apply, and must reach its caller.
-review_provisioning() { # json host
-  local json="$1" host="$2" count index status acted=0 tally leftovers review_status=0
+review_provisioning() { # json host authoring_repo
+  local json="$1" host="$2" authoring_repo="$3" count index status acted=0 tally leftovers review_status=0
 
   collect_provisioning_checks
   count="$(jq -r 'length' <<<"$provisioning_checks")"
@@ -255,7 +256,7 @@ review_provisioning() { # json host
         acted=1
         ;;
       incomplete)
-        review_incomplete_surface "$index" "$host" || review_status="$EX_UNAVAILABLE"
+        review_incomplete_surface "$index" "$host" "$authoring_repo" || review_status="$EX_UNAVAILABLE"
         acted=1
         ;;
     esac
@@ -310,7 +311,13 @@ review_degraded_surface() { # json index
 # The offer names the command it runs, so accepting here and typing it later
 # cannot leave the machine in two different states. Off a terminal the same
 # facts are printed without a question, because there is nobody to answer it.
-review_incomplete_surface() { # index host
+#
+# The machine-key ceremony writes into a checkout, and the only checkout this
+# apply can vouch for is the one it built from. An apply of the published
+# revision has none, so it names what the command needs rather than picking a
+# directory on the operator's behalf -- and it never re-mints: the key is
+# either published at this revision or it is not.
+review_incomplete_surface() { # index host authoring_repo
   local id label surface_command implies declinable summary
 
   id="$(jq -r ".[$1].id" <<<"$provisioning_checks")"
@@ -322,6 +329,17 @@ review_incomplete_surface() { # index host
 
   printf '%s is not configured: %s\n' "$label" "$summary" >&2
   printf '  %s\n' "$implies" >&2
+  # The policy names the ceremony as an operator would type it, with `--repo
+  # PATH` left for them to fill; when this apply built from a checkout, that
+  # checkout fills it, and the offer runs exactly the line it shows.
+  if [[ "$id" == machine-key ]]; then
+    if [[ -z "$3" ]]; then
+      printf '  configure with: %s\n' "$surface_command" >&2
+      printf '  it commits into a checkout of this repository; this apply built the published revision, which is not one, so name the checkout you will push from\n' >&2
+      return 0
+    fi
+    surface_command="${surface_command/--repo PATH/--repo $(printf '%q' "$3")}"
+  fi
   if ! interactive; then
     printf '  configure with: %s\n' "$surface_command" >&2
     return 0
@@ -343,7 +361,7 @@ review_incomplete_surface() { # index host
   # same argv as "retry" invites an operator to run the identical command and
   # collect the identical failure, so it is named as what it actually is: the
   # command for afterwards, once the blocker the child reported is gone.
-  if ! provisioning_run "$id" "$2"; then
+  if ! provisioning_run "$id" "$2" "$3"; then
     printf '  that did not complete; %s is still unconfigured.\n' "$label" >&2
     printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
     return "$EX_UNAVAILABLE"
@@ -357,9 +375,9 @@ review_incomplete_surface() { # index host
 # the Git identity have no line: both are clan vars placed by activation, so
 # their probes only ever report them as converged or as owed a generation,
 # never as an offer.
-provisioning_run() { # id host
+provisioning_run() { # id host authoring_repo
   case "$1" in
-    machine-key) provision_now machine-key ;;
+    machine-key) provision_now machine-key --repo "$3" ;;
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
     local-qwen) "$atyrode_runtime" provision local-qwen ;;
@@ -368,23 +386,25 @@ provisioning_run() { # id host
   esac
 }
 
-# Mint this machine's age key into the repository. Clan does the minting and
+# Mint this machine's age key into a checkout. Clan does the minting and
 # encrypts the private half to the admins group, which is why this can only
 # run on a device that is a member: any other device is told so rather than
-# handed clan's own refusal. Clan commits what it writes; the operator pushes.
-provision_machine_key() {
-  local host data user recipient checkout
+# handed clan's own refusal. Clan commits what it writes, into the checkout
+# the operator named -- never one guessed from HOME -- and the operator
+# pushes. Both refusals come before anything is written.
+provision_machine_key() { # repo
+  local host data user recipient checkout state
   host="$(resolve_host)"
   data="$(host_json "$host")"
   [[ "$(jq -r '.identityMode // "fixed"' <<<"$data")" == fixed ]] ||
     die "$EX_DATAERR" "$host is a portable profile; it is not a fleet member and clan does not know it"
+  checkout="$(fleet_repository "$1")"
   user="$(operator_user_for "$host")"
   if ! recipient="$(operator_recipient)" || ! operator_registered "$user" "$recipient"; then
     die "$EX_UNAVAILABLE" "this device holds no registered operator key, so it cannot mint a machine key; run on an operator device: clan vars generate $host"
   fi
-  checkout="$HOME/nix-dotfiles"
-  [[ -d "$checkout/.git" ]] ||
-    die "$EX_UNAVAILABLE" "no repository checkout at ~/nix-dotfiles to mint the key into"
+  state="$(fleet_repository_state "$checkout")"
+  say "source: $(fleet_repository_describe "$checkout" "$state")"
   local -a clan_write
   mapfile -t clan_write < <(clan_write_command "$checkout")
   say "clan mints $host's key and encrypts it to group $operator_group; it commits the result, which is then pushed like any other change"
@@ -439,8 +459,18 @@ cmd_provision() {
   case "${1:-}" in
     machine-key)
       shift
-      [[ $# -eq 0 ]] || die "$EX_USAGE" "unknown provision machine-key option: $1"
-      provision_machine_key
+      local repo=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --repo)
+            [[ $# -ge 2 ]] || die "$EX_USAGE" "--repo requires a path"
+            repo="$2"
+            shift 2
+            ;;
+          *) die "$EX_USAGE" "unknown provision machine-key option: $1" ;;
+        esac
+      done
+      provision_machine_key "$repo"
       ;;
     *) die "$EX_USAGE" "provision expects machine-key" ;;
   esac

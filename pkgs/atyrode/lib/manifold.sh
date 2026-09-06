@@ -346,7 +346,7 @@ manifold_enroll() { # host [--rotate-token]
     say "rotating revokes $host's current token: an agent still using it is fenced off the hub until the new token is placed and the agent restarted"
 
   local scratch
-  scratch="$(vault_secure_temp_dir atyrode-manifold)"
+  scratch="$(secure_temp_dir atyrode-manifold)"
   manifold_enroll_cleanup() { rm -rf -- "${scratch:-}"; }
   trap manifold_enroll_cleanup EXIT HUP INT TERM
 

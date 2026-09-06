@@ -568,27 +568,10 @@ pkgs.runCommand "check-atyrode-apply"
     test -z "$(find "$XDG_STATE_HOME/atyrode" -name '.dotfiles-config.*' -print -quit)"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
 
-    # The CLI carries its own bw, and a sandbox has no session, so every
-    # vault-backed surface below would otherwise be offered its login first.
-    # The scenarios that follow are about the surfaces themselves, so the
-    # vault stops being a free variable here. The stub is driven through the
-    # CLI's own bw seam: the wrapper prefixes the real bw onto PATH and
-    # adopt_activated_path only appends, so a stub anywhere on PATH could
-    # never win.
-    mkdir -p "$TMPDIR/vaultbin"
-    {
-      printf '#!%s\n' "${pkgs.runtimeShell}"
-      printf 'case "$1" in\n'
-      printf '  status) cat %s ;;\n' "$TMPDIR/bw-status.json"
-      printf '  config) printf %s ;;\n' "'https://vault.bitwarden.eu'"
-      printf '  login) printf %s > %s ;;\n' "'{\"status\":\"unlocked\"}'" "$TMPDIR/bw-status.json"
-      printf '  *) exit 1 ;;\n'
-      printf 'esac\n'
-    } > "$TMPDIR/vaultbin/bw"
-    chmod +x "$TMPDIR/vaultbin/bw"
     # A sandbox can neither hold nor acquire a real Clever Cloud session, and
-    # the agent context below reports clever's session state, so the stub
-    # keeps its own: `profile` succeeds once `login` has run.
+    # the agent context below reports clever's session state, so a stub keeps
+    # its own: `profile` succeeds once `login` has run.
+    mkdir -p "$TMPDIR/sessionbin"
     {
       printf '#!%s\n' "${pkgs.runtimeShell}"
       printf 'case "$1" in\n'
@@ -596,12 +579,10 @@ pkgs.runCommand "check-atyrode-apply"
       printf '  login) touch %s ;;\n' "$TMPDIR/clever-session"
       printf '  *) exit 1 ;;\n'
       printf 'esac\n'
-    } > "$TMPDIR/vaultbin/clever"
-    chmod +x "$TMPDIR/vaultbin/clever"
+    } > "$TMPDIR/sessionbin/clever"
+    chmod +x "$TMPDIR/sessionbin/clever"
     touch "$TMPDIR/clever-session"
-    printf '%s\n' '{"status":"unlocked"}' > "$TMPDIR/bw-status.json"
-    export ATYRODE_BW="$TMPDIR/vaultbin/bw"
-    export ATYRODE_CLEVER="$TMPDIR/vaultbin/clever"
+    export ATYRODE_CLEVER="$TMPDIR/sessionbin/clever"
 
     # ... and a home-manager apply writes nothing this user could not write, so
     # it must not warn about a password prompt that will never arrive.
@@ -629,7 +610,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF -- '- Host: `development-x86_64-linux` -- Portable headless x86_64 Linux development environment' "$context_file"
     grep -qF -- '- `macbook`: Primary Apple Silicon Mac' "$context_file"
     grep -qF -- '- `development-aarch64-linux`: Portable' "$context_file"
-    grep -qF 'None yet; secrets arrive with ADR 0008 step 3' "$context_file"
+    grep -qF 'Every secret is a clan var placed by activation' "$context_file"
     grep -qF -- '- Fleet cache substituter: `https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com`' "$context_file"
     grep -qF 'does not trust it yet' "$context_file"
     grep -qF 'No canonical clone root is declared for this host' "$context_file"
@@ -639,21 +620,24 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode apply development-x86_64-linux --candidate ${contextCandidate} \
       > "$TMPDIR/candidate-context.out" 2> "$TMPDIR/candidate-context.err"
     grep -qF 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
-    # Under the session stubs exported above, every CLI is reported as it is:
-    # the vault unlocked, clever logged in, gh (real, no account here) not --
-    # and a missing session names the exact command that acquires it. A token
-    # planted in the environment is the falsification: gh would use it and bw
-    # would use it, and neither may reach the file. Assembled at run time so
-    # the fixture never holds a string a scanner would flag.
+    # Under the session stub exported above, every CLI is reported as it is:
+    # clever logged in, gh (real, no account here) not -- and a missing session
+    # names the exact command that acquires it. A token planted in the
+    # environment is the falsification: gh would use it, and it may not reach
+    # the file. Assembled at run time so the fixture never holds a string a
+    # scanner would flag. Bitwarden is not a session this file knows: every
+    # secret is a clan var, and the section lists what sops-nix placed for this
+    # account -- nothing, in a sandbox -- never a vault.
     planted_gh_token="ghp_$(printf 'FIXTURE%.0s' 1 2 3 4 5)"
-    GH_TOKEN="$planted_gh_token" BW_SESSION=fixture-session-secret-value \
+    GH_TOKEN="$planted_gh_token" \
       atyrode context render 2>"$TMPDIR/context-render.err"
     grep -qF "wrote $context_file" "$TMPDIR/context-render.err"
     grep -qF -- '- `gh`: not authenticated; acquire a GitHub session with `gh auth login`' "$context_file"
     grep -qF -- '- `clever`: authenticated' "$context_file"
-    grep -qF -- '- `bw`: authenticated, vault unlocked' "$context_file"
+    ! grep -qiF 'bitwarden' "$context_file"
+    ! grep -qF 'atyrode vault' "$context_file"
+    grep -qF -- '- None placed for this account.' "$context_file"
     ! grep -qF 'ghp_FIXTURE' "$context_file"
-    ! grep -qF 'fixture-session-secret' "$context_file"
     ! grep -qE 'gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|[A-Za-z0-9+/]{80,}==' "$context_file"
     # show prints the same document render writes; --json is the section as
     # data, and it says the same things the prose does.
@@ -669,7 +653,7 @@ pkgs.runCommand "check-atyrode-apply"
       and .authentication.gh.authenticated == false
       and .authentication.gh.acquire == "gh auth login"
       and .authentication.clever.authenticated == true
-      and .authentication.bitwarden.vault == "unlocked"
+      and (.authentication | has("bitwarden") | not)
       and (.secrets.readable | length) == 0
       and .fleetCache.substituter == "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com"
       and .fleetCache.trusted == false
@@ -732,7 +716,7 @@ pkgs.runCommand "check-atyrode-apply"
     # provision names its targets, so a mistyped one cannot be mistaken for a
     # missing feature.
     ! atyrode provision nonsense 2>"$TMPDIR/provision-usage.err"
-    grep -qF 'provision expects git or machine-key' "$TMPDIR/provision-usage.err"
+    grep -qF 'provision expects machine-key' "$TMPDIR/provision-usage.err"
 
     # The archive is never offered: its storage document is a clan var, so
     # there is no ceremony this machine could run, only a generation an
@@ -815,23 +799,15 @@ pkgs.runCommand "check-atyrode-apply"
     ! grep -qF 'BROKER-TOKEN-TEST' "$TMPDIR/broker-placed.json"
     rm "$HOME/.omp/auth-broker.token"
 
-    # The provisioning surface apply does offer: the signing key the global
-    # Git config names is missing. Without a terminal that stays exactly the
-    # reminder it has always been, and nothing is asked of a machine that
-    # cannot answer.
-    printf '[user]\n\tsigningKey = %s\n' "$HOME/.ssh/absent-signing-key.pub" \
-      > "$HOME/.gitconfig"
+    # The Git identity is a clan var: on a portable profile it is not
+    # applicable, and apply neither offers nor asks anything about it.
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/git-identity-quiet.err" ||
       { cat "$TMPDIR/git-identity-quiet.err" >&2; exit 1; }
-    grep -qF 'Git identity is not configured: Git identity incomplete: the configured signing key is missing' \
-      "$TMPDIR/git-identity-quiet.err"
-    grep -qF 'configure with: atyrode provision git' "$TMPDIR/git-identity-quiet.err"
-    if grep -qF 'run atyrode provision git' "$TMPDIR/git-identity-quiet.err" &&
-      grep -qF 'now?' "$TMPDIR/git-identity-quiet.err"; then
-      echo 'a machine with no terminal was asked a question it cannot answer' >&2
-      exit 1
-    fi
-
+    ! grep -qF 'provision git' "$TMPDIR/git-identity-quiet.err"
+    ! grep -qF 'Git identity' "$TMPDIR/git-identity-quiet.err"
+    atyrode doctor provisioning --json |
+      jq -e '.surfaces[] | select(.id == "git-identity")
+        | .status == "not-applicable" and .code == "portable-profile"' >/dev/null
     # A supervised apply an operator is watching keeps that operator's terminal,
     # and a captured job has none of what follows from that: the job is
     # submitted with --pty rather than as a detached --service-type=exec unit,
@@ -840,18 +816,17 @@ pkgs.runCommand "check-atyrode-apply"
     # replays once it is all over. The log keeps an account of where the output
     # went so apply-status cannot claim to hold a transcript it never captured.
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
-    live_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 \
+    live_out="$(_ATYRODE_TEST_TTY=1 \
       _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
       ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
       ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
-      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
+      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1 </dev/null)" ||
       { printf '%s\n' "$live_out" >&2; exit 1; }
     grep -qF -- '--pty' "$TMPDIR/fake-systemd/run-args"
     if grep -qF -- '--service-type=exec' "$TMPDIR/fake-systemd/run-args"; then
       echo 'a live apply was submitted as a detached job' >&2
       exit 1
     fi
-    printf '%s\n' "$live_out" | grep -qF 'run atyrode provision git for development-x86_64-linux now?'
     printf '%s\n' "$live_out" | grep -qF 'mutation boundary:'
     if printf '%s\n' "$live_out" | grep -qF 'reconnect with: atyrode apply-status'; then
       echo 'a live apply pointed the operator at output they were already reading' >&2
@@ -881,77 +856,7 @@ pkgs.runCommand "check-atyrode-apply"
       echo 'a live apply captured the transcript it was supposed to stream' >&2
       exit 1
     fi
-    # The answer given through the worker was a refusal, so it is on the
-    # ledger; forgotten here so the decline below is asked for afresh.
-    ledger="$XDG_STATE_HOME/atyrode/provisioning-declined"
-    rm -f "$ledger"
     rm -rf "$XDG_STATE_HOME/atyrode/apply-jobs" "$TMPDIR/fake-systemd"
-
-    # With a terminal the reminder is followed by the offer to run the command
-    # it names. This is the path a real machine takes, so it must ask before
-    # doing anything, name the identity it would configure, and honour a
-    # refusal by leaving a way back in -- while the activation itself still
-    # succeeds.
-    git_decline="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 \
-      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
-      { printf '%s\n' "$git_decline" >&2; exit 1; }
-    printf '%s\n' "$git_decline" | grep -qF 'the configured signing key is missing'
-    printf '%s\n' "$git_decline" | grep -qF 'run atyrode provision git for development-x86_64-linux now?'
-    printf '%s\n' "$git_decline" | grep -qF 'this machine will not be asked again'
-    # Declining must not have configured anything.
-    test ! -e "$HOME/.ssh/absent-signing-key.pub"
-
-    # A decline is a per-machine answer, not a per-run one: the whole point of
-    # recording it is that the next apply does not re-ask a question already
-    # answered. Same state, same terminal, and this time no question at all.
-    grep -q '^git-identity	' "$ledger"
-    again_out="$(printf 'n\n' | _ATYRODE_TEST_TTY=1 atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)" ||
-      { printf '%s\n' "$again_out" >&2; exit 1; }
-    if printf '%s\n' "$again_out" | grep -qF 'run atyrode provision git'; then
-      echo 'atyrode: a recorded decline was re-asked on the next apply' >&2
-      exit 1
-    fi
-    # Still reported, though: declined is not the same as absent, and "what is
-    # missing here" has to include what is missing on purpose.
-    atyrode doctor provisioning --json |
-      jq -e '.pending == 0
-        and (.surfaces[] | select(.id == "git-identity")
-             | .status == "declined" and .code == "declined-by-operator")' >/dev/null
-    rm -f "$ledger"
-    # A requested ceremony that fails makes both the live command and its
-    # durable job result fail, while preserving the successful activation.
-    set +e
-    git_accept="$(printf 'y\n' | _ATYRODE_TEST_TTY=1 SSH_AUTH_SOCK= \
-      _ATYRODE_TEST_SYSTEMD_AVAILABLE=1 \
-      ATYRODE_SYSTEMD_RUN="$TMPDIR/bin/fake-systemd-run" \
-      ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
-      atyrode apply --repo "$HOME/nix-dotfiles" 2>&1)"
-    git_accept_status="$?"
-    set -e
-    test "$git_accept_status" = 69
-    if grep -q 'Apply complete' <<<"$git_accept"; then
-      echo 'a failed requested ceremony was reported as a complete apply' >&2
-      exit 1
-    fi
-    test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = development-x86_64-linux
-    failed_job="$(cat "$XDG_STATE_HOME/atyrode/apply-jobs/latest")"
-    jq -e '.phase == "failed" and .exitCode == 69' \
-      "$XDG_STATE_HOME/atyrode/apply-jobs/$failed_job/result.json" >/dev/null
-    printf '%s\n' "$git_accept" | grep -qF 'no ssh-agent socket'
-    printf '%s\n' "$git_accept" | grep -qF 'that did not complete; Git identity is still unconfigured'
-    # The child said what is wrong. Naming the same argv as "retry" would send
-    # the operator to collect the identical failure, so the surface command is
-    # offered as the thing to run afterwards, and the reason stays the child's.
-    printf '%s\n' "$git_accept" | grep -qF 'clear what it reported above, then: atyrode provision git'
-    if printf '%s\n' "$git_accept" | grep -qF 'retry: atyrode provision git'; then
-      echo 'a failed ceremony advised rerunning the command that just failed' >&2
-      exit 1
-    fi
-    # Accepting spawns a whole second program, so the boundary is named: every
-    # line after it belongs to that child, and it is the argv an operator
-    # repeats to retry the ceremony on its own.
-    printf '%s\n' "$git_accept" | grep -qE '^  \$ .*atyrode provision git$'
-    rm -f "$HOME/.gitconfig"
 
     # A degraded surface whose remedy is itself a dialogue. The seeder asks the
     # questions rather than answering them, so apply runs it instead of quoting
@@ -2126,8 +2031,8 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'atyrode capabilities list [--json]' <<<"$help"
     grep -qF 'atyrode capabilities show [HOST] [--json]' <<<"$help"
     grep -qF 'atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes]' <<<"$help"
-    grep -qF 'atyrode vault get NAME' <<<"$help"
-    grep -qF 'atyrode vault put NAME' <<<"$help"
+    grep -qF 'atyrode provision machine-key' <<<"$help"
+    ! grep -qF 'atyrode vault' <<<"$help"
 
     mkdir "$out"
   ''

@@ -459,8 +459,9 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/bootstrap/logs/
 ```
 
 A managed step's output is evidence, and its stdio is also a conversation.
-Activation asks for sudo, for the vault password, and whether to provision
-each surface it found unconfigured; the CLI gates every one of those on stdin
+Activation asks for sudo, for Touch ID or elevation behind an identity
+ceremony, and whether to provision each surface it found unconfigured; the
+CLI gates every one of those on stdin
 and stdout both being a terminal. Capturing the stream answers no to all of
 them, so bootstrap captures only where there is no terminal to lose — which is
 exactly where there is nobody to ask. On a terminal the run log records that
@@ -486,8 +487,9 @@ with its evidence rather than requiring another run to produce it.
 ## What bootstrap does not do itself
 
 Activation installs the machine's declared state. What it cannot install is
-anything that needs a secret or a decision — a vault password, forty gigabytes
-of disk, enrollment with a service. Those are the CLI's provisioning
+anything that needs a secret or a decision — a key that must be minted on an
+operator device, forty gigabytes of disk, enrollment with a service. Those are
+the CLI's provisioning
 ceremonies, and `atyrode apply` reviews every one of them after activating.
 
 Bootstrap's part is to not get in the way of that. It runs each managed step
@@ -505,7 +507,7 @@ something it cannot take back silently:
 | --- | --- |
 | Babel session archive (`clan vars generate HOST`, on an operator device) | Nothing on this machine: the storage document and the payload key ring are clan vars, typed once on an operator device and placed by the next apply, which arms the hourly timer that publishes this machine's session archives |
 | OMP auth broker token (`clan vars generate HOST`, on an operator device) | Nothing on this machine: the bearer token is a shared clan var, minted once on an operator device and placed by the next apply, after which the broker host serves with it and every other machine tunnels to that host |
-| Git identity (`atyrode provision git`) | The vault password, plus an ed25519 authentication and signing keypair materialised on disk and loaded into the agent |
+| Git identity (`clan vars generate HOST`, on an operator device) | Nothing on this machine: the ed25519 authentication and signing keys are this machine's clan vars, generated once on an operator device and placed by the next apply at mode 0600 under `/run/secrets/vars/git-identity`, where Git signs with the signing key and `ssh` authenticates to the forges with the auth key, both read directly with no agent involved. The signing key is trusted only once a reviewed commit adds its public half to `modules/home/git/allowed-signers` |
 | omp seed drift (`atyrode-omp-seed resolve`) | Nothing beyond the local plain-omp settings file: repository defaults are restored over local edits, with no secret and no network call |
 | generated agent context (`atyrode context render`) | Nothing beyond a file under `~/.config/agents`: this machine's facts under the operator policy. It asks `gh` and `clever` for their session state (read-only, bounded), stores no secret, and downloads nothing; apply renders it itself, so this surface is only ever pending between applies |
 | local-qwen (`atyrode runtime provision local-qwen`) | Roughly forty gigabytes of downloads and a built container image serving a model from the local GPU |
@@ -520,7 +522,7 @@ dialogue somebody has to design again:
   would have typed are the same thing.
 - **Off a terminal each is a name.** The surface and the command that
   configures it are printed and nothing runs. A stream with nobody on it
-  cannot consent to a vault password or forty gigabytes.
+  cannot consent to an elevation or forty gigabytes.
 - **A decline is recorded.** The record is per machine and per surface, so a
   surface refused once is not offered again on the next apply. Asking a second
   time is how a prompt becomes noise, and noise is answered without reading.

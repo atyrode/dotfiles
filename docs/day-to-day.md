@@ -133,16 +133,15 @@ machine's, not the operator's.
 
 ## Break-glass
 
-Bitwarden is not part of routine operation. It holds the recovery identity
-that is registered in `admins` alongside every device, so a fleet whose
-devices are all lost is still readable:
-
-```sh
-atyrode vault login      # pins the right server, then authenticates
-atyrode vault get NAME
-```
-
-`atyrode doctor` mentions Bitwarden nowhere else, and `bw status` may read
+Bitwarden is not part of routine operation, and nothing in `atyrode` opens
+it. It holds exactly one thing this fleet depends on: the `alex-recovery` age
+key, the recovery identity registered in `admins` alongside every device, so
+a fleet whose devices are all lost is still readable. When that day comes the
+note is read by hand with the `bw` CLI, which the development profile still
+installs, and the key is written to `~/.config/sops/age/keys.txt` on whatever
+device is doing the recovery. No machine's Git identity, archive document,
+broker token, or any other secret lives there any more; those are clan vars.
+`atyrode doctor` mentions Bitwarden nowhere, and `bw status` may read
 `unauthenticated` on every machine without anything degrading.
 
 ## Keeping the machine small

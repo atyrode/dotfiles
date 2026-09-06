@@ -43,12 +43,10 @@
     },
     "git-identity": {
       "label": "Git identity",
-      "command": "atyrode provision git",
-      "implies": "Materialises this machine's SSH auth and signing keys from Bitwarden and loads them into the agent. Needs your vault password once.",
-      "declinable": true,
-      "prerequisites": [
-        "bitwarden-session"
-      ]
+      "command": "clan vars generate <host>",
+      "implies": "Generates this machine's SSH auth and signing keys on an operator device, encrypted to the admins group; the next apply places them and Git reads them directly. The signing key is trusted only once a reviewed commit adds its public half to modules/home/git/allowed-signers. No vault and no agent on this machine.",
+      "declinable": false,
+      "prerequisites": []
     },
     "babel-archive": {
       "label": "Babel session archive",
@@ -86,11 +84,5 @@
       "prerequisites": []
     }
   },
-  "prerequisites": {
-    "bitwarden-session": {
-      "label": "a Bitwarden session",
-      "command": "atyrode vault login",
-      "without": "no secret can be read on this machine, so nothing the vault holds can be configured"
-    }
-  }
+  "prerequisites": {}
 }

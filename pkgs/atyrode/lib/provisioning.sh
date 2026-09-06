@@ -48,21 +48,16 @@ provisioning_policy_field() { # id field
 # A prerequisite is a session or a login some surface cannot start without.
 # They are declared once in the policy and shared, so satisfying one for a
 # surface settles it for the next that wants it. Order matters and is the
-# declared order.
+# declared order. None is declared today: every surface travels as a clan var
+# placed by activation, and the probe and runner below say so if a policy
+# ever names one again without wiring it.
 prerequisite_field() { # id field
   jq -r --arg id "$1" --arg field "$2" \
     '.prerequisites[$id][$field] // ""' "$provisioning_policy"
 }
 
-# Whether the machine already satisfies one. Mapped by name rather than derived
-# from the command string, for the same reason the ceremonies are: a policy
-# that can be executed is not a policy. Every probe reads softly, because it is
-# deciding whether to offer something, not diagnosing a fault.
 prerequisite_met() { # id
-  case "$1" in
-    bitwarden-session) ! vault_logged_out ;;
-    *) die "$EX_SOFTWARE" "no probe is wired for prerequisite $1" ;;
-  esac
+  die "$EX_SOFTWARE" "no probe is wired for prerequisite $1"
 }
 
 # The unmet prerequisites of a surface, in declared order, one id per line.
@@ -238,8 +233,8 @@ collect_provisioning_checks() {
 
 # Run a provisioning command now, in this terminal, as the operator would type
 # it. Re-entering the CLI rather than calling the ceremony in-process is
-# deliberate: provisioning owns a vault session, its own traps, and its own
-# refusals, and none of them may end an apply that has already activated.
+# deliberate: a ceremony owns its own traps and its own refusals, and none of
+# them may end an apply that has already activated.
 #
 # Shown, because it is a whole second program: everything printed after this
 # line belongs to that child process, and an operator who wants to run it alone
@@ -286,36 +281,8 @@ clever_logged_out() {
   ! "$program" profile >/dev/null 2>&1
 }
 
-# A prerequisite is reached by name, exactly as the ceremonies are: deriving
-# argv by splitting the policy string would make the inventory executable, and
-# an inventory that can run anything is not an inventory.
 prerequisite_run() { # id
-  case "$1" in
-    bitwarden-session) vault_login_child ;;
-    *) die "$EX_SOFTWARE" "no runner is wired for prerequisite $1" ;;
-  esac
-}
-
-# The login runs as its own process, for the same reasons a ceremony does, so
-# the session it opens would die with it and the very next command would ask
-# for the master password again. A private file carries the key back instead:
-# this side creates it, the child writes it, this side adopts it into the
-# environment every later child inherits, and it is removed immediately. The
-# key is never announced, never logged, and never an argument.
-vault_login_child() {
-  local dir file status=0
-
-  dir="$(vault_secure_temp_dir atyrode-session)"
-  file="$dir/session"
-  : >"$file"
-  chmod 600 "$file"
-  ATYRODE_VAULT_SESSION_OUT="$file" run_self_visible vault login || status=$?
-  if [[ "$status" == 0 && -s "$file" ]]; then
-    BW_SESSION="$(<"$file")"
-    export BW_SESSION
-  fi
-  rm -rf -- "$dir"
-  return "$status"
+  die "$EX_SOFTWARE" "no runner is wired for prerequisite $1"
 }
 
 # What apply does with each surface, and why the three answers differ:
@@ -424,8 +391,8 @@ review_incomplete_surface() { # index host
   # The whole chain is walked here rather than discovered one failure at a
   # time, and each link is asked for separately: declining one makes every
   # question after it moot, and a decline is worth more when the operator was
-  # told what it costs. Shared links are settled once -- both vault-backed
-  # ceremonies want the same session, so the second one stops asking.
+  # told what it costs. Shared links are settled once, so a second surface
+  # wanting the same one stops asking.
   index=0
   while ((index < unmet_count)); do
     requirement="$(jq -r ".[$1].unmet[$index].id" <<<"$provisioning_checks")"
@@ -474,13 +441,12 @@ review_incomplete_surface() { # index host
 
 # Each ceremony is reached by the command the offer just named. The mapping is
 # explicit rather than derived from the command string: a surface whose
-# provisioning moves belongs to one line here, not to a parser. The archive
-# has no line: its document is a clan var placed by activation, so the probe
-# only ever reports it as converged or as owed a generation, never as an
-# offer.
+# provisioning moves belongs to one line here, not to a parser. The archive and
+# the Git identity have no line: both are clan vars placed by activation, so
+# their probes only ever report them as converged or as owed a generation,
+# never as an offer.
 provisioning_run() { # id host
   case "$1" in
-    git-identity) provision_now git ;;
     machine-key) provision_now machine-key ;;
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
@@ -554,159 +520,16 @@ archive_converge_timer() { # host
 }
 
 # --- provision ----------------------------------------------------------------
-# One-time interactive machine provisioning (#8): per-machine Git SSH keys are
-# vault-backed. `provision git` reconciles the machine's auth and signing
-# identities against Bitwarden — materializing a vault key into agent memory,
-# backing up a pre-vault local key, or bootstrapping a brand-new one (generate,
-# store, register with GitHub).
-# Default custody is agent-memory: no private file lands on disk; --persist
-# writes the 0600 file for machines that must survive agent restarts
-# unattended. Public halves are always written (they are the reviewed data).
-
-provision_git_agent_loaded() { # pub_file
-  local ssh_add fingerprint
-  ssh_add="$(optional_host_command ATYRODE_SSH_ADD ssh-add)" || return 1
-  [[ -f "$1" ]] || return 1
-  fingerprint="$("$provision_ssh_keygen" -lf "$1" 2>/dev/null | awk '{print $2}')" || return 1
-  [[ -n "$fingerprint" ]] || return 1
-  "$ssh_add" -l 2>/dev/null | grep -qF "$fingerprint"
-}
-
-provision_git_role() { # role private_path item_name persist yes scratch
-  local role="$1" private_path="$2" item_name="$3" persist="$4" yes="$5" scratch="$6"
-  local public_path="$private_path.pub" matches count material="$scratch/$role.key"
-  matches="$scratch/$role-matches.json"
-  vault_find_exact_item "$item_name" "$matches"
-  count="$(jq -er 'length' "$matches")"
-
-  if [[ "$count" == 1 ]]; then
-    [[ "$(jq -er '.[0].type' "$matches")" == 2 ]] ||
-      die "$EX_DATAERR" "Bitwarden item '$item_name' exists but is not a Secure Note"
-    bw_cli get item "$(jq -er '.[0].id' "$matches")" |
-      jq -er '.notes | select(type == "string")' >"$material" ||
-      die "$EX_DATAERR" "Bitwarden Secure Note '$item_name' has no text value"
-    chmod 600 "$material"
-    "$provision_ssh_keygen" -y -f "$material" >"$material.pub" 2>/dev/null ||
-      die "$EX_DATAERR" "Bitwarden Secure Note '$item_name' is not a private SSH key"
-    if [[ -f "$private_path" ]]; then
-      local local_fp vault_fp
-      local_fp="$("$provision_ssh_keygen" -lf "$private_path" 2>/dev/null | awk '{print $2}')"
-      vault_fp="$("$provision_ssh_keygen" -lf "$material.pub" | awk '{print $2}')"
-      [[ "$local_fp" == "$vault_fp" ]] ||
-        die "$EX_DATAERR" "the local $role key and Secure Note '$item_name' are different keys; resolve that conflict manually before provisioning"
-      printf 'atyrode: %s key matches the vault\n' "$role" >&2
-    else
-      run_visible install -m 644 "$material.pub" "$public_path"
-      if [[ "$persist" == 1 ]]; then
-        run_visible install -m 600 "$material" "$private_path"
-        printf 'atyrode: installed the vault-backed %s key at %s\n' "$role" "$private_path" >&2
-      fi
-    fi
-    if ! provision_git_agent_loaded "$public_path"; then
-      show_command "$provision_ssh_add" "$material"
-      "$provision_ssh_add" "$material" 2>/dev/null ||
-        die "$EX_UNAVAILABLE" "could not load the $role key into the ssh-agent"
-      printf 'atyrode: loaded the %s key into the agent\n' "$role" >&2
-    fi
-    return 0
-  fi
-
-  if [[ -f "$private_path" ]]; then
-    # Pre-vault key: this machine predates the vault-backed custody decision.
-    if [[ "$yes" == 1 ]] || confirm "Back up the existing $role key to Secure Note '$item_name'?"; then
-      vault_store_note "$item_name" "$private_path" "$scratch"
-    else
-      printf 'atyrode: left the %s key device-local (no vault recovery)\n' "$role" >&2
-    fi
-    if ! provision_git_agent_loaded "$public_path"; then
-      show_command "$provision_ssh_add" "$private_path"
-      "$provision_ssh_add" "$private_path" 2>/dev/null ||
-        printf 'atyrode: warning: could not load the %s key into the ssh-agent\n' "$role" >&2
-    fi
-    return 0
-  fi
-
-  # Brand new identity: generate, store first (the vault is the recovery
-  # authority — no window where agent memory holds the only copy), register
-  # the public half, then load.
-  if [[ "$yes" != 1 ]]; then
-    confirm "Generate a new $role key for this machine and store it in Secure Note '$item_name'?" ||
-      die "$EX_USAGE" "provision git needs the $role key decision"
-  fi
-  run_visible "$provision_ssh_keygen" -t ed25519 -N "" \
-    -C "$(actual_user)@$(manifold_machine_name) git-$role" -f "$material" -q
-  vault_store_note "$item_name" "$material" "$scratch"
-  run_visible install -m 644 "$material.pub" "$public_path"
-  if [[ "$persist" == 1 ]]; then
-    run_visible install -m 600 "$material" "$private_path"
-  fi
-  show_command "$provision_ssh_add" "$material"
-  "$provision_ssh_add" "$material" 2>/dev/null ||
-    die "$EX_UNAVAILABLE" "could not load the new $role key into the ssh-agent"
-  local gh_cli register=(ssh-key add "$public_path" --title "$(manifold_machine_name) git-$role")
-  [[ "$role" != signing ]] || register+=(--type signing)
-  if gh_cli="$(optional_host_command ATYRODE_GH gh)" && show_command "$gh_cli" "${register[@]}" &&
-    "$gh_cli" "${register[@]}" >/dev/null 2>&1; then
-    printf 'atyrode: registered the %s public key with GitHub\n' "$role" >&2
-  else
-    printf 'atyrode: register the %s key yourself: gh %s\n' "$role" "${register[*]}" >&2
-  fi
-}
-
+# The one ceremony left to the machine itself: minting its own age key when it
+# is also an operator device. Every other value is a clan var generated on an
+# operator device and placed by activation.
 cmd_provision() {
-  local target="${1:-}" persist=0 yes=0
-  case "$target" in
-    git) ;;
+  case "${1:-}" in
     machine-key)
       shift
       [[ $# -eq 0 ]] || die "$EX_USAGE" "unknown provision machine-key option: $1"
       provision_machine_key
-      return
       ;;
-    *) die "$EX_USAGE" "provision expects git or machine-key" ;;
+    *) die "$EX_USAGE" "provision expects machine-key" ;;
   esac
-  shift
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --persist) persist=1 ;;
-      -y | --yes) yes=1 ;;
-      *) die "$EX_USAGE" "unknown provision git option: $1" ;;
-    esac
-    shift
-  done
-  provision_ssh_keygen="$(optional_host_command ATYRODE_SSH_KEYGEN ssh-keygen)" ||
-    die "$EX_UNAVAILABLE" "ssh-keygen is required by provision git"
-  provision_ssh_add="$(optional_host_command ATYRODE_SSH_ADD ssh-add)" ||
-    die "$EX_UNAVAILABLE" "ssh-add is required by provision git"
-  [[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK:-}" ]] ||
-    die "$EX_UNAVAILABLE" "no ssh-agent socket; apply this configuration and log in again (services.ssh-agent supervises the Linux agent), or start your platform agent"
-
-  local ssh_home="$HOME/.ssh"
-  mkdir -p "$ssh_home"
-  chmod 700 "$ssh_home"
-
-  local scratch host
-  host="$(manifold_machine_name)"
-  scratch="$(vault_secure_temp_dir atyrode-provision)"
-  provision_cleanup() {
-    rm -rf -- "${scratch:-}"
-    vault_close_session
-  }
-  trap provision_cleanup EXIT HUP INT TERM
-  vault_open_session 0
-  bw_visible sync >/dev/null || die "$EX_UNAVAILABLE" "Bitwarden sync failed"
-
-  provision_git_role auth "$ssh_home/id_ed25519" \
-    "Git SSH auth key ($host)" "$persist" "$yes" "$scratch"
-  provision_git_role signing "$ssh_home/id_ed25519_git_signing" \
-    "Git SSH signing key ($host)" "$persist" "$yes" "$scratch"
-
-  # The reviewed signer set is git-owned data: a new signing key becomes
-  # trusted only through a reviewed commit, never through provisioning.
-  local signing_public="$ssh_home/id_ed25519_git_signing.pub" key_blob=""
-  key_blob="$(awk '{print $2}' "$signing_public" 2>/dev/null || true)"
-  if [[ -n "$key_blob" ]] && ! grep -qF "$key_blob" "$managed_git_allowed_signers"; then
-    printf 'atyrode: the signing key is not yet in modules/home/git/allowed-signers; add it through a reviewed commit, then apply\n' >&2
-  fi
-  printf 'atyrode: verify with: atyrode doctor git\n' >&2
 }

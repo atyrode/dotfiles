@@ -77,8 +77,6 @@ apply_job_worker=0
 . "$lib_dir/clean.sh"
 # shellcheck source=lib/catalog.sh
 . "$lib_dir/catalog.sh"
-# shellcheck source=lib/vault.sh
-. "$lib_dir/vault.sh"
 # shellcheck source=lib/authbroker.sh
 . "$lib_dir/authbroker.sh"
 # shellcheck source=lib/manifold.sh
@@ -112,13 +110,9 @@ Usage:
   atyrode runtime shortcut [local-qwen]
   atyrode inventory [--host HOST] [--ref REF | --repo PATH] --json
   atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes] [--scope SCOPE:SERVICE]...
-  atyrode vault status [--json]
-  atyrode vault login|lock
-  atyrode vault get NAME
-  atyrode vault put NAME
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
-  atyrode provision git [--persist] [--yes]
+  atyrode provision machine-key
   atyrode lifecycle [--json]
   atyrode context [show] [--json]
   atyrode context render
@@ -171,8 +165,8 @@ reading. apply validates everything before building, and afterwards reports
 plain-omp settings that drifted from the seeded defaults. Mutating Linux Home
 Manager applies run as manager-owned jobs rather than as children of the
 invoking shell. Started from a terminal the job is handed that terminal:
-activation output streams as it happens, every prompt it raises (sudo, the
-vault) is answerable, and the job ends with the terminal. Without one it is
+activation output streams as it happens, every prompt it raises (sudo) is
+answerable, and the job ends with the terminal. Without one it is
 detached and its output captured, so replacing a terminal-hosting service
 cannot terminate the activation and apply-status reconnects to the durable
 result. On a terminal apply also offers an interactive keep-or-reset review
@@ -192,10 +186,6 @@ machine's own `atyrode apply --candidate`, bound to the fingerprint just shown
 -- and verifies the machine reports itself converged afterwards. Where it is
 reached is the machine's own clan.core.networking.targetHost, so a deployment
 cannot be aimed somewhere the reviewed configuration does not name.
-vault provides exact-name Bitwarden Secure Note storage. get and put sync and
-unlock interactively when needed, then relock only when they opened the session.
-put accepts secret material only from hidden terminal input or stdin; get is the
-explicit secret-output boundary. Duplicate names and non-note items are refused.
 lifecycle inventories a fixed set of Home Manager, Git/OMP worktree, and OMP/atyrode
 cache/state paths under the configured home. It is read-only, includes OMP's
 supported GC/worktree-clear dry-runs when omp is available, and --json emits a stable report.
@@ -292,7 +282,6 @@ main() {
     run) cmd_run "$@" ;;
     runtime) cmd_runtime "$@" ;;
     fleet) cmd_fleet "$@" ;;
-    vault) cmd_vault "$@" ;;
     auth) cmd_auth "$@" ;;
     provision) cmd_provision "$@" ;;
     context) cmd_context "$@" ;;

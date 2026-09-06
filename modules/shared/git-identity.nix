@@ -22,6 +22,17 @@ let
   # for; every clan machine in this fleet has exactly one.
   user = lib.head (lib.attrNames config.home-manager.users);
   machine = config.clan.core.settings.machine.name;
+
+  # Where sops-nix places the private halves, stated from its fixed layout for
+  # the reason babel-archive.nix gives, and asserted against clan's answer once
+  # there is one so the two cannot silently diverge.
+  placed = name: "/run/secrets/vars/git-identity/${name}";
+  agrees =
+    name:
+    let
+      reported = config.clan.core.vars.generators.git-identity.files.${name}.path;
+    in
+    reported == "/no-such-path" || reported == placed name;
 in
 {
   clan.core.vars.generators.git-identity = {
@@ -50,4 +61,23 @@ in
       ssh-keygen -q -t ed25519 -N "" -C "alex@tyrode.dev (${machine} signing)" -f "$out/signing-key"
     '';
   };
+
+  assertions = [
+    {
+      assertion = agrees "auth-key" && agrees "signing-key";
+      message = "git-identity expects its keys under /run/secrets/vars/git-identity, but sops-nix places them elsewhere";
+    }
+  ];
+
+  # A shared module rather than `users.<name>`, for the reason babel-archive.nix
+  # gives: naming the user here would read the very attribute set this defines.
+  # The home module reads these paths; it never learns where they came from.
+  home-manager.sharedModules = [
+    {
+      atyrode.gitIdentity = {
+        authKey = placed "auth-key";
+        signingKey = placed "signing-key";
+      };
+    }
+  ];
 }

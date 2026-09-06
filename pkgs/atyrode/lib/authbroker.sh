@@ -104,7 +104,7 @@ auth_broker_add_api_key() {
     die "$EX_USAGE" "auth broker add-api-key expects one provider id"
   auth_broker_token_placed ||
     die "$EX_NOINPUT" "OMP auth broker token is not placed at $(auth_broker_token_file); generate it on an operator device (clan vars generate $(resolve_host)), then atyrode apply"
-  scratch="$(vault_secure_temp_dir atyrode-omp-api-key)"
+  scratch="$(secure_temp_dir atyrode-omp-api-key)"
   auth_broker_api_cleanup() { rm -rf -- "${scratch:-}"; }
   trap auth_broker_api_cleanup EXIT HUP INT TERM
   secret="$scratch/key"

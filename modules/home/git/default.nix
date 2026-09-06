@@ -8,6 +8,8 @@
 let
   gitAuthMode = config.atyrode.gitAuthMode;
   useSshAuth = gitAuthMode == "ssh";
+  identity = config.atyrode.gitIdentity;
+  hasIdentity = identity.signingKey != null;
 in
 {
   options.atyrode.gitAuthMode = lib.mkOption {
@@ -19,6 +21,23 @@ in
     description = "Git transport authentication mode; commit signing remains SSH-backed in every mode.";
   };
 
+  # The machine's Git keys, as paths to private keys activation placed. A clan
+  # machine sets both from its git-identity generator (modules/shared/
+  # git-identity.nix); a portable profile is not a fleet member and has none,
+  # so it signs nothing rather than signing with a key nobody reviewed.
+  options.atyrode.gitIdentity = {
+    authKey = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Private SSH key that authenticates this machine to forges.";
+    };
+    signingKey = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Private SSH key that signs this machine's commits; its public half must be in allowed-signers.";
+    };
+  };
+
   config = {
     programs.git = {
       enable = true;
@@ -26,11 +45,13 @@ in
       settings = {
         user.name = "Alex TYRODE";
         user.email = "alex@tyrode.dev";
-        user.signingKey = "${config.home.homeDirectory}/.ssh/id_ed25519_git_signing.pub";
 
         # Authentication and commit signing are independent. SSH-first hosts use
         # push-only rewrites; external-auth runtimes keep HTTPS so the declared gh
         # credential helper can serve Git without an additional authentication key.
+        # ssh-keygen -Y sign reads the private key file directly, so signing
+        # needs no agent and no passphrase: the key is placed 0600 for this
+        # account by activation, and the machine signs the moment it is up.
         gpg.format = "ssh";
         gpg.ssh.allowedSignersFile = "${config.xdg.configHome}/git/allowed_signers";
         core.hooksPath = "${config.xdg.configHome}/git/hooks";
@@ -39,7 +60,7 @@ in
         pull.rebase = false;
         push.autoSetupRemote = true;
         fetch.prune = true;
-        commit.gpgsign = true;
+        commit.gpgsign = hasIdentity;
 
         includeIf."gitdir/i:**/gitlab.alouette.dev/**".path = "~/.gitconfigs/.alouette.config";
 
@@ -56,17 +77,25 @@ in
         alias.last = "log -1 HEAD";
         alias.visual = "!gitk";
       }
+      // lib.optionalAttrs hasIdentity { user.signingKey = identity.signingKey; }
+      # Git alone reaches the forges with the placed auth key, and with that key
+      # only: IdentitiesOnly keeps ssh from offering every key an agent holds,
+      # which is how a forge ends up authenticating a machine as someone else.
+      # Scoped to git rather than written into ~/.ssh/config, so the account's
+      # own ssh configuration -- other hosts, other keys -- stays its own.
+      // lib.optionalAttrs (useSshAuth && identity.authKey != null) {
+        core.sshCommand = "${lib.getExe pkgs.openssh} -i ${identity.authKey} -o IdentitiesOnly=yes";
+      }
       // lib.optionalAttrs useSshAuth {
         url."git@github.com:".pushInsteadOf = "https://github.com/";
         url."git@gitlab.com:".pushInsteadOf = "https://gitlab.com/";
       };
     };
 
-    # Supervised user ssh-agent (#8): agent sessions and headless logins inherit
-    # SSH_AUTH_SOCK from the user manager, so SSH pushes and commit signing work
-    # without per-session key loading. `atyrode provision git` loads the
-    # vault-backed keys. Linux only: macOS keeps the validated Keychain-backed
-    # system agent, which a Home Manager agent would shadow.
+    # Neither signing nor forge authentication needs an agent any more: both
+    # read the placed key file. The Linux user agent stays for ordinary
+    # interactive ssh, where a passphrase-protected key an operator adds by
+    # hand should survive the shell that added it. macOS keeps its own.
     services.ssh-agent.enable = pkgs.stdenv.hostPlatform.isLinux;
 
     programs.gh = {

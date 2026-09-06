@@ -63,7 +63,7 @@ non-operator content.
 - Tool-owned state stays tool-owned: `~/.codex/auth.json`, `~/.codex/config.toml`
   after its one-time seed, OMP sessions and caches under `~/.omp/agent`.
   Authenticate with the tool's own login (`codex login`, `gh auth login`,
-  `clever login`, `atyrode vault login`); never copy a credential between
+  `clever login`); never copy a credential between
   machines.
 - A repository that needs an `AGENTS.md` and lacks one starts from
   `~/.codex/templates/repo-AGENTS.md`: fill only real repository facts, delete

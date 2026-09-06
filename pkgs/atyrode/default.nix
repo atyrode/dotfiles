@@ -4,7 +4,6 @@
   atyrode-tui,
   atyrodeTuiPackage ? atyrode-tui,
   bubblewrap,
-  bitwarden-cli,
   capabilities,
   catalog,
   claude-code,
@@ -18,6 +17,10 @@
   # github: ref; the CLI derives the ls-remote URL from it.
   flakeRef ? "github:atyrode/dotfiles",
   revision ? "unknown",
+  # The reviewed signer set doctor git judges a signing key against. A check
+  # overrides it with a file naming a key it minted, the one way to reach the
+  # authorized state without committing a fixture key to the fleet's own list.
+  gitAllowedSigners ? ../../modules/home/git/allowed-signers,
   gawk,
   gitMinimal,
   gnugrep,
@@ -61,7 +64,6 @@ let
 
   capabilityInventory = builtins.toFile "atyrode-capabilities.json" (builtins.toJSON capabilities);
   catalogInventory = builtins.toFile "atyrode-catalog.json" (builtins.toJSON catalog);
-  gitAllowedSigners = ../../modules/home/git/allowed-signers;
   agentsPolicy = ../../modules/home/agents/AGENTS.md;
   homebrewCaskInventory = builtins.toFile "atyrode-homebrew-casks.json" (
     builtins.toJSON homebrewCasks
@@ -262,7 +264,6 @@ stdenvNoCC.mkDerivation {
           [
             coreutils
             age
-            bitwarden-cli
             curl
             findutils
             gawk

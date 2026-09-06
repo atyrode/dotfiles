@@ -681,24 +681,38 @@ pkgs.runCommand "check-atyrode-apply"
         { echo "atyrode: babel-archive on $1 was not $2/$3" >&2; exit 1; }
     }
     babel_probe development-x86_64-linux not-applicable portable-profile
-    babel_probe fixture-nixos degraded not-generated
-    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
-      .surfaces[] | select(.id == "babel-archive")
-      | .remediation == "clan vars generate fixture-nixos (on an operator device), then atyrode apply"' >/dev/null
+    babel_probe fixture-nixos degraded archive-input-unavailable
     # Document placed but no success stamp: the archive has never run here.
     # That is configured-but-not-working, so it is told, never offered --
     # there is no yes/no in "your archive is broken", only a fix.
     mkdir -p "$XDG_CONFIG_HOME/babel"
-    printf '%s\n' '{}' > "$XDG_CONFIG_HOME/babel/storage.json"
+    printf '{"password_file":"%s"}\n' "$XDG_CONFIG_HOME/babel/repository-password" > "$XDG_CONFIG_HOME/babel/storage.json"
+    printf 'fixture-password\n' > "$XDG_CONFIG_HOME/babel/repository-password"
+    printf '{}\n' > "$XDG_CONFIG_HOME/babel/payload-keys.json"
     babel_probe fixture-nixos degraded never-succeeded
-    ATYRODE_HOST=fixture-nixos atyrode doctor provisioning --json | jq -e '
-      .surfaces[] | select(.id == "babel-archive")
-      | .remediation == "babel archive status (then: babel archive push)"' >/dev/null
     # A stamp older than the staleness window is degraded; a fresh one is fine.
     mkdir -p "$XDG_STATE_HOME/babel"
     date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
     babel_probe fixture-nixos degraded archive-stale
     date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
+    babel_probe fixture-nixos ok ""
+    # A recent success must not hide an incomplete activation or lost input.
+    rm "$XDG_CONFIG_HOME/babel/payload-keys.json"
+    babel_probe fixture-nixos degraded archive-input-unavailable
+    ln -s "$TMPDIR/missing-payload-keys" "$XDG_CONFIG_HOME/babel/payload-keys.json"
+    babel_probe fixture-nixos degraded archive-input-unavailable
+    rm "$XDG_CONFIG_HOME/babel/payload-keys.json"
+    printf '{}\n' > "$XDG_CONFIG_HOME/babel/payload-keys.json"
+    chmod 000 "$XDG_CONFIG_HOME/babel/repository-password"
+    babel_probe fixture-nixos degraded archive-input-unavailable
+    chmod 600 "$XDG_CONFIG_HOME/babel/repository-password"
+    : > "$XDG_CONFIG_HOME/babel/repository-password"
+    babel_probe fixture-nixos degraded archive-input-unavailable
+    printf 'fixture-password\n' > "$XDG_CONFIG_HOME/babel/repository-password"
+    cp "$XDG_CONFIG_HOME/babel/storage.json" "$TMPDIR/valid-babel-storage"
+    printf '{}\n' > "$XDG_CONFIG_HOME/babel/storage.json"
+    babel_probe fixture-nixos degraded archive-config-invalid
+    mv "$TMPDIR/valid-babel-storage" "$XDG_CONFIG_HOME/babel/storage.json"
     babel_probe fixture-nixos ok ""
     # Arming is an apply-owned mutation. A refused start must make the apply
     # fail, and the announced start is what shows the arm branch ran rather

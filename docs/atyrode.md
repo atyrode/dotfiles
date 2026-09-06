@@ -33,6 +33,11 @@ generation. `--repo PATH` is for development -- activating work in progress
 before pushing -- and additionally validates the checkout and reports a dirty
 tree.
 
+Read-only key inspection uses the CLI's packaged source, never an implicit
+`~/nix-dotfiles` checkout. Commands that author repository state require an
+explicit writable `--repo PATH`; normal apply does not become an authoring
+operation when a required value is missing.
+
 ### The mutation boundary
 
 Build and preview first produce an exact candidate closure. Activation
@@ -174,10 +179,10 @@ reported with the `babel archive` commands that show why (see [Agent
 tools](agent-tools.md#session-archive)). None of this can fail the activation:
 a machine that declines to provision is still a machine that activated.
 
-When an accepted ceremony stops anyway, the reason is the ceremony's own and
-the follow-up says so (`clear what it reported above, then: atyrode provision
-machine-key`). Naming the same command as a retry would send an operator to
-collect the identical failure.
+When an accepted ceremony stops, the follow-up names the failure and remedy.
+Machine-key generation
+requires `atyrode provision machine-key --repo PATH`; apply does not guess a
+writable checkout and repeat the same failed ceremony.
 
 ### What is waiting on main
 
@@ -207,6 +212,8 @@ deploy -- a portable profile has no system closure -- and say which command
 converges it instead; the run stops before touching the machine when its vars
 are not generated (the remedy names `clan vars generate <host>`) or when it
 does not answer a strict-host-key check.
+The initiating operator explicitly selects the checkout with `--repo PATH`;
+the plan reports its revision and whether it is dirty.
 
 Deploying reaches outside this repository for nothing: the machines are this
 flake's, the operator identity is the device's own age key rather than a
@@ -248,16 +255,17 @@ Two age keys pass through the CLI and neither is ever printed, placed in argv,
 or written to the run log. The **machine key** is the one clan vars are
 decrypted with at activation, this machine's own and never the operator's;
 `clan vars generate <host>` mints it on an operator device and `apply` places
-it as its first step on a clan machine, before the switch, so the activation
-that follows decrypts the machine's vars. `provision machine-key` is the same
-generation run from the machine itself when it is an operator device, and the
-only `provision` verb. The **operator identity** is the key that edits
+it before the switch, so the activation
+that follows decrypts the machine's vars. `provision machine-key --repo PATH`
+is the same generation run from the machine itself when it is an operator
+device, and the only `provision` verb. The **operator identity** is the key that edits
 secrets, one per device, minted where it is used (inside the Secure Enclave on
 a Mac) by `operator init`, which never replaces an existing
 `~/.config/sops/age/keys.txt`; both `operator` verbs refuse on a portable
 profile with exit 65, and the platform branch reads the registry's system
-rather than `uname`, so the Mac's ceremony is exercised from a Linux sandbox.
-`apply` offers whichever of the two a machine lacks, and `doctor provisioning`
+rather than `uname`, so its branch is exercised from a Linux sandbox.
+`apply` offers operator identity initialization when needed, but leaves
+machine-key authoring to an explicit checkout. `doctor provisioning`
 carries them as the `machine-key` and `operator-identity` surfaces
 (`not-applicable` on a portable profile; `incomplete` with no key; `degraded`
 when the key exists but is not placed, or not registered, with the exact

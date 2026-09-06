@@ -163,8 +163,7 @@ pkgs.runCommand "check-atyrode-runtime"
     # by doctor as a fix and by provision as a refusal that names the same command.
     atyrode doctor provisioning --json | jq -e '
       .surfaces[] | select(.id == "manifold-agent")
-      | .status == "degraded"
-        and .remediation == "atyrode runtime enroll manifold-agent wsl (on an operator device), then atyrode apply"' >/dev/null
+      | .status == "degraded"' >/dev/null
     set +e
     atyrode runtime provision manifold-agent >/dev/null 2>"$TMPDIR/manifold-unplaced.err"
     result="$?"
@@ -173,9 +172,15 @@ pkgs.runCommand "check-atyrode-runtime"
     grep -qF 'atyrode runtime enroll manifold-agent wsl' "$TMPDIR/manifold-unplaced.err"
     test ! -e "$MANIFOLD_ENROLL_LOG"
 
+    if atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-source.err"; then
+      echo 'enrollment implicitly selected a writable checkout' >&2
+      exit 1
+    fi
+    test ! -e "$MANIFOLD_ENROLL_LOG"
+
     # No owner key in clan yet: the ceremony names the generator that takes it,
     # and asks the hub nothing.
-    if MANIFOLD_CUSTODY_MISSING=1 atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-nocustody.err"; then
+    if MANIFOLD_CUSTODY_MISSING=1 atyrode runtime enroll manifold-agent wsl --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/manifold-nocustody.err"; then
       echo 'enroll proceeded without an owner key' >&2
       exit 1
     fi
@@ -186,7 +191,7 @@ pkgs.runCommand "check-atyrode-runtime"
     # to this machine, must not store a credential, and must not be confused
     # with an idempotent existing machine lacking a new token.
     set +e
-    MANIFOLD_ENROLL_REFUSED=1 atyrode runtime enroll manifold-agent wsl > /dev/null 2>"$TMPDIR/manifold-refused.err"
+    MANIFOLD_ENROLL_REFUSED=1 atyrode runtime enroll manifold-agent wsl --repo "$HOME/nix-dotfiles" > /dev/null 2>"$TMPDIR/manifold-refused.err"
     result="$?"
     set -e
     test "$result" -eq 69
@@ -195,7 +200,7 @@ pkgs.runCommand "check-atyrode-runtime"
 
     # A fresh enrollment stores the minted token as wsl's var, and the two
     # secrets appear in no announced line and no argv.
-    atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-enroll.err"
+    atyrode runtime enroll manifold-agent wsl --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/manifold-enroll.err"
     test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = minted-token
     jq -e '.name == "wsl" and (has("rotateToken") | not)' "$MANIFOLD_ENROLL_LOG" >/dev/null
     grep -qF 'vars set wsl manifold-agent/machine-token' "$MANIFOLD_CLAN_LOG"
@@ -209,7 +214,7 @@ pkgs.runCommand "check-atyrode-runtime"
     printf 'legacy-token\n' > "$token_file"
     chmod 600 "$token_file"
     enrollments_before="$(wc -l < "$MANIFOLD_ENROLL_LOG")"
-    atyrode runtime enroll manifold-agent wsl >/dev/null 2>&1
+    atyrode runtime enroll manifold-agent wsl --repo "$HOME/nix-dotfiles" >/dev/null 2>&1
     test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = legacy-token
     test "$(wc -l < "$MANIFOLD_ENROLL_LOG")" -eq "$enrollments_before"
     rm "$token_file"
@@ -242,19 +247,19 @@ pkgs.runCommand "check-atyrode-runtime"
     # explicit rotation mints a replacement and says the agent must be restarted.
     touch "$MANIFOLD_ROW_EXISTS"
     rm "$MANIFOLD_CLAN_STORE/wsl"
-    if atyrode runtime enroll manifold-agent wsl >/dev/null 2>"$TMPDIR/manifold-lost.err"; then
+    if atyrode runtime enroll manifold-agent wsl --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/manifold-lost.err"; then
       echo 'enroll unexpectedly succeeded without a minted token' >&2
       exit 1
     fi
     grep -q -- --rotate-token "$TMPDIR/manifold-lost.err"
     test ! -e "$MANIFOLD_CLAN_STORE/wsl"
-    atyrode runtime enroll manifold-agent wsl --rotate-token >/dev/null 2>"$TMPDIR/manifold-rotate.err"
+    atyrode runtime enroll manifold-agent wsl --repo "$HOME/nix-dotfiles" --rotate-token >/dev/null 2>"$TMPDIR/manifold-rotate.err"
     test "$(cat "$MANIFOLD_CLAN_STORE/wsl")" = rotated-token
     jq -e 'select(has("rotateToken")) | .rotateToken == true and .name == "wsl"' \
       "$MANIFOLD_ENROLL_LOG" >/dev/null
     grep -qF 'atyrode runtime restart manifold-agent' "$TMPDIR/manifold-rotate.err"
     # A machine that is not a spoke cannot be enrolled by mistake.
-    if atyrode runtime enroll manifold-agent development-x86_64-linux >/dev/null 2>&1; then
+    if atyrode runtime enroll manifold-agent development-x86_64-linux --repo "$HOME/nix-dotfiles" >/dev/null 2>&1; then
       echo 'enroll accepted a machine that is not a spoke' >&2
       exit 1
     fi

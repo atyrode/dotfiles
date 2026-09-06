@@ -1367,7 +1367,7 @@ probe_manifold_agent() {
     available)
       provisioning_check_add manifold-agent degraded not-enrolled \
         "the agent is installed but no machine token is placed at $(jq -r '.tokenPath' <<<"$status")" \
-        "atyrode runtime enroll manifold-agent $host (on an operator device), then atyrode apply"
+        "atyrode runtime enroll manifold-agent $host --repo PATH (on an operator device), then atyrode apply"
       ;;
     enrolled)
       # Enrollment already records opt-in. Starting its inactive service needs

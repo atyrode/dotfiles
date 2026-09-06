@@ -291,7 +291,7 @@ manifold_provision() {
   local host
   host="$(manifold_node_name)"
   manifold_enrolled ||
-    die "$EX_NOINPUT" "no machine token is placed at $(manifold_token_path); on an operator device run: atyrode runtime enroll manifold-agent $host, then atyrode apply here"
+    die "$EX_NOINPUT" "no machine token is placed at $(manifold_token_path); on an operator device run: atyrode runtime enroll manifold-agent $host --repo PATH, then atyrode apply here"
   manifold_start || return $?
   manifold_fail_if_rejected || return $?
   printf 'atyrode: %s is enrolled and its agent is running\n' "$host" >&2
@@ -304,27 +304,35 @@ manifold_provision() {
 # this device's operator key, and travels only through a 0600 curl config in a
 # secure temp dir -- never argv, never a machine. A token this device already
 # holds as a plain file, from before the token was a clan var, is adopted
-# rather than re-minted, so the cutover rotates nothing.
-manifold_enroll() { # host [--rotate-token]
-  local host="" rotate=0 arg
-  for arg in "$@"; do
-    case "$arg" in
+# rather than re-minted, so the cutover rotates nothing. Clan commits the var
+# into the checkout named by --repo; no checkout is guessed.
+manifold_enroll() { # host --repo PATH [--rotate-token]
+  local host="" repo="" rotate=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
       --rotate-token) rotate=1 ;;
-      -*) die "$EX_USAGE" "unknown manifold-agent enroll option: $arg" ;;
+      --repo)
+        [[ $# -ge 2 ]] || die "$EX_USAGE" "--repo requires a path"
+        repo="$2"
+        shift
+        ;;
+      -*) die "$EX_USAGE" "unknown manifold-agent enroll option: $1" ;;
       *)
         [[ -z "$host" ]] || die "$EX_USAGE" "manifold-agent enroll takes one host"
-        host="$arg"
+        host="$1"
         ;;
     esac
+    shift
   done
-  [[ -n "$host" ]] || die "$EX_USAGE" "manifold-agent enroll needs the host to enroll: atyrode runtime enroll manifold-agent <host>"
+  [[ -n "$host" ]] || die "$EX_USAGE" "manifold-agent enroll needs the host to enroll: atyrode runtime enroll manifold-agent <host> --repo PATH"
   host="$(resolve_host "$host")"
   jq -e '.capabilities | index("manifold-node") != null' <<<"$(host_json "$host")" >/dev/null ||
     die "$EX_USAGE" "$host does not declare the manifold-node capability in fleet/hosts.nix, so it is not a spoke"
   local clan checkout master_url
   local -a clan_write
   clan="$(clan_program)"
-  checkout="$(fleet_repository "")"
+  checkout="$(fleet_repository "$repo")"
+  say "source: $(fleet_repository_describe "$checkout" "$(fleet_repository_state "$checkout")")"
   mapfile -t clan_write < <(clan_write_command "$checkout")
   master_url="$(manifold_inventory_field masterUrl)"
 

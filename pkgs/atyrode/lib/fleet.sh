@@ -26,17 +26,42 @@
 fleet_ssh_visible() { tool_exec visible ATYRODE_SSH ssh "$@"; }
 fleet_nix() { tool_exec quiet ATYRODE_NIX nix "$@"; }
 fleet_nix_visible() { tool_exec visible ATYRODE_NIX nix "$@"; }
+fleet_git() { tool_exec quiet ATYRODE_GIT git "$@"; }
 
-# The repository clan builds from. Conventionally the operator's checkout,
-# because a deployment must be reproducible from a revision someone can name
-# and the published flake is that revision only by accident.
+# The one checkout an authoring operation reads from or writes into: a local
+# apply builds it, a fleet deployment builds from it, and clan commits minted
+# vars into it. It is always named by the operator, because none of these may
+# guess. A stale, absent or differently checked-out ~/nix-dotfiles used to be
+# tried first and changed what "the repository" meant from one device to the
+# next; now the published flake is the only implicit source, and it is
+# immutable, so anything that writes has to be told where.
 fleet_repository() { # repo
   local repo="$1"
-  [[ -n "$repo" ]] || repo="$HOME/nix-dotfiles"
-  [[ "$repo" == /* ]] || die "$EX_USAGE" "the repository path must be absolute: $repo"
-  [[ -e "$repo/flake.nix" ]] ||
-    die "$EX_NOINPUT" "not a checkout of this repository: $repo (name one with --repo)"
-  printf '%s' "$repo"
+  [[ -n "$repo" ]] ||
+    die "$EX_USAGE" "this needs a writable checkout of this repository and does not assume one; name it with --repo PATH"
+  [[ "$repo" == /* ]] || die "$EX_USAGE" "repository path must be absolute: $repo"
+  [[ -f "$repo/flake.nix" ]] || die "$EX_NOINPUT" "not a flake checkout: $repo"
+  fleet_git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+    die "$EX_DATAERR" "repository is not a Git checkout: $repo"
+  printf '%s\n' "$repo"
+}
+
+# What that checkout is at, so a plan or a ceremony names the revision it
+# acted on and whether the tree matched it. Same shape as apply's plan.
+fleet_repository_state() { # repo
+  local revision resolved dirty=false
+  revision="$(fleet_git -C "$1" rev-parse --short=12 HEAD)"
+  resolved="$(fleet_git -C "$1" rev-parse HEAD)"
+  fleet_git -C "$1" diff --quiet --ignore-submodules HEAD -- || dirty=true
+  jq -nc --arg revision "$revision" --arg resolvedRevision "$resolved" --argjson dirty "$dirty" \
+    '{revision:$revision,resolvedRevision:$resolvedRevision,dirty:$dirty}'
+}
+
+# One line for the operator: the checkout, its revision, and whether the
+# tree carries changes the revision does not name.
+fleet_repository_describe() { # repo state
+  jq -r --arg repo "$1" \
+    '"\($repo) at \(.revision)" + (if .dirty then " (working tree has uncommitted changes)" else "" end)' <<<"$2"
 }
 
 # Which machines this command can reach. A portable Home Manager profile has no
@@ -111,13 +136,18 @@ cmd_fleet() {
   [[ -n "$requested" ]] ||
     die "$EX_USAGE" "fleet $action names the machine to deploy; this machine converges with atyrode apply"
 
-  local host clan target user
+  local host clan target user source_state
   host="$(fleet_target_host "$requested")"
   [[ "$host" != "$(resolve_host "")" ]] ||
     die "$EX_USAGE" "$host is this machine; converge it with atyrode apply"
   user="$(jq -r '.username' <<<"$(host_json "$host")")"
   repo="$(fleet_repository "$repo")"
+  source_state="$(fleet_repository_state "$repo")"
   clan="$(clan_program)"
+  # Named before anything is evaluated: what goes to the machine is whatever
+  # this checkout holds, and an operator with two checkouts open should read
+  # which one, at which revision, before a plan or a build reads it.
+  say "source: $(fleet_repository_describe "$repo" "$source_state")"
 
   # Where clan will reach the machine is the machine's own declaration, so a
   # deployment cannot be aimed somewhere the reviewed configuration does not
@@ -171,9 +201,10 @@ cmd_fleet() {
     step_ok
     if [[ "$json" == 1 ]]; then
       jq -nc --arg host "$host" --arg repository "$repo" --arg targetHost "$target" \
-        --arg drvPath "$drv_path" \
-        '{ok:true,action:"plan",host:$host,repository:$repository,targetHost:$targetHost,
-          drvPath:$drvPath,hostKeyCheck:"strict",buildHost:"localhost",
+        --arg drvPath "$drv_path" --argjson source "$source_state" \
+        '{ok:true,action:"plan",host:$host,repository:$repository,source:"local",
+          revision:$source.revision,resolvedRevision:$source.resolvedRevision,dirty:$source.dirty,
+          targetHost:$targetHost,drvPath:$drvPath,hostKeyCheck:"strict",buildHost:"localhost",
           mutationBoundary:"read-only until fleet apply"}'
     else
       printf '\nNo changes were made. Run fleet apply to deploy this.\n' >&2
@@ -270,9 +301,10 @@ cmd_fleet() {
   step_ok
 
   if [[ "$json" == 1 ]]; then
-    jq -nc --arg host "$host" --arg targetHost "$target" --arg closure "$closure" \
-      --argjson disruption "$report" \
-      '{ok:true,action:"apply",host:$host,targetHost:$targetHost,closure:$closure,
-        disruption:$disruption,verified:true}'
+    jq -nc --arg host "$host" --arg repository "$repo" --arg targetHost "$target" --arg closure "$closure" \
+      --argjson source "$source_state" --argjson disruption "$report" \
+      '{ok:true,action:"apply",host:$host,repository:$repository,source:"local",
+        revision:$source.revision,resolvedRevision:$source.resolvedRevision,dirty:$source.dirty,
+        targetHost:$targetHost,closure:$closure,disruption:$disruption,verified:true}'
   fi
 }

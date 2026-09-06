@@ -153,10 +153,11 @@ decrypt it; the actual decryption must succeed before activation begins.
 
 1. On any operator device, in a checkout: `clan vars generate <host>`. It
    mints the machine key if absent and every var its generators declare,
-   encrypts them, and commits. `atyrode provision machine-key` is the same
-   thing run from the machine itself when it is an operator device, which is
-   what `atyrode apply` offers; `atyrode doctor provisioning` reports the
-   `machine-key` surface: not applicable on a portable profile,
+   encrypts them, and commits. `atyrode provision machine-key --repo PATH`
+   runs that operation from an explicitly selected checkout when this machine
+   is an operator device. Apply does not guess a writable repository;
+   `atyrode doctor provisioning` reports the `machine-key` surface:
+   not applicable on a portable profile,
    not yet in the repository, in the repository but not placed, or placed.
    A visible key is detected without reading its contents or requiring a
    cached sudo authorization. If its directory cannot be traversed and sudo
@@ -263,7 +264,7 @@ hub, so it exists only as an input an operator device reads, and no machine
 of the fleet receives it. `manifold-agent` is per machine and holds the
 token the hub minted for that machine. A generator runs without a network,
 so it cannot mint the token itself; `atyrode runtime enroll manifold-agent
-<host>` on an operator device asks the hub with the custody key and stores
+<host> --repo PATH` on an operator device asks the hub with the custody key and stores
 the answer with `clan vars set`, and the prompt exists for an operator who
 has a token in hand and no CLI. sops-nix places it at
 `/run/secrets/vars/manifold-agent/machine-token`, mode 0600 and owned by the

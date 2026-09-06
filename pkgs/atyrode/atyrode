@@ -97,17 +97,17 @@ Usage:
   atyrode runtime list [--json]
   atyrode runtime status [local-qwen|manifold-agent] [--json]
   atyrode runtime provision local-qwen [--data-dir PATH] [--yes]
-  atyrode runtime enroll manifold-agent HOST [--rotate-token]
+  atyrode runtime enroll manifold-agent HOST --repo PATH [--rotate-token]
   atyrode runtime provision manifold-agent
   atyrode runtime start|stop|run [local-qwen]
   atyrode runtime start|stop|restart manifold-agent
   atyrode runtime autostart [local-qwen] on|off
   atyrode runtime boot
   atyrode runtime shortcut [local-qwen]
-  atyrode fleet plan|apply HOST [--repo PATH] [--json] [--yes] [--scope SCOPE:SERVICE]...
+  atyrode fleet plan|apply HOST --repo PATH [--json] [--yes] [--scope SCOPE:SERVICE]...
   atyrode auth broker status [--json]
   atyrode auth broker add-api-key PROVIDER
-  atyrode provision machine-key
+  atyrode provision machine-key --repo PATH
   atyrode context [show] [--json]
   atyrode context render
   atyrode operator show
@@ -173,7 +173,12 @@ the machine's secrets through clan, and only then activates -- through the
 machine's own `atyrode apply --candidate`, bound to the fingerprint just shown
 -- and verifies the machine reports itself converged afterwards. Where it is
 reached is the machine's own clan.core.networking.targetHost, so a deployment
-cannot be aimed somewhere the reviewed configuration does not name.
+cannot be aimed somewhere the reviewed configuration does not name. What is
+deployed is the checkout named by --repo, always explicit: fleet, provision
+machine-key and runtime enroll each commit into or build from a checkout the
+operator selected, report its revision and whether its tree is dirty, and
+never substitute a conventional ~/nix-dotfiles for it. Plain apply resolves the
+selected published revision; doctor inspects the source packaged with its CLI.
 doctor git is a read-only audit of SSH authentication, SSH signing, forge
 remotes, Git credential helpers, and GitHub CLI credential storage. It reports
 classifications only and never prints keys, tokens, helper arguments, or remotes.

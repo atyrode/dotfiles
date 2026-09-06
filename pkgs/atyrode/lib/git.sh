@@ -193,13 +193,8 @@ git_github_ssh_relevant() {
   return 1
 }
 
-# GitHub's key list for the account gh holds on github.com, one `type blob`
-# per line with the comment dropped, so a key compares by what it is rather
-# than by what somebody named it. Announced and bounded: this is the one
-# network call doctor git makes, and only when asked to. A non-zero exit or a
-# body that is not a list of keys prints nothing and fails, and the caller
-# treats that as unknown -- a denied scope or a dropped connection is not an
-# absent key.
+# Comments are not part of a key's identity. Failed or malformed responses
+# must stay unknown: denied scopes and dropped connections do not prove absence.
 git_github_registered_keys() { # gh endpoint
   local gh="$1" endpoint="$2" body
   local -a argv=(timeout 20s "$gh" api --hostname github.com --paginate "$endpoint")

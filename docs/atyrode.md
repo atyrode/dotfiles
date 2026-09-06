@@ -313,3 +313,6 @@ not executed. `failed` checks return 69; `warning` rows remain visible without
 failing the report. JSON contains classifications, paths and fingerprints,
 never key material, tokens, helper arguments or remote URLs. See
 [secrets.md](secrets.md#git-identity) for the diagnostic boundaries.
+
+With `--online`, the token-storage check may also ask `gh auth status` about
+github.com; offline it only inspects local files and environment metadata.

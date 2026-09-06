@@ -391,9 +391,10 @@ doctor_git() {
   [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GH_ENTERPRISE_TOKEN:-}${GITHUB_ENTERPRISE_TOKEN:-}" ]] ||
     env_token=true
 
-  if [[ "$gh_available" == true && "$gh_plaintext" == false &&
+  if [[ "$online" == 1 && "$gh_available" == true && "$gh_plaintext" == false &&
     "$gh_hosts_present" == true && "$gh_hosts_readable" == true ]]; then
-    if auth_json="$(timeout 10s gh auth status --json hosts 2>/dev/null)" &&
+    show_command timeout 10s gh auth status --hostname github.com --json hosts
+    if auth_json="$(timeout 10s gh auth status --hostname github.com --json hosts 2>/dev/null)" &&
       jq -e '.hosts | type == "object"' >/dev/null 2>&1 <<<"$auth_json"; then
       auth_classified=true
       account_count="$(jq '[.hosts[][]?] | length' <<<"$auth_json")"
@@ -441,17 +442,17 @@ doctor_git() {
     code=gh-environment-token
     summary="GitHub CLI is using a process token whose external storage cannot be verified"
     remediation="inject it only from an approved secret manager and never persist it in shell or gh configuration"
-  elif [[ "$auth_classified" == true && "$account_count" -eq "$keyring_count" &&
+  elif [[ "$auth_classified" == true && "$account_count" -gt 0 && "$account_count" -eq "$keyring_count" &&
     "$unknown_source_count" -eq 0 ]]; then
     status=ok
     code=""
-    summary="GitHub CLI durable authentication is stored in the platform keyring"
+    summary="GitHub.com durable authentication is stored in the platform keyring"
     remediation=""
   else
-    status=failed
+    status=warning
     code=gh-storage-unverified
-    summary="GitHub CLI credential storage could not be verified as non-plaintext"
-    remediation="repair the platform keyring and require gh auth status to report tokenSource=keyring"
+    summary="GitHub CLI credential storage has no visible plaintext token, but its token source is unverified"
+    remediation="atyrode doctor git --online checks github.com through gh auth status; offline inspection does not query hosts"
   fi
   git_check_add gh-auth-storage gh true "$status" "$code" "$summary" "$remediation" \
     "$expected" "$actual"

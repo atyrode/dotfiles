@@ -342,13 +342,17 @@ pkgs.runCommand "check-atyrode-credentials"
       mkdir -p "$TMPDIR/git-doctor-bin"
     cat > "$TMPDIR/git-doctor-bin/gh" <<'EOF'
     #!${pkgs.runtimeShell}
+    printf 'called\n' >> "$TMPDIR/gh-status-called"
     printf '%s\n' '{"hosts":{"github.com":[{"tokenSource":"keyring"}]}}'
     EOF
       chmod +x "$TMPDIR/git-doctor-bin/gh"
       export PATH="$TMPDIR/git-doctor-bin:$PATH"
       printf '%s\n' 'github.com:' '    users:' '        atyrode:' \
         > "$GH_CONFIG_DIR/hosts.yml"
-      keyring_result="$(doctor_git --json)"
+      doctor_git --json | jq -e '.checks[] | select(.id == "gh-auth-storage") |
+        .status == "warning" and .code == "gh-storage-unverified"' >/dev/null
+      test ! -e "$TMPDIR/gh-status-called"
+      keyring_result="$(doctor_git --json --online)"
       jq -e '
         .ok
         and (.checks[] | select(.id == "gh-auth-storage") | .status) == "ok"

@@ -70,9 +70,6 @@ home directory at activation time. They reject a foreign-owned home or a home
 that disagrees with the account database. Fixed machine profiles retain their
 declared repository identity. Bootstrap validates explicit target names and
 never infers between portable, fixed, desktop, or Mac configurations.
-Production NixOS servers instead import the
-[portable Home Manager profile](portable-profiles.md) from their infrastructure
-flake.
 
 `get.sh` is deliberately thin: it verifies Git is present, clones the
 repository to `~/nix-dotfiles` (`DOTFILES_DIR` overrides it; an existing

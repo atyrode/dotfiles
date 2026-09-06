@@ -26,14 +26,11 @@ let
     modulesForHost
     publicBootstrapProfile
     selectHomeManagerProfiles
-    serverCapabilities
-    serverPolicy
     systems
     ;
   inherit (packages)
     agentToolsOverlay
     allowedUnfreePackages
-    evaluationPkgsFor
     flakeInputPackageNames
     inventoryRevision
     mkPackageOverlay
@@ -52,68 +49,21 @@ let
     ../modules/shared/manifold-agent.nix
   ];
 
+  # Home Manager inside a NixOS machine of this fleet: the package overlay
+  # reads this flake's own registry, so no machine restates it.
   dotfilesHomeNixosModule =
-    { config, lib, ... }:
+    { lib, ... }:
     {
       imports = [ home-manager.nixosModules.home-manager ];
-
-      options.atyrode.dotfiles.hostRegistry = lib.mkOption {
-        type = lib.types.attrsOf lib.types.anything;
-        default = { };
-        description = "Non-secret host registry supplied by the consuming NixOS flake.";
-      };
-
       config = {
         home-manager.useGlobalPkgs = lib.mkDefault true;
         home-manager.useUserPackages = lib.mkDefault true;
-        nixpkgs.overlays = [
-          (mkPackageOverlay { hostRegistry = config.atyrode.dotfiles.hostRegistry; })
-        ];
+        nixpkgs.overlays = [ (mkPackageOverlay { hostRegistry = hosts; }) ];
         nixpkgs.config.allowUnfreePredicate = lib.mkDefault (
           package: builtins.elem (lib.getName package) allowedUnfreePackages
         );
       };
     };
-
-  mkServerHomeConfig =
-    {
-      homeDirectory ? "/home/fixture",
-      system,
-      username ? "fixture",
-    }:
-    home-manager.lib.homeManagerConfiguration {
-      pkgs = evaluationPkgsFor system;
-      modules =
-        selectHomeManagerProfiles {
-          name = "portable server profile";
-          inherit system;
-          capabilities = serverCapabilities;
-        }
-        ++ [
-          {
-            home = {
-              inherit homeDirectory username;
-            };
-          }
-        ];
-    };
-
-  serverHomeConfigs = lib.genAttrs serverPolicy.supportedSystems (
-    system: mkServerHomeConfig { inherit system; }
-  );
-
-  serverProfileManifests = lib.mapAttrs (
-    system: serverHomeConfig:
-    import ../checks/fleet/server-profile.nix {
-      inherit
-        lib
-        serverHomeConfig
-        serverPolicy
-        system
-        ;
-      pkgs = evaluationPkgsFor system;
-    }
-  ) serverHomeConfigs;
 
   mkHomeConfig =
     name: host:
@@ -226,7 +176,6 @@ let
       inherit host;
       hostId = name;
       homeModules = modulesForHost name host;
-      hostRegistry = hosts;
     };
     imports = [
       nixos-wsl.nixosModules.default
@@ -267,10 +216,6 @@ let
         ../modules/nixos/myparcelle-dev.nix
       ]
       ++ clanMachineModules;
-      # The registry the packages overlay reads is this flake's own, so the
-      # machine never restates it: the option exists for a consuming flake
-      # that has to supply what it does not contain.
-      atyrode.dotfiles.hostRegistry = hosts;
     };
 
   # Every registered host is a clan machine, one class each; the Darwin
@@ -369,8 +314,5 @@ in
     fleetClosuresFor
     inventoryBySystem
     mkPortableHomeConfiguration
-    mkServerHomeConfig
-    serverHomeConfigs
-    serverProfileManifests
     ;
 }

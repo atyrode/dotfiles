@@ -45,30 +45,6 @@ provisioning_policy_field() { # id field
   printf '%s\n' "$value"
 }
 
-# A prerequisite is a session or a login some surface cannot start without.
-# They are declared once in the policy and shared, so satisfying one for a
-# surface settles it for the next that wants it. Order matters and is the
-# declared order. None is declared today: every surface travels as a clan var
-# placed by activation, and the probe and runner below say so if a policy
-# ever names one again without wiring it.
-prerequisite_field() { # id field
-  jq -r --arg id "$1" --arg field "$2" \
-    '.prerequisites[$id][$field] // ""' "$provisioning_policy"
-}
-
-prerequisite_met() { # id
-  die "$EX_SOFTWARE" "no probe is wired for prerequisite $1"
-}
-
-# The unmet prerequisites of a surface, in declared order, one id per line.
-prerequisites_unmet() { # id
-  local requirement
-  while IFS= read -r requirement; do
-    [[ -n "$requirement" ]] || continue
-    prerequisite_met "$requirement" || printf '%s\n' "$requirement"
-  done < <(jq -r --arg id "$1" '.surfaces[$id].prerequisites // [] | .[]' "$provisioning_policy")
-}
-
 # One line per declined surface, so the file stays something an operator can
 # read and edit. The timestamp is for them, never parsed back.
 provisioning_ledger() {
@@ -110,21 +86,8 @@ provisioning_clear_decline() { # id
 #   incomplete     applicable and unconfigured; apply offers the ceremony
 #   declined       unconfigured because the operator said no, and it is recorded
 #   not-applicable this machine cannot have it at all
-# The unmet prerequisites travel with the record rather than only as prose,
-# because the two readers want different things from them: doctor can only
-# state what is in the way, and apply can offer to clear it.
-provisioning_check_add() { # id status code summary remediation [unmet-id...]
+provisioning_check_add() { # id status code summary remediation
   local id="$1" status="$2" code="$3" summary="$4" remediation="$5"
-  shift 5
-  local unmet='[]' requirement
-
-  for requirement in "$@"; do
-    unmet="$(jq -c --arg id "$requirement" \
-      --arg label "$(prerequisite_field "$requirement" label)" \
-      --arg command "$(prerequisite_field "$requirement" command)" \
-      --arg without "$(prerequisite_field "$requirement" without)" \
-      '. + [{id: $id, label: $label, command: $command, without: $without}]' <<<"$unmet")"
-  done
   provisioning_checks="$(jq -c \
     --arg id "$id" \
     --arg label "$(provisioning_policy_field "$id" label)" \
@@ -135,7 +98,6 @@ provisioning_check_add() { # id status code summary remediation [unmet-id...]
     --arg code "$code" \
     --arg summary "$summary" \
     --arg remediation "$remediation" \
-    --argjson unmet "$unmet" \
     '. + [{
       id: $id,
       label: $label,
@@ -145,8 +107,7 @@ provisioning_check_add() { # id status code summary remediation [unmet-id...]
       status: $status,
       code: (if $code == "" then null else $code end),
       summary: $summary,
-      remediation: (if $remediation == "" then null else $remediation end),
-      unmet: $unmet
+      remediation: (if $remediation == "" then null else $remediation end)
     }]' <<<"$provisioning_checks")"
 }
 
@@ -154,26 +115,13 @@ provisioning_check_add() { # id status code summary remediation [unmet-id...]
 # already answered, and repeating the question as a finding is how a diagnostic
 # becomes noise. It is still listed, because "what is missing here" has to
 # include the things missing on purpose.
-#
-# An unconfigured one resolves its prerequisites here, once, so every renderer
-# agrees about what is actually in the way. The sentence appended to the
-# summary is for the readers that can only tell: doctor, and any apply without
-# a terminal to ask at.
 provisioning_unconfigured() { # id summary
-  local -a unmet=()
-  local requirement suffix=""
-
   if provisioning_declined "$1"; then
     provisioning_check_add "$1" declined declined-by-operator \
       "$2" "reconsider by running the command; that clears the decline"
     return 0
   fi
-  while IFS= read -r requirement; do
-    [[ -n "$requirement" ]] || continue
-    unmet+=("$requirement")
-    suffix="$suffix; it needs $(prerequisite_field "$requirement" label) first: $(prerequisite_field "$requirement" command)"
-  done < <(prerequisites_unmet "$1")
-  provisioning_check_add "$1" incomplete not-configured "$2$suffix" "" "${unmet[@]+"${unmet[@]}"}"
+  provisioning_check_add "$1" incomplete not-configured "$2" ""
 }
 
 # The doctor probe for the machine's own age key, the one clan vars are
@@ -281,10 +229,6 @@ clever_logged_out() {
   ! "$program" profile >/dev/null 2>&1
 }
 
-prerequisite_run() { # id
-  die "$EX_SOFTWARE" "no runner is wired for prerequisite $1"
-}
-
 # What apply does with each surface, and why the three answers differ:
 #
 #   incomplete  ask, because the machine is missing something the operator can
@@ -367,7 +311,6 @@ review_degraded_surface() { # json index
 # facts are printed without a question, because there is nobody to answer it.
 review_incomplete_surface() { # index host
   local id label surface_command implies declinable summary
-  local unmet_count index requirement requirement_command requirement_label without
 
   id="$(jq -r ".[$1].id" <<<"$provisioning_checks")"
   label="$(jq -r ".[$1].label" <<<"$provisioning_checks")"
@@ -375,7 +318,6 @@ review_incomplete_surface() { # index host
   implies="$(jq -r ".[$1].implies" <<<"$provisioning_checks")"
   declinable="$(jq -r ".[$1].declinable" <<<"$provisioning_checks")"
   summary="$(jq -r ".[$1].summary" <<<"$provisioning_checks")"
-  unmet_count="$(jq -r ".[$1].unmet | length" <<<"$provisioning_checks")"
 
   printf '%s is not configured: %s\n' "$label" "$summary" >&2
   printf '  %s\n' "$implies" >&2
@@ -383,37 +325,6 @@ review_incomplete_surface() { # index host
     printf '  configure with: %s\n' "$surface_command" >&2
     return 0
   fi
-  # A prerequisite is something to offer, not homework to set. Telling an
-  # operator at a terminal to go and type a command this CLI owns wastes the
-  # one moment they are here to answer, and the ceremony would only fail on it
-  # again -- one step further in, having already spent a password.
-  #
-  # The whole chain is walked here rather than discovered one failure at a
-  # time, and each link is asked for separately: declining one makes every
-  # question after it moot, and a decline is worth more when the operator was
-  # told what it costs. Shared links are settled once, so a second surface
-  # wanting the same one stops asking.
-  index=0
-  while ((index < unmet_count)); do
-    requirement="$(jq -r ".[$1].unmet[$index].id" <<<"$provisioning_checks")"
-    requirement_label="$(jq -r ".[$1].unmet[$index].label" <<<"$provisioning_checks")"
-    requirement_command="$(jq -r ".[$1].unmet[$index].command" <<<"$provisioning_checks")"
-    without="$(jq -r ".[$1].unmet[$index].without" <<<"$provisioning_checks")"
-    index=$((index + 1))
-    # Re-probed rather than trusted: an earlier link in this run, or in another
-    # surface's chain, may already have settled it.
-    prerequisite_met "$requirement" && continue
-    printf '  %s needs %s, and without it %s\n' "$label" "$requirement_label" "$without" >&2
-    if ! confirm "run $requirement_command now?"; then
-      printf '  skipped; %s stays unconfigured until %s runs.\n' "$label" "$requirement_command" >&2
-      return 0
-    fi
-    if ! prerequisite_run "$requirement"; then
-      printf '  that did not complete; %s stays unconfigured.\n' "$label" >&2
-      printf '  clear what it reported above, then: %s\n' "$surface_command" >&2
-      return "$EX_UNAVAILABLE"
-    fi
-  done
   # The prompt names the machine, not just the command: these ceremonies write
   # a per-machine identity, and an operator with several hosts open should
   # never have to infer which one is asking.

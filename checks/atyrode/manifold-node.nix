@@ -7,7 +7,6 @@
   nixosConfigs,
   darwinConfigs,
   pkgs,
-  serverConfig,
   system,
 }:
 
@@ -15,21 +14,17 @@ let
   inventory = builtins.fromJSON (builtins.readFile ../../fleet/manifold.json);
   supported = builtins.elem system inventory.supportedSystems;
   spokesHere = lib.filter (name: hosts.${name}.system == system) inventory.spokes;
-  homeConfigs =
-    lib.optionalAttrs (serverConfig != null) {
-      "the server profile" = serverConfig;
-    }
-    // lib.listToAttrs (
-      map (
-        name:
-        lib.nameValuePair name (
-          if hosts.${name}.platform == "darwin" then
-            darwinConfigs.${name}.config.home-manager.users.${hosts.${name}.username}
-          else
-            nixosConfigs.${name}.config.home-manager.users.${hosts.${name}.username}
-        )
-      ) spokesHere
-    );
+  homeConfigs = lib.listToAttrs (
+    map (
+      name:
+      lib.nameValuePair name (
+        if hosts.${name}.platform == "darwin" then
+          darwinConfigs.${name}.config.home-manager.users.${hosts.${name}.username}
+        else
+          nixosConfigs.${name}.config.home-manager.users.${hosts.${name}.username}
+      )
+    ) spokesHere
+  );
   splitHomeConfigs = lib.listToAttrs (
     map (
       name:

@@ -287,16 +287,15 @@ this can fail the activation: a machine that declines to provision is still a
 machine that activated.
 
 Every surface is declared once in `fleet/provisioning.json` with the command
-that configures it and what that command implies, and none of them declares a
-prerequisite: nothing on a machine needs a session opened before it can be
-configured, because every secret a surface needs is a clan var that activation
-placed. A surface is therefore either offered, when the command is a ceremony
-this CLI owns and runs here (`atyrode provision machine-key`, `atyrode
-operator init`, `atyrode runtime provision local-qwen`, `atyrode runtime
-provision manifold-agent`), or told, when the command runs on an operator
-device and this machine only reports what it is owed (the Git identity, the
-archive document, the broker token). Off a terminal both are stated without a
-question, since there is nobody to answer.
+that configures it and what that command implies. Nothing on a machine needs a
+session opened before a surface can be configured, because every secret a
+surface needs is a clan var that activation placed. A surface is therefore
+either offered, when the command is a ceremony this CLI owns and runs here
+(`atyrode provision machine-key`, `atyrode operator init`, `atyrode runtime
+provision local-qwen`, `atyrode runtime provision manifold-agent`), or told,
+when the command runs on an operator device and this machine only reports what
+it is owed (the Git identity, the archive document, the broker token). Off a
+terminal both are stated without a question, since there is nobody to answer.
 
 When an accepted ceremony stops anyway, the reason is the ceremony's own and
 the follow-up says so: `clear what it reported above, then: atyrode provision

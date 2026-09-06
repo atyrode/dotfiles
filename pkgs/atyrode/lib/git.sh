@@ -42,23 +42,21 @@ actual_hostname() {
   fi
 }
 
-git_checks='[]'
-
-git_check_add() {
-  local id="$1" owner="$2" required="$3" status="$4" code="$5"
-  local summary="$6" remediation="$7" expected="$8" actual="$9"
-
-  git_checks="$(jq -c \
-    --arg id "$id" \
-    --arg owner "$owner" \
-    --argjson required "$required" \
-    --arg status "$status" \
-    --arg code "$code" \
-    --arg summary "$summary" \
-    --arg remediation "$remediation" \
-    --argjson expected "$expected" \
-    --argjson actual "$actual" \
-    '. + [{
+# One row of a doctor family's verdict. Every family (git, system) appends
+# rows of this exact shape to its own accumulator, so the JSON a check reads
+# is the same whichever family produced it.
+check_row() { # id owner required status code summary remediation expected actual
+  jq -nc \
+    --arg id "$1" \
+    --arg owner "$2" \
+    --argjson required "$3" \
+    --arg status "$4" \
+    --arg code "$5" \
+    --arg summary "$6" \
+    --arg remediation "$7" \
+    --argjson expected "$8" \
+    --argjson actual "$9" \
+    '{
       id: $id,
       owner: $owner,
       required: $required,
@@ -68,7 +66,13 @@ git_check_add() {
       remediation: (if $remediation == "" then null else $remediation end),
       expected: $expected,
       actual: $actual
-    }]' <<<"$git_checks")"
+    }'
+}
+
+git_checks='[]'
+
+git_check_add() {
+  git_checks="$(jq -c --argjson row "$(check_row "$@")" '. + [$row]' <<<"$git_checks")"
 }
 
 git_helper_is_store() {

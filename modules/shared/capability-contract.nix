@@ -28,18 +28,6 @@ in
       message = "every portable dotfiles composition must include the base capability";
     }
     {
-      assertion = !(has "server" && has "desktop");
-      message = "server and desktop Home Manager capabilities are incompatible";
-    }
-    {
-      assertion = !(has "server" && has "development");
-      message = "server and development Home Manager capabilities are incompatible";
-    }
-    {
-      assertion = !has "server" || pkgs.stdenv.hostPlatform.isLinux;
-      message = "the server Home Manager capability is Linux-only";
-    }
-    {
       assertion = !has "base" || builtins.hasAttr "atyrode" pkgs;
       message = "the base Home Manager capability requires the dotfiles package overlay";
     }

@@ -56,14 +56,9 @@ mutable state remain application-owned. In particular, Zen's Mozilla account,
 sync tokens, cookies, sessions, and browser profile never enter the Nix store
 or repository; Mozilla sign-in remains an interactive step on each device.
 
-For external production NixOS hosts, the relationship remains one-way:
-infrastructure pins this flake and imports its Home Manager profiles. It passes
-the non-secret machine identity with `activation = "nixos"` and an exact
-`nixTrustedUsers` list, while retaining ownership of those daemon settings.
-Dotfiles do not acquire production identity, disks, services, or secrets. The
-repository-owned `wsl` configuration is the deliberate
-workstation exception: it owns only the local WSL guest and imports the same
-portable profiles. See [Portable Home Manager profiles](portable-profiles.md).
+The repository-owned `wsl` configuration is the deliberate workstation
+exception: it owns only the local WSL guest and imports the same capability
+modules as every other host.
 
 Starting the managed distribution while another WSL distribution is already
 running can leave the guest without a systemd user session (`wsl: Failed to

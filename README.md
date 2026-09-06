@@ -204,14 +204,8 @@ dotfiles/
 The installer detects the current system and selects the matching
 configuration. The authoritative registry lives in
 [Hosts and capabilities](docs/hosts.md); list the registered targets and their
-capabilities with `atyrode capabilities list`. Production NixOS servers
-consume the exported `base + server + agent-tools` profile from their
-infrastructure flake instead of appearing in this personal host registry.
-Host IDs are canonical and have no compatibility aliases.
-
-[Portable Home Manager profiles](docs/portable-profiles.md) documents the
-external NixOS interface, one-way infrastructure dependency, server manifest,
-closure budget, and pin/update workflow.
+capabilities with `atyrode capabilities list`. Host IDs are canonical and have
+no compatibility aliases.
 
 [The `atyrode` CLI](docs/atyrode.md) documents deterministic application,
 machine-readable capability discovery, and diagnostics.

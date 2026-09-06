@@ -1,12 +1,10 @@
 {
   darwinConfigs ? { },
-  externalFixture ? null,
   homeConfigs,
   inventory,
   lib,
   nixosConfigs ? { },
   pkgs,
-  serverConfig ? null,
   system,
 }:
 
@@ -21,11 +19,6 @@ let
   normaliseDarwin = value: value.config or value;
 
   configuredHomes = map normaliseHome (builtins.attrValues homeConfigs);
-  serverHomes = lib.optional (serverConfig != null) (normaliseHome serverConfig);
-  externalSystem = if externalFixture == null then null else externalFixture.configuration.config;
-  externalHomes = lib.optional (
-    externalFixture != null
-  ) externalSystem.home-manager.users.${externalFixture.host.username};
   configuredDarwin = map normaliseDarwin (builtins.attrValues darwinConfigs);
   darwinHomes = lib.concatMap (
     config: builtins.attrValues config.home-manager.users
@@ -34,7 +27,7 @@ let
     builtins.attrValues nixosConfigs
   );
   darwinHomePackages = lib.unique (lib.concatMap packageNames darwinHomes);
-  portableHomes = configuredHomes ++ serverHomes ++ externalHomes ++ darwinHomes ++ nixosHomes;
+  portableHomes = configuredHomes ++ darwinHomes ++ nixosHomes;
 
   packageNames = config: lib.unique (map lib.getName (config.home.packages or [ ]));
   hasCapability =
@@ -253,13 +246,6 @@ assert lib.assertMsg (lib.all (
   in
   (user.name or "") != "" && (user.email or "") != ""
 ) portableHomes) "a Home Manager configuration renders git without user.name or user.email";
-assert lib.assertMsg (
-  externalFixture == null || externalSystem.programs.zsh.enable
-) "the external NixOS consumer must own system Zsh enablement";
-assert lib.assertMsg (
-  externalFixture == null
-  || lib.getName externalSystem.users.users.${externalFixture.host.username}.shell == "zsh"
-) "the external NixOS consumer must own its account login shell";
 assert lib.assertMsg (lib.all darwinPolicyMatches configuredDarwin)
   "nix-darwin shell, Nix daemon, or Homebrew policy differs from the reviewed boundary";
 pkgs.runCommand "check-system-boundary-${system}" { } ''

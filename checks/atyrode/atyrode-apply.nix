@@ -219,7 +219,7 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode </dev/null | grep -qF 'Usage:'
 
     atyrode capabilities list --json | jq -e '
-      (map(.name) | index("base") and index("server"))
+      (map(.name) | index("base") and index("development"))
       and all(.[]; .description | length > 0)
       and (.[] | select(.name == "base") | .active)
       and ((.[] | select(.name == "desktop") | .active) | not)

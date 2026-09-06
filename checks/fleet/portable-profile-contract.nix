@@ -4,6 +4,7 @@
   mkPortableHomeConfiguration,
   pkgs,
   profileName,
+  selectHomeManagerProfiles,
 }:
 
 let
@@ -26,6 +27,17 @@ let
   coderIdentity = builtins.fromJSON coder.config.xdg.configFile."atyrode/host.json".text;
   developerIdentity = builtins.fromJSON developer.config.xdg.configFile."atyrode/host.json".text;
   coderHttpsIdentity = builtins.fromJSON coderHttps.config.xdg.configFile."atyrode/host.json".text;
+  # The validator's refusals are the contract: a composition the registry
+  # would reject must fail evaluation, not compose silently.
+  selectionSucceeds =
+    capabilities:
+    (builtins.tryEval (
+      builtins.deepSeq (selectHomeManagerProfiles {
+        inherit capabilities;
+        name = "invalid composition fixture";
+        system = pkgs.stdenv.hostPlatform.system;
+      }) true
+    )).success;
 in
 assert lib.assertMsg (
   coder.config.home.username == "coder"
@@ -87,6 +99,15 @@ assert lib.assertMsg (
 assert lib.assertMsg (
   developerIdentity.homeDirectory == "/srv/developer"
 ) "portable bootstrap must keep identities isolated";
+assert lib.assertMsg (
+  !(selectionSucceeds [ "development" ])
+) "a composition without base unexpectedly validated";
+assert lib.assertMsg (
+  !(selectionSucceeds [
+    "base"
+    "base"
+  ])
+) "duplicate capabilities unexpectedly validated";
 builtins.deepSeq
   [
     coder.activationPackage.drvPath

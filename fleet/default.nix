@@ -291,9 +291,6 @@ assert lib.assertMsg (revision != "") "inventory revision must not be empty";
 assert lib.assertMsg (duplicateNames allCapabilityEntries == [ ])
   "inventory duplicate capability ownership: ${lib.concatStringsSep ", " (duplicateNames allCapabilityEntries)}";
 assert lib.assertMsg (
-  capabilities.server.marker && capabilities.server.deliverables == [ ]
-) "server must remain a deliberate empty marker capability";
-assert lib.assertMsg (
   platform != "darwin" || casks != [ ]
 ) "Darwin inventory must contain evaluated Homebrew casks";
 assert lib.assertMsg (

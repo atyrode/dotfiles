@@ -87,16 +87,6 @@
       mutableState = "Tool-specific caches only";
       securityBoundary = "Targets, scan results, and network state are never evaluated";
     };
-    server = {
-      title = "Server";
-      purpose = "Linux-only marker for the reviewed headless composition";
-      consumer = "Portable server profiles";
-      group = "operations";
-      deliveryBoundary = "Marker capability; base and agent-tools deliver its user packages";
-      mutableState = "System and service state remain owned by the consuming NixOS configuration";
-      securityBoundary = "The marker deliberately contributes no package and carries no production facts";
-      platforms = [ "linux" ];
-    };
   };
 
   # These are intentional boundaries, not evaluated package membership.

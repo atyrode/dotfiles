@@ -18,12 +18,12 @@ Hosts are entries in a **registry** ([`fleet/hosts.nix`](../../fleet/hosts.nix))
 that declares each machine's identity, platform, and **capabilities** rather than
 its packages or modules directly. Configuration is composed from capability and
 profile modules ([`modules/home/profiles/`](../../modules/home/profiles/)); a host turns on the
-capabilities it needs (e.g. `agent-tools`, `desktop`, `server`) and inherits the
+capabilities it needs (e.g. `agent-tools`, `desktop`, `containers`) and inherits the
 modules and packages those capabilities own. The registry is the single source
 of host truth, and a public projection of it is committed so bootstrap can read
 host identity before Nix is available.
 
-See [hosts.md](../hosts.md) and [portable-profiles.md](../portable-profiles.md).
+See [hosts.md](../hosts.md).
 
 ## Consequences
 

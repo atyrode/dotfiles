@@ -483,73 +483,71 @@ apply_config() {
   step_ok
   apply_scratch_cleanup
   trap - EXIT
-  if [[ "$dry" == 0 ]]; then
-    local state_dir state_file temp
-    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
-    state_file="$state_dir/dotfiles-config"
-    step_begin "Record $host as the activated host"
-    # These files are read back by the next apply, by doctor, and by the
-    # bootstrap's verification step. A silent write is the reason "why did this
-    # apply pick https-gh" has no answer three weeks later.
-    step_why 'later runs read this receipt to know which host this machine is'
-    mkdir -p "$state_dir"
-    temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
-    printf '%s\n' "$host" >"$temp"
-    mv -f "$temp" "$state_file"
-    step_detail "wrote $state_file"
-    if [[ "$identity_mode" == runtime ]]; then
-      local git_auth_mode_file="$state_dir/git-auth-mode"
-      [[ ! -L "$git_auth_mode_file" ]] ||
-        die "$EX_DATAERR" "persisted Git auth mode must not be a symlink"
-      temp="$(mktemp "$state_dir/.git-auth-mode.XXXXXX")"
-      printf '%s\n' "$git_auth_mode" >"$temp"
-      chmod 600 "$temp"
-      mv -f "$temp" "$git_auth_mode_file"
-      step_detail "wrote $git_auth_mode_file ($git_auth_mode)"
+  local state_dir state_file temp
+  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode"
+  state_file="$state_dir/dotfiles-config"
+  step_begin "Record $host as the activated host"
+  # These files are read back by the next apply, by doctor, and by the
+  # bootstrap's verification step. A silent write is the reason "why did this
+  # apply pick https-gh" has no answer three weeks later.
+  step_why 'later runs read this receipt to know which host this machine is'
+  mkdir -p "$state_dir"
+  temp="$(mktemp "$state_dir/.dotfiles-config.XXXXXX")"
+  printf '%s\n' "$host" >"$temp"
+  mv -f "$temp" "$state_file"
+  step_detail "wrote $state_file"
+  if [[ "$identity_mode" == runtime ]]; then
+    local git_auth_mode_file="$state_dir/git-auth-mode"
+    [[ ! -L "$git_auth_mode_file" ]] ||
+      die "$EX_DATAERR" "persisted Git auth mode must not be a symlink"
+    temp="$(mktemp "$state_dir/.git-auth-mode.XXXXXX")"
+    printf '%s\n' "$git_auth_mode" >"$temp"
+    chmod 600 "$temp"
+    mv -f "$temp" "$git_auth_mode_file"
+    step_detail "wrote $git_auth_mode_file ($git_auth_mode)"
+  fi
+  step_ok
+  if [[ "$activation" == nixos-wsl ]]; then
+    local windows_result
+    step_begin 'Reconcile native Windows packages through WinGet'
+    step_why 'WinGet state is native Windows state; no Nix generation covers it'
+    if ! windows_result="$(windows_reconcile apply "$host" 1)"; then
+      step_fail 'the non-transactional Windows phase did not complete'
+      die "$EX_SOFTWARE" "NixOS activation succeeded, but the non-transactional Windows phase failed; rerun 'atyrode windows apply'"
     fi
     step_ok
-    if [[ "$activation" == nixos-wsl ]]; then
-      local windows_result
-      step_begin 'Reconcile native Windows packages through WinGet'
-      step_why 'WinGet state is native Windows state; no Nix generation covers it'
-      if ! windows_result="$(windows_reconcile apply "$host" 1)"; then
-        step_fail 'the non-transactional Windows phase did not complete'
-        die "$EX_SOFTWARE" "NixOS activation succeeded, but the non-transactional Windows phase failed; rerun 'atyrode windows apply'"
-      fi
-      step_ok
-      [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
-    fi
-    # Declared state first, decisions second. Convergence is not a question:
-    # the login shell is part of what this host says it is, so apply fixes it
-    # rather than reporting it. Only then are the opt-in surfaces raised, so a
-    # machine that is still wrong never gets asked what else it would like.
-    step_begin 'Converge the account login shell'
-    converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
-    # The activation above may have just placed Babel's storage document, and
-    # the timer gated on it only re-reads its condition when started.
-    step_begin 'Arm the hourly archive timer'
-    archive_converge_timer "$host" || apply_status="$EX_UNAVAILABLE"
-    step_begin 'Review the provisioning surfaces this machine declares'
-    review_provisioning "$json" "$host" || apply_status="$EX_UNAVAILABLE"
-    # Last, because the review may have just opened the sessions this file
-    # reports: activation already rendered it with the new CLI, and this
-    # render is what makes the file describe the machine apply leaves behind.
-    step_begin "Render this machine's agent context"
-    step_why 'every agent tool here reads this file, and the review above may have changed what is authenticated'
-    if apply_render_context "$candidate" "$expected_user"; then
-      step_ok
-    else
-      step_fail 'the agent context was not rendered; run atyrode context render'
-      apply_status="$EX_UNAVAILABLE"
-    fi
-    # Rendering is the last mutation after the review, so refresh its verdict
-    # before describing what remains; do not report a blocker we just cleared.
-    provisioning_checks="$(jq 'map(select(.id != "agent-context"))' <<<"$provisioning_checks")"
-    probe_agent_context
-    provisioning_leftovers="$(jq -r '
-      map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
-    ' <<<"$provisioning_checks")"
+    [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
   fi
+  # Declared state first, decisions second. Convergence is not a question:
+  # the login shell is part of what this host says it is, so apply fixes it
+  # rather than reporting it. Only then are the opt-in surfaces raised, so a
+  # machine that is still wrong never gets asked what else it would like.
+  step_begin 'Converge the account login shell'
+  converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
+  # The activation above may have just placed Babel's storage document, and
+  # the timer gated on it only re-reads its condition when started.
+  step_begin 'Arm the hourly archive timer'
+  archive_converge_timer "$host" || apply_status="$EX_UNAVAILABLE"
+  step_begin 'Review the provisioning surfaces this machine declares'
+  review_provisioning "$json" "$host" || apply_status="$EX_UNAVAILABLE"
+  # Last, because the review may have just opened the sessions this file
+  # reports: activation already rendered it with the new CLI, and this
+  # render is what makes the file describe the machine apply leaves behind.
+  step_begin "Render this machine's agent context"
+  step_why 'every agent tool here reads this file, and the review above may have changed what is authenticated'
+  if apply_render_context "$candidate" "$expected_user"; then
+    step_ok
+  else
+    step_fail 'the agent context was not rendered; run atyrode context render'
+    apply_status="$EX_UNAVAILABLE"
+  fi
+  # Rendering is the last mutation after the review, so refresh its verdict
+  # before describing what remains; do not report a blocker we just cleared.
+  provisioning_checks="$(jq 'map(select(.id != "agent-context"))' <<<"$provisioning_checks")"
+  probe_agent_context
+  provisioning_leftovers="$(jq -r '
+    map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
+  ' <<<"$provisioning_checks")"
   apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host" "$apply_status"
   return "$apply_status"
 }

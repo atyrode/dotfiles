@@ -33,8 +33,6 @@ builtins.deepSeq inventory (
             and (.source | type == "string" and length > 0)
             and (.system == $system)
             and (.platform == $platform)))
-        and .capabilities.server.marker
-        and (.capabilities.server.deliverables | length == 0)
         and all(.hosts[];
           (.id | type == "string" and length > 0)
           and (.system == $system)

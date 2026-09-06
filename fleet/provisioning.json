@@ -17,72 +17,61 @@
       "label": "omp settings seed",
       "command": "atyrode-omp-seed resolve",
       "implies": "Reviews settings this machine kept over the repository defaults. Local only: no secret, no network, nothing downloaded.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "machine-key": {
       "label": "machine key",
       "command": "atyrode provision machine-key",
       "implies": "Mints this machine's age key on an operator device and stores it in the repository encrypted to the admins group; atyrode apply places it.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "operator-identity": {
       "label": "operator identity",
       "command": "atyrode operator init",
       "implies": "Mints this device's own age key (inside the Secure Enclave on a Mac, a plain age file elsewhere) and prints the two clan commands that register it as a member of the admins group. Local only: no secret is read, nothing is uploaded, and the key never leaves the device.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "agent-context": {
       "label": "generated agent context",
       "command": "atyrode context render",
       "implies": "Writes this machine's facts under the operator policy to ~/.config/agents/AGENTS.md, which every agent tool here reads. Asks gh and clever for their session state, stores no secret, downloads nothing.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "git-identity": {
       "label": "Git identity",
       "command": "clan vars generate <host>",
       "implies": "Generates this machine's SSH auth and signing keys on an operator device, encrypted to the admins group; the next apply places them and Git reads them directly. The signing key is trusted only once a reviewed commit adds its public half to modules/home/git/allowed-signers. No vault and no agent on this machine.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "babel-archive": {
       "label": "Babel session archive",
       "command": "clan vars generate <host>",
       "implies": "Generates this machine's storage document on an operator device from the repository password, the add-on credentials, and the payload key ring typed once; the next apply places them and arms the hourly timer that publishes sessions. No vault and no provider session on this machine.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "omp-auth-broker": {
       "label": "OMP auth broker token",
       "command": "clan vars generate <host>",
       "implies": "Generates the bearer token the fleet's one OMP auth broker and every client of it share, on an operator device; the next apply places it, and the broker host serves with it while every other machine tunnels to that host. No vault and no provider session on this machine.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     },
     "local-qwen": {
       "label": "local-qwen model runtime",
       "command": "atyrode runtime provision local-qwen",
       "implies": "Builds a Docker image and downloads about 40 GB of model weights. No secret and no vault, but it is the largest thing this machine will fetch.",
-      "declinable": true,
-      "prerequisites": []
+      "declinable": true
     },
     "manifold-agent": {
       "label": "Manifold fleet agent",
       "command": "atyrode runtime provision manifold-agent",
       "implies": "Starts the native managed agent for the machine token activation placed. The token is this machine's clan var, minted by `atyrode runtime enroll manifold-agent <host>` on an operator device that holds the hub's owner key as a clan var this machine never receives. No vault and no owner key on this machine.",
-      "declinable": true,
-      "prerequisites": []
+      "declinable": true
     },
     "convergence": {
       "label": "convergence to main",
       "command": "atyrode changelog",
       "implies": "Compares the revision this machine runs with the head of main. Read-only: nothing is activated here or by the hourly timer that records the same comparison for the shell; taking the update is atyrode apply, run by an operator.",
-      "declinable": false,
-      "prerequisites": []
+      "declinable": false
     }
-  },
-  "prerequisites": {}
+  }
 }

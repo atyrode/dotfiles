@@ -374,12 +374,16 @@ def api_response(state, method, endpoint, payload):
         run = next(run for run in state["runs"] if run["id"] == int(parts[2]))
         if len(parts) == 3:
             return run
-        if parts[3] == "jobs":
+        if len(parts) == 6 and parts[3] == "attempts" and parts[5] == "jobs":
+            if int(parts[4]) != run["run_attempt"]:
+                raise Refused("Requested run attempt does not match the current fixture attempt")
             return {"total_count": len(run["jobs"]), "jobs": run["jobs"]}
         if parts[3] == "approve" and method == "POST":
             record(state, "approve", run=run["id"])
             run["status"] = "completed"
             run["conclusion"] = state.get("job_conclusion", "success")
+            if state.get("attempt_race"):
+                run["run_attempt"] += 1
             if state.get("source_race") and not state.get("source_race_fired"):
                 state["source_race_fired"] = True
                 append_remote_commit(state, "source_remote", POLICY_PATH, NEXT)
@@ -699,6 +703,29 @@ class SyncTests(unittest.TestCase):
         self.assert_no_delivery()
         self.assertFalse(any("rerun" in event["endpoint"] for event in self.events("api")))
 
+    def test_maintainer_rerun_can_resolve_failed_evidence_without_an_automatic_rerun(self):
+        pull = self.seed_candidate()
+        self.state["job_conclusion"] = "failure"
+        make_runs(self.state, pull)
+        head = pull["sha"]
+        self.run_sync(1)
+        for run in self.state["runs"]:
+            run.update({"run_attempt": 2, "conclusion": "success"})
+            for job in run["jobs"]:
+                job["conclusion"] = "success"
+        self.run_sync(0)
+        self.assertEqual(self.events("merge")[0]["sha"], head)
+        self.assertFalse(self.events("create"))
+        self.assertFalse(any("rerun" in event["endpoint"] for event in self.events("api")))
+        self.assertTrue(any("/attempts/2/jobs" in event["endpoint"] for event in self.events("api")))
+
+    def test_attempt_change_during_observation_invalidates_the_attempt(self):
+        self.state["park_runs"] = True
+        self.state["attempt_race"] = True
+        self.run_sync(1)
+        self.assertTrue(any(run["run_attempt"] == 2 for run in self.state["runs"]))
+        self.assert_no_delivery()
+
     def test_server_rejected_merge_does_not_delete_branch_or_dispatch_main(self):
         self.state["merge_rejected"] = True
         self.run_sync(1)
@@ -883,7 +910,7 @@ class SyncTests(unittest.TestCase):
             {"repository": {"full_name": "outsider/code"}},
             {"pull_requests": [{"number": 99}]},
             {"path": ".github/workflows/unrelated.yml"},
-            {"run_attempt": 2},
+            {"run_attempt": 0},
         )
         for mutation in mutations:
             with self.subTest(identity=mutation):

@@ -1,0 +1,67 @@
+name: Synchronize shared engineering contract
+
+on:
+  workflow_call:
+
+# Callers must grant these same repository-scoped permissions explicitly. This
+# workflow never accepts a caller-selected source, helper, base or credential.
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: agent-policy-sync-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Validate synchronization boundary
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          CALLER_EVENT: ${{ github.event_name }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_FORK: ${{ github.event.repository.fork == true }}
+        run: |
+          case "$CALLER_REPOSITORY" in
+            atyrode/code|atyrode/babel|atyrode/manifold) ;;
+            *) echo 'Repository is not enrolled'; exit 2 ;;
+          esac
+          case "$CALLER_EVENT" in
+            schedule|workflow_dispatch) ;;
+            *) echo 'Event cannot synchronize policy'; exit 2 ;;
+          esac
+          test "$CALLER_REF" = refs/heads/main
+          test "$CALLER_FORK" = false
+
+      # Following main deliberately trusts reviewed dotfiles automation, not
+      # merely its Markdown. A single checkout supplies code and payload for the
+      # whole attempt; historical PR metadata never selects executable helpers.
+      - name: Check out canonical reviewed source
+        id: source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: atyrode/dotfiles
+          ref: main
+          path: agent-policy-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Synchronize and qualify repository policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_POLICY_SOURCE_SHA: ${{ steps.source.outputs.commit }}
+        run: |
+          work_dir="$(mktemp -d "$RUNNER_TEMP/agent-policy.XXXXXXXX")"
+          trap 'if ! rm -rf -- "$work_dir"; then echo "Run-owned policy workspace cleanup failed" >&2; exit 1; fi' EXIT
+          python3 agent-policy-source/ci/agent-policy-sync.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-checkout "$GITHUB_WORKSPACE/agent-policy-source" \
+            --work-dir "$work_dir"

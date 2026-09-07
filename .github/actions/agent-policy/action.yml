@@ -1,0 +1,30 @@
+name: Check shared engineering contract
+description: Check generated policy bytes against the source bundled with this action.
+inputs:
+  layout:
+    description: Fixed target layout (repository or dotfiles).
+    required: false
+    default: repository
+runs:
+  using: composite
+  steps:
+    - name: Check shared policy bytes
+      shell: bash
+      env:
+        POLICY_LAYOUT: ${{ inputs.layout }}
+        POLICY_ACTION_REF: ${{ github.action_ref }}
+      run: |
+        source_root="$(realpath -- "$GITHUB_ACTION_PATH/../../..")"
+        source_file="$source_root/modules/home/agents/engineering.md"
+        digest="$(sha256sum -- "$source_file")"
+        {
+          printf '## Shared engineering contract\n\n'
+          printf 'Source: https://github.com/atyrode/dotfiles/blob/main/modules/home/agents/engineering.md\n\n'
+          printf 'Bundled payload SHA256: `%s`\n\n' "${digest%% *}"
+          printf 'Action ref: `%s` (not a resolved commit SHA).\n\n' "${POLICY_ACTION_REF:-local candidate}"
+          printf 'This check uses the source bundled with its action snapshot, not a later resolution of main.\n'
+        } >> "$GITHUB_STEP_SUMMARY"
+        python3 "$source_root/ci/agent-policy.py" check \
+          --source "$source_file" \
+          --root "$GITHUB_WORKSPACE" \
+          --layout "$POLICY_LAYOUT"

@@ -341,6 +341,7 @@ let
     # (docs included); they are the intentional exceptions the docs-only
     # fast path builds directly and ci/docs-drift-guard.sh excludes.
     docs-links = import ./lints/docs-links.nix { inherit lib pkgs; };
+    agent-policy = import ./lints/agent-policy.nix { inherit lib pkgs; };
     docs-drift-guard = import ./lints/docs-drift-guard.nix { inherit pkgs; };
     classify-ci-paths = import ./lints/classify-ci-paths.nix { inherit pkgs; };
     macos-bash = import ./lints/macos-bash.nix { inherit pkgs; };

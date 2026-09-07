@@ -16,7 +16,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import unittest
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -305,6 +304,8 @@ def api_response(state, method, endpoint, payload):
                     pull["closed_at"] = timestamp()
             return pull_view(state, pull)
         if parts[2] == "reviews":
+            if state.get("hold_on_review"):
+                state["labels"] = ["blocked"]
             return ([{"id": 1, "user": {"login": "maintainer"}, "state": "CHANGES_REQUESTED", "submitted_at": timestamp()}]
                     if state.get("review_hold") else [])
         if parts[2] == "merge" and method == "PUT":
@@ -445,6 +446,7 @@ if len(sys.argv) > 1 and sys.argv[1] in ("--fake-git", "--fake-gh"):
     else:
         fake_gh()
     sys.exit(0)
+import unittest
 
 SYNC = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else SELF.parents[2] / "ci/agent-policy-sync.py"
 RENDERER = Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else SELF.parents[2] / "ci/agent-policy.py"
@@ -773,6 +775,18 @@ class SyncTests(unittest.TestCase):
         self.assertFalse(self.branch_exists())
         self.run_sync(0)
         self.assertEqual(len(self.events("dispatch")), 1)
+    def test_unrelated_main_dispatch_does_not_block_merge_recovery(self):
+        pull = self.seed_candidate(draft=False)
+        unrelated = make_runs(self.state, event="workflow_dispatch")[0]
+        api_response(self.state, "PUT", f"repos/{self.state['repository']}/pulls/1/merge", {"sha": pull["sha"], "merge_method": "squash"})
+        unrelated["created_at"] = pull["merged_at"]
+        self.run_sync(0)
+        self.assertEqual(len(self.events("dispatch")), 1)
+        matching = [run for run in self.state["runs"] if run["event"] == "workflow_dispatch" and run["head_sha"] == ref_sha(self.state)]
+        self.assertEqual(len(matching), 1)
+        self.run_sync(0)
+        self.assertEqual(len(self.events("dispatch")), 1)
+
 
     def test_completed_failed_main_ci_is_never_rerun_or_reported_current(self):
         self.state["main_conclusion"] = "failure"
@@ -1019,6 +1033,17 @@ class SyncTests(unittest.TestCase):
         self.run_sync(0)
         self.assertEqual(len(self.state["pulls"]), 1)
         self.assertFalse(self.events("create"))
+    def test_obsolete_pr_preserves_a_hold_added_after_initial_snapshot(self):
+        self.seed_candidate()
+        append_remote_commit(self.state, "consumer_remote", "AGENTS.md", PREFIX + envelope(NEW) + SUFFIX)
+        self.state["hold_on_review"] = True
+        self.run_sync(1)
+        self.assertEqual(self.state["pulls"][0]["state"], "open")
+        self.assertEqual(self.state["labels"], ["blocked"])
+        self.assertTrue(self.branch_exists())
+        self.assertFalse(self.events("merge"))
+        self.assertFalse(self.events("dispatch"))
+
 
     def test_reopening_the_held_pr_resumes_it_without_creating_another(self):
         pull = self.seed_candidate(closed=True)
@@ -1066,4 +1091,28 @@ class SyncTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) > 1:
+        unittest.main()
+    else:
+        # Each process owns its environment and temporary Git/API fixtures.
+        # Sharding preserves every case and real polling delay while keeping
+        # the five-minute CI contract; threads never run setUp in shared state.
+        from concurrent.futures import ThreadPoolExecutor
+
+        cases = unittest.defaultTestLoader.getTestCaseNames(SyncTests)
+        groups = [cases[index::4] for index in range(4)]
+
+        def run_group(group):
+            return subprocess.run(
+                [sys.executable, str(SELF), str(SYNC), str(RENDERER),
+                 *["SyncTests." + name for name in group]],
+                capture_output=True, timeout=600,
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(run_group, groups))
+        for result in results:
+            sys.stdout.buffer.write(result.stdout)
+            sys.stderr.buffer.write(result.stderr)
+        print(f"Executed all {len(cases)} synchronization cases in four isolated processes.")
+        sys.exit(1 if any(result.returncode for result in results) else 0)

@@ -642,9 +642,11 @@ class Sync:
                 continue
             run = self.validate_run(self.run_detail(number(brief.get("id"))), "ci.yml")
             self.git("fetch", "--no-tags", "origin", run["head_sha"])
-            require(self.ancestor(pr["merge_commit_sha"], run["head_sha"])
-                    and self.ancestor(run["head_sha"], self.main),
-                    "main dispatch is not a reviewed descendant of the policy merge")
+            if not (self.ancestor(pr["merge_commit_sha"], run["head_sha"])
+                    and self.ancestor(run["head_sha"], self.main)):
+                # A dispatch can snapshot old main just before the merge yet
+                # become visible afterwards. It is not this recovery's evidence.
+                continue
             candidates.append(run)
         return sorted(candidates, key=lambda run: (instant(run["created_at"]), run["id"]))
 
@@ -747,6 +749,13 @@ class Sync:
                 old_meta = metadata(open_pr)
                 _, old_current, _ = self.expected_tree(self.main, self.source_data(old_meta["source"]))
                 require(old_current == content, "obsolete PR has unique policy content not present on main")
+                current = self.pull(open_pr["number"])
+                require(current.get("state") == "open" and current["head"]["sha"] == remote
+                        and metadata(current) == old_meta,
+                        "obsolete PR state/head/metadata raced before closure")
+                self.verify_owned(current)
+                self.holds(current)
+                require(self.branch_head() == remote, "obsolete branch raced before closure")
                 self.api(f"repos/{self.repository}/pulls/{open_pr['number']}", "PATCH", {"state": "closed"})
                 closed = self.pull(open_pr["number"])
                 require(closed.get("state") == "closed" and closed.get("merged_at") is None

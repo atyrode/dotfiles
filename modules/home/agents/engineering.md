@@ -67,6 +67,10 @@
 
 ### Safety and maintenance
 
+- Internal cutovers migrate callers and remove obsolete paths. Public
+  interfaces, separately released consumers, persistent formats and
+  migration/rollback support require a coordinated compatibility transition;
+  do not delete them under a blanket no-shims rule.
 - New dependencies and abstractions must justify a real need and their
   maintenance cost. Correctness is not measured by lines removed.
 - Keep secrets and sensitive data out of public text, fixtures, prompts,

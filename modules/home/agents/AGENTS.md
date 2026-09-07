@@ -17,7 +17,7 @@ Edit local sections outside it; propose reusable-rule changes at that source.
 
 <!-- prettier-ignore-start -->
 <!-- Source: https://github.com/atyrode/dotfiles/blob/main/modules/home/agents/engineering.md -->
-<!-- SHA256: c01de5208b14a01623ac41bd7f09e4d28cf6f2bc844b704e522e46cb2ba63242 -->
+<!-- SHA256: 8ff1b1dc4758c62e76cb8eb6326d8a091001cff453929d3a821b650220dd9ef8 -->
 
 ## Common engineering contract
 
@@ -88,6 +88,10 @@ Edit local sections outside it; propose reusable-rule changes at that source.
 
 ### Safety and maintenance
 
+- Internal cutovers migrate callers and remove obsolete paths. Public
+  interfaces, separately released consumers, persistent formats and
+  migration/rollback support require a coordinated compatibility transition;
+  do not delete them under a blanket no-shims rule.
 - New dependencies and abstractions must justify a real need and their
   maintenance cost. Correctness is not measured by lines removed.
 - Keep secrets and sensitive data out of public text, fixtures, prompts,

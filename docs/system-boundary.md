@@ -51,6 +51,16 @@ back WinGet. A failed Windows phase therefore reports the exact
 installs reviewed exact package IDs, but does not silently uninstall a
 conflicting Zen channel.
 
+Service-launched shells, including Manifold terminals, may start without the
+Windows PATH inherited by a Windows Terminal login. The WSL module and the
+CLI's pre-activation Windows check share `atyrode-wsl-path`: it locates Windows
+under the configured automount root, asks `cmd.exe` for its PATH, and translates
+it with upstream `wslpath`. This also lets a shell from an older generation
+reach activation without first needing the new shell startup configuration.
+No session's `WSL_INTEROP` socket is cached or substituted; an unset variable
+can use WSL's distro interop server. Failure to discover or execute Windows
+commands is diagnosed separately from a genuinely missing WinGet alias.
+
 Windows application accounts, profiles, update services, caches, and other
 mutable state remain application-owned. In particular, Zen's Mozilla account,
 sync tokens, cookies, sessions, and browser profile never enter the Nix store

@@ -140,16 +140,26 @@ worker's `-apply-job.log` records the run itself.
 
 ### Supervised applies
 
-On Linux with a systemd user manager, a mutating apply runs in a transient
+On Linux with a systemd user manager, a mutating apply runs in its own transient
 service so that replacing a terminal-hosting service cannot terminate the
-activation; job metadata, output, and the atomic final result live under
-`$XDG_STATE_HOME/atyrode/apply-jobs`, and the CLI exits with the activation's
-own status. From a terminal the job is handed that terminal, so every prompt
-is answerable in place; the trade is that the job ends with the terminal, and
-its log records where the output went rather than a copy, so `apply-status`
-cannot claim a transcript it never captured. Read-only plans and dry runs stay
-terminal-bound, and platforms without a user manager keep the direct,
-interactive activation path.
+activation. Job metadata, progress, output, and the atomic final result live
+under `$XDG_STATE_HOME/atyrode/apply-jobs`. From a terminal, prompts are
+answerable in place, but closing that terminal does not reliably end its
+worker: it can remain waiting for an answer. Live output is streamed rather
+than copied, so status does not promise a transcript it never captured.
+
+`atyrode apply-status [JOB] [--json]` reports the current step, whether it is
+waiting for input, the originating terminal, and whether activation completed.
+If that terminal is gone, inspect the named job and explicitly cancel it with
+`atyrode apply-status JOB --cancel`, then start a new apply. Cancellation stops
+only that job's service; it never rolls activation back and can leave partial
+activation if the switch was still running. There is no timeout that kills
+work automatically. Historical jobs from the shared-unit implementation can
+be inspected but cannot be cancelled by job ID, since that name could belong
+to a newer worker.
+
+Read-only plans and dry runs stay terminal-bound, and platforms without a
+user manager keep the direct, interactive activation path.
 
 ### After activation
 

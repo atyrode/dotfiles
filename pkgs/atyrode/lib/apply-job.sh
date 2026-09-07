@@ -7,6 +7,34 @@
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
+apply_job_directory=""
+
+apply_job_progress() {
+  [[ -n "$apply_job_directory" ]] || return 0
+  write_apply_job_json "$apply_job_directory/running.json" \
+    "$(jq --arg step "$1" --argjson index "$STEP_INDEX" --argjson total "$STEP_TOTAL" \
+      '. + {state:"working",step:$step,index:$index,total:$total,waitingFor:null}' \
+      "$apply_job_directory/running.json")"
+}
+
+apply_job_waiting() {
+  [[ -n "$apply_job_directory" ]] || return 0
+  write_apply_job_json "$apply_job_directory/running.json" \
+    "$(jq --arg reason "$1" '. + {state:"waiting",waitingFor:$reason}' \
+      "$apply_job_directory/running.json")"
+}
+
+apply_job_resumed() {
+  [[ -n "$apply_job_directory" ]] || return 0
+  write_apply_job_json "$apply_job_directory/running.json" \
+    "$(jq '. + {state:"working",waitingFor:null}' "$apply_job_directory/running.json")"
+}
+
+apply_job_activated() {
+  [[ -n "$apply_job_directory" ]] || return 0
+  write_apply_job_json "$apply_job_directory/running.json" \
+    "$(jq '. + {activationCompleted:true}' "$apply_job_directory/running.json")"
+}
 apply_jobs_root() {
   printf '%s/atyrode/apply-jobs\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
 }
@@ -59,7 +87,7 @@ apply_job_phase() {
   }
   if "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
     if [[ -f "$job_dir/running.json" ]]; then
-      printf 'running\n'
+      jq -r 'if .state == "waiting" then "waiting" else "running" end' "$job_dir/running.json"
     else
       printf 'submitted\n'
     fi
@@ -69,11 +97,15 @@ apply_job_phase() {
 }
 
 cmd_apply_status() {
-  local job_id="" json=0 root job_dir unit phase
+  local job_id="" json=0 cancel=0 root job_dir unit phase progress='{}' systemctl
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json)
         json=1
+        shift
+        ;;
+      --cancel)
+        cancel=1
         shift
         ;;
       --*) die "$EX_USAGE" "unknown apply-status option: $1" ;;
@@ -84,6 +116,12 @@ cmd_apply_status() {
         ;;
     esac
   done
+  [[ "$cancel" == 0 || -n "$job_id" ]] ||
+    die "$EX_USAGE" "cancelling requires an explicit job id: atyrode apply-status JOB --cancel"
+  if [[ "$cancel" == 1 ]]; then
+    guard_production_mutation apply-status
+    start_run_log apply-cancel
+  fi
   root="$(apply_jobs_root)"
   if [[ -z "$job_id" ]]; then
     [[ -r "$root/latest" ]] || die "$EX_NOINPUT" "no apply jobs have been submitted"
@@ -94,23 +132,61 @@ cmd_apply_status() {
   job_dir="$root/$job_id"
   [[ -r "$job_dir/metadata.json" ]] || die "$EX_NOINPUT" "unknown apply job: $job_id"
   unit="$(jq -r '.unit' "$job_dir/metadata.json")"
+  [[ "$unit" == "atyrode-apply-$job_id.service" || "$unit" == "atyrode-apply.service" ]] ||
+    die "$EX_DATAERR" "invalid apply job unit"
+  [[ ! -r "$job_dir/running.json" ]] || progress="$(cat "$job_dir/running.json")"
   phase="$(apply_job_phase "$job_dir" "$unit")"
+  if [[ "$cancel" == 1 && ! -f "$job_dir/result.json" ]]; then
+    # A job-specific unit cannot be reused by a later apply between inspection
+    # and stop. Older jobs shared one name, so they cannot be cancelled safely
+    # through a historical job id.
+    [[ "$unit" == "atyrode-apply-$job_id.service" ]] ||
+      die "$EX_UNAVAILABLE" "this older job has a shared unit; inspect it with systemctl --user status atyrode-apply.service before stopping it"
+    systemctl="$(apply_systemctl_command)" ||
+      die "$EX_UNAVAILABLE" "systemctl is unavailable; the apply job was not cancelled"
+    if [[ "$(jq -r '.activationCompleted // false' <<<"$progress")" == true ]]; then
+      printf 'atyrode: activation already completed; cancelling the remaining work does not roll it back\n' >&2
+    else
+      printf 'atyrode: activation is not recorded complete; cancellation may leave a partially activated system\n' >&2
+    fi
+    run_visible "$systemctl" --user stop "$unit" ||
+      die "$EX_UNAVAILABLE" "could not stop apply job $job_id; inspect its status before retrying"
+    [[ ! -r "$job_dir/running.json" ]] || progress="$(cat "$job_dir/running.json")"
+    if [[ ! -f "$job_dir/result.json" ]]; then
+      write_apply_job_json "$job_dir/result.json" \
+        "$(jq -nc --arg finishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson progress "$progress" \
+          '{schemaVersion:1,phase:"cancelled",exitCode:130,finishedAt:$finishedAt,
+            startedAt:$progress.startedAt,activationCompleted:($progress.activationCompleted // false)}')"
+    fi
+    phase="$(jq -r '.phase' "$job_dir/result.json")"
+  fi
   if [[ "$json" == 1 ]]; then
     if [[ -r "$job_dir/result.json" ]]; then
       jq -nc --slurpfile metadata "$job_dir/metadata.json" \
         --slurpfile result "$job_dir/result.json" \
-        --rawfile output "$job_dir/output.log" --arg phase "$phase" \
-        '$metadata[0] + {phase:$phase,result:$result[0],output:$output}'
+        --rawfile output "$job_dir/output.log" --arg phase "$phase" --argjson progress "$progress" \
+        '$metadata[0] + {phase:$phase,progress:$progress,result:$result[0],output:$output}'
     else
       jq -nc --slurpfile metadata "$job_dir/metadata.json" \
-        --rawfile output "$job_dir/output.log" --arg phase "$phase" \
-        '$metadata[0] + {phase:$phase,result:null,output:$output}'
+        --rawfile output "$job_dir/output.log" --arg phase "$phase" --argjson progress "$progress" \
+        '$metadata[0] + {phase:$phase,progress:$progress,result:null,output:$output}'
     fi
   else
     [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
     printf 'atyrode: apply job %s: %s\n' "$job_id" "$phase" >&2
+    jq -r --arg phase "$phase" '
+      if .step then "  \(if $phase == "waiting" or $phase == "running" then "step" else "last step" end): \(.index)/\(.total) \(.step)" else empty end,
+      if $phase == "waiting" and .waitingFor then "  waiting for: \(.waitingFor)" else empty end,
+      if .activationCompleted then "  system activation completed" else empty end
+    ' <<<"$progress" >&2
+    jq -r 'if (.originTty // "") != "" then "  original terminal: \(.originTty)" else empty end' \
+      "$job_dir/metadata.json" >&2
+    if [[ "$phase" == waiting || "$phase" == running || "$phase" == submitted ]]; then
+      printf '  cancel this job: atyrode apply-status %s --cancel\n' "$job_id" >&2
+    fi
   fi
   if [[ -r "$job_dir/result.json" ]]; then
+    [[ "$cancel" == 0 || "$phase" != cancelled ]] || return 0
     return "$(jq -r '.exitCode' "$job_dir/result.json")"
   fi
   [[ "$phase" != interrupted ]] ||
@@ -131,15 +207,17 @@ run_apply_job_worker() {
     die "$EX_NOINPUT" "private apply job metadata is unavailable"
   metadata="$(cat "$job_dir/metadata.json")"
   unit="$(jq -r '.unit' <<<"$metadata")"
-  [[ "$unit" == "atyrode-apply.service" ]] ||
+  [[ "$unit" == "atyrode-apply-$job_id.service" ]] ||
     die "$EX_DATAERR" "private apply job metadata is invalid"
 
   apply_job_worker=1
+  apply_job_directory="$job_dir"
   live=false
   [[ "$(jq -r '.live' <<<"$metadata")" != true ]] || live=true
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   write_apply_job_json "$job_dir/running.json" \
-    "$(jq -nc --arg startedAt "$started_at" '{schemaVersion:1,startedAt:$startedAt}')"
+    "$(jq -nc --arg startedAt "$started_at" \
+      '{schemaVersion:1,startedAt:$startedAt,state:"working",activationCompleted:false}')"
   # apply_config is written for errexit: its command substitutions are
   # unguarded, and the synchronous `atyrode apply` path runs it that way. The
   # subshell inherits this `set +e`, so it must re-enable errexit for itself -
@@ -174,22 +252,23 @@ run_apply_job_worker() {
   [[ "$status" == 0 ]] && phase=succeeded
   result="$(jq -nc --arg phase "$phase" --arg startedAt "$started_at" \
     --arg finishedAt "$finished_at" --argjson exitCode "$status" \
-    '{schemaVersion:1,phase:$phase,exitCode:$exitCode,startedAt:$startedAt,finishedAt:$finishedAt}')"
+    --argjson activated "$(jq '.activationCompleted' "$job_dir/running.json")" \
+    '{schemaVersion:1,phase:$phase,exitCode:$exitCode,startedAt:$startedAt,finishedAt:$finishedAt,
+      activationCompleted:$activated}')"
   write_apply_job_json "$job_dir/result.json" "$result"
-  rm -f "$job_dir/running.json"
   return "$status"
 }
 
 submit_apply_job() {
   local root job_id job_dir unit created_at metadata latest_temp self systemd_run systemctl
-  local env_name probe_status unreachable live=false submitted=1 status=0
+  local env_name probe_status unreachable live=false submitted=1 status=0 origin_tty=""
   local -a run_args job_argv
   root="$(apply_jobs_root)"
   mkdir -p "$root"
   chmod 700 "$root"
   job_id="$(date -u +%s)-$$-$RANDOM"
   job_dir="$root/$job_id"
-  unit="atyrode-apply.service"
+  unit="atyrode-apply-$job_id.service"
   mkdir -m 700 "$job_dir"
   : >"$job_dir/output.log"
   chmod 600 "$job_dir/output.log"
@@ -199,9 +278,10 @@ submit_apply_job() {
   # capture. Anything without a terminal on both ends - CI, a pipe, a timer -
   # keeps the detached job whose output apply-status replays.
   ! interactive || live=true
+  [[ ! -t 0 ]] || origin_tty="$(tty)"
   metadata="$(jq -nc --arg jobId "$job_id" --arg unit "$unit" \
-    --arg createdAt "$created_at" --argjson live "$live" \
-    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt,live:$live}')"
+    --arg createdAt "$created_at" --argjson live "$live" --arg originTty "$origin_tty" \
+    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt,live:$live,originTty:$originTty}')"
   write_apply_job_json "$job_dir/metadata.json" "$metadata"
   self="$(atyrode_self)" ||
     die "$EX_UNAVAILABLE" "atyrode package wrapper is unavailable"
@@ -209,7 +289,7 @@ submit_apply_job() {
     die "$EX_UNAVAILABLE" "systemd-run became unavailable while submitting apply"
   systemctl="$(apply_systemctl_command)" ||
     die "$EX_UNAVAILABLE" "systemctl became unavailable while submitting apply"
-  if "$systemctl" --user is-active --quiet "$unit" 2>/dev/null; then
+  if "$systemctl" --user is-active --quiet 'atyrode-apply*.service' 2>/dev/null; then
     die "$EX_UNAVAILABLE" "another apply job is active; inspect it with: atyrode apply-status"
   fi
   if [[ "$live" == true ]]; then
@@ -235,7 +315,7 @@ submit_apply_job() {
   # shell resolves it fine. The public wrapper re-prefixes the package's own
   # tools, so forwarding cannot displace them with caller-supplied binaries.
   for env_name in PATH XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME \
-    ATYRODE_HOST ATYRODE_GIT_AUTH_MODE SSH_AUTH_SOCK; do
+    ATYRODE_HOST ATYRODE_GIT_AUTH_MODE SSH_AUTH_SOCK WSL_INTEROP WSLPATH; do
     [[ -z "${!env_name:-}" ]] ||
       run_args+=("--setenv=$env_name=${!env_name}")
   done

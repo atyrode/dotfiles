@@ -291,6 +291,8 @@ apply_config() {
     [[ -n "$candidate_path" ]] || planned+=("Build the candidate closure of $host through $backend.")
     planned+=("Analyse what activating the candidate does to services.")
     if [[ "$dry" == 0 ]]; then
+      [[ "$identity_mode" == runtime ]] ||
+        planned+=("Check declared generator sources before activation.")
       case "$activation" in
         nix-darwin | nixos-wsl | nixos) [[ -n "$candidate_path" ]] || planned+=("Place the machine key.") ;;
       esac
@@ -496,6 +498,7 @@ apply_config() {
     step_fail "$backend did not complete after switching $profile_link to $profile_after"
     die "$EX_SOFTWARE" "$backend failed while activating $host"
   }
+  apply_job_activated
   step_ok
   apply_scratch_cleanup
   trap - EXIT

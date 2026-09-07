@@ -1,4 +1,5 @@
 {
+  config,
   host,
   hostId,
   homeModules,
@@ -11,6 +12,19 @@
 let
   inherit (host) username;
   binaryCaches = import ../shared/binary-caches.nix;
+  # Windows-started sessions already carry this PATH. Systemd-started shells
+  # do not; ask Windows for it instead of retaining another session's socket
+  # or guessing the Windows user's App Execution Alias directory.
+  windowsPath = "${pkgs.atyrode}/libexec/atyrode-wsl-path";
+  windowsEnvironment = ''
+    if [ -z "''${WSLPATH:-}" ]; then
+      if _atyrode_windows_path="$(${windowsPath} --automount-root ${lib.escapeShellArg config.wsl.wslConf.automount.root} 2>/dev/null)"; then
+        export WSLPATH="$_atyrode_windows_path"
+        export PATH="$PATH:$WSLPATH"
+      fi
+      unset _atyrode_windows_path
+    fi
+  '';
 in
 {
   assertions = [
@@ -42,6 +56,12 @@ in
       appendWindowsPath = true;
     };
   };
+
+  # The upstream wrapper sources set-environment, while interactive shells
+  # can inherit its already-initialized marker from a user service. Cover
+  # both entry points and leave split-path to maintain upstream WSLPATH.
+  environment.extraInit = lib.mkBefore windowsEnvironment;
+  environment.interactiveShellInit = windowsEnvironment;
 
   networking.hostName = host.hostname;
 

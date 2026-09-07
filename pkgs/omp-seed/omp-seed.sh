@@ -17,6 +17,7 @@ NARRATE_NAME=omp-seed
 #   changed locally since the last seed -> kept, reported as drift
 #   blocked by a local non-mapping      -> kept, reported as drift
 #   unchanged since a now-updated seed  -> updated to the new default
+#   explicitly kept, unchanged review  -> accepted local choice
 #
 # Local edits therefore always win; only values the operator never touched
 # follow the repository. Unmanaged keys are preserved untouched. The last
@@ -28,6 +29,7 @@ seed_file="${OMP_SEED_FILE:?OMP_SEED_FILE must point at the seed YAML}"
 state_root="${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/omp-plain-seed"
 snapshot_file="$state_root/last-applied.yml"
 report_file="$state_root/drift.json"
+decisions_file="$state_root/kept.json"
 dry_run="${AGENT_TOOLS_DRY_RUN:-0}"
 
 # Always the default state root: the seed's target and its global drift state
@@ -98,7 +100,7 @@ file_digest() {
 # Classify every seed leaf against the live config and the last-applied
 # snapshot. Arrays are atomic leaves; path segments are always object keys
 # because the seed never indexes into arrays. A leaf whose intermediate
-# path is blocked by a local scalar or array is drift, never a write —
+# path is blocked by a local scalar, null or array is drift, never a write —
 # setpath would otherwise error (or the merge would destroy the local
 # value), so blocked leaves must not reach the set list.
 classify() {
@@ -106,7 +108,8 @@ classify() {
   jq -n \
     --argjson live "$live_json" \
     --argjson seed "$seed_json" \
-    --argjson snap "$snap_json" '
+    --argjson snap "$snap_json" \
+    --argjson decisions "$decisions_json" '
     def leafpaths:
       [ paths as $p
         | select((($p | map(type) | any(. == "number")) | not)
@@ -115,32 +118,42 @@ classify() {
     def haspath($p):
       try (reduce ($p[:-1])[] as $k (.; .[$k]) | (type == "object") and has($p[-1]))
       catch false;
-    def pathopen($p):
-      try (reduce ($p[:-1])[] as $k (.; .[$k]) | (type == "object") or (type == "null"))
-      catch false;
+    def localstate($p):
+      reduce range(0; $p | length) as $i (
+        {present: true, value: ., blocked: null};
+        if .blocked != null or (.present | not) then .
+        elif (.value | type) != "object" then .blocked = $p[:$i]
+        elif (.value | has($p[$i])) then .value = .value[$p[$i]]
+        else .present = false | .value = null
+        end
+      );
     ($seed | leafpaths) as $paths
     | reduce $paths[] as $p (
         {set: [], drift: [], insync: []};
         ($seed | getpath($p)) as $s
-        | ($live | pathopen($p)) as $open
+        | ($live | localstate($p)) as $state
         | ($live | haspath($p)) as $lh
         | ($snap | haspath($p)) as $sh
         | (if $lh then ($live | getpath($p)) else null end) as $l
         | (if $sh then ($snap | getpath($p)) else null end) as $v0
-        | if ($open | not)
-          then .drift += [{path: $p, key: ($p | join(".")), live: null, seed: $s, reason: "blocked-by-local-value"}]
-          elif ($lh | not) and ($sh | not)
+        | {path: $p, key: ($p | join(".")), live: $l, seed: $s, localState: $state} as $d
+        | if $state.blocked != null
+          then .drift += [$d + {reason: "blocked-by-local-value"}]
+          elif ($lh | not) and ($sh | not) and (any($decisions[]; .path == $p and .localState == $state) | not)
           then .set += [{path: $p, key: ($p | join(".")), to: $s, reason: "new"}]
           elif ($lh | not)
-          then .drift += [{path: $p, key: ($p | join(".")), live: null, seed: $s, reason: "deleted-locally"}]
+          then .drift += [$d + {reason: "deleted-locally"}]
           elif $l == $s
           then .insync += [{key: ($p | join("."))}]
+          elif any($decisions[]; .path == $p and .localState == $state)
+          then .drift += [$d + {reason: "local-edit"}]
           elif $sh and ($l == $v0)
           then .set += [{path: $p, key: ($p | join(".")), from: $l, to: $s, reason: "seed-updated"}]
-          else .drift += [{path: $p, key: ($p | join(".")), live: $l, seed: $s, reason: "local-edit"}]
+          else .drift += [$d + {reason: "local-edit"}]
           end
       )
-    | {set, drift, insync}'
+    | .accepted = [.drift[] | select(. as $d | $decisions | index($d))]
+    | .drift -= .accepted'
 }
 
 # Atomically replace the target with the rendered JSON document. Refuses
@@ -186,6 +199,7 @@ write_report() {
     '{generatedAt: $generatedAt, config: $config, seed: $seed,
       applied: [$result.set[] | {key, reason, to}],
       drift: [$result.drift[] | {key, reason, live, seed}],
+      accepted: [$result.accepted[] | {key, reason, live, seed}],
       inSyncCount: ($result.insync | length)}' >"$temp"
   chmod 600 "$temp"
   mv -f -- "$temp" "$report_file"
@@ -193,12 +207,14 @@ write_report() {
 
 print_summary() {
   local classification="$1" verb="$2"
-  local set_count drift_count sync_count
+  local set_count drift_count sync_count accepted_count
   set_count="$(jq -r '.set | length' <<<"$classification")"
   drift_count="$(jq -r '.drift | length' <<<"$classification")"
   sync_count="$(jq -r '.insync | length' <<<"$classification")"
-  printf 'omp seed: %s %s, %s drifted (kept), %s in sync\n' \
+  accepted_count="$(jq -r '.accepted | length' <<<"$classification")"
+  printf 'omp seed: %s %s, %s unreviewed local changes, %s in sync\n' \
     "$set_count" "$verb" "$drift_count" "$sync_count"
+  [[ "$accepted_count" == 0 ]] || printf '  %s local choice(s) already reviewed\n' "$accepted_count"
   if [[ "$set_count" != 0 ]]; then
     jq -r '.set[] | "  + \(.key) = \(.to | tojson)\(if .reason == "seed-updated" then " (was \(.from | tojson))" else "" end)"' \
       <<<"$classification"
@@ -216,6 +232,11 @@ load_documents() {
   live_json="$(yaml_to_json "$config_path")"
   seed_json="$(yaml_to_json "$seed_file")"
   snap_json="$(yaml_to_json "$snapshot_file")"
+  decisions_json='[]'
+  if [[ -f "$decisions_file" ]]; then
+    decisions_json="$(jq -e 'if type == "array" then . else error("expected an array") end' "$decisions_file")" ||
+      fail "invalid keep decisions in $decisions_file"
+  fi
   jq -e 'type == "object"' <<<"$live_json" >/dev/null || fail "$config_path is not a YAML mapping"
   jq -e 'type == "object"' <<<"$seed_json" >/dev/null || fail "seed $seed_file is not a YAML mapping"
 }
@@ -262,6 +283,7 @@ cmd_status() {
       '{config: $config, seed: $seed,
         pending: [$result.set[] | {key, reason, to}],
         drift: [$result.drift[] | {key, reason, live, seed}],
+        accepted: [$result.accepted[] | {key, reason, live, seed}],
         inSyncCount: ($result.insync | length)}'
   else
     print_summary "$classification" "pending"
@@ -275,6 +297,9 @@ cmd_resolve() {
   load_documents
   local classification drift_count
   classification="$(classify "$live_json" "$seed_json" "$snap_json")"
+  if [[ "$reset_all" == 1 ]]; then
+    classification="$(jq '.drift += .accepted | .accepted = []' <<<"$classification")"
+  fi
   drift_count="$(jq -r '.drift | length' <<<"$classification")"
   if [[ "$drift_count" == 0 ]]; then
     printf 'omp seed: no drift to resolve\n'
@@ -290,7 +315,7 @@ cmd_resolve() {
     exec 4<&0
   fi
 
-  local updated="$live_json" answer key live_value seed_value keep_all=0
+  local updated="$live_json" answer key live_value seed_value keep_all=0 temp
   while IFS=$'\t' read -r -u 3 key live_value seed_value; do
     if [[ "$reset_all" == 1 ]]; then
       answer=r
@@ -302,8 +327,22 @@ cmd_resolve() {
         "$(paint 2 '[k]eep local / [r]eset to default / keep [a]ll / [q]uit:')"
       read -r -u 4 answer || answer=q
       printf '\n'
+      case "$answer" in
+        k | K | r | R | a | A | q | Q) ;;
+        *)
+          printf '  not a choice; leaving the remaining settings unreviewed\n'
+          break
+          ;;
+      esac
     fi
     case "$answer" in
+      k | K | a | A)
+        [[ "$answer" != a && "$answer" != A ]] || keep_all=1
+        decisions_json="$(jq --arg key "$key" --argjson result "$classification" '
+          map(select(.key != $key)) + [$result.drift[] | select(.key == $key)]
+        ' <<<"$decisions_json")"
+        printf '  kept %s\n' "$key"
+        ;;
       r | R)
         # Resetting may need to displace a local non-mapping that blocks the
         # path; the operator explicitly chose the default here.
@@ -318,11 +357,10 @@ cmd_resolve() {
             )
           | setpath($d.path; $d.seed)' <<<"$updated")" ||
           fail "could not reset $key"
+        decisions_json="$(jq --arg key "$key" 'map(select(.key != $key))' <<<"$decisions_json")"
         printf '  reset %s\n' "$key"
         ;;
-      a | A) keep_all=1 ;;
       q | Q) break ;;
-      *) printf '  kept %s\n' "$key" ;;
     esac
   done 3< <(jq -r '.drift[] | [.key, (.live | tojson), (.seed | tojson)] | @tsv' <<<"$classification")
 
@@ -331,6 +369,18 @@ cmd_resolve() {
     live_json="$updated"
     live_digest="$(file_digest "$config_path")"
   fi
+  # A keep records exactly the reviewed local value (including absence) and
+  # default, not a new merge baseline. Changed defaults must ask again, while
+  # accepting a local value must never make it follow repository updates.
+  if [[ "$(file_digest "$config_path")" != "$live_digest" ]]; then
+    fail "$config_path changed during review; rerun to review its current values"
+  fi
+  temp="$(mktemp "$state_root/.kept.json.XXXXXX")"
+  transient_files+=("$temp")
+  printf '%s\n' "$decisions_json" >"$temp"
+  chmod 600 "$temp"
+  mv -f -- "$temp" "$decisions_file"
+  load_documents
   classification="$(classify "$live_json" "$seed_json" "$snap_json")"
   write_report "$classification" "$config_path"
   print_summary "$classification" "pending"
@@ -342,10 +392,12 @@ atyrode-omp-seed <command>
 
   apply                Seed missing defaults and follow repository updates for
                        values the operator never changed. Local edits win and
-                       are reported as drift. Honors AGENT_TOOLS_DRY_RUN=1.
+                       are reported until reviewed. Honors AGENT_TOOLS_DRY_RUN=1.
   status [--json]      Report pending seeds and drift without writing.
   resolve [--reset-all]
-                       Interactively keep or reset each drifted value.
+                       Interactively keep or reset each unreviewed drifted value.
+                       Keep decisions last until the local value or default changes.
+                       --reset-all also resets previously accepted local choices.
 EOF
 }
 

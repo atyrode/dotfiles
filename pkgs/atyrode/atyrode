@@ -91,7 +91,7 @@ usage() {
 Usage:
   atyrode apply [HOST] [--ref REF | --repo PATH | --candidate STOREPATH] [--git-auth-mode ssh|https-gh] [--plan|--dry-run|--preview-json] [--json] [--restart-shell] [--expected-disruption FINGERPRINT] [--scope SCOPE:SERVICE]...
   atyrode changelog [--json] [--record]
-  atyrode apply-status [JOB] [--json]
+  atyrode apply-status [JOB] [--json] [--cancel]
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode runtime list [--json]
@@ -157,10 +157,12 @@ plain-omp settings that drifted from the seeded defaults. Mutating Linux Home
 Manager applies run as manager-owned jobs rather than as children of the
 invoking shell. Started from a terminal the job is handed that terminal:
 activation output streams as it happens, every prompt it raises (sudo) is
-answerable, and the job ends with the terminal. Without one it is
-detached and its output captured, so replacing a terminal-hosting service
-cannot terminate the activation and apply-status reconnects to the durable
-result. On a terminal apply also offers an interactive keep-or-reset review
+answerable, and the job is owned by the user manager. Without a terminal it is
+detached and its output captured. apply-status reports the current step,
+whether it is waiting for input, the originating terminal, and whether
+activation completed. To stop an abandoned job explicitly, use
+atyrode apply-status JOB --cancel; cancellation does not roll back activation.
+On a terminal apply also offers an interactive keep-or-reset review
 after activation, and offers to run the provisioning command for each surface
 it finds unconfigured instead of only naming it.
 fleet deploys a machine of this clan that the operator is not sitting at:

@@ -216,6 +216,7 @@ stdenvNoCC.mkDerivation {
   runtimeSrc = ./runtime;
   disruptionSrc = ./disruption;
   inputsSrc = ./inputs;
+  wslPathSrc = ./wsl-path;
   nativeBuildInputs = [ makeWrapper ];
 
   dontUnpack = true;
@@ -233,6 +234,9 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@service_protection@' '${serviceProtection}'
     install -D -m755 "$inputsSrc" "$out/libexec/atyrode-inputs"
     substituteInPlace "$out/libexec/atyrode-inputs" \
+      --replace-fail '@python3@' '${python3.interpreter}'
+    install -D -m755 "$wslPathSrc" "$out/libexec/atyrode-wsl-path"
+    substituteInPlace "$out/libexec/atyrode-wsl-path" \
       --replace-fail '@python3@' '${python3.interpreter}'
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@agents_policy@' '${agentsPolicy}' \

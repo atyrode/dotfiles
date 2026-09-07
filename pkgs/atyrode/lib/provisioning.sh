@@ -243,7 +243,7 @@ clever_logged_out() {
 # Declining an optional surface is not an activation failure. Accepting a
 # ceremony that then fails is an incomplete apply, and must reach its caller.
 review_provisioning() { # json host authoring_repo
-  local json="$1" host="$2" authoring_repo="$3" count index status acted=0 tally leftovers review_status=0
+  local json="$1" host="$2" authoring_repo="$3" count index status acted=0 tally leftovers review_status=0 omp_summary
 
   collect_provisioning_checks
   count="$(jq -r 'length' <<<"$provisioning_checks")"
@@ -267,6 +267,13 @@ review_provisioning() { # json host authoring_repo
   # is now, not as it was before a ceremony ran. Only worth the second pass when
   # something actually acted -- an untouched machine already has its answer.
   [[ "$acted" == 0 ]] || collect_provisioning_checks
+  if [[ "$acted" != 0 ]]; then
+    omp_summary="$(jq -r '.[] | select(.id == "omp-seed" and .status == "degraded") | .summary' <<<"$provisioning_checks")"
+    if [[ -n "$omp_summary" ]]; then
+      step_detail "OMP state after review: $omp_summary"
+      step_detail 'If reset values returned, restart OMP sessions opened before the managed-settings guard upgrade, then run atyrode-omp-seed resolve again; those sessions can still run the old rollback watcher.'
+    fi
+  fi
   # Settled first, outstanding last, so the tail of the line is the part that
   # still wants an operator. Alphabetical order would bury it in the middle.
   tally="$(jq -r '
@@ -289,11 +296,12 @@ review_provisioning() { # json host authoring_repo
 }
 
 review_degraded_surface() { # json index
-  local json="$1" id summary remediation
+  local json="$1" id summary remediation code resolve_status=0
 
   id="$(jq -r ".[$2].id" <<<"$provisioning_checks")"
   summary="$(jq -r ".[$2].summary" <<<"$provisioning_checks")"
   remediation="$(jq -r ".[$2].remediation // empty" <<<"$provisioning_checks")"
+  code="$(jq -r ".[$2].code // empty" <<<"$provisioning_checks")"
   printf '%s: %s\n' "$id" "$summary" >&2
   # Seed drift is the one surface whose remediation is itself a review: running
   # it asks the questions rather than answering them, so on a terminal it runs
@@ -302,9 +310,11 @@ review_degraded_surface() { # json index
   # Shown before it runs for the same reason as any other: the next thing on
   # this terminal is an interactive dialogue from another program, and an
   # operator should never be prompted by something they did not see start.
-  if [[ "$id" == omp-seed && "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 ]] && interactive; then
-    run_visible atyrode-omp-seed resolve
-    return $?
+  if [[ "$id" == omp-seed && "$code" == seed-drift && "$json" == 0 && "${ATYRODE_SEED_REVIEW:-1}" == 1 ]] && interactive; then
+    apply_job_waiting "Review OMP local settings"
+    run_visible atyrode-omp-seed resolve || resolve_status=$?
+    apply_job_resumed
+    return "$resolve_status"
   fi
   [[ -z "$remediation" ]] || printf '  fix with: %s\n' "$remediation" >&2
 }

@@ -1,0 +1,56 @@
+#!@python3@
+"""Recover Windows PATH for a service-launched WSL process without caching sockets."""
+
+import argparse
+import configparser
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+
+def windows_path(automount_root=None):
+    if automount_root is None:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read("/etc/wsl.conf")
+        automount_root = config.get("automount", "root", fallback="/mnt").strip('"')
+    cmd = shutil.which("cmd.exe")
+    if cmd is None:
+        cmd = next((str(path) for path in sorted(Path(automount_root).glob("*/Windows/System32/cmd.exe")) if path.is_file()), None)
+    if cmd is None:
+        raise RuntimeError("Windows command processor was not found under the WSL automount root")
+    converter = shutil.which("wslpath") or "/bin/wslpath"
+    # /init supplies the distro interop server when no session socket is set.
+    # PATH is a builtin: unlike echo %PATH%, metacharacters are not re-parsed.
+    output = subprocess.run([cmd, "/d", "/u", "/c", "path"], stdin=subprocess.DEVNULL,
+                            capture_output=True, timeout=5, check=True).stdout.decode("utf-16-le").strip()
+    if not output.upper().startswith("PATH="):
+        raise RuntimeError("Windows did not return its executable search path")
+    paths = []
+    for entry in output[5:].split(";"):
+        if not entry:
+            continue
+        converted = subprocess.run([converter, "-u", entry], stdin=subprocess.DEVNULL,
+                                   capture_output=True, text=True, timeout=5, check=True).stdout.rstrip("\r\n")
+        if os.path.isabs(converted) and ":" not in converted and converted not in paths:
+            paths.append(converted)
+    if not paths:
+        raise RuntimeError("Windows returned no usable executable search paths")
+    return ":".join(paths)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--automount-root")
+    args = parser.parse_args()
+    try:
+        print(windows_path(args.automount_root))
+    except (OSError, ValueError, configparser.Error, RuntimeError, subprocess.SubprocessError):
+        print("atyrode: Windows PATH discovery failed; inspect the Windows mounts and WSL runtime, not App Installer", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

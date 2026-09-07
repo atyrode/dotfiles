@@ -281,7 +281,7 @@ def main():
         verify_runtime(fixture)
         for width, height in ((150, 44), (100, 30)):
             verify_terminal(fixture, width, height)
-        sizes = json.loads(run("docker", "inspect", "--size", *fixture.containers).stdout)
+        sizes = json.loads(run("docker", "inspect", "--size", *fixture.containers, timeout=180).stdout)
         fixture.metrics["owned_writable_bytes"] = sum(item.get("SizeRw", 0) for item in sizes)
         fixture.metrics["elapsed_seconds"] = round(time.monotonic() - start, 2)
         print(json.dumps(fixture.metrics, indent=2))

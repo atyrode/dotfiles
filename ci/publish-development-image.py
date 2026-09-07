@@ -146,6 +146,7 @@ def publish(args, password, environment):
             environment, stdin=password + "\n", timeout=60)
     registry.authenticate()
     platforms = {}
+    loaded_ids = set()
     for architecture in ("amd64", "arm64"):
         archive = args.archives / f"development-image-{architecture}" / "development-image.tar.gz"
         require(archive.is_file(), f"Missing tested {architecture} archive")
@@ -155,6 +156,7 @@ def publish(args, password, environment):
         # Both archives carry the same tag. Capture and use the ID before the next load.
         loaded = json.loads(command(["docker", "image", "inspect", f"{IMAGE}:{args.revision}"], environment))[0]
         image_id = loaded["Id"]
+        loaded_ids.add(image_id)
         verify_config(loaded, args.revision, architecture, loaded=True)
         tag = f"{args.revision}-{architecture}"
         existing = registry.manifest(tag)
@@ -185,6 +187,8 @@ def publish(args, password, environment):
         print("Reusing immutable multi-platform index", flush=True)
     verify_index(existing[0], platforms)
     reference = f"{IMAGE}@{existing[1]}"
+    # The anonymous pull must fetch blobs, not reuse the archives loaded above.
+    command(["docker", "image", "rm", "--force", *sorted(loaded_ids)], environment)
 
     print("Verifying anonymous digest pulls and standalone startup", flush=True)
     try:
@@ -206,10 +210,10 @@ def publish(args, password, environment):
                 subprocess.run(["docker", "rm", "--force", container], env=anonymous_env,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                timeout=30, check=False)
-    except PublicationError:
+    except PublicationError as error:
         raise PublicationError(
-            "Anonymous pull/run proof failed. Set ghcr.io/atyrode/development public in GitHub package Settings, "
-            "then rerun publication; if already public, investigate anonymous registry/runtime availability."
+            f"Anonymous pull/run proof failed: {error}. If the package is private, set "
+            "ghcr.io/atyrode/development public in GitHub package Settings, then rerun publication."
         ) from None
     args.output.write_text(reference + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

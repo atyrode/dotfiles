@@ -96,7 +96,10 @@ The parcel development edge serves `myparcelle.tyrode.dev` from port 4173
 and `auth.myparcelle.tyrode.dev` from port 8082. Caddy owns TLS; the
 application checkout owns the development runtime and identity database.
 Only the `myparcelle` realm and theme resources are public on the auth host:
-Keycloak administration stays on loopback. Storybook is not published.
+Keycloak administration stays on loopback. The application edge adds nothing
+but TLS and compression: caching and the admin gate on `/storybook/` are the
+application's, exactly as on production, so a reviewer sees on the
+development surface what production would show.
 Source delivery does not authorize activation: any future activation needs
 an independently reviewed service-disruption plan and the
 [terminal-preservation safeguards](manifold.md#upgrades).

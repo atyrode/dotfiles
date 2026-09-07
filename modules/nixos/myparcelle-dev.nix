@@ -1,13 +1,17 @@
 # Only the public edge belongs to the machine. The development checkout owns
 # its application and isolated identity service; neither upstream is exposed
 # beyond loopback, and an absent checkout answers 502 rather than a fallback.
+#
+# The application edge is TLS, compression and forwarding, nothing else: the
+# application owns caching (fingerprinted assets immutable, documents
+# revalidated, invitation shells never stored) and the admin gate on
+# /storybook/, exactly as on production. A path block or a cache header here
+# made the development surface answer differently from production for no
+# reason a reviewer could see (2026-09-07: a 404 on the interface catalog).
 _: {
   services.caddy.virtualHosts = {
     "myparcelle.tyrode.dev".extraConfig = ''
       encode zstd gzip
-      header Cache-Control "no-store"
-      @storybook path /storybook /storybook/*
-      respond @storybook 404
       reverse_proxy 127.0.0.1:4173
     '';
     "auth.myparcelle.tyrode.dev".extraConfig = ''

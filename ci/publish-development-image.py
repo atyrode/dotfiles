@@ -200,7 +200,8 @@ def publish(args, password, environment):
             # Pull both platforms from the immutable index, then run the native one.
             for architecture in ("arm64", "amd64"):
                 pulled = subprocess.run(
-                    ["docker", "pull", "--platform", f"linux/{architecture}", reference],
+                    ["docker", "pull", "--platform", f"linux/{architecture}",
+                     f"{IMAGE}@{platforms[architecture]}" if architecture == "arm64" else reference],
                     env=anonymous_env, text=True, capture_output=True, timeout=900, check=False,
                 )
                 # This client has no credentials. Preserve Docker's actionable error,

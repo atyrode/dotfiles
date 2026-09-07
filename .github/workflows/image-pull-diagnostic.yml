@@ -16,5 +16,5 @@ jobs:
           export DOCKER_CONFIG="$config"
           df -h
           docker info
-          docker pull --platform linux/arm64 ghcr.io/atyrode/development@sha256:f41ca1ba59430fbd7adbcc02bb33ef87f69de3af42edd4cd3371e1ade6e26ea3
+          docker pull --platform linux/arm64 ghcr.io/atyrode/development@sha256:904f5a2639b22ec9f28e1d12f32557b598a7342eb4987e141766bd50cc0d5b96
           docker pull --platform linux/amd64 ghcr.io/atyrode/development@sha256:f41ca1ba59430fbd7adbcc02bb33ef87f69de3af42edd4cd3371e1ade6e26ea3

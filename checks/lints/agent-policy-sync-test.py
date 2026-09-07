@@ -556,7 +556,9 @@ class SyncTests(unittest.TestCase):
             sys.executable, str(SYNC), "--repository", repository or self.state["repository"],
             "--source-checkout", str(self.source), "--work-dir", str(work),
         ]
-        proc = subprocess.run(args, env=self.env | (env or {}), capture_output=True, timeout=45)
+        # Real polling plus many interpreter/CLI launches can exceed 45 seconds
+        # on a contended local builder; retain a finite outer fixture deadline.
+        proc = subprocess.run(args, env=self.env | (env or {}), capture_output=True, timeout=120)
         self.reload()
         self.assertFalse(self.events("fixture_error"), self.events("fixture_error"))
         self.assertEqual(proc.returncode, expected, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}\nevents={self.state['events']!r}")

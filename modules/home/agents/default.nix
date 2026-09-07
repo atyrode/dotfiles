@@ -6,28 +6,28 @@
 }:
 
 let
-  # The one file every agent on this machine starts from: the operator policy
-  # in modules/home/agents/AGENTS.md with a generated section describing this machine.
-  # It is machine state, not store content -- it names what is authenticated
-  # here right now -- so it is rendered into place by the CLI rather than
-  # linked from the store, and the tool files below are out-of-store symlinks
-  # to it so a re-render never has to touch them.
+  # The CLI renders static personal policy from modules/home/agents/AGENTS.md
+  # with minimal generation provenance, not machine or authentication facts.
+  # Keep its existing writable target and out-of-store tool adapters so an
+  # atomic re-render does not require relinking them.
   generatedContext = "${config.xdg.configHome}/agents/AGENTS.md";
   contextLink = config.lib.file.mkOutOfStoreSymlink generatedContext;
 in
 {
+  xdg.configFile."agents/templates/repo-AGENTS.md".source = ./templates/repo-AGENTS.md;
+
   home.file = {
+    # Cross-tool adapters; their presence does not require using either tool.
     ".claude/CLAUDE.md".source = contextLink;
     ".codex/AGENTS.md".source = contextLink;
-    # OMP's native user context file; it shadows the two above in OMP sessions,
-    # which is harmless because all three are the same bytes.
+    # Native user context for OMP's default agent directory. Custom profiles
+    # and discovery overrides may use different files.
     ".omp/agent/AGENTS.md".source = contextLink;
   };
 
-  # Rendered on every activation so the file always describes the machine
-  # this generation produced. A render that fails must not fail the
-  # activation: the machine is converged either way, and the doctor probe
-  # reports the missing file with the command that writes it.
+  # Refresh policy and provenance on activation without probing machine/auth
+  # state. Failure remains best-effort: the doctor probe reports missing or
+  # mismatched policy and the command that writes it.
   home.activation.renderAgentContext =
     lib.hm.dag.entryAfter
       [

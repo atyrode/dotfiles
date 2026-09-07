@@ -26,8 +26,7 @@ LAYOUTS = {
     "repository": ("AGENTS.md",),
     "dotfiles": (
         "AGENTS.md",
-        "modules/home/agents/AGENTS.md",
-        "modules/home/codex/templates/repo-AGENTS.md",
+        "modules/home/agents/templates/repo-AGENTS.md",
     ),
 }
 ENVELOPE = re.compile(

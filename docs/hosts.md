@@ -79,9 +79,10 @@ what the machine actually contains, and the address clan deploys to. Those
 facts are public here on purpose. An address is not what protects a machine
 that answers on the internet, resolves publicly, and is scanned continuously;
 key-only SSH, no root login, and a firewall open on the ports it serves are,
-and they are public here too. A machine that could not state its own address could not be
-rebuilt from this repository, which is the test that matters
-([invariant 8](../AGENTS.md)). The provider is a different kind of fact and
+and they are public here too. Declared hardware and network configuration
+supports rebuilding from this repository and its locked inputs
+([source boundary](../AGENTS.md#boundaries)); it is not proof of a timed recovery.
+The provider is a different kind of fact and
 stays out of every file; `checks/lints/production-facts.nix` enforces both
 halves of that rule. `dev-01`, the persistent development VPS, is the
 first machine of this shape: `modules/nixos/vps.nix` is its policy — SSH plus

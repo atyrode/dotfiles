@@ -552,11 +552,10 @@ apply_config() {
   # a published revision or a copied closure is nothing a ceremony can commit
   # into, and the review says so rather than picking one.
   review_provisioning "$json" "$host" "${repo:-}" || apply_status="$EX_UNAVAILABLE"
-  # Last, because the review may have just opened the sessions this file
-  # reports: activation already rendered it with the new CLI, and this
-  # render is what makes the file describe the machine apply leaves behind.
+  # Keep the final render owned by the inspected generation, including when
+  # activation did not render its personal policy snapshot.
   step_begin "Render this machine's agent context"
-  step_why 'every agent tool here reads this file, and the review above may have changed what is authenticated'
+  step_why 'install the personal policy and provenance used by the default linked agent instructions'
   if apply_render_context "$candidate" "$expected_user"; then
     step_ok
   else

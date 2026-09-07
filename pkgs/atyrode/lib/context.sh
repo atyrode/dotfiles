@@ -1,27 +1,24 @@
 # shellcheck shell=bash
 #
-# The agent context: the operator policy with this machine's facts appended,
-# rendered into the one file every agent tool on the machine reads.
+# The startup context contains personal policy and generation provenance only.
+# Machine inventory is collected solely for explicit diagnostic display.
 #
 # Sourced by bin/atyrode; every @substitution@ lives in that entry point.
 
-# Where the generated file lives. The tool files (~/.claude/CLAUDE.md,
-# ~/.codex/AGENTS.md, ~/.omp/agent/AGENTS.md) are Home Manager symlinks to
-# this path, so a render never has to know which tools are installed.
+# The default OMP user file and Claude/Codex adapters are Home Manager symlinks
+# to this path, so a render need not discover tools or named profiles.
 context_target() {
   printf '%s/agents/AGENTS.md\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 
-# The command that acquires each session, spelled the way the operator types
-# it. Repeated in every "not authenticated" line so an agent never has to ask.
+# Diagnostic remediation names the owning tool's supported login command.
 readonly context_gh_login='gh auth login'
 readonly context_clever_login='clever login'
 
 # gh's own status report names each account and where its token lives, never
 # the token; only the login of a session gh could validate is taken from it,
 # so an unverifiable process token counts as no session. Bounded because gh
-# consults the API to validate and a machine without network would otherwise
-# hang a render that has nothing to do with the network.
+# consults the API to validate; explicit diagnostics must not hang indefinitely.
 context_gh_json() {
   local available=false status="" account=""
   ! command -v gh >/dev/null 2>&1 || available=true
@@ -46,7 +43,7 @@ context_clever_json() {
   if ! command -v "$program" >/dev/null 2>&1; then
     jq -nc --arg acquire "$context_clever_login" \
       '{available:false,authenticated:false,account:null,acquire:$acquire}'
-  elif clever_logged_out; then
+  elif ! timeout 15s "$program" profile >/dev/null 2>&1; then
     jq -nc --arg acquire "$context_clever_login" \
       '{available:true,authenticated:false,account:null,acquire:$acquire}'
   else
@@ -59,7 +56,7 @@ context_clever_json() {
 
 # The secrets this account can read are the clan vars sops-nix placed for it:
 # each is named by generator and file with the path it is readable at, never
-# its value (AGENTS.md invariant 9). A file the account cannot read is not
+# its value. A file the account cannot read is not
 # listed, because "readable here" is the question an agent asks.
 context_secrets_json() {
   local root=/run/secrets/vars entry
@@ -93,11 +90,10 @@ context_fleet_cache_json() {
     '{substituter:$substituter,trusted:$trusted}'
 }
 
-# Everything the generated section says, as one document. The Markdown is
-# rendered from this rather than alongside it, so `--json` and the file can
-# never disagree about a fact.
+# Explicit diagnostic inventory. The text display and public JSON share this
+# document; startup rendering never calls it.
 context_machine_json() {
-  local host data fleet generated_at checkout="" clone_root=null
+  local host data fleet generated_at
   host="$(resolve_host)"
   data="$(host_json "$host")"
   generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -105,10 +101,8 @@ context_machine_json() {
     [to_entries[].value | select(.id != $host)
       | {id, description, activation, platform, portable: ((.identityMode // "fixed") == "runtime")}]
     | sort_by(.portable, .id)' "$registry")"
-  # No registry field declares a clone root yet, and guessing one is exactly
-  # what this file exists to end; the dotfiles checkout is the one path this
-  # repository already treats as conventional.
-  [[ ! -d "$HOME/nix-dotfiles/.git" ]] || checkout="$HOME/nix-dotfiles"
+  # Neither path has a declared owner in the registry. Keep the public fields
+  # unknown rather than discovering a checkout from HOME or the working tree.
   jq -nc \
     --arg generatedAt "$generated_at" \
     --arg revision "$embedded_revision" \
@@ -119,20 +113,17 @@ context_machine_json() {
     --argjson clever "$(context_clever_json)" \
     --argjson secrets "$(context_secrets_json)" \
     --argjson fleetCache "$(context_fleet_cache_json)" \
-    --argjson cloneRoot "$clone_root" \
-    --arg checkout "$checkout" \
     '{schemaVersion:1,command:"context",generatedAt:$generatedAt,revision:$revision,target:$target,
       host:$host,fleet:$fleet,
       authentication:{gh:$gh,clever:$clever},
       secrets:{readable:$secrets},
       fleetCache:$fleetCache,
-      cloneRoot:$cloneRoot,
-      dotfilesCheckout:(if $checkout == "" then null else $checkout end)}'
+      cloneRoot:null,
+      dotfilesCheckout:null}'
 }
 
-# The generated section. The first line is the one doctor parses back, so its
-# shape is a contract: `Generated at <timestamp> from atyrode/dotfiles
-# revision <revision> by ...`.
+# Human-readable diagnostics retain the policy-first show contract, but are
+# never persisted into the startup instruction file.
 context_render_section() { # machine-json
   jq -r '
     def auth(name; entry; noun):
@@ -145,7 +136,7 @@ context_render_section() { # machine-json
       end;
     "## This machine",
     "",
-    "Generated at \(.generatedAt) from atyrode/dotfiles revision \(.revision) by `atyrode context render`.",
+    "Generated at \(.generatedAt) from atyrode/dotfiles revision \(.revision) by `atyrode context show`.",
     "",
     "- Host: `\(.host.id)` -- \(.host.description)",
     "- Platform: \(.host.platform) (\(.host.system)); activated by \(.host.activation)",
@@ -164,7 +155,7 @@ context_render_section() { # machine-json
     "",
     "### Secrets readable here",
     "",
-    "Every secret is a clan var placed by activation (ADR 0008 step 3); nothing here opens a vault. Named by generator and file, at the path this account reads it from; values are never written to this file.",
+    "Clan vars placed by activation, named by generator and file at the readable path; secret values are never displayed.",
     "",
     (if (.secrets.readable | length) == 0 then "- None placed for this account."
      else (.secrets.readable[] | "- `\(.name)`: `\(.path)`") end),
@@ -180,29 +171,29 @@ context_render_section() { # machine-json
     (if .cloneRoot then "- Canonical clone root: `\(.cloneRoot)`"
      else "- No canonical clone root is declared for this host; do not assume one." end),
     (if .dotfilesCheckout then "- The dotfiles checkout is `\(.dotfilesCheckout)`."
-     else "- There is no dotfiles checkout at `~/nix-dotfiles`; this machine consumes the published flake through `atyrode apply`." end),
+     else "- No dotfiles checkout is declared; repository-authoring commands require an explicit `--repo PATH`." end),
     "",
-    "This section is generated by `atyrode context`; if it is wrong, `atyrode doctor` is wrong. Never edit by hand."
+    "This is an on-demand diagnostic snapshot, not startup policy or authorization."
   ' <<<"$1"
 }
 
-context_render_document() { # machine-json
+context_render_document() { # optional generation timestamp and revision
   cat "$agents_policy"
-  printf '\n'
-  context_render_section "$1"
+  printf '\nGenerated at %s from atyrode/dotfiles revision %s by `atyrode context render`.\n' \
+    "${1:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" "${2:-$embedded_revision}"
 }
 
 # Written whole and moved into place, mode 0644: an agent reading the file
 # mid-render sees the previous complete one, never a torn one. Shell
 # bookkeeping stays silent; the caller names the path it produced.
-context_write() { # machine-json
+context_write() {
   local target directory temporary
   target="$(context_target)"
   directory="${target%/*}"
   [[ ! -L "$target" ]] || die "$EX_DATAERR" "the agent context must be a regular file, not a symlink: $target"
   mkdir -p "$directory"
   temporary="$(mktemp "$directory/.AGENTS.md.XXXXXX")"
-  context_render_document "$1" >"$temporary"
+  context_render_document >"$temporary"
   chmod 644 "$temporary"
   mv -f "$temporary" "$target"
   printf '%s\n' "$target"
@@ -234,22 +225,21 @@ apply_render_context() { # candidate user
   "$program" context render
 }
 
-# The header line context_render_section writes, read back: prints
+# The provenance line context_render_document writes, read back: prints
 # `<timestamp> <revision>` or nothing when the file does not carry one.
 context_stamp() { # file
   sed -nE 's/^Generated at ([^ ]+) from atyrode\/dotfiles revision ([^ ]+) by .*$/\1 \2/p' "$1" | head -n 1
 }
 
-# A missing file is a to-do apply settles on its own; a present one is stale
-# when it came from another published revision than this CLI or is older than
-# a week, since what it says about sessions decays even when nothing shipped.
-# Development builds carry no revision to compare, so only the age applies.
+# Policy does not expire with age. Compare the full expected document using its
+# original timestamp so edits, older policy and retired inventory all need a
+# render even when the embedded revision is an unpublished development build.
 probe_agent_context() {
-  local target stamp rendered_at revision rendered_epoch now
+  local target stamp rendered_at revision expected actual
   target="$(context_target)"
   if [[ ! -f "$target" ]]; then
     provisioning_unconfigured agent-context \
-      "no generated context at $target, so agents here start without this machine's facts"
+      "no generated personal policy at $target"
     return 0
   fi
   stamp="$(context_stamp "$target")"
@@ -260,20 +250,21 @@ probe_agent_context() {
     return 0
   fi
   read -r rendered_at revision <<<"$stamp"
+  # An unpublished build cannot establish revision currency; it still verifies
+  # all policy bytes below, preserving the recorded generation provenance.
   if [[ "$embedded_revision" =~ ^[0-9a-f]{40}$ && "$revision" != "$embedded_revision" ]]; then
     provisioning_check_add agent-context degraded context-stale \
       "the agent context was rendered from revision ${revision:0:12}, not this CLI's ${embedded_revision:0:12}" \
       "atyrode context render"
     return 0
   fi
-  if rendered_epoch="$(date -u -d "$rendered_at" +%s 2>/dev/null)"; then
-    now="$(date -u +%s)"
-    if ((now - rendered_epoch > 7 * 24 * 3600)); then
-      provisioning_check_add agent-context degraded context-stale \
-        "the agent context was rendered at $rendered_at, more than a week ago" \
-        "atyrode context render"
-      return 0
-    fi
+  expected="$(context_render_document "$rendered_at" "$revision" | sha256sum)"
+  actual="$(sha256sum <"$target")"
+  if [[ "$actual" != "$expected" ]]; then
+    provisioning_check_add agent-context degraded context-stale \
+      "the agent context does not match this CLI's personal policy and provenance" \
+      "atyrode context render"
+    return 0
   fi
   provisioning_check_add agent-context ok "" \
     "the agent context was rendered at $rendered_at from revision ${revision:0:12}" ""
@@ -293,13 +284,17 @@ cmd_context() {
     shift
   done
   [[ "$json" == 0 || "$action" != render ]] ||
-    die "$EX_USAGE" "context render writes the file; use context show --json for the machine section"
+    die "$EX_USAGE" "context render writes the file; use context show --json for diagnostics"
+  if [[ "$action" == render ]]; then
+    say "wrote $(context_write)"
+    return 0
+  fi
   machine="$(context_machine_json)"
   if [[ "$json" == 1 ]]; then
     printf '%s\n' "$machine"
-  elif [[ "$action" == render ]]; then
-    say "wrote $(context_write "$machine")"
   else
-    context_render_document "$machine"
+    cat "$agents_policy"
+    printf '\n'
+    context_render_section "$machine"
   fi
 }

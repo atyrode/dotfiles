@@ -155,6 +155,7 @@ def make_runs(state, pull=None, event="pull_request"):
             "path": ".github/workflows/" + workflow, "workflow": workflow,
             "event": event, "head_sha": sha, "head_branch": BRANCH if pull else "main",
             "head_repository": public_repo(state), "repository": public_repo(state),
+            "triggering_actor": {"login": "github-actions[bot]"},
             "pull_requests": ([{
                 "number": pull["number"],
                 "head": {"sha": sha, "ref": BRANCH, "repo": public_repo(state)},
@@ -214,9 +215,24 @@ def fake_git():
         tree = git_text("--git-dir", state["consumer_remote"], "rev-parse", old + "^{tree}")
         replacement = git("--git-dir", state["consumer_remote"], "commit-tree", tree, "-p", old, data=b"Concurrent head\n").stdout.decode().strip()
         git("--git-dir", state["consumer_remote"], "update-ref", "refs/heads/" + BRANCH, replacement, old)
+    deleting = "push" in clean and f":refs/heads/{BRANCH}" in clean
+    if deleting and state.get("cleanup_race"):
+        old = ref_sha(state, BRANCH)
+        if state["cleanup_race"] == "deleted":
+            git("--git-dir", state["consumer_remote"], "update-ref", "-d", "refs/heads/" + BRANCH, old)
+        elif state["cleanup_race"] == "changed":
+            tree = git_text("--git-dir", state["consumer_remote"], "rev-parse", old + "^{tree}")
+            replacement = git("--git-dir", state["consumer_remote"], "commit-tree", tree, "-p", old, data=b"Concurrent branch work\n").stdout.decode().strip()
+            git("--git-dir", state["consumer_remote"], "update-ref", "refs/heads/" + BRANCH, replacement, old)
+        elif state["cleanup_race"] == "rejected":
+            record(state, "delete_result", code=1)
+            save_state(state)
+            sys.exit(1)
     save_state(state)
     data = sys.stdin.buffer.read() if "--stdin" in clean else None
     proc = git(*mappings, *clean, data=data, check=False)
+    if deleting:
+        record(state, "delete_result", code=proc.returncode)
     if proc.returncode == 0 and "push" in clean:
         current = git("--git-dir", state["consumer_remote"], "rev-parse", "refs/heads/" + BRANCH, check=False)
         if current.returncode == 0:
@@ -374,17 +390,37 @@ def api_response(state, method, endpoint, payload):
     if parts[:2] == ["actions", "runs"]:
         run = next(run for run in state["runs"] if run["id"] == int(parts[2]))
         if len(parts) == 3:
+            run["detail_reads"] = run.get("detail_reads", 0) + 1
+            if run["event"] == "pull_request":
+                if state.get("unapproved_attempt_race") and run["detail_reads"] == 2:
+                    run["run_attempt"] += 1
+                if state.get("second_promotion") and run["detail_reads"] == 4:
+                    run.update({"run_attempt": run["run_attempt"] + 1, "status": "completed", "conclusion": "success"})
+                if state.get("attempt_after_evidence") and run.get("evidence_read"):
+                    run["run_attempt"] += 1
+                if state.get("run_id_race") and run["detail_reads"] == 2:
+                    return {**run, "id": run["id"] + 1000}
             return run
         if len(parts) == 6 and parts[3] == "attempts" and parts[5] == "jobs":
             if int(parts[4]) != run["run_attempt"]:
                 raise Refused("Requested run attempt does not match the current fixture attempt")
+            run["evidence_read"] = True
             return {"total_count": len(run["jobs"]), "jobs": run["jobs"]}
         if parts[3] == "approve" and method == "POST":
             record(state, "approve", run=run["id"])
             run["status"] = "completed"
             run["conclusion"] = state.get("job_conclusion", "success")
+            # GitHub promotes the approval-required stub to the next attempt.
+            run["run_attempt"] += 1
+            run["triggering_actor"] = {"login": state.get("approval_actor", "github-actions[bot]")}
             if state.get("attempt_race"):
                 run["run_attempt"] += 1
+            if state.get("second_promotion"):
+                run.update({"status": "queued", "conclusion": None})
+            if state.get("approval_still_parked"):
+                run["conclusion"] = "action_required"
+            if state.get("approval_response_lost"):
+                raise Refused("Approval accepted but response lost")
             if state.get("source_race") and not state.get("source_race_fired"):
                 state["source_race_fired"] = True
                 append_remote_commit(state, "source_remote", POLICY_PATH, NEXT)
@@ -624,6 +660,9 @@ class SyncTests(unittest.TestCase):
         self.assertFalse(self.branch_exists())
         self.assertEqual([event["ref"] for event in self.events("dispatch")], ["main"])
         self.assertEqual(len(self.events("approve")), 2)
+        for run in self.state["runs"]:
+            if run["event"] == "pull_request":
+                self.assertIn(f"/actions/runs/{run['id']}/attempts/2", self.state["pulls"][0]["body"])
         pushes = [event["argv"] for event in self.events("git") if "push" in event["argv"]]
         self.assertTrue(any(any(arg.startswith("--force-with-lease=") for arg in args) for args in pushes))
         changed = git_text("--git-dir", self.consumer_remote, "diff", "--name-only", self.base_sha, "main")
@@ -632,6 +671,29 @@ class SyncTests(unittest.TestCase):
         self.run_sync(0)
         self.assertEqual(len(self.events("create")), before)
         self.assertEqual(len(self.events("dispatch")), 1)
+
+    def test_server_auto_delete_racing_cleanup_is_idempotent(self):
+        self.state["cleanup_race"] = "deleted"
+        self.run_sync(0)
+        self.assertEqual([event["code"] for event in self.events("delete_result")], [1])
+        self.assertFalse(self.branch_exists())
+        self.assertEqual([event["ref"] for event in self.events("dispatch")], ["main"])
+        self.run_sync(0)
+        self.assertEqual(len(self.events("merge")), 1)
+        self.assertEqual(len(self.events("dispatch")), 1)
+
+    def test_cleanup_lease_preserves_concurrently_changed_ref(self):
+        self.state["cleanup_race"] = "changed"
+        self.run_sync(1)
+        self.assertEqual([event["code"] for event in self.events("delete_result")], [1])
+        self.assertNotEqual(ref_sha(self.state, BRANCH), self.events("merge")[0]["sha"])
+        self.assertFalse(self.events("dispatch"))
+
+    def test_cleanup_rejection_with_unchanged_ref_is_not_success(self):
+        self.state["cleanup_race"] = "rejected"
+        self.run_sync(1)
+        self.assertEqual(ref_sha(self.state, BRANCH), self.events("merge")[0]["sha"])
+        self.assertFalse(self.events("dispatch"))
 
     def test_foreign_author_head_or_orphan_branch_are_not_adopted(self):
         self.seed_candidate(author="someone-else")
@@ -727,7 +789,52 @@ class SyncTests(unittest.TestCase):
         self.state["park_runs"] = True
         self.state["attempt_race"] = True
         self.run_sync(1)
+        self.assertTrue(any(run["run_attempt"] == 3 for run in self.state["runs"]))
+        self.assert_no_delivery()
+
+    def test_foreign_rerun_during_approval_is_not_adopted(self):
+        self.state["park_runs"] = True
+        self.state["approval_actor"] = "maintainer"
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_unapproved_bot_attempt_change_is_not_adopted(self):
+        self.state["unapproved_attempt_race"] = True
+        self.run_sync(1)
+        self.assertFalse(self.events("approve"))
+        self.assert_no_delivery()
+
+    def test_approval_cannot_adopt_a_still_parked_next_attempt(self):
+        self.state["park_runs"] = True
+        self.state["approval_still_parked"] = True
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_approval_authorizes_only_one_promotion(self):
+        self.state["park_runs"] = True
+        self.state["second_promotion"] = True
+        self.run_sync(1)
+        self.assertTrue(any(run["run_attempt"] == 3 for run in self.state["runs"]))
+        self.assert_no_delivery()
+
+    def test_attempt_change_after_verified_approval_evidence_is_refused(self):
+        self.state["park_runs"] = True
+        self.state["attempt_after_evidence"] = True
+        self.run_sync(1)
+        self.assertTrue(any(run.get("evidence_read") and run["run_attempt"] == 3 for run in self.state["runs"]))
+        self.assert_no_delivery()
+
+    def test_lost_approval_response_does_not_authorize_promotion(self):
+        self.state["park_runs"] = True
+        self.state["approval_response_lost"] = True
+        self.run_sync(1)
         self.assertTrue(any(run["run_attempt"] == 2 for run in self.state["runs"]))
+        self.assert_no_delivery()
+
+    def test_run_detail_cannot_substitute_another_run_id(self):
+        self.state["run_id_race"] = True
+        self.run_sync(1)
+        self.assertFalse(self.events("approve"))
         self.assert_no_delivery()
 
     def test_server_rejected_merge_does_not_delete_branch_or_dispatch_main(self):

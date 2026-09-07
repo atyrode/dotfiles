@@ -15,11 +15,11 @@ Nix owns:
   guard;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
   restricted `ompu` launcher, and the `code` profile generator;
-- the operator policy every agent reads: `modules/home/agents/AGENTS.md`, rendered by
-  `atyrode context render` into `~/.config/agents/AGENTS.md` with this
-  machine's facts appended, which `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
-  and `~/.omp/agent/AGENTS.md` link to (see
-  [Agent context](atyrode.md#agent-context));
+- personal policy from `modules/home/agents/AGENTS.md`, rendered by
+  `atyrode context render` into `$XDG_CONFIG_HOME/agents/AGENTS.md` (default
+  `~/.config/agents/AGENTS.md`) with minimal generation provenance, not a
+  machine inventory; Home Manager links the default OMP user path and optional
+  Claude/Codex adapters to it (see [Instruction architecture](#instruction-architecture));
 - Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
@@ -44,6 +44,169 @@ Reusable package derivations live in `pkgs/`, Home Manager deployment lives in
 `lib/packages.nix`. On Linux, the OMP package preserves upstream's binary and
 launches it through Nix's dynamic loader instead of rewriting the Bun executable
 with `patchelf`.
+
+## Instruction architecture
+
+Keep three readers separate:
+
+| Reader | Authored owner | Delivery |
+| --- | --- | --- |
+| Personal defaults and bounded personal authority | [`modules/home/agents/AGENTS.md`](../modules/home/agents/AGENTS.md) | Packaged into `atyrode`; `context render` writes the personal document and provenance |
+| Repository contributors | Root `AGENTS.md`: local purpose, commands, boundaries, task routes and delivery | Repository revision, with one generated common block |
+| Reusable repository engineering | [`modules/home/agents/engineering.md`](../modules/home/agents/engineering.md) | Renderer inserts exact bytes into repository roots and the neutral template, not personal context |
+
+The template source is
+[`modules/home/agents/templates/repo-AGENTS.md`](../modules/home/agents/templates/repo-AGENTS.md),
+deployed by the agents module at
+`$XDG_CONFIG_HOME/agents/templates/repo-AGENTS.md`. Fill applicable local
+prompts and delete irrelevant ones. It requires neither Codex nor OMP and
+does not enroll the recipient in automation or grant authority.
+
+Personal guidance contains durable preferences and safety/authority boundaries,
+not a fleet handbook or a second copy of repository engineering. Machine state
+is evidence, not permission. `atyrode context render` performs no host,
+authentication or network inventory probes. Explicit `atyrode context show`
+and `atyrode context show --json` retain diagnostic access, including bounded
+GitHub authentication status (10 seconds) and Clever status probing (15 seconds).
+They can contact services and expose account/secret-path metadata, never secret
+values; do not copy their output wholesale into public artifacts or instructions.
+An undeclared checkout remains unknown/null rather than inferred from a
+conventional directory. [Agent context](atyrode.md#agent-context) owns the
+command contract; the provisioning probe compares policy/revision, not age alone.
+
+Home Manager links `~/.omp/agent/AGENTS.md`, `~/.claude/CLAUDE.md` and
+`~/.codex/AGENTS.md` to the rendered file. These are cross-tool adapters, not
+three independently injected OMP copies. The OMP link covers its default agent
+directory; named profiles or custom `PI_CODING_AGENT_DIR` roots are not covered
+merely because the default link exists. Codex configuration/authentication
+seeding remains separate and optional; see [Codex state](codex-state.md).
+Durable Claude permission rules belong in the Nix-managed user settings
+[`modules/home/claude/default.nix`](../modules/home/claude/default.nix).
+Project-local exceptions belong in that project's appropriate local settings,
+not in a generated global file or committed as machine-specific policy.
+
+### Guidance and loader limits
+
+[OpenAI's AGENTS.md guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+describes Codex's startup chain, one file per directory, override/fallback
+selection and configurable combined-size limit.
+[Anthropic's memory guidance](https://code.claude.com/docs/en/memory#write-effective-instructions)
+recommends concise, concrete persistent instructions and moving multi-step or
+conditional guidance to skills/rules; its imports still consume startup context.
+These are useful authoring guidance, not descriptions of OMP. Selecting an
+OpenAI or Anthropic model does not select that vendor's instruction loader.
+
+OMP behavior below is evidenced at version 18.1.13, commit
+[`a1b254047d12e143b7c6011536e918c6c35c5906`](https://github.com/can1357/oh-my-pi/commit/a1b254047d12e143b7c6011536e918c6c35c5906).
+Recheck the source when changing the OMP pin:
+
+- Native user `AGENTS.md` wins the single user scope over Claude and Codex
+  adapters (priorities 100, 80 and 70). Surviving byte-identical whole context
+  files can collapse; repeated spans inside different documents do not.
+- Standalone project `AGENTS.md`/`CLAUDE.md` discovery walks ancestors, retaining
+  multiple depths root-first. Native discovery selects the nearest non-empty
+  `.omp` directory and only its non-empty `AGENTS.md`; a missing file there
+  does not resume the search farther up. Same-depth provider priority can
+  shadow a standalone file. Claude/Gemini/GitHub adapter project paths are
+  cwd-only; OMP's Codex adapter has no project `.codex/AGENTS.md` reader.
+- Loaded context bodies are fully injected, not lazy. Deeper files beneath cwd
+  are discovery pointers requiring an explicit read. `@path` expands inline,
+  relative to its importer, up to five recursive levels; it is not a deferred
+  link. Use ordinary Markdown task links and explicit read conditions.
+- Described rulebook rules without `alwaysApply` or accepted TTSR conditions
+  expose discovery metadata and `rule://` content. Their globs are advisory,
+  not automatic body loading. `RULES.md` and `alwaysApply` rules inject bodies;
+  TTSR is conditional intervention, not general-purpose background loading.
+- `SYSTEM.md` changes the bundled prompt template, retaining generated context
+  while replacing default role/tool/workflow guidance; it is not a lightweight
+  routing mechanism. The pinned native loader searches the nearest non-empty
+  ancestor `.omp` for it, despite documentation describing cwd-only discovery.
+  `APPEND_SYSTEM.md` adds startup content, not laziness.
+
+Owning pinned sources:
+[native discovery](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/builtin.ts),
+[Claude adapter](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/claude.ts),
+[Codex adapter](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/codex.ts),
+[context capability](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/capability/context-file.ts),
+[capability resolution](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/capability/index.ts),
+[imports](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/at-imports.ts),
+[prompt composition](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/system-prompt.ts).
+No normal-context byte/token cap is established by these OMP sources; do not
+apply Codex's cap to OMP. Managed configuration layers do not replace this
+loader. Verify the selected profile/overlays when diagnosing a particular
+session rather than assuming its effective discovery configuration.
+
+## Instruction authoring and distribution
+
+Edit local repository guidance outside the marked common envelope. For a shared
+rule, edit `modules/home/agents/engineering.md` and regenerate in a deliberately
+selected dotfiles worktree:
+
+```sh
+python3 ci/agent-policy.py render --source modules/home/agents/engineering.md --root . --layout dotfiles
+python3 ci/agent-policy.py check --source modules/home/agents/engineering.md --root . --layout dotfiles
+```
+
+The `dotfiles` layout is exactly root `AGENTS.md` plus
+`modules/home/agents/templates/repo-AGENTS.md`. Publish those outputs with the
+source change; the static personal policy is not a renderer target.
+The source is UTF-8/LF with exactly one final newline and no envelope sentinels.
+The digest identifies exact payload bytes, not unrelated source commits.
+Never hand-edit managed bytes or their Prettier guards. For a new document,
+`block` emits the complete envelope to insert after its introduction; `render`
+refuses missing/corrupt envelopes and preserves bytes outside them.
+
+For a deliberately adopted, unenrolled repository, run from a reviewed dotfiles
+worktree, substituting the recipient path:
+
+```sh
+python3 ci/agent-policy.py block --source modules/home/agents/engineering.md
+python3 ci/agent-policy.py render --source modules/home/agents/engineering.md --root <repository> --layout repository
+python3 ci/agent-policy.py check --source modules/home/agents/engineering.md --root <repository> --layout repository
+```
+
+The `repository` layout updates only root `AGENTS.md`.
+[`ci/agent-policy.py`](../ci/agent-policy.py) owns the byte/path contract;
+the [read-only workflow](../.github/workflows/agent-policy.yml), local composite
+action and offline Nix `agent-policy` check enforce it. CI catches byte drift,
+not every semantic contradiction. Review local and shared text together.
+
+### Optional automation enrollment
+
+Copying the template is not enrollment. An authorized enrollment change must
+add reviewed support to the
+[reusable synchronizer allowlist](../.github/workflows/sync-agent-policy.yml)
+and [`ci/agent-policy-sync.py`](../ci/agent-policy-sync.py) core-check mapping.
+Use the existing
+[consumer workflow pattern](https://github.com/atyrode/code/blob/main/.github/workflows/agent-policy.yml):
+PR/push checks invoke reviewed dotfiles `main` read-only; hourly/manual
+synchronization calls the reusable workflow with repository-scoped
+contents/pull-requests/actions write permission. Preserve read-only defaults,
+enable Actions PR creation, provide core CI `workflow_dispatch`, and require
+`agent-policy` plus repository core checks under strict/up-to-date protection,
+without removing existing protections. These settings require their own
+authority; do not acquire credentials to make enrollment possible.
+
+The Code, Babel and Manifold consumers receive generated-only draft PRs,
+exact-head core/policy CI, guarded squash merge, and separately observed main
+CI. Maintainer holds remain effective; the bot neither reviews its PR nor uses
+cross-repository write credentials. Following reviewed dotfiles `main` trusts
+its automation code as well as its Markdown. Delivery is eventual convergence
+through scheduling and CI, not an exact-time promise. Existing green runs are
+not retroactively invalidated when the source changes.
+
+### Publication is not activation
+
+A source PR publishes policy and generated repository outputs. Consumer PRs
+deliver repository copies. Separately authorized Home Manager activation
+deploys the personal policy/template through the packaged CLI and agents
+module; normal `atyrode apply` consumes a published revision without requiring
+a checkout. Authoring operations require an explicit `--repo PATH`, never a
+particular machine or directory name. Rendering does not activate a generation.
+Neither a source merge nor a bot merge authorizes apply, fleet deployment,
+secret migration, provider/archive mutation or any other live operation.
+Historical checkouts and already-running sessions retain their loaded snapshot;
+publication and activation do not silently rewrite it.
 
 ## Standalone Linux development image
 
@@ -179,33 +342,21 @@ tiers; tool credentials stay owned by their tools, and fleet secrets travel
 through sops-nix ([secrets.md](secrets.md)) since ADR 0008 superseded
 [ADR-0005](adr/0005-no-declarative-secret-manager.md).
 
-The enforced policy fixes trusted-machine approvals, secret obfuscation, and
-automatic task isolation with patch merging. Writable machine, project, and
-one-shot configuration cannot weaken those controls. Plain `omp` carries none
-of these managed layers and uses the operator's mutable approval policy. Use
-`ompu --cwd <project>` for deliberately untrusted repositories; its complete
-trust boundary and limits are documented in [Agent security](agent-security.md).
+Use `ompu --cwd <project>` for deliberately untrusted repositories.
+[Agent security](agent-security.md) owns the trust tiers, enforced controls,
+credential isolation and sandbox limits. Plain `omp` uses mutable operator
+policy; managed launchers apply the layering described above.
 
-Trusted authentication uses one canonical OMP broker backed by the `default`
-profile, on the machine [`fleet/auth-broker.json`](../fleet/auth-broker.json)
-names. That host's Home Manager service binds only to `127.0.0.1:46171` and is
-the only process that stores or rotates OAuth refresh tokens. Every other clan
-machine's same service is a persistent SSH local-forward to that host, on the
-target [`modules/shared/omp-auth-broker.nix`](../modules/shared/omp-auth-broker.nix)
-derives from the registry and the host's `address.nix` the way clan reaches
-it, so the role and the target are decided in Nix and nothing on a machine is
-read to choose them. The bearer token is the shared `omp-auth-broker` clan var
-([secrets.md](secrets.md)): minted once on an operator device by
-`clan vars generate <host>`, placed by sops-nix at activation, mode `0600`,
-and linked to `~/.omp/auth-broker.token`, the path OMP itself reads it from on
-both sides. The broker never mints a token: until the value is placed, its
-service does not start and `atyrode doctor provisioning` reports the
-`omp-auth-broker` surface as owed a generation. `code` reads the same file at
-launch, because it talks to the broker itself and hands each run its
-credential through the environment, and keeps its encrypted snapshot cache
-under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`. No vault holds any of this,
-and no verb prints the token; `atyrode auth broker status` reports the mode,
-the broker host, the service, and whether the token is placed.
+Trusted authentication uses the canonical OMP broker backed by the `default`
+profile on the machine [`fleet/auth-broker.json`](../fleet/auth-broker.json)
+names. [`modules/shared/omp-auth-broker.nix`](../modules/shared/omp-auth-broker.nix)
+owns the loopback service and other machines' SSH forwarding target.
+[Secrets](secrets.md#declaring-a-secret) owns bearer-token generation, placement,
+audiences and rotation. Until the token is placed the service does not start;
+`atyrode doctor provisioning` reports the owed generation.
+`atyrode auth broker status` reports mode, host, service and placement without
+printing the token. `code` uses the same token and stores encrypted snapshots
+under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
 
 Add Anthropic/OpenAI OAuth accounts from `code` with `v`, then `a` -- on a
 tunnel machine the login runs on the broker host over the same SSH target,
@@ -222,14 +373,8 @@ account on its next automatic or manual (`r`) refresh; no credential file is
 copied between machines. Account-selection presets remain non-secret state in
 `$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. The `code` account
 manager reads only redacted broker data and never reads OAuth material.
-Rotating the token is `clan vars generate --regenerate` of the shared var and
-an apply on every machine, since all of them must present the same string.
-
-The `ompu` sandbox uses dedicated HOME, XDG, temporary, cache, worktree,
-authentication, and session paths below
-`$XDG_STATE_HOME/atyrode/omp-untrusted/`. It does not inherit personal
-authentication, GitHub or SSH credentials, caller Git configuration, normal
-sessions, MCP state, or caches.
+Token rotation follows [the secret owner](secrets.md#declaring-a-secret), not
+an independent agent-tool ceremony.
 
 ## State ownership
 
@@ -323,71 +468,29 @@ conflict, and apply again.
 
 ## Session archive
 
-Every managed machine continuously archives its agent session histories — omp
-(`~/.omp/agent/sessions`, `~/.omp/collab`), codex (`~/.codex/sessions`,
-`history.jsonl`, `session_index.jsonl`, `attachments`), and Claude Code
-(`~/.claude/projects`) — with [babel](https://github.com/atyrode/babel). Babel
-snapshots those trees into a [restic](https://restic.net) repository on Clever
-Cloud Cellar (S3) under a stable host identity, so every machine's snapshots
-carry the same hostname across reinstalls instead of whatever the kernel
-happens to report. restic is content-addressed and deduplicating: repeated
-snapshots of a slowly growing session tree cost only the new chunks, and a
-snapshot is never rewritten in place. Sources missing on a machine are skipped
-silently.
+Home Manager configures [Babel](https://github.com/atyrode/babel) to archive
+available OMP, Codex and Claude session sources under the registry's stable
+host identity. Actual archival requires configured custody and a successful
+push; installing a timer is not evidence of either. Babel owns snapshot,
+catalog, browsing and recovery behavior; consult its documentation and
+`babel --help` for product workflows. This section owns dotfiles deployment
+and the managed-state boundary.
 
-Babel keeps a shared PostgreSQL catalog alongside the repository, so
-`babel sessions list` can answer which machine held which session, and when,
-without downloading snapshots.
+[`modules/shared/babel-archive.nix`](../modules/shared/babel-archive.nix) owns
+provisioning; [Secrets](secrets.md#declaring-a-secret) owns the shared
+`babel-custody` inputs, per-machine storage, whole append-only payload key
+ring, validation and rotation. Home Manager links placed mode-600 files at
+`~/.config/babel/storage.json` and `~/.config/babel/payload-keys.json`; do not
+run `babel storage configure` on a fleet machine to replace that ownership.
 
-Provisioning is a clan var
-([`modules/shared/babel-archive.nix`](../modules/shared/babel-archive.nix);
-the custody model is in [secrets.md](secrets.md)). Home Manager installs
-Babel's hourly timer on every managed machine, but the unit does not arm until
-an archive configuration exists, so between install and generation a machine
-holds an installed, inactive timer. That is the intended resting state, not a
-half-configured one: nothing is scheduled to push until there is something to
-push with.
-
-The values only the operator holds are typed once, on an operator device, at
-`clan vars generate <host>`: the restic repository password, the two add-on
-environments as `clever addon env <add-on> --format json` prints them, pasted
-whole, and the deployment's payload key ring. They become the shared
-`babel-custody` var, validated at generation so a bad paste fails at the
-terminal and never at an activation; the per-machine `babel-archive` var
-renders this machine's storage document from the first three under the
-registry identity -- not the reported hostname, because that identity is what
-snapshots are filed under -- and every later host reuses the same custody
-without re-prompting. `atyrode apply` on the machine places the document, the
-password file, and the ring at mode 0600 under `/run/secrets`, links
-`~/.config/babel/storage.json` and `~/.config/babel/payload-keys.json` to the
-placed files, and arms the timer; `babel storage configure` is never run on a
-fleet machine. The document's presence at that path is what "configured"
-means, and `atyrode doctor provisioning` names the generation a machine is
-owed. No connection material and no provider hostname lives in this
-repository: all of it arrives through the prompts. A machine configured by
-the old ceremony keeps plain files at those paths, which Home Manager refuses
-to replace. Before removing any file, import the full existing ring into
-custody and verify it retains every key held by any configured machine or
-the old vault item; refuse conflicting material under the same key id.
-Only after that encrypted custody is secured, remove the old plain files
-(and `~/.config/babel/repository-password`) before the apply that places the
-links. Never leave the ring prompt empty when migrating an existing archive.
-
-The ring is the deployment's whole append-only key history, never the newest
-key alone: an object sealed under a retired key still needs that key, and
-without the ring a fleet member reads every plaintext catalog row and can open
-no record's content, which is a degradation rather than a failure and is
-exactly why it is easy to miss. The prompt takes the ring as
-`~/.config/babel/payload-keys.json` reads on a configured machine, pasted
-whole, and is validated to Babel's own rules (every key 32 bytes of standard
-base64 under a well-formed id, `active_key_id` naming one of them); left
-empty, the generator mints a ring of one fresh key under a date-stamped id,
-which is right only for a deployment that has sealed nothing yet. Rotation is
-an edit of the var, not a regeneration and not a ceremony on any machine:
-`clan vars get <host> babel-custody/payload-keys.json`, append the new key
-and name it active, `clan vars set <host> babel-custody/payload-keys.json`
-over stdin, then apply everywhere; every host seals under the new key and
-keeps opening what it already had ([secrets.md](secrets.md)).
+For migration from plain local files, Home Manager refuses to replace them.
+Before removing any file, import the full existing ring into encrypted custody
+and verify it retains every key held by any configured machine or the old vault
+item; refuse conflicting material under the same key ID. Only then remove the
+old plain files (including `~/.config/babel/repository-password`) before the
+authorized apply that places the links. Never leave the ring prompt empty for
+an existing archive: minting a fresh ring would lose access to sealed content.
+Keep all prior keys when rotating through the secret owner's procedure.
 
 Do not run `babel sync --generate-key` on a managed machine: Babel's atomic
 rotation replaces the Home Manager symlink with a local file and does not
@@ -423,6 +526,11 @@ foreground, `babel archive status [--json]` reports repository and stamp health,
 `babel archive verify [--deep]` checks repository integrity (`--deep` reads
 the pack data, not just the index), and `babel sessions list` browses the
 catalog.
+
+These commands have different effects: listing/status inspect state, integrity
+verification accesses the configured repository, and push writes the live
+archive. Documentation of a command is not permission to run live archive
+writes, destructive recovery, key rotation or activation.
 
 ## Skills
 

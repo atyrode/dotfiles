@@ -496,7 +496,9 @@ class Sync:
         return run
 
     def run_detail(self, run_id):
-        return self.api(f"repos/{self.repository}/actions/runs/{number(run_id)}")
+        run = self.api(f"repos/{self.repository}/actions/runs/{number(run_id)}")
+        require(isinstance(run, dict) and run.get("id") == run_id, "workflow run ID changed")
+        return run
 
     def run_jobs(self, run, required):
         jobs = self.pages(f"repos/{self.repository}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
@@ -552,7 +554,7 @@ class Sync:
         self.phase = "PR CI"
         self.limit = min(time.monotonic() + PR_SECONDS, self.deadline - MAIN_SECONDS)
         pending = dict(runs)
-        approved = set()
+        approved = {}
         while pending:
             current = self.pull(pr["number"])
             require(current.get("state") == "open" and current["head"]["sha"] == head
@@ -560,12 +562,20 @@ class Sync:
             self.holds(current)
             for name, run_id in list(pending.items()):
                 run = self.validate_run(self.run_detail(run_id), name, pr=pr, base=base, head=head)
-                require(run["run_attempt"] == self.pr_attempts[run_id], "PR run attempt changed during observation")
                 parked = run.get("conclusion") == "action_required" or run.get("status") == "action_required"
+                attempt = self.pr_attempts[run_id]
+                if run["run_attempt"] != attempt:
+                    # GitHub may promote the parked stub on token approval.
+                    # Only our successful approval authorizes one next attempt.
+                    require(approved.get(run_id) == attempt
+                            and run["run_attempt"] == attempt + 1 and not parked
+                            and run.get("triggering_actor", {}).get("login") == BOT,
+                            "PR run attempt changed during observation")
+                    self.pr_attempts[run_id] = run["run_attempt"]
                 if parked:
                     if run_id not in approved:
                         self.api(f"repos/{self.repository}/actions/runs/{run_id}/approve", "POST")
-                        approved.add(run_id)
+                        approved[run_id] = attempt
                     continue
                 if run.get("status") == "completed":
                     self.run_jobs(run, REQUIRED[self.repository] if name == "ci.yml" else ("agent-policy",))
@@ -625,12 +635,16 @@ class Sync:
         return True
 
     def cleanup_branch(self, pr):
+        require(pr.get("merged") is True and pr.get("state") == "closed"
+                and pr.get("merged_at") is not None, "branch cleanup requires a confirmed merge")
         remote = self.branch_head()
         if remote is None:
             return
         require(remote == pr["head"]["sha"], "merged bot branch head changed; cleanup refused")
+        # Server auto-deletion can win this lease race. A rejected push is
+        # harmless only when the subsequent read confirms the ref is absent.
         self.git("push", f"--force-with-lease=refs/heads/{BRANCH}:{remote}",
-                 "origin", f":refs/heads/{BRANCH}")
+                 "origin", f":refs/heads/{BRANCH}", allowed=(0, 1))
         require(self.branch_head() is None, "owned branch deletion was not confirmed")
 
     def main_candidates(self, pr, after):

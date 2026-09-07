@@ -807,8 +807,32 @@ class Sync:
         self.git("push", f"--force-with-lease=refs/heads/{BRANCH}:{remote or ''}",
                  "origin", f"{head}:refs/heads/{BRANCH}")
         require(self.branch_head() == head, "candidate push was not confirmed")
+        self.head = head
         if open_pr:
-            require(self.pull(open_pr["number"])["head"]["sha"] == head, "PR head did not follow candidate push")
+            # A confirmed ref update can precede REST PR-head visibility. Keep
+            # the verified old metadata until this exact publication settles.
+            previous_limit = self.limit
+            self.limit = min(previous_limit, self.deadline, time.monotonic() + 60)
+            try:
+                while True:
+                    require(time.monotonic() < self.limit,
+                            "PR head visibility did not settle before publication deadline")
+                    current = self.pull(open_pr["number"])
+                    require(current["number"] == open_pr["number"]
+                            and current.get("state") == "open" and current.get("draft") is True
+                            and current.get("merged_at") is None
+                            and current["base"]["sha"] == self.main
+                            and metadata(current) == old_meta
+                            and current["head"]["sha"] in {remote, head},
+                            "owned draft identity/head/base/state/metadata raced during publication")
+                    self.holds(current)
+                    if current["head"]["sha"] == head:
+                        require(self.branch_head() == head,
+                                "reserved branch raced before publication metadata update")
+                        break
+                    self.pause()
+            finally:
+                self.limit = previous_limit
             pr = self.api(f"repos/{self.repository}/pulls/{open_pr['number']}", "PATCH",
                           {"title": TITLE, "body": self.body(meta)})
         else:

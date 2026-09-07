@@ -111,6 +111,30 @@ def pull_view(state, pull):
     return result
 
 
+def rest_pull_view(state, pull):
+    lag = state.get("rest_lag")
+    if not lag or lag["snapshot"]["number"] != pull["number"]:
+        return pull_view(state, pull)
+    lag["reads"] += 1
+    if lag["reads"] == 2:
+        if state.get("rest_lag_mutation") == "head":
+            head = ref_sha(state, BRANCH)
+            tree = git_text("--git-dir", state["consumer_remote"], "rev-parse", head + "^{tree}")
+            third = git("--git-dir", state["consumer_remote"], "commit-tree", tree, "-p", head, data=b"Competing REST head\n").stdout.decode().strip()
+            lag["snapshot"]["sha"] = third
+        elif state.get("rest_lag_mutation") == "hold":
+            state["labels"] = ["blocked"]
+    if lag["remaining"]:
+        lag["remaining"] -= 1
+        view = pull_view(state, lag["snapshot"])
+    else:
+        view = pull_view(state, pull)
+        del state["rest_lag"]
+    record(state, "rest_visibility", sha=view["head"]["sha"], remote_sha=ref_sha(state, BRANCH),
+           body=view["body"], draft=view["draft"])
+    return view
+
+
 def sync_pull_refs(state, pull):
     remote = state["consumer_remote"]
     head = pull["sha"]
@@ -239,6 +263,12 @@ def fake_git():
             head = current.stdout.decode().strip()
             for pull in state["pulls"]:
                 if pull["state"] == "open" and pull["sha"] != head:
+                    if state.get("rest_lag_reads") and any(arg.startswith("--force-with-lease=") for arg in clean):
+                        # The push has already succeeded in real Git. Only REST
+                        # visibility lags; refs and new-head CI advance normally.
+                        state["rest_lag"] = {
+                            "snapshot": dict(pull), "remaining": state["rest_lag_reads"], "reads": 0,
+                        }
                     pull["sha"] = head
                     sync_pull_refs(state, pull)
                     make_runs(state, pull)
@@ -307,7 +337,7 @@ def api_response(state, method, endpoint, payload):
         requested = query.get("state", ["open"])[0]
         if requested != "all":
             pulls = [pull for pull in pulls if pull["state"] == requested]
-        return [] if int(query.get("page", ["1"])[0]) > 1 else [pull_view(state, pull) for pull in reversed(pulls)]
+        return [] if int(query.get("page", ["1"])[0]) > 1 else [rest_pull_view(state, pull) for pull in reversed(pulls)]
     if parts[0] == "pulls" and len(parts) >= 2:
         pull = next(pull for pull in state["pulls"] if pull["number"] == int(parts[1]))
         if len(parts) == 2:
@@ -318,7 +348,7 @@ def api_response(state, method, endpoint, payload):
                 if payload.get("state") == "closed":
                     pull["closed_by"] = "github-actions[bot]"
                     pull["closed_at"] = timestamp()
-            return pull_view(state, pull)
+            return rest_pull_view(state, pull) if method == "GET" else pull_view(state, pull)
         if parts[2] == "reviews":
             if state.get("hold_on_review"):
                 state["labels"] = ["blocked"]
@@ -970,6 +1000,82 @@ class SyncTests(unittest.TestCase):
         self.assertLess(draft_index, update_index)
         self.assertEqual(len(self.state["pulls"]), 1)
         self.assertFalse(self.events("create"))
+
+    def test_replacement_waits_for_rest_visibility_before_approving_new_head(self):
+        self.state["park_runs"] = True
+        pull = self.seed_candidate(draft=False)
+        previous, body = pull["sha"], pull["body"]
+        make_runs(self.state, pull)
+        self.advance_source()
+        self.state["rest_lag_reads"] = 2
+        self.run_sync(0)
+        head = self.state["pulls"][0]["sha"]
+        self.assertNotEqual(head, previous)
+        observations = self.events("rest_visibility")
+        self.assertEqual([event["sha"] for event in observations], [previous, previous, head])
+        self.assertEqual({event["remote_sha"] for event in observations}, {head})
+        self.assertTrue(all(event["draft"] and event["body"] == body for event in observations))
+        visible_index = next(index for index, event in enumerate(self.state["events"]) if event["kind"] == "rest_visibility" and event["sha"] == head)
+        self.assertFalse(any(
+            event["kind"] == "api" and event["method"] == "PATCH" and "body" in event["payload"]
+            for event in self.state["events"][:visible_index]
+        ))
+        approved = {event["run"] for event in self.events("approve")}
+        fresh = {run["id"] for run in self.state["runs"] if run["event"] == "pull_request" and run["head_sha"] == head}
+        self.assertEqual(len(fresh), 2)
+        self.assertEqual(approved, fresh)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+        self.assertEqual(self.main_bytes("application.txt"), b"Application behavior is outside this task.\n")
+        self.assertEqual(git_text("--git-dir", self.consumer_remote, "diff", "--name-only", self.base_sha, "main"), "AGENTS.md")
+        self.assertEqual(len(self.state["pulls"]), 1)
+        self.assertFalse(self.events("create"))
+        self.assertEqual(sum("commit" in event["argv"] for event in self.events("git")), 1)
+        publications = [
+            event["argv"] for event in self.events("git")
+            if "push" in event["argv"] and f":refs/heads/{BRANCH}" not in event["argv"]
+        ]
+        self.assertEqual(len(publications), 1)
+        self.assertTrue(any(arg.startswith("--force-with-lease=") and arg.endswith(":" + previous) for arg in publications[0]))
+        self.assertEqual([event["ref"] for event in self.events("dispatch")], ["main"])
+
+    def test_third_rest_head_during_replacement_visibility_is_refused(self):
+        pull = self.seed_candidate()
+        previous, body = pull["sha"], pull["body"]
+        self.advance_source()
+        self.state.update({"rest_lag_reads": 2, "rest_lag_mutation": "head"})
+        self.run_sync(1)
+        observations = self.events("rest_visibility")
+        self.assertEqual(len(observations), 2)
+        self.assertEqual(observations[0]["sha"], previous)
+        head = ref_sha(self.state, BRANCH)
+        self.assertNotEqual(head, previous)
+        self.assertEqual({event["remote_sha"] for event in observations}, {head})
+        self.assertNotIn(observations[1]["sha"], (previous, head))
+        self.assertEqual(self.state["pulls"][0]["body"], body)
+        self.assertTrue(self.state["pulls"][0]["draft"])
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+
+    def test_new_hold_during_replacement_visibility_is_not_cleared(self):
+        pull = self.seed_candidate()
+        previous, body = pull["sha"], pull["body"]
+        self.advance_source()
+        self.state.update({"rest_lag_reads": 2, "rest_lag_mutation": "hold"})
+        self.run_sync(1)
+        observations = self.events("rest_visibility")
+        self.assertEqual([event["sha"] for event in observations], [previous, previous])
+        head = ref_sha(self.state, BRANCH)
+        self.assertNotEqual(head, previous)
+        self.assertEqual({event["remote_sha"] for event in observations}, {head})
+        self.assertEqual(self.state["labels"], ["blocked"])
+        self.assertEqual(self.state["pulls"][0]["body"], body)
+        self.assertTrue(self.state["pulls"][0]["draft"])
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+        self.assertFalse(any(event["method"] == "PUT" and event["endpoint"].endswith("/merge") for event in self.events("api")))
 
     def test_expected_head_lease_refuses_a_concurrent_branch_push(self):
         self.seed_candidate(draft=False)

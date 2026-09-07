@@ -126,31 +126,19 @@ fi
 @setpriv@ --reuid=1000 --regid=1000 --init-groups @session@ "$@" <&0 &
 application_pid=$!
 result=1
-while :; do
-  if ((shutdown_signal != 0)); then break; fi
-  finished=
-  wait -n -p finished "$application_pid" "$daemon_pid"
-  status=$?
-  if [[ ${finished:-} == "$application_pid" ]]; then
-    application_status=$status
-    result=$status
-    break
-  fi
-  if ((shutdown_signal != 0)); then break; fi
-  # Prefer an already completed application's status when both children exit
-  # together; an exited daemon is fatal only while the application is live.
-  if ! running "$application_pid"; then
-    wait "$application_pid"
-    application_status=$?
-    result=$application_status
-    break
-  fi
-  if [[ ${finished:-} == "$daemon_pid" ]] || ! running "$daemon_pid"; then
-    fail 'Nix daemon exited unexpectedly while the application was running'
-    result=1
-    break
-  fi
+# Bash wait -n can consume a completed child's status while returning only the
+# simultaneous trapped signal. Observe liveness without reaping; collect each
+# owned child's status exactly by PID after completion.
+while ((shutdown_signal == 0)) && running "$application_pid" && running "$daemon_pid"; do
+  @sleep@ 0.1
 done
+if ! running "$application_pid"; then
+  wait "$application_pid"
+  application_status=$?
+  result=$application_status
+elif ((shutdown_signal == 0)); then
+  fail 'Nix daemon exited unexpectedly while the application was running'
+fi
 cleanup
 if ((shutdown_signal != 0)); then
   if ((forced_application != 0)); then exit "$shutdown_signal"; fi

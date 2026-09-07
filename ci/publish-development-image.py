@@ -199,7 +199,15 @@ def publish(args, password, environment):
             anonymous_env = {**environment, "DOCKER_CONFIG": directory}
             # Pull both platforms from the immutable index, then run the native one.
             for architecture in ("arm64", "amd64"):
-                command(["docker", "pull", "--platform", f"linux/{architecture}", reference], anonymous_env)
+                pulled = subprocess.run(
+                    ["docker", "pull", "--platform", f"linux/{architecture}",
+                     f"{IMAGE}@{platforms[architecture]}" if architecture == "arm64" else reference],
+                    env=anonymous_env, text=True, capture_output=True, timeout=900, check=False,
+                )
+                # This client has no credentials. Preserve Docker's actionable error,
+                # excluding registry URLs that may carry signed blob-download queries.
+                detail = re.sub(r"https?://\S+", "[registry endpoint]", pulled.stderr[-4000:])
+                require(pulled.returncode == 0, f"Anonymous linux/{architecture} pull failed: {detail}")
             container = Path(directory).name
             try:
                 command(["docker", "run", "--name", container, "--rm", "--network", "none",

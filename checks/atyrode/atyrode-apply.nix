@@ -540,13 +540,13 @@ pkgs.runCommand "check-atyrode-apply"
     test "$(cat "$TMPDIR/nh-locale")" = C.UTF-8
 
     # A sandbox can neither hold nor acquire a real Clever Cloud session, and
-    # the agent context below reports clever's session state, so a stub keeps
-    # its own: `profile` succeeds once `login` has run.
+    # explicit context diagnostics below report clever's session state, so a
+    # stub keeps its own: `profile` succeeds once `login` has run.
     mkdir -p "$TMPDIR/sessionbin"
     {
       printf '#!%s\n' "${pkgs.runtimeShell}"
       printf 'case "$1" in\n'
-      printf '  profile) test -e %s ;;\n' "$TMPDIR/clever-session"
+      printf '  profile) echo clever >> "$TMPDIR/context-auth-probes"; test -e %s ;;\n' "$TMPDIR/clever-session"
       printf '  login) touch %s ;;\n' "$TMPDIR/clever-session"
       printf '  *) exit 1 ;;\n'
       printf 'esac\n'
@@ -554,6 +554,12 @@ pkgs.runCommand "check-atyrode-apply"
     chmod +x "$TMPDIR/sessionbin/clever"
     touch "$TMPDIR/clever-session"
     export ATYRODE_CLEVER="$TMPDIR/sessionbin/clever"
+    cat > "$TMPDIR/sessionbin/gh" <<'EOF'
+    #!${pkgs.runtimeShell}
+    echo gh >> "$TMPDIR/context-auth-probes"
+    exit 1
+    EOF
+    chmod +x "$TMPDIR/sessionbin/gh"
 
     # ... and a home-manager apply writes nothing this user could not write, so
     # it must not warn about a password prompt that will never arrive.
@@ -562,52 +568,56 @@ pkgs.runCommand "check-atyrode-apply"
       exit 1
     fi
 
-    # The agent context (ADR 0008 step 2). apply's last step rendered it, and
-    # every tool file on the machine is a symlink to this one path, so what it
-    # says is what every agent here starts from: the operator policy first,
-    # then the generated section naming this host and the rest of the fleet.
+    # Apply writes a regular, atomic policy snapshot, not diagnostic inventory.
     context_file="$XDG_CONFIG_HOME/agents/AGENTS.md"
     grep -qE '^  \$ atyrode context render$' "$TMPDIR/apply-success.err"
     test -f "$context_file"
     test ! -L "$context_file"
     test "$(stat -c %a "$context_file")" = 644
     test -z "$(find "$XDG_CONFIG_HOME/agents" -name '.AGENTS.md.*' -print -quit)"
-    grep -qxF '# Operator policy' "$context_file"
-    grep -qxF '## This machine' "$context_file"
-    test "$(grep -nxF '# Operator policy' "$context_file" | cut -d: -f1)" \
-      -lt "$(grep -nxF '## This machine' "$context_file" | cut -d: -f1)"
-    grep -qF -- '- Host: `development-x86_64-linux` -- Portable headless x86_64 Linux development environment' "$context_file"
-    grep -qF -- '- Fleet cache substituter: `https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com`' "$context_file"
-    grep -qF 'Never edit by hand.' "$context_file"
+    {
+      cat ${../../modules/home/agents/AGENTS.md}
+      printf '\n'
+    } > "$TMPDIR/context-policy"
+    sed '/^Generated at /d' "$context_file" | diff "$TMPDIR/context-policy" -
     # A copied closure renders its own revision, not the invoking CLI's or an
     # unrelated global profile's. This matters for standalone HM on NixOS.
     atyrode apply development-x86_64-linux --candidate ${contextCandidate} \
       > "$TMPDIR/candidate-context.out" 2> "$TMPDIR/candidate-context.err"
     grep -qF 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
-    # Under the session stub exported above, every CLI is reported as it is:
-    # clever logged in, gh (real, no account here) not -- and a missing session
-    # names the exact command that acquires it. A token planted in the
-    # environment is the falsification: gh would use it, and it may not reach
-    # the file. Assembled at run time so the fixture never holds a string a
-    # scanner would flag. Bitwarden is not a session this file knows: every
-    # secret is a clan var, and the section lists what sops-nix placed for this
-    # account -- nothing, in a sandbox -- never a vault.
+    # Rendering must not acquire inventory, even on an unregistered host with
+    # an unreadable diagnostic fixture and provider credentials in the process.
+    # The existing command overrides also observe calls whose failures a
+    # renderer might otherwise swallow. No production seam is added.
     planted_gh_token="ghp_$(printf 'FIXTURE%.0s' 1 2 3 4 5)"
-    GH_TOKEN="$planted_gh_token" \
+    : > "$TMPDIR/context-auth-probes"
+    PATH="$TMPDIR/sessionbin:$PATH" GH_TOKEN="$planted_gh_token" \
+      ATYRODE_HOST=unregistered-context-host \
+      _ATYRODE_TEST_SYSTEM_FIXTURE="$TMPDIR/context-missing-fixture" \
       atyrode context render 2>"$TMPDIR/context-render.err"
-    grep -qF -- '- `gh`: not authenticated; acquire a GitHub session with `gh auth login`' "$context_file"
-    grep -qF -- '- `clever`: authenticated' "$context_file"
-    grep -qF -- '- None placed for this account.' "$context_file"
+    test ! -s "$TMPDIR/context-auth-probes"
+    # A valid host must not cause otherwise optional inventory probes either.
+    PATH="$TMPDIR/sessionbin:$PATH" GH_TOKEN="$planted_gh_token" \
+      atyrode context render 2>"$TMPDIR/context-render.err"
+    test ! -s "$TMPDIR/context-auth-probes"
+    sed '/^Generated at /d' "$context_file" | diff "$TMPDIR/context-policy" -
     grep -qF 'ghp_FIXTURE' "$context_file" && false
-    grep -qE 'gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|[A-Za-z0-9+/]{80,}==' "$context_file" && false
-    # show prints the same document render writes; --json is the section as
-    # data, and it says the same things the prose does.
-    atyrode context show | sed '/^## This machine$/,$d' > "$TMPDIR/context-shown-policy"
-    sed '/^## This machine$/,$d' "$context_file" | diff - "$TMPDIR/context-shown-policy"
-    atyrode context show | grep -qF -- '- Host: `development-x86_64-linux`'
-    atyrode context --json | jq -e '
+    cp "$context_file" "$TMPDIR/context-before-show"
+    PATH="$TMPDIR/sessionbin:$PATH" atyrode context show > "$TMPDIR/context-show"
+    sed '/^## This machine$/,$d' "$TMPDIR/context-show" |
+      diff "$TMPDIR/context-policy" -
+    grep -qF 'development-x86_64-linux' "$TMPDIR/context-show"
+    test -s "$TMPDIR/context-auth-probes"
+    diff "$context_file" "$TMPDIR/context-before-show"
+    PATH="$TMPDIR/sessionbin:$PATH" atyrode context |
+      sed '/^Generated at /d' > "$TMPDIR/context-default"
+    sed '/^Generated at /d' "$TMPDIR/context-show" |
+      diff "$TMPDIR/context-default" -
+    PATH="$TMPDIR/sessionbin:$PATH" atyrode context --json | jq -e '
       .schemaVersion == 1
       and .command == "context"
+      and .target == (env.XDG_CONFIG_HOME + "/agents/AGENTS.md")
+      and .revision == "unknown"
       and .host.id == "development-x86_64-linux"
       and (.fleet | map(.id) | index("macbook") != null)
       and (.fleet | map(.id) | index("development-x86_64-linux") == null)
@@ -619,15 +629,17 @@ pkgs.runCommand "check-atyrode-apply"
       and .fleetCache.substituter == "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com"
       and .fleetCache.trusted == false
       and .cloneRoot == null
+      and .dotfilesCheckout == null
       and (.generatedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
     ' >/dev/null
+    # The fixture has a conventional checkout; diagnostics must not infer it.
+    test -d "$HOME/nix-dotfiles/.git"
+    diff "$context_file" "$TMPDIR/context-before-show"
     atyrode context render --json >/dev/null 2>&1 && false
     atyrode context render show >/dev/null 2>&1 && false
 
-    # doctor owns the verdict on the file it does not write: fresh is ok, a
-    # week old or from another published revision is stale, hand-written is
-    # unreadable, and absent is a to-do apply settles. Every remedy is the one
-    # command that writes it.
+    # Health compares actual policy and known revision, not inventory age.
+    # Missing, changed or manually replaced policy still requires the writer.
     context_probe() {
       atyrode doctor provisioning --json |
         jq -e --arg status "$1" --arg code "$2" '
@@ -643,16 +655,29 @@ pkgs.runCommand "check-atyrode-apply"
     test -n "$stamped_revision"
     cp "$context_file" "$TMPDIR/context-fresh"
     sed -i "s/^Generated at [^ ]* /Generated at $(date -u -d '8 days ago' +%FT%TZ) /" "$context_file"
+    context_probe ok ""
+    printf '\nRetired diagnostic inventory\n' >> "$context_file"
     context_probe degraded context-stale
     cp "$TMPDIR/context-fresh" "$context_file"
-    # A published build knows its revision and holds the file to it; a
-    # development build has nothing to compare and judges by age alone.
+    # Development builds lack a published revision but still compare policy.
     sed -i 's/ revision [^ ]* by / revision 0123456789abcdef0123456789abcdef01234567 by /' "$context_file"
     if [[ "$stamped_revision" =~ ^[0-9a-f]{40}$ ]]; then
       context_probe degraded context-stale
     else
       context_probe ok ""
     fi
+    cp "$TMPDIR/context-fresh" "$context_file"
+    sed -i '1d' "$context_file"
+    context_probe degraded context-stale
+    # Exercise revision comparison with a published CLI, not just the unknown
+    # revision used by the rest of this fixture.
+    ${launcherAtyrode}/bin/atyrode context render >/dev/null
+    sed -i "s/^Generated at [^ ]* /Generated at $(date -u -d '8 days ago' +%FT%TZ) /" "$context_file"
+    ${launcherAtyrode}/bin/atyrode doctor provisioning --json |
+      jq -e '.surfaces[] | select(.id == "agent-context") | .status == "ok"' >/dev/null
+    ${targetAtyrode}/bin/atyrode doctor provisioning --json |
+      jq -e '.surfaces[] | select(.id == "agent-context")
+        | .status == "degraded" and .code == "context-stale"' >/dev/null
     printf '# hand-written\n' > "$context_file"
     context_probe degraded context-unreadable
     rm -f "$context_file"

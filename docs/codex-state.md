@@ -1,8 +1,9 @@
 # Codex configuration and the defaults seed
 
-Codex runs vanilla against `~/.codex`. The repository contributes a **one-time
-config seed** plus a few **portable managed files**; everything else in
-`~/.codex` is Codex-owned mutable state the dotfiles never touch.
+Codex is optional and, when used, runs vanilla against `~/.codex`. The
+repository contributes a **one-time config seed** and a **shared personal-policy
+adapter**; everything else in `~/.codex` is Codex-owned mutable state the
+dotfiles never touch. The adapter does not require Codex installation or use.
 
 Decision record: [ADR-0006](adr/0006-managed-layering-over-profiles.md).
 
@@ -11,8 +12,7 @@ Decision record: [ADR-0006](adr/0006-managed-layering-over-profiles.md).
 | Path | Owner | Behavior |
 |---|---|---|
 | `~/.codex/config.toml` | seeded once, then user | On first activation the curated defaults (`modules/home/codex/config.toml`) are installed. Any pre-existing file is timestamp-backed-up to `config.toml.pre-seed.<ts>` first (never merged). After that the file is yours — repository changes do not re-apply and your edits, including Codex's machine-local `[projects]` trust, are never touched again. |
-| `~/.codex/AGENTS.md` | generated, repository-rendered | Home Manager out-of-store symlink to `~/.config/agents/AGENTS.md`, the agent context `atyrode context render` writes from `modules/home/agents/AGENTS.md` plus this machine's facts (see [Agent context](atyrode.md#agent-context)). |
-| `~/.codex/templates` | portable, repository-managed | Home Manager recursive symlink to `modules/home/codex/templates`. |
+| `~/.codex/AGENTS.md` | agents module, CLI-rendered | Home Manager out-of-store symlink to `$XDG_CONFIG_HOME/agents/AGENTS.md` (default `~/.config/agents/AGENTS.md`). `atyrode context render` writes static personal policy from `modules/home/agents/AGENTS.md` plus minimal generation provenance, not machine/auth inventory (see [Agent context](atyrode.md#agent-context)). |
 | `auth.json` and provider credentials | secret, Codex-owned | Never read, copied into derivations, or moved. Log in with `codex login`. |
 | history, sessions, rollouts, plugins, caches, logs, and `config.toml` after the seed | mutable, Codex-owned | Never entered into the Nix store or rewritten by the dotfiles. |
 

@@ -7,9 +7,8 @@ let
     root = ../../.;
     fileset = lib.fileset.unions [
       ../../AGENTS.md
-      ../../modules/home/agents/AGENTS.md
       ../../modules/home/agents/engineering.md
-      ../../modules/home/codex/templates/repo-AGENTS.md
+      ../../modules/home/agents/templates/repo-AGENTS.md
     ];
   };
 in

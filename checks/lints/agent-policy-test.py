@@ -33,8 +33,7 @@ OLD = b"## Common engineering contract\n\n- Preserve the caller's evidence.\n"
 NEW = b"## Common engineering contract\n\n- Preserve evidence and report its limits.\n"
 TARGETS = (
     "AGENTS.md",
-    "modules/home/agents/AGENTS.md",
-    "modules/home/codex/templates/repo-AGENTS.md",
+    "modules/home/agents/templates/repo-AGENTS.md",
 )
 PREFIX = b"# Local contract\r\n\r\nLocal introduction with non-ASCII: \xc3\xa9.\r\n\n"
 SUFFIX = b"\r\n## Local ownership\r\n\r\nKeep these exact local bytes.\r\n"
@@ -137,7 +136,7 @@ class RendererTests(unittest.TestCase):
         self.run_cli("render", 0)
         self.assertEqual(unrelated.read_bytes(), b"No managed block belongs here.\n")
 
-    def test_dotfiles_layout_updates_exactly_three_targets(self):
+    def test_dotfiles_layout_updates_exactly_two_targets(self):
         for name in TARGETS[1:]:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,6 +146,21 @@ class RendererTests(unittest.TestCase):
         for name in TARGETS:
             self.assertEqual((self.root / name).read_bytes(), PREFIX + envelope(NEW) + SUFFIX)
         self.run_cli("check", 0, layout="dotfiles")
+
+    def test_dotfiles_layout_does_not_read_or_rewrite_personal_policy(self):
+        template = self.root / TARGETS[1]
+        template.parent.mkdir(parents=True)
+        template.write_bytes(PREFIX + envelope(OLD) + SUFFIX)
+        personal = self.root / "modules/home/agents/AGENTS.md"
+        destination = self.base / "personal.md"
+        document = PREFIX + envelope(OLD) + SUFFIX
+        destination.write_bytes(document)
+        personal.symlink_to(destination)
+        self.run_cli("check", 1, layout="dotfiles")
+        self.run_cli("render", 0, layout="dotfiles")
+        self.run_cli("check", 0, layout="dotfiles")
+        self.assertTrue(personal.is_symlink())
+        self.assertEqual(destination.read_bytes(), document)
 
     def test_dotfiles_prevalidates_all_targets_before_any_write(self):
         for bad_index in range(len(TARGETS)):
@@ -161,13 +175,11 @@ class RendererTests(unittest.TestCase):
                 self.assertEqual({name: (self.root / name).read_bytes() for name in TARGETS}, before)
 
     def test_missing_dotfiles_target_prevents_partial_update(self):
-        path = self.root / TARGETS[1]
-        path.parent.mkdir(parents=True)
-        path.write_bytes(PREFIX + envelope(OLD) + SUFFIX)
-        before = (self.target.read_bytes(), path.read_bytes())
+        (self.root / TARGETS[1]).parent.mkdir(parents=True)
+        before = self.target.read_bytes()
         self.run_cli("render", 2, layout="dotfiles")
-        self.assertEqual((self.target.read_bytes(), path.read_bytes()), before)
-        self.assertFalse((self.root / TARGETS[2]).exists())
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertFalse((self.root / TARGETS[1]).exists())
 
     def test_corruption_and_every_envelope_component_are_refused(self):
         block = envelope(OLD)
@@ -253,8 +265,7 @@ class RendererTests(unittest.TestCase):
 
     def test_symlink_ancestor_cannot_escape_dotfiles_root(self):
         external = self.base / "external"
-        (external / "home/agents").mkdir(parents=True)
-        (external / "home/codex/templates").mkdir(parents=True)
+        (external / "home/agents/templates").mkdir(parents=True)
         for name in TARGETS[1:]:
             (external / Path(name).relative_to("modules")).write_bytes(PREFIX + envelope(OLD) + SUFFIX)
         (self.root / "modules").symlink_to(external, target_is_directory=True)

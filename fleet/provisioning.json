@@ -36,7 +36,7 @@
     "agent-context": {
       "label": "generated agent context",
       "command": "atyrode context render",
-      "implies": "Writes this machine's facts under the operator policy to ~/.config/agents/AGENTS.md, which every agent tool here reads. Asks gh and clever for their session state, stores no secret, downloads nothing.",
+      "implies": "Writes the personal policy and generation provenance to the configured agents context file used by the linked default harness adapters. Does not query authentication or network state; detailed machine diagnostics remain available through atyrode context show.",
       "declinable": false
     },
     "git-identity": {

@@ -1,15 +1,11 @@
 { lib, pkgs, ... }:
 
 {
-  # Codex runs vanilla against ~/.codex. Curated defaults seed config.toml once
-  # (then become fully user-owned); the repository template is managed and the
-  # global instructions are the generated agent context (modules/home/agents).
+  # Optional Codex uses ~/.codex. Curated defaults seed config.toml once
+  # (then become fully user-owned). The agents module owns the shared personal
+  # policy adapter at ~/.codex/AGENTS.md; Codex does not own that policy.
   # Auth, sessions, history, plugins, caches, and machine-local trust remain
   # Codex-owned.
-  home.file.".codex/templates" = {
-    source = ./templates;
-    recursive = true;
-  };
 
   # Seed the curated Codex defaults into the writable config once (then yours).
   # A failure warns instead of failing the whole activation.

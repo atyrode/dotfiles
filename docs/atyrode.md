@@ -234,31 +234,42 @@ inventory.
 
 ## Agent context
 
-Every agent on a machine starts from one file: the operator policy kept in
-`modules/home/agents/AGENTS.md`, followed by a generated `## This machine`
-section. `context render` writes it whole and moves it into place, and Home
-Manager makes every tool's instruction file an out-of-store symlink to it, so
-every tool reads the same bytes and none is maintained by hand. Activation
-renders it (`modules/home/agents/default.nix`) and `atyrode apply` renders it
-again as its last step, after the provisioning review may have changed what is
-authenticated, so the file describes the machine apply leaves behind. This is
-[ADR 0008](adr/0008-fleet-shape-and-substrate.md) step 2 and invariant 9 of
-the repository's own `AGENTS.md`.
+`context render` writes the static personal policy embedded from
+`modules/home/agents/AGENTS.md` plus a timestamp and CLI revision. It does not
+resolve the host, inspect authentication, enumerate secrets, inspect the Nix
+cache or contact the network. The generated startup file contains none of that
+dynamic inventory. Shared repository engineering policy belongs in repository
+instructions, not this personal context.
 
-The generated section is machine state, never a value: the revision the CLI
-came from and when it rendered, this host and the other registered ones, which
-CLIs are authenticated here and as whom with the exact command that acquires
-each missing session, the clan vars under `/run/secrets/vars` this account can
-read by name and path, the fleet cache and whether the Nix daemon trusts it,
-and the canonical clone root -- which no registry field declares yet, so the
-section says so rather than guess.
+The target is `$XDG_CONFIG_HOME/agents/AGENTS.md` (default
+`~/.config/agents/AGENTS.md`): an atomically replaced regular file, mode 0644.
+Home Manager owns the out-of-store links from the default OMP user file
+`~/.omp/agent/AGENTS.md` and the Claude/Codex adapters. These links do not imply
+coverage of arbitrary named OMP profiles. Activation renders through
+`modules/home/agents/default.nix`; `atyrode apply` renders as its last step using
+the inspected generation's CLI when available, otherwise the invoking CLI.
+Edit the authored policy, not the deployed snapshot.
+
+`context [show]` remains an explicit, read-only diagnostic display: personal
+policy first, then host/platform/capabilities, fleet roster, authenticated CLI
+accounts and login commands, readable clan-var names and paths, and Nix cache
+trust. `context [show] --json` retains the public inventory fields, including
+`schemaVersion`, `command`, `generatedAt`, `revision`, `target`, `host`, `fleet`,
+`authentication`, `secrets`, `fleetCache`, `cloneRoot` and `dotfilesCheckout`.
+Neither form prints secret values or writes the startup file. Authentication
+checks may contact providers: GitHub status is bounded to 10 seconds, and Clever
+status/profile to at most two calls of 15 seconds each. This is diagnostic
+evidence, not authorization. No registry field declares a clone root or checkout;
+both JSON fields remain null even if `~/nix-dotfiles` exists. Repository-authoring
+commands require an explicitly selected `--repo PATH`.
 
 `doctor provisioning` carries the matching `agent-context` surface: `ok` when
-the file is fresh, `degraded` with remediation `atyrode context render` when
-it was rendered from another published revision than the running CLI, is
-older than seven days, or carries no generation stamp, and `incomplete` when
-it is absent. The file is never edited by hand: if it is wrong, `doctor` is
-wrong.
+the complete file matches this CLI's personal policy and known published revision,
+ignoring the generation time; `degraded` with remediation `atyrode context render`
+for changed policy, a different published revision, retired inventory or a missing
+stamp; and `incomplete` when the file is absent. An old timestamp alone is not drift.
+Development builds without a published revision still compare the complete policy
+and provenance layout, but cannot establish whether a recorded revision is current.
 
 ## Identities
 

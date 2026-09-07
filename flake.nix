@@ -198,6 +198,12 @@
             lib.mapAttrsToList (name: path: { inherit name path; }) (fleetClosuresFor system)
           );
         }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          development-image = pkgs.callPackage ./pkgs/development-image {
+            inherit mkPortableHomeConfiguration;
+            revision = self.rev or self.dirtyRev or "dirty";
+          };
+        }
       );
 
       checks = forAllSystems (

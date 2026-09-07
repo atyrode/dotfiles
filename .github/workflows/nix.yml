@@ -206,6 +206,73 @@ jobs:
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: ./ci/publish-store.sh
 
+  development-image:
+    name: development image ${{ matrix.system }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+            architecture: amd64
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+            architecture: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          nix_conf: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
+            extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
+
+      - name: Build standalone development environment
+        run: nix build .#development-image --print-build-logs
+
+      - name: Load and verify standalone environment
+        id: verify
+        run: |
+          image_name="$(nix eval --raw .#development-image.imageName)"
+          image_tag="$(nix eval --raw .#development-image.imageTag)"
+          docker load --input result
+          printf 'Compressed development image archive: %s bytes\n' "$(stat -Lc %s result)" >> "$GITHUB_STEP_SUMMARY"
+          nix shell --inputs-from . nixpkgs#tmux nixpkgs#python3 \
+            --command python3 ci/verify-development-image.py "$image_name:$image_tag"
+
+      - name: Retain terminal verification captures
+        if: always() && steps.verify.outputs.captures != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: development-captures-${{ matrix.architecture }}
+          path: ${{ steps.verify.outputs.captures }}
+          retention-days: 1
+
+      - name: Stage tested archive
+        if: github.ref == 'refs/heads/main'
+        run: cp --dereference result development-image.tar.gz
+
+      - name: Retain tested main archive
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: development-image-${{ matrix.architecture }}
+          path: development-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   # Docs-only fast path: Markdown is not fully inert — links are linted and
   # docs can leak production facts — so build the two intentional whole-tree
   # lints when the matrix is skipped, then guard the fast-path invariant
@@ -259,7 +326,7 @@ jobs:
   # (matrix or docs-links) ran.
   ci-gate:
     name: ci-gate
-    needs: [changes, check, closures, docs-links]
+    needs: [changes, check, closures, development-image, docs-links]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -272,5 +339,52 @@ jobs:
           jq -e '
             (.changes.result == "success")
             and ([.[] | .result] | all(. == "success" or . == "skipped"))
-            and ((.check.result == "success" and .closures.result == "success") or (.["docs-links"].result == "success"))
+            and (
+              (.changes.outputs.code == "true"
+                and .check.result == "success"
+                and .closures.result == "success"
+                and .["development-image"].result == "success")
+              or (.changes.outputs.code == "false" and .["docs-links"].result == "success")
+            )
           ' <<<"$NEEDS" >/dev/null
+
+  publish-development-image:
+    name: publish development image
+    needs: [ci-gate, development-image]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download this run's tested archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh run download "$RUN_ID" --repo "$REPOSITORY" --pattern development-image-amd64 --dir tested-archives
+          gh run download "$RUN_ID" --repo "$REPOSITORY" --pattern development-image-arm64 --dir tested-archives
+
+      - name: Publish immutable revisions and verify anonymous access
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.sha }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | python3 ci/publish-development-image.py \
+            tested-archives "$REVISION" --username "$GITHUB_ACTOR" \
+            --output development-image-reference.txt
+
+      - name: Retain published digest reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: development-image-reference
+          path: development-image-reference.txt
+          if-no-files-found: error

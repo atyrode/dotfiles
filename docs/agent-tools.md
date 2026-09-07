@@ -45,6 +45,61 @@ Reusable package derivations live in `pkgs/`, Home Manager deployment lives in
 launches it through Nix's dynamic loader instead of rewriting the Bun executable
 with `patchelf`.
 
+## Standalone Linux development image
+
+`packages.<linux-system>.development-image` packages the existing portable
+`development-*` Home Manager environment for Linux amd64 and arm64. It includes
+the configured zsh, OMP, Code catalog and the rest of that profile, rather than
+a separate container tool list. Build and exercise it locally with:
+
+```sh
+nix build .#development-image --print-build-logs
+docker load --input result
+image="$(nix eval --raw .#development-image.imageName):$(nix eval --raw .#development-image.imageTag)"
+docker run --rm -it "$image"
+nix shell --inputs-from . nixpkgs#tmux nixpkgs#python3 \
+  --command python3 ci/verify-development-image.py "$image"
+```
+
+The default command is the real login zsh, running as `developer` (UID/GID
+1000) in `/workspace`. Supplying another command retains home activation and
+the same user. A project may be bind-mounted at `/workspace` when its
+permissions allow UID 1000 access. Do not mount an operator home, credentials,
+host Nix store or Docker socket as part of the default environment.
+
+Every start runs Home Manager activation, including its generation management,
+managed-file conflict checks, OMP and Codex seeds, migrations and context
+rendering. Automatic speech-model downloads and the classifier, resource-guard
+and ssh-agent services are disabled; no systemd manager or model supervisor
+is started. Provider authentication is not bundled. Native tools remain
+responsible for their sign-in flow and current model availability.
+
+The image supplies the daemon boundary declared in
+[`fleet/system-boundary.json`](../fleet/system-boundary.json): root owns the
+store and Nix daemon, while the developer is an untrusted client. The daemon
+does not inherit the developer's Nix configuration or cache paths, and builds
+run under separate `nixbld` users. Builds use `sandbox = false` inside the OCI
+boundary; this is not a sandbox for hostile builds. The Linux bootstrap's
+existing `--no-daemon` installation is a different runtime contract and is
+neither invoked nor changed by this image.
+
+Home and mutable Nix state belong to the container writable layer. They
+survive stop/start of that container, not deletion or recreation. Home Manager
+refuses unmanaged files that conflict with its links. Startup also refuses a
+home not owned by UID 1000 rather than recursively changing a possible host
+mount. Application exit status is preserved; unexpected daemon loss ends the
+session instead of leaving a shell with broken Nix access.
+
+CI verifies real offline containers and terminal interaction on both native
+architectures. Green main publishes those tested archives, without rebuilding,
+to immutable revision tags under `ghcr.io/atyrode/development` and a
+multi-platform index. The publication job's summary and
+`development-image-reference` artifact give the immutable digest for consumers.
+Retries reuse matching platform and index digests and refuse mismatches.
+Publication requires anonymous pulls and standalone startup; initial GHCR
+package visibility may need to be set to public in GitHub package Settings.
+It does not activate fleet hosts or redeploy consumers.
+
 ## OMP commands
 
 Four commands make up the operator surface:

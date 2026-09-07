@@ -6,9 +6,10 @@ file, not that adapter.
 
 The marked section comes from
 [`modules/home/agents/engineering.md`](modules/home/agents/engineering.md).
-Edit local guidance outside it. For reusable policy changes, read
-[instruction authoring and distribution](docs/agent-tools.md#instruction-authoring-and-distribution),
-edit the source, and regenerate its repository outputs.
+`agent-policy` rejects stale or corrupted common generated content. Edit local
+guidance outside it; for reusable policy, edit the source, regenerate both
+outputs with the renderer, and include all three in the same PR, as described
+in [instruction authoring and distribution](docs/agent-tools.md#instruction-authoring-and-distribution).
 
 <!-- BEGIN SHARED ENGINEERING: generated; do not edit -->
 

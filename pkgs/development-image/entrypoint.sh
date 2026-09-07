@@ -21,15 +21,13 @@ application_status=
 forced_application=0
 
 running() {
-  local pid
+  local stat state parent _rest
   [[ -n $1 ]] || return 1
-  for pid in $(
-    jobs -pr
-    jobs -ps
-  ); do
-    [[ $pid != "$1" ]] || return 0
-  done
-  return 1
+  # A command-substitution copy of Bash's job table can outlive a reaped child.
+  # Read the kernel's state instead, and never signal a PID no longer owned here.
+  IFS= read -r stat 2>/dev/null <"/proc/$1/stat" || return 1
+  read -r state parent _rest <<<"${stat##*) }"
+  [[ $parent == "$$" && $state != Z && $state != X ]]
 }
 
 # The INT/TERM traps invoke this callback asynchronously.

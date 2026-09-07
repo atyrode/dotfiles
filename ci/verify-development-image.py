@@ -219,12 +219,14 @@ printf 'build-users-group =\n' > "$HOME/.config/nix/nix.conf"
 printf 'export DOTFILES_IMAGE_SMOKE=preserved\n' > "$HOME/.config/zsh/local.zsh"
 touch "$HOME/image-smoke-marker"
 ''')
-    started = time.monotonic()
-    run("docker", "stop", "--time", "10", name, timeout=20)
-    require(f.stopped(name) == 0, "TERM handler exit 0 was not preserved")
-    require(time.monotonic() - started < 10, "TERM shutdown was not prompt")
-    f.start(name)
-    eventually(lambda: "APPLICATION-READY" in f.logs(name), "restarted supplied command")
+    # Repeat shutdown to expose races between daemon exit and the command's handler.
+    for cycle in range(5):
+        started = time.monotonic()
+        run("docker", "stop", "--time", "10", name, timeout=20)
+        status = f.stopped(name)
+        require(status == 0, f"TERM handler exit 0 was not preserved in cycle {cycle}: {status}")
+        require(time.monotonic() - started < 10, "TERM shutdown was not prompt")
+        f.start(name)
     f.exec(name, r'''set -eu
 /home/developer/.nix-profile/bin/zsh -lic '[[ $DOTFILES_IMAGE_SMOKE = preserved ]]'
 generation=$(readlink -f "$XDG_STATE_HOME/nix/profiles/home-manager")

@@ -54,19 +54,26 @@ context_clever_json() {
   fi
 }
 
-# The secrets this account can read are the clan vars sops-nix placed for it:
-# each is named by generator and file with the path it is readable at, never
-# its value. A file the account cannot read is not
-# listed, because "readable here" is the question an agent asks.
+# The secrets this account can read are the clan vars sops-nix placed for it.
+# sops directories can be searchable but not listable (0751 root:keys), so
+# probe published var names as well as discoverable placements. Follow sops
+# symlinks, but inspect only generator/file paths and never open their contents.
 context_secrets_json() {
-  local root=/run/secrets/vars entry
-  if [[ -d "$root" ]]; then
-    find "$root" -mindepth 2 -maxdepth 2 -type f -readable 2>/dev/null | sort |
-      jq -Rnc --arg root "$root" '[inputs | select(length > 0)
-        | {name: (ltrimstr($root + "/")), path: .}]'
-  else
-    printf '[]\n'
-  fi
+  local root entry
+  root="$(machine_key_system_root)/run/secrets/vars"
+  {
+    jq -j --arg root "$root" '.[] | $root + "/" + . + "\u0000"' "$clan_var_names"
+    if [[ -d "$root" ]]; then
+      find -L "$root" -mindepth 2 -maxdepth 2 -type f -print0 2>/dev/null || true
+    fi
+  } |
+    while IFS= read -r -d "" entry; do
+      if [[ -f "$entry" && -r "$entry" ]]; then
+        printf '%s\0' "$entry"
+      fi
+    done |
+    jq -Rsc --arg root "$root" 'split("\u0000") | map(select(length > 0)) | unique
+      | map({name: ltrimstr($root + "/"), path: .})'
 }
 
 # The fleet cache is trusted when the daemon lists both its URL and its key,

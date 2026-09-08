@@ -681,6 +681,73 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode context render --json >/dev/null 2>&1 && false
     atyrode context render show >/dev/null 2>&1 && false
 
+    # Real placed-file metadata, not mocked find output: sops can link the
+    # generation root, a generator directory, and individual secret files.
+    # Published per-machine and shared names must also work when directory
+    # permissions permit lookup of known paths but prohibit enumeration.
+    (
+      secret_root="$TMPDIR/context-secrets"
+      vars_root="$secret_root/run/secrets/vars"
+      mkdir -p "$secret_root/run/secrets.d/1/vars" "$secret_root/targets/discovered"
+      ln -s secrets.d/1 "$secret_root/run/secrets"
+      mkdir -p "$vars_root/git-identity" "$vars_root/omp-auth-broker" \
+        "$vars_root/babel-archive" \
+        "$vars_root/dangling" "$vars_root/unreadable" \
+        "$vars_root/not-file/value" "$vars_root/nested/deep"
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$vars_root/git-identity/auth-key"
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$secret_root/targets/token"
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$secret_root/targets/discovered/value"
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$secret_root/targets/unreadable"
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$vars_root/nested/deep/value"
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$vars_root/top-level"
+      chmod 000 "$secret_root/targets/unreadable"
+      ln -s "$secret_root/targets/token" "$vars_root/omp-auth-broker/token"
+      ln -s "$secret_root/targets/discovered" "$vars_root/discovered"
+      ln -s "$secret_root/targets/unreadable" "$vars_root/git-identity/signing-key"
+      ln -s "$secret_root/targets/missing" "$vars_root/babel-archive/storage.json"
+      ln -s "$secret_root/targets/missing" "$vars_root/dangling/value"
+      ln -s "$secret_root/targets/unreadable" "$vars_root/unreadable/value"
+      export _ATYRODE_TEST_IDENTITY_ROOT="$secret_root"
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show --json \
+        > "$TMPDIR/context-secrets.json" 2> "$TMPDIR/context-secrets.err"
+      jq -e --arg root "$vars_root" '
+        .secrets.readable == ([
+          "discovered/value", "git-identity/auth-key", "omp-auth-broker/token"
+        ] | map({name: ., path: ($root + "/" + .)}))
+      ' "$TMPDIR/context-secrets.json" >/dev/null
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show \
+        > "$TMPDIR/context-secrets.txt" 2>> "$TMPDIR/context-secrets.err"
+      grep -qF "$vars_root/omp-auth-broker/token" "$TMPDIR/context-secrets.txt"
+      if grep -qF 'FIXTURE_ONLY_CONTEXT_SECRET' "$TMPDIR/context-secrets.json" \
+        "$TMPDIR/context-secrets.txt" "$TMPDIR/context-secrets.err"; then
+        echo 'context disclosed a placed secret value' >&2
+        exit 1
+      fi
+      # A public Clan output has directory metadata too, but must not become
+      # a secret candidate merely because a file exists at that placed path.
+      printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$vars_root/git-identity/auth-key.pub"
+      chmod 0111 "$vars_root" "$vars_root/git-identity" "$vars_root/omp-auth-broker"
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show --json \
+        > "$TMPDIR/context-secrets-private.json"
+      jq -e --arg root "$vars_root" '
+        .secrets.readable == ([
+          "git-identity/auth-key", "omp-auth-broker/token"
+        ] | map({name: ., path: ($root + "/" + .)}))
+      ' "$TMPDIR/context-secrets-private.json" >/dev/null
+      chmod 0700 "$vars_root" "$vars_root/git-identity" "$vars_root/omp-auth-broker"
+      # A symlink at the vars root itself must work too, not only its parent.
+      rm "$vars_root/git-identity/auth-key.pub"
+      mv "$vars_root" "$secret_root/targets/vars"
+      ln -s "$secret_root/targets/vars" "$vars_root"
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show --json \
+        > "$TMPDIR/context-secrets-linked.json"
+      diff <(jq -S '.secrets' "$TMPDIR/context-secrets.json") \
+        <(jq -S '.secrets' "$TMPDIR/context-secrets-linked.json")
+      rm -rf "$secret_root"
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show --json |
+        jq -e '.secrets.readable == []' >/dev/null
+    )
+
     # Refusals propagate through the public command without announcing a write
     # or replacing the old document. Apply must also retain the failed step.
     mv "$context_file" "$TMPDIR/context-link-target"

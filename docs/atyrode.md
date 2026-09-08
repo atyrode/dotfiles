@@ -276,6 +276,16 @@ evidence, not authorization. No registry field declares a clone root or checkout
 both JSON fields remain null even if `~/nix-dotfiles` exists. Repository-authoring
 commands require an explicitly selected `--repo PATH`.
 
+Secret discovery is bounded to `/run/secrets/vars/<generator>/<file>`. It follows
+sops-nix's generation and placement symlinks and includes only regular files
+readable by the invoking account, preserving the placed path rather than the
+generation's resolved target. Because sops directories can allow path lookup
+without directory listing, the CLI also probes secret names published under
+Clan's shared and per-machine vars at its own revision. This embedded inventory
+uses directory names and ciphertext presence only, never secret contents.
+Dangling links, unreadable files and undeployed vars are omitted; other credential
+locations are not scanned.
+
 Neither `context render` nor `context show` reloads instructions in an existing
 agent session. Rendering changes the file for a subsequent startup; showing
 diagnostics only prints evidence and is not an instruction-loading step.

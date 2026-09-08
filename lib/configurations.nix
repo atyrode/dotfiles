@@ -209,6 +209,7 @@ let
         ../modules/nixos/cloudflare-dns.nix
         ../modules/nixos/manifold-dev-hub.nix
         ../modules/nixos/myparcelle-dev.nix
+        ../modules/nixos/games.nix
       ]
       ++ clanMachineModules;
     };

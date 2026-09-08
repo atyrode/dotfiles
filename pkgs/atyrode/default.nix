@@ -40,6 +40,9 @@
   # a fixture tree, the one way to reach the registered state without a real
   # recipient in the committed one.
   sopsDirectory ? ../../sops,
+  # Only directory names and the presence of ciphertext are inspected; secret
+  # contents never enter the diagnostic inventory.
+  varsDirectory ? ../../vars,
   stdenvNoCC,
   tmux,
   windowsPackages,
@@ -83,6 +86,31 @@ let
   authBrokerInventory = ../../fleet/auth-broker.json;
   systemPolicy = ../../fleet/system-boundary.json;
   provisioningPolicy = ../../fleet/provisioning.json;
+  directories =
+    path: lib.attrNames (lib.filterAttrs (_: type: type == "directory") (builtins.readDir path));
+  varRoots = [
+    (varsDirectory + "/shared")
+  ]
+  ++ map (host: varsDirectory + "/per-machine/${host}") (
+    directories (varsDirectory + "/per-machine")
+  );
+  clanVarNames = builtins.toFile "atyrode-clan-var-names.json" (
+    builtins.toJSON (
+      lib.unique (
+        lib.concatMap (
+          root:
+          lib.concatMap (
+            generator:
+            map (file: "${generator}/${file}") (
+              builtins.filter (file: builtins.pathExists (root + "/${generator}/${file}/secret")) (
+                directories (root + "/${generator}")
+              )
+            )
+          ) (directories root)
+        ) varRoots
+      )
+    )
+  );
   # The services whose disruption an unattended activation may never cause,
   # read by libexec/atyrode-disruption on every apply, rollback and fleet
   # deploy. Compiled in rather than read from the checkout so the policy a
@@ -253,6 +281,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@registry@' '${registry}' \
       --replace-fail '@revision@' '${revision}' \
       --replace-fail '@sops_directory@' '${sopsDirectory}' \
+      --replace-fail '@clan_var_names@' '${clanVarNames}' \
       --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@auth_broker_inventory@' '${authBrokerInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \

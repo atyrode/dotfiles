@@ -243,17 +243,23 @@ instructions, not this personal context.
 
 The target is `$XDG_CONFIG_HOME/agents/AGENTS.md` (default
 `~/.config/agents/AGENTS.md`): an atomically replaced regular file, mode 0644.
-Home Manager owns the out-of-store links from the default OMP user file
-`~/.omp/agent/AGENTS.md` and the Claude/Codex adapters. These links do not imply
-coverage of arbitrary named OMP profiles. Activation renders through
-`modules/home/agents/default.nix`; `atyrode apply` renders as its last step using
-the inspected generation's CLI when available, otherwise the invoking CLI.
-Edit the authored policy, not the deployed snapshot.
+Home Manager activation renders it through `modules/home/agents/default.nix`;
+`atyrode apply` also renders as its last step using the inspected generation's CLI
+when available, otherwise the invoking CLI. Home Manager owns the out-of-store
+links from the default OMP user file `~/.omp/agent/AGENTS.md` and the optional
+Claude/Codex adapters to that snapshot. On the next OMP startup, its instruction
+loader reads the personal document through the default user link and discovers
+the current repository's instructions separately. Thus normal apply/activation
+deploys startup guidance automatically; no separate manual render is required.
+The default link does not cover arbitrary named OMP profiles or custom
+`PI_CODING_AGENT_DIR` roots. Edit the authored policy, not the deployed snapshot.
 
-`context [show]` remains an explicit, read-only diagnostic display: personal
-policy first, then host/platform/capabilities, fleet roster, authenticated CLI
-accounts and login commands, readable clan-var names and paths, and Nix cache
-trust. `context [show] --json` retains the public inventory fields, including
+`context [show]` is an independent, explicit, read-only diagnostic display. It
+needs no previous render and does not read the startup file: absent, stale or
+corrupt deployed content does not affect its diagnostics. It displays the CLI's
+embedded personal policy first, then live host/platform/capabilities, fleet
+roster, authenticated CLI accounts and login commands, readable clan-var names
+and paths, and Nix cache trust. `context [show] --json` retains the public inventory fields, including
 `schemaVersion`, `command`, `generatedAt`, `revision`, `target`, `host`, `fleet`,
 `authentication`, `secrets`, `fleetCache`, `cloneRoot` and `dotfilesCheckout`.
 Neither form prints secret values or writes the startup file. Authentication
@@ -262,6 +268,10 @@ status/profile to at most two calls of 15 seconds each. This is diagnostic
 evidence, not authorization. No registry field declares a clone root or checkout;
 both JSON fields remain null even if `~/nix-dotfiles` exists. Repository-authoring
 commands require an explicitly selected `--repo PATH`.
+
+Neither `context render` nor `context show` reloads instructions in an existing
+agent session. Rendering changes the file for a subsequent startup; showing
+diagnostics only prints evidence and is not an instruction-loading step.
 
 `doctor provisioning` carries the matching `agent-context` surface: `ok` when
 the complete file matches this CLI's personal policy and known published revision,

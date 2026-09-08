@@ -51,7 +51,7 @@ Keep three readers separate:
 
 | Reader | Authored owner | Delivery |
 | --- | --- | --- |
-| Personal defaults and bounded personal authority | [`modules/home/agents/AGENTS.md`](../modules/home/agents/AGENTS.md) | Packaged into `atyrode`; `context render` writes the personal document and provenance |
+| Personal defaults and bounded personal authority | [`modules/home/agents/AGENTS.md`](../modules/home/agents/AGENTS.md) | Packaged into `atyrode`; activation and `atyrode apply` render the personal document and provenance for automatic harness loading |
 | Repository contributors | Root `AGENTS.md`: local purpose, commands, boundaries, task routes and delivery | Repository revision, with one generated common block |
 | Reusable repository engineering | [`modules/home/agents/engineering.md`](../modules/home/agents/engineering.md) | Renderer inserts exact bytes into repository roots and the neutral template, not personal context |
 
@@ -62,17 +62,32 @@ deployed by the agents module at
 prompts and delete irrelevant ones. It requires neither Codex nor OMP and
 does not enroll the recipient in automation or grant authority.
 
+For a default OMP session, the normal sequence is automatic: `atyrode apply`
+activates the managed environment, the activation hook renders personal policy,
+Home Manager supplies the OMP user-file link, and OMP loads that file plus the
+applicable repository instructions when a session starts. An agent does not
+prepare its instructions by running `context render`, and the operator does not
+need to paste them. Apply also performs a final render using the activated
+generation's CLI. Rendering and loading are separate operations; neither
+rendering nor diagnostics refreshes an already-running session's loaded policy.
+
 Personal guidance contains durable preferences and safety/authority boundaries,
 not a fleet handbook or a second copy of repository engineering. Machine state
 is evidence, not permission. `atyrode context render` performs no host,
-authentication or network inventory probes. Explicit `atyrode context show`
-and `atyrode context show --json` retain diagnostic access, including bounded
-GitHub authentication status (10 seconds) and Clever status probing (15 seconds).
+authentication or network inventory probes. When machine facts matter, an agent
+can run `atyrode context show` or `atyrode context show --json` directly, without
+asking the operator to fetch them. Neither command needs a previous render or
+reads an inventory from the generated file: each gathers current diagnostics,
+including bounded GitHub authentication status (10 seconds) and Clever status
+probing (15 seconds).
 They can contact services and expose account/secret-path metadata, never secret
 values; do not copy their output wholesale into public artifacts or instructions.
 An undeclared checkout remains unknown/null rather than inferred from a
 conventional directory. [Agent context](atyrode.md#agent-context) owns the
 command contract; the provisioning probe compares policy/revision, not age alone.
+OMP's own workstation/environment block is separate and unchanged; moving the
+fleet/authentication/cache inventory out of this file does not remove OMP's
+basic platform information.
 
 Home Manager links `~/.omp/agent/AGENTS.md`, `~/.claude/CLAUDE.md` and
 `~/.codex/AGENTS.md` to the rendered file. These are cross-tool adapters, not
@@ -96,13 +111,18 @@ conditional guidance to skills/rules; its imports still consume startup context.
 These are useful authoring guidance, not descriptions of OMP. Selecting an
 OpenAI or Anthropic model does not select that vendor's instruction loader.
 
-OMP behavior below is evidenced at version 18.1.13, commit
-[`a1b254047d12e143b7c6011536e918c6c35c5906`](https://github.com/can1357/oh-my-pi/commit/a1b254047d12e143b7c6011536e918c6c35c5906).
+The loading checks exercise the repository's current OMP package pin. The
+discovery reference below is pinned to version 18.1.14, commit
+[`daf07999c2fee9b22edc7bf8fea1fb6272e0df5e`](https://github.com/can1357/oh-my-pi/commit/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e).
 Recheck the source when changing the OMP pin:
 
-- Native user `AGENTS.md` wins the single user scope over Claude and Codex
-  adapters (priorities 100, 80 and 70). Surviving byte-identical whole context
-  files can collapse; repeated spans inside different documents do not.
+- Native user `AGENTS.md` follows the active profile or explicit agent directory.
+  Foreign user adapters require opt-in; when enabled, native context wins the
+  single user scope over Claude and Codex (priorities 100, 80 and 70).
+- Context deduplication can omit a farther file whose entire normalized paragraph
+  sequence occurs contiguously in a closer file. It does not remove arbitrary
+  overlapping spans or paraphrases from retained documents. Keep personal and
+  shared repository policy separate rather than relying on deduplication.
 - Standalone project `AGENTS.md`/`CLAUDE.md` discovery walks ancestors, retaining
   multiple depths root-first. Native discovery selects the nearest non-empty
   `.omp` directory and only its non-empty `AGENTS.md`; a missing file there
@@ -124,17 +144,49 @@ Recheck the source when changing the OMP pin:
   `APPEND_SYSTEM.md` adds startup content, not laziness.
 
 Owning pinned sources:
-[native discovery](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/builtin.ts),
-[Claude adapter](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/claude.ts),
-[Codex adapter](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/codex.ts),
-[context capability](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/capability/context-file.ts),
-[capability resolution](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/capability/index.ts),
-[imports](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/discovery/at-imports.ts),
-[prompt composition](https://github.com/can1357/oh-my-pi/blob/a1b254047d12e143b7c6011536e918c6c35c5906/packages/coding-agent/src/system-prompt.ts).
+[native discovery](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/discovery/builtin.ts),
+[user-path resolution](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/discovery/helpers.ts),
+[Claude adapter](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/discovery/claude.ts),
+[Codex adapter](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/discovery/codex.ts),
+[context capability](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/capability/context-file.ts),
+[capability resolution](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/capability/index.ts),
+[imports](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/discovery/at-imports.ts),
+[prompt composition](https://github.com/can1357/oh-my-pi/blob/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e/packages/coding-agent/src/system-prompt.ts).
 No normal-context byte/token cap is established by these OMP sources; do not
 apply Codex's cap to OMP. Managed configuration layers do not replace this
 loader. Verify the selected profile/overlays when diagnosing a particular
 session rather than assuming its effective discovery configuration.
+
+### Maintained loading checks
+
+`nix build --no-link .#checks.x86_64-linux.omp-context` exercises the packaged
+`atyrode context render`, the evaluated Home Manager render hook and its actual
+adapter sources, relocated into disposable homes. It checks first activation
+and replacement of stale policy, source content/provenance and permissions, then
+inspects real raw and managed OMP prompts through the deployed links. The same
+check runs on the native CI platforms, including portable Linux configuration.
+
+[`ci/check-agent-context.py`](../ci/check-agent-context.py) drives real OMP's
+ready/negotiation/`get_state` protocol without a model turn. It checks complete
+rendered documents, accounting for OMP's table-padding compaction without
+discarding directive or cell text; single copies and ordering; root versus nested
+cwd; default, named and explicitly selected agent directories; opted-in adapter precedence;
+portable/outside-repository contexts; and loaded snapshots versus a changed file
+in a new process.
+
+The existing `agent-policy` action also runs this acceptance against each
+repository's **current candidate** `AGENTS.md` in dotfiles, Code, Babel and
+Manifold. Runtime, common source and personal source come from one action
+snapshot; there is no second OMP pin or frozen copy of another repository's
+instructions. Consumer fixtures use the authored personal document; the native
+check separately proves its actual rendering and deployment.
+
+Only instruction documents enter the fixture: caller credentials, local
+configuration and project extensions are excluded. Therefore this proves the
+maintained default loading contract, not every machine-local override, import
+layout or model's compliance with the instructions. The command regressions in
+`atyrode-apply` separately prove that text/JSON diagnostics work with absent,
+stale or corrupt startup files without changing them.
 
 ## Instruction authoring and distribution
 

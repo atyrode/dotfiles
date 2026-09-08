@@ -247,6 +247,18 @@ let
     bun-fd-ownership = import ./atyrode/bun.nix { inherit pkgs; };
     omp-auth-broker = import ./omp/omp-auth-broker.nix { inherit lib pkgs; };
     omp-stack = import ./omp/omp-stack.nix { inherit lib pkgs; };
+    omp-context = import ./omp/omp-context.nix {
+      inherit lib pkgs;
+      homeConfigs =
+        systemHomeConfigs
+        // lib.optionalAttrs isLinux {
+          portable = mkPortableHomeConfiguration {
+            profileName = "development-${system}";
+            username = "agent-context";
+            homeDirectory = "/home/agent-context";
+          };
+        };
+    };
     omp-wrapper = import ./omp/omp-wrapper.nix { inherit lib pkgs; };
     omp-agent-references = import ./omp/omp-agent-references.nix { inherit lib pkgs; };
     agent-tools-terminal-viewing = import ./atyrode/agent-terminal-viewing.nix { inherit pkgs; };

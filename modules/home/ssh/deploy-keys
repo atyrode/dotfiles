@@ -14,14 +14,21 @@
 # a line removed cannot connect. Rotate by replacing the KEY field and the
 # secret on the automation side in the same hour.
 #
-# One line per key, whitespace-separated, four fields:
+# One line per key, whitespace-separated, four identity fields plus argv:
 #
-#   NAME  HOST  KEYTYPE  BASE64-KEY  COMMAND
+#   NAME  HOST  KEYTYPE  BASE64-KEY  COMMAND [ARG...]
 #
 # NAME     stable identifier, written as the comment of the rendered line.
 # HOST     the fleet host id that accepts it; other hosts ignore the row.
-# COMMAND  absolute path of the forced command on that host. The caller's
-#          command text arrives as SSH_ORIGINAL_COMMAND; the script decides.
+# COMMAND  absolute executable path followed by fixed literal argument tokens.
+#          No shell parsing: quotes and metacharacters are literal, not syntax;
+#          whitespace cannot occur inside a token. Rendering shell-quotes every
+#          token, then escapes it for the authorized_keys command option.
+#          Caller text arrives only as SSH_ORIGINAL_COMMAND; the receiver
+#          validates it within the fixed role, never as additional authority.
+#          Deploy and plugin delivery deliberately use separate roles. The
+#          shared own-plugin key retains in-realm installs for Code and Babel;
+#          it cannot deploy revisions or choose other publishers.
 
-manifold-deploy  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIINhtNvQ1OSskawGaz6rKvHFg3J95BF1ref1QwwupxXu  /home/alex/manifold-dev/infra/previews/receiver.sh
-plugins-deploy   dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAINQnbB1ko44SXqwsfzn3/C7qJoyyQXgEPKHrtlxwInLl  /home/alex/manifold-dev/infra/previews/receiver.sh
+manifold-deploy  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIINhtNvQ1OSskawGaz6rKvHFg3J95BF1ref1QwwupxXu  /run/current-system/sw/bin/manifold-preview-receiver deploy
+plugins-deploy   dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAINQnbB1ko44SXqwsfzn3/C7qJoyyQXgEPKHrtlxwInLl  /run/current-system/sw/bin/manifold-preview-receiver plugin-delivery in-realm https://github.com/atyrode/code/releases/ https://github.com/atyrode/babel/releases/

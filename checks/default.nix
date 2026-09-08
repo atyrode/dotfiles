@@ -244,6 +244,7 @@ let
   # .github/workflows/nix.yml) so a drifting ci/ci.json fails
   # evaluation instead of silently desynchronizing.
   checksForSystem = {
+    deploy-keys = import ./fleet/deploy-keys.nix { inherit lib pkgs; };
     bun-fd-ownership = import ./atyrode/bun.nix { inherit pkgs; };
     omp-auth-broker = import ./omp/omp-auth-broker.nix { inherit lib pkgs; };
     omp-stack = import ./omp/omp-stack.nix { inherit lib pkgs; };
@@ -347,6 +348,10 @@ let
     };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {
+    manifold-preview-substrate = import ./fleet/manifold-preview-substrate.nix {
+      inherit lib pkgs;
+      hostConfig = canonicalNixosConfigs.dev-01.config;
+    };
     # Two unrelated reasons land checks on this one leg.
     #
     # Platform-independent lints: their output is a pure function of the

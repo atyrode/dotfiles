@@ -26,7 +26,12 @@
 # key runs (`modules/home/ssh/deploy-keys`), and a vhost whose upstream is down
 # answers 502, which is the state "not running" should
 # have -- never a fallback to some other hub.
-_: {
+{ pkgs, ... }:
+{
+  # /run/current-system/sw/bin is root-owned and follows the activated closure,
+  # independently of revisions the receiver deploys into mutable checkouts.
+  environment.systemPackages = [ pkgs.preview-tools ];
+
   services.caddy = {
     enable = true;
     globalConfig = ''

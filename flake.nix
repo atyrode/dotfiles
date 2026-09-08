@@ -15,6 +15,12 @@
     babel.url = "github:atyrode/babel";
     babel.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Product-owned immutable preview receiver; never execute tooling from the
+    # mutable preview checkout. #657 requires a qualified published main pin
+    # exporting packages.<linux-system>.preview-tools before activation.
+    manifold.url = "github:atyrode/manifold/main";
+    manifold.inputs.nixpkgs.follows = "nixpkgs";
+
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -75,6 +81,7 @@
       self,
       nixpkgs,
       babel,
+      manifold,
       clan-core,
       disko,
       home-manager,
@@ -101,6 +108,7 @@
           babel
           clan-core
           lib
+          manifold
           nixpkgs
           self
           targets
@@ -199,6 +207,7 @@
           );
         }
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          inherit (pkgs) preview-tools;
           development-image = pkgs.callPackage ./pkgs/development-image {
             inherit mkPortableHomeConfiguration;
             revision = self.rev or self.dirtyRev or "dirty";

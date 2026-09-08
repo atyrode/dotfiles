@@ -225,15 +225,52 @@ fronts two names with Caddy, sharing the VPS's ports 80 and 443 with the
   go. Certificates are issued on demand, per hostname, only for names the
   router vouches for.
 
-Both are driven from GitHub through one deploy key
-([`modules/home/ssh/deploy-keys`](../modules/home/ssh/deploy-keys)): a
-forced-command SSH key whose only power is to run
-`~/manifold-dev/infra/previews/receiver.sh`, which deploys `main` or brings a
-preview up or down. The private half is atyrode/manifold's
-`DEV_DEPLOY_SSH_KEY` repository secret. The stacks themselves are not
-declared here: they are the operator's checkouts, and a vhost whose upstream
-is down answers 502, which is what "not running" should look like. DNS:
-`preview` and `*` A records to this machine; the apex stays the master's.
+Preview deployment and plugin delivery use separate fixed roles on the same
+product-owned receiver. The reviewed
+[`deploy-keys` registry](../modules/home/ssh/deploy-keys) retains both existing
+public keys and their existing private-key custody:
+
+- `manifold-deploy` (atyrode/manifold's `DEV_DEPLOY_SSH_KEY`) runs
+  `/run/current-system/sw/bin/manifold-preview-receiver deploy`. It can deploy
+  `main` or bring a preview up or down, not install plugins.
+- `plugins-deploy` (the shared delivery credential in atyrode/code and
+  atyrode/babel) runs that receiver with fixed `plugin-delivery in-realm`
+  authority, limited to `https://github.com/atyrode/code/releases/` and
+  `https://github.com/atyrode/babel/releases/`. This deliberately preserves
+  trusted own-plugin development, installation and release delivery on the
+  integrated preview, without revision-deployment authority or arbitrary
+  publishers. In-realm execution is trusted application-code authority, not a
+  sandbox. The native hardened plugin installation API remains available for
+  the operator's separate choice; this delivery key does not ban or remove it.
+
+Both keys are forced-command only, with no PTY, forwarding or user SSH rc.
+The registry's command tail is literal argv, shell-quoted and then escaped
+for SSH; request text remains `SSH_ORIGINAL_COMMAND`, validated by Manifold
+within the fixed role rather than granting additional authority.
+
+Nix installs Manifold's Linux `preview-tools` package in the system profile.
+Its root-owned stable command selects the activated immutable receiver and
+its locked, preinstalled dependencies from `share/manifold`, with the
+product's immutable runtime PATH and pinned Bun 1.4.2. Dotfiles consumes that
+package once; it does not copy the receiver or resolve dependencies at login.
+Updating or replacing `~/manifold-dev` changes application revision/data, not
+the tooling trusted by either key.
+
+**Publication prerequisite (#657):** the initial Manifold flake lock records
+published `main` revision `f5fd6bdbc5fe8499badba58f31919d1a46598483`, which does
+not yet export `preview-tools`. The consumer intentionally has no fallback:
+before qualification or activation, publish the qualified product receiver
+package on Manifold `main` and update only the `manifold` flake input to that
+published revision. This configuration is not an activatable migration until
+that dependency and the substrate checks pass. Source publication, package
+qualification and a separately authorized dev-01 activation are distinct;
+this change authorizes no production promotion, credential rotation, data
+deletion or terminal-host retirement.
+
+The stacks themselves are not declared here: they are the operator's
+checkouts, and a vhost whose upstream is down answers 502, which is what
+"not running" should look like. DNS: `preview` and `*` A records point to
+this machine; the apex stays the master's.
 
 Concretely, as of 2026-09-05: the checkout is `~/manifold-dev` (a git worktree
 of `~/manifold`), its `.env` sets `COMPOSE_PROJECT_NAME=manifold-dev` and

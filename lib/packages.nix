@@ -5,6 +5,7 @@
   babel,
   clan-core,
   lib,
+  manifold,
   nixpkgs,
   self,
   targets,
@@ -88,6 +89,15 @@ let
           windowsPackages = windowsPackageInventory;
         };
       })
+      (
+        final: _previous:
+        lib.optionalAttrs final.stdenv.hostPlatform.isLinux {
+          # Receiver implementation, dependency closure and runtime PATH belong
+          # to Manifold. A missing upstream export must fail, never fall back
+          # to the mutable application checkout.
+          preview-tools = manifold.packages.${final.stdenv.hostPlatform.system}.preview-tools;
+        }
+      )
       (
         _final: previous:
         lib.optionalAttrs previous.stdenv.hostPlatform.isDarwin {

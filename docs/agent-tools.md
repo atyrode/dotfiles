@@ -182,10 +182,25 @@ Use the existing
 PR/push checks invoke reviewed dotfiles `main` read-only; hourly/manual
 synchronization calls the reusable workflow with repository-scoped
 contents/pull-requests/actions write permission. Preserve read-only defaults,
-enable Actions PR creation, provide core CI `workflow_dispatch`, and require
-`agent-policy` plus repository core checks under strict/up-to-date protection,
-without removing existing protections. These settings require their own
-authority; do not acquire credentials to make enrollment possible.
+enable Actions PR creation and provide core CI `workflow_dispatch`. Preserve
+existing classic core checks, their GitHub Actions application bindings,
+strict/up-to-date enforcement, admin/review settings and other rulesets.
+Enroll `agent-policy`, bound to GitHub Actions app ID `15368`, in a dedicated
+active, main-only, strict required-status-check ruleset with no bypass actors.
+Create and verify that rule before removing only a duplicate classic
+`agent-policy` requirement introduced during enrollment. These settings require
+their own authority; the synchronizer never mutates them or acquires credentials
+to make enrollment possible.
+
+The repository token reads main's exact SHA, protected state and classic
+app-bound checks from the public branch endpoint. The bounded effective-branch
+rules endpoint supplies active strict policy requirements; evaluate/disabled
+rules do not count. Core check bindings may be supplied by applicable classic
+or active ruleset requirements, but `agent-policy` itself must be app-bound in
+a strict active rule. The PR GraphQL query separately confirms the tested
+head/base, readiness, mergeability and successful current-head status rollup,
+without requesting administrative branch-protection fields. Missing evidence
+blocks merge; no operator-token fallback or permission expansion is used.
 
 The Code, Babel and Manifold consumers receive generated-only draft PRs,
 exact-head core/policy CI, guarded squash merge, and separately observed main

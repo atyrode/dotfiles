@@ -101,7 +101,7 @@ def pull_view(state, pull):
         "url": f"https://api.github.com/repos/{state['repository']}/pulls/{pull['number']}",
         "html_url": f"https://github.com/{state['repository']}/pull/{pull['number']}",
         "head": {"sha": pull["sha"], "ref": BRANCH, "repo": repo},
-        "base": {"sha": ref_sha(state), "ref": "main", "repo": repo},
+        "base": {"sha": pull.get("base_sha", ref_sha(state)), "ref": "main", "repo": repo},
         "labels": [{"name": name} for name in state.get("labels", [])],
         "mergeable": True, "mergeable_state": state.get("mergeable_state", "clean"),
         "node_id": "PR_fixture_1", "maintainer_can_modify": False,
@@ -114,7 +114,10 @@ def pull_view(state, pull):
 def rest_pull_view(state, pull):
     lag = state.get("rest_lag")
     if not lag or lag["snapshot"]["number"] != pull["number"]:
-        return pull_view(state, pull)
+        view = pull_view(state, pull)
+        if "base_sha" in pull:
+            record(state, "rest_base_snapshot", sha=view["head"]["sha"], base=view["base"]["sha"])
+        return view
     lag["reads"] += 1
     if lag["reads"] == 2:
         if state.get("rest_lag_mutation") == "head":
@@ -122,6 +125,11 @@ def rest_pull_view(state, pull):
             tree = git_text("--git-dir", state["consumer_remote"], "rev-parse", head + "^{tree}")
             third = git("--git-dir", state["consumer_remote"], "commit-tree", tree, "-p", head, data=b"Competing REST head\n").stdout.decode().strip()
             lag["snapshot"]["sha"] = third
+        elif state.get("rest_lag_mutation") == "base":
+            base = ref_sha(state)
+            tree = git_text("--git-dir", state["consumer_remote"], "rev-parse", base + "^{tree}")
+            third = git("--git-dir", state["consumer_remote"], "commit-tree", tree, "-p", base, data=b"Competing REST base\n").stdout.decode().strip()
+            lag["snapshot"]["base_sha"] = third
         elif state.get("rest_lag_mutation") == "hold":
             state["labels"] = ["blocked"]
     if lag["remaining"]:
@@ -129,9 +137,15 @@ def rest_pull_view(state, pull):
         view = pull_view(state, lag["snapshot"])
     else:
         view = pull_view(state, pull)
+    if lag["base_remaining"]:
+        lag["base_remaining"] -= 1
+        view["base"]["sha"] = lag["snapshot"]["base_sha"]
+    else:
+        view["base"]["sha"] = ref_sha(state)
+    if not lag["remaining"] and not lag["base_remaining"] and view["head"]["sha"] == pull["sha"] and view["base"]["sha"] == ref_sha(state):
         del state["rest_lag"]
     record(state, "rest_visibility", sha=view["head"]["sha"], remote_sha=ref_sha(state, BRANCH),
-           body=view["body"], draft=view["draft"])
+           base=view["base"]["sha"], body=view["body"], draft=view["draft"])
     return view
 
 
@@ -268,8 +282,10 @@ def fake_git():
                         # visibility lags; refs and new-head CI advance normally.
                         state["rest_lag"] = {
                             "snapshot": dict(pull), "remaining": state["rest_lag_reads"], "reads": 0,
+                            "base_remaining": state.get("rest_base_lag_reads", 0),
                         }
                     pull["sha"] = head
+                    pull.pop("base_sha", None)
                     sync_pull_refs(state, pull)
                     make_runs(state, pull)
     save_state(state)
@@ -299,13 +315,6 @@ def graphql_response(state, payload):
             "baseRefOid": ref_sha(state), "mergeable": "MERGEABLE",
             "mergeStateStatus": "BLOCKED" if state.get("protection_blocked") else "CLEAN",
             "reviewDecision": "CHANGES_REQUESTED" if state.get("review_hold") else None,
-            "baseRef": {"branchProtectionRule": {
-                "requiresStrictStatusChecks": not state.get("non_strict"),
-                "requiredStatusChecks": [
-                    {"context": name, "app": {"databaseId": 15368}}
-                    for name in REQUIRED[state["name"]] + ["agent-policy"]
-                ],
-            }},
             "commits": {"nodes": [{"commit": {"oid": pull["sha"], "statusCheckRollup": {
                 "state": "SUCCESS", "contexts": {"nodes": contexts},
             }}}]},
@@ -327,6 +336,38 @@ def api_response(state, method, endpoint, payload):
         raise ValueError("Unexpected repository endpoint: " + path)
     suffix = path[len(prefix) + 1:]
     parts = suffix.split("/")
+    if suffix == "branches/main" and method == "GET":
+        names = [
+            name for name in REQUIRED[state["name"]]
+            if name != state.get("missing_core_protection") and name not in state.get("ruleset_core_protection", [])
+        ]
+        if state.get("classic_policy_protection"):
+            names.append("agent-policy")
+        return {
+            "name": "main", "commit": {"sha": ref_sha(state)},
+            "protected": not state.get("unprotected"),
+            "protection": {"required_status_checks": {
+                "enforcement_level": "everyone", "contexts": names,
+                "checks": [{"context": name, "app_id": state.get("core_protection_app", 15368)} for name in names],
+            }},
+        }
+    if suffix == "rules/branches/main" and method == "GET":
+        if int(query.get("page", ["1"])[0]) > 1 or state.get("missing_policy_protection"):
+            return []
+        return [{
+            "type": "required_status_checks", "ruleset_id": 301,
+            "ruleset_source_type": "Repository", "ruleset_source": state["repository"],
+            "parameters": {
+                "strict_required_status_checks_policy": not state.get("non_strict"),
+                "do_not_enforce_on_create": False,
+                "required_status_checks": [{
+                    "context": "agent-policy", "integration_id": state.get("policy_protection_app", 15368),
+                }, *[
+                    {"context": name, "integration_id": 15368}
+                    for name in state.get("ruleset_core_protection", [])
+                ]],
+            },
+        }]
     if suffix == "pulls":
         if method == "POST":
             pull = make_pull(state, payload["body"], draft=payload.get("draft", False))
@@ -493,6 +534,13 @@ def fake_gh():
         else:
             raise ValueError("Unexpected gh argument: " + arg)
     record(state, "api", method=method, endpoint=endpoint, payload=payload)
+    if endpoint == "graphql" and "headRefOid" in payload.get("query", "") and state.get("graphql_error"):
+        error = state["graphql_error"]
+        record(state, "graphql_denial", code=error["exit"])
+        save_state(state)
+        print(json.dumps({"data": {"repository": {"pullRequest": None}}, "errors": error["errors"]}))
+        print(error["stderr"], file=sys.stderr)
+        sys.exit(error["exit"])
     try:
         result = api_response(state, method, endpoint, payload)
     except Exception as error:
@@ -1039,6 +1087,74 @@ class SyncTests(unittest.TestCase):
         self.assertTrue(any(arg.startswith("--force-with-lease=") and arg.endswith(":" + previous) for arg in publications[0]))
         self.assertEqual([event["ref"] for event in self.events("dispatch")], ["main"])
 
+    def test_replacement_waits_for_both_new_head_and_advanced_main_base(self):
+        self.state["park_runs"] = True
+        pull = self.seed_candidate(draft=False)
+        previous, body = pull["sha"], pull["body"]
+        append_remote_commit(self.state, "consumer_remote", "application.txt", b"Earlier reviewed application update.\n")
+        observed_base = ref_sha(self.state)
+        pull["base_sha"] = observed_base
+        append_remote_commit(self.state, "consumer_remote", "application.txt", b"Reviewed application update.\n")
+        reviewed_main = ref_sha(self.state)
+        self.advance_source()
+        self.state.update({"rest_lag_reads": 1, "rest_base_lag_reads": 2})
+        self.run_sync(0)
+        head = self.state["pulls"][0]["sha"]
+        self.assertNotEqual(head, previous)
+        snapshots = self.events("rest_base_snapshot")
+        self.assertTrue(snapshots)
+        self.assertEqual({(event["sha"], event["base"]) for event in snapshots}, {(previous, observed_base)})
+        push_index = next(index for index, event in enumerate(self.state["events"]) if event["kind"] == "git" and "push" in event["argv"])
+        self.assertTrue(any(event["kind"] == "rest_base_snapshot" for event in self.state["events"][:push_index]))
+        observations = self.events("rest_visibility")
+        self.assertEqual(
+            [(event["sha"], event["base"]) for event in observations],
+            [(previous, observed_base), (head, observed_base), (head, reviewed_main)],
+        )
+        self.assertEqual({event["remote_sha"] for event in observations}, {head})
+        self.assertTrue(all(event["draft"] and event["body"] == body for event in observations))
+        settled_index = next(
+            index for index, event in enumerate(self.state["events"])
+            if event["kind"] == "rest_visibility" and event["sha"] == head and event["base"] == reviewed_main
+        )
+        self.assertFalse(any(
+            event["kind"] in ("approve", "ready", "merge")
+            or (event["kind"] == "api" and event["method"] == "PATCH" and "body" in event["payload"])
+            for event in self.state["events"][:settled_index]
+        ))
+        fresh = {run["id"] for run in self.state["runs"] if run["event"] == "pull_request" and run["head_sha"] == head}
+        self.assertEqual({event["run"] for event in self.events("approve")}, fresh)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+        self.assertEqual(self.main_bytes("application.txt"), b"Reviewed application update.\n")
+        self.assertEqual(git_text("--git-dir", self.consumer_remote, "diff", "--name-only", reviewed_main, "main"), "AGENTS.md")
+        self.assertEqual([event["ref"] for event in self.events("dispatch")], ["main"])
+
+    def test_third_rest_base_during_replacement_visibility_is_refused(self):
+        pull = self.seed_candidate()
+        previous, body = pull["sha"], pull["body"]
+        pull["base_sha"] = self.base_sha
+        append_remote_commit(self.state, "consumer_remote", "application.txt", b"Reviewed application update.\n")
+        reviewed_main = ref_sha(self.state)
+        self.advance_source()
+        self.state.update({"rest_lag_reads": 1, "rest_base_lag_reads": 2, "rest_lag_mutation": "base"})
+        self.run_sync(1)
+        head = ref_sha(self.state, BRANCH)
+        self.assertNotEqual(head, previous)
+        observations = self.events("rest_visibility")
+        self.assertEqual(len(observations), 2)
+        self.assertEqual((observations[0]["sha"], observations[0]["base"]), (previous, self.base_sha))
+        self.assertEqual(observations[1]["sha"], head)
+        self.assertNotIn(observations[1]["base"], (self.base_sha, reviewed_main))
+        self.assertEqual({event["remote_sha"] for event in observations}, {head})
+        self.assertEqual(ref_sha(self.state), reviewed_main)
+        self.assertEqual(self.state["pulls"][0]["body"], body)
+        self.assertTrue(self.state["pulls"][0]["draft"])
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assertFalse(any(event["method"] == "PUT" and event["endpoint"].endswith("/merge") for event in self.events("api")))
+        self.assert_no_delivery()
+
     def test_third_rest_head_during_replacement_visibility_is_refused(self):
         pull = self.seed_candidate()
         previous, body = pull["sha"], pull["body"]
@@ -1298,6 +1414,111 @@ class SyncTests(unittest.TestCase):
         self.seed_candidate(source_sha=historical)
         self.run_sync(0)
         self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+
+    def assert_graphql_denial(self, *, exit_code, error_type, path, expected_type=None, expected_path=None):
+        secrets = {
+            "message": "synthetic-private-api-message",
+            "stderr": "synthetic-private-cli-stderr",
+            "type": "synthetic-private-error-type",
+            "path": "synthetic-private-path-component",
+            "extension": "synthetic-private-extension-value",
+        }
+        error = {
+            **error_type, "path": path,
+            "message": secrets["message"] + " synthetic-not-a-credential",
+            "extensions": {**error_type.get("extensions", {}), "sensitive": secrets["extension"]},
+        }
+        self.state["graphql_error"] = {
+            "exit": exit_code,
+            "stderr": secrets["stderr"] + " synthetic-not-a-credential",
+            "errors": [error, {"type": secrets["type"], "path": [secrets["path"]], "message": secrets["message"]}],
+        }
+        proc = self.run_sync(1)
+        self.assertEqual([event["code"] for event in self.events("graphql_denial")], [exit_code])
+        self.assert_no_delivery()
+        self.assertFalse(any(event["method"] == "PUT" and event["endpoint"].endswith("/merge") for event in self.events("api")))
+        summary = Path(self.env["GITHUB_STEP_SUMMARY"])
+        report = "\n".join([
+            proc.stdout.decode(), proc.stderr.decode(),
+            summary.read_text() if summary.exists() else "",
+            *[comment["body"] for comment in self.state["comments"]],
+        ])
+        for secret in secrets.values():
+            self.assertNotIn(secret, report)
+        if expected_type:
+            self.assertIn(expected_type, report)
+        else:
+            for allowed in ("FORBIDDEN", "INSUFFICIENT_SCOPES", "NOT_FOUND", "RATE_LIMITED"):
+                self.assertNotIn(allowed, report)
+        if expected_path:
+            self.assertIn(expected_path, report)
+        else:
+            self.assertNotIn("repository.pullRequest", report)
+
+    def test_graphql_exit_one_denial_reports_only_safe_type_and_path(self):
+        self.assert_graphql_denial(
+            exit_code=1, error_type={"type": "FORBIDDEN"},
+            path=["repository", "pullRequest", "headRefOid"],
+            expected_type="FORBIDDEN", expected_path="repository.pullRequest.headRefOid",
+        )
+
+    def test_graphql_exit_zero_errors_still_refuse_with_safe_evidence(self):
+        self.assert_graphql_denial(
+            exit_code=0, error_type={"extensions": {"code": "INSUFFICIENT_SCOPES"}},
+            path=["repository", "pullRequest", "commits", "nodes", 0, "commit", "statusCheckRollup"],
+            expected_type="INSUFFICIENT_SCOPES", expected_path="repository.pullRequest.commits.nodes.commit.statusCheckRollup",
+        )
+
+    def test_graphql_denial_rejects_sensitive_path_components(self):
+        self.assert_graphql_denial(
+            exit_code=1, error_type={"type": "FORBIDDEN"},
+            path=["repository", "pullRequest", "synthetic-private-path-component"],
+            expected_type="FORBIDDEN",
+        )
+
+    def test_graphql_unknown_error_keeps_a_generic_refusal(self):
+        self.assert_graphql_denial(
+            exit_code=1, error_type={"type": "synthetic-private-error-type"},
+            path=["repository", "pullRequest", "headRefOid"],
+        )
+
+    def test_missing_policy_rule_cannot_qualify_a_green_candidate(self):
+        self.state["missing_policy_protection"] = True
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_classic_policy_check_does_not_replace_the_strict_policy_rule(self):
+        self.state.update({"missing_policy_protection": True, "classic_policy_protection": True})
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_core_checks_can_be_combined_across_classic_and_effective_rules(self):
+        self.select_repository("babel")
+        self.state["ruleset_core_protection"] = ["browser"]
+        self.run_sync(0)
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEW) + SUFFIX)
+        self.assertEqual(len(self.events("merge")), 1)
+        self.assertEqual([event["ref"] for event in self.events("dispatch")], ["main"])
+
+    def test_missing_core_protection_cannot_qualify_a_green_candidate(self):
+        self.state["missing_core_protection"] = "test"
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_policy_rule_from_another_app_cannot_qualify_a_green_candidate(self):
+        self.state["policy_protection_app"] = 777
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_core_protection_from_another_app_cannot_qualify_a_green_candidate(self):
+        self.state["core_protection_app"] = 777
+        self.run_sync(1)
+        self.assert_no_delivery()
+
+    def test_unprotected_main_cannot_qualify_a_green_candidate(self):
+        self.state["unprotected"] = True
+        self.run_sync(1)
+        self.assert_no_delivery()
 
     def test_non_strict_protection_cannot_qualify_a_green_candidate(self):
         self.state["non_strict"] = True

@@ -40,10 +40,26 @@ OVERALL_SECONDS = 90 * 60
 DISCOVERY_SECONDS = 5 * 60
 PR_SECONDS = 60 * 60
 MAIN_SECONDS = 20 * 60
+GRAPHQL_ERROR_TYPES = {"FORBIDDEN", "INSUFFICIENT_SCOPES", "NOT_FOUND", "RATE_LIMITED"}
+GRAPHQL_ERROR_LEAVES = (
+    "repository.pullRequest.headRefOid",
+    "repository.pullRequest.baseRefOid",
+    "repository.pullRequest.isDraft",
+    "repository.pullRequest.mergeable",
+    "repository.pullRequest.mergeStateStatus",
+    "repository.pullRequest.reviewDecision",
+    "repository.pullRequest.commits.nodes.commit.statusCheckRollup.state",
+)
+GRAPHQL_ERROR_PATHS = {
+    ".".join(parts[:length])
+    for leaf in GRAPHQL_ERROR_LEAVES
+    for parts in [leaf.split(".")]
+    for length in range(1, len(parts) + 1)
+}
 
 
 class Blocked(Exception):
-    """A safe, fixed diagnostic; remote command output is never exposed."""
+    """A safe diagnostic; only fixed text and whitelisted API enums are exposed."""
 
 
 class Invalid(Blocked):
@@ -53,6 +69,35 @@ class Invalid(Blocked):
 def require(condition, message):
     if not condition:
         raise Blocked(message)
+
+
+def graphql_error(value):
+    """Extract only known error types and static protection-query field paths."""
+    errors = value.get("errors") if isinstance(value, dict) else None
+    if not isinstance(errors, list):
+        return None
+    diagnostics = set()
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        kind = error.get("type")
+        extensions = error.get("extensions")
+        if not isinstance(kind, str) and isinstance(extensions, dict):
+            kind = extensions.get("code")
+        if not isinstance(kind, str) or kind not in GRAPHQL_ERROR_TYPES:
+            continue
+        path = error.get("path")
+        field_path = None
+        if isinstance(path, list) and all(isinstance(part, str)
+                                         or (type(part) is int and part >= 0) for part in path):
+            # Array positions are not query fields and must not enter reports.
+            candidate = ".".join(part for part in path if isinstance(part, str))
+            if candidate in GRAPHQL_ERROR_PATHS:
+                field_path = candidate
+        diagnostics.add(f"{kind} at {field_path}" if field_path else kind)
+    if diagnostics:
+        return "GitHub GraphQL operation failed (" + "; ".join(sorted(diagnostics)) + ")"
+    return None
 
 
 def object_id(value, label="object ID"):
@@ -183,13 +228,20 @@ class Sync:
         if payload is not None:
             argv += ["--input", "-"]
             data = json.dumps(payload, separators=(",", ":")).encode()
-        raw = self.command(argv, data=data, timeout=45).stdout
-        if not raw.strip():
-            return None
+        result = self.command(argv, data=data, timeout=45,
+                              allowed=(0, 1) if endpoint == "graphql" else (0,))
+        failure = f"{self.phase}: gh command failed (exit {result.returncode})"
         try:
-            return json.loads(raw)
+            value = json.loads(result.stdout) if result.stdout.strip() else None
         except ValueError:
+            require(result.returncode == 0, failure)
             raise Blocked(f"{self.phase}: invalid GitHub JSON response") from None
+        if endpoint == "graphql":
+            diagnostic = graphql_error(value)
+            if diagnostic:
+                raise Blocked(diagnostic)
+        require(result.returncode == 0, failure)
+        return value
 
     def pages(self, endpoint, key=None):
         rows = []
@@ -598,14 +650,47 @@ class Sync:
                 "pinned source checkout changed during the attempt")
 
     def protection(self, pr, base, head):
-        # The REST protection-admin endpoint requires Administration(read),
-        # which a repository GITHUB_TOKEN cannot request. Read the applicable
-        # base-ref rule alongside the PR's effective mergeability instead.
+        # Read-only branch metadata exposes classic app bindings without the
+        # Administration permission required by the protection-admin endpoint.
+        branch = self.api(f"repos/{self.repository}/branches/main")
+        require(isinstance(branch, dict) and branch.get("name") == "main"
+                and branch.get("protected") is True,
+                "protected main branch metadata is unavailable")
+        commit = branch.get("commit")
+        require(isinstance(commit, dict) and commit.get("sha") == base,
+                "main protection evidence does not match the tested base")
+        protection = branch.get("protection")
+        classic = protection.get("required_status_checks") if isinstance(protection, dict) else None
+        require(isinstance(classic, dict) and classic.get("enforcement_level") == "everyone",
+                "main required checks are not enforced for everyone")
+        checks = classic.get("checks")
+        require(isinstance(checks, list) and all(isinstance(row, dict) for row in checks),
+                "required check application identities are unavailable")
+        contexts = {row["context"] for row in checks
+                    if isinstance(row.get("context"), str) and row.get("app_id") == 15368}
+        policy_strict = False
+        # This endpoint returns only active rules applying to main, excluding
+        # evaluate/disabled rules. Enrollment supplies a no-bypass policy rule.
+        for rule in self.pages(f"repos/{self.repository}/rules/branches/main"):
+            require(isinstance(rule, dict), "invalid effective main rule")
+            if rule.get("type") != "required_status_checks":
+                continue
+            parameters = rule.get("parameters")
+            require(isinstance(parameters, dict), "effective required check parameters are unavailable")
+            checks = parameters.get("required_status_checks")
+            require(isinstance(checks, list) and all(isinstance(row, dict) for row in checks),
+                    "effective required check application identities are unavailable")
+            bound = {row["context"] for row in checks
+                     if isinstance(row.get("context"), str) and row.get("integration_id") == 15368}
+            contexts.update(bound)
+            if "agent-policy" in bound and parameters.get("strict_required_status_checks_policy") is True:
+                policy_strict = True
+        require(policy_strict, "strict app-bound agent-policy protection is not configured or visible")
+        require(all(context in contexts for context in REQUIRED[self.repository]),
+                "required GitHub Actions check protection is missing")
         query = """query($owner:String!,$name:String!,$number:Int!){
           repository(owner:$owner,name:$name){pullRequest(number:$number){
             headRefOid baseRefOid isDraft mergeable mergeStateStatus reviewDecision
-            baseRef{branchProtectionRule{requiresStrictStatusChecks
-              requiredStatusChecks{context app{databaseId}}}}
             commits(last:1){nodes{commit{statusCheckRollup{state}}}}
           }}
         }"""
@@ -614,14 +699,6 @@ class Sync:
         value = data.get("repository", {}).get("pullRequest")
         require(isinstance(value, dict) and value.get("headRefOid") == head and value.get("baseRefOid") == base,
                 "mergeability evidence does not match the tested head/base")
-        rule = value.get("baseRef", {}).get("branchProtectionRule")
-        require(isinstance(rule, dict) and rule.get("requiresStrictStatusChecks") is True,
-                "strict main required checks are not configured or visible")
-        checks = rule.get("requiredStatusChecks")
-        require(isinstance(checks, list), "required check application identities are unavailable")
-        for context in (*REQUIRED[self.repository], "agent-policy"):
-            require(any(row.get("context") == context and (row.get("app") or {}).get("databaseId") == 15368
-                        for row in checks), "required GitHub Actions check protection is missing")
         require(value.get("isDraft") is False
                 and value.get("reviewDecision") not in {"CHANGES_REQUESTED", "REVIEW_REQUIRED"},
                 "server-side readiness or required review protections block merge")
@@ -800,33 +877,39 @@ class Sync:
         require(self.branch_head() == remote, "reserved branch raced before publication")
         if open_pr:
             current = self.pull(open_pr["number"])
-            require(current.get("state") == "open" and current.get("draft") is True
+            require(current["number"] == open_pr["number"]
+                    and current.get("state") == "open" and current.get("draft") is True
+                    and current.get("merged_at") is None
                     and current["head"]["sha"] == remote and metadata(current) == old_meta,
-                    "owned draft head/state/metadata raced before replacement")
+                    "owned draft identity/head/state/metadata raced before replacement")
             self.holds(current)
+            observed_base = object_id(current["base"].get("sha"), "observed PR base")
+            require(self.ancestor(observed_base, self.main),
+                    "observed PR base is not an ancestor of reviewed main")
         self.git("push", f"--force-with-lease=refs/heads/{BRANCH}:{remote or ''}",
                  "origin", f"{head}:refs/heads/{BRANCH}")
         require(self.branch_head() == head, "candidate push was not confirmed")
         self.head = head
         if open_pr:
-            # A confirmed ref update can precede REST PR-head visibility. Keep
-            # the verified old metadata until this exact publication settles.
+            # Confirmed refs can precede REST head/base visibility. Keep the
+            # verified old metadata until both exact publication snapshots settle.
             previous_limit = self.limit
             self.limit = min(previous_limit, self.deadline, time.monotonic() + 60)
             try:
                 while True:
                     require(time.monotonic() < self.limit,
-                            "PR head visibility did not settle before publication deadline")
+                            "PR head/base visibility did not settle before publication deadline")
                     current = self.pull(open_pr["number"])
+                    current_base = object_id(current["base"].get("sha"), "observed PR base")
                     require(current["number"] == open_pr["number"]
                             and current.get("state") == "open" and current.get("draft") is True
                             and current.get("merged_at") is None
-                            and current["base"]["sha"] == self.main
+                            and current_base in {observed_base, self.main}
                             and metadata(current) == old_meta
                             and current["head"]["sha"] in {remote, head},
                             "owned draft identity/head/base/state/metadata raced during publication")
                     self.holds(current)
-                    if current["head"]["sha"] == head:
+                    if current["head"]["sha"] == head and current_base == self.main:
                         require(self.branch_head() == head,
                                 "reserved branch raced before publication metadata update")
                         break
@@ -977,8 +1060,8 @@ class Sync:
         return "policy merged; required PR CI and explicit main CI confirmed"
 
     def report(self, message, failed=False):
-        # Messages are fixed local diagnostics, never API bodies, stderr, tokens,
-        # arbitrary issue text or checkout contents.
+        # Diagnostics contain only fixed local text and whitelisted GraphQL
+        # types/field paths, never API messages, stderr, tokens or arbitrary text.
         lines = [f"Agent policy: {message}", f"Phase: {self.phase}"]
         if self.source_sha:
             lines.append(f"Source revision: {self.source_sha}")

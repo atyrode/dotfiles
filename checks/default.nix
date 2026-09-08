@@ -244,6 +244,7 @@ let
   # .github/workflows/nix.yml) so a drifting ci/ci.json fails
   # evaluation instead of silently desynchronizing.
   checksForSystem = {
+    bun-fd-ownership = import ./atyrode/bun.nix { inherit pkgs; };
     omp-auth-broker = import ./omp/omp-auth-broker.nix { inherit lib pkgs; };
     omp-stack = import ./omp/omp-stack.nix { inherit lib pkgs; };
     omp-wrapper = import ./omp/omp-wrapper.nix { inherit lib pkgs; };

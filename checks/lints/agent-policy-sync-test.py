@@ -1743,12 +1743,13 @@ if __name__ == "__main__":
         unittest.main()
     else:
         # Each process owns its environment and temporary Git/API fixtures.
-        # Sharding preserves every case and real polling delay while keeping
-        # the five-minute CI contract; threads never run setUp in shared state.
+        # Keep the expanded crash-recovery cases within the existing deadline
+        # without shortening real polling or running setUp in shared state.
         from concurrent.futures import ThreadPoolExecutor
 
         cases = unittest.defaultTestLoader.getTestCaseNames(SyncTests)
-        groups = [cases[index::4] for index in range(4)]
+        shards = 8
+        groups = [cases[index::shards] for index in range(shards)]
 
         def run_group(group):
             return subprocess.run(
@@ -1757,10 +1758,10 @@ if __name__ == "__main__":
                 capture_output=True, timeout=600,
             )
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=shards) as pool:
             results = list(pool.map(run_group, groups))
         for result in results:
             sys.stdout.buffer.write(result.stdout)
             sys.stderr.buffer.write(result.stderr)
-        print(f"Executed all {len(cases)} synchronization cases in four isolated processes.")
+        print(f"Executed all {len(cases)} synchronization cases in {shards} isolated processes.")
         sys.exit(1 if any(result.returncode for result in results) else 0)

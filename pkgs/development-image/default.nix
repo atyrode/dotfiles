@@ -26,7 +26,6 @@ let
   };
   containerLifecycleModule = {
     home.uid = 1000;
-    atyrode.agentTools.seedSpeechModels = false;
     atyrode.agentTools.localClassifier.enable = false;
     atyrode.agentTools.resourceGuard.enable = false;
     services.ssh-agent.enable = lib.mkForce false;

@@ -64,20 +64,19 @@ pkgs.runCommand "check-omp-stack"
       "$raw_omp" models --config "$config" --json >/dev/null
     done
 
-    test "$(yq eval '.modelRoles.default' ${defaultsConfig})" = "openai-codex/gpt-5.6-sol:medium"
-    test "$(yq eval '.modelRoles.task' ${defaultsConfig})" = "openai-codex/gpt-5.6-terra:medium"
     test "$(yq eval '.tools.approvalMode' ${defaultsConfig})" = "null"
     test "$(yq eval '.secrets.enabled' ${defaultsConfig})" = "null"
     test "$(yq eval '.tools.approvalMode' ${policyConfig})" = "yolo"
     test "$(yq eval '.secrets.enabled' ${policyConfig})" = "true"
-    test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "secrets,task,tools"
+    test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "isolation,secrets,task,tools"
     test "$(yq eval '.tools | keys | sort | join(",")' ${policyConfig})" = "approval,approvalMode"
     for tool in bash eval browser task github; do
       test "$(yq eval ".tools.approval.$tool" ${policyConfig})" = "allow"
       test "$(yq eval ".tools.approval.$tool" ${yoloConfig})" = "allow"
     done
     test "$(yq eval '.secrets | keys | join(",")' ${policyConfig})" = "enabled"
-    test "$(yq eval '.task.isolation.mode' ${policyConfig})" = "auto"
+    test "$(yq eval '.task.isolation.enabled' ${policyConfig})" = "true"
+    test "$(yq eval '.isolation.backend' ${policyConfig})" = "auto"
     test "$(yq eval '.task.isolation.merge' ${policyConfig})" = "patch"
     test "$(yq eval '.task.isolation.commits' ${policyConfig})" = "generic"
     test "$(yq eval '.tools.approvalMode' ${untrustedConfig})" = "always-ask"
@@ -344,17 +343,24 @@ pkgs.runCommand "check-omp-stack"
     task:
       isolation:
         mode: none
+      agentModelOverrides:
+        task: openai-codex/gpt-5.6-luna:minimal
     YAML
     env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config managed --json \
       > "$TMPDIR/effective.json"
     # routing: the managed default wins over the user's weak pin
     test "$(jq -r '.effectiveManaged.modelRoles.default' "$TMPDIR/effective.json")" \
       = "openai-codex/gpt-5.6-sol:medium"
+    # A persistent direct override cannot erase the managed child's role.
+    test "$(jq -r '.effectiveManaged.task.agentModelOverrides.task' "$TMPDIR/effective.json")" = "@task"
     # enforced policy: the user cannot weaken approvals or task isolation
     test "$(jq -r '.effectiveManaged.tools.approvalMode' "$TMPDIR/effective.json")" = "yolo"
-    test "$(jq -r '.effectiveManaged.task.isolation.mode' "$TMPDIR/effective.json")" = "auto"
+    test "$(jq -r '.effectiveManaged.task.isolation.enabled' "$TMPDIR/effective.json")" = "true"
+    test "$(jq -r '.effectiveManaged.isolation.backend' "$TMPDIR/effective.json")" = "auto"
     # the user's own bare-omp machine config is left untouched (still theirs)
     test "$(yq eval '.modelRoles.default' "$imm_home/.omp/agent/config.yml")" \
+      = "openai-codex/gpt-5.6-luna:minimal"
+    test "$(yq eval '.task.agentModelOverrides.task' "$imm_home/.omp/agent/config.yml")" \
       = "openai-codex/gpt-5.6-luna:minimal"
     # and the CLI refuses to set a managed path from a managed launcher
     set +e

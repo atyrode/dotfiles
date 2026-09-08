@@ -47,9 +47,12 @@ commands:
   enableOpencodeUser: false
   enableOpencodeProject: false
 
+isolation:
+  backend: auto
+
 task:
   isolation:
-    mode: auto
+    enabled: true
     merge: patch
     commits: generic
   maxRecursionDepth: 1

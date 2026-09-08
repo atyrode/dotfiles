@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
-"""Refresh the factual fields in pkgs/omp-configured/config/models.yml from omp — the source of truth.
+"""Refresh cached model facts from OMP, preserving curated fields and comments.
 
-omp is the authority for what a model costs and how fast it runs; models.yml is
-only a committed cache the sandboxed Nix build can read (the build has no network,
-creds, or ~/.omp). This script re-pulls the facts so we never hand-maintain them:
+  nix run .#refresh-model-facts                 # metadata + paid chat benchmarks
+  nix run .#refresh-model-facts -- --skip-bench # metadata only (no model turns)
+  nix run .#refresh-model-facts -- --runs 3     # mean of three chat runs per model
 
-  cost_in / cost_out / context / thinking   <- `omp models --json`
-  speed (tok/s) / ttft (s)                   <- `omp bench --json`  (live, costs API $)
-
-Only those fields are rewritten; the curated fields (pool, tier, bucket, role) and
-every comment are preserved. Run it from the repo root:
-
-  nix run .#refresh-model-facts                 # cost + speed (benches every model)
-  nix run .#refresh-model-facts -- --skip-bench # cost/context/thinking only (free)
-  nix run .#refresh-model-facts -- --runs 3     # average speed over 3 bench runs
-
-A model whose bench fails (e.g. its quota is maxed) keeps its existing speed/ttft
-and prints a warning — re-run once the bucket resets.
+The single `refreshed` date attests ALL expected metadata and speed/TTFT values.
+Skipped, failed or malformed measurements retain their old values and date.
+Partial failures exit nonzero after saving valid updates; --skip-bench is an
+intentional partial refresh and exits zero when all metadata was available.
+Saved --bench-json must use the pinned OMP chat profile, not mixed/cache runs.
 """
 import argparse
 import datetime
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -30,142 +24,199 @@ from ruamel.yaml import YAML
 POOL_PROVIDER = {"O": "openai-codex", "A": "anthropic", "D": "deepseek"}
 
 
+def positive_number(value):
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
+def positive_integer(value):
+    return type(value) is int and value > 0
+
+
+def model_rows(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        raise ValueError("expected a JSON object with a models array")
+    return payload["models"]
+
+
 def omp_models():
-    out = subprocess.run(["omp", "models", "--json"], capture_output=True, text=True, check=True).stdout
+    result = subprocess.run(["omp", "models", "--json"], capture_output=True, text=True, check=True)
     idx = {}
-    for m in json.loads(out)["models"]:
-        idx[(m["provider"], m["id"])] = m
+    for model in model_rows(json.loads(result.stdout)):
+        if not isinstance(model, dict) or not all(isinstance(model.get(k), str) and model[k] for k in ("provider", "id")):
+            raise ValueError("model metadata lacks provider/id")
+        key = (model["provider"], model["id"])
+        if key in idx:
+            raise ValueError("duplicate provider/id in model metadata")
+        idx[key] = model
     return idx
 
 
 def sibling_prices(idx):
-    """Priced rows by bare model id (reseller prefix stripped), highest wins.
-
-    omp's model table lags a launch unevenly: the provider's own row (the one
-    POOL_PROVIDER reads) can list a new model at $0 while openrouter's
-    `openai/<id>` row carries the price. This is the fill for such a row -
-    the same rule as `code generate init` - so a refresh never writes $0 back
-    and tips the ladder. Highest wins where resellers disagree: a reseller
-    discounts, it does not mark up.
-    """
+    """Highest valid reseller price by bare id, for unpriced provider rows."""
     out = {}
-    for m in idx.values():
-        cost = m.get("cost") or {}
-        if not cost.get("input"):
+    for model in idx.values():
+        cost = model.get("cost")
+        if not isinstance(cost, dict) or not all(positive_number(cost.get(k)) for k in ("input", "output")):
             continue
-        bare = m["id"].rsplit("/", 1)[-1].lower()
+        bare = model["id"].rsplit("/", 1)[-1].lower()
         if bare not in out or cost["input"] > out[bare][0]:
             out[bare] = (cost["input"], cost["output"])
     return out
 
 
-def bench_from(models_data):
-    """Index a bench --json payload by selector, keeping only successful runs.
+def bench_from(payload):
+    """Read OMP 18.1.14 stats means, only for complete successful chat runs.
 
-    omp 18 moved the run aggregate from `models[].average` (flat) to
-    `models[].stats` (per-field min/p50/mean/...); both shapes are accepted so
-    the refresher works against either pinned omp. The mean is what a
-    multi-run refresh always meant.
+    OMP emits JSON even when a request fails, and stats then average ONLY the
+    successes. Accepting those stats would conceal incomplete measurements.
+    Each valid metric can update independently; a missing one retains its cache.
     """
-
-    def agg(m, field):
-        if m.get("average"):
-            return m["average"].get(field)
-        st = m.get("stats") or {}
-        return (st.get(field) or {}).get("mean")
-
+    rows = model_rows(payload)
+    if payload.get("profile") != "chat" or "cache" in payload:
+        raise ValueError("benchmark must use --profile chat (not mix/cache)")
+    runs = payload.get("runs")
+    if not positive_integer(runs):
+        raise ValueError("benchmark lacks a positive runs count")
     out = {}
-    for m in models_data:
-        r0 = (m.get("results") or [{}])[0]
-        tps, ttft = agg(m, "tokensPerSecond"), agg(m, "ttftMs")
-        if r0.get("ok") and tps and ttft:
-            out[m.get("selector") or m["model"]] = {
-                "tokensPerSecond": tps,
-                "ttftMs": ttft,
-            }
+    seen = set()
+    for model in rows:
+        if not isinstance(model, dict) or not isinstance(model.get("selector"), str):
+            raise ValueError("benchmark row lacks a selector")
+        selector = model["selector"]
+        if selector in seen:
+            raise ValueError("duplicate benchmark selector")
+        seen.add(selector)
+        results = model.get("results")
+        if not isinstance(results, list) or len(results) != runs or not all(
+            isinstance(run, dict) and run.get("ok") is True and run.get("challenge") == "chat"
+            for run in results
+        ):
+            continue
+        stats = model.get("stats")
+        if not isinstance(stats, dict):
+            continue
+        metrics = {}
+        for field in ("tokensPerSecond", "ttftMs"):
+            aggregate = stats.get(field)
+            value = aggregate.get("mean") if isinstance(aggregate, dict) else None
+            if positive_number(value) and all(positive_number(run.get(field)) for run in results):
+                metrics[field] = value
+        out[selector] = metrics
     return out
 
 
 def omp_bench(selectors, runs, max_tokens):
-    cmd = ["omp", "bench", *selectors, "--json", "--runs", str(runs), "--max-tokens", str(max_tokens)]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-    return bench_from(json.loads(out)["models"])
-
-
+    cmd = ["omp", "bench", *selectors, "--json", "--profile", "chat", "--runs", str(runs), "--max-tokens", str(max_tokens)]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode:
+        print(f"warn: omp bench exited {result.returncode}; retaining unavailable measurements", file=sys.stderr)
+    return bench_from(json.loads(result.stdout)), result.returncode == 0
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--file", default="pkgs/omp-configured/config/models.yml", help="path to models.yml (default: pkgs/omp-configured/config/models.yml under CWD)")
-    ap.add_argument("--runs", type=int, default=2, help="bench requests per model, averaged")
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--file", default="pkgs/omp-configured/config/models.yml", help="catalog path under CWD")
+    ap.add_argument("--runs", type=int, default=2, help="chat requests per model, averaged")
     ap.add_argument("--max-tokens", type=int, default=256)
-    ap.add_argument("--skip-bench", action="store_true", help="only refresh cost/context/thinking (no API calls)")
-    ap.add_argument("--bench-json", help="reuse a saved `omp bench --json` payload instead of running it")
+    source = ap.add_mutually_exclusive_group()
+    source.add_argument("--skip-bench", action="store_true", help="metadata only; preserve the full-refresh date")
+    source.add_argument("--bench-json", help="reuse a saved `omp bench --profile chat --json` payload")
     args = ap.parse_args()
+    if args.runs <= 0 or args.max_tokens <= 0:
+        ap.error("--runs and --max-tokens must be positive")
 
     path = Path(args.file)
     yaml = YAML()
     yaml.preserve_quotes = True
     doc = yaml.load(path.read_text())
     models = doc["models"]
+    if not isinstance(models, dict) or not models:
+        ap.error("catalog must contain a nonempty models mapping")
 
-    mi = omp_models()
-    siblings = sibling_prices(mi)
-    for key, m in models.items():
-        prov = POOL_PROVIDER[m["pool"]]
-        om4 = mi.get((prov, m["id"]))
-        if not om4:
-            print(f"warn: {key} ({prov}/{m['id']}) not found in `omp models`", file=sys.stderr)
+    try:
+        metadata = omp_models()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        print(f"error: model metadata unavailable ({type(error).__name__}); catalog unchanged", file=sys.stderr)
+        return 1
+    siblings = sibling_prices(metadata)
+    metadata_complete = True
+    for key, model in models.items():
+        provider = POOL_PROVIDER[model["pool"]]
+        row = metadata.get((provider, model["id"]))
+        if row is None:
+            print(f"warn: {key}: metadata missing; keeping cost/context/thinking", file=sys.stderr)
+            metadata_complete = False
             continue
-        # A $0 row is an absence, not a price - a $0 flagship would sort to
-        # the bottom of its pool's ladder. Fill it from the same model's priced
-        # row under another provider; failing that, keep the curated figure.
-        cost = (om4["cost"]["input"], om4["cost"]["output"])
-        if cost[0] <= 0:
-            cost = siblings.get(m["id"].lower(), (0, 0))
-        if cost[0] > 0:
-            m["cost_in"], m["cost_out"] = cost
+        cost = row.get("cost")
+        prices = (cost.get("input"), cost.get("output")) if isinstance(cost, dict) else (None, None)
+        # Zero means unavailable in this routing catalog. Fall back to the same
+        # model's valid reseller price, never replace an existing price with zero.
+        if not all(positive_number(value) for value in prices):
+            prices = siblings.get(model["id"].lower(), prices)
+        for field, value in zip(("cost_in", "cost_out"), prices):
+            if positive_number(value):
+                model[field] = value
+            else:
+                print(f"warn: {key}: invalid/unavailable {field}; keeping existing value", file=sys.stderr)
+                metadata_complete = False
+        context = row.get("contextWindow")
+        if positive_integer(context):
+            model["context"] = context
         else:
-            print(f"warn: {key} ({prov}/{m['id']}) is unpriced under every provider in `omp models`; keeping cost_in/cost_out", file=sys.stderr)
-        m["context"] = om4["contextWindow"]
-        th = om4.get("thinking") or []
-        if th:
-            m["thinking"] = f"{th[0]}→{th[-1]}"
+            print(f"warn: {key}: invalid/unavailable context; keeping existing value", file=sys.stderr)
+            metadata_complete = False
+        thinking = row.get("thinking")
+        if isinstance(thinking, list) and thinking and all(isinstance(level, str) and level for level in thinking):
+            model["thinking"] = f"{thinking[0]}→{thinking[-1]}"
+        else:
+            print(f"warn: {key}: unavailable thinking range; keeping existing value", file=sys.stderr)
+            metadata_complete = False
 
+    bench_complete = False
     if not args.skip_bench:
-        if args.bench_json:
-            bench = bench_from(json.loads(Path(args.bench_json).read_text())["models"])
+        try:
+            if args.bench_json:
+                bench = bench_from(json.loads(Path(args.bench_json).read_text()))
+                bench_complete = True
+            else:
+                selectors = [f"{POOL_PROVIDER[model['pool']]}/{model['id']}" for model in models.values()]
+                bench, bench_complete = omp_bench(selectors, args.runs, args.max_tokens)
+        except (OSError, ValueError) as error:
+            print(f"warn: benchmark unavailable ({type(error).__name__}); keeping speed/ttft", file=sys.stderr)
+            bench, bench_complete = {}, False
+        for key, model in models.items():
+            selector = f"{POOL_PROVIDER[model['pool']]}/{model['id']}"
+            metrics = bench.get(selector, {})
+            for field, metric, divisor, digits in (("speed", "tokensPerSecond", 1, 1), ("ttft", "ttftMs", 1000, 2)):
+                if metric not in metrics:
+                    print(f"warn: {key}: no complete valid benchmark for {field}; keeping existing value", file=sys.stderr)
+                    bench_complete = False
+                    continue
+                value = round(metrics[metric] / divisor, digits)
+                if value <= 0:
+                    print(f"warn: {key}: {field} rounds to zero; keeping existing value", file=sys.stderr)
+                    bench_complete = False
+                elif field == "ttft" and field not in model:
+                    model.insert(list(model).index("speed") + 1, field, value)
+                else:
+                    model[field] = value
+
+    complete = metadata_complete and bench_complete
+    if complete:
+        today = datetime.date.today().isoformat()
+        if "refreshed" in doc:
+            doc["refreshed"] = today
         else:
-            selectors = [f"{POOL_PROVIDER[m['pool']]}/{m['id']}" for m in models.values()]
-            bench = omp_bench(selectors, args.runs, args.max_tokens)
-        for key, m in models.items():
-            sel = f"{POOL_PROVIDER[m['pool']]}/{m['id']}"
-            avg = bench.get(sel)
-            if not avg:
-                print(
-                    f"warn: no successful benchmark for {key} ({sel}); keeping existing speed/ttft",
-                    file=sys.stderr,
-                )
-                continue
-            m["speed"] = round(avg["tokensPerSecond"], 1)
-            ttft = round(avg["ttftMs"] / 1000.0, 2)
-            if "ttft" in m:
-                m["ttft"] = ttft
-            else:  # keep ttft next to speed, not appended at the end
-                ks = list(m.keys())
-                m.insert(ks.index("speed") + 1, "ttft", ttft)
-
-    # stamp the refresh date (top-level; consumers read only `models`) so a CI
-    # freshness check can nudge a re-run when the cache goes stale.
-    today = datetime.date.today().isoformat()
-    if "refreshed" in doc:
-        doc["refreshed"] = today
+            doc.insert(0, "refreshed", today)
+    with path.open("w") as stream:
+        yaml.dump(doc, stream)
+    if complete:
+        print(f"refreshed all model facts in {path} ({doc['refreshed']})")
     else:
-        doc.insert(0, "refreshed", today)
-
-    yaml.dump(doc, path.open("w"))
-    print(f"refreshed {path} ({today})")
+        reason = "benchmarks skipped" if args.skip_bench else "incomplete facts"
+        print(f"updated available facts in {path}; {reason}; full-refresh date unchanged ({doc.get('refreshed') or 'unknown'})")
+    return 0 if complete or (args.skip_bench and metadata_complete) else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

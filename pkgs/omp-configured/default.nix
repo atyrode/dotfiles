@@ -103,6 +103,7 @@ let
     "browser.enabled"
     "proseOnlyThinking"
     "defaultThinkingLevel"
+    "startup.checkUpdate"
   ];
   enforcedPolicyPaths = [
     "tools.approvalMode"
@@ -112,7 +113,8 @@ let
     "tools.approval.task"
     "tools.approval.github"
     "secrets.enabled"
-    "task.isolation.mode"
+    "task.isolation.enabled"
+    "isolation.backend"
     "task.isolation.merge"
     "task.isolation.commits"
   ];
@@ -144,49 +146,7 @@ let
         enforced_policy_paths_json=${lib.escapeShellArg (builtins.toJSON enforcedPolicyPaths)}
         all_managed_paths_json=${lib.escapeShellArg (builtins.toJSON allManagedPaths)}
 
-        takes_required_value() {
-          case "$1" in
-            --alias|--api-key|--append-system-prompt|--approval-mode|--config|--cwd|--export|--extension|-e|--fork|--hook|--max-time|--mode|--model|--models|--plan|--plugin-dir|--profile|--provider|--provider-session-id|--session-dir|--skills|--slow|--smol|--system-prompt|--thinking|--tools)
-              return 0
-              ;;
-            *)
-              return 1
-              ;;
-          esac
-        }
-
-        takes_optional_value() {
-          case "$1" in
-            --resume|-r|--session)
-              return 0
-              ;;
-            *)
-              return 1
-              ;;
-          esac
-        }
-
-        is_known_boolean() {
-          case "$1" in
-            --advisor|--allow-home|--auto-approve|--continue|-c|--hide-thinking|--no-extensions|--no-lsp|--no-pty|--no-rules|--no-session|--no-skills|--no-title|--no-tools|--print|-p|--print-thoughts|--yolo)
-              return 0
-              ;;
-            *)
-              return 1
-              ;;
-          esac
-        }
-
-        is_known_subcommand() {
-          case "$1" in
-            __complete|acp|agents|auth-broker|auth-gateway|bench|commit|completions|config|dry-balance|gallery|gc|grep|grievances|install|join|models|plugin|read|say|search|setup|shell|ssh|stats|tiny-models|token|ttsr|update|usage|worktree)
-              return 0
-              ;;
-            *)
-              return 1
-              ;;
-          esac
-        }
+        ${builtins.readFile ./argv.sh}
 
         paths_overlap() {
           local key="$1"
@@ -307,7 +267,7 @@ let
                   runtime_approval_mode="''${original_args[$i]}"
                 fi
                 ;;
-              --auto-approve | --yolo)
+              --auto-approve|--auto-approve=*|--yolo|--yolo=*)
                 runtime_approval_mode=yolo
                 ;;
               --model=*)
@@ -355,24 +315,18 @@ let
                   runtime_thinking="''${original_args[$i]}"
                 fi
                 ;;
-              --advisor)
+              --advisor|--advisor=*)
                 runtime_advisor=true
                 ;;
-              --allow-home)
+              --allow-home|--allow-home=*)
                 allow_home=true
                 ;;
               --*=*)
                 ;;
               *)
-                if takes_required_value "$arg"; then
-                  if (( i + 1 < ''${#original_args[@]} )); then
-                    i=$((i + 1))
-                  fi
-                elif takes_optional_value "$arg"; then
-                  if (( i + 1 < ''${#original_args[@]} )) &&
-                    [[ "''${original_args[$((i + 1))]}" != -* ]]; then
-                    i=$((i + 1))
-                  fi
+                if (( i + 1 < ''${#original_args[@]} )) &&
+                  omp_consumes_value "$arg" "''${original_args[$((i + 1))]}"; then
+                  i=$((i + 1))
                 fi
                 ;;
             esac
@@ -449,109 +403,6 @@ let
           fi
         }
 
-        subcommand=""
-        subcommand_index=-1
-
-        classify_invocation() {
-          local -a argv=( "$@" )
-          local i=0
-          local arg flag next
-
-          while (( i < ''${#argv[@]} )); do
-            arg="''${argv[$i]}"
-
-            case "$arg" in
-              --)
-                return 0
-                ;;
-              --help|-h|--version|-v)
-                subcommand="__passthrough__"
-                return 0
-                ;;
-            esac
-
-            if [[ "$arg" == --*=* ]]; then
-              flag="''${arg%%=*}"
-              if takes_required_value "$flag" || takes_optional_value "$flag"; then
-                i=$((i + 1))
-                continue
-              fi
-            fi
-
-            if takes_required_value "$arg"; then
-              if (( i + 1 >= ''${#argv[@]} )); then
-                return 0
-              fi
-              i=$((i + 2))
-              continue
-            fi
-
-            if takes_optional_value "$arg"; then
-              next="''${argv[$((i + 1))]:-}"
-              if [[ -n "$next" && "$next" != -* ]]; then
-                i=$((i + 2))
-              else
-                i=$((i + 1))
-              fi
-              continue
-            fi
-
-            if is_known_boolean "$arg"; then
-              i=$((i + 1))
-              continue
-            fi
-
-            if is_known_subcommand "$arg"; then
-              subcommand="$arg"
-              subcommand_index="$i"
-              return 0
-            fi
-
-            # The first unknown flag or positional belongs to a root session.
-            return 0
-          done
-        }
-
-        # Apply the same legacy-key migrations pinned OMP performs at load
-        # (verified against 17.0.3: string theme, boolean autoRedeem,
-        # memories.enabled, task.isolation.enabled, and renamed isolation
-        # modes), so the diagnostic reports what the binary actually resolves.
-        normalize_layer_json() {
-          local file="$1"
-          yq eval -o=json -I=0 '.' "$file" | jq -c '
-            if (.theme | type) == "string" then
-              if .theme == "light" or .theme == "dark" then
-                del(.theme)
-              else
-                .theme = { dark: .theme }
-              end
-            else . end
-            | if (.codexResets | type) == "object" and (.codexResets.autoRedeem | type) == "boolean" then
-                .codexResets.autoRedeem = (if .codexResets.autoRedeem then "yes" else "no" end)
-              else . end
-            | if (."codexResets.autoRedeem" | type) == "boolean" then
-                ."codexResets.autoRedeem" = (if ."codexResets.autoRedeem" then "yes" else "no" end)
-              else . end
-            | if (.memory | type) != "object" then .memory = {} else . end
-            | if ((.memory.backend | type) != "string")
-                and ((.memories | type) == "object")
-                and ((.memories.enabled | type) == "boolean") then
-                .memory.backend = (if .memories.enabled then "local" else "off" end)
-              else . end
-            | if .memory.backend == "mnemosyne" then .memory.backend = "mnemopi" else . end
-            | if (.memory | length) == 0 then del(.memory) else . end
-            | if ((.task | type) == "object")
-                and ((.task.isolation | type) == "object")
-                and ((.task.isolation.enabled | type) == "boolean") then
-                .task.isolation.mode = (if .task.isolation.enabled then "auto" else "none" end)
-                | del(.task.isolation.enabled)
-              else . end
-            | if (try .task.isolation.mode catch null) == "worktree" then .task.isolation.mode = "rcopy"
-              elif (try .task.isolation.mode catch null) == "fuse-overlay" then .task.isolation.mode = "overlayfs"
-              elif (try .task.isolation.mode catch null) == "fuse-projfs" then .task.isolation.mode = "projfs"
-              else . end
-          '
-        }
 
         emit_managed_config() {
           local json_output="$1"
@@ -565,6 +416,16 @@ let
             machine_present=true
             layer_files+=( "$machine_config" )
           fi
+          local -a environment_configs=()
+          local environment_config
+          IFS=: read -r -a environment_configs <<< "''${PI_CONFIG_FILES:-}"
+          for i in "''${!environment_configs[@]}"; do
+            environment_config="''${environment_configs[$i]}"
+            [[ -n "$environment_config" ]] || continue
+            environment_config="$(resolve_path_from_cwd "$environment_config" "$launch_cwd")"
+            environment_configs[i]="$environment_config"
+            layer_files+=( "$environment_config" )
+          done
           layer_files+=( "$defaults_config" )
           if [[ -e "$project_settings" ]]; then
             project_settings_present=true
@@ -592,27 +453,47 @@ let
             layer_files+=( "$yolo_config" )
           fi
 
-          local merged_json effective_managed policy_json diagnostic_json one_shots_json runtime_overrides
+          local effective_managed policy_json diagnostic_json one_shots_json runtime_overrides
           local runtime_yolo=false
           if [[ "$runtime_approval_mode" == yolo ]]; then
             runtime_yolo=true
           fi
-          merged_json='{}'
-          local layer_json layer_file
-          for layer_file in "''${layer_files[@]}"; do
-            layer_json="$(normalize_layer_json "$layer_file")"
-            merged_json="$(printf '%s\n%s\n' "$merged_json" "$layer_json" | jq -cs '.[0] * .[1]')"
-          done
           effective_managed="$(
+            # Native config list owns migrations, merging and schema defaults.
+            # Its CLI opens writable storage, so run it in disposable state with
+            # explicit read-only overlays, never in the operator's project/home.
+            # Numbered links also preserve paths containing PI_CONFIG_FILES' ':'.
+            scratch="$(mktemp -d)"
+            trap 'rm -rf "$scratch"' EXIT
+            chmod 700 "$scratch"
+            native_layers=()
+            for layer_file in "''${layer_files[@]}"; do
+              layer_link="$scratch/layer-''${#native_layers[@]}.yml"
+              ln -s "$layer_file" "$layer_link"
+              native_layers+=( "$layer_link" )
+            done
+            config_files="$(IFS=:; printf '%s' "''${native_layers[*]}")"
+            cd ${neutralRoot}
+            if ! env -i HOME="$scratch/home" PATH="$PATH" \
+              XDG_CONFIG_HOME="$scratch/xdg" PI_CODING_AGENT_DIR="$scratch/agent" \
+              PI_CONFIG_FILES="$config_files" \
+              "$raw_omp" config list --json >"$scratch/config.json" 2>"$scratch/error"; then
+              # Upstream parse errors may quote source contents (credentials).
+              printf '%s\n' 'OMP could not resolve managed configuration; check that the listed source files exist and contain valid mappings.' >&2
+              exit 2
+            fi
             # shellcheck disable=SC2016 # Dollar-prefixed names are jq variables.
             jq -c --argjson paths "$all_managed_paths_json" '
-              . as $source
+              reduce (to_entries[] | select(.value | has("value"))) as $entry
+                ({}; setpath($entry.key | split("."); $entry.value.value))
+              | . as $source
               | reduce $paths[] as $key ({};
                   ($key | split(".")) as $path
                   | (try ($source | getpath($path)) catch null) as $value
-                  | if $value == null then . else setpath($path; $value) end
+                  | if $value != null then setpath($path; $value)
+                  else . end
                 )
-            ' <<<"$merged_json"
+            ' "$scratch/config.json"
           )"
           runtime_overrides="$(
             jq -n \
@@ -685,6 +566,7 @@ let
               --arg yolo "$yolo_config" \
               --argjson runtimeYolo "$runtime_yolo" \
               --argjson oneShots "$one_shots_json" \
+              --argjson environmentConfigs "$(json_array "''${environment_configs[@]}")" \
               --argjson defaultKeys "$managed_default_paths_json" \
               --argjson policyKeys "$enforced_policy_paths_json" \
               --argjson effectiveManaged "$effective_managed" \
@@ -697,7 +579,10 @@ let
                   effectiveCwd: $effectiveCwd,
                   sources: (
                     [
-                      { kind: "writable-machine-state", managed: false, implicit: true, path: $machine, present: $machinePresent },
+                      { kind: "writable-machine-state", managed: false, implicit: true, path: $machine, present: $machinePresent }
+                    ]
+                    + ($environmentConfigs | map(select(. != "") | { kind: "environment-config", managed: false, path: . }))
+                    + [
                       { kind: "managed-defaults", managed: true, path: $defaults },
                       { kind: "native-project", format: "settings.json", managed: false, path: $projectSettings, present: $projectSettingsPresent },
                       { kind: "native-project", format: "config.yml", managed: false, path: $project, present: $projectConfigPresent },
@@ -780,11 +665,11 @@ let
 
           if [[ "$action" == managed ]]; then
             if [[ "$show_help" == true ]]; then
-              printf 'Usage: omp config managed [--json]\n'
+              printf 'Usage: omp-managed config managed [--json]\n'
               exit 0
             fi
             if [[ -n "$unsupported_flag" || ''${#positionals[@]} -ne 1 ]]; then
-              printf 'Usage: omp config managed [--json]\n' >&2
+              printf 'Usage: omp-managed config managed [--json]\n' >&2
               exit 2
             fi
             emit_managed_config "$json_output"
@@ -808,13 +693,13 @@ let
             { contains_managed_path "$key" "''${enforced_policy_paths[@]}" ||
               contains_managed_path "$key" "''${managed_default_paths[@]}"; }; then
             printf '%s\n' \
-              "OMP setting '$key' has Nix-managed layers. 'omp config get' only reads writable machine state; use 'omp config managed --json' for the effective value." >&2
+              "OMP setting '$key' has Nix-managed layers. Native 'config get' does not include Nix overlays; use 'omp-managed config managed --json' for the effective value." >&2
             exit 2
           fi
 
           if [[ "$action" == list ]]; then
             printf '%s\n' \
-              "Note: 'omp config list' shows writable machine state, not Nix overlays. Use 'omp config managed' for effective managed values." >&2
+              "Note: native 'config list' does not include Nix overlays. Use 'omp-managed config managed' for effective managed values." >&2
           fi
 
           exec "$raw_omp" "''${original_args[@]}"
@@ -825,7 +710,7 @@ let
           session_args=()
           local -a argv=( "$@" )
           local i=0
-          local arg next
+          local arg
           local after_separator=false
 
           while (( i < ''${#argv[@]} )); do
@@ -855,25 +740,15 @@ let
               i=$((i + 2))
               continue
             fi
-            if takes_required_value "$arg"; then
-              session_args+=( "$arg" )
-              if (( i + 1 < ''${#argv[@]} )); then
-                session_args+=( "''${argv[$((i + 1))]}" )
-                i=$((i + 2))
-              else
-                i=$((i + 1))
-              fi
-              continue
+            if [[ "''${arg%%=*}" == --no-extensions ]]; then
+              printf '%s\n' \
+                'OMP --no-extensions is unavailable for managed sessions because it disables the Nix-owned settings guard, agents, and rules. Use a dedicated restricted launcher instead.' >&2
+              return 2
             fi
-            if takes_optional_value "$arg"; then
-              session_args+=( "$arg" )
-              next="''${argv[$((i + 1))]:-}"
-              if [[ -n "$next" && "$next" != -* ]]; then
-                session_args+=( "$next" )
-                i=$((i + 2))
-              else
-                i=$((i + 1))
-              fi
+            if (( i + 1 < ''${#argv[@]} )) &&
+              omp_consumes_value "$arg" "''${argv[$((i + 1))]}"; then
+              session_args+=( "$arg" "''${argv[$((i + 1))]}" )
+              i=$((i + 2))
               continue
             fi
             session_args+=( "$arg" )
@@ -898,26 +773,19 @@ let
             ;;
           setup)
             printf '%s\n' \
-              "Note: 'omp setup' writes writable machine state. Nix-owned values remain governed by managed overlays; use 'omp config managed' afterward to inspect the effective session." >&2
+              "Note: 'omp setup' writes writable machine state. Nix-owned values remain governed by managed overlays; use 'omp-managed config managed' afterward to inspect the effective session." >&2
             exec "$raw_omp" "''${original_args[@]}"
             ;;
-          acp|"")
+          acp|launch|"")
             ;;
           *)
             exec "$raw_omp" "''${original_args[@]}"
             ;;
         esac
 
-        for arg in "''${original_args[@]}"; do
-          if [[ "$arg" == --no-extensions ]]; then
-            printf '%s\n' \
-              'OMP --no-extensions is unavailable for managed sessions because it disables the Nix-owned settings guard, agents, and rules. Use a dedicated restricted launcher instead.' >&2
-            exit 2
-          fi
-        done
 
         launch_args=()
-        if [[ "$subcommand" == acp ]]; then
+        if [[ "$subcommand" == acp || "$subcommand" == launch ]]; then
           for ((i = 0; i < ''${#original_args[@]}; i++)); do
             if (( i != subcommand_index )); then
               launch_args+=( "''${original_args[$i]}" )
@@ -1044,6 +912,13 @@ let
         fi
       fi
 
+      # Upstream's late startup listener can miss the prepaint event. An explicit
+      # cwd avoids that race until the upstream startup fix is released.
+      if [[ -t 0 && -t 1 ]] &&
+        { (( ''${#args[@]} == 0 )) || { (( ''${#args[@]} == 1 )) && [[ "''${args[0]}" == --no-session ]]; }; }; then
+        args=( --cwd "$PWD" "''${args[@]}" )
+      fi
+
       exec ${lib.getExe omp} "''${args[@]}"
     '';
   };
@@ -1083,6 +958,7 @@ let
     runtimeInputs = [ coreutils ];
     text = ''
       raw_omp=${lib.escapeShellArg (lib.getExe omp)}
+      ${builtins.readFile ./argv.sh}
       launch_cwd="$PWD"
       target_cwd="$PWD"
       original_args=( "$@" )
@@ -1094,9 +970,15 @@ let
         exit 2
       }
 
+      refuse_bootstrap_state_flags "''${original_args[@]}"
+      classify_invocation "''${original_args[@]}"
       i=0
       while (( i < ''${#original_args[@]} )); do
         arg="''${original_args[$i]}"
+        if (( i == subcommand_index )) && [[ "$subcommand" == launch || "$subcommand" == acp ]]; then
+          i=$((i + 1))
+          continue
+        fi
         case "$arg" in
           --)
             forwarded_args+=( "$arg" )
@@ -1115,17 +997,22 @@ let
             i=$((i + 1))
             target_cwd="''${original_args[$i]}"
             ;;
-          --profile|--alias|--api-key|--config|--extension|-e|--hook|--plugin-dir|--approval-mode|--tools|--skills|--system-prompt|--append-system-prompt|--session-dir|--session|--resume|-r|--fork|--provider-session-id)
+          --profile|--alias|--api-key|--config|--extension|-e|--trusted-extension|--hook|--plugin-dir|--approval-mode|--tools|--skills|--system-prompt|--append-system-prompt|--session-dir|--session|--resume|-r|--fork|--provider-session-id|--add-dir|--continue|-c|--from-claude|--from-codex)
             refuse_flag "$arg"
             ;;
-          --profile=*|--alias=*|--api-key=*|--config=*|--extension=*|-e=*|--hook=*|--plugin-dir=*|--approval-mode=*|--tools=*|--skills=*|--system-prompt=*|--append-system-prompt=*|--session-dir=*|--session=*|--resume=*|-r=*|--fork=*|--provider-session-id=*)
+          --profile=*|--alias=*|--api-key=*|--config=*|--extension=*|-e=*|--trusted-extension=*|--hook=*|--plugin-dir=*|--approval-mode=*|--tools=*|--skills=*|--system-prompt=*|--append-system-prompt=*|--session-dir=*|--session=*|--resume=*|-r=*|--fork=*|--provider-session-id=*|--add-dir=*|--continue=*|--from-claude=*|--from-codex=*)
             refuse_flag "''${arg%%=*}"
             ;;
-          --auto-approve|--yolo|--no-extensions)
+          --auto-approve|--auto-approve=*|--yolo|--yolo=*|--no-extensions|--no-extensions=*|-r?*)
             refuse_flag "$arg"
             ;;
           *)
             forwarded_args+=( "$arg" )
+            if (( i + 1 < ''${#original_args[@]} )) &&
+              omp_consumes_value "$arg" "''${original_args[$((i + 1))]}"; then
+              i=$((i + 1))
+              forwarded_args+=( "''${original_args[$i]}" )
+            fi
             ;;
         esac
         i=$((i + 1))
@@ -1204,16 +1091,20 @@ let
           "$@"
       }
 
-      case "''${forwarded_args[0]:-}" in
-        __complete|agents|auth-broker|auth-gateway|bench|commit|completions|config|dry-balance|gallery|gc|grep|grievances|install|join|models|plugin|read|say|search|setup|shell|ssh|stats|tiny-models|token|ttsr|usage|worktree)
-          cd ${neutralRoot}
-          run_isolated "$raw_omp" --profile untrusted "''${forwarded_args[@]}"
+      case "$subcommand" in
+        ""|launch|acp)
           ;;
         update)
           printf '%s\n' "OMP is managed by Nix. Update the pinned derivation, then run 'atyrode apply'." >&2
           exit 2
           ;;
+        *)
+          cd ${neutralRoot}
+          run_isolated "$raw_omp" --profile untrusted "''${forwarded_args[@]}"
+          ;;
       esac
+
+
 
       blocked_paths=(
         "$target_cwd/.omp/extensions"
@@ -1266,6 +1157,9 @@ let
       )
 
       cd ${neutralRoot}
+      if [[ "$subcommand" == acp ]]; then
+        run_isolated "$raw_omp" acp "''${managed_args[@]}" "''${forwarded_args[@]}"
+      fi
       run_isolated "$raw_omp" "''${managed_args[@]}" "''${forwarded_args[@]}"
     '';
   };
@@ -1374,54 +1268,34 @@ let
           "this launcher exists for one invocation shape — the analysis worker's RPC session — and a subcommand is a different program. Use omp or omp-managed."
       }
 
-      # OMP's value-taking flags, so a value is never mistaken for a flag: a
-      # --config whose path spelled a refused flag would otherwise be refused.
-      takes_required_value() {
-        case "$1" in
-          --alias|--api-key|--append-system-prompt|--approval-mode|--config|--cwd|--export|--extension|-e|--fork|--hook|--max-time|--mode|--model|--models|--plan|--plugin-dir|--profile|--provider|--provider-session-id|--session-dir|--skills|--slow|--smol|--system-prompt|--thinking|--tools)
-            return 0
-            ;;
-          *)
-            return 1
-            ;;
-        esac
-      }
-
-      # Every OMP subcommand. This launcher answers none of them.
-      is_known_subcommand() {
-        case "$1" in
-          __complete|acp|agents|auth-broker|auth-gateway|bench|commit|completions|config|dry-balance|gallery|gc|grep|grievances|install|join|models|plugin|read|say|search|setup|shell|ssh|stats|tiny-models|token|ttsr|update|usage|worktree)
-            return 0
-            ;;
-          *)
-            return 1
-            ;;
-        esac
-      }
+      ${builtins.readFile ./argv.sh}
 
       original_args=( "$@" )
+      refuse_bootstrap_state_flags "''${original_args[@]}"
+      classify_invocation "''${original_args[@]}"
+      if [[ -n "$subcommand" && "$subcommand" != __passthrough__ ]]; then
+        refuse_subcommand "$subcommand"
+      fi
       i=0
       while (( i < ''${#original_args[@]} )); do
         arg="''${original_args[$i]}"
         # Past `--` every word is the session's prompt, not an argument to read.
         [[ "$arg" == -- ]] && break
         case "$arg" in
-          --profile|--session-dir|--session|--resume|-r|--fork|--continue|-c|--provider-session-id|--extension|-e|--plugin-dir|--hook|--api-key|--alias)
+          --profile|--session-dir|--session|--resume|-r|--fork|--continue|-c|--from-claude|--from-codex|--provider-session-id|--extension|-e|--trusted-extension|--plugin-dir|--hook|--api-key|--alias|--add-dir)
             refuse_flag "$arg"
             ;;
-          --profile=*|--session-dir=*|--session=*|--resume=*|--fork=*|--provider-session-id=*|--extension=*|-e=*|--plugin-dir=*|--hook=*|--api-key=*|--alias=*)
+          --profile=*|--session-dir=*|--session=*|--resume=*|--fork=*|--continue=*|--from-claude=*|--from-codex=*|--provider-session-id=*|--extension=*|-e=*|--trusted-extension=*|--plugin-dir=*|--hook=*|--api-key=*|--alias=*|--add-dir=*)
             refuse_flag "''${arg%%=*}"
             ;;
           -r?*)
             refuse_flag --resume
             ;;
         esac
-        if takes_required_value "$arg"; then
+        if (( i + 1 < ''${#original_args[@]} )) &&
+          omp_consumes_value "$arg" "''${original_args[$((i + 1))]}"; then
           i=$((i + 2))
           continue
-        fi
-        if is_known_subcommand "$arg"; then
-          refuse_subcommand "$arg"
         fi
         i=$((i + 1))
       done

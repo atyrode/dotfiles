@@ -19,7 +19,10 @@
 #
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
-refreshed: '2026-08-22'
+# Date of the last complete metadata AND chat benchmark refresh for every model.
+# Partial or --skip-bench runs retain it; null means no complete refresh is attested.
+# The former date did not distinguish carried-forward measurements from new ones.
+refreshed: null
 # probed: `code generate` refuses a catalog that is not marked verified, because
 # omp lists models an account cannot actually call and nothing in their metadata
 # says so. This file is a curated committed cache rather than a live scaffold, so

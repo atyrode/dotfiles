@@ -10,8 +10,11 @@ tools:
 secrets:
   enabled: true
 
+isolation:
+  backend: auto
+
 task:
   isolation:
-    mode: auto
+    enabled: true
     merge: patch
     commits: generic

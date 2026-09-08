@@ -141,11 +141,13 @@ def exercise(executable, args, name, launch_key=None):
                     expect(b"#1")
                 print(f"PASS {name}: paste opt-in, PNG request and composer attachment")
             finally:
-                if process is not None:
-                    stop_process_group(process)
+                # Release the terminal before waiting: no reader remains to drain
+                # a child's final screen writes, particularly on Darwin PTYs.
                 os.close(master)
                 if slave is not None:
                     os.close(slave)
+                if process is not None:
+                    stop_process_group(process)
 
 
 def main():

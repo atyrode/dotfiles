@@ -17,9 +17,13 @@ let
   targetAtyrode =
     (atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; }).overrideAttrs
       (old: {
-        installPhase = builtins.replaceStrings [ "${../../modules/home/agents/AGENTS.md}" ] [
-          "${targetPolicy}"
-        ] old.installPhase;
+        installPhase =
+          builtins.replaceStrings
+            [ "${../../modules/home/agents/AGENTS.md}" ]
+            [
+              "${targetPolicy}"
+            ]
+            old.installPhase;
       });
   publishedKeyAtyrode = atyrode.override {
     sopsDirectory = pkgs.writeTextDir "secrets/fixture-nixos-age.key/secret" "{}";

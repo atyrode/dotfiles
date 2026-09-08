@@ -54,7 +54,12 @@ def timestamp():
 
 
 def git(*args, cwd=None, data=None, check=True):
-    fixture_env = os.environ | {"GIT_ALLOW_PROTOCOL": "file"}
+    # Preserve the synchronizer's explicit commit identity, while synthetic
+    # server-side integration commits still have an isolated default identity.
+    fixture_env = {
+        "GIT_AUTHOR_NAME": "Policy fixture", "GIT_AUTHOR_EMAIL": "policy@example.invalid",
+        "GIT_COMMITTER_NAME": "Policy fixture", "GIT_COMMITTER_EMAIL": "policy@example.invalid",
+    } | os.environ | {"GIT_ALLOW_PROTOCOL": "file"}
     return subprocess.run(
         [os.environ.get("POLICY_TEST_REAL_GIT", "git"), *map(str, args)],
         cwd=cwd, input=data, env=fixture_env, capture_output=True, check=check, timeout=15,

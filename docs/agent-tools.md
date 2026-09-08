@@ -168,8 +168,9 @@ check runs on the native CI platforms, including portable Linux configuration.
 
 [`ci/check-agent-context.py`](../ci/check-agent-context.py) drives real OMP's
 ready/negotiation/`get_state` protocol without a model turn. It checks complete
-input bodies, single copies and ordering; root versus nested cwd; default,
-named and explicitly selected agent directories; opted-in adapter precedence;
+rendered documents, accounting for OMP's table-padding compaction without
+discarding directive or cell text; single copies and ordering; root versus nested
+cwd; default, named and explicitly selected agent directories; opted-in adapter precedence;
 portable/outside-repository contexts; and loaded snapshots versus a changed file
 in a new process.
 

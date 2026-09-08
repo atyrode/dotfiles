@@ -27,7 +27,12 @@ TIMEOUT = 45
 MAX_FRAME = 1024 * 1024
 MAX_MESSAGE = 64 * 1024 * 1024
 ADAPTERS = (".omp/agent/AGENTS.md", ".claude/CLAUDE.md", ".codex/AGENTS.md")
-NESTED = "Context acceptance: nested cwd body 472dd6bb.\n"
+NESTED = (
+    "Context acceptance: nested cwd body 472dd6bb.\n\n"
+    "| Scope | Directive |\n| :------ | -------: |\n"
+    "| Nested | Preserve this entire cell. |\n\n"
+    "```text\n| This is code | not a table to compact |\n```\n"
+)
 PROFILE = "Context acceptance: named profile body 3c985bf8.\n"
 OVERRIDE = "Context acceptance: explicit agent directory body 5c9ca737.\n"
 CLAUDE = "Context acceptance: shadowed Claude body a52f178a.\n"
@@ -261,17 +266,43 @@ class Rpc:
             self.close()
 
 
+def rendered_document(content):
+    """Account only for OMP's table presentation, not arbitrary text differences.
+
+    Upstream packages/utils/src/prompt.ts compacts pipe-delimited rows outside
+    fences, including separator padding/alignment. Keep every other byte: a
+    missing directive or cell must not pass because its whitespace was stripped.
+    """
+    lines = []
+    fenced = False
+    for line in content.splitlines(keepends=True):
+        stripped = line.lstrip(" \t")
+        if stripped.startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and re.fullmatch(r"\|.*\|[ \t]*\n?", stripped):
+            indent = line[:len(line) - len(stripped)]
+            cells = [cell.strip() for cell in stripped.strip().split("|")[1:-1]]
+            if cells and all(re.fullmatch(r":?-+:?", cell) for cell in cells):
+                cells = [(":" if cell.startswith(":") else "") + "---"
+                         + (":" if cell.endswith(":") else "") for cell in cells]
+            line = indent + "|" + "|".join(cells) + "|" + ("\n" if line.endswith("\n") else "")
+        lines.append(line)
+    return "".join(lines)
+
+
 def check_prompt(prompt, ordered, absent=(), common=None):
     previous = -1
     for label, body in ordered:
-        require(prompt.count(body) == 1, f"{label}: expected exactly one complete source body")
+        body = rendered_document(body)
+        require(prompt.count(body) == 1, f"{label}: expected exactly one complete rendered document")
         position = prompt.index(body)
         require(position > previous, f"{label}: wrong instruction order")
         previous = position
     for label, body in absent:
-        require(body not in prompt, f"{label}: unexpectedly loaded")
+        require(rendered_document(body) not in prompt, f"{label}: unexpectedly loaded")
     if common is not None:
-        require(prompt.count(common) == 1, "common policy: expected exactly one complete source body")
+        require(prompt.count(rendered_document(common)) == 1,
+                "common policy: expected exactly one complete rendered document")
 
 
 def personal_home(home, personal):

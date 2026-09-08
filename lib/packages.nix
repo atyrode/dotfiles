@@ -123,6 +123,38 @@ let
           });
         }
       )
+      (
+        final: previous:
+        let
+          sources = {
+            "aarch64-darwin" = final.fetchurl {
+              url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-aarch64.zip";
+              hash = "sha256-kJh6OhbX21VtiGrD1VHnttPt8KHPQ6yu1iLoZ2vh0S8=";
+            };
+            "aarch64-linux" = final.fetchurl {
+              url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-aarch64.zip";
+              hash = "sha256-VDKLvC2cjgyfiSxUTWbFeoO4QTnjSQnl7oF1jxrI/ac=";
+            };
+            "x86_64-linux" = final.fetchurl {
+              url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64-baseline.zip";
+              hash = "sha256-xngEDxT+BEDrg503y9DOTAUaMtpygGrJfeamqra/co8=";
+            };
+          };
+        in
+        {
+          # Nixpkgs currently ships Bun 1.3.13, whose numeric extended-stdio
+          # cleanup closes descriptors borrowed from the caller. Keep the
+          # nixpkgs derivation's patchelf, Darwin ICU signing, and completions,
+          # replacing only its official release source set.
+          bun = previous.bun.overrideAttrs (old: {
+            version = "1.4.2";
+            src = sources.${previous.stdenv.hostPlatform.system};
+            passthru = old.passthru // {
+              inherit sources;
+            };
+          });
+        }
+      )
     ];
 
   agentToolsOverlay = mkPackageOverlay {

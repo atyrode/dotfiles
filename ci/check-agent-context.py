@@ -27,11 +27,19 @@ TIMEOUT = 45
 MAX_FRAME = 1024 * 1024
 MAX_MESSAGE = 64 * 1024 * 1024
 ADAPTERS = (".omp/agent/AGENTS.md", ".claude/CLAUDE.md", ".codex/AGENTS.md")
+# ECMAScript trim whitespace, as used by OMP's prompt formatter. Python's
+# default strip also removes control characters that OMP preserves.
+PROMPT_WHITESPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 NESTED = (
     "Context acceptance: nested cwd body 472dd6bb.\n\n"
+    "Preserve this hard-break directive.  \n"
+    "Preserve the directive after the break.\n\n\n"
+    "Preserve the directive after repeated blank lines.\n\n"
     "| Scope | Directive |\n| :------ | -------: |\n"
     "| Nested | Preserve this entire cell. |\n\n"
-    "```text\n| This is code | not a table to compact |\n```\n"
+    "```text\n| This is code | not a table to compact |\n"
+    "    Indentation is meaningful.\n\n\n```\n\n"
+    "<instruction>\n\nNever discard this instruction.\n\n</instruction>\n"
 )
 PROFILE = "Context acceptance: named profile body 3c985bf8.\n"
 OVERRIDE = "Context acceptance: explicit agent directory body 5c9ca737.\n"
@@ -267,27 +275,48 @@ class Rpc:
 
 
 def rendered_document(content):
-    """Account only for OMP's table presentation, not arbitrary text differences.
+    """Apply OMP's presentation rules to an expected file body, never the prompt.
 
-    Upstream packages/utils/src/prompt.ts compacts pipe-delimited rows outside
-    fences, including separator padding/alignment. Keep every other byte: a
-    missing directive or cell must not pass because its whitespace was stripped.
+    Mirrors the unconditional formatting in upstream packages/utils/src/prompt.ts:
+    trailing whitespace, table padding, blank runs and blanks before XML closers.
+    File boundaries matter because OMP formats the entire assembled prompt.
+    Directive text, interior spacing and code indentation remain significant.
     """
-    lines = []
+    source = content.split("\n") + ["</file>"]
+    lines = ["<file>"]
     fenced = False
-    for line in content.splitlines(keepends=True):
+    index = 0
+    while index < len(source):
+        line = source[index].rstrip(PROMPT_WHITESPACE)
+        index += 1
         stripped = line.lstrip(" \t")
+        if stripped and ord(stripped[0]) >= 128:
+            stripped = stripped.lstrip(PROMPT_WHITESPACE)
         if stripped.startswith(("```", "~~~")):
             fenced = not fenced
-        elif not fenced and re.fullmatch(r"\|.*\|[ \t]*\n?", stripped):
-            indent = line[:len(line) - len(stripped)]
-            cells = [cell.strip() for cell in stripped.strip().split("|")[1:-1]]
-            if cells and all(re.fullmatch(r":?-+:?", cell) for cell in cells):
-                cells = [(":" if cell.startswith(":") else "") + "---"
-                         + (":" if cell.endswith(":") else "") for cell in cells]
-            line = indent + "|" + "|".join(cells) + "|" + ("\n" if line.endswith("\n") else "")
+        elif not fenced:
+            if len(stripped) >= 2 and stripped.startswith("|") and stripped.endswith("|"):
+                separator = len(stripped) > 2 and all(char in "-:|" or char in PROMPT_WHITESPACE
+                                                      for char in stripped)
+                if separator or not any(char in stripped for char in ("\r", "\u2028", "\u2029")):
+                    indent = line[:len(line) - len(stripped)]
+                    cells = [cell.strip(PROMPT_WHITESPACE) for cell in stripped.split("|")[1:-1]]
+                    if separator:
+                        cells = [(":" if cell.startswith(":") else "") + "---"
+                                 + (":" if cell.endswith(":") else "") for cell in cells if cell]
+                    line = indent + "|" + "|".join(cells) + "|"
+            if not line:
+                if index < len(source) and not source[index].strip(PROMPT_WHITESPACE):
+                    while lines and not lines[-1]:
+                        lines.pop()
+                    while index < len(source) and not source[index].strip(PROMPT_WHITESPACE):
+                        index += 1
+                    continue
+            elif re.fullmatch(r"</[a-z_-]+>", stripped):
+                while lines and not lines[-1]:
+                    lines.pop()
         lines.append(line)
-    return "".join(lines)
+    return "\n".join(lines[1:-1]) + "\n"
 
 
 def check_prompt(prompt, ordered, absent=(), common=None):
@@ -330,11 +359,25 @@ def exercise(executable, root, personal, common, *, managed=False):
 
         def inspect(label, cwd=repository, ordered=base, absent=(), **options):
             with Rpc(executable, home, cwd, managed=managed, **options) as rpc:
-                check_prompt(rpc.prompt(), ordered, absent, common if any(body == root for _, body in ordered) else None)
+                prompt = rpc.prompt()
+                check_prompt(prompt, ordered, absent, common if any(body == root for _, body in ordered) else None)
             print(f"ok: {'managed ' if managed else ''}{label}", flush=True)
+            return prompt
 
         inspect("default root and identical adapters", absent=[("nested body", NESTED)])
-        inspect("nested cwd ancestor order", nested, base + [("nested", NESTED)])
+        nested_order = base + [("nested", NESTED)]
+        nested_prompt = inspect("nested cwd ancestor order", nested, nested_order)
+        for label, before, after in (
+            ("changed directive", "Never discard this instruction.", "Discard this instruction."),
+            ("changed code indentation", "    Indentation is meaningful.", "Indentation is meaningful."),
+        ):
+            changed_prompt = nested_prompt.replace(before, after, 1)
+            require(changed_prompt != nested_prompt, f"{label}: runtime fixture text is absent")
+            try:
+                check_prompt(changed_prompt, nested_order, common=common)
+            except AssertionError:
+                continue
+            raise AssertionError(f"{label}: normalization hid a changed instruction body")
         profile_dir = home / ".omp/profiles/context-check/agent"
         put(profile_dir / "AGENTS.md", PROFILE)
         inspect("named profile", ordered=[("profile", PROFILE), ("root", root)],

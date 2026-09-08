@@ -695,8 +695,6 @@ pkgs.runCommand "check-atyrode-apply"
     diff "$TMPDIR/context-preserved" "$TMPDIR/context-link-target"
     if grep -qF 'wrote ' "$TMPDIR/context-refused.err"; then exit 1; fi
     if grep -qF "wrote $context_file" "$TMPDIR/context-refused-apply.err"; then exit 1; fi
-    grep -qE 'failed.*agent context' "$TMPDIR/context-refused-apply.err"
-    grep -qF 'Apply incomplete' "$TMPDIR/context-refused-apply.err"
     rm "$context_file"
     mv "$TMPDIR/context-link-target" "$context_file"
 

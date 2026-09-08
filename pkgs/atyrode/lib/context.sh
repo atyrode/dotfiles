@@ -202,6 +202,7 @@ context_write() (
   context_render_document >"$temporary" || return
   chmod 644 "$temporary" || return
   mv -fT -- "$temporary" "$target" || return
+  trap - EXIT
   printf '%s\n' "$target"
 )
 

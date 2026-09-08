@@ -395,19 +395,26 @@ class Sync:
 
     def verify_owned(self, pr):
         meta = self.pr_identity(pr)
-        require(self.ancestor(meta["base"], self.main), "recorded base is not an ancestor of reviewed main")
-        payload = self.source_data(meta["source"])
-        require(self.validate_payload(payload) == meta["digest"], "historical source digest does not match metadata")
         self.git("fetch", "--no-tags", "origin", f"refs/pull/{pr['number']}/head")
         head = pr["head"]["sha"]
         require(self.rev("FETCH_HEAD") == head, "PR head raced during ownership inspection")
+        self.verify_tree(meta, head)
+        return meta
+
+    def owned_tree(self, meta):
+        require(self.ancestor(meta["base"], self.main), "recorded base is not an ancestor of reviewed main")
+        payload = self.source_data(meta["source"])
+        require(self.validate_payload(payload) == meta["digest"], "historical source digest does not match metadata")
         tree, _, changed = self.expected_tree(meta["base"], payload)
         require(changed, "owned policy PR does not contain a generated update")
+        return tree
+
+    def verify_tree(self, meta, head):
+        tree = self.owned_tree(meta)
         require(self.rev(f"{head}^{{tree}}") == tree,
                 "policy PR complete tree differs from reconstructed generated-only candidate")
         require(self.git("diff", "--name-only", "-z", meta["base"], head) == b"AGENTS.md\0",
                 "policy PR changes files outside root AGENTS.md")
-        return meta
 
     def holds(self, pr):
         require(not any(label.get("name") in {"needs-operator", "blocked"}
@@ -451,7 +458,7 @@ class Sync:
         require(data.get(operation, {}).get("pullRequest", {}).get("isDraft") is (not ready),
                 "PR readiness transition was not confirmed")
 
-    def load_status(self, pr):
+    def load_status(self, pr, *, publication=False):
         self.status = None
         self.status_id = None
         comments = self.pages(f"repos/{self.repository}/issues/{pr['number']}/comments")
@@ -463,13 +470,15 @@ class Sync:
         row = owned[0]
         status = tagged(row.get("body"), STATUS)
         allowed = {"version", "head", "source", "digest", "merge", "phase", "outcome",
-                   "dispatch_requested_at", "run_id", "run_attempt", "tested_sha", "evidence_after"}
+                   "dispatch_requested_at", "run_id", "run_attempt", "tested_sha", "evidence_after", "prepared"}
         require(set(status) <= allowed and status.get("version") == 1, "invalid synchronization status schema")
         for key in ("head", "source"):
             object_id(status.get(key), f"status {key}")
         require(DIGEST.fullmatch(status.get("digest", "")), "invalid status digest")
-        require(status["head"] == pr["head"]["sha"] and status["source"] == metadata(pr)["source"]
-                and status["digest"] == metadata(pr)["digest"], "status belongs to another candidate")
+        if not (publication and "prepared" in status):
+            require(status["head"] == pr["head"]["sha"] and status["source"] == metadata(pr)["source"]
+                    and status["digest"] == metadata(pr)["digest"], "status belongs to another candidate")
+            require("prepared" not in status, "unfinished replacement publication")
         if "merge" in status:
             require(object_id(status["merge"]) == pr.get("merge_commit_sha"), "status merge does not match merged PR")
         if "run_id" in status:
@@ -506,9 +515,16 @@ class Sync:
         lines += ["", f"<!-- {STATUS} {json.dumps(status, sort_keys=True, separators=(',', ':'))} -->"]
         endpoint = (f"repos/{self.repository}/issues/comments/{self.status_id}" if self.status_id
                     else f"repos/{self.repository}/issues/{self.pr['number']}/comments")
-        value = self.api(endpoint, "PATCH" if self.status_id else "POST", {"body": "\n".join(lines) + "\n"})
-        require(isinstance(value, dict), "status comment write was not confirmed")
-        self.status_id = number(value.get("id"), "comment ID")
+        try:
+            value = self.api(endpoint, "PATCH" if self.status_id else "POST", {"body": "\n".join(lines) + "\n"})
+            require(isinstance(value, dict), "status comment write was not confirmed")
+            self.status_id = number(value.get("id"), "comment ID")
+        except (Blocked, OSError):
+            if self.status_id is None:
+                # An accepted POST with a lost response must be discovered on
+                # the next invocation, not duplicated by failure reporting.
+                self.pr_owned = False
+            raise
 
     def workflow(self, name):
         if name not in self.workflow_ids:
@@ -825,6 +841,127 @@ class Sync:
             self.cleanup_branch(pr)
         self.limit = self.deadline
 
+    def publication_commit(self, tree, base, created_at):
+        instant(created_at)
+        identity = {"GIT_AUTHOR_NAME": BOT, "GIT_COMMITTER_NAME": BOT,
+                    "GIT_AUTHOR_EMAIL": "41898282+github-actions[bot]@users.noreply.github.com",
+                    "GIT_COMMITTER_EMAIL": "41898282+github-actions[bot]@users.noreply.github.com",
+                    "GIT_AUTHOR_DATE": created_at, "GIT_COMMITTER_DATE": created_at}
+        return object_id(self.git("commit-tree", tree, "-p", base, data=(TITLE + "\n").encode(),
+                                  extra_env=identity).decode().strip())
+
+    def recover_publication(self, pr):
+        """Finish only the recorded old/prepared transition, never infer a head."""
+        self.load_status(pr, publication=True)
+        if not self.status or "prepared" not in self.status:
+            return pr
+        self.phase = "replacement publication recovery"
+        self.pr_owned = False
+        prepared = self.status["prepared"]
+        require(isinstance(prepared, dict)
+                and set(prepared) == {"previous", "candidate", "observed_base", "created_at"},
+                "invalid prepared replacement schema")
+        for key in ("previous", "candidate"):
+            value = prepared[key]
+            require(isinstance(value, dict) and set(value) == {"head", "base", "source", "digest"},
+                    "invalid prepared candidate schema")
+            for field in ("head", "base", "source"):
+                object_id(value[field], f"prepared {field}")
+            require(isinstance(value["digest"], str) and DIGEST.fullmatch(value["digest"]),
+                    "invalid prepared digest")
+        old, new = prepared["previous"], prepared["candidate"]
+        old_meta = {key: old[key] for key in ("base", "source", "digest")}
+        meta = {key: new[key] for key in ("base", "source", "digest")}
+        observed_base = object_id(prepared["observed_base"], "prepared observed base")
+        require(self.ancestor(observed_base, new["base"]), "prepared observed base is not reviewed ancestry")
+        require(old["head"] != new["head"], "prepared replacement does not change head")
+        require(metadata(pr) in (old_meta, meta), "canonical metadata differs from prepared replacement")
+        require(any(all(self.status[key] == value[key] for key in ("head", "source", "digest"))
+                    for value in (old, new))
+                and set(self.status) == {"version", "head", "source", "digest", "phase", "outcome", "prepared"}
+                and self.status["phase"] == "pr" and self.status["outcome"] in {"pending", "failed"},
+                "status differs from prepared replacement")
+        require(metadata(pr) == meta or self.status["head"] == old["head"],
+                "replacement status advanced before canonical metadata")
+        remote = self.branch_head()
+        require(remote in (old["head"], new["head"]), "reserved branch differs from prepared replacement")
+        require(remote == new["head"] or metadata(pr) == old_meta,
+                "canonical metadata advanced before replacement push")
+        self.git("fetch", "--no-tags", "origin", f"refs/heads/{BRANCH}")
+        require(self.rev("FETCH_HEAD") == remote, "prepared branch raced during ownership inspection")
+        old_tree = self.owned_tree(old_meta)
+        if remote == old["head"]:
+            require(self.rev(f"{remote}^{{tree}}") == old_tree,
+                    "previous head differs from reconstructed generated-only candidate")
+        # Once pushed, the discarded commit may no longer be fetchable. Its
+        # persisted binding and reconstructed metadata remain the old-state
+        # proof; only the exact recorded live head can authorize recovery.
+        tree = self.owned_tree(meta)
+        head = self.publication_commit(tree, meta["base"], prepared["created_at"])
+        require(head == new["head"], "prepared commit differs from reconstructed candidate")
+        if remote == head:
+            require(self.rev(f"{remote}^{{tree}}") == tree,
+                    "prepared live tree differs from reconstructed generated-only candidate")
+        # Only now may failure reporting retain/update this proven owned record.
+        self.pr, self.pr_owned, self.head = pr, True, remote
+        previous_limit = self.limit
+        self.limit = min(previous_limit, self.deadline, time.monotonic() + 60)
+        try:
+            while True:
+                require(time.monotonic() < self.limit,
+                        "PR head/base visibility did not settle before publication deadline")
+                current = self.pull(pr["number"])
+                current_base = object_id(current["base"].get("sha"), "observed PR base")
+                require(current.get("state") == "open" and current.get("draft") is True
+                        and current.get("merged_at") is None
+                        and current_base in {observed_base, meta["base"], self.main}
+                        and metadata(current) == metadata(pr)
+                        and current["head"]["sha"] in {old["head"], head},
+                        "owned draft identity/head/base/state/metadata raced during publication")
+                self.holds(current)
+                require(self.branch_head() == remote, "reserved branch raced during publication recovery")
+                status = self.status
+                self.pr_owned = False
+                self.load_status(current, publication=True)
+                require(self.status == status, "prepared replacement status raced")
+                self.pr_owned = True
+                if remote == old["head"]:
+                    require(current["head"]["sha"] == remote and metadata(current) == old_meta,
+                            "old publication snapshot differs from prepared replacement")
+                    self.git("push", f"--force-with-lease=refs/heads/{BRANCH}:{remote}",
+                             "origin", f"{head}:refs/heads/{BRANCH}")
+                    require(self.branch_head() == head, "candidate push was not confirmed")
+                    remote = self.head = head
+                    continue
+                if current["head"]["sha"] == head and current_base in {meta["base"], self.main}:
+                    break
+                self.pause()
+            if metadata(current) != meta:
+                current = self.api(f"repos/{self.repository}/pulls/{pr['number']}", "PATCH",
+                                   {"title": TITLE, "body": self.body(meta)})
+            self.pr_identity(current)
+            require(current["head"]["sha"] == head and current.get("draft") is True
+                    and metadata(current) == meta, "published replacement metadata was not confirmed")
+            self.pr = current
+            self.status = {"version": 1, "head": head, "source": meta["source"], "digest": meta["digest"],
+                           "phase": "pr", "outcome": "pending", "prepared": prepared}
+            self.save_status()
+            current = self.pull(pr["number"])
+            self.holds(current)
+            require(current.get("state") == "open" and current.get("draft") is True
+                    and current["head"]["sha"] == head and metadata(current) == meta
+                    and self.branch_head() == head, "replacement coherence raced")
+            status = self.status
+            self.pr_owned = False
+            self.load_status(current, publication=True)
+            require(self.status == status, "replacement status coherence was not confirmed")
+            self.pr_owned = True
+            del self.status["prepared"]
+            self.save_status()
+            return current
+        finally:
+            self.limit = previous_limit
+
     def candidate(self, open_pr, remote):
         desired_tree, content, changed = self.expected_tree(self.main, self.source_bytes)
         if not changed:
@@ -868,12 +1005,8 @@ class Sync:
         else:
             require(remote is None, "orphan reserved bot branch refused")
         self.phase = "candidate publication"
-        self.git("checkout", "--detach", self.main)
-        (self.checkout / "AGENTS.md").write_bytes(content)
-        self.git("add", "--", "AGENTS.md")
-        require(self.rev_tree_index() == desired_tree, "publication tree differs from generated-only candidate")
-        self.git("commit", "-m", TITLE)
-        head = self.rev("HEAD")
+        created_at = timestamp()
+        head = self.publication_commit(desired_tree, self.main, created_at)
         require(self.branch_head() == remote, "reserved branch raced before publication")
         if open_pr:
             current = self.pull(open_pr["number"])
@@ -886,41 +1019,21 @@ class Sync:
             observed_base = object_id(current["base"].get("sha"), "observed PR base")
             require(self.ancestor(observed_base, self.main),
                     "observed PR base is not an ancestor of reviewed main")
-        self.git("push", f"--force-with-lease=refs/heads/{BRANCH}:{remote or ''}",
+            self.pr, self.pr_owned, self.head = current, True, remote
+            self.load_status(current)
+            self.status = {"version": 1, "head": remote, "source": old_meta["source"], "digest": old_meta["digest"],
+                           "phase": "pr", "outcome": "pending",
+                           "prepared": {"previous": {"head": remote, **old_meta},
+                                        "candidate": {"head": head, **meta},
+                                        "observed_base": observed_base, "created_at": created_at}}
+            self.save_status()
+            return self.recover_publication(current)
+        self.git("push", f"--force-with-lease=refs/heads/{BRANCH}:",
                  "origin", f"{head}:refs/heads/{BRANCH}")
         require(self.branch_head() == head, "candidate push was not confirmed")
         self.head = head
-        if open_pr:
-            # Confirmed refs can precede REST head/base visibility. Keep the
-            # verified old metadata until both exact publication snapshots settle.
-            previous_limit = self.limit
-            self.limit = min(previous_limit, self.deadline, time.monotonic() + 60)
-            try:
-                while True:
-                    require(time.monotonic() < self.limit,
-                            "PR head/base visibility did not settle before publication deadline")
-                    current = self.pull(open_pr["number"])
-                    current_base = object_id(current["base"].get("sha"), "observed PR base")
-                    require(current["number"] == open_pr["number"]
-                            and current.get("state") == "open" and current.get("draft") is True
-                            and current.get("merged_at") is None
-                            and current_base in {observed_base, self.main}
-                            and metadata(current) == old_meta
-                            and current["head"]["sha"] in {remote, head},
-                            "owned draft identity/head/base/state/metadata raced during publication")
-                    self.holds(current)
-                    if current["head"]["sha"] == head and current_base == self.main:
-                        require(self.branch_head() == head,
-                                "reserved branch raced before publication metadata update")
-                        break
-                    self.pause()
-            finally:
-                self.limit = previous_limit
-            pr = self.api(f"repos/{self.repository}/pulls/{open_pr['number']}", "PATCH",
-                          {"title": TITLE, "body": self.body(meta)})
-        else:
-            pr = self.api(f"repos/{self.repository}/pulls", "POST",
-                          {"title": TITLE, "head": BRANCH, "base": "main", "body": self.body(meta), "draft": True})
+        pr = self.api(f"repos/{self.repository}/pulls", "POST",
+                      {"title": TITLE, "head": BRANCH, "base": "main", "body": self.body(meta), "draft": True})
         self.pr_identity(pr)
         require(pr["head"]["sha"] == head and pr.get("draft") is True, "published draft head not confirmed")
         self.pr, self.pr_owned, self.head = pr, True, head
@@ -935,9 +1048,6 @@ class Sync:
                        "phase": "pr", "outcome": "pending"}
         self.save_status()
         return pr
-
-    def rev_tree_index(self):
-        return object_id(self.git("write-tree").decode().strip())
 
     def merge(self, pr):
         self.phase = "pre-merge validation"
@@ -1000,6 +1110,7 @@ class Sync:
         open_pr = self.pull(open_pulls[0]["number"]) if open_pulls else None
         if open_pr:
             self.pr, self.head = open_pr, open_pr["head"]["sha"]
+            open_pr = self.recover_publication(open_pr)
             self.verify_owned(open_pr)
             self.pr_owned = True
         # Recovery precedes rendering/no-op. Later source policy cannot relabel

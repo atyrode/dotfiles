@@ -54,11 +54,12 @@ def timestamp():
 
 
 def git(*args, cwd=None, data=None, check=True):
-    fixture_env = os.environ | {
+    # Preserve the synchronizer's explicit commit identity, while synthetic
+    # server-side integration commits still have an isolated default identity.
+    fixture_env = {
         "GIT_AUTHOR_NAME": "Policy fixture", "GIT_AUTHOR_EMAIL": "policy@example.invalid",
         "GIT_COMMITTER_NAME": "Policy fixture", "GIT_COMMITTER_EMAIL": "policy@example.invalid",
-        "GIT_ALLOW_PROTOCOL": "file",
-    }
+    } | os.environ | {"GIT_ALLOW_PROTOCOL": "file"}
     return subprocess.run(
         [os.environ.get("POLICY_TEST_REAL_GIT", "git"), *map(str, args)],
         cwd=cwd, input=data, env=fixture_env, capture_output=True, check=check, timeout=15,
@@ -222,6 +223,15 @@ def append_remote_commit(state, remote_key, path, content):
         git("push", "--quiet", "origin", "main", cwd=temp)
 
 
+def interrupt_publication(state, boundary):
+    if state.get("interrupt_publication") == boundary:
+        state.pop("interrupt_publication")
+        record(state, "publication_interrupted", boundary=boundary)
+        save_state(state)
+        os.kill(os.getppid(), 9)
+        sys.exit(1)
+
+
 def fake_git():
     state = load_state()
     args = sys.argv[2:]
@@ -254,6 +264,9 @@ def fake_git():
         replacement = git("--git-dir", state["consumer_remote"], "commit-tree", tree, "-p", old, data=b"Concurrent head\n").stdout.decode().strip()
         git("--git-dir", state["consumer_remote"], "update-ref", "refs/heads/" + BRANCH, replacement, old)
     deleting = "push" in clean and f":refs/heads/{BRANCH}" in clean
+    replacing = "push" in clean and not deleting and any(pull["state"] == "open" for pull in state["pulls"])
+    if replacing:
+        interrupt_publication(state, "before_push")
     if deleting and state.get("cleanup_race"):
         old = ref_sha(state, BRANCH)
         if state["cleanup_race"] == "deleted":
@@ -267,7 +280,7 @@ def fake_git():
             save_state(state)
             sys.exit(1)
     save_state(state)
-    data = sys.stdin.buffer.read() if "--stdin" in clean else None
+    data = sys.stdin.buffer.read() if "--stdin" in clean or "commit-tree" in clean else None
     proc = git(*mappings, *clean, data=data, check=False)
     if deleting:
         record(state, "delete_result", code=proc.returncode)
@@ -289,6 +302,8 @@ def fake_git():
                     sync_pull_refs(state, pull)
                     make_runs(state, pull)
     save_state(state)
+    if replacing and proc.returncode == 0:
+        interrupt_publication(state, "after_push")
     sys.stdout.buffer.write(proc.stdout)
     sys.stderr.buffer.write(proc.stderr)
     sys.exit(proc.returncode)
@@ -550,6 +565,20 @@ def fake_gh():
         print(str(error), file=sys.stderr)
         sys.exit(1)
     save_state(state)
+    if method in ("PATCH", "POST") and "body" in payload:
+        body = payload["body"]
+        if "<!-- agent-policy-sync:v1 " in body and "/pulls/" in endpoint:
+            interrupt_publication(state, "after_body")
+        if "<!-- agent-policy-sync-status:v1 " in body:
+            marker = "<!-- agent-policy-sync-status:v1 "
+            status = json.loads(next(line for line in body.splitlines() if line.startswith(marker))[len(marker):-4])
+            if method == "POST" and "prepared" in status and state.pop("lose_prepared_status_response", False):
+                save_state(state)
+                sys.exit(1)
+            if "prepared" in status and status["head"] == status["prepared"]["candidate"]["head"]:
+                interrupt_publication(state, "after_status")
+            elif "prepared" not in status:
+                interrupt_publication(state, "after_clear")
     if result is not None:
         print(json.dumps(result))
 
@@ -1065,7 +1094,7 @@ class SyncTests(unittest.TestCase):
         self.assertTrue(all(event["draft"] and event["body"] == body for event in observations))
         visible_index = next(index for index, event in enumerate(self.state["events"]) if event["kind"] == "rest_visibility" and event["sha"] == head)
         self.assertFalse(any(
-            event["kind"] == "api" and event["method"] == "PATCH" and "body" in event["payload"]
+            event["kind"] == "api" and event["method"] == "PATCH" and "/pulls/" in event["endpoint"] and "body" in event["payload"]
             for event in self.state["events"][:visible_index]
         ))
         approved = {event["run"] for event in self.events("approve")}
@@ -1078,7 +1107,6 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(git_text("--git-dir", self.consumer_remote, "diff", "--name-only", self.base_sha, "main"), "AGENTS.md")
         self.assertEqual(len(self.state["pulls"]), 1)
         self.assertFalse(self.events("create"))
-        self.assertEqual(sum("commit" in event["argv"] for event in self.events("git")), 1)
         publications = [
             event["argv"] for event in self.events("git")
             if "push" in event["argv"] and f":refs/heads/{BRANCH}" not in event["argv"]
@@ -1119,7 +1147,7 @@ class SyncTests(unittest.TestCase):
         )
         self.assertFalse(any(
             event["kind"] in ("approve", "ready", "merge")
-            or (event["kind"] == "api" and event["method"] == "PATCH" and "body" in event["payload"])
+            or (event["kind"] == "api" and event["method"] == "PATCH" and "/pulls/" in event["endpoint"] and "body" in event["payload"])
             for event in self.state["events"][:settled_index]
         ))
         fresh = {run["id"] for run in self.state["runs"] if run["event"] == "pull_request" and run["head_sha"] == head}
@@ -1192,6 +1220,190 @@ class SyncTests(unittest.TestCase):
         self.assertFalse(self.events("ready"))
         self.assert_no_delivery()
         self.assertFalse(any(event["method"] == "PUT" and event["endpoint"].endswith("/merge") for event in self.events("api")))
+        self.state["events"] = []
+        self.run_sync(1)
+        self.assertEqual(ref_sha(self.state, BRANCH), head)
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+        self.state["labels"] = []
+        self.run_sync(0)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+
+    def publication_status(self):
+        marker = "<!-- agent-policy-sync-status:v1 "
+        owned = [row for row in self.state["comments"] if marker in row["body"]]
+        self.assertEqual(len(owned), 1)
+        line = next(line for line in owned[0]["body"].splitlines() if line.startswith(marker))
+        return owned[0], json.loads(line[len(marker):-4])
+
+    def interrupted_replacement(self, boundary):
+        self.seed_candidate()
+        self.advance_source()
+        self.state["interrupt_publication"] = boundary
+        self.run_sync(-9)
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+        _, status = self.publication_status()
+        return status
+
+    def resume_interrupted_replacement(self, boundary):
+        status = self.interrupted_replacement(boundary)
+        head = status["prepared"]["candidate"]["head"] if "prepared" in status else status["head"]
+        self.state["events"] = []
+        self.run_sync(0)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+        self.assertEqual(self.main_bytes("application.txt"), b"Application behavior is outside this task.\n")
+        _, completed = self.publication_status()
+        self.assertNotIn("prepared", completed)
+        self.assertEqual(completed["outcome"], "success")
+
+    def test_prepared_replacement_recovers_before_push(self):
+        self.resume_interrupted_replacement("before_push")
+
+    def test_prepared_replacement_recovers_after_lost_status_creation_response(self):
+        self.seed_candidate()
+        old = ref_sha(self.state, BRANCH)
+        self.advance_source()
+        self.state["lose_prepared_status_response"] = True
+        self.run_sync(1)
+        self.assertEqual(ref_sha(self.state, BRANCH), old)
+        self.assert_no_delivery()
+        _, status = self.publication_status()
+        head = status["prepared"]["candidate"]["head"]
+        self.run_sync(0)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+
+    def test_prepared_replacement_recovers_after_push(self):
+        self.resume_interrupted_replacement("after_push")
+
+    def test_prepared_replacement_recovers_after_discarded_head_is_pruned(self):
+        status = self.interrupted_replacement("after_push")
+        old, head = status["prepared"]["previous"]["head"], status["prepared"]["candidate"]["head"]
+        git("--git-dir", self.consumer_remote, "prune", "--expire=now")
+        self.assertNotEqual(git("--git-dir", self.consumer_remote, "cat-file", "-e", old, check=False).returncode, 0)
+        self.state["events"] = []
+        self.run_sync(0)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(NEXT) + SUFFIX)
+
+    def test_prepared_replacement_recovers_after_canonical_body_write(self):
+        self.resume_interrupted_replacement("after_body")
+
+    def test_prepared_replacement_recovers_after_status_write(self):
+        self.resume_interrupted_replacement("after_status")
+
+    def test_prepared_replacement_recovers_after_coherence_record_clear(self):
+        self.resume_interrupted_replacement("after_clear")
+
+    def test_prepared_replacement_hold_before_push_retains_exact_candidate(self):
+        status = self.interrupted_replacement("before_push")
+        old, head = status["prepared"]["previous"]["head"], status["prepared"]["candidate"]["head"]
+        self.state["labels"] = ["blocked"]
+        self.state["events"] = []
+        self.run_sync(1)
+        self.assertEqual(ref_sha(self.state, BRANCH), old)
+        _, held = self.publication_status()
+        self.assertEqual(held["prepared"], status["prepared"])
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+        self.state["labels"] = []
+        self.run_sync(0)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+
+    def test_prepared_replacement_hold_after_body_retains_coherence_evidence(self):
+        status = self.interrupted_replacement("after_body")
+        head = status["prepared"]["candidate"]["head"]
+        self.state["labels"] = ["blocked"]
+        self.state["events"] = []
+        self.run_sync(1)
+        _, held = self.publication_status()
+        self.assertEqual(held["prepared"], status["prepared"])
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+        self.state["labels"] = []
+        self.run_sync(0)
+        self.assertEqual([event["sha"] for event in self.events("merge")], [head])
+
+    def test_prepared_replacement_source_advance_does_not_relabel_prepared_head(self):
+        status = self.interrupted_replacement("after_push")
+        head = status["prepared"]["candidate"]["head"]
+        latest = b"## Common engineering contract\n\n- Preserve independently reviewed evidence.\n"
+        (self.source / POLICY_PATH).write_bytes(latest)
+        self.commit(self.source, "Later reviewed source")
+        git("push", "--quiet", self.source_remote, "main", cwd=self.source)
+        self.source_sha = git_text("rev-parse", "HEAD", cwd=self.source)
+        self.env["AGENT_POLICY_SOURCE_SHA"] = self.source_sha
+        self.state["events"] = []
+        self.run_sync(0)
+        self.assertNotEqual(self.events("merge")[0]["sha"], head)
+        self.assertEqual(self.main_bytes(), PREFIX + envelope(latest) + SUFFIX)
+        self.assertEqual(len(self.state["pulls"]), 1)
+
+    def test_prepared_replacement_refuses_status_ahead_of_canonical_body(self):
+        status = self.interrupted_replacement("after_push")
+        comment, _ = self.publication_status()
+        status.update({key: status["prepared"]["candidate"][key] for key in ("head", "source", "digest")})
+        comment["body"] = "<!-- agent-policy-sync-status:v1 " + json.dumps(status) + " -->\n"
+        self.run_sync(1)
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+
+    def test_prepared_replacement_refuses_tampered_branch(self):
+        self.interrupted_replacement("after_push")
+        old = ref_sha(self.state, BRANCH)
+        tree = git_text("--git-dir", self.consumer_remote, "rev-parse", old + "^{tree}")
+        changed = git("--git-dir", self.consumer_remote, "commit-tree", tree, "-p", old, data=b"Unrecorded replacement\n").stdout.decode().strip()
+        git("--git-dir", self.consumer_remote, "update-ref", "refs/heads/" + BRANCH, changed, old)
+        self.state["pulls"][0]["sha"] = changed
+        sync_pull_refs(self.state, self.state["pulls"][0])
+        self.run_sync(1)
+        self.assertEqual(ref_sha(self.state, BRANCH), changed)
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
+
+    def test_prepared_replacement_refuses_mutated_or_ambiguous_record(self):
+        self.interrupted_replacement("after_push")
+        comment, status = self.publication_status()
+        original = comment["body"]
+        for key, value in (("head", self.base_sha), ("source", self.old_source_sha), ("digest", "0" * 64)):
+            with self.subTest(field=key):
+                changed = json.loads(json.dumps(status))
+                changed["prepared"]["candidate"][key] = value
+                comment["body"] = "<!-- agent-policy-sync-status:v1 " + json.dumps(changed) + " -->\n"
+                self.run_sync(1)
+                comment, _ = self.publication_status()
+                self.assertFalse(self.events("approve"))
+                self.assertFalse(self.events("ready"))
+                self.assert_no_delivery()
+        comment["body"] = original
+        self.state["comments"].append({**comment, "id": comment["id"] + 1})
+        self.run_sync(1)
+        self.assertFalse(self.events("approve"))
+        self.assert_no_delivery()
+
+    def test_prepared_replacement_does_not_hide_failed_current_head_ci(self):
+        status = self.interrupted_replacement("after_push")
+        head = status["prepared"]["candidate"]["head"]
+        for run in self.state["runs"]:
+            if run["head_sha"] == head:
+                run["conclusion"] = "failure"
+                run["jobs"][0]["conclusion"] = "failure"
+        self.state["events"] = []
+        self.run_sync(1)
+        self.run_sync(1)
+        self.assertEqual(ref_sha(self.state, BRANCH), head)
+        self.assertFalse(self.events("approve"))
+        self.assertFalse(self.events("ready"))
+        self.assert_no_delivery()
 
     def test_expected_head_lease_refuses_a_concurrent_branch_push(self):
         self.seed_candidate(draft=False)
@@ -1531,12 +1743,13 @@ if __name__ == "__main__":
         unittest.main()
     else:
         # Each process owns its environment and temporary Git/API fixtures.
-        # Sharding preserves every case and real polling delay while keeping
-        # the five-minute CI contract; threads never run setUp in shared state.
+        # Keep the expanded crash-recovery cases within the existing deadline
+        # without shortening real polling or running setUp in shared state.
         from concurrent.futures import ThreadPoolExecutor
 
         cases = unittest.defaultTestLoader.getTestCaseNames(SyncTests)
-        groups = [cases[index::4] for index in range(4)]
+        shards = 8
+        groups = [cases[index::shards] for index in range(shards)]
 
         def run_group(group):
             return subprocess.run(
@@ -1545,10 +1758,10 @@ if __name__ == "__main__":
                 capture_output=True, timeout=600,
             )
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=shards) as pool:
             results = list(pool.map(run_group, groups))
         for result in results:
             sys.stdout.buffer.write(result.stdout)
             sys.stderr.buffer.write(result.stderr)
-        print(f"Executed all {len(cases)} synchronization cases in four isolated processes.")
+        print(f"Executed all {len(cases)} synchronization cases in {shards} isolated processes.")
         sys.exit(1 if any(result.returncode for result in results) else 0)

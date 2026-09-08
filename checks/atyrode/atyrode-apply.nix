@@ -9,7 +9,22 @@ let
   fixtures = import ../lib/atyrode-fixtures.nix { inherit pkgs; };
   developmentAtyrode = atyrode.override { revision = "unknown"; };
   launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
-  targetAtyrode = atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; };
+  targetPolicy = pkgs.writeText "candidate-personal-policy" ''
+    # Candidate personal policy
+
+    This fixture deliberately differs from the launcher's embedded policy.
+  '';
+  targetAtyrode =
+    (atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; }).overrideAttrs
+      (old: {
+        installPhase =
+          builtins.replaceStrings
+            [ "${../../modules/home/agents/AGENTS.md}" ]
+            [
+              "${targetPolicy}"
+            ]
+            old.installPhase;
+      });
   publishedKeyAtyrode = atyrode.override {
     sopsDirectory = pkgs.writeTextDir "secrets/fixture-nixos-age.key/secret" "{}";
   };
@@ -580,11 +595,38 @@ pkgs.runCommand "check-atyrode-apply"
       printf '\n'
     } > "$TMPDIR/context-policy"
     sed '/^Generated at /d' "$context_file" | diff "$TMPDIR/context-policy" -
-    # A copied closure renders its own revision, not the invoking CLI's or an
-    # unrelated global profile's. This matters for standalone HM on NixOS.
+    # A copied closure renders its own policy and revision, not the invoking
+    # CLI's or an unrelated global profile's. The final verdict has that same
+    # owner even when the development launcher has different policy bytes.
     atyrode apply development-x86_64-linux --candidate ${contextCandidate} \
       > "$TMPDIR/candidate-context.out" 2> "$TMPDIR/candidate-context.err"
     grep -qF 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
+    { cat ${targetPolicy}; printf '\n'; } > "$TMPDIR/candidate-context-policy"
+    sed '/^Generated at /d' "$context_file" | diff "$TMPDIR/candidate-context-policy" -
+    if grep -qE 'remaining.*agent-context|context-stale' "$TMPDIR/candidate-context.err"; then
+      echo 'candidate-owned context was judged against the launcher policy' >&2
+      exit 1
+    fi
+    # A published launcher with an explicit dirty checkout does not hand off
+    # the whole apply. Its built candidate must still own the final context.
+    cat > "$TMPDIR/seam/dirty-git" <<'EOF'
+    #!${pkgs.runtimeShell}
+    case "$*" in
+      *diff\ --quiet*) exit 1 ;;
+      *) exec "$TMPDIR/bin/git" "$@" ;;
+    esac
+    EOF
+    chmod +x "$TMPDIR/seam/dirty-git"
+    ATYRODE_GIT="$TMPDIR/seam/dirty-git" ATYRODE_TEST_CANDIDATE=${contextCandidate} \
+      ${launcherAtyrode}/bin/atyrode apply --repo "$HOME/nix-dotfiles" --json \
+      > "$TMPDIR/dirty-context.out" 2> "$TMPDIR/dirty-context.err"
+    jq -e '.source == "local" and .dirty == true' "$TMPDIR/dirty-context.out" >/dev/null
+    sed '/^Generated at /d' "$context_file" | diff "$TMPDIR/candidate-context-policy" -
+    if grep -qE 'remaining.*agent-context|context-stale' "$TMPDIR/dirty-context.err"; then
+      echo 'dirty apply left a false context blocker' >&2
+      exit 1
+    fi
+    rm "$TMPDIR/seam/dirty-git"
     # Rendering must not acquire inventory, even on an unregistered host with
     # an unreadable diagnostic fixture and provider credentials in the process.
     # The existing command overrides also observe calls whose failures a
@@ -639,6 +681,69 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode context render --json >/dev/null 2>&1 && false
     atyrode context render show >/dev/null 2>&1 && false
 
+    # Refusals propagate through the public command without announcing a write
+    # or replacing the old document. Apply must also retain the failed step.
+    mv "$context_file" "$TMPDIR/context-link-target"
+    cp "$TMPDIR/context-link-target" "$TMPDIR/context-preserved"
+    ln -s "$TMPDIR/context-link-target" "$context_file"
+    set +e
+    atyrode context render >"$TMPDIR/context-refused.out" 2>"$TMPDIR/context-refused.err"
+    refused_status="$?"
+    atyrode apply --repo "$HOME/nix-dotfiles" \
+      >"$TMPDIR/context-refused-apply.out" 2>"$TMPDIR/context-refused-apply.err"
+    refused_apply_status="$?"
+    set -e
+    test "$refused_status" = 65
+    test "$refused_apply_status" = 69
+    test -L "$context_file"
+    diff "$TMPDIR/context-preserved" "$TMPDIR/context-link-target"
+    if grep -qF 'wrote ' "$TMPDIR/context-refused.err"; then exit 1; fi
+    if grep -qF "wrote $context_file" "$TMPDIR/context-refused-apply.err"; then exit 1; fi
+    rm "$context_file"
+    mv "$TMPDIR/context-link-target" "$context_file"
+
+    # A failed temporary-file creation cannot be mistaken for a write either.
+    chmod 555 "$XDG_CONFIG_HOME/agents"
+    set +e
+    atyrode context render >"$TMPDIR/context-unwritable.out" 2>"$TMPDIR/context-unwritable.err"
+    unwritable_status="$?"
+    set -e
+    chmod 755 "$XDG_CONFIG_HOME/agents"
+    test "$unwritable_status" != 0
+    diff "$TMPDIR/context-preserved" "$context_file"
+    if grep -qF 'wrote ' "$TMPDIR/context-unwritable.err"; then exit 1; fi
+
+    # Exercise failures after temporary creation using the existing sourced
+    # library seam, in a conditional (where Bash disables implicit errexit).
+    # Neither partial rendering nor a failed chmod/rename may commit bytes;
+    # cleanup must retain a different invocation's temporary and parent trap.
+    for failure in policy chmod rename; do
+      (
+        source ${../../pkgs/atyrode/lib/context.sh}
+        embedded_revision=unknown
+        agents_policy=${../../modules/home/agents/AGENTS.md}
+        say() { printf '%s\n' "$*" >&2; }
+        case "$failure" in
+          policy) agents_policy="$TMPDIR/absent-personal-policy" ;;
+          chmod) chmod() { return 73; } ;;
+          rename) mv() { return 74; } ;;
+        esac
+        trap 'touch "$TMPDIR/context-parent-exit"' EXIT
+        printf 'other render\n' > "$XDG_CONFIG_HOME/agents/.AGENTS.md.other"
+        if cmd_context render >"$TMPDIR/context-write-failed.out" 2>"$TMPDIR/context-write-failed.err"; then
+          echo "context accepted a failed $failure step" >&2
+          exit 1
+        fi
+        diff "$TMPDIR/context-preserved" "$context_file"
+        if grep -qF 'wrote ' "$TMPDIR/context-write-failed.err"; then exit 1; fi
+        test "$(cat "$XDG_CONFIG_HOME/agents/.AGENTS.md.other")" = 'other render'
+        rm "$XDG_CONFIG_HOME/agents/.AGENTS.md.other"
+        test -z "$(find "$XDG_CONFIG_HOME/agents" -name '.AGENTS.md.*' -print -quit)"
+      )
+      test -f "$TMPDIR/context-parent-exit"
+      rm "$TMPDIR/context-parent-exit"
+    done
+
     # Diagnostics are live, not a view of the deployed startup snapshot. Compare
     # both public formats with the healthy baseline, ignoring only display time.
     context_show_live() {
@@ -688,7 +793,8 @@ pkgs.runCommand "check-atyrode-apply"
     sed -i "s/^Generated at [^ ]* /Generated at $(date -u -d '8 days ago' +%FT%TZ) /" "$context_file"
     ${launcherAtyrode}/bin/atyrode doctor provisioning --json |
       jq -e '.surfaces[] | select(.id == "agent-context") | .status == "ok"' >/dev/null
-    ${targetAtyrode}/bin/atyrode doctor provisioning --json |
+    sed -i 's/ revision [^ ]* by / revision feedfacefeedfacefeedfacefeedfacefeedface by /' "$context_file"
+    ${launcherAtyrode}/bin/atyrode doctor provisioning --json |
       jq -e '.surfaces[] | select(.id == "agent-context")
         | .status == "degraded" and .code == "context-stale"' >/dev/null
     printf '# hand-written\n' > "$context_file"
@@ -983,6 +1089,11 @@ pkgs.runCommand "check-atyrode-apply"
     ATYRODE_NIX="$TMPDIR/bin/handoff-nix" ${launcherAtyrode}/bin/atyrode apply --json \
       > "$TMPDIR/handoff.out" 2> "$TMPDIR/handoff.err"
     grep -q 'revision feedfacefeedfacefeedfacefeedfacefeedface by' "$context_file"
+    sed '/^Generated at /d' "$context_file" | diff "$TMPDIR/candidate-context-policy" -
+    if grep -qE 'remaining.*agent-context|context-stale' "$TMPDIR/handoff.err"; then
+      echo 'published handoff left a false context blocker' >&2
+      exit 1
+    fi
     rm "$TMPDIR/bin/handoff-nix"
     printf '%s\n' sentinel > "$XDG_STATE_HOME/atyrode/dotfiles-config"
     atyrode apply --plan --json | jq -e '

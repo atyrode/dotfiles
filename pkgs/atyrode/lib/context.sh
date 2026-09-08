@@ -178,26 +178,33 @@ context_render_section() { # machine-json
 }
 
 context_render_document() { # optional generation timestamp and revision
-  cat "$agents_policy"
+  local rendered_at="${1:-}"
+  [[ -n "$rendered_at" ]] || rendered_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return
+  cat "$agents_policy" || return
   printf '\nGenerated at %s from atyrode/dotfiles revision %s by `atyrode context render`.\n' \
-    "${1:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" "${2:-$embedded_revision}"
+    "$rendered_at" "${2:-$embedded_revision}"
 }
 
 # Written whole and moved into place, mode 0644: an agent reading the file
 # mid-render sees the previous complete one, never a torn one. Shell
 # bookkeeping stays silent; the caller names the path it produced.
-context_write() {
+context_write() (
   local target directory temporary
-  target="$(context_target)"
+  target="$(context_target)" || return
   directory="${target%/*}"
   [[ ! -L "$target" ]] || die "$EX_DATAERR" "the agent context must be a regular file, not a symlink: $target"
-  mkdir -p "$directory"
-  temporary="$(mktemp "$directory/.AGENTS.md.XXXXXX")"
-  context_render_document >"$temporary"
-  chmod 644 "$temporary"
-  mv -f "$temporary" "$target"
+  [[ ! -e "$target" || -f "$target" ]] || die "$EX_DATAERR" "the agent context must be a regular file: $target"
+  mkdir -p "$directory" || return
+  temporary="$(mktemp "$directory/.AGENTS.md.XXXXXX")" || return
+  # A subshell scopes cleanup to this write without replacing apply's traps.
+  # Explicit guards also work when the caller disables errexit with `if`.
+  trap 'rm -f -- "$temporary"' EXIT
+  context_render_document >"$temporary" || return
+  chmod 644 "$temporary" || return
+  mv -fT -- "$temporary" "$target" || return
+  trap - EXIT
   printf '%s\n' "$target"
-}
+)
 
 # Re-enter the inspected generation, not a mutable global profile: a standalone
 # Home Manager activation must not borrow a different system CLI. A generation
@@ -271,7 +278,7 @@ probe_agent_context() {
 }
 
 cmd_context() {
-  local action="" json=0 machine
+  local action="" json=0 machine target
   while [[ $# -gt 0 ]]; do
     case "$1" in
       render | show)
@@ -286,7 +293,8 @@ cmd_context() {
   [[ "$json" == 0 || "$action" != render ]] ||
     die "$EX_USAGE" "context render writes the file; use context show --json for diagnostics"
   if [[ "$action" == render ]]; then
-    say "wrote $(context_write)"
+    target="$(context_write)" || return
+    say "wrote $target"
     return 0
   fi
   machine="$(context_machine_json)"

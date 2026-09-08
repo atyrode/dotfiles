@@ -243,6 +243,9 @@ instructions, not this personal context.
 
 The target is `$XDG_CONFIG_HOME/agents/AGENTS.md` (default
 `~/.config/agents/AGENTS.md`): an atomically replaced regular file, mode 0644.
+Rendering returns nonzero if it cannot read the policy or create, secure and
+publish the replacement; it preserves the previous document on failure and does
+not announce a successful write. Temporary-file cleanup is scoped to that render.
 Home Manager activation renders it through `modules/home/agents/default.nix`;
 `atyrode apply` also renders as its last step using the inspected generation's CLI
 when available, otherwise the invoking CLI. Home Manager owns the out-of-store
@@ -253,6 +256,10 @@ the current repository's instructions separately. Thus normal apply/activation
 deploys startup guidance automatically; no separate manual render is required.
 The default link does not cover arbitrary named OMP profiles or custom
 `PI_CODING_AGENT_DIR` roots. Edit the authored policy, not the deployed snapshot.
+Apply's final `agent-context` verdict follows that selected writer's result,
+including when a development launcher and the candidate embed different policies.
+It does not recheck new candidate bytes against the old launcher's policy;
+a failed render leaves apply incomplete rather than clearing the context failure.
 
 `context [show]` is an independent, explicit, read-only diagnostic display. It
 needs no previous render and does not read the startup file: absent, stale or

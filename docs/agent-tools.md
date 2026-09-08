@@ -168,8 +168,9 @@ check runs on the native CI platforms, including portable Linux configuration.
 
 [`ci/check-agent-context.py`](../ci/check-agent-context.py) drives real OMP's
 ready/negotiation/`get_state` protocol without a model turn. It checks complete
-rendered documents, accounting for OMP's table-padding compaction without
-discarding directive or cell text; single copies and ordering; root versus nested
+rendered documents, accounting for OMP's trailing-whitespace, table-padding and
+blank-line formatting without discarding directive text or meaningful indentation;
+negative cases reject changed directives and code indentation. It checks single copies and ordering; root versus nested
 cwd; default, named and explicitly selected agent directories; opted-in adapter precedence;
 portable/outside-repository contexts; and loaded snapshots versus a changed file
 in a new process.
@@ -261,6 +262,17 @@ cross-repository write credentials. Following reviewed dotfiles `main` trusts
 its automation code as well as its Markdown. Delivery is eventual convergence
 through scheduling and CI, not an exact-time promise. Existing green runs are
 not retroactively invalidated when the source changes.
+
+Replacement publication first records a prepared candidate in the existing
+bot-owned `agent-policy-sync-status:v1` comment. Its optional `prepared` field
+binds the previous and candidate head/base/source/digest, the observed base and
+the commit timestamp; canonical `agent-policy-sync:v1` PR metadata is unchanged.
+After interruption, a later attempt reconstructs the exact generated candidate
+and accepts only the recorded old or prepared branch head. It keeps the record
+until PR metadata and status agree, without relying on a discarded commit
+remaining fetchable. Holds still stop publication, and recovery does not approve
+or merge without fresh applicable CI and protection checks. Missing, ambiguous or
+mutated ownership evidence remains a refusal, not permission to infer a repair.
 
 ### Publication is not activation
 

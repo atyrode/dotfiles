@@ -6,15 +6,15 @@ plugin or skill sync.
 
 ## Ownership
 
-Nix owns:
+Dotfiles owns deployment and the operator's authored configuration:
 
-- the pinned OMP binary and generated Zsh completion;
-- the managed OMP defaults, enforced policy, and model catalog;
+- the pinned OMP and Code packages and generated Zsh completion;
+- the managed OMP defaults, enforced policy, and curated model-catalog data;
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings
   guard;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
-  restricted `ompu` launcher, and the `code` profile generator;
+  restricted `ompu` launcher, and the environment wrapper around `code`;
 - personal policy from `modules/home/agents/AGENTS.md`, rendered by
   `atyrode context render` into `$XDG_CONFIG_HOME/agents/AGENTS.md` (default
   `~/.config/agents/AGENTS.md`) with minimal generation provenance, not a
@@ -23,9 +23,23 @@ Nix owns:
 - Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
-OMP owns mutable runtime data such as authentication, sessions, caches,
-onboarding state, and machine-local UI state. Secrets never belong in this
+Code owns catalog generation and maintenance, model-routing selection, one-shot
+session overlays, its account-management interface, and whole-session worktree
+and session bookkeeping. Packaging Code here does not transfer that product
+logic into dotfiles. The Manifold plugin consumes Code's headless capabilities;
+it is not another model or account-routing implementation.
+
+OMP owns execution: role resolution, retries, live credential selection,
+compaction, terminal protocols, and mutable runtime data such as authentication,
+sessions, caches, onboarding state and machine-local UI state. Dotfiles supplies
+its baseline policy, not a replacement runtime. Secrets never belong in this
 repository or the Nix store.
+
+The Python model-fact refresher still located here is an ownership exception,
+tracked for replacement in [#650](https://github.com/atyrode/dotfiles/issues/650).
+Its generic mechanism belongs in Code; the curated catalog and repository
+freshness reminder remain here. Removal waits for the normal published Code
+binary to expose the replacement command—never a second private source pin.
 
 Activation does not rewrite or back up pre-existing mutable paths before Home
 Manager links the managed agents, rules, extensions, and skills. If

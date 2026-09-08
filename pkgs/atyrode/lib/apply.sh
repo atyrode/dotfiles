@@ -556,16 +556,20 @@ apply_config() {
   # activation did not render its personal policy snapshot.
   step_begin "Render this machine's agent context"
   step_why 'install the personal policy and provenance used by the default linked agent instructions'
+  # The candidate's atomic writer owns the result as well as the policy.
+  # Re-probing in this process would judge new bytes against the launcher's
+  # old policy on development or dirty-checkout applies.
+  provisioning_checks="$(jq 'map(select(.id != "agent-context"))' <<<"$provisioning_checks")"
   if apply_render_context "$candidate" "$expected_user"; then
     step_ok
+    provisioning_check_add agent-context ok "" \
+      "the agent context was rendered by the selected context writer" ""
   else
     step_fail 'the agent context was not rendered; run atyrode context render'
     apply_status="$EX_UNAVAILABLE"
+    provisioning_check_add agent-context degraded context-render-failed \
+      "the agent context render did not complete" "atyrode context render"
   fi
-  # Rendering is the last mutation after the review, so refresh its verdict
-  # before describing what remains; do not report a blocker we just cleared.
-  provisioning_checks="$(jq 'map(select(.id != "agent-context"))' <<<"$provisioning_checks")"
-  probe_agent_context
   provisioning_leftovers="$(jq -r '
     map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
   ' <<<"$provisioning_checks")"

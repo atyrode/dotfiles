@@ -185,16 +185,6 @@ pkgs.runCommand "check-omp-isolated-writer"
     git -C "$repo" add .
     git -C "$repo" commit --quiet -m baseline
 
-    (
-      cd "$repo"
-      ${pkgs.omp-configured}/bin/omp-managed config managed --json \
-        > "$TMPDIR/effective.json"
-    )
-    jq -e '.effectiveManaged.task.isolation == {
-      "mode": "auto",
-      "merge": "patch",
-      "commits": "generic"
-    }' "$TMPDIR/effective.json" >/dev/null
 
     export ISSUE17_SOURCE_REPO="$repo"
     export ISSUE17_ISOLATION_OBSERVATION="$observation"

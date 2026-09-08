@@ -23,10 +23,6 @@ pkgs.runCommand "check-omp-agent-references"
     find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' -printf '%f\n' \
       | sed 's/\.md$//' > "$TMPDIR/agents"
 
-    # Model roles with no backing agent file; every other routing key must
-    # name an unpacked agent.
-    printf '%s\n' default advisor smol slow plan tiny commit > "$TMPDIR/roles"
-
     status=0
     for config in \
       ${defaultsConfig} \
@@ -35,6 +31,9 @@ pkgs.runCommand "check-omp-agent-references"
       ${policyConfig} \
       ${plainSeedConfig}
     do
+      # Repository role routes declare their selectors in this layer; a bundled
+      # agent name is not itself a model role. Custom declared roles are valid.
+      yq eval '.modelRoles // {} | keys | .[]' "$config" > "$TMPDIR/roles"
       while IFS= read -r name; do
         [ -n "$name" ] || continue
         if ! grep -qxF "$name" "$TMPDIR/agents"; then
@@ -46,10 +45,23 @@ pkgs.runCommand "check-omp-agent-references"
           '(.task.agentModelOverrides // {} | keys | .[]), (.task.disabledAgents // [] | .[])' \
           "$config"
       )
+      while IFS= read -r alias; do
+        case "$alias" in
+          @*)
+            if ! grep -qxF "''${alias#@}" "$TMPDIR/roles"; then
+              printf 'model alias %s in %s has no declared modelRoles selector\n' \
+                "$alias" "$config" >&2
+              status=1
+            fi
+            ;;
+        esac
+      done < <(yq eval '.task.agentModelOverrides // {} | .[]' "$config")
       while IFS= read -r name; do
         [ -n "$name" ] || continue
-        if ! grep -qxF "$name" "$TMPDIR/roles" && ! grep -qxF "$name" "$TMPDIR/agents"; then
-          printf 'fallback chain %s in %s names neither a role nor an agent\n' \
+        # Concrete provider/model fallback keys are also supported upstream.
+        case "$name" in */*) continue ;; esac
+        if ! grep -qxF "$name" "$TMPDIR/roles"; then
+          printf 'fallback chain %s in %s has no declared modelRoles selector\n' \
             "$name" "$config" >&2
           status=1
         fi

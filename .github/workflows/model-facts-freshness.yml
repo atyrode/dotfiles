@@ -3,8 +3,8 @@ name: Model facts freshness
 # omp is the authority for the factual model data (cost/speed/ttft) cached in
 # pkgs/omp-configured/config/models.yml, refreshed by `nix run .#refresh-model-facts`. That refresh
 # needs omp's creds + `omp bench` (real API calls), so CI can't run it — but it
-# can watch the `refreshed:` stamp and nudge when the cache goes stale, so the
-# data gets recomputed *sometime* even though it changes rarely.
+# can watch the complete `refreshed:` stamp. Partial or metadata-only updates
+# never reset it; null means that no complete refresh has been attested.
 
 on:
   schedule:
@@ -32,24 +32,49 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read the complete refresh date
+        id: freshness
+        shell: python
+        run: |
+          import datetime
+          import os
+          from pathlib import Path
+          import re
+
+          catalog = Path("pkgs/omp-configured/config/models.yml").read_text()
+          stamps = re.findall(r"^refreshed:[ \t]*(.*)$", catalog, re.MULTILINE)
+          if len(stamps) != 1:
+              raise SystemExit("expected exactly one top-level refreshed stamp")
+          stamp = stamps[0].strip()
+          if stamp in ("", "null", "~"):
+              refreshed, age = "unknown", "unknown"
+          else:
+              match = re.fullmatch(r"""(['"]?)(\d{4}-\d{2}-\d{2})\1""", stamp)
+              if match is None:
+                  raise SystemExit("invalid refreshed stamp")
+              refreshed = match[2]
+              age = (datetime.date.today() - datetime.date.fromisoformat(refreshed)).days
+              if age < 0:
+                  raise SystemExit("refreshed stamp is in the future")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"refreshed={refreshed}\nage={age}\n")
+
       - name: Nudge if the model-facts cache is stale
         env:
           GH_TOKEN: ${{ github.token }}
+          REFRESHED: ${{ steps.freshness.outputs.refreshed }}
+          AGE: ${{ steps.freshness.outputs.age }}
         run: |
           set -euo pipefail
-          refreshed="$(grep -m1 '^refreshed:' pkgs/omp-configured/config/models.yml | sed -E "s/^refreshed:[[:space:]]*'?([0-9-]+)'?.*/\1/")"
-          if [ -z "$refreshed" ]; then
-            echo "no 'refreshed:' stamp in pkgs/omp-configured/config/models.yml" >&2
-            exit 1
-          fi
-          age=$(( ( $(date +%s) - $(date -d "$refreshed" +%s) ) / 86400 ))
-          echo "model facts last refreshed $refreshed ($age days ago; threshold ${MAX_AGE_DAYS})"
-          if [ "$age" -le "${MAX_AGE_DAYS}" ]; then
-            echo "fresh enough — nothing to do."
+          refreshed="$REFRESHED"
+          age="$AGE"
+          echo "model facts last completely refreshed $refreshed ($age days ago; threshold ${MAX_AGE_DAYS})"
+          if [ "$age" != unknown ] && [ "$age" -le "${MAX_AGE_DAYS}" ]; then
+            echo "complete refresh fresh enough — nothing to do."
             exit 0
           fi
-          title="Refresh model facts (pkgs/omp-configured/config/models.yml is ${age} days old)"
-          body=$(printf "pkgs/omp-configured/config/models.yml was last refreshed **%s** (%s days ago).\n\nRun \`nix run .#refresh-model-facts\` on a machine with omp auth to re-pull cost/speed/ttft, then open a PR. (CI can't do it — \`omp bench\` needs creds + real API calls.)" "$refreshed" "$age")
+          title="Refresh model facts (complete refresh age: ${age} days)"
+          body=$(printf "pkgs/omp-configured/config/models.yml last complete refresh: **%s** (age: %s days).\n\nRun \`nix run .#refresh-model-facts\` on a machine with omp auth to re-pull all metadata and chat speed/TTFT, then open a PR. Only a fully successful run advances \`refreshed\`; skipped, missing or failed facts retain old values and freshness. Unknown means no complete refresh is attested. CI cannot benchmark: it requires credentials and real API calls." "$refreshed" "$age")
           existing="$(gh issue list --state open --search "in:title Refresh model facts" --json number --jq '.[0].number' || true)"
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --title "$title" --body "$body"

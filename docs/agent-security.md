@@ -11,11 +11,12 @@ Decision record: [ADR-0004](adr/0004-agent-trust-tiers.md).
 Managed sessions launched through `omp-managed` — including every profile the
 `code` generator produces — use the trusted-machine unattended approval policy:
 workspace edits, shell/eval, browser, task spawning, and GitHub operations do
-not prompt. Secret filtering remains enabled, and when a spawn requests
-isolation, OMP's automatic backend selection and patch merging apply (both
-policy-fixed). Isolation itself is upstream's per-spawn opt-in — the model or
-operator requests `isolated: true` per task; a managed rule advises it for
-concurrent writing subagents. There is no repository-side isolation mandate
+not prompt. Secret filtering remains enabled, and requested isolation uses
+automatic backend selection and patch merging (both policy-fixed).
+`task.isolation.enabled: true` permits isolation; it does not
+isolate every spawn. The model or operator must still request `isolated: true`
+per task, and `isolation.backend: auto` selects its backend. A managed rule
+advises isolation for concurrent writing subagents. There is no repository-side isolation mandate
 (#175): a hard guard converted upstream isolation failures into a total
 delegation outage, and stock OMP has no such concept.
 

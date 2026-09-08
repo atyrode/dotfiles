@@ -174,7 +174,9 @@ def verify_terminal(f, width, height):
             (f.directory / f"omp-setup-{width}-{step.group(1)}.ansi").write_text(f.capture(pane, True))
             f.keys(pane, "Escape")
             return False
-        return not step and re.search(r"(?m)^╰─", capture) is not None
+        # A fresh home paints the composer before opening first-run setup.
+        # Do not paste into that transient frame: observe and finish setup first.
+        return bool(skipped_steps) and not step and re.search(r"(?m)^╰─", capture) is not None
     eventually(editor_ready, "OMP composer ready for input", 90)
     draft = f"draft-{f.prefix}-café界"
     f.text(pane, "\x1b[200~" + draft + "\nsecond-line-λ\x1b[201~")

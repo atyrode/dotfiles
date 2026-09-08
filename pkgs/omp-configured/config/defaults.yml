@@ -6,6 +6,7 @@ modelRoles:
   advisor: anthropic/claude-haiku-4-5:low
   smol: openai-codex/gpt-5.6-luna:low
   task: openai-codex/gpt-5.6-terra:medium
+  scout: openai-codex/gpt-5.6-luna:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
   reviewer: anthropic/claude-sonnet-5:high
   plan: anthropic/claude-fable-5:high
@@ -29,16 +30,18 @@ retry:
   # so a single-model outage never leaves its bucket; then the matched pair on
   # the other provider. Chains never route below the lead's tier. Spark (drain)
   # and Fable (elite) draw separate quota and never appear as a net — plan leads
-  # on Fable deliberately and falls back to main-plan Opus. Trivial leads carry
-  # no chain: a blip on commit/tiny/sonic is harmless.
-  # Keys are omp role ids or provider/model selectors — never agent names.
-  # `reviewer` was an agent name: it matched nothing and never fired, silently,
-  # since unknown role names raise no warning. That agent takes its model from
-  # task.agentModelOverrides and inherits `default`.
-  # `task` works only because it is both an agent and a role.
-  # Check omp's current role list before adding a key; it grows (`vision` is
-  # recent). Deliberately not duplicated here — a copy would go stale.
+  # on Fable deliberately and falls back to main-plan Opus. Trivial leads have
+  # explicit empty chains: omitting them would inherit the default chain.
+  # Role-keyed chains require role identity: task.agentModelOverrides uses
+  # native @role aliases below, with selectors/thinking owned by modelRoles.
+  # An agent name alone (including `task`) does not preserve that identity
+  # when its override is a concrete selector. Settings-defined roles work too.
+  # Do not duplicate chains under selectors: roles can share a lead yet need
+  # different fallback chains.
   fallbackChains:
+    tiny: []
+    commit: []
+    sonic: []
     default:
       - openai-codex/gpt-5.6-terra:medium
       - anthropic/claude-opus-5:medium
@@ -126,10 +129,10 @@ codexResets:
 task:
   showResolvedModelBadge: true
   agentModelOverrides:
-    reviewer: anthropic/claude-sonnet-5:high
-    scout: openai-codex/gpt-5.6-luna:medium
-    sonic: openai-codex/gpt-5.6-luna:minimal
-    task: openai-codex/gpt-5.6-terra:medium
+    reviewer: "@reviewer"
+    scout: "@scout"
+    sonic: "@sonic"
+    task: "@task"
   disabledAgents: []
 
 # Memory guidance in the system prompt pollutes agent context for no
@@ -148,3 +151,7 @@ browser:
 
 proseOnlyThinking: false
 defaultThinkingLevel: medium
+
+# Nix owns the version; repository pin-update automation reports new releases.
+startup:
+  checkUpdate: false

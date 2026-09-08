@@ -17,6 +17,10 @@ let
             mkdir -p "$out/bin" "$out/share/zsh/site-functions"
             cat > "$out/bin/omp" <<'EOF'
         #!${pkgs.runtimeShell}
+        # Diagnostics delegate to the real pinned resolver, not an emulation.
+        if [[ "$*" == "config list --json" ]]; then
+          exec ${lib.getExe pkgs.omp} "$@"
+        fi
         if [[ " $* " == *" auth-broker serve "* ]]; then
           printf '%s\n' "$@" >> "''${BROKER_STUB_LOG:?}"
           trap 'exit 0' INT TERM

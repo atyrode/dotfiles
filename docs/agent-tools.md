@@ -41,9 +41,9 @@ same platform assets without sharing authentication, sessions, or caches.
 
 Reusable package derivations live in `pkgs/`, Home Manager deployment lives in
 `modules/home/agent-tools/contract.nix`, and the package overlay is assembled by
-`lib/packages.nix`. On Linux, the OMP package preserves upstream's binary and
-launches it through Nix's dynamic loader instead of rewriting the Bun executable
-with `patchelf`.
+`lib/packages.nix`. On Linux, the OMP package patches only the ELF interpreter
+(`PT_INTERP`), preserving the appended Bun payload and the binary's self-reexec
+path for subprocess workers; it does not run the binary through a loader command.
 
 ## Instruction architecture
 
@@ -378,21 +378,129 @@ configuration in this order:
 6. the Nix-managed enforced policy; and
 7. explicit runtime flags such as `--model` or `--approval-mode`.
 
-Later layers win. `omp acp` receives the same layers in the same order, with
-overlays placed after the `acp` subcommand as required by OMP's parser.
-Maintenance subcommands pass directly to OMP because their parsers do not
-consistently accept interactive launch flags.
+Native `PI_CONFIG_FILES` overlays, when inherited, precede the managed
+defaults (after writable/native project configuration).
+
+Later layers win. Explicit `launch` and `acp` receive the same layers in the
+same order, with overlays placed after the subcommand as required by OMP's
+parser. Maintenance subcommands pass directly to OMP because their parsers
+do not consistently accept interactive launch flags.
 
 When launched from `$HOME` without `--cwd` or `--allow-home`, the wrapper
 mirrors OMP's safety change of directory before resolving project layers.
 Relative one-shot `--config` paths resolve from that effective project
 directory.
 
-Use `omp config managed --json` to inspect the managed profile, state path,
+Use `omp-managed config managed --json` to inspect the managed profile, state path,
 ordered configuration sources, ownership, and effective Nix-owned values. Use
 `~/.config/omp/local.yml` for machine-only overrides of defaults; it cannot
 weaken enforced policy. The readable managed copies under `~/.config/omp/` are
 links—edit their repository sources instead.
+
+The diagnostic delegates migration, merging and schema-default resolution to
+the pinned binary's `config list --json`, with the same ordered layers supplied
+through native `PI_CONFIG_FILES`. That command opens mutable storage, so it runs
+in disposable private state, outside the project, and reads source files only
+as overlays. Only Nix-owned keys are returned; arbitrary local settings and
+credential values are not dumped. Schema defaults now appear for Nix-owned keys
+that no layer sets. Runtime model/thinking/approval flags are reported separately
+and applied to the selected values; this is not a model turn or an extension
+startup and does not resolve extension-registered flags.
+
+The shared launcher grammar in `pkgs/omp-configured/argv.sh` follows the pinned
+CLI's value consumption, including flag-shaped string values, optional session
+values, boolean `--flag=value` spellings and the `--` prompt boundary. Restricted
+launchers reject state/resource/approval overrides only in flag positions.
+`nix build --no-link .#checks.x86_64-linux.omp-wrapper` checks argv preservation,
+restricted boundaries, native diagnostics and live CLI grammar drift; `omp-stack`
+additionally exercises real RPC/ACP startup. Neither requires provider credentials.
+
+`nix build --no-link .#checks.x86_64-linux.omp-interactive` covers the actual
+terminal composer: paste a PNG and observe an image attachment through raw OMP
+with explicit cwd, plain bare/no-session launches, managed and restricted
+launchers, and packaged Code's Enter/`m` launch paths. It uses isolated homes
+with `startup.setupWizard: false`; otherwise first-run onboarding correctly
+intercepts input before the composer is available. This is attachment/UI proof,
+not a model image-understanding turn, and does not activate a machine.
+
+The diagnostic now reports current isolation keys (`task.isolation.enabled`
+and `isolation.backend`), not the retired combined `task.isolation.mode`.
+Enablement permits per-spawn requests; it is not a default to isolate every task.
+The persistent plain-OMP seed retains its legacy key because upstream still
+migrates it and changing seeded keys could override a local opt-out on reseed.
+
+Managed defaults and the plain seed disable `startup.checkUpdate`: Nix owns
+upgrades and repository pin-update automation still reports release drift.
+This removes the interactive upstream release reminder (and its startup network
+check), not the pinned-version check or the repository's latest-release warning.
+The ordinary seed merge preserves an operator's divergent local preference.
+
+### Agent role identity and fallback
+
+Managed `task.agentModelOverrides` values are native aliases (`@task`,
+`@reviewer`, `@scout`, `@sonic`); `modelRoles` owns each selector and its
+thinking suffix. The pinned OMP accepts settings-defined roles as well as
+built-ins. Merely naming an agent `task` does not retain the `task` model role
+when its override is a concrete selector: the child loses that identity and
+cannot select the intended role-keyed `retry.fallbackChains.task`.
+Declaring the role and selecting it through `@task` preserves dispatch identity.
+
+Do not duplicate chains under concrete selectors to compensate. Two roles may
+share the same lead model but need different fallback chains; a selector-keyed
+map cannot express that distinction. Existing managed lead selectors/thinking
+levels and non-empty chains are unchanged. The additional `scout` role carries
+its existing override selector. Explicit empty `tiny`, `commit` and `sonic`
+chains express those utility roles' lead-only intent; other omitted role chains
+inherit the native `default` chain.
+
+The pinned OMP 18.1.14 still drops that identity when initializing a child
+session. Actual retry experiments show a shared lead can borrow the parent's
+or a sibling's chain, including for an explicitly empty chain. Aliases fix the
+configuration boundary but need an upstream runtime repair for complete
+enforcement ([Code #142](https://github.com/atyrode/code/issues/142)); effective
+config and constructor-only checks cannot certify that behavior.
+
+`omp-managed config managed --json` exposes effective aliases, selectors and
+chains, but is not proof of a child's fallback behavior. For an offline native
+regression check when changing the OMP pin or routing:
+
+1. Use disposable HOME/state/configuration with no operator credentials,
+   project extensions or network model access. Register a deterministic local
+   test provider with a failing lead and distinct successful fallback models.
+2. Configure two declared roles with the same lead and thinking level, native
+   `@role` agent overrides, and different role-keyed chains. Exercise one
+   built-in role and one settings-defined role.
+3. Spawn real task children through the pinned OMP. Make the lead return a
+   retry-eligible failure, then inspect provider calls and child output: each
+   child must use its own role's fallback, with the configured thinking level,
+   rather than the parent's/default chain or the other role's fallback.
+4. Repeat with a direct-selector override to reproduce the lost-role defect.
+   Resolving an alias or inspecting generated YAML alone is insufficient.
+5. Remove disposable state. No paid provider calls or host activation are
+   required. `omp-stack` separately checks that a persistent direct override
+   cannot displace the managed alias and that the writable preference survives.
+
+### Speech and model-fact freshness
+
+Speech uses OMP's native first-use model downloads. Dotfiles no longer
+prefetches speech models at activation or manages a separate speech cache;
+existing downloaded caches remain untouched. A first use on an uncached
+machine can require a download. Publishing this change does not activate any
+host or download/remove its models.
+
+`pkgs/omp-configured/config/models.yml` stores curated routing facts.
+`nix run .#refresh-model-facts` refreshes metadata and runs paid chat benchmarks;
+it requires separately authorized model use. `--skip-bench` updates metadata
+without model turns, and `--bench-json <path>` can consume a saved native chat
+benchmark payload instead of making new benchmark calls.
+The `refreshed` stamp advances only when every catalog model has complete
+valid metadata and chat speed/TTFT measurements. Partial or failed runs retain
+unavailable values and the previous stamp while saving valid updates; partial
+failures exit nonzero. A successful metadata-only run still leaves the stamp
+unchanged. `refreshed: null` honestly means no complete refresh is attested,
+not that the facts were freshly measured or that every retained value is wrong.
+
+### Code launch choices
 
 `code` classifies a prompt and selected facets into a generated routing profile.
 Its trusted launches always use `omp-managed`; plain `omp` is invoked directly,
@@ -495,6 +603,24 @@ requires another review. Quit and EOF leave remaining choices unreviewed;
 `AGENT_TOOLS_DRY_RUN=1` prints the plan without writing, and
 `ATYRODE_SEED_REVIEW=0` suppresses apply-time interactive review for
 PTY-backed automation.
+
+The persistent seed intentionally retains direct `task.agentModelOverrides`
+selectors and supported legacy migration keys (including `task.isolation.mode`).
+Unlike immutable managed defaults, a seed has per-leaf ownership history:
+changing an untouched override to `@task` can silently switch its model to an
+independently customized `modelRoles.task`. Adding new role leaves can likewise
+conflict with existing local routing. The current seeder has one seed for both
+fresh and existing state, not a separate fresh-only alias path; this change does
+not introduce a second seed or migration engine. Consequently even a fresh
+plain-OMP seed retains the direct-selector limitation described above.
+
+For plain OMP, an operator-reviewed conversion must compare each live override,
+the desired role selector/thinking level, and its fallback chain together;
+declare any custom role and select `@role` only after preserving that intended
+routing. Keep the resulting differences during seed drift review rather than
+using `--reset-all`, which deliberately restores the legacy seeded values.
+Managed aliases preserve managed dispatch identity without rewriting any
+plain-OMP preference or changing old migration-key ownership.
 
 The seed may overlap keys owned by managed launchers: `defaults.yml` and
 `policy.yml` layer above the machine configuration, so seeded values cannot

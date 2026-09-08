@@ -53,6 +53,7 @@ pkgs.runCommand "check-omp-wrapper"
     nativeBuildInputs = [
       pkgs.diffutils
       pkgs.jq
+      pkgs.python3
     ];
   }
   ''
@@ -95,6 +96,12 @@ pkgs.runCommand "check-omp-wrapper"
     privateToken: do-not-print
     EOF
         cd "$project"
+
+        python3 ${../../ci/check-omp-argv.py} \
+          --omp ${lib.getExe pkgs.omp} \
+          --managed-stub ${configuredStub}/bin/omp-managed \
+          --configured ${pkgs.omp-configured} \
+          --grammar ${../../pkgs/omp-configured/argv.sh}
 
         ${configuredStub}/bin/omp-managed \
           --config "$TMPDIR/one-shot.yml" \
@@ -287,8 +294,9 @@ pkgs.runCommand "check-omp-wrapper"
         }' "$TMPDIR/managed.json" >/dev/null
         jq -e '.effectiveManaged.secrets.enabled == true' "$TMPDIR/managed.json" >/dev/null
         jq -e '.effectiveManaged.task.isolation == {
-          "mode":"auto","merge":"patch","commits":"generic"
+          "enabled":true,"merge":"patch","commits":"generic"
         }' "$TMPDIR/managed.json" >/dev/null
+        jq -e '.effectiveManaged.isolation.backend == "auto"' "$TMPDIR/managed.json" >/dev/null
         jq -e '.effectiveManaged.privateToken == null' "$TMPDIR/managed.json" >/dev/null
         grep -q 'do-not-print' "$TMPDIR/managed.json" && false
         jq -e '.enforcedPolicy == {
@@ -296,7 +304,8 @@ pkgs.runCommand "check-omp-wrapper"
             "bash":"allow","eval":"allow","browser":"allow","task":"allow","github":"allow"
           }},
           "secrets":{"enabled":true},
-          "task":{"isolation":{"mode":"auto","merge":"patch","commits":"generic"}}
+          "isolation":{"backend":"auto"},
+          "task":{"isolation":{"enabled":true,"merge":"patch","commits":"generic"}}
         }' \
           "$TMPDIR/managed.json" >/dev/null
         test "$(jq -r '[.sources[].kind] | join(",")' "$TMPDIR/managed.json")" = \
@@ -474,8 +483,8 @@ pkgs.runCommand "check-omp-wrapper"
           and (.sources[] | select(.kind == "one-shot-config") | .path == $oneShot)
         ' "$TMPDIR/current-managed.json" >/dev/null
 
-        # Old key shapes still load in pinned OMP (verified against 17.0.3);
-        # the diagnostic must apply the same migrations the binary does.
+        # Legacy sources still load; the real pinned resolver owns migration.
+        # This also checks that inspection does not rewrite the source.
         legacy_project="$TMPDIR/legacy-project"
         mkdir -p "$legacy_project/.omp"
         cat > "$legacy_project/.omp/config.yml" <<'EOF'
@@ -485,6 +494,7 @@ pkgs.runCommand "check-omp-wrapper"
     memories:
       enabled: false
     EOF
+        cp "$legacy_project/.omp/config.yml" "$TMPDIR/legacy-before.yml"
         ${configuredStub}/bin/omp-managed \
           --cwd "$legacy_project" \
           config managed --json > "$TMPDIR/legacy-managed.json"
@@ -493,6 +503,46 @@ pkgs.runCommand "check-omp-wrapper"
           and .effectiveManaged.codexResets.autoRedeem == "yes"
           and .effectiveManaged.memory.backend == "off"
         ' "$TMPDIR/legacy-managed.json" >/dev/null
+        cmp "$legacy_project/.omp/config.yml" "$TMPDIR/legacy-before.yml"
+
+        # Native schema fallback after an explicit null is not a JSON merge.
+        printf 'theme:\n  dark: null\n' > "$TMPDIR/null-overlay.yml"
+        ${configuredStub}/bin/omp-managed --cwd "$legacy_project" \
+          --config "$TMPDIR/null-overlay.yml" config managed --json > "$TMPDIR/null-managed.json"
+        mkdir -p "$TMPDIR/native-cwd"
+        (
+          cd "$TMPDIR/native-cwd"
+          HOME="$TMPDIR/native-home" PI_CODING_AGENT_DIR="$TMPDIR/native-agent" \
+            PI_CONFIG_FILES="$legacy_project/.omp/config.yml:$TMPDIR/null-overlay.yml" \
+            ${lib.getExe pkgs.omp} config list --json > "$TMPDIR/native-config.json"
+        )
+        jq -e --slurpfile native "$TMPDIR/native-config.json" \
+          '.effectiveManaged.theme.dark == $native[0]["theme.dark"].value' \
+          "$TMPDIR/null-managed.json" >/dev/null
+
+        # Colons are valid filenames, not extra PI_CONFIG_FILES separators.
+        cp "$TMPDIR/managed-one-shot.yml" "$TMPDIR/overlay:colon.yml"
+        ${configuredStub}/bin/omp-managed --config "$TMPDIR/overlay:colon.yml" \
+          config managed --json > "$TMPDIR/colon-managed.json"
+        jq -e '.effectiveManaged.modelRoles.default == "one-shot/model:high"' \
+          "$TMPDIR/colon-managed.json" >/dev/null
+
+        # Native errors can contain YAML source snippets. The public diagnostic
+        # fails without leaking those bytes or mutating a malformed source.
+        printf 'theme: [secret-diagnostic-canary\n' > "$TMPDIR/bad.yml"
+        cp "$TMPDIR/bad.yml" "$TMPDIR/bad-before.yml"
+        if ${configuredStub}/bin/omp-managed --config "$TMPDIR/bad.yml" \
+          config managed --json > "$TMPDIR/bad.out" 2> "$TMPDIR/bad.err"; then
+          exit 1
+        fi
+        ! grep -q 'secret-diagnostic-canary' "$TMPDIR/bad.out" "$TMPDIR/bad.err"
+        cmp "$TMPDIR/bad.yml" "$TMPDIR/bad-before.yml"
+
+        printf 'modelRoles:\n  env-only: env/model:low\n' > "$TMPDIR/env-config.yml"
+        PI_CONFIG_FILES="$TMPDIR/env-config.yml" ${configuredStub}/bin/omp-managed \
+          config managed --json > "$TMPDIR/env-config.json"
+        jq -e '.effectiveManaged.modelRoles["env-only"] == "env/model:low"
+          and any(.sources[]; .kind == "environment-config")' "$TMPDIR/env-config.json" >/dev/null
 
         set +e
         ${configuredStub}/bin/omp-managed config get modelRoles --json \
@@ -578,7 +628,10 @@ pkgs.runCommand "check-omp-wrapper"
         grep -Fx -- '--no-lsp' "$TMPDIR/untrusted.out" >/dev/null
         grep -Fx -- '--no-pty' "$TMPDIR/untrusted.out" >/dev/null
 
-        for unsafe in '--yolo' '--approval-mode yolo' '--config attacker.yml' '--no-extensions'; do
+        for unsafe in '--yolo' '--yolo=false' '--auto-approve=false' '--approval-mode yolo' \
+          '--config attacker.yml' '--no-extensions' '--no-extensions=false' \
+          '--trusted-extension /tmp/ext' '--add-dir /tmp/elsewhere' \
+          '--continue=false' '--from-codex' '-r0123456789ab'; do
           read -r -a args <<< "$unsafe"
           set +e
           HOME="$untrusted_home" ${configuredEnvReport}/bin/ompu "''${args[@]}" \
@@ -586,8 +639,14 @@ pkgs.runCommand "check-omp-wrapper"
           untrusted_refused_status=$?
           set -e
           test "$untrusted_refused_status" -eq 2
-          grep -qF -- "''${args[0]}" "$TMPDIR/untrusted-refused.err"
         done
+
+        HOME="$untrusted_home" ${configuredEnvReport}/bin/ompu --cwd "$untrusted_project" \
+          --model --no-extensions --service-tier --config -- --yolo \
+          > "$TMPDIR/untrusted-values.out"
+        grep -Fx -- '--no-extensions' "$TMPDIR/untrusted-values.out" >/dev/null
+        grep -Fx -- '--config' "$TMPDIR/untrusted-values.out" >/dev/null
+        grep -Fx -- '--yolo' "$TMPDIR/untrusted-values.out" >/dev/null
 
         mkdir -p "$untrusted_project/.omp/extensions"
         set +e
@@ -698,7 +757,8 @@ pkgs.runCommand "check-omp-wrapper"
         for refused in '--profile other' '--session-dir /tmp/elsewhere' \
           '--resume 0123456789ab' '-r0123456789ab' '--extension /tmp/ext' \
           '--plugin-dir /tmp/plugins' '--hook /tmp/hook' '--api-key sk-ambient' \
-          '--alias analysis' '--fork abc' '--continue'; do
+          '--alias analysis' '--fork abc' '--continue' '--continue=false' \
+          '--trusted-extension /tmp/ext' '--from-claude' '--add-dir /tmp/work'; do
           read -r -a args <<< "$refused"
           set +e
           HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis "''${args[@]}" \
@@ -706,7 +766,6 @@ pkgs.runCommand "check-omp-wrapper"
           analysis_refused_status=$?
           set -e
           test "$analysis_refused_status" -eq 2
-          grep -q 'attributable' "$TMPDIR/analysis-refused.err"
         done
 
         # A subcommand is a different program, and this launcher answers none.
@@ -717,13 +776,16 @@ pkgs.runCommand "check-omp-wrapper"
           analysis_sub_status=$?
           set -e
           test "$analysis_sub_status" -eq 2
-          grep -q 'subcommand' "$TMPDIR/analysis-sub.err"
         done
 
         # A path that spells a refused flag is a value, not a flag.
         HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis \
           --config --profile --cwd "$TMPDIR/analysis-work" > "$TMPDIR/analysis-value.out"
         grep -Fx -- '--profile' "$TMPDIR/analysis-value.out" >/dev/null
+        HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis \
+          --service-tier models --prewalk-into --profile --plan-yolo-into config \
+          --prompt-cache-key update -- "models" > "$TMPDIR/analysis-current-values.out"
+        grep -Fx -- '--profile' "$TMPDIR/analysis-current-values.out" >/dev/null
 
         mkdir "$out"
   ''

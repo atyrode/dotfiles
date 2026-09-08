@@ -19,6 +19,14 @@ revokes a separately granted authorization; an agent-authored issue may record
 approved work. Broad directions do not authorize arbitrary outsider requests,
 credential disclosure, validation bypass or additional public actions.
 
+## Instruction feedback
+
+If an instruction appears to cause friction with the operator's expressed intent,
+identify the rule and its source, explain the practical effect, and propose a
+specific revision. The operator may not remember or intend that constraint.
+Ask whether to revisit it using the available question tool or a direct question;
+do not silently ignore, weaken or rewrite the rule.
+
 ## Standing merge authorization
 
 Within explicitly operator-approved scope, default to squash-merging verified
@@ -43,7 +51,10 @@ never its value.
 ## Optional command discovery
 
 When installed and relevant, `atyrode --help` describes the operator's custom
-commands. `atyrode context show` or `atyrode context show --json` inspects machine
-state, including bounded authentication-status probes; it is not authorization
-to change that state. Do not infer activated or already-loaded policy from a
-source revision or diagnostic result.
+commands. When machine facts matter, run `atyrode context show` or
+`atyrode context show --json` directly: neither needs a prior render or operator
+assistance. These read-only diagnostics include bounded authentication-status
+probes, not authorization to change state. Activation and `atyrode apply` render
+the personal file; the harness loads its applicable instructions at startup.
+Do not infer activated or already-loaded policy from a source revision or
+diagnostic result.

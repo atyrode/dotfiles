@@ -613,7 +613,8 @@ pkgs.runCommand "check-atyrode-apply"
       sed '/^Generated at /d' > "$TMPDIR/context-default"
     sed '/^Generated at /d' "$TMPDIR/context-show" |
       diff "$TMPDIR/context-default" -
-    PATH="$TMPDIR/sessionbin:$PATH" atyrode context --json | jq -e '
+    PATH="$TMPDIR/sessionbin:$PATH" atyrode context --json > "$TMPDIR/context-show.json"
+    jq -e '
       .schemaVersion == 1
       and .command == "context"
       and .target == (env.XDG_CONFIG_HOME + "/agents/AGENTS.md")
@@ -631,12 +632,23 @@ pkgs.runCommand "check-atyrode-apply"
       and .cloneRoot == null
       and .dotfilesCheckout == null
       and (.generatedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
-    ' >/dev/null
+    ' "$TMPDIR/context-show.json" >/dev/null
     # The fixture has a conventional checkout; diagnostics must not infer it.
     test -d "$HOME/nix-dotfiles/.git"
     diff "$context_file" "$TMPDIR/context-before-show"
     atyrode context render --json >/dev/null 2>&1 && false
     atyrode context render show >/dev/null 2>&1 && false
+
+    # Diagnostics are live, not a view of the deployed startup snapshot. Compare
+    # both public formats with the healthy baseline, ignoring only display time.
+    context_show_live() {
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show > "$TMPDIR/context-live"
+      sed '/^Generated at /d' "$TMPDIR/context-live" |
+        diff "$TMPDIR/context-default" -
+      PATH="$TMPDIR/sessionbin:$PATH" atyrode context show --json > "$TMPDIR/context-live.json"
+      diff <(jq -S 'del(.generatedAt)' "$TMPDIR/context-show.json") \
+        <(jq -S 'del(.generatedAt)' "$TMPDIR/context-live.json")
+    }
 
     # Health compares actual policy and known revision, not inventory age.
     # Missing, changed or manually replaced policy still requires the writer.
@@ -658,6 +670,7 @@ pkgs.runCommand "check-atyrode-apply"
     context_probe ok ""
     printf '\nRetired diagnostic inventory\n' >> "$context_file"
     context_probe degraded context-stale
+    context_show_live
     cp "$TMPDIR/context-fresh" "$context_file"
     # Development builds lack a published revision but still compare policy.
     sed -i 's/ revision [^ ]* by / revision 0123456789abcdef0123456789abcdef01234567 by /' "$context_file"
@@ -680,8 +693,12 @@ pkgs.runCommand "check-atyrode-apply"
         | .status == "degraded" and .code == "context-stale"' >/dev/null
     printf '# hand-written\n' > "$context_file"
     context_probe degraded context-unreadable
+    context_show_live
     rm -f "$context_file"
     context_probe incomplete not-configured
+    # Neither diagnostic format requires an earlier render or creates its file.
+    context_show_live
+    test ! -e "$context_file"
     # Off a terminal the review names the surface and the render step settles
     # it in the same run, so the machine never stays without one.
     atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/context-heal.err" ||

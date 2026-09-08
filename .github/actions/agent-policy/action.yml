@@ -1,5 +1,5 @@
-name: Check shared engineering contract
-description: Check generated policy bytes against the source bundled with this action.
+name: Check agent instructions
+description: Check generated policy bytes and actual OMP loading of the candidate instructions.
 inputs:
   layout:
     description: Fixed target layout (repository or dotfiles).
@@ -28,3 +28,19 @@ runs:
           --source "$source_file" \
           --root "$GITHUB_WORKSPACE" \
           --layout "$POLICY_LAYOUT"
+
+    - name: Install Nix for the pinned OMP runtime
+      uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+
+    - name: Check actual OMP context loading
+      shell: bash
+      run: |
+        source_root="$(realpath -- "$GITHUB_ACTION_PATH/../../..")"
+        # Build the runtime from this action's reviewed snapshot, not a second pin
+        # or a later resolution of main. The consumer's code is never executed.
+        omp_package="$(nix build --no-link --print-out-paths "path:$source_root#omp")"
+        python3 "$source_root/ci/check-agent-context.py" \
+          --omp "$omp_package/bin/omp" \
+          --repository "$GITHUB_WORKSPACE" \
+          --personal-context "$source_root/modules/home/agents/AGENTS.md" \
+          --common-policy "$source_root/modules/home/agents/engineering.md"

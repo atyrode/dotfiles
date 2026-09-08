@@ -34,6 +34,32 @@ def packet(metadata, payload=b""):
     return b"\x1b]5522;type=read:" + metadata + b";" + payload + b"\x07"
 
 
+def stop_process_group(process):
+    # Code can still have startup probes alive after its OMP child exits.
+    # Reaping only the group leader does not make its temporary HOME quiescent.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError("interactive fixture process group did not terminate")
+        time.sleep(0.02)
+
+
 def exercise(executable, args, name, launch_key=None):
     with tempfile.TemporaryDirectory(prefix="omp-interactive-") as temporary:
         root = Path(temporary)
@@ -116,13 +142,7 @@ def exercise(executable, args, name, launch_key=None):
                 print(f"PASS {name}: paste opt-in, PNG request and composer attachment")
             finally:
                 if process is not None:
-                    if process.poll() is None:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=5)
+                    stop_process_group(process)
                 os.close(master)
                 if slave is not None:
                     os.close(slave)

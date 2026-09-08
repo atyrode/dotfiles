@@ -55,8 +55,9 @@ assert lib.assertMsg (
     plugins-deploy = [
       receiver
       "plugin-delivery"
-      "in-realm"
+      "hardened"
       "https://github.com/atyrode/code/releases/"
+      "in-realm"
       "https://github.com/atyrode/babel/releases/"
     ];
   }
@@ -92,8 +93,9 @@ pkgs.runCommand "check-deploy-keys"
     commands = {line.rsplit(' ', 1)[1]: shlex.split(decode(line)) for line in data['lines']}
     assert commands == {
         'manifold-deploy': [data['receiver'], 'deploy'],
-        'plugins-deploy': [data['receiver'], 'plugin-delivery', 'in-realm',
+        'plugins-deploy': [data['receiver'], 'plugin-delivery', 'hardened',
                            'https://github.com/atyrode/code/releases/',
+                           'in-realm',
                            'https://github.com/atyrode/babel/releases/'],
     }
     command = decode(data['fixtureLine'])

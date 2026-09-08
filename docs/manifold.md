@@ -234,14 +234,18 @@ public keys and their existing private-key custody:
   `/run/current-system/sw/bin/manifold-preview-receiver deploy`. It can deploy
   `main` or bring a preview up or down, not install plugins.
 - `plugins-deploy` (the shared delivery credential in atyrode/code and
-  atyrode/babel) runs that receiver with fixed `plugin-delivery in-realm`
-  authority, limited to `https://github.com/atyrode/code/releases/` and
-  `https://github.com/atyrode/babel/releases/`. This deliberately preserves
-  trusted own-plugin development, installation and release delivery on the
-  integrated preview, without revision-deployment authority or arbitrary
-  publishers. In-realm execution is trusted application-code authority, not a
-  sandbox. The native hardened plugin installation API remains available for
-  the operator's separate choice; this delivery key does not ban or remove it.
+  atyrode/babel) runs that receiver with fixed `plugin-delivery` authority
+  expressed as `MODE PREFIX` pairs: `hardened` for
+  `https://github.com/atyrode/code/releases/`, then `in-realm` for
+  `https://github.com/atyrode/babel/releases/`. This preserves the existing
+  Code release workflow's `--hardened` installation and Babel's in-realm
+  installation, without changing either workflow or its credentials. Trusted
+  own-plugin development, installation and release delivery remain available
+  on the integrated preview, without revision-deployment authority, arbitrary
+  publishers or caller-selected mode changes. In-realm execution is trusted
+  application-code authority, not a sandbox. The native hardened plugin
+  installation API also remains available for the operator's separate choice;
+  this delivery key does not ban or remove it.
 
 Both keys are forced-command only, with no PTY, forwarding or user SSH rc.
 The registry's command tail is literal argv, shell-quoted and then escaped

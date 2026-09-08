@@ -27,8 +27,9 @@
 #          Caller text arrives only as SSH_ORIGINAL_COMMAND; the receiver
 #          validates it within the fixed role, never as additional authority.
 #          Deploy and plugin delivery deliberately use separate roles. The
-#          shared own-plugin key retains in-realm installs for Code and Babel;
-#          it cannot deploy revisions or choose other publishers.
+#          shared own-plugin key retains Code's hardened installs and Babel's
+#          in-realm installs through fixed MODE PREFIX pairs; it cannot deploy
+#          revisions, change a publisher's mode or choose other publishers.
 
 manifold-deploy  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIINhtNvQ1OSskawGaz6rKvHFg3J95BF1ref1QwwupxXu  /run/current-system/sw/bin/manifold-preview-receiver deploy
-plugins-deploy   dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAINQnbB1ko44SXqwsfzn3/C7qJoyyQXgEPKHrtlxwInLl  /run/current-system/sw/bin/manifold-preview-receiver plugin-delivery in-realm https://github.com/atyrode/code/releases/ https://github.com/atyrode/babel/releases/
+plugins-deploy   dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAINQnbB1ko44SXqwsfzn3/C7qJoyyQXgEPKHrtlxwInLl  /run/current-system/sw/bin/manifold-preview-receiver plugin-delivery hardened https://github.com/atyrode/code/releases/ in-realm https://github.com/atyrode/babel/releases/

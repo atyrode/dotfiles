@@ -316,10 +316,16 @@ prerequisite `manifold-preview-legacy-guard.service`. On every native owner or
 transport start it first resolves the existing account's public UID and
 explicitly starts/waits for its systemd user manager. It then queries both
 declared old units through that manager. Each must be `inactive`/`dead`, with
-no pending job, trigger or upholding unit, no stale manager metadata, and a
-disabled, persistently masked or demonstrably absent unit definition. Enabled,
-runtime-only masked, failed, activating and unknown states all block startup;
-an unavailable user bus or failed/incomplete metadata query also blocks it.
+no pending job or stale manager metadata, and a disabled, persistently masked
+or demonstrably absent unit definition. The manager's declared trigger/upholder,
+reverse Wants/Requires/BindsTo, success/failure (both directions), and
+PartOf/ConsistsOf relationships may name only the two independently checked old
+units. Any external edge blocks startup even when its source is inactive:
+in particular, a timer targeting a wrapper that wants an old unit is not
+retirement. This is a bounded dependency snapshot, not permission for later
+privileged reconfiguration. Enabled, runtime-only masked, failed, activating
+and unknown states all block startup; an unavailable user bus or
+failed/incomplete metadata query also blocks it.
 The guard never stops, disables, masks or kills either old supervisor and
 never reads or repairs its state. It runs before private owner configuration
 publication and before PID 1 loads the transport's credential, not as an

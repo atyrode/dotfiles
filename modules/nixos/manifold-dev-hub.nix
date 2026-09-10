@@ -166,24 +166,38 @@ in
       for unit in manifold-dev-terminal-host.service manifold-dev-agent.service; do
         metadata="$(${config.systemd.package}/bin/systemctl --user \
           --machine=${pkgs.lib.escapeShellArg "${username}@.host"} show --all \
-          --property=LoadState,ActiveState,SubState,UnitFileState,Job,NeedDaemonReload,TriggeredBy,UpheldBy \
+          --property=LoadState,ActiveState,SubState,UnitFileState,Job,NeedDaemonReload,TriggeredBy,UpheldBy,WantedBy,RequiredBy,BoundBy,OnSuccess,OnFailure,OnSuccessOf,OnFailureOf,PartOf,ConsistsOf \
           -- "$unit")" || refuse "$unit metadata is unavailable"
         declare -A state=()
         while IFS='=' read -r key value; do
           case "$key" in
-            LoadState|ActiveState|SubState|UnitFileState|Job|NeedDaemonReload|TriggeredBy|UpheldBy)
+            LoadState|ActiveState|SubState|UnitFileState|Job|NeedDaemonReload|TriggeredBy|UpheldBy|WantedBy|RequiredBy|BoundBy|OnSuccess|OnFailure|OnSuccessOf|OnFailureOf|PartOf|ConsistsOf)
               [[ ! -v "state[$key]" ]] || refuse "$unit metadata is ambiguous"
               state[$key]="$value"
               ;;
             *) refuse "$unit metadata is unrecognized" ;;
           esac
         done <<< "$metadata"
-        [[ "''${#state[@]}" == 8 ]] || refuse "$unit metadata is incomplete"
+        [[ "''${#state[@]}" == 17 ]] || refuse "$unit metadata is incomplete"
         [[ "''${state[ActiveState]}" == inactive && "''${state[SubState]}" == dead ]] \
           || refuse "$unit is not stopped"
-        [[ "''${state[NeedDaemonReload]}" == no && -z "''${state[Job]}" \
-          && -z "''${state[TriggeredBy]}" && -z "''${state[UpheldBy]}" ]] \
-          || refuse "$unit has stale metadata or a queued/triggered supervisor"
+        [[ "''${state[NeedDaemonReload]}" == no && -z "''${state[Job]}" ]] \
+          || refuse "$unit has stale metadata or a queued supervisor"
+        # Disabled units can still be pulled in by a timer's wrapper target,
+        # another unit's success/failure handler, or a propagated restart.
+        # Inspect the manager's declared edges, not merely direct triggers.
+        # Only the two independently checked legacy units may supervise each
+        # other; no external activation edge is safe even when inactive now.
+        for relationship in TriggeredBy UpheldBy WantedBy RequiredBy BoundBy \
+          OnSuccess OnFailure OnSuccessOf OnFailureOf PartOf ConsistsOf; do
+          read -r -a related <<< "''${state[$relationship]}"
+          for other in "''${related[@]}"; do
+            case "$other" in
+              manifold-dev-terminal-host.service|manifold-dev-agent.service) ;;
+              *) refuse "$unit has external $relationship dependency $other" ;;
+            esac
+          done
+        done
         case "''${state[LoadState]}:''${state[UnitFileState]}" in
           loaded:disabled|loaded:masked|masked:masked|not-found:)
             ;;

@@ -6,37 +6,12 @@ let
     configuredStub
     defaultsConfig
     policyConfig
-    stubOmp
     untrustedConfig
     yoloConfig
     ;
   settingsGuardExtension = ../../pkgs/omp-configured/config/extensions/managed-settings-guard.ts;
   parallelWriteRule = ../../pkgs/omp-configured/config/rules/parallel-write-isolation.md;
   ompRuntimeVersion = builtins.head (lib.splitString "-" (lib.getVersion pkgs.omp));
-  codeEnvironmentStub = pkgs.writeShellScriptBin "code" ''
-    if [[ -z "''${CODE_ENV_LOG:-}" ]]; then
-      while (( $# )); do
-        if [[ "$1" == --out ]]; then
-          : > "$2"
-          exit 0
-        fi
-        shift
-      done
-      exit 0
-    fi
-    {
-      printf 'OMP_AUTH_BROKER_URL=%s\n' "''${OMP_AUTH_BROKER_URL-unset}"
-      printf 'OMP_AUTH_BROKER_TOKEN=%s\n' "''${OMP_AUTH_BROKER_TOKEN-unset}"
-      printf 'OMP_AUTH_BROKER_SNAPSHOT_CACHE=%s\n' "''${OMP_AUTH_BROKER_SNAPSHOT_CACHE-unset}"
-      printf 'CODE_AUTH_LOGIN_VIA=%s\n' "''${CODE_AUTH_LOGIN_VIA-unset}"
-      printf 'CODE_OMP=%s\n' "''${CODE_OMP-unset}"
-      printf 'args=%s\n' "$*"
-    } > "''${CODE_ENV_LOG:?}"
-  '';
-  configuredCodeStub = pkgs.callPackage ../../pkgs/omp-configured {
-    omp = stubOmp;
-    code = codeEnvironmentStub;
-  };
 in
 pkgs.runCommand "check-omp-stack"
   {
@@ -86,15 +61,8 @@ pkgs.runCommand "check-omp-stack"
     test "$(yq eval '.tools.approval.eval' ${untrustedConfig})" = "deny"
     test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
 
-    # The hand-curated preset launchers were sunset: the managed bin set is now
-    # exactly `code omp omp-analysis omp-managed ompu` (plus the zsh
-    # completion). The omp-passthrough launchers report the pinned version;
-    # Code's headless engine path is exercised by the Babel migration check.
-    # Also validate the analysis posture the restricted launcher applies: an
-    # unreadable or malformed layer would take the Babel worker down at launch,
-    # which is exactly the failure this launcher exists to end.
-    "$raw_omp" models --config ${pkgs.omp-configured.analysisConfig} --json >/dev/null
-    for command in omp omp-analysis omp-managed ompu; do
+    # The OMP launchers report the pinned runtime version.
+    for command in omp omp-managed ompu; do
       command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
       test "''${command_version##*/}" = "${ompRuntimeVersion}"
     done
@@ -121,73 +89,10 @@ pkgs.runCommand "check-omp-stack"
       grep -Fxq ${lib.escapeShellArg (lib.getExe pkgs.typescript-language-server)} \
         "$typescript_lsp_log"
     done
-    ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
-    grep -q 'usage:' "$TMPDIR/code-help.txt"
-    # `code ls` must survive the wrapper's tty guard. It exists for scripts
-    # and for triaging a machine over a bare `ssh host 'code ls'`, which is
-    # precisely when no terminal is attached — and a nix build sandbox has
-    # none either, so this check reproduces that condition exactly.
-    CODE_SESSION_STATE="$TMPDIR/code-sessions" \
-      ${pkgs.omp-configured}/bin/code ls >/dev/null
-    # The generator owns only non-secret account/selection state; every
-    # trusted child inherits the central broker and its launch account pool.
-    grep -Fq 'export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"' \
-      ${pkgs.omp-configured}/bin/code
-    grep -Fq 'export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"' \
-      ${pkgs.omp-configured}/bin/code
-    grep -Fq 'export CODE_RUNTIME_BROKER="''${CODE_RUNTIME_BROKER:-atyrode}"' ${pkgs.omp-configured}/bin/code
-    grep -Fq -- '--profile default usage --json' ${pkgs.omp-configured}/bin/code
-    # The bearer token is the shared clan var Home Manager links to
-    # ~/.omp/auth-broker.token, the same file OMP resolves itself; `code` reads
-    # it into the environment because it talks to the broker over HTTP and
-    # passes the credential on through withAuthEnv. CODE_AUTH_LOGIN_VIA is
-    # not derived from anything on disk: tunnel machines export it from Home
-    # Manager, so here it is exactly what the caller's environment carried.
-    mkdir -p "$HOME/.omp"
-    printf 'broker-token\n' > "$HOME/.omp/auth-broker.token"
-    CODE_ENV_LOG="$TMPDIR/code-broker-env" \
-      XDG_CACHE_HOME="$TMPDIR/code-broker-cache" \
-      ${configuredCodeStub}/bin/code ls
-    printf '%s\n' \
-      'OMP_AUTH_BROKER_URL=http://127.0.0.1:46171' \
-      'OMP_AUTH_BROKER_TOKEN=broker-token' \
-      "OMP_AUTH_BROKER_SNAPSHOT_CACHE=$TMPDIR/code-broker-cache/atyrode/omp-auth-broker/snapshot.json" \
-      'CODE_AUTH_LOGIN_VIA=unset' \
-      "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
-      'args=ls' > "$TMPDIR/expected-code-broker-env"
-    cmp "$TMPDIR/expected-code-broker-env" "$TMPDIR/code-broker-env"
-
-    CODE_ENV_LOG="$TMPDIR/code-tunnel-broker-env" \
-      XDG_CACHE_HOME="$TMPDIR/code-broker-cache" \
-      CODE_AUTH_LOGIN_VIA=alex@broker.example \
-      ${configuredCodeStub}/bin/code ls
-    grep -Fxq 'CODE_AUTH_LOGIN_VIA=alex@broker.example' "$TMPDIR/code-tunnel-broker-env"
-    grep -Fxq 'OMP_AUTH_BROKER_TOKEN=broker-token' "$TMPDIR/code-tunnel-broker-env"
-
-    # A machine whose var is not yet placed has a dangling link where the
-    # token would be: `code` launches without a broker and clears any stale
-    # broker environment rather than forwarding it.
-    rm "$HOME/.omp/auth-broker.token"
-    ln -s /run/secrets/vars/omp-auth-broker/token "$HOME/.omp/auth-broker.token"
-    CODE_ENV_LOG="$TMPDIR/code-no-broker-env" \
-      OMP_AUTH_BROKER_URL=stale-url \
-      OMP_AUTH_BROKER_TOKEN= \
-      OMP_AUTH_BROKER_SNAPSHOT_CACHE=stale-cache \
-      ${configuredCodeStub}/bin/code ls
-    printf '%s\n' \
-      'OMP_AUTH_BROKER_URL=unset' \
-      'OMP_AUTH_BROKER_TOKEN=unset' \
-      'OMP_AUTH_BROKER_SNAPSHOT_CACHE=unset' \
-      'CODE_AUTH_LOGIN_VIA=unset' \
-      "CODE_OMP=${lib.getExe configuredCodeStub.ompManagedDefault}" \
-      'args=ls' > "$TMPDIR/expected-code-no-broker-env"
-    cmp "$TMPDIR/expected-code-no-broker-env" "$TMPDIR/code-no-broker-env"
-    rm "$HOME/.omp/auth-broker.token"
-
     test ! -e ${pkgs.omp-configured}/bin/pi
     test "$(
       find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-    )" = "code,omp,omp-analysis,omp-managed,ompu"
+    )" = "omp,omp-managed,ompu"
 
     ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
     test ! -s "$TMPDIR/models.err"

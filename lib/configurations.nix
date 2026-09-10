@@ -6,6 +6,7 @@
   clan-core,
   disko,
   home-manager,
+  manifold,
   nix-homebrew,
   nixos-facter-modules,
   nixos-wsl,
@@ -202,9 +203,12 @@ let
         (machineDirectory + "/boot.nix")
         ../modules/nixos/vps.nix
         ../modules/nixos/cloudflare-dns.nix
-        ../modules/nixos/manifold-dev-hub.nix
         ../modules/nixos/myparcelle-dev.nix
         ../modules/nixos/games.nix
+      ]
+      ++ lib.optionals (name == "dev-01") [
+        manifold.nixosModules.native
+        ../modules/nixos/manifold-dev-hub.nix
       ]
       ++ clanMachineModules;
     };

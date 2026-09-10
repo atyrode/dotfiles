@@ -60,7 +60,6 @@ let
         atyrode-preview = final.callPackage ../pkgs/atyrode-preview { };
         # Repository-owned on every platform: upstream releases outpace
         # nixpkgs, which also cannot build codex on aarch64-darwin.
-        code = final.callPackage ../pkgs/code { };
         codex = final.callPackage ../pkgs/codex { };
         codex-seed = final.callPackage ../pkgs/codex-seed { };
         omp = final.callPackage ../pkgs/omp { };

@@ -183,7 +183,6 @@
           inherit (pkgs)
             atyrode
             atyrode-preview
-            code
             codex
             codex-seed
             omp
@@ -227,17 +226,6 @@
         system:
         let
           pkgs = repositoryPkgsFor system;
-          # Re-pull the factual fields in pkgs/omp-configured/config/models.yml from omp (cost/context via
-          # `omp models`, speed/ttft via `omp bench`). Run from the repo root:
-          #   nix run .#refresh-model-facts [-- --skip-bench | --runs 3 | …]
-          refreshModelFacts = pkgs.writeShellApplication {
-            name = "refresh-model-facts";
-            runtimeInputs = [
-              (pkgs.python3.withPackages (ps: [ ps.ruamel-yaml ]))
-              pkgs.omp
-            ];
-            text = ''python3 ${./pkgs/omp-configured/config/refresh-model-facts.py} "$@"'';
-          };
           atyrodeApp = {
             type = "app";
             program = "${pkgs.atyrode}/bin/atyrode";
@@ -247,11 +235,6 @@
         {
           default = atyrodeApp;
           atyrode = atyrodeApp;
-          refresh-model-facts = {
-            type = "app";
-            program = "${refreshModelFacts}/bin/refresh-model-facts";
-            meta.description = "Refresh OMP model cost, context, and benchmark facts";
-          };
         }
       );
     };

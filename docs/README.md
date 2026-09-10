@@ -16,7 +16,7 @@ not in a checklist.
 | [atyrode.md](atyrode.md) | What the `atyrode` CLI promises: the mutation boundary, what reaches the terminal, and where its identities and surfaces come from (`atyrode --help` is the syntax) |
 | [secrets.md](secrets.md) | Secrets and their audience: sops-nix, the operator and machine identities, enrolment and revocation |
 | [manifold.md](manifold.md) | The `manifold-node` capability: a spoke of the self-hosted hub, its enrollment, operator-timed agent upgrades, and master migration |
-| [agent-tools.md](agent-tools.md) | OMP, the `code` profile generator, agents, and rules |
+| [agent-tools.md](agent-tools.md) | OMP launchers, shared authentication, agents, and rules |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |
 | [agent-security.md](agent-security.md) | Trust tiers and the managed OMP policy for untrusted content |
 | [shell.md](shell.md) | The interactive shell surface (a launcher, not a dev environment) |

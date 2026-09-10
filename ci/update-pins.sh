@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh selected repository-owned binary pins to their latest releases.
-# With no package names, refresh OMP, code, and Codex. Prints one line per
+# With no package names, refresh OMP, Codex, and Manifold. Prints one line per
 # bump on stdout -- the manifest the workflow reads -- and narrates what it
 # fetched and rewrote on stderr. Requires curl, jq, awk, and nix.
 set -euo pipefail
@@ -22,10 +22,10 @@ NARRATE_NAME=update-pins
 targets=("$@")
 for target in "${targets[@]}"; do
   case "$target" in
-    omp | code | codex | manifold) ;;
+    omp | codex | manifold) ;;
     *)
       refuse "$NARRATE_NAME" "$target is not a pin this repository owns"
-      say "usage: ${0##*/} [omp|code|codex|manifold]..."
+      say "usage: ${0##*/} [omp|codex|manifold]..."
       exit 2
       ;;
   esac
@@ -172,12 +172,6 @@ if wants omp; then
   bump omp "$repo_root/pkgs/omp/default.nix" can1357/oh-my-pi v \
     'https://github.com/can1357/oh-my-pi/releases/download/@tag@/@asset@' \
     omp-linux-x64 omp-linux-arm64 omp-darwin-x64 omp-darwin-arm64
-fi
-
-if wants code; then
-  bump code "$repo_root/pkgs/code/default.nix" atyrode/code v \
-    'https://github.com/atyrode/code/releases/download/@tag@/@asset@.tar.gz' \
-    code-linux-amd64 code-linux-arm64 code-darwin-amd64 code-darwin-arm64
 fi
 
 if wants codex; then

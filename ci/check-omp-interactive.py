@@ -35,8 +35,7 @@ def packet(metadata, payload=b""):
 
 
 def stop_process_group(process):
-    # Code can still have startup probes alive after its OMP child exits.
-    # Reaping only the group leader does not make its temporary HOME quiescent.
+    # Reap the whole process group before its temporary HOME is removed.
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -60,7 +59,7 @@ def stop_process_group(process):
         time.sleep(0.02)
 
 
-def exercise(executable, args, name, launch_key=None):
+def exercise(executable, args, name):
     with tempfile.TemporaryDirectory(prefix="omp-interactive-") as temporary:
         root = Path(temporary)
         home = root / "home"
@@ -70,10 +69,6 @@ def exercise(executable, args, name, launch_key=None):
         for key in ("CI", "NO_COLOR"):
             environment.pop(key, None)
         environment.update({"TERM": "xterm-256color", "COLORTERM": "truecolor"})
-        environment.update({
-            "CODE_SELECTION_STATE": "off",
-            "CODE_SESSION_STATE": "off",
-        })
         config = home / ".omp/agent/config.yml"
         context.put(config, json.dumps({
             "modelRoles": {"default": "openai/gpt-4.1"},
@@ -126,9 +121,6 @@ def exercise(executable, args, name, launch_key=None):
                                 if len(output) > 4 * 1024 * 1024:
                                     raise AssertionError(f"{name}: excessive terminal output")
 
-                    if launch_key is not None:
-                        expect(b"managed")
-                        os.write(master, launch_key)
                     expect(ENABLE)
                     # An opt-in alone is insufficient: prove the live input controller
                     # consumes a MIME offer and asks the terminal for its PNG bytes.
@@ -163,8 +155,6 @@ def main():
         ("ompu", [], "restricted bare startup"),
     ):
         exercise(str(Path(options.configured) / "bin" / command), args, name)
-    for key, name in ((b"\r", "generated Code launch"), (b"m", "managed Code launch")):
-        exercise(str(Path(options.configured) / "bin/code"), [], name, launch_key=key)
 
 
 if __name__ == "__main__":

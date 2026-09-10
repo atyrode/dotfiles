@@ -7,39 +7,16 @@
 
 let
   cfg = config.atyrode.agentTools;
-  lcfg = cfg.localClassifier;
   rgcfg = cfg.resourceGuard;
   managedSkills = pkgs.symlinkJoin {
     name = "atyrode-agent-skills";
     paths = [ ../agents/skills ];
   };
-  ollamaBin = lib.getExe pkgs.ollama;
-  # Pull the generator's classifier model to disk once the daemon is up (only if
-  # missing — the pull is a no-op otherwise), so the first Load in the generator is a
-  # fast RAM-load rather than a multi-minute download. The model is NOT loaded
-  # into memory here: residency is the user's explicit choice via the generator's
-  # load/unload toggle (see cli-kit Loadable), so it never occupies RAM unbidden.
-  pullClassifierModel = pkgs.writeShellScript "ollama-pull-classifier" ''
-    set -u
-    export OLLAMA_HOST=127.0.0.1:${toString lcfg.port}
-    for _ in $(seq 1 60); do
-      if ${ollamaBin} list >/dev/null 2>&1; then break; fi
-      sleep 1
-    done
-    if ${ollamaBin} list 2>/dev/null | grep -qF ${lib.escapeShellArg lcfg.model}; then
-      echo "ollama: ${lcfg.model} already present"
-      exit 0
-    fi
-    echo "ollama: pulling ${lcfg.model} for the code generator (first run only)..."
-    exec ${ollamaBin} pull ${lib.escapeShellArg lcfg.model}
-  '';
   defaultsConfig = ../../../pkgs/omp-configured/config/defaults.yml;
   policyConfig = ../../../pkgs/omp-configured/config/policy.yml;
   untrustedConfig = ../../../pkgs/omp-configured/config/untrusted.yml;
 
-  # Trusted sessions share one credential pool in OMP's default profile. `code`
-  # applies immutable per-launch account pools; changing a preset never mutates
-  # or duplicates credentials.
+  # Trusted sessions share one credential pool in OMP's default profile.
   #
   # One broker serves the fleet and every other machine tunnels to it. Which
   # is which, and where the tunnel goes, are decided in Nix by
@@ -259,53 +236,6 @@ in
       };
     };
 
-    localClassifier = {
-      # A local model that powers `code`'s prompt→profile suggestion (ctrl+o): a
-      # small instruct model on the ollama daemon answers over loopback with no
-      # auth and no network. The daemon is a general Asker/Commander backend and a
-      # local-model playground, not generator-only — hence enabled everywhere.
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = ''
-          Run the nix-managed ollama daemon (and put the ollama CLI on PATH). On
-          Linux the daemon runs as a systemd user service and the generator's
-          classifier model is auto-pulled to disk on activation; on macOS the
-          daemon runs via launchd and models are pulled manually (`ollama pull`).
-          The model is never loaded into memory automatically — residency is the
-          user's explicit choice via the generator's load/unload toggle.
-        '';
-      };
-
-      model = lib.mkOption {
-        type = lib.types.str;
-        default = "qwen2.5:3b";
-        description = ''
-          The ollama model tag the generator classifies with. Must match the model
-          `code` requests (CODE_EVAL_MODEL / ollama.DefaultModel in
-          github.com/atyrode/cli-kit — keep the two in sync by hand).
-        '';
-      };
-
-      port = lib.mkOption {
-        type = lib.types.port;
-        default = 11434;
-        description = "Loopback port the ollama daemon listens on.";
-      };
-
-      keepAlive = lib.mkOption {
-        type = lib.types.str;
-        default = "5m";
-        example = "-1";
-        description = ''
-          The daemon's DEFAULT keep-alive (OLLAMA_KEEP_ALIVE) for requests that do
-          not set their own — i.e. manual `ollama run` chats. The code generator sets
-          its own per call (pinned while loaded, evict-after while not), so this
-          does not affect it. "-1" would pin every model forever.
-        '';
-      };
-    };
-
     resourceGuard = {
       # The agent stack (OMP sessions, their language servers, Chrome, and bun
       # workers) runs under the user manager's app.slice. Account for it there,
@@ -411,60 +341,24 @@ in
           recursive = true;
         };
 
-        home.activation = lib.mkMerge [
-          {
-            # The activating generation owns this transition, even when an old
-            # atyrode invoked apply. Import immutable profiles before Babel
-            # validates its configured wrappers; never select replacement refs.
-            migrateBabelAnalysisRuntime =
-              lib.hm.dag.entryAfter
-                [
-                  "installPackages"
-                  "linkGeneration"
-                ]
-                ''
-                  legacy_profiles="''${CODE_BABEL_PROFILE_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/code/babel/profiles}"
-                  if [[ -e "$legacy_profiles" || -L "$legacy_profiles" ]]; then
-                    if [[ -v DRY_RUN ]]; then
-                      echo "(dry run) would import Code profiles from $legacy_profiles"
-                    else
-                      echo "agent-tools: importing legacy Code profiles from $legacy_profiles (source retained)..."
-                      if ! ${pkgs.code}/bin/code engine --import-profiles "$legacy_profiles"; then
-                        echo "agent-tools: Code profile import failed; Babel settings were not migrated" >&2
-                        exit 1
-                      fi
-                    fi
-                  fi
-                  if [[ -v DRY_RUN ]]; then
-                    echo "(dry run) would migrate Babel analysis launches and validate configured profile references"
-                  else
-                    echo "agent-tools: migrating Babel analysis launches and validating configured profile references..."
-                    if ! PATH="${cfg.ompPackage}/bin:$PATH" ${pkgs.babel}/bin/babel analysis migrate; then
-                      echo "agent-tools: Babel analysis migration failed; resolve the reported settings or profile conflict and apply again" >&2
-                      exit 1
-                    fi
-                  fi
-                '';
-          }
-          (lib.mkIf cfg.seedPlainConfig {
-            # Seeding is a convenience: a failure (for example unparseable
-            # operator YAML) warns instead of failing the whole activation.
-            seedPlainOmpConfig =
-              lib.hm.dag.entryAfter
-                [
-                  "installPackages"
-                  "linkGeneration"
-                ]
-                ''
-                  if [[ -v DRY_RUN ]]; then
-                    export AGENT_TOOLS_DRY_RUN=1
-                  fi
-                  if ! ${lib.getExe cfg.seedPackage} apply; then
-                    echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
-                  fi
-                '';
-          })
-        ];
+        home.activation = lib.mkIf cfg.seedPlainConfig {
+          # Seeding is a convenience: a failure (for example unparseable
+          # operator YAML) warns instead of failing the whole activation.
+          seedPlainOmpConfig =
+            lib.hm.dag.entryAfter
+              [
+                "installPackages"
+                "linkGeneration"
+              ]
+              ''
+                if [[ -v DRY_RUN ]]; then
+                  export AGENT_TOOLS_DRY_RUN=1
+                fi
+                if ! ${lib.getExe cfg.seedPackage} apply; then
+                  echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
+                fi
+              '';
+        };
       }
 
       (lib.mkIf (bcfg.role != null) {
@@ -478,14 +372,6 @@ in
             message = "atyrode.agentTools.authBroker.role is serve, but no tokenFile is set";
           }
         ];
-
-        # `code` adds OAuth accounts by running the provider login on the
-        # broker host over SSH; on the host itself the login is local. The
-        # target is the same one the tunnel uses, so it is stated once, here,
-        # rather than read back from a file the launcher would have to parse.
-        home.sessionVariables = lib.mkIf (bcfg.role == "tunnel") {
-          CODE_AUTH_LOGIN_VIA = bcfg.target;
-        };
 
         # A broker host whose token is not yet placed has nothing to serve
         # with; the condition keeps the unit from restarting every five
@@ -537,8 +423,7 @@ in
 
         # No Install on the service: a first archive can move multiple GB, and
         # a startup-transaction job that long holds user-manager readiness at
-        # "starting" (same rationale as ollama-pull-classifier below). The
-        # timer triggers it instead.
+        # "starting". The timer triggers it instead.
         systemd.user.services.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           Unit = {
             Description = "Archive agent session histories with Babel";
@@ -599,47 +484,15 @@ in
         };
       }
 
-      (lib.mkIf lcfg.enable {
+      {
+        # Ollama remains a general local-model backend and playground.
+        # Operators pull models explicitly; enabling the daemon downloads none.
         services.ollama = {
-          enable = true;
-          inherit (lcfg) port;
-          environmentVariables.OLLAMA_KEEP_ALIVE = lcfg.keepAlive;
+          enable = lib.mkDefault true;
+          port = lib.mkDefault 11434;
+          environmentVariables.OLLAMA_KEEP_ALIVE = lib.mkDefault "5m";
         };
-
-        # Auto-pull the classifier model once the daemon is up. systemd user
-        # services are Linux-only in Home Manager; on other platforms the daemon
-        # still runs (via the launchd agent the ollama module defines) but the
-        # model is pulled on first use / manually.
-        #
-        # The service deliberately has no Install: a first-boot multi-GB pull
-        # inside the startup transaction holds `systemctl --user
-        # is-system-running` at "starting" for its whole duration. The timer
-        # below triggers it shortly after startup instead, outside the
-        # readiness transaction.
-        systemd.user.services.ollama-pull-classifier = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          Unit = {
-            Description = "Pull the code generator's local classifier model to disk (${lcfg.model})";
-            After = [ "ollama.service" ];
-            Wants = [ "ollama.service" ];
-          };
-          Service = {
-            Type = "oneshot";
-            ExecStart = "${pullClassifierModel}";
-          };
-        };
-
-        systemd.user.timers.ollama-pull-classifier = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          Unit.Description = "Trigger the classifier model pull after session startup";
-          Timer = {
-            # 30s keeps the trigger comfortably outside the startup job queue
-            # (racing into it would re-gate readiness); the default minute-level
-            # AccuracySec would smear that on purpose-built delay, so pin it.
-            OnActiveSec = "30s";
-            AccuracySec = "1s";
-          };
-          Install.WantedBy = [ "timers.target" ];
-        };
-      })
+      }
 
       (lib.mkIf (rgcfg.enable && pkgs.stdenv.hostPlatform.isLinux) {
         # A drop-in rather than a systemd.user.slices unit: Home Manager would

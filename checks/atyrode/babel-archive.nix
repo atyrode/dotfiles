@@ -91,7 +91,7 @@ pkgs.runCommand "check-babel-archive"
     test ${lib.escapeShellArg (lib.concatStringsSep " " linuxArchiveService.Unit.After)} = 'network.target'
     # No Install on the service: a first archive can move multiple GB, and a
     # startup-transaction job that long holds `is-system-running` at "starting"
-    # (same rationale as classifier-schedule). The timer owns scheduling.
+    # instead of finishing readiness. The timer owns scheduling.
     test ${if linuxArchiveService ? Install then "1" else "0"} = 0
 
     test ${lib.escapeShellArg (toString linuxArchiveTimer.Timer.OnCalendar)} = hourly

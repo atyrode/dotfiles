@@ -1352,54 +1352,6 @@ probe_babel_archive() {
   provisioning_check_add babel-archive ok "" "babel archived successfully at $last" ""
 }
 
-# Babel owns both launch canonicalization and offline profile resolution.
-# Doctor asks the same read-only question rather than interpreting settings or
-# bypassing a configured worker wrapper (which may own account selection).
-probe_babel_analysis() {
-  local result check_status=0 configured needed data
-  data="$(host_json "$(resolve_host)")"
-  if ! has_capability "$data" agent-tools; then
-    provisioning_check_add babel-analysis not-applicable capability-absent \
-      "this profile does not declare agent tools" ""
-    return 0
-  fi
-  if ! command -v babel >/dev/null 2>&1; then
-    provisioning_check_add babel-analysis degraded command-unavailable \
-      "Babel analysis migration status is unavailable: babel is not installed" \
-      "atyrode apply"
-    return 0
-  fi
-  result="$(babel analysis migrate --check --json 2>/dev/null)" || check_status=$?
-  if ! jq -e '
-    type == "object" and
-    (.needed | type == "boolean") and
-    .changed == false and
-    (.configured | type == "number" and . >= 0 and floor == .)
-  ' <<<"$result" >/dev/null 2>&1; then
-    provisioning_check_add babel-analysis degraded check-failed \
-      "Babel could not validate its analysis launches and configured profile references offline" \
-      "babel analysis migrate --check --json (resolve the reported error, then atyrode apply)"
-    return 0
-  fi
-  needed="$(jq -r '.needed' <<<"$result")"
-  configured="$(jq -r '.configured' <<<"$result")"
-  if [[ "$needed" == true && "$check_status" == 1 && "$configured" -gt 0 ]]; then
-    provisioning_check_add babel-analysis degraded migration-needed \
-      "Babel analysis launches need migration to the native Code engine" \
-      "atyrode apply"
-  elif [[ "$check_status" != 0 || "$needed" != false ]]; then
-    provisioning_check_add babel-analysis degraded check-failed \
-      "Babel analysis launch or profile validation failed" \
-      "babel analysis migrate --check --json (resolve the reported error, then atyrode apply)"
-  elif [[ "$configured" == 0 ]]; then
-    provisioning_check_add babel-analysis not-applicable unconfigured \
-      "no Babel analysis or title worker is configured" ""
-  else
-    provisioning_check_add babel-analysis ok "" \
-      "Babel analysis launches are canonical; all $configured configured profile references resolve offline" ""
-  fi
-}
-
 # The broker's bearer token is a shared clan var placed by activation, so this
 # probe offers no ceremony either: the mode and the broker host are Nix facts
 # read from fleet/auth-broker.json, and the only question on the machine is

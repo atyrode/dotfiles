@@ -1,20 +1,20 @@
 # Agent tools
 
-OMP, the profile generator, agents, rules, and generic skills are part of the
-Home Manager profile. `atyrode apply` activates them; there is no separate
-plugin or skill sync.
+OMP, agents, rules and generic skills are part of the Home Manager profile.
+`atyrode apply` activates them. The native Code plugin family is installed
+separately through Manifold, not synchronized into the OMP profile.
 
 ## Ownership
 
 Dotfiles owns deployment and the operator's authored configuration:
 
-- the pinned OMP and Code packages and generated Zsh completion;
-- the managed OMP defaults, enforced policy, and curated model-catalog data;
+- the pinned OMP package and generated Zsh completion;
+- the managed OMP defaults and enforced policy;
 - the curated plain-omp seed and its drift-aware activation step;
 - the pinned bundled agents, global generic skills, and managed-settings
   guard;
 - the `omp` passthrough, the `omp-managed` managed-layering launcher, the
-  restricted `ompu` launcher, and the environment wrapper around `code`;
+  restricted `ompu` launcher;
 - personal policy from `modules/home/agents/AGENTS.md`, rendered by
   `atyrode context render` into `$XDG_CONFIG_HOME/agents/AGENTS.md` (default
   `~/.config/agents/AGENTS.md`) with minimal generation provenance, not a
@@ -23,11 +23,10 @@ Dotfiles owns deployment and the operator's authored configuration:
 - Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
-Code owns catalog generation and maintenance, model-routing selection, one-shot
-session overlays, its account-management interface, and whole-session worktree
-and session bookkeeping. Packaging Code here does not transfer that product
-logic into dotfiles. The Manifold plugin consumes Code's headless capabilities;
-it is not another model or account-routing implementation.
+Code owns catalog generation, routing selection, session overlays and its
+account-management interface as native Manifold plugins. Manifold owns their
+governed execution, shared workspace state and resource consent. Dotfiles owns
+neither a second product runtime nor a generated catalog.
 
 OMP owns execution: role resolution, retries, live credential selection,
 compaction, terminal protocols, and mutable runtime data such as authentication,
@@ -35,11 +34,6 @@ sessions, caches, onboarding state and machine-local UI state. Dotfiles supplies
 its baseline policy, not a replacement runtime. Secrets never belong in this
 repository or the Nix store.
 
-The Python model-fact refresher still located here is an ownership exception,
-tracked for replacement in [#650](https://github.com/atyrode/dotfiles/issues/650).
-Its generic mechanism belongs in Code; the curated catalog and repository
-freshness reminder remain here. Removal waits for the normal published Code
-binary to expose the replacement command—never a second private source pin.
 
 Activation does not rewrite or back up pre-existing mutable paths before Home
 Manager links the managed agents, rules, extensions, and skills. If
@@ -305,7 +299,7 @@ publication and activation do not silently rewrite it.
 
 `packages.<linux-system>.development-image` packages the existing portable
 `development-*` Home Manager environment for Linux amd64 and arm64. It includes
-the configured zsh, OMP, Code catalog and the rest of that profile, rather than
+the configured zsh, OMP and the rest of that profile, rather than
 a separate container tool list. Build and exercise it locally with:
 
 ```sh
@@ -325,9 +319,9 @@ host Nix store or Docker socket as part of the default environment.
 
 Every start runs Home Manager activation, including its generation management,
 managed-file conflict checks, OMP and Codex seeds, migrations and context
-rendering. Automatic speech-model downloads and the classifier, resource-guard
-and ssh-agent services are disabled; no systemd manager or model supervisor
-is started. Provider authentication is not bundled. Native tools remain
+rendering. Automatic speech-model downloads, Ollama, resource-guard and ssh-agent
+services are disabled; no systemd manager or model supervisor is started.
+Provider authentication is not bundled. Native tools remain
 responsible for their sign-in flow and current model availability.
 
 The image supplies the daemon boundary declared in
@@ -358,19 +352,19 @@ It does not activate fleet hosts or redeploy consumers.
 
 ## OMP commands
 
-Four commands make up the operator surface:
+Three commands make up the operator surface:
 
 | Command | Intended use | Configuration |
 | --- | --- | --- |
 | `omp` | Mutable daily driver | The operator's writable OMP configuration, apart from the blocked `update` command and profile-aware resume lookup |
 | `omp-managed` | Managed launch target | Platform extensions, managed defaults, enforced policy, and any generated one-shot `--config` |
 | `ompu` | Deliberately untrusted repositories | Dedicated state, sanitized credentials, restricted integrations, and approval-gated shell/task use |
-| `code` | Profile generator and launcher | Generated profiles launched through `omp-managed`, the managed defaults, or the `ompu` sandbox |
 
 Use `omp --help` and `omp <command> --help` for the pinned upstream command
 surface. [Upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
 may describe behavior newer than the repository pin. This document is
-authoritative for `code`, `omp-managed`, and `ompu`.
+authoritative for `omp-managed` and `ompu`. Code is a separately installed native
+Manifold plugin, not a command in this profile.
 
 Plain `omp` executes upstream OMP directly, with no managed extension, defaults,
 or policy overlay. `omp update` is blocked so it cannot shadow the Nix-pinned
@@ -379,8 +373,7 @@ the default and named-profile session roots and injects the sole matching
 profile; explicit state or profile selection wins, and ambiguous matches require
 `--profile`.
 
-`omp-managed` is the managed-layering primitive used by `code`. It loads
-configuration in this order:
+`omp-managed` loads configuration in this order:
 
 1. OMP's writable machine config at `~/.omp/agent/config.yml`, with
    `config.yaml` selected only when the canonical filename is absent;
@@ -388,7 +381,7 @@ configuration in this order:
 3. native project configuration from `<cwd>/.omp/settings.json` and then
    `<cwd>/.omp/config.yml`;
 4. optional machine-local overrides at `~/.config/omp/local.yml`;
-5. one-shot `--config` overlays, including the profile generated by `code`;
+5. one-shot `--config` overlays;
 6. the Nix-managed enforced policy; and
 7. explicit runtime flags such as `--model` or `--approval-mode`.
 
@@ -431,8 +424,8 @@ additionally exercises real RPC/ACP startup. Neither requires provider credentia
 
 `nix build --no-link .#checks.x86_64-linux.omp-interactive` covers the actual
 terminal composer: paste a PNG and observe an image attachment through raw OMP
-with explicit cwd, plain bare/no-session launches, managed and restricted
-launchers, and packaged Code's Enter/`m` launch paths. It uses isolated homes
+with explicit cwd, plain bare/no-session launches, and managed and restricted
+launchers. It uses isolated homes
 with `startup.setupWizard: false`; otherwise first-run onboarding correctly
 intercepts input before the composer is available. This is attachment/UI proof,
 not a model image-understanding turn, and does not activate a machine.
@@ -494,7 +487,7 @@ regression check when changing the OMP pin or routing:
    required. `omp-stack` separately checks that a persistent direct override
    cannot displace the managed alias and that the writable preference survives.
 
-### Speech and model-fact freshness
+### Speech models
 
 Speech uses OMP's native first-use model downloads. Dotfiles no longer
 prefetches speech models at activation or manages a separate speech cache;
@@ -502,39 +495,20 @@ existing downloaded caches remain untouched. A first use on an uncached
 machine can require a download. Publishing this change does not activate any
 host or download/remove its models.
 
-`pkgs/omp-configured/config/models.yml` stores curated routing facts.
-`nix run .#refresh-model-facts` refreshes metadata and runs paid chat benchmarks;
-it requires separately authorized model use. `--skip-bench` updates metadata
-without model turns, and `--bench-json <path>` can consume a saved native chat
-benchmark payload instead of making new benchmark calls.
-The `refreshed` stamp advances only when every catalog model has complete
-valid metadata and chat speed/TTFT measurements. Partial or failed runs retain
-unavailable values and the previous stamp while saving valid updates; partial
-failures exit nonzero. A successful metadata-only run still leaves the stamp
-unchanged. `refreshed: null` honestly means no complete refresh is attested,
-not that the facts were freshly measured or that every retained value is wrong.
 
-### Code launch choices
+### Code workspace
 
-`code` classifies a prompt and selected facets into a generated routing profile.
-Its trusted launches always use `omp-managed`; plain `omp` is invoked directly,
-never through `code`. The launch choices are:
+[Code](https://github.com/atyrode/code) is a native Manifold plugin family.
+Its workspace, catalog, account selection and governed runtime setup belong to
+that product, not an `omp-configured` launcher or a generated dotfiles catalog.
+Install and review its bundles through Manifold's plugin manager; the native
+execution profile determines which declared resources are available.
 
-- launch the generated profile through `omp-managed`;
-- launch `omp-managed` without an overlay to use the managed defaults; or
-- launch the current context through the credential-sanitized `ompu` sandbox.
-
-`code --no-usage` skips the usage fetch, `code --help` prints help, `code ls`
-lists live managed sessions, `code session reap` previews or retires selected
-session process trees, and `code generate` regenerates the profile catalog.
-Sessions are recorded under `$XDG_STATE_HOME/code/sessions` while they run; a
-session locks its record so crashed sessions can be pruned.
-
-On an applicable x86_64 WSL2 host with NVIDIA CUDA passthrough, `code` can
-discover the `local-qwen` runtime through `CODE_RUNTIME_BROKER=atyrode`.
-Selecting it delegates lifecycle to `atyrode runtime run local-qwen`; model
-data, generated API keys, container state, and the selected storage path remain
-machine-local and outside the Nix store. Unsupported hosts remain hosted-only.
+The retired standalone `code` command, private analysis launcher, catalog
+refresher and automatic Code-to-Babel profile import are no longer installed.
+This source cutover does not activate hosts, stop existing sessions, remove
+historical Code/Babel state, migrate credentials or authenticate providers.
+Direct OMP launchers and the operator's general local runtime remain separate.
 
 ## Security boundaries
 
@@ -556,24 +530,20 @@ owns the loopback service and other machines' SSH forwarding target.
 audiences and rotation. Until the token is placed the service does not start;
 `atyrode doctor provisioning` reports the owed generation.
 `atyrode auth broker status` reports mode, host, service and placement without
-printing the token. `code` uses the same token and stores encrypted snapshots
-under `$XDG_CACHE_HOME/atyrode/omp-auth-broker/`.
+printing the token. The broker and its clients retain their tool-owned state;
+the native Code plugin does not transfer that state into dotfiles.
 
-Add Anthropic/OpenAI OAuth accounts from `code` with `v`, then `a` -- on a
-tunnel machine the login runs on the broker host over the same SSH target,
-which Home Manager exports as `CODE_AUTH_LOGIN_VIA` -- or directly with
-`omp auth-broker login <provider> --via=alex@<broker host>`. Add API-key
-providers without exposing the key in argv:
+Add Anthropic/OpenAI OAuth accounts with the broker's supported flow:
+`omp auth-broker login <provider> --via=alex@<broker host>`.
+Add API-key providers without exposing the key in argv:
 
 ```sh
 atyrode auth broker add-api-key deepseek
 ```
 
-Both paths mutate the canonical broker, so every connected machine sees the new
-account on its next automatic or manual (`r`) refresh; no credential file is
-copied between machines. Account-selection presets remain non-secret state in
-`$XDG_STATE_HOME/atyrode/code-auth-account-state.json`. The `code` account
-manager reads only redacted broker data and never reads OAuth material.
+Both paths mutate the canonical broker, so authorized connected clients see
+the new account on their next refresh; no credential file is copied between
+machines.
 Token rotation follows [the secret owner](secrets.md#declaring-a-secret), not
 an independent agent-tool ceremony.
 
@@ -584,8 +554,6 @@ an independent agent-tool ceremony.
 | `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state; the one exception is `~/.omp/agent/AGENTS.md`, a Home Manager symlink to the generated agent context |
 | `~/.omp/auth-broker.token` | Home Manager link to the `omp-auth-broker` clan var sops-nix places; the shared bearer token the broker checks and every client sends, mode `0600` |
 | `$XDG_CACHE_HOME/atyrode/omp-auth-broker/` | Broker client snapshot cache |
-| `$XDG_STATE_HOME/atyrode/code-auth-account-state.json` | `code`; non-secret account-selection presets |
-| `$XDG_STATE_HOME/code/sessions` | `code`; live session records |
 | `$XDG_STATE_HOME/atyrode/omp-untrusted/` | `ompu`; isolated mutable sandbox state |
 | `~/.local/state/atyrode/omp-plain-seed/` | Plain-OMP seeder; last-applied seed and drift state |
 | `~/.omp/agent/managed-skills` | OMP; project-specific auto-learned mutable skills |
@@ -652,38 +620,6 @@ further reset/restart cycles.
 Apply re-reads the state after review and names any remaining keys. If a reset
 summary is followed by renewed drift, restart those older sessions before
 resolving again rather than repeatedly resetting under the old watcher.
-
-## Babel analysis profile migration
-
-The managed `code` launcher forwards `code engine` headlessly to Code's native
-RPC engine and keeps its sessions on the restricted `omp-analysis` launcher.
-The explicit `--configure` ceremony retains the interactive managed launcher.
-
-Home Manager's `migrateBabelAnalysisRuntime` activation runs after `installPackages`
-and `linkGeneration`, using the activating generation's Code and Babel
-executables even when an older `atyrode` invoked apply. It first runs
-`code engine --import-profiles` on
-`${CODE_BABEL_PROFILE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/code/babel/profiles}`
-when that source exists, retaining the original store. It then runs
-`babel analysis migrate`, which removes only the trailing legacy `babel`
-worker mode argument and validates configured immutable profile references
-offline through the configured workers before saving settings.
-
-Custom worker wrappers, profile IDs and revisions, account choices, and
-unrelated settings remain unchanged. Unconfigured analysis creates no settings.
-The owner commands neither contact providers nor start analysis or restart
-services; retained wrappers keep their normal environment setup. A dry-run
-only announces the operations. Import conflicts or invalid settings stop
-activation with the owning command's error rather than being hidden or
-replaced with a new profile selection.
-
-`atyrode doctor provisioning` reports the `babel-analysis` surface using
-`babel analysis migrate --check --json`: unconfigured workers are
-`not-applicable`, pending migration or unresolved references are `degraded`,
-and canonical launches whose references resolve offline are `ok`. The probe
-does not migrate anything; `atyrode apply` owns convergence. To inspect a
-failure directly, run the same read-only Babel command, resolve its reported
-conflict, and apply again.
 
 ## Session archive
 

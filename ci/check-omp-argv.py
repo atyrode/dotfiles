@@ -56,7 +56,7 @@ def main():
     assert actual[-4:] == ["--", "--no-extensions", "--config", "literal"], actual
     # Bootstrap can install shell aliases before normal launch parsing. Exercise
     # the real restricted launchers with state entirely confined to this fixture.
-    for command in ("ompu", "omp-analysis"):
+    for command in ("ompu",):
         for options in (
             ("--plan", "--alias=reviewproof"),
             ("--plan", "--alias", "reviewproof"),

@@ -25,12 +25,6 @@ let
         ? atyrode-omp-auth-brokers
       )
     ) "a home with authBroker.role = null must define no broker service";
-    assert lib.assertMsg
-      ((linuxClientAgentTools.home.sessionVariables.CODE_AUTH_LOGIN_VIA or null) == clientTarget)
-      "a tunnel machine must export CODE_AUTH_LOGIN_VIA naming the tunnel target, for code's OAuth login";
-    assert lib.assertMsg (
-      !(linuxAgentTools.home.sessionVariables ? CODE_AUTH_LOGIN_VIA)
-    ) "the broker host logs in locally: it must not export CODE_AUTH_LOGIN_VIA";
     # The unit and the launchd agent gate on the placed token, so a broker host
     # whose var is not yet generated stays quiet instead of restart-looping.
     assert lib.assertMsg (

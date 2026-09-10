@@ -261,17 +261,11 @@ let
     };
     omp-wrapper = import ./omp/omp-wrapper.nix { inherit lib pkgs; };
     omp-interactive = import ./omp/omp-interactive.nix { inherit lib pkgs; };
-    omp-model-facts = import ./omp/omp-model-facts.nix { inherit pkgs; };
     omp-agent-references = import ./omp/omp-agent-references.nix { inherit lib pkgs; };
     agent-tools-terminal-viewing = import ./atyrode/agent-terminal-viewing.nix { inherit pkgs; };
-    classifier-schedule = import ./lints/classifier-schedule.nix { inherit lib pkgs; };
     babel-archive = import ./atyrode/babel-archive.nix {
       inherit lib pkgs;
       clanMachine = canonicalNixosConfigs.dev-01.config;
-    };
-    babel-analysis = import ./atyrode/babel-analysis.nix {
-      inherit lib pkgs;
-      atyrode = systemDoctorAtyrode;
     };
   }
   // {

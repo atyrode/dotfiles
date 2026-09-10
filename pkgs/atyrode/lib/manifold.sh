@@ -477,9 +477,8 @@ cmd_runtime_manifold() {
 }
 
 cmd_runtime() {
-  # `runtime list` enumerates *launchable model runtimes* only: it is what
-  # `code` renders in its runtime dial (CODE_RUNTIME_BROKER=atyrode). The
-  # manifold capability is a PTY service daemon that hosts no model, so it
+  # `runtime list` enumerates *launchable model runtimes* only. The manifold
+  # capability is a PTY service daemon that hosts no model, so it
   # routes here for provision/enroll/status/start/stop/restart but MUST NOT appear
   # in that list — see checks/atyrode/atyrode-runtime.nix, which asserts it.
   if [[ "${2:-}" == manifold-agent ]]; then

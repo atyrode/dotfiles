@@ -244,20 +244,27 @@ chooses a service owner by display name or falls back to another machine.
 Back up the retained volume before a deployment that crosses a schema version.
 
 The separate preview executor is declared in
-`modules/nixos/manifold-dev-hub.nix` through the pinned Manifold
-`nixosModules.native` profile, imported only for dev-01. It runs the same
-execution-only profile documented for ordinary multi-node self-hosting:
-`manifold-owner` retains jobs and PTYs; `manifold-transport` can be replaced
-independently. The existing Compose hub, Caddy edge and ordinary
-Home Manager `manifold-agent` are not replaced or repointed.
+`modules/nixos/manifold-dev-hub.nix` through Manifold's `nixosModules.native`
+profile at merged revision `3de83c4abb7b44830d19c02cbb5c0cec75ef95fa`
+(Manifold #463), recorded in `flake.lock` and imported only for dev-01.
+It runs the same execution-only profile documented for ordinary multi-node
+self-hosting: `manifold-owner` retains jobs and PTYs; `manifold-transport`
+can be replaced independently. The existing Compose hub, Caddy edge and
+ordinary Home Manager `manifold-agent` are not replaced or repointed.
 
 The declaration contains only the enrolled preview ID, public admission
 verifier, reviewed artifact origins and explicit runtime-resource bindings.
 The `tokenCredentialFile` reference names the incumbent
-`~/.config/manifold/dev/machine.token`, still owned by the operator.
-Systemd's `LoadCredential` delivers it privately to the transport while the
-source remains in its existing custody. There is no agent-managed token copy,
-rotation, ownership repair or additional source read access. The profile
+`~/.config/manifold/dev/machine.token` under the operator's existing custody.
+On separately authorized activation, systemd's `LoadCredential` delivers it
+privately to the transport while the source remains in its existing custody.
+The native profile first checks source metadata: a regular non-symlink file
+with mode 0400 or 0600, neither it nor any ancestor owned by `manifold` or
+writable by group/others (including ACL masks). It refuses unsafe custody
+rather than repairing it. This source declaration does not establish that the
+live file or its ancestors satisfy those prerequisites; none have been inspected.
+There is no agent-managed token copy, rotation, ownership repair or additional
+source read access. The profile
 protects the traversable `/home` ancestor so the
 operator's mode-0700 home need not be weakened, and excludes generated
 systemd credential directories from workloads. Token bytes never enter Nix
@@ -265,8 +272,9 @@ or a derivation. The ordinary fleet token and provider-authentication stores
 are not inputs to this profile.
 
 The separate `development` tool group supplies the ordinary Code launch's
-shell, coding utilities, Git and Python. Only its declared package closure is
-mounted at exact immutable store paths, with explicit `/usr/bin`, `/bin/sh`
+shell, coding utilities, Git and Python. `runtimeToolClosures.development`
+expands the declared `developmentRuntime` package closure at build time into
+read-only bindings at exact immutable store paths, with explicit `/usr/bin`, `/bin/sh`
 and `/bin/bash` entrypoints. This is not a host PATH, whole-store mount or a
 global Python environment; project-specific dependencies remain local to the
 workspace. Account sign-in and shared service workers keep their narrower
@@ -279,8 +287,12 @@ points TLS clients at that bundle; Git receives its explicit CA setting.
 No host `/etc` directory or ambient environment is mounted. The native owner
 starts after the resolver, but resolver restarts do not stop the owner.
 
-Source publication (including updating the pinned Manifold input) is not
-authorization to activate this transition. The supported operator handoff is
+The pin and declarations are source integration only: no legacy retirement,
+credential handoff, native activation or admission reopening has been performed
+by this change. Source publication (including updating the pinned Manifold
+input) is not authorization to activate this transition, nor does it replace
+the required current-revision native-profile, flake and CI gates.
+The supported operator handoff is
 Manifold's `infra/previews/retire-spoke.sh`, using the merged
 `manifold-agent --maintenance` API. Run it only with separate live-maintenance
 authorization, as the account owning the old user units. Its explicit public
@@ -296,10 +308,11 @@ PID or a private state file. The command reads the hub's owner key only inside
 that owning container: never extract the key, enrollment token or provider
 state into a shell, Nix input or handoff transcript.
 
-Retirement drains admission for that exact machine and fails closed on busy
-or unknown state. It never finishes, cancels or kills retained work: the
-operator must finish that work through its native controls. The command
-requires the owner's atomic `shutdown_request` acknowledgment before retiring
+Retirement uses `core.machines.drain` for that exact machine and requires
+positive-empty evidence; busy or unknown state fails closed. It never
+finishes, cancels or kills retained work: the operator must finish that work
+through its native controls. The command requires the owner's atomic
+`shutdown_request` acknowledgment before retiring
 its old supervisors; on shutdown refusal it restores the transport but leaves
 admission closed. Empty-looking process listings are not shutdown proof. The
 helper does not activate Nix or reopen admission. Preserve the existing Compose

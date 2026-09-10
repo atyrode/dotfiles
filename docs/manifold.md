@@ -235,10 +235,11 @@ is down answers 502, which is what "not running" should look like. DNS:
 `preview` and `*` A records to this machine; the apex stays the master's.
 
 The bounded cutover will retain the existing Compose project and
-`manifold-dev_manifold-data` volume under Manifold's preview receiver. Its
-reviewed deployment settings will select hub-only operation with
-`MANIFOLD_DEV_SPAWN_AGENT=0` and set `MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID`
-to the enrolled preview machine's opaque ID. The hub never
+`manifold-dev_manifold-data` volume under Manifold's preview receiver.
+Home Manager declares the receiver's public `~/manifold-previews/env`
+settings: hub-only operation with `MANIFOLD_DEV_SPAWN_AGENT=0` and
+`MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID` set to the enrolled preview
+machine's opaque ID. The hub never
 chooses a service owner by display name or falls back to another machine.
 Back up the retained volume before a deployment that crosses a schema version.
 
@@ -251,22 +252,43 @@ independently. The existing Compose hub, Caddy edge and ordinary
 Home Manager `manifold-agent` are not replaced or repointed.
 
 The declaration contains only the enrolled preview ID, public admission
-verifier, reviewed artifact origins and explicit runtime-library bindings.
-Manifold's system user reads the retained preview token from
-`/var/lib/manifold/machine.token`: a regular non-symlink file, mode 0600, in
-a mode-0700 directory owned by `manifold`. Token bytes never enter Nix or a
-derivation. The ordinary fleet token and provider-authentication stores are
-not inputs to this profile.
+verifier, reviewed artifact origins and explicit runtime-resource bindings.
+The `tokenCredentialFile` reference names the incumbent
+`~/.config/manifold/dev/machine.token`, still owned by the operator.
+Systemd's `LoadCredential` delivers it privately to the transport while the
+source remains in its existing custody. There is no agent-managed token copy,
+rotation, ownership repair or additional source read access. The profile
+protects the traversable `/home` ancestor so the
+operator's mode-0700 home need not be weakened, and excludes generated
+systemd credential directories from workloads. Token bytes never enter Nix
+or a derivation. The ordinary fleet token and provider-authentication stores
+are not inputs to this profile.
+
+The separate `development` tool group supplies the ordinary Code launch's
+shell, coding utilities, Git and Python. Only its declared package closure is
+mounted at exact immutable store paths, with explicit `/usr/bin`, `/bin/sh`
+and `/bin/bash` entrypoints. This is not a host PATH, whole-store mount or a
+global Python environment; project-specific dependencies remain local to the
+workspace. Account sign-in and shared service workers keep their narrower
+library/managed-runtime bindings.
+
+The `system` group also binds the existing systemd-resolved stub to
+`/etc/resolv.conf` and the machine's configured public CA bundle to
+`/etc/ssl/certs/ca-certificates.crt`. Code's reviewed operation environment
+points TLS clients at that bundle; Git receives its explicit CA setting.
+No host `/etc` directory or ambient environment is mounted. The native owner
+starts after the resolver, but resolver restarts do not stop the owner.
 
 Source delivery does not activate this transition. Before replacing the old
 hand-written `manifold-dev-terminal-host` and `manifold-dev-agent` user units,
 use the authorized preview machine's `core.machines.drain`, finish retained
 work through its native controls, and require the owner's atomic
 `shutdown_request` acknowledgment. Empty-looking process listings are not
-that proof. Only then perform the approved same-machine credential handoff
-and profile activation; never overlap two transports with the same token,
-rotate merely to move supervision, or copy another machine's credentials.
-Leave legacy `MANIFOLD_DEV_SPOKE_*` deployment settings unset after cutover.
+that proof. Only then activate the declared credential reference and profile;
+never overlap two transports with the same token, rotate merely to move
+supervision, or copy another machine's credentials. The receiver declaration
+explicitly disables its legacy `MANIFOLD_DEV_SPOKE_UNIT` hook so a later hub
+deployment cannot restart the retired user unit.
 
 Routine hub or transport updates must retain the owner PID and running
 workloads. Owner configuration changes require the same explicit maintenance;

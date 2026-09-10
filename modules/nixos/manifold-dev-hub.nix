@@ -26,8 +26,15 @@
 # key runs (`modules/home/ssh/deploy-keys`), and a vhost whose upstream is down
 # answers 502, which is the state "not running" should
 # have -- never a fallback to some other hub.
-{ pkgs, ... }:
+{
+  config,
+  host,
+  pkgs,
+  ...
+}:
 let
+  inherit (host) homeDirectory username;
+  serviceOwnerMachineId = "05df7eaa-efd8-4d9c-bb0c-334706555c77";
   loader =
     if pkgs.stdenv.hostPlatform.isAarch64 then "ld-linux-aarch64.so.1" else "ld-linux-x86-64.so.2";
   libraries = [
@@ -45,6 +52,27 @@ let
       target = "${target}/${name}";
       kind = "file";
     }) libraries;
+  developmentRuntime = pkgs.buildEnv {
+    name = "manifold-preview-development-runtime";
+    paths = with pkgs; [
+      bash
+      coreutils
+      findutils
+      gnused
+      gnugrep
+      gawk
+      diffutils
+      patch
+      gitMinimal
+      gh
+      curl
+      ripgrep
+      fd
+      jq
+      python3
+    ];
+    pathsToLink = [ "/bin" ];
+  };
 in
 {
   services.manifold = {
@@ -54,23 +82,37 @@ in
       enable = true;
       machineName = "dev-01";
       serverUrl = "https://preview.manifold.tyrode.dev";
-      machineId = "05df7eaa-efd8-4d9c-bb0c-334706555c77";
+      machineId = serviceOwnerMachineId;
       admissionPublicKey = ''
         -----BEGIN PUBLIC KEY-----
         MCowBQYDK2VwAyEAI/Pr5NQBY5sqj80suvdcAffkVgMMauD21FAoUvT45oo=
         -----END PUBLIC KEY-----
       '';
-      tokenFile = "/var/lib/manifold/machine.token";
+      tokenCredentialFile = "${homeDirectory}/.config/manifold/dev/machine.token";
+      # The incumbent token lives beneath the operator's private home. Protect
+      # its traversable ancestor instead of weakening that home's permissions.
+      protectedDirectories = [ "/home" ];
       artifactOrigins = [
         "https://github.com"
         "https://release-assets.githubusercontent.com"
         "https://registry.npmjs.org"
       ];
-      # Published runtimes use FHS interpreter paths; pinned Nix executables
-      # also retain their exact loader paths. Neither exposes the host store.
+      # Published runtimes use FHS interpreter paths. Coding tools receive their
+      # explicitly selected Nix closures separately, never the ambient store.
       runtimeTools.system =
         libraryBindings "/lib"
-        ++ libraryBindings "${pkgs.glibc}/lib"
+        ++ [
+          {
+            source = "/run/systemd/resolve/stub-resolv.conf";
+            target = "/etc/resolv.conf";
+            kind = "file";
+          }
+          {
+            source = toString config.environment.etc."ssl/certs/ca-certificates.crt".source;
+            target = "/etc/ssl/certs/ca-certificates.crt";
+            kind = "file";
+          }
+        ]
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
           {
             source = "${pkgs.glibc}/lib/${loader}";
@@ -78,10 +120,42 @@ in
             kind = "file";
           }
         ];
+      runtimeTools.development = [
+        {
+          source = "${developmentRuntime}/bin";
+          target = "/usr/bin";
+          kind = "directory";
+        }
+        {
+          source = "${pkgs.bash}/bin/bash";
+          target = "/bin/sh";
+          kind = "file";
+        }
+        {
+          source = "${pkgs.bash}/bin/bash";
+          target = "/bin/bash";
+          kind = "file";
+        }
+      ];
+      runtimeToolClosures.development = [ developmentRuntime ];
     };
   };
+  # Start after the existing resolver without coupling owner lifetime to its restarts.
+  systemd.services.manifold-owner.after = [ "systemd-resolved.service" ];
+  systemd.services.manifold-owner.wants = [ "systemd-resolved.service" ];
   systemd.services.manifold-owner.unitConfig."X-Atyrode-SessionOwner" = true;
   systemd.services.manifold-transport.unitConfig."X-Atyrode-SessionOwner" = false;
+  # These public receiver choices must travel with the native owner declaration,
+  # so a later hub deployment cannot revive the retired user-spoke helper.
+  home-manager.users.${username}.home.file."manifold-previews/env".text = ''
+    PREVIEW_DOMAIN=manifold.tyrode.dev
+    PREVIEW_DEV_CHECKOUT=${homeDirectory}/manifold-dev
+    PREVIEW_DEV_URL=https://preview.manifold.tyrode.dev
+    PREVIEW_SEED=${homeDirectory}/manifold-dev-deploy/backups/manifold-dev-data-20260905T131810Z.tgz
+    MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID=${serviceOwnerMachineId}
+    MANIFOLD_DEV_SPAWN_AGENT=0
+    MANIFOLD_DEV_SPOKE_UNIT=
+  '';
   services.caddy = {
     enable = true;
     globalConfig = ''

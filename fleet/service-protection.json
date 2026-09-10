@@ -28,6 +28,12 @@
     },
     {
       "scope": "system",
+      "service": "manifold-owner.service",
+      "owner": "Manifold nixosModules.native via modules/nixos/manifold-dev-hub.nix",
+      "reason": "retains native jobs and PTYs independently of the preview hub and replaceable transport"
+    },
+    {
+      "scope": "system",
       "service": "sshd.service",
       "owner": "modules/nixos/vps.nix, modules/nixos/wsl.nix (services.openssh)",
       "reason": "the deployer's own way in; removing or stopping the listener strands every session, while a restart or reload keeps established sessions only because NixOS declares KillMode=process, which the analyzer requires to see on both definitions",

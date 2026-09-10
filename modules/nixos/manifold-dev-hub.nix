@@ -26,7 +26,62 @@
 # key runs (`modules/home/ssh/deploy-keys`), and a vhost whose upstream is down
 # answers 502, which is the state "not running" should
 # have -- never a fallback to some other hub.
-_: {
+{ pkgs, ... }:
+let
+  loader =
+    if pkgs.stdenv.hostPlatform.isAarch64 then "ld-linux-aarch64.so.1" else "ld-linux-x86-64.so.2";
+  libraries = [
+    "libc.so.6"
+    "libdl.so.2"
+    "libm.so.6"
+    "libpthread.so.0"
+    "libutil.so.1"
+    loader
+  ];
+  libraryBindings =
+    target:
+    map (name: {
+      source = "${pkgs.glibc}/lib/${name}";
+      target = "${target}/${name}";
+      kind = "file";
+    }) libraries;
+in
+{
+  services.manifold = {
+    enable = true;
+    hub.enable = false;
+    execution = {
+      enable = true;
+      machineName = "dev-01";
+      serverUrl = "https://preview.manifold.tyrode.dev";
+      machineId = "05df7eaa-efd8-4d9c-bb0c-334706555c77";
+      admissionPublicKey = ''
+        -----BEGIN PUBLIC KEY-----
+        MCowBQYDK2VwAyEAI/Pr5NQBY5sqj80suvdcAffkVgMMauD21FAoUvT45oo=
+        -----END PUBLIC KEY-----
+      '';
+      tokenFile = "/var/lib/manifold/machine.token";
+      artifactOrigins = [
+        "https://github.com"
+        "https://release-assets.githubusercontent.com"
+        "https://registry.npmjs.org"
+      ];
+      # Published runtimes use FHS interpreter paths; pinned Nix executables
+      # also retain their exact loader paths. Neither exposes the host store.
+      runtimeTools.system =
+        libraryBindings "/lib"
+        ++ libraryBindings "${pkgs.glibc}/lib"
+        ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
+          {
+            source = "${pkgs.glibc}/lib/${loader}";
+            target = "/lib64/${loader}";
+            kind = "file";
+          }
+        ];
+    };
+  };
+  systemd.services.manifold-owner.unitConfig."X-Atyrode-SessionOwner" = true;
+  systemd.services.manifold-transport.unitConfig."X-Atyrode-SessionOwner" = false;
   services.caddy = {
     enable = true;
     globalConfig = ''

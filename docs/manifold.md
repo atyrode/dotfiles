@@ -16,8 +16,7 @@ are no inbound ports, no mesh, and no election — one hub, many spokes.
   Vault write access can never redirect fleet terminals (the Bitwarden-based
   discovery alternative was rejected in #418 for exactly that reason).
 - **Nix owns the agent and its native service.** The `manifold-node` capability
-  installs the pinned release asset (the upstream flake's bun-deps derivation
-  is not reproducible across machines, atyrode/manifold#51). Linux uses
+  installs the independently pinned release asset. Linux uses
   `systemd --user`; Apple Silicon macOS uses a Home Manager launchd agent.
   Both execute the immutable store binary against the committed master URL.
   `fleet/manifold.json` declares the supported systems; which machines are
@@ -235,29 +234,46 @@ declared here: they are the operator's checkouts, and a vhost whose upstream
 is down answers 502, which is what "not running" should look like. DNS:
 `preview` and `*` A records to this machine; the apex stays the master's.
 
-Concretely, as of 2026-09-05: the checkout is `~/manifold-dev` (a git worktree
-of `~/manifold`), its `.env` sets `COMPOSE_PROJECT_NAME=manifold-dev` and
-`COMPOSE_FILE=compose.yaml:/home/alex/manifold-dev-deploy/compose.dev.yaml`,
-and that overlay publishes `127.0.0.1:7912:7777`, names the in-container
-machine `dev-hub`, and parks the bundled caddy behind a profile. A deploy is
-`git -C ~/manifold-dev checkout <rev>` then, from that directory,
-`MANIFOLD_BUILD=$(git rev-parse --short HEAD) docker compose up -d --build manifold`;
-`/healthz` reports the revision. Back the volume
-(`manifold-dev_manifold-data`) up before a deploy that crosses a schema
-version; `~/manifold-dev-deploy/backups/` holds the tarballs.
+The bounded cutover will retain the existing Compose project and
+`manifold-dev_manifold-data` volume under Manifold's preview receiver. Its
+reviewed deployment settings will select hub-only operation with
+`MANIFOLD_DEV_SPAWN_AGENT=0` and set `MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID`
+to the enrolled preview machine's opaque ID. The hub never
+chooses a service owner by display name or falls back to another machine.
+Back up the retained volume before a deployment that crosses a schema version.
 
-The dev hub has its own spoke on the same machine, and it is by-hand for the
-same reason the stack is: it must track a checkout revision, not a release
-pin. `~/.config/systemd/user/manifold-dev-agent.service` (hand-written, not
-Home Manager's) runs `~/.local/share/manifold-dev-agent/manifold-agent`, built
-with `bun build --compile packages/agent/src/main.ts` from the revision the dev
-hub runs, enrolled as `dev-01` on `https://dev.manifold.tyrode.dev` with its
-token at `~/.config/manifold/dev/machine.token`. It is a second
-`manifold-agent` process beside the Home Manager unit and shares nothing with
-it: different hub, different token file, different `MANIFOLD_BUILD`. After a
-dev-hub deploy that changes the agent wire, rebuild the binary, update the
-unit's `MANIFOLD_BUILD`, and `systemctl --user restart manifold-dev-agent`.
-Never point this unit at the master: the master's spoke is the declared one.
+The separate preview executor is declared in
+`modules/nixos/manifold-dev-hub.nix` through the pinned Manifold
+`nixosModules.native` profile, imported only for dev-01. It runs the same
+execution-only profile documented for ordinary multi-node self-hosting:
+`manifold-owner` retains jobs and PTYs; `manifold-transport` can be replaced
+independently. The existing Compose hub, Caddy edge and ordinary
+Home Manager `manifold-agent` are not replaced or repointed.
+
+The declaration contains only the enrolled preview ID, public admission
+verifier, reviewed artifact origins and explicit runtime-library bindings.
+Manifold's system user reads the retained preview token from
+`/var/lib/manifold/machine.token`: a regular non-symlink file, mode 0600, in
+a mode-0700 directory owned by `manifold`. Token bytes never enter Nix or a
+derivation. The ordinary fleet token and provider-authentication stores are
+not inputs to this profile.
+
+Source delivery does not activate this transition. Before replacing the old
+hand-written `manifold-dev-terminal-host` and `manifold-dev-agent` user units,
+use the authorized preview machine's `core.machines.drain`, finish retained
+work through its native controls, and require the owner's atomic
+`shutdown_request` acknowledgment. Empty-looking process listings are not
+that proof. Only then perform the approved same-machine credential handoff
+and profile activation; never overlap two transports with the same token,
+rotate merely to move supervision, or copy another machine's credentials.
+Leave legacy `MANIFOLD_DEV_SPOKE_*` deployment settings unset after cutover.
+
+Routine hub or transport updates must retain the owner PID and running
+workloads. Owner configuration changes require the same explicit maintenance;
+the profile refuses drift rather than rewriting a live owner's configuration.
+`fleet/service-protection.json` and the native units' session-owner markers
+keep that distinction visible to `atyrode apply`. Verify native readiness and
+retained workloads before explicitly reopening admission.
 
 ## Master migration
 

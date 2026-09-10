@@ -140,8 +140,72 @@ in
       runtimeToolClosures.development = [ developmentRuntime ];
     };
   };
+  # Recheck supervisor truth on every start, before the native profile publishes
+  # private owner configuration or PID 1 loads the transport credential. This is
+  # a prerequisite, not a retirement operation or a persistent "retired" marker.
+  systemd.services.manifold-preview-legacy-guard = {
+    description = "Require retired preview user supervisors before native startup";
+    script = ''
+      set -euo pipefail
+      refuse() {
+        echo "Manifold preview native startup blocked: $*; complete authorized old-spoke retirement first" >&2
+        exit 1
+      }
+
+      # NixOS allocates this existing account's UID at activation; resolve the
+      # public identity instead of assigning a new UID or reading private state.
+      uid="$(${pkgs.coreutils}/bin/id -u ${pkgs.lib.escapeShellArg username})"
+      manager="user@$uid.service"
+      # An absent user bus is not evidence of retirement. Start its manager and
+      # wait for it explicitly; later manager restarts must not stop the owner.
+      ${config.systemd.package}/bin/systemctl start -- "$manager" \
+        || refuse "owning user manager could not start"
+      ${config.systemd.package}/bin/systemctl is-active --quiet -- "$manager" \
+        || refuse "owning user manager is not active"
+
+      for unit in manifold-dev-terminal-host.service manifold-dev-agent.service; do
+        metadata="$(${config.systemd.package}/bin/systemctl --user \
+          --machine=${pkgs.lib.escapeShellArg "${username}@.host"} show --all \
+          --property=LoadState,ActiveState,SubState,UnitFileState,Job,NeedDaemonReload,TriggeredBy,UpheldBy \
+          -- "$unit")" || refuse "$unit metadata is unavailable"
+        declare -A state=()
+        while IFS='=' read -r key value; do
+          case "$key" in
+            LoadState|ActiveState|SubState|UnitFileState|Job|NeedDaemonReload|TriggeredBy|UpheldBy)
+              [[ ! -v "state[$key]" ]] || refuse "$unit metadata is ambiguous"
+              state[$key]="$value"
+              ;;
+            *) refuse "$unit metadata is unrecognized" ;;
+          esac
+        done <<< "$metadata"
+        [[ "''${#state[@]}" == 8 ]] || refuse "$unit metadata is incomplete"
+        [[ "''${state[ActiveState]}" == inactive && "''${state[SubState]}" == dead ]] \
+          || refuse "$unit is not stopped"
+        [[ "''${state[NeedDaemonReload]}" == no && -z "''${state[Job]}" \
+          && -z "''${state[TriggeredBy]}" && -z "''${state[UpheldBy]}" ]] \
+          || refuse "$unit has stale metadata or a queued/triggered supervisor"
+        case "''${state[LoadState]}:''${state[UnitFileState]}" in
+          loaded:disabled|loaded:masked|masked:masked|not-found:)
+            ;;
+          *) refuse "$unit is enabled, restartable or in an uncertain load state" ;;
+        esac
+      done
+    '';
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      Group = "root";
+      TimeoutStartSec = 90;
+    };
+  };
+  systemd.services.manifold-owner.requires = [ "manifold-preview-legacy-guard.service" ];
+  systemd.services.manifold-transport.requires = [ "manifold-preview-legacy-guard.service" ];
+  systemd.services.manifold-transport.after = [ "manifold-preview-legacy-guard.service" ];
   # Start after the existing resolver without coupling owner lifetime to its restarts.
-  systemd.services.manifold-owner.after = [ "systemd-resolved.service" ];
+  systemd.services.manifold-owner.after = [
+    "systemd-resolved.service"
+    "manifold-preview-legacy-guard.service"
+  ];
   systemd.services.manifold-owner.wants = [ "systemd-resolved.service" ];
   systemd.services.manifold-owner.unitConfig."X-Atyrode-SessionOwner" = true;
   systemd.services.manifold-transport.unitConfig."X-Atyrode-SessionOwner" = false;
@@ -154,7 +218,6 @@ in
     PREVIEW_SEED=${homeDirectory}/manifold-dev-deploy/backups/manifold-dev-data-20260905T131810Z.tgz
     MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID=${serviceOwnerMachineId}
     MANIFOLD_DEV_SPAWN_AGENT=0
-    MANIFOLD_DEV_SPOKE_UNIT=
   '';
   services.caddy = {
     enable = true;

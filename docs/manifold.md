@@ -279,16 +279,59 @@ points TLS clients at that bundle; Git receives its explicit CA setting.
 No host `/etc` directory or ambient environment is mounted. The native owner
 starts after the resolver, but resolver restarts do not stop the owner.
 
-Source delivery does not activate this transition. Before replacing the old
-hand-written `manifold-dev-terminal-host` and `manifold-dev-agent` user units,
-use the authorized preview machine's `core.machines.drain`, finish retained
-work through its native controls, and require the owner's atomic
-`shutdown_request` acknowledgment. Empty-looking process listings are not
-that proof. Only then activate the declared credential reference and profile;
-never overlap two transports with the same token, rotate merely to move
-supervision, or copy another machine's credentials. The receiver declaration
-explicitly disables its legacy `MANIFOLD_DEV_SPOKE_UNIT` hook so a later hub
-deployment cannot restart the retired user unit.
+Source publication (including updating the pinned Manifold input) is not
+authorization to activate this transition. The supported operator handoff is
+Manifold's `infra/previews/retire-spoke.sh`, using the merged
+`manifold-agent --maintenance` API. Run it only with separate live-maintenance
+authorization, as the account owning the old user units. Its explicit public
+arguments are `--container`, `--machine-id`, `--terminal-host-id`,
+`--terminal-host-unit`, `--transport-unit`, `--socket` and
+`--runtime-dir "$XDG_RUNTIME_DIR"` (the owning user's mode-0700 runtime directory
+for the public maintenance bundle and serialization lock). The reviewed machine
+ID is `05df7eaa-efd8-4d9c-bb0c-334706555c77`; the units are
+`manifold-dev-terminal-host.service` and `manifold-dev-agent.service`.
+Select the incumbent Compose container, terminal-host identity and absolute
+socket path from the reviewed deployment's public configuration, not a guessed
+PID or a private state file. The command reads the hub's owner key only inside
+that owning container: never extract the key, enrollment token or provider
+state into a shell, Nix input or handoff transcript.
+
+Retirement drains admission for that exact machine and fails closed on busy
+or unknown state. It never finishes, cancels or kills retained work: the
+operator must finish that work through its native controls. The command
+requires the owner's atomic `shutdown_request` acknowledgment before retiring
+its old supervisors; on shutdown refusal it restores the transport but leaves
+admission closed. Empty-looking process listings are not shutdown proof. The
+helper does not activate Nix or reopen admission. Preserve the existing Compose
+project, data volume, identities, credential-file reference and every workload
+directory; neither this handoff nor a retained hub replacement recursively
+chowns or migrates them. Never overlap two transports using the enrolled
+token, rotate credentials merely to change supervision, or substitute another
+machine's credentials. The shared receiver now runs the server-only image;
+there is no legacy spoke rebuild/restart hook. Numbered disposable previews
+keep their separate, explicit disposable lifecycle.
+
+An unrelated system activation cannot bypass the source-managed startup
+prerequisite `manifold-preview-legacy-guard.service`. On every native owner or
+transport start it first resolves the existing account's public UID and
+explicitly starts/waits for its systemd user manager. It then queries both
+declared old units through that manager. Each must be `inactive`/`dead`, with
+no pending job, trigger or upholding unit, no stale manager metadata, and a
+disabled, persistently masked or demonstrably absent unit definition. Enabled,
+runtime-only masked, failed, activating and unknown states all block startup;
+an unavailable user bus or failed/incomplete metadata query also blocks it.
+The guard never stops, disables, masks or kills either old supervisor and
+never reads or repairs its state. It runs before private owner configuration
+publication and before PID 1 loads the transport's credential, not as an
+activation-time migration.
+
+Only the acknowledged retirement and stopped/disabled supervisors permit
+separately authorized native-profile activation. The prerequisite has no
+cached retirement marker or persistent success state, and no lifetime
+dependency from the retained owner to the user manager. A later user-manager
+or resolver restart therefore does not stop the native owner. Failed
+preconditions require completing the authorized handoff, not weakening the
+guard or making activation retire the old owner automatically.
 
 Routine hub or transport updates must retain the owner PID and running
 workloads. Owner configuration changes require the same explicit maintenance;

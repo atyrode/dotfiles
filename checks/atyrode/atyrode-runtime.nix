@@ -25,11 +25,10 @@ pkgs.runCommand "check-atyrode-runtime"
     ${fixtures.base}
     ${fixtures.gitNh}
     ${fixtures.identity}
-    # Runtime discovery is read-only and versioned. `runtime list` is the
-    # surface `code` renders in its runtime dial (CODE_RUNTIME_BROKER=atyrode),
-    # so it MUST enumerate launchable model runtimes only — never a service
-    # daemon like manifold-agent, which hosts no model and whose state is
-    # reachable through its own `status` verb. A generic Nix build host has no
+    # Runtime discovery is read-only and versioned. `runtime list` enumerates
+    # launchable model runtimes only — never a service daemon like
+    # manifold-agent, which hosts no model and whose state is reachable through
+    # its own `status` verb. A generic Nix build host has no
     # WSL GPU passthrough, so the one model runtime advertises as unsupported
     # without allocating machine state or attempting a download.
     runtime_list="$(env -u WSL_DISTRO_NAME atyrode runtime list --json)"

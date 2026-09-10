@@ -34,7 +34,7 @@ Apply verifies a pinned NixOS-WSL image, activates `wsl`, and reconciles reviewe
 - **Git** - Pre-configured with useful aliases
 - **tmux** - Terminal multiplexer
 - **Nix/shell/workflow quality tooling** - nixd, nixfmt, ShellCheck, shfmt, and actionlint
-- **OMP** - Pinned coding agent, the `code` profile generator, agents, and skills
+- **OMP** - Pinned coding agent, managed and untrusted launchers, agents, and skills
 - **mise** - Declaratively installed runtime/version manager
 - **Project-owned runtimes** - Python/uv, general JavaScript runtimes, Go, Rust,
   and native compilers come from committed dev shells, `mise.toml`, or native

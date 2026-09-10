@@ -1,38 +1,20 @@
-# omp-configured — the `code` profile generator
+# omp-configured — managed and untrusted OMP launchers
 
-`omp-configured` packages [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`), the
-coding-agent launcher, plus **`code`** — an interactive TUI that builds an OMP routing
-profile from a prompt (or a few dials) and launches it, with a per-provider usage panel.
+`omp-configured` packages [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`)
+with declarative launch policy. [Code](https://github.com/atyrode/code) is a
+separate native Manifold plugin family, not a command shipped by this package.
 
 ## What you get
 
-- **`code`** — the profile generator (Bubble Tea TUI). Type a prompt and/or adjust the
-  facet dials (lane, model tier, thinking, spark, fable — plus, while fable is on, a
-  "main" sub-dial that hands Fable the default-agent role; that escalation is manual
-  only, never suggested); a local prompt→profile classifier
-  (running on the resident ollama daemon) suggests settings. The usage widget
-  groups the identities the central broker reports by provider; **`v`** opens
-  the account manager for per-account usage, selection presets, and refresh.
-  **Enter** launches the generated routing profile, layered over the managed
-  defaults and policy. Every trusted launch and usage fetch stays in the shared
-  OMP client profile `default`; the broker supplies the credentials and each
-  trusted child is pinned to an immutable account pool.
-
-  Press **`m`** to launch the managed defaults without a generated overlay,
-  **`u`** to open the fixed untrusted sandbox for the current directory, or `?`
-  for all keys.
 - **`omp`** — passthrough to your own **unmanaged** `~/.omp` config (the one mutable base;
   `omp update` is blocked since the package is Nix-managed).
-- **`omp-managed`** — the managed-layering primitive: platform extensions + managed defaults
-  + policy applied to a one-shot `--config`. This is the launch target `code` uses for a
-  generated profile; it is also useful directly.
+- **`omp-managed`** — platform extensions, managed defaults and policy applied
+  through a one-shot `--config`, without replacing the operator's configuration.
 - **`ompu`** — a sandboxed launcher for untrusted repositories (stripped credentials,
   restricted tools/approvals, sanitized state).
 
-The generator's model catalog and cost figures live in
-[`config/models.yml`](config/models.yml) (synced from `omp models`).
 Use the pinned binary's `omp --help` and `omp <command> --help` for upstream
-behavior; this README remains authoritative for the four repository wrappers.
+behavior; this README describes the three repository launchers.
 
 ## Install it standalone (Nix)
 
@@ -43,27 +25,17 @@ any machine that has Nix and uses `omp`:
 nix profile install github:atyrode/dotfiles#omp-configured
 ```
 
-That puts `code`, `omp`, `omp-managed`, and `ompu` on your PATH. It's self-contained:
+That puts `omp`, `omp-managed` and `ompu` on your PATH. The managed
+`defaults.yml`, `policy.yml` and `untrusted.yml` are baked into the package;
+bare `omp` retains the operator's mutable configuration.
 
-- The managed config (`defaults.yml`, `policy.yml`, `untrusted.yml`) and the generated
-  routing grid are **baked into the package**.
-- Your bare `omp` configuration remains mutable. `code` keeps trusted client
-  sessions/settings in profile `default` and changes only its auth-broker
-  environment.
-- Trusted authentication runs through one central OMP auth broker: the wrapper
-  passes its URL, snapshot cache, and bearer token, and `code` presents the
-  identities that broker reports. Only non-secret selection state (presets and
-  per-account enabled flags) is machine-local; the package generates no
-  identities. Home Manager supervises the broker on managed machines, but the
-  standalone install works against any broker the environment already names.
-- Broker bearer tokens remain mutable mode-0600 files outside the Nix store and
-  are read fresh for each usage fetch or launch. Each trusted launch is then
-  pinned to a temporary account-pool file, so the displayed quota and the
-  session that follows can never draw on different accounts.
+Home Manager supervises the shared OMP auth broker on managed machines.
+Its supported commands and credential custody remain OMP's; this package
+does not generate identities or copy authentication into Code.
 
 ## How the managed layering stays reliable
 
-`omp-managed` (and the generated profiles launched through it) run `omp` with the managed
+`omp-managed` runs `omp` with the managed
 config layered via `--config` at higher precedence than your machine config, so the managed
 paths (model roles, retry/fallback, advisor, thinking level, approvals, isolation, …) always
 resolve to their Nix-owned values. Editing them in `~/.omp` — or in a running session — does

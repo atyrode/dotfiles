@@ -5,7 +5,7 @@ description: Run a Bubble Tea (or any terminal) TUI headlessly, drive it with ke
 
 # Headless TUI verification
 
-How to run a terminal UI (the `code` generator, or any Bubble Tea program)
+How to run a terminal UI (including Bubble Tea programs)
 without a graphical session, drive it with keys, and verify what it actually
 renders — for operators debugging a TUI and for agents shipping changes to one.
 Unit tests on render functions miss what reaches the terminal: wrapped rows
@@ -52,7 +52,7 @@ session you did not create:
 $ SESSION="tui-$$"
 $ tmux new-session -d -s "$SESSION" -x 150 -y 44 \
     "env -u NO_COLOR -u CI CLICOLOR_FORCE=1 COLORTERM=truecolor TERM=xterm-256color \
-     CODE_GENERATED=… <app>; sleep 300"
+     <app>; sleep 300"
 $ tmux send-keys -t "$SESSION" Down Down Right          # navigate, change a dial
 $ tmux capture-pane -t "$SESSION" -p  > /tmp/frame.txt  # plain text grid
 $ tmux capture-pane -t "$SESSION" -pe > /tmp/frame.ansi # with SGR color codes
@@ -70,9 +70,6 @@ This is deterministic and assertable:
 - **Colors / style bleed** — You MUST inspect SGR sequences in the `-e` capture
   around suspect regions (for example, text wrapping that loses its dim style).
 
-For `code`, you MUST build with `nix build .#code`, generate the grid with
-`./result/bin/code generate --models-file pkgs/omp-configured/config/models.yml --out /tmp/grid.plain`,
-and point `CODE_GENERATED` at it. No further wrapper env is required.
 
 ## 2. Content-dependent responsive layouts
 

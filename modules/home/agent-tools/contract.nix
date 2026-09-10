@@ -236,7 +236,6 @@ in
       };
     };
 
-
     resourceGuard = {
       # The agent stack (OMP sessions, their language servers, Chrome, and bun
       # workers) runs under the user manager's app.slice. Account for it there,
@@ -343,22 +342,22 @@ in
         };
 
         home.activation = lib.mkIf cfg.seedPlainConfig {
-            # Seeding is a convenience: a failure (for example unparseable
-            # operator YAML) warns instead of failing the whole activation.
-            seedPlainOmpConfig =
-              lib.hm.dag.entryAfter
-                [
-                  "installPackages"
-                  "linkGeneration"
-                ]
-                ''
-                  if [[ -v DRY_RUN ]]; then
-                    export AGENT_TOOLS_DRY_RUN=1
-                  fi
-                  if ! ${lib.getExe cfg.seedPackage} apply; then
-                    echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
-                  fi
-                '';
+          # Seeding is a convenience: a failure (for example unparseable
+          # operator YAML) warns instead of failing the whole activation.
+          seedPlainOmpConfig =
+            lib.hm.dag.entryAfter
+              [
+                "installPackages"
+                "linkGeneration"
+              ]
+              ''
+                if [[ -v DRY_RUN ]]; then
+                  export AGENT_TOOLS_DRY_RUN=1
+                fi
+                if ! ${lib.getExe cfg.seedPackage} apply; then
+                  echo "warning: plain-omp seeding failed; inspect with atyrode-omp-seed status" >&2
+                fi
+              '';
         };
       }
 

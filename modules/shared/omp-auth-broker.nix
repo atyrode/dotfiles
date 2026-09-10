@@ -78,7 +78,7 @@ in
   # profile, one level above the agent directory) and nothing else, on both
   # sides of the broker. An out-of-store link keeps the token where sops-nix
   # placed it, mode 0600 and never in the Nix store; until the value is
-  # generated the link dangles, which the supervisor, `code`, and doctor all
+  # generated the link dangles, which the supervisor and doctor both
   # read as "not yet placed". A shared module rather than `users.<name>`, for
   # the reason babel-archive.nix gives: naming the user here would read the
   # very attribute set this defines.

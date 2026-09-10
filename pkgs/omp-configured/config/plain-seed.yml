@@ -34,7 +34,7 @@ task:
 
 # Sol for interactive work; cheap Luna/Terra routes for recurring background
 # roles so commit messages, titles, and subtasks never bill at the main tier.
-# This is the non-dialed baseline; `code` owns generated per-session routing.
+# The Code Manifold plugin owns reviewed per-session routing separately.
 modelRoles:
   default: openai-codex/gpt-5.6-sol:medium
   advisor: openai-codex/gpt-5.6-luna:medium

@@ -124,6 +124,7 @@ let
               xdg.configHome = "/tmp/check-agent-auth-broker/xdg-config";
               xdg.stateHome = "/tmp/check-agent-auth-broker/xdg-state";
               xdg.cacheHome = "/tmp/check-agent-auth-broker/xdg-cache";
+              services.ollama.enable = false;
               # A fixture is not a clan machine, so nothing sets the broker
               # role for it; the serve fixtures name a token path under the
               # scratch tree that the broker check populates itself.
@@ -131,7 +132,6 @@ let
                 enable = true;
                 seedPlainConfig = false;
                 ompPackage = configuredStub;
-                localClassifier.enable = false;
                 authBroker = {
                   role = "serve";
                   tokenFile = brokerTokenFile;

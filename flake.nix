@@ -8,12 +8,15 @@
     # (atyrode/babel SPEC.md 2.3): restic to a Cellar bucket under a stable
     # host identity, catalogued in a shared PostgreSQL. Pinned as a flake
     # input rather than re-packaged under pkgs/, because its derivation is a
-    # plain buildGoModule with a fixed vendorHash and is reproducible across
-    # machines - unlike manifold-agent's upstream bun-deps FOD, which is why
-    # that one is a release asset. flake.lock then carries the exact revision
-    # the hourly archive timer executes.
+    # plain buildGoModule with a fixed vendorHash. flake.lock carries the
+    # exact revision the hourly archive timer executes.
     babel.url = "github:atyrode/babel";
     babel.inputs.nixpkgs.follows = "nixpkgs";
+
+    # The preview executor uses Manifold's own declared owner/transport
+    # profile; the ordinary fleet agent remains independently release-pinned.
+    manifold.url = "github:atyrode/manifold";
+    manifold.inputs.nixpkgs.follows = "nixpkgs";
 
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
@@ -75,6 +78,7 @@
       self,
       nixpkgs,
       babel,
+      manifold,
       clan-core,
       disko,
       home-manager,
@@ -115,6 +119,7 @@
           clan-core
           disko
           home-manager
+          manifold
           nix-homebrew
           nixos-facter-modules
           nixos-wsl

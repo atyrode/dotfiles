@@ -11,7 +11,16 @@
 }:
 
 let
-  casks = import ./casks.nix;
+  casks = map (
+    cask:
+    if cask == "zen@twilight" then
+      {
+        name = cask;
+        greedy = true;
+      }
+    else
+      cask
+  ) (import ./casks.nix);
   binaryCaches = import ../shared/binary-caches.nix;
 in
 {
@@ -61,6 +70,7 @@ in
 
   system.activationScripts.postActivation.text = lib.mkAfter ''
     shell_user=${lib.escapeShellArg username}
+    homebrew_prefix=${lib.escapeShellArg config.homebrew.prefix}
     shell_record="/Users/$shell_user"
     expected_shell=/run/current-system/sw/bin/zsh
 
@@ -101,6 +111,20 @@ in
     if [ "$current_shell" != "$expected_shell" ]; then
       echo "nix-darwin: failed to configure the login shell for $shell_user" >&2
       exit 1
+    fi
+
+    # Keep the rapidly moving Twilight channel aligned with the immutable cask
+    # tap without broadening activation into upgrades of every declared app.
+    twilight_outdated="$(
+      /usr/bin/sudo --user="$shell_user" --set-home /usr/bin/env \
+        HOMEBREW_NO_AUTO_UPDATE=1 \
+        "$homebrew_prefix/bin/brew" outdated --cask --greedy --quiet zen@twilight
+    )"
+    if [ -n "$twilight_outdated" ]; then
+      echo "atyrode: upgrading Zen Twilight from the pinned Homebrew cask" >&2
+      /usr/bin/sudo --user="$shell_user" --set-home /usr/bin/env \
+        HOMEBREW_NO_AUTO_UPDATE=1 \
+        "$homebrew_prefix/bin/brew" upgrade --cask --greedy zen@twilight
     fi
   '';
 

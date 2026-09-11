@@ -62,6 +62,7 @@ windows_plan() {
       and (.name | type == "string" and length > 0)
       and (.versionPolicy | type == "string" and length > 0)
       and (.mutableStateOwner | type == "string" and length > 0)
+      and (.installVersion == null or (.installVersion | type == "string" and length > 0))
       and (.source == "winget")
       and (.conflicts | type == "array"))
   ' "$windows_package_inventory" >/dev/null ||
@@ -109,7 +110,8 @@ windows_render_plan() {
 }
 
 windows_reconcile() {
-  local action="$1" host="$2" json="$3" plan winget package id source status final
+  local action="$1" host="$2" json="$3" plan winget package id source status version final
+  local -a install_args
   plan="$(windows_plan "$host")"
   if [[ "$action" == plan ]]; then
     if [[ "$json" == 1 ]]; then printf '%s\n' "$plan"; else windows_render_plan "$plan"; fi
@@ -131,12 +133,16 @@ windows_reconcile() {
     status="$(jq -r '.status' <<<"$package")"
     if [[ "$source" == winget && "$status" == missing ]]; then
       id="$(jq -r '.id' <<<"$package")"
+      version="$(jq -r '.installVersion // empty' <<<"$package")"
+      install_args=(
+        install --id "$id" --exact --source winget
+        --accept-package-agreements --accept-source-agreements --disable-interactivity
+      )
+      [[ -z "$version" ]] || install_args+=(--version "$version")
       # Native Windows state, fetched over the network and outside every Nix
       # generation, so the argv that changes it is the operator's to see.
-      show_command "$winget" install --id "$id" --exact --source winget \
-        --accept-package-agreements --accept-source-agreements --disable-interactivity
-      "$winget" install --id "$id" --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity </dev/null >&2 ||
-        return "$EX_SOFTWARE"
+      show_command "$winget" "${install_args[@]}"
+      "$winget" "${install_args[@]}" </dev/null >&2 || return "$EX_SOFTWARE"
     fi
   done < <(jq -c '.packages[] | select(.status != "installed")' <<<"$plan")
   final="$(windows_plan "$host")"

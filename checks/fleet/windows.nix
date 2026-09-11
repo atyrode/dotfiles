@@ -51,6 +51,8 @@ pkgs.runCommand "check-windows-control-plane"
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .source == "winget"
+        and .installVersion == "1.23t"
+        and (.versionPolicy | startswith("install 1.23t;"))
         and .conflicts == ["Zen-Team.Zen-Browser"]
         and (.mutableStateOwner | contains("Zen Browser owns"))
       )] | length == 1)

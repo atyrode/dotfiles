@@ -112,6 +112,7 @@ let
       configuredCasks = map (
         cask: if builtins.isString cask then cask else cask.name
       ) config.homebrew.casks;
+      declaredCasks = map (cask: if builtins.isString cask then cask else cask.name) darwinCasks;
     in
     config.programs.zsh.enable
     && builtins.elem boundary.loginShell.darwinPath shellPaths
@@ -134,13 +135,18 @@ let
     && config.homebrew.onActivation.cleanup == "zap"
     && config.homebrew.onActivation.extraEnv == { }
     && config.homebrew.onActivation.extraFlags == [ ]
-    && sort configuredCasks == sort darwinCasks
+    && sort configuredCasks == sort declaredCasks
+    && lib.any (
+      cask: !builtins.isString cask && cask.name == "zen@twilight" && cask.greedy
+    ) config.homebrew.casks
     && lib.hasInfix "--zap --force-cleanup" homebrewActivation
     && lib.hasInfix "--no-upgrade" homebrewActivation
     && !(lib.hasInfix "HOMEBREW_ASK" homebrewActivation)
     && !(lib.hasInfix "manaflow-ai/cmux" homebrewActivation)
     && lib.hasInfix "/usr/bin/dscl" postActivation
     && lib.hasInfix "/run/current-system/sw/bin/zsh" postActivation
+    && lib.hasInfix "brew\" outdated --cask --greedy --quiet zen@twilight" postActivation
+    && lib.hasInfix "brew\" upgrade --cask --greedy zen@twilight" postActivation
     && lib.hasInfix "refusing to create" postActivation;
 in
 assert lib.assertMsg (boundary.schemaVersion == 1) "unknown system-boundary policy schema";

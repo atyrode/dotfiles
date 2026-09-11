@@ -1,8 +1,8 @@
-# omp-configured — managed and untrusted OMP launchers
+# omp-configured — managed, untrusted, and continuity launchers
 
 `omp-configured` packages [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`)
-with declarative launch policy. [Code](https://github.com/atyrode/code) is a
-separate native Manifold plugin family, not a command shipped by this package.
+with declarative launch policy and temporarily restores the frozen standalone
+[Code](https://github.com/atyrode/code) 0.19.0 launcher.
 
 ## What you get
 
@@ -12,9 +12,12 @@ separate native Manifold plugin family, not a command shipped by this package.
   through a one-shot `--config`, without replacing the operator's configuration.
 - **`ompu`** — a sandboxed launcher for untrusted repositories (stripped credentials,
   restricted tools/approvals, sanitized state).
+- **`code`** — the pinned facet-dial catalog and launcher retained for daily
+  continuity while native Manifold workflows are proven and accepted.
 
-Use the pinned binary's `omp --help` and `omp <command> --help` for upstream
-behavior; this README describes the three repository launchers.
+Use the pinned binaries' `--help` output for upstream behavior; this README
+describes the four operator launchers. `omp-analysis` is also exposed only as
+the restricted RPC engine used by `code engine`.
 
 ## Install it standalone (Nix)
 
@@ -25,13 +28,14 @@ any machine that has Nix and uses `omp`:
 nix profile install github:atyrode/dotfiles#omp-configured
 ```
 
-That puts `omp`, `omp-managed` and `ompu` on your PATH. The managed
-`defaults.yml`, `policy.yml` and `untrusted.yml` are baked into the package;
-bare `omp` retains the operator's mutable configuration.
+That puts `omp`, `omp-managed`, `ompu` and `code` on your PATH. The managed
+defaults, policy, untrusted posture, Code catalog and restricted analysis
+posture are baked into the package; bare `omp` retains the operator's mutable
+configuration.
 
 Home Manager supervises the shared OMP auth broker on managed machines.
-Its supported commands and credential custody remain OMP's; this package
-does not generate identities or copy authentication into Code.
+Its supported commands and credential custody remain OMP's; the Code wrapper
+only reuses that authority and does not copy authentication.
 
 ## How the managed layering stays reliable
 

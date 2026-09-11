@@ -363,8 +363,9 @@ Three commands make up the operator surface:
 Use `omp --help` and `omp <command> --help` for the pinned upstream command
 surface. [Upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
 may describe behavior newer than the repository pin. This document is
-authoritative for `omp-managed` and `ompu`. Code is a separately installed native
-Manifold plugin, not a command in this profile.
+authoritative for `omp-managed` and `ompu`. The adjacent standalone `code`
+command is the temporary continuity bridge described below; it is not the
+native Manifold plugin runtime.
 
 Plain `omp` executes upstream OMP directly, with no managed extension, defaults,
 or policy overlay. `omp update` is blocked so it cannot shadow the Nix-pinned
@@ -496,19 +497,41 @@ machine can require a download. Publishing this change does not activate any
 host or download/remove its models.
 
 
-### Code workspace
+### Code continuity bridge
 
-[Code](https://github.com/atyrode/code) is a native Manifold plugin family.
-Its workspace, catalog, account selection and governed runtime setup belong to
-that product, not an `omp-configured` launcher or a generated dotfiles catalog.
-Install and review its bundles through Manifold's plugin manager; the native
-execution profile determines which declared resources are available.
+[Code](https://github.com/atyrode/code) 0.19.0 is temporarily restored as the
+last accepted standalone daily launcher. Nix fetches immutable release assets
+with fixed hashes, and the pin is intentionally absent from automatic update
+jobs.
 
-The retired standalone `code` command, private analysis launcher, catalog
-refresher and automatic Code-to-Babel profile import are no longer installed.
-This source cutover does not activate hosts, stop existing sessions, remove
-historical Code/Babel state, migrate credentials or authenticate providers.
-Direct OMP launchers and the operator's general local runtime remain separate.
+The Code/Manifold transition owns coordinated updates to this temporary pin:
+when a reviewed plugin stage requires a newer CLI contract such as headless
+launch, its dotfiles follow-up may advance the binary, wrapper and catalog
+together. The freeze prevents unrelated release automation from moving the
+daily launcher; it does not make 0.19.0 a constraint on transition work.
+
+`omp-configured` carries the generated catalog, `CODE_*` wrapper integration
+and restricted `omp-analysis` RPC launcher required by `code engine`. The
+wrapper reuses OMP's existing auth-broker target and the general
+`atyrode runtime` interface; it creates no second broker or runtime authority.
+
+This bridge does **not** install Manifold plugin bundles, start or configure a
+Manifold hub, alter `manifold-agent`, or claim the native plugin workspace. The
+retired classifier-model pull schedule, catalog/model-fact refresher and
+automatic Code-to-Babel profile import remain retired. Native Manifold plugin
+installation and review still belong to Manifold's plugin manager.
+
+Retire the standalone command only after the native Manifold path reliably
+covers the operator's accepted daily workflows: choosing a catalog profile and
+account, launching managed and untrusted OMP workspaces, using brokered provider
+login, selecting the declared local runtime, and recovering workspace/session
+state. Passing builds or CI alone is not acceptance; the operator must confirm
+the replacement in sustained daily use before the package, catalog, wrapper and
+private analysis launcher are removed together.
+
+Publishing this source does not activate hosts, stop existing sessions, migrate
+credentials or change native Manifold deployment. Direct OMP launchers and the
+general local runtime remain separately owned.
 
 ## Security boundaries
 

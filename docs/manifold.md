@@ -245,8 +245,8 @@ Back up the retained volume before a deployment that crosses a schema version.
 
 The separate preview executor is declared in
 `modules/nixos/manifold-dev-hub.nix` through Manifold's `nixosModules.native`
-profile at merged revision `3de83c4abb7b44830d19c02cbb5c0cec75ef95fa`
-(Manifold #463), recorded in `flake.lock` and imported only for dev-01.
+profile at merged revision `9ac8d70197fe31cbc20ad582780a33fded46d9a1`
+(Manifold #455), recorded in `flake.lock` and imported only for dev-01.
 It runs the same execution-only profile documented for ordinary multi-node
 self-hosting: `manifold-owner` retains jobs and PTYs; `manifold-transport`
 can be replaced independently. The existing Compose hub, Caddy edge and
@@ -297,14 +297,21 @@ Manifold's `infra/previews/retire-spoke.sh`, using the merged
 `manifold-agent --maintenance` API. Run it only with separate live-maintenance
 authorization, as the account owning the old user units. Its explicit public
 arguments are `--container`, `--machine-id`, `--terminal-host-id`,
-`--terminal-host-unit`, `--transport-unit`, `--socket` and
-`--runtime-dir "$XDG_RUNTIME_DIR"` (the owning user's mode-0700 runtime directory
-for the public maintenance bundle and serialization lock). The reviewed machine
+`--terminal-host-unit`, `--transport-unit`, `--transport-package`, `--socket`
+and `--runtime-dir "$XDG_RUNTIME_DIR"` (the owning user's mode-0700 runtime
+directory for the public maintenance bundle and serialization lock). The reviewed machine
 ID is `05df7eaa-efd8-4d9c-bb0c-334706555c77`; the units are
 `manifold-dev-terminal-host.service` and `manifold-dev-agent.service`.
-Select the incumbent Compose container, terminal-host identity and absolute
-socket path from the reviewed deployment's public configuration, not a guessed
-PID or a private state file. The command reads the hub's owner key only inside
+The transport package must be a separately reviewed immutable
+`/nix/store/…-manifold-agent-…` output whose compiled non-owning executable
+matches the retained transport; never approve an artifact discovered from the
+running process itself.
+Select the incumbent Compose container and absolute socket path from the
+reviewed deployment's public configuration. The supported maintenance drain
+response supplies the live terminal-host identity for the reviewed machine;
+obtaining it closes admission and requires the same maintenance authorization.
+Retained or unknown work holds the transition. Never guess a PID or read a
+private state file to discover the owner. The command reads the hub's owner key only inside
 that owning container: never extract the key, enrollment token or provider
 state into a shell, Nix input or handoff transcript.
 

@@ -27,6 +27,13 @@ specific revision. The operator may not remember or intend that constraint.
 Ask whether to revisit it using the available question tool or a direct question;
 do not silently ignore, weaken or rewrite the rule.
 
+## Task tracking
+
+For non-trivial work, treat an available task tracker as canonical live state.
+Initialize the complete scope before substantive work, and update it immediately
+when work completes, blocks, unblocks, changes scope or is abandoned. Before
+every user-facing response, reconcile the tracker with actual progress; never
+leave completed work marked open.
 ## Standing merge authorization
 
 Within explicitly operator-approved scope, default to squash-merging verified

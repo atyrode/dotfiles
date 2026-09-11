@@ -226,6 +226,26 @@
         "type": "github"
       }
     },
+    "manifold": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789086474,
+        "narHash": "sha256-9nc6YS4SeSaqWJ407Yxm9fS6SY4k/fPpKxD64y4ZxjE=",
+        "owner": "atyrode",
+        "repo": "manifold",
+        "rev": "9ac8d70197fe31cbc20ad582780a33fded46d9a1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "atyrode",
+        "repo": "manifold",
+        "type": "github"
+      }
+    },
     "nix-darwin": {
       "inputs": {
         "nixpkgs": [
@@ -357,6 +377,7 @@
         "home-manager": "home-manager",
         "homebrew-cask": "homebrew-cask",
         "homebrew-core": "homebrew-core",
+        "manifold": "manifold",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
         "nix-index-database": "nix-index-database",

@@ -143,6 +143,9 @@ pkgs.runCommand "check-omp-seed"
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "fresh seed did not write secrets.enabled"
     [ "$(yq eval '.task.isolation.mode' "$config")" = "auto" ] || fail "fresh seed did not write task.isolation.mode"
     [ "$(yq eval '.advisor.syncBacklog' "$config")" = "3" ] || fail "fresh seed did not write advisor.syncBacklog"
+    [ "$(yq eval '.todo.eager' "$config")" = "always" ] || fail "fresh seed did not require todo creation"
+    [ "$(yq eval '.todo.reminders' "$config")" = "true" ] || fail "fresh seed did not enable todo reminders"
+    [ "$(yq eval '.todo.remindersMax' "$config")" = "5" ] || fail "fresh seed did not set the todo reminder limit"
     [ "$(yq eval '.dev.autoqa.consent' "$config")" = "granted" ] || fail "unmanaged key was not preserved"
     [ -f "$state/last-applied.yml" ] || fail "snapshot was not recorded"
     [ "$(jq -r '.drift | length' "$state/drift.json")" = 0 ] || fail "fresh seed reported drift"
@@ -174,9 +177,9 @@ pkgs.runCommand "check-omp-seed"
     # never for drifted ones.
     updated_seed="$TMPDIR/updated-seed.yml"
     cp "$seed" "$updated_seed"
-    yq eval -i '.todo.eager = "always" | .advisor.syncBacklog = "1"' "$updated_seed"
+    yq eval -i '.todo.eager = "preferred" | .advisor.syncBacklog = "1"' "$updated_seed"
     OMP_SEED_FILE="$updated_seed" atyrode-omp-seed apply >/dev/null
-    [ "$(yq eval '.todo.eager' "$config")" = "always" ] || fail "seed update was not applied"
+    [ "$(yq eval '.todo.eager' "$config")" = "preferred" ] || fail "seed update was not applied"
     [ "$(yq eval '.advisor.syncBacklog' "$config")" = "5" ] || fail "seed update clobbered local edit"
 
     # Scenario: dry run writes nothing once state exists.

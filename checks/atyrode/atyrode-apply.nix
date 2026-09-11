@@ -1395,6 +1395,7 @@ pkgs.runCommand "check-atyrode-apply"
       and (.packages | length) == 2
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
+        and .installVersion == "1.23t"
         and .status == "missing"
         and (.installed | not)
         and .detectedConflicts == []
@@ -1644,7 +1645,7 @@ pkgs.runCommand "check-atyrode-apply"
     unset ATYRODE_CLAN _ATYRODE_TEST_IDENTITY_ROOT
     grep -Fx -- "os switch $ATYRODE_TEST_CANDIDATE --diff always" \
       "$TMPDIR/nh-args" >/dev/null
-    grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget' \
+    grep -F -- 'install --id Zen-Team.Zen-Browser.Twilight --exact --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity --version 1.23t' \
       "$WINGET_LOG" >/dev/null
     grep -F -- 'install --id DEVCOM.JetBrainsMonoNerdFont --exact --source winget' \
       "$WINGET_LOG" >/dev/null

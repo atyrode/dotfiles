@@ -26,6 +26,11 @@ Decision record: [ADR-0002](adr/0002-home-manager-primary-authority.md).
 | Homebrew installation and declared casks | Not applicable | nix-homebrew and nix-darwin; Homebrew retains native mutable state | Not applicable |
 | Filesystems, networking, firewall, SSH, services, logging, updates, monitoring, backups and secrets | Operating system/operator | Operating system and nix-darwin where declared | The consuming infrastructure |
 
+The Mac keeps Homebrew taps immutable and does not broadly upgrade declared
+applications during activation. Zen Twilight is the deliberate exception:
+activation upgrades that one greedy cask to the version in the pinned cask tap,
+leaving every other application under the existing no-upgrade policy.
+
 ## Windows and NixOS-WSL
 
 The home Windows machine deliberately has two ownership domains:

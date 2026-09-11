@@ -148,7 +148,9 @@ steeringMode: one-at-a-time
 doubleEscapeAction: tree
 treeFilterMode: default
 todo:
-  eager: preferred
+  eager: always
+  reminders: true
+  remindersMax: 5
 stt:
   enabled: true
   submitTrigger: say-submit

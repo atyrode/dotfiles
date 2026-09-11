@@ -167,6 +167,12 @@ Green `main` is the event that matters, so it is what moves machines:
 
 1. A release of a fleet tool (`code`, `babel`, `omp`) **dispatches** the
    dotfiles pin bump the moment it publishes, instead of waiting for a cron.
+
+   Temporary exception: the standalone Code continuity bridge stays at its
+   reviewed pin and does not accept routine release-driven bumps. The
+   Code/Manifold transition may advance its binary, wrapper and catalog
+   together when a reviewed plugin stage requires a newer CLI contract. This
+   exception ends when the accepted native workflow retires the bridge.
 2. CI builds every host closure, pushes it to the cache, and on green `main`
    **pushes** a converge to every reachable machine over the overlay.
 3. A **slow timer** on every machine is the floor for machines that were

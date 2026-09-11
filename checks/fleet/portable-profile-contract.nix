@@ -58,6 +58,10 @@ assert lib.assertMsg (
   coderHttps.config.home.sessionVariables.ATYRODE_GIT_AUTH_MODE == "https-gh"
 ) "portable HTTPS bootstrap must persist its Git auth mode in the session";
 assert lib.assertMsg (
+  coder.config.home.sessionVariables.CODE_FACET_GLYPHS
+  == "runtime=@,lane=~,model=#,thinking=?,advisor=&,spark=^,fable=*,main=+,fast=!,relief=%"
+) "portable bootstrap must use terminal-portable Code glyphs";
+assert lib.assertMsg (
   coderHttps.config.programs.gh.settings.git_protocol == "https"
 ) "portable HTTPS bootstrap must keep gh clones on HTTPS";
 assert lib.assertMsg coderHttps.config.programs.gh.gitCredentialHelper.enable
@@ -69,6 +73,9 @@ assert lib.assertMsg (
     "pushInsteadOf"
   ] null coderHttps.config.programs.git.settings == null
 ) "portable HTTPS bootstrap must not rewrite GitHub pushes to SSH";
+assert lib.assertMsg (
+  !(fixedHomeConfig.config.home.sessionVariables ? CODE_FACET_GLYPHS)
+) "portable Code glyphs must not leak into fixed host configurations";
 assert lib.assertMsg (
   coderIdentity == {
     activation = "home-manager";

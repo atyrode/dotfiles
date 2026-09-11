@@ -373,6 +373,13 @@ in
           }
         ];
 
+        # The temporary standalone `code` launcher adds OAuth accounts by
+        # running provider login on the broker host over SSH. Reuse the tunnel
+        # target instead of creating another routing authority.
+        home.sessionVariables = lib.mkIf (bcfg.role == "tunnel") {
+          CODE_AUTH_LOGIN_VIA = bcfg.target;
+        };
+
         # A broker host whose token is not yet placed has nothing to serve
         # with; the condition keeps the unit from restarting every five
         # seconds until the value is generated, and the supervisor's own check

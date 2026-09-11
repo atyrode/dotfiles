@@ -184,6 +184,27 @@ def verify_terminal(f, width, height):
     f.expect(pane, "second-line-λ")
     f.frame(pane, "omp", width, height)
     run("docker", "stop", "--time", "10", name, timeout=20)
+    name = f.create(f"code-{width}",
+                    ["/home/developer/.nix-profile/bin/zsh", "-lc", "git init -q; exec code"],
+                    interactive=True)
+    pane = f.pane(name, width, height)
+    f.expect(pane, "generator", 30)
+    f.expect(pane, "q quit")
+    f.keys(pane, "Down")
+    def selected_dial(capture):
+        for row in capture.splitlines():
+            control = row.split("│", 1)[0]
+            if "▸" in control and re.search(r"\bmodel\s+", control):
+                return control.strip()
+        return None
+    previous_value = eventually(lambda: selected_dial(f.capture(pane)), "Code model dial focused")
+    f.frame(pane, "code-before", width, height)
+    f.keys(pane, "Right")
+    eventually(lambda: selected_dial(f.capture(pane)) not in (None, previous_value),
+               "Code dial changes its displayed value")
+    f.frame(pane, "code-after", width, height)
+    f.keys(pane, "C-c")
+    run("docker", "stop", "--time", "10", name, timeout=20)
 
 
 def verify_runtime(f):

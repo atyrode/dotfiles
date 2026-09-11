@@ -1,6 +1,7 @@
 {
   bash,
   cacert,
+  code,
   coreutils,
   findutils,
   gitMinimal,
@@ -20,6 +21,7 @@
 }:
 
 let
+  analysisConfig = ./config/analysis.yml;
   defaultsConfig = ./config/defaults.yml;
   policyConfig = ./config/policy.yml;
   untrustedConfig = ./config/untrusted.yml;
@@ -921,9 +923,28 @@ let
     '';
   };
   # The managed launcher: applies the platform extensions + managed defaults +
-  # policy to an arbitrary one-shot `--config`.
+  # policy to an arbitrary one-shot `--config`. The code generator points
+  # CODE_OMP here so a synthesised profile launches through the full managed
+  # layering.
   ompManaged = mkOmpCommand "omp-managed";
 
+  # First-principles facet grid: `code generate` renders a routing block for
+  # every valid (lane, model-tier, thinking, spark) combination from the model
+  # catalog, baked at build time so the generator view stays immutable and
+  # reviewable. The binary that browses the grid also renders it — the second
+  # implementation this replaced had drifted from it, which is also why the two
+  # can never disagree about the combo-id format across a version bump.
+  #
+  # The model-tier dial carries a fourth notch, `elite`, on lanes whose lead
+  # pool ladders to tier 4 (Anthropic today). The `fable` and `fable-as-main`
+  # toggles this comment used to name are gone: Anthropic retired that model's
+  # separate quota window, so it is now simply pool A's top rung.
+  generatedProfiles = runCommand "omp-generated-profiles" { } ''
+    mkdir -p "$out/share/omp"
+    ${lib.getExe code} generate \
+      --models-file ${./config/models.yml} \
+      --out "$out/share/omp/generated.plain"
+  '';
   trustedUntrustedPath = lib.makeBinPath [
     bash
     coreutils
@@ -1142,6 +1163,318 @@ let
       run_isolated "$raw_omp" "''${managed_args[@]}" "''${forwarded_args[@]}"
     '';
   };
+
+  # The generator and central authentication broker share OMP's default profile.
+  # `code` constrains each trusted child with an immutable account pool.
+  ompManagedDefault = writeShellApplication {
+    name = "omp-managed-default";
+    text = ''
+      exec ${lib.getExe ompManaged} --profile default "$@"
+    '';
+  };
+
+  # The runtime a restricted analysis session may reach. It is hermetic on
+  # purpose: the session has no tools (the worker passes --no-tools) and the
+  # posture config denies bash, eval, task, browser, github and debug on top of
+  # that, so anything OMP still shells out to should come from this closure
+  # rather than from whatever the operator happened to have on PATH.
+  analysisPath = lib.makeBinPath [
+    bash
+    coreutils
+    gitMinimal
+  ];
+
+  # omp-analysis: the dedicated restricted launcher for Code's native RPC
+  # engine. Code resolves the OMP it drives through
+  # CODE_OMP and invokes it as
+  #
+  #   omp --mode rpc --no-tools --no-lsp --no-session --no-extensions \
+  #       --no-rules --no-skills --no-title --auto-approve \
+  #       --config <rendered profile> --cwd <run work dir>
+  #
+  # (code/omprpc.go, ompArgv). Neither existing launcher can legitimately serve
+  # that invocation, and both refuse it for the right reason: omp-managed layers
+  # the Nix-owned defaults, platform extensions and policy that --no-extensions
+  # would silently disable, and ompu owns its own credential, state, tool and
+  # approval policy, which the worker's flags would contradict. Rather than
+  # weaken either, this is a third launcher whose whole posture is the restricted
+  # one, declared here as an intentional operator artifact.
+  #
+  # Why each property holds:
+  #
+  #   Raw omp, no managed layering. It execs the pinned binary directly, so
+  #   there is no settings guard for --no-extensions to disable and no
+  #   contradiction to refuse. What replaces the guard is analysis.yml, applied
+  #   *before* the worker's own --config so an operator-minted profile keeps
+  #   authority over model routing. The launcher names no model, provider or
+  #   thinking level: every model invocation traces to the profile a human
+  #   confirmed in the configuration ceremony, which is the binding principle of
+  #   atyrode/babel#86.
+  #
+  #   Never the operator's OMP state. HOME is replaced with a private home under
+  #   $HOME/.local/state/atyrode/omp-analysis, unconditionally, and that is the
+  #   whole mechanism: OMP resolves its configuration root, its logs and its
+  #   extracted native modules from HOME, and PI_CONFIG_DIR is a HOME-*relative*
+  #   override rather than an absolute one, so anything else would be a second,
+  #   weaker answer to the same question. The inherited PI_CONFIG_DIR and
+  #   PI_CODING_AGENT_DIR are therefore dropped rather than rewritten — the
+  #   latter is absolute and an ambient one pointing at ~/.omp/agent is exactly
+  #   the hazard — and OMP_PROFILE is pinned so an inherited profile name cannot
+  #   select the operator's. The XDG roots and OMP_WORKTREE_DIR are replaced
+  #   alongside. Unconditionally is the load-bearing word: the guarantee is the
+  #   launcher's own rather than something inherited from a caller that happened
+  #   to isolate itself, so $HOME/.omp — the operator's sessions, agent state
+  #   and provider credentials — is unreachable however omp-analysis is reached.
+  #   Under the worker this nests inside the run-private HOME Code makes and
+  #   deletes with the run (code/omprpc.go, ompChildEnv/ompNewRunDir), so
+  #   relocating costs nothing and the property stands on its own.
+  #
+  #   Credentials: the brokered one, and nothing else. Unlike ompu this does not
+  #   run `env -i`. Code's worker has already built the child environment — the
+  #   private home, the job secrets dropped, and the run's own auth-broker
+  #   credential added (withAuthEnv) — and wiping it would delete exactly the
+  #   credential the run legitimately needs. What is removed instead is every
+  #   ambient credential-shaped variable except those four broker keys, so a
+  #   run authenticates through the account pool the operator selected and
+  #   never through a provider key that happened to be exported. The
+  #   environment-resolved model dials (PI_SMOL_MODEL, PI_SLOW_MODEL,
+  #   PI_PLAN_MODEL) go with them: an env-resolved dial is precisely the silent
+  #   default atyrode/babel#86 forbids.
+  #
+  #   The worker's flags are accepted, not fought. Every argument is forwarded
+  #   verbatim. The refusals are narrow and none of them is in ompArgv: they are
+  #   the arguments that would relocate state outside this run, load executable
+  #   or policy-bearing material into a session whose justification is that it
+  #   loads none, or supply a credential beside the brokered one.
+  ompAnalysis = writeShellApplication {
+    name = "omp-analysis";
+    runtimeInputs = [ coreutils ];
+    text = ''
+      raw_omp=${lib.escapeShellArg (lib.getExe omp)}
+      export PATH=${lib.escapeShellArg analysisPath}
+
+      refuse() {
+        printf '%s\n' "omp-analysis refused '$1': $2" >&2
+        exit 2
+      }
+
+      refuse_flag() {
+        refuse "$1" \
+          "the analysis launcher owns OMP's state root, its executable-resource discovery and its credential, so that a run stays attributable to the profile an operator confirmed."
+      }
+
+      refuse_subcommand() {
+        refuse "$1" \
+          "this launcher exists for one invocation shape — the analysis worker's RPC session — and a subcommand is a different program. Use omp or omp-managed."
+      }
+
+      ${builtins.readFile ./argv.sh}
+
+      original_args=( "$@" )
+      refuse_bootstrap_state_flags "''${original_args[@]}"
+      classify_invocation "''${original_args[@]}"
+      if [[ -n "$subcommand" && "$subcommand" != __passthrough__ ]]; then
+        refuse_subcommand "$subcommand"
+      fi
+      i=0
+      while (( i < ''${#original_args[@]} )); do
+        arg="''${original_args[$i]}"
+        # Past `--` every word is the session's prompt, not an argument to read.
+        [[ "$arg" == -- ]] && break
+        case "$arg" in
+          --profile|--session-dir|--session|--resume|-r|--fork|--continue|-c|--from-claude|--from-codex|--provider-session-id|--extension|-e|--trusted-extension|--plugin-dir|--hook|--api-key|--alias|--add-dir)
+            refuse_flag "$arg"
+            ;;
+          --profile=*|--session-dir=*|--session=*|--resume=*|--fork=*|--continue=*|--from-claude=*|--from-codex=*|--provider-session-id=*|--extension=*|-e=*|--trusted-extension=*|--plugin-dir=*|--hook=*|--api-key=*|--alias=*|--add-dir=*)
+            refuse_flag "''${arg%%=*}"
+            ;;
+          -r?*)
+            refuse_flag --resume
+            ;;
+        esac
+        if (( i + 1 < ''${#original_args[@]} )) &&
+          omp_consumes_value "$arg" "''${original_args[$((i + 1))]}"; then
+          i=$((i + 2))
+          continue
+        fi
+        i=$((i + 1))
+      done
+
+      state_root="$HOME/.local/state/atyrode/omp-analysis"
+      if [[ -L "$state_root" ]]; then
+        printf 'omp-analysis state root must not be a symlink: %s\n' "$state_root" >&2
+        exit 2
+      fi
+      analysis_home="$state_root/home"
+      analysis_worktrees="$state_root/worktrees"
+      analysis_xdg_config="$state_root/xdg/config"
+      analysis_xdg_data="$state_root/xdg/data"
+      analysis_xdg_state="$state_root/xdg/state"
+      analysis_xdg_cache="$state_root/xdg/cache"
+      mkdir -p \
+        "$analysis_home" \
+        "$analysis_worktrees" \
+        "$analysis_xdg_config" \
+        "$analysis_xdg_data" \
+        "$analysis_xdg_state" \
+        "$analysis_xdg_cache"
+      chmod 700 "$state_root" "$analysis_home" "$analysis_worktrees"
+
+      export HOME="$analysis_home"
+      export XDG_CONFIG_HOME="$analysis_xdg_config"
+      export XDG_DATA_HOME="$analysis_xdg_data"
+      export XDG_STATE_HOME="$analysis_xdg_state"
+      export XDG_CACHE_HOME="$analysis_xdg_cache"
+      export OMP_WORKTREE_DIR="$analysis_worktrees"
+      export OMP_PROFILE=analysis
+      export PI_PROFILE=analysis
+
+      # HOME is the whole answer to where OMP keeps state, so the two variables
+      # that could give a different one are dropped: PI_CONFIG_DIR is resolved
+      # relative to HOME and an absolute one produces a doubled path, while
+      # PI_CODING_AGENT_DIR is absolute and an ambient ~/.omp/agent is precisely
+      # the operator state this launcher exists not to touch.
+      unset PI_CONFIG_DIR PI_CODING_AGENT_DIR
+
+      # An env-resolved dial or an overridden package directory would be a model
+      # choice — or an executable-resource choice — that no operator made.
+      unset PI_SMOL_MODEL PI_SLOW_MODEL PI_PLAN_MODEL PI_PACKAGE_DIR
+
+      # The run's credential is the auth-broker one Code wired for it. Every
+      # other credential-shaped variable is dropped by shape rather than by an
+      # enumeration of today's providers, which would go stale the first time OMP
+      # learns another one. Names are read from a NUL-delimited snapshot because
+      # a value may contain a newline and `compgen` is not a builtin every bash
+      # build ships.
+      while IFS= read -r -d "" entry; do
+        name="''${entry%%=*}"
+        case "$name" in
+          OMP_AUTH_BROKER_URL|OMP_AUTH_BROKER_TOKEN|OMP_AUTH_BROKER_SNAPSHOT_CACHE|OMP_AUTH_BROKER_ACCOUNT_POOL_FILE)
+            continue
+            ;;
+          *API_KEY|*APIKEY|*TOKEN|*SECRET|*PASSWORD|*OAUTH|*CREDENTIAL|*CREDENTIALS|*COOKIE|*COOKIES|AWS_PROFILE|AWS_ACCESS_KEY_ID|GOOGLE_CLOUD_PROJECT|GOOGLE_CLOUD_LOCATION)
+            unset "$name"
+            ;;
+        esac
+      done < <(env -0)
+
+      # Nothing is discovered from the directory Babel happened to be run in.
+      # The session's own directory is the one the worker names with --cwd, which
+      # is a run-private working tree Code creates empty.
+      cd ${neutralRoot}
+      exec "$raw_omp" --config ${analysisConfig} "$@"
+    '';
+  };
+
+  codeLauncher = writeShellApplication {
+    name = "code";
+    runtimeInputs = [ coreutils ];
+    text = ''
+      omp_bin=${lib.escapeShellArg (lib.getExe omp)}
+      export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
+      export CODE_OMP=${lib.getExe ompManagedDefault}
+      export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
+      # code is not OMP: it asks the broker over HTTP for the identities it
+      # presents and hands the run its credential through the environment
+      # (withAuthEnv), so the bearer token has to be a value here rather than
+      # a file OMP would read on its own. It is read from the one place OMP
+      # itself resolves it, the token of the default profile's configuration
+      # root, which Home Manager links to the clan var sops-nix places; a
+      # machine where it is not yet placed has a dangling link, reads as
+      # unreadable, and launches without a broker. CODE_AUTH_LOGIN_VIA is the
+      # SSH target the tunnel machines export from Home Manager, so the
+      # provider login runs on the broker host; on that host it stays unset
+      # and the login is local.
+      broker_token_file="$HOME/.omp/auth-broker.token"
+      if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_token_file" ]]; then
+        OMP_AUTH_BROKER_TOKEN="$(<"$broker_token_file")"
+      fi
+      if [[ -n "''${OMP_AUTH_BROKER_TOKEN:-}" ]]; then
+        export OMP_AUTH_BROKER_TOKEN
+        export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
+        export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
+      else
+        unset OMP_AUTH_BROKER_URL OMP_AUTH_BROKER_TOKEN OMP_AUTH_BROKER_SNAPSHOT_CACHE
+      fi
+      # Resolve by command name rather than a Nix store path: atyrode owns
+      # machine-local capabilities, while code remains independently releasable.
+      export CODE_RUNTIME_BROKER="''${CODE_RUNTIME_BROKER:-atyrode}"
+      export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
+      export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"
+      export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
+      # The generator's prompt→profile classifier runs on the resident,
+      # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
+      # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
+      # daemon/model. The account manager owns only non-secret selection state;
+      # every trusted launch receives the central broker plus an immutable
+      # per-process account pool while remaining on the shared default client
+      # profile. On supported machines, code discovers machine-local targets
+      # from CODE_RUNTIME_BROKER. Selecting one delegates provisioning and launch
+      # to atyrode without forwarding the cloud broker environment.
+
+      usage() {
+        printf '%s\n' \
+          'code - build an OMP profile from a prompt and run it' \
+          "" \
+          'usage:' \
+          '  code                 open the profile generator' \
+          '  code [args]          open it, forwarding extra args to the launch' \
+          '  code -U, --no-usage  open without fetching the usage panel' \
+          '  code -h, --help      this help' \
+          "" \
+          'subcommands (no terminal required):' \
+          '  code ls              list live sessions' \
+          '  code session reap    retire sessions (dry run unless --yes)' \
+          '  code wt              list and clean session worktrees' \
+          '  code generate        re-render the profile catalog' \
+          '  code engine          native OMP RPC and immutable profiles' \
+          "" \
+          'In the generator: type a prompt or adjust the dials, v opens the' \
+          'account manager, w toggles an isolated git worktree, and ? shows' \
+          'all keys. Enter launches the selected hosted or local runtime; m' \
+          'runs the managed hosted defaults, and u opens an untrusted sandbox.'
+      }
+
+      case "''${1:-}" in
+        -h | --help) usage; exit 0 ;;
+        -U | --no-usage) export CODE_USAGE=""; shift ;;
+      esac
+
+      # Subcommands that never open the TUI must not require a terminal. They
+      # exist for scripts and for triaging a machine over a bare `ssh host
+      # 'code ls'`, which is exactly when no tty is attached; only the
+      # generator below needs one.
+      #
+      # Native engine sessions keep the restricted launcher: their
+      # --no-extensions posture must not disable omp-managed's settings guard.
+      # The explicit configuration ceremony keeps the managed launcher because
+      # its dial UI discovers providers from the operator's own environment.
+      case "''${1:-}" in
+        engine)
+          engine_configure=false
+          for arg in "$@"; do
+            if [[ "$arg" == --configure ]]; then
+              engine_configure=true
+              break
+            fi
+          done
+          if [[ "$engine_configure" == false ]]; then
+            export CODE_OMP=${lib.getExe ompAnalysis}
+          fi
+          exec ${lib.getExe code} "$@"
+          ;;
+        generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
+      esac
+
+      if [[ ! -t 0 || ! -t 1 ]]; then
+        printf 'code: no interactive terminal.\n' >&2
+        usage >&2
+        exit 2
+      fi
+
+      exec ${lib.getExe code} "$@"
+    '';
+  };
 in
 runCommand "omp-configured-${lib.getVersion omp}"
   {
@@ -1154,12 +1487,16 @@ runCommand "omp-configured-${lib.getVersion omp}"
       # checks/omp/omp-managed-keys.nix can prove they still mirror the YAML they
       # gate. Drift there makes `omp config set` silently accept a key Nix
       # overrides.
+      # ompManagedDefault is exposed for the broker-launch checks in
+      # checks/omp/omp-stack.nix.
       inherit
         goplsCommand
+        analysisConfig
         defaultsConfig
         enforcedPolicyPaths
         managedDefaultPaths
         neutralRoot
+        ompManagedDefault
         platformRoot
         policyConfig
         untrustedConfig
@@ -1168,7 +1505,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     };
 
     meta = omp.meta // {
-      description = "Declaratively configured OMP with managed and untrusted launchers";
+      description = "Declaratively configured OMP with the atyrode profile generator";
       mainProgram = "omp";
     };
   }
@@ -1176,6 +1513,8 @@ runCommand "omp-configured-${lib.getVersion omp}"
     mkdir -p "$out/bin" "$out/share/zsh/site-functions"
     ln -s ${lib.getExe ompDefault} "$out/bin/omp"
     ln -s ${lib.getExe ompManaged} "$out/bin/omp-managed"
+    ln -s ${lib.getExe ompAnalysis} "$out/bin/omp-analysis"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
+    ln -s ${lib.getExe codeLauncher} "$out/bin/code"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"
   ''

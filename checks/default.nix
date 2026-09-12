@@ -341,6 +341,10 @@ let
     };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {
+    manifold-runtime-libraries = import ./fleet/manifold-runtime-libraries.nix {
+      inherit lib pkgs;
+      execution = canonicalNixosConfigs.dev-01.config.services.manifold.execution;
+    };
     # Two unrelated reasons land checks on this one leg.
     #
     # Platform-independent lints: their output is a pure function of the

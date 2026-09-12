@@ -137,6 +137,9 @@ in
           kind = "file";
         }
       ];
+      # The Nix-built loader still searches its immutable library path even when
+      # invoked through the FHS aliases above.
+      runtimeToolClosures.system = [ pkgs.glibc ];
       runtimeToolClosures.development = [ developmentRuntime ];
     };
   };

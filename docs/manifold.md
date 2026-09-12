@@ -280,6 +280,15 @@ global Python environment; project-specific dependencies remain local to the
 workspace. Account sign-in and shared service workers keep their narrower
 library/managed-runtime bindings.
 
+The `system` group retains FHS interpreter and library aliases for upstream
+ELF binaries and declares `runtimeToolClosures.system = [ pkgs.glibc ]`.
+The Nix-built loader still searches its original immutable library path when
+invoked through an FHS alias, so those aliases alone do not supply a working
+runtime. Only the selected glibc closure is added at its original paths.
+The `manifold-runtime-libraries` check executes an FHS-interpreter ELF consumer
+without an RPATH inside these bindings and verifies a dynamic library load;
+it never relies on the VM's ambient store.
+
 The `system` group also binds the existing systemd-resolved stub to
 `/etc/resolv.conf` and the machine's configured public CA bundle to
 `/etc/ssl/certs/ca-certificates.crt`. Code's reviewed operation environment

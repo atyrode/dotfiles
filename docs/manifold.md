@@ -122,6 +122,15 @@ changes and refuses direct stops; macOS keeps an unchanged loaded owner plist.
 The legacy Linux combined agent is retained across activation too, but does
 not refuse a deliberate manager stop after its workloads have finished.
 
+The fleet accepts terminal-host IPC 1 and 2 as the same split service topology;
+only capability 0 selects the legacy combined owner. Unknown capabilities fail
+closed. Accepting IPC 2 does not restart or migrate a retained IPC-1 terminal
+host: its unit, protection properties and stable profile command stay unchanged.
+An IPC-2 transport can read a retained IPC-1 owner's existing terminals, but
+that owner cannot declare IPC-2 unconfined terminal admission. Do not restart
+the owner merely to gain that declaration; new-owner code is a separate
+maintenance boundary.
+
 The first migration cannot transfer existing PTY masters between processes.
 After promoting a compatible hub, close admission with `core.machines.drain`,
 then finish or deliberately close **every** legacy terminal. A legacy agent
@@ -145,10 +154,12 @@ Release, promotion, pin publication and activation are distinct operations:
 
 1. Publish and verify the release. Publication is not production deployment.
 2. Promote the target hub deliberately before installing a newer-protocol
-   agent; compatibility accepts older agents, not newer ones.
-3. Refresh the transport pin only after compatibility is proven. Restarting the
-   retained terminal host to use newly installed code is separate maintenance,
-   never an incidental transport update.
+   agent, and check the release's machine-protocol acceptance set.
+3. Refresh the transport pin after compatibility is proven. A reviewed pin may
+   be published ahead of promotion, but it must remain inactive until the hub
+   supports its machine protocol. Restarting the retained terminal host to use
+   newly installed code is separate maintenance, never an incidental transport
+   update.
 4. Inspect and enforce the exact running-to-candidate disruption report before
    activation. Unknown effects or a protected-owner replacement must refuse;
    neither `--yes` nor a successful package build proves preservation.
@@ -159,13 +170,25 @@ On dev-01, `atyrode apply` converges that local machine; `atyrode fleet apply
 dev-01 --repo PATH` requests convergence from another operator device. Both paths must obey
 the same activation safety contract.
 
-The pin refresh enforces hub compatibility. `ci/update-pins.sh` carries a
+Manifold v0.15.0 declares terminal-host IPC 2 and machine protocol 31. Publishing
+that pin does not activate it: an operator must first promote the hub to support
+protocol 31, then time `atyrode apply` on each machine using the disruption
+contract above. A hub serving protocol 25 cannot accept that transport, and
+the protocol-31 hub accepts machine protocols 30 and 31, not the older fleet
+transports. Time that reconnect boundary deliberately without replacing their
+terminal owners. This repository's IPC-2 acceptance and pin publication do not
+authorize production promotion or machine activation.
+
+The automatic pin refresh enforces hub compatibility. `ci/update-pins.sh` carries a
 `guard_manifold` precondition: it reads the hub's `/healthz` protocol version
 and the candidate tag's `PROTOCOL_VERSION`, and holds the bump whenever the
 candidate is newer, or whenever it cannot prove otherwise (unreachable hub,
-unreadable constant). A held bump prints to stderr and to the Actions job
-summary, opens no pull request, and leaves the pin untouched. Clearing it means
-deploying the hub, not overriding the guard.
+unreadable constant). It also reads the tag's `TERMINAL_HOST_PROTOCOL_VERSION`
+and accepts only IPC 1 or 2; missing or unknown versions hold the bump. A held
+bump prints to stderr and to the Actions job summary, opens no pull request,
+and leaves the pin untouched. Clearing an automatic hold means deploying the
+hub, not overriding the guard; an explicitly reviewed inactive pin does not
+change that rule.
 
 ### Protocol mismatch does not stop the process
 

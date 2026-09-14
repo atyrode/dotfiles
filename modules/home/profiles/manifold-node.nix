@@ -14,7 +14,12 @@ let
   stateDirectory = "${config.home.homeDirectory}/.local/state/manifold";
   logFile = "${stateDirectory}/agent.log";
   terminalHostProtocol = pkgs.manifold-agent.terminalHostProtocol or 0;
-  split = terminalHostProtocol == 1;
+  # Both reviewed IPC versions separate terminal ownership from transport.
+  # Unknown versions still fail the assertion below rather than selecting a topology.
+  split = builtins.elem terminalHostProtocol [
+    1
+    2
+  ];
   terminalHostSocket = "${stateDirectory}/terminal-host/host.sock";
   # A loaded terminal owner must not be replaced because a transport package
   # changed. The stable profile path is used only when the owner next starts;
@@ -35,6 +40,7 @@ in
     assertion = builtins.elem terminalHostProtocol [
       0
       1
+      2
     ];
     message = "Unsupported manifold terminal-host protocol; update the service topology before activating this pin.";
   };

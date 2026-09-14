@@ -27,32 +27,34 @@ let
       )
     ) spokesHere
   );
-  splitHomeConfigs = lib.listToAttrs (
-    map (
-      name:
-      let
-        machine =
-          (if hosts.${name}.platform == "darwin" then darwinConfigs.${name} else nixosConfigs.${name})
-          .extendModules
-            {
-              modules = [
-                {
-                  nixpkgs.overlays = [
-                    (_final: previous: {
-                      manifold-agent = previous.manifold-agent.overrideAttrs (old: {
-                        passthru = (old.passthru or { }) // {
-                          terminalHostProtocol = 1;
-                        };
-                      });
-                    })
-                  ];
-                }
-              ];
-            };
-      in
-      lib.nameValuePair name machine.config.home-manager.users.${hosts.${name}.username}
-    ) spokesHere
-  );
+  homeConfigsWithProtocol =
+    protocol:
+    lib.listToAttrs (
+      map (
+        name:
+        let
+          machine =
+            (if hosts.${name}.platform == "darwin" then darwinConfigs.${name} else nixosConfigs.${name})
+            .extendModules
+              {
+                modules = [
+                  {
+                    nixpkgs.overlays = [
+                      (_final: previous: {
+                        manifold-agent = previous.manifold-agent.overrideAttrs (old: {
+                          passthru = (old.passthru or { }) // {
+                            terminalHostProtocol = protocol;
+                          };
+                        });
+                      })
+                    ];
+                  }
+                ];
+              };
+        in
+        lib.nameValuePair name machine.config.home-manager.users.${hosts.${name}.username}
+      ) spokesHere
+    );
   one = value: lib.toList value;
   contract =
     split: name: homeConfig:
@@ -149,6 +151,7 @@ let
               ]
             && one hostUnit.Unit."X-SwitchMethod" == [ "keep-old" ]
             && one hostUnit.Unit.RefuseManualStop == [ true ]
+            && one hostUnit.Unit."X-Atyrode-SessionOwner" == [ true ]
             && (hostUnit.Unit.PartOf or [ ]) == [ ]
             && (hostUnit.Unit.BindsTo or [ ]) == [ ]
             && one unit.Unit."X-Atyrode-SessionOwner" == [ false ]
@@ -188,9 +191,23 @@ let
     true;
 in
 assert lib.all lib.id (
-  lib.mapAttrsToList (contract ((pkgs.manifold-agent.terminalHostProtocol or 0) == 1)) homeConfigs
+  lib.mapAttrsToList (contract (
+    builtins.elem (pkgs.manifold-agent.terminalHostProtocol or 0) [
+      1
+      2
+    ]
+  )) homeConfigs
 );
-assert lib.all lib.id (lib.mapAttrsToList (contract true) splitHomeConfigs);
+assert lib.all
+  (
+    protocol:
+    lib.all lib.id (lib.mapAttrsToList (contract (protocol != 0)) (homeConfigsWithProtocol protocol))
+  )
+  [
+    0
+    1
+    2
+  ];
 assert lib.all custody spokesHere;
 pkgs.runCommand "check-manifold-node-${system}" { } ''
   ${lib.optionalString supported ''

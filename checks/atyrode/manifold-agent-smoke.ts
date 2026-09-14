@@ -6,7 +6,7 @@ import { join } from "node:path";
 // Test the downloaded native artifact, not an interpreted copy of its source.
 // The peer, credentials, terminal workload and both processes are disposable.
 const binary = process.argv[2]!;
-const split = process.argv[3] === "1";
+const split = process.argv[3] === "1" || process.argv[3] === "2";
 const directory = mkdtempSync(join(tmpdir(), "manifold-agent-smoke-"));
 const tokenPath = join(directory, "machine.token");
 const token = "disposable-smoke-token";

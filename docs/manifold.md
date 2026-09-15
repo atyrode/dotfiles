@@ -268,12 +268,32 @@ Back up the retained volume before a deployment that crosses a schema version.
 
 The separate preview executor is declared in
 `modules/nixos/manifold-dev-hub.nix` through Manifold's `nixosModules.native`
-profile at merged revision `9ac8d70197fe31cbc20ad582780a33fded46d9a1`
-(Manifold #455), recorded in `flake.lock` and imported only for dev-01.
+profile from the separate `manifold` input in `flake.lock`, imported only
+for dev-01.
 It runs the same execution-only profile documented for ordinary multi-node
 self-hosting: `manifold-owner` retains jobs and PTYs; `manifold-transport`
 can be replaced independently. The existing Compose hub, Caddy edge and
 ordinary Home Manager `manifold-agent` are not replaced or repointed.
+
+After ordinary preview live verification, Manifold dispatches
+[`update-preview-owner.yml`](../.github/workflows/update-preview-owner.yml)
+with `target=preview-owner` and a full Manifold commit SHA. The receiver runs
+only through dotfiles `main` and proves that the requested revision is reachable
+from `atyrode/manifold` `main`. The
+[`source-pin updater`](../ci/update-preview-owner.py) asks Nix to produce a
+separate candidate lockfile, then permits only the preview input's locked
+metadata to change. Its original identity, dependency edges and every unrelated
+lock node must remain unchanged; a wider lock-graph change requires separate
+review. Failed resolution leaves the pin untouched, and an already-current
+revision is a no-op.
+
+Successful dispatch means request acceptance, not a merged pin. The receiver
+opens or updates the review-only `bot/update-preview-owner` PR and starts its
+current `ci-gate` and `agent-policy` checks. Source review and merge remain
+separate; this workflow never auto-merges. It does not update the ordinary
+fleet release-asset pin, change native-profile declarations, activate a machine,
+retire a legacy service, or restart or replace an owner. A merged source pin
+still requires the separately authorized activation and disruption checks below.
 
 The declaration contains only the enrolled preview ID, public admission
 verifier, reviewed artifact origins and explicit runtime-resource bindings.

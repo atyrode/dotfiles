@@ -1,0 +1,125 @@
+name: Update preview owner source
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Source-pin target; never a machine activation
+        type: choice
+        options:
+          - preview-owner
+        required: true
+      revision:
+        description: Full atyrode/manifold commit reachable from main
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: update-preview-owner
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TARGET: ${{ inputs.target }}
+      REVISION: ${{ inputs.revision }}
+    steps:
+      - name: Require a preview-only request on main
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != refs/heads/main ] || [ "$TARGET" != preview-owner ]; then
+            echo "::error::Only preview-owner requests through main are supported"
+            exit 1
+          fi
+          if ! [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::revision must be a full lowercase Git commit SHA"
+            exit 1
+          fi
+
+      - name: Check out the main-branch baseline
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+
+      - name: Resolve only the preview source pin
+        id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 ci/update-preview-owner.py --target "$TARGET" --revision "$REVISION"
+          if git diff --quiet -- flake.lock; then
+            printf "### Preview source already current\n\n\`%s\` is already pinned on main. No PR, machine activation or owner restart was performed.\n" "$REVISION" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'changed=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Like flake-update.yml, this is a review-only source proposal. Publishing
+      # a lock change does not grant authority to merge it or activate an owner.
+      - name: Open or update the review-only pin PR
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="bot/update-preview-owner"
+          title="chore(manifold): pin preview source"
+          summary_file="$RUNNER_TEMP/preview-owner-pin-body"
+          {
+            printf '## Preview source proposal\n\n'
+            printf "Pin the separate \`manifold\` flake input to [atyrode/manifold@%s](https://github.com/atyrode/manifold/commit/%s), proven reachable from its main branch.\n\n" "$REVISION" "$REVISION"
+            printf 'Only that input\047s locked metadata changes. Its original identity, dependency edges, unrelated lock nodes and ordinary fleet binary pin are preserved.\n\n'
+            printf 'Request: [%s](%s/%s/actions/runs/%s).\n\n' "$GITHUB_RUN_ID" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf 'Current PR CI and source review must complete before merge. Request acceptance, PR publication, merge and runtime activation are distinct states. This workflow does not auto-merge, activate machines, change native-profile declarations, or restart/replace an owner.\n\n'
+            printf 'Refs #693; atyrode/manifold#660.\n'
+          } > "$summary_file"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -- flake.lock
+          git commit -m "$title" -m "Manifold source: $REVISION. No activation."
+          gh auth setup-git --hostname github.com
+          expected_head="$(git ls-remote --heads origin "refs/heads/$branch" | cut -f1)"
+          git push "--force-with-lease=refs/heads/$branch:$expected_head" origin "HEAD:refs/heads/$branch"
+          if ! pr_url="$(gh pr create --base main --head "$branch" --title "$title" --body-file "$summary_file")"; then
+            pr_url="$(gh pr view "$branch" --json url --jq .url)"
+            gh pr edit "$branch" --title "$title" --body-file "$summary_file"
+          fi
+          printf "### Preview source PR published\n\n%s\n\nRevision: \`%s\`. Review-only; no merge, machine activation or owner restart was performed.\n\n" "$pr_url" "$REVISION" >> "$GITHUB_STEP_SUMMARY"
+
+      # Bot PR runs can be parked. Approve their actual PR-event checks rather
+      # than dispatching parallel runs that cannot satisfy the required gate.
+      - name: Start the current PR checks
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          for workflow in nix.yml agent-policy.yml; do
+            run_id=""
+            for _ in $(seq 1 30); do
+              run_id="$(gh run list --workflow "$workflow" --commit "$head_sha" --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              if [ -n "$run_id" ]; then break; fi
+              sleep 10
+            done
+            if [ -z "$run_id" ]; then
+              echo "::error::No current pull_request run appeared for $workflow; the PR remains unverified"
+              exit 1
+            fi
+            if [ "$(gh run view "$run_id" --json conclusion --jq '.conclusion // ""')" = action_required ]; then
+              gh api --silent -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/approve"
+            fi
+            printf 'Current PR CI requested: [%s](%s/%s/actions/runs/%s). Its result is still required before merge.\n\n' "$workflow" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$run_id" >> "$GITHUB_STEP_SUMMARY"
+          done

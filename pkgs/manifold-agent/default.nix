@@ -14,18 +14,18 @@
 }:
 
 let
-  version = "0.16.0";
+  version = "0.16.1";
   # The pin refresh reads this capability from the exact release's protocol
   # source. Zero names the deployed combined agent, not a guessed semver range.
   terminalHostProtocol = 2;
   sources = {
     "x86_64-linux" = {
       asset = "manifold-agent-linux-x64";
-      hash = "sha256-4ytfncO+HJDipw5rYQMNHuurfIhaIDvFkbFxqOr0TeA=";
+      hash = "sha256-WChXFc6QV1R7kYWrlxPX7hUtpP/x64iEogrnzDRn+PA=";
     };
     "aarch64-darwin" = {
       asset = "manifold-agent-darwin-arm64";
-      hash = "sha256-NETEHmmnzaQUEbFRcCQM2jmeDM2+OvcmQPYLZaxN7hc=";
+      hash = "sha256-fUUn5tAScEdNcFDXR4BpDunXllnKoC8GOf+wZ+CNEHs=";
     };
   };
   source =

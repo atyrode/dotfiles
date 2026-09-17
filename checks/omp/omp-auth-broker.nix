@@ -36,8 +36,7 @@ let
             tokenFile = brokerTokenFile;
             nativeCustody = true;
           };
-        }).systemd.user.services
-        ? atyrode-omp-auth-brokers
+        }).systemd.user.services ? atyrode-omp-auth-brokers
       )
     ) "a home with authBroker.nativeCustody must define no broker service";
     assert lib.assertMsg

@@ -226,16 +226,26 @@ in
   systemd.services.manifold-owner.wants = [ "systemd-resolved.service" ];
   systemd.services.manifold-owner.unitConfig."X-Atyrode-SessionOwner" = true;
   systemd.services.manifold-transport.unitConfig."X-Atyrode-SessionOwner" = false;
-  # These public receiver choices must travel with the native owner declaration,
-  # so a later hub deployment cannot revive the retired user-spoke helper.
-  home-manager.users.${username}.home.file."manifold-previews/env".text = ''
-    PREVIEW_DOMAIN=manifold.tyrode.dev
-    PREVIEW_DEV_CHECKOUT=${homeDirectory}/manifold-dev
-    PREVIEW_DEV_URL=https://preview.manifold.tyrode.dev
-    PREVIEW_SEED=${homeDirectory}/manifold-dev-deploy/backups/manifold-dev-data-20260905T131810Z.tgz
-    MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID=${serviceOwnerMachineId}
-    MANIFOLD_DEV_SPAWN_AGENT=0
-  '';
+  home-manager.users.${username} = {
+    # These public receiver choices must travel with the native owner declaration,
+    # so a later hub deployment cannot revive the retired user-spoke helper.
+    home.file."manifold-previews/env".text = ''
+      PREVIEW_DOMAIN=manifold.tyrode.dev
+      PREVIEW_DEV_CHECKOUT=${homeDirectory}/manifold-dev
+      PREVIEW_DEV_URL=https://preview.manifold.tyrode.dev
+      PREVIEW_SEED=${homeDirectory}/manifold-dev-deploy/backups/manifold-dev-data-20260905T131810Z.tgz
+      MANIFOLD_DEV_SERVICE_OWNER_MACHINE_ID=${serviceOwnerMachineId}
+      MANIFOLD_DEV_SPAWN_AGENT=0
+    '';
+    # The Code Manifold plugin's native broker holds 127.0.0.1:46171 on this
+    # machine, which is the same bind `atyrode.agentTools`' own broker unit would
+    # serve and the one the standalone Code TUI dials. Declare the handoff beside
+    # the native execution owner it arrived with, so Home Manager defines no
+    # competing unit: the host previously carried an undeclared
+    # `RefuseManualStart=yes` drop-in instead, and every `atyrode apply` failed
+    # when `sd-switch` tried to start the unit it still wanted.
+    atyrode.agentTools.authBroker.nativeCustody = true;
+  };
   services.caddy = {
     enable = true;
     globalConfig = ''

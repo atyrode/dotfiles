@@ -25,6 +25,21 @@ let
         ? atyrode-omp-auth-brokers
       )
     ) "a home with authBroker.role = null must define no broker service";
+    # Native custody is the plugin serving the same loopback bind: a machine
+    # that declares it must define no unit of its own, rather than carrying a
+    # neutralising drop-in Home Manager still tries to start.
+    assert lib.assertMsg (
+      !(
+        (fixtures.evalAgentTools pkgs {
+          authBroker = {
+            role = "serve";
+            tokenFile = brokerTokenFile;
+            nativeCustody = true;
+          };
+        }).systemd.user.services
+        ? atyrode-omp-auth-brokers
+      )
+    ) "a home with authBroker.nativeCustody must define no broker service";
     assert lib.assertMsg
       ((linuxClientAgentTools.home.sessionVariables.CODE_AUTH_LOGIN_VIA or null) == clientTarget)
       "a tunnel machine must export CODE_AUTH_LOGIN_VIA naming the tunnel target, for code's OAuth login";

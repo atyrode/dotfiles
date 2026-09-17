@@ -19,9 +19,10 @@ omp_boolean_flags=(
 )
 omp_subcommands=(
   __complete acp agents auth-broker auth-gateway bench browser-relay cleanse
-  commit completions compress config dry-balance gallery gc git grep grievances
-  images img if-bench install join launch models plugin ps q read render say
-  search setup share shell ssh stats tiny-models token ttsr update usage worktree wt
+  collab commit completions compress config dry-balance gallery gc git grep
+  grievances images img if-bench install join launch models plugin plugins ps q
+  read render say search setup share shell ssh stats tiny-models token ttsr
+  update usage worktree wt
 )
 
 omp_contains() {

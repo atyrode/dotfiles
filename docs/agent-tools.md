@@ -785,8 +785,11 @@ ledger, native HTTP service and archive core. It delivered the unchanged skill
 and redacted evidence, reported one cold snapshot fetch, recovered a withheld
 request handle through the owned action trace, and confirmed every SDK run's
 cleanup. `omp-stack` also passed its byte-identity and no-provider OMP discovery
-checks. This used a local exact source-revision override before publication;
-it proves the package path, not deployed authority or managed activation.
+checks. The initial run used an exact source-revision override; the default
+locked package and Linux `omp-stack` subsequently passed with merged Babel
+`1ea3838931b4acf92076bceb6214fa35a5ba5cef` and SDK
+`3e8510c473d84175568ac81012763635112ed7d3`. This proves the package path, not
+deployed authority or managed activation.
 
 **OPERATOR STEP — activate separately:** only after the matching Babel/SDK
 proof and reviewed source pins are integrated, authorize normal Home Manager

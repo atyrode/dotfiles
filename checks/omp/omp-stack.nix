@@ -6,7 +6,7 @@ let
     configuredStub
     defaultsConfig
     policyConfig
-    linuxAgentTools
+    evalAgentTools
     stubOmp
     untrustedConfig
     yoloConfig
@@ -14,8 +14,9 @@ let
   settingsGuardExtension = ../../pkgs/omp-configured/config/extensions/managed-settings-guard.ts;
   parallelWriteRule = ../../pkgs/omp-configured/config/rules/parallel-write-isolation.md;
   ompRuntimeVersion = builtins.head (lib.splitString "-" (lib.getVersion pkgs.omp));
-  managedSkills = linuxAgentTools.home.file.".agents/skills".source;
-  claudeSkills = linuxAgentTools.home.file.".claude/skills".source;
+  agentTools = evalAgentTools pkgs { };
+  managedSkills = agentTools.home.file.".agents/skills".source;
+  claudeSkills = agentTools.home.file.".claude/skills".source;
   codeEnvironmentStub = pkgs.writeShellScriptBin "code" ''
     if [[ -z "''${CODE_ENV_LOG:-}" ]]; then
       while (( $# )); do
@@ -231,7 +232,7 @@ pkgs.runCommand "check-omp-stack"
     cmp "$recall_skill" "$rpc_home/.claude/skills/babel-recall/SKILL.md"
     test "$(readlink -f "$recall_skill")" = \
       "$(readlink -f "$rpc_home/.claude/skills/babel-recall/SKILL.md")"
-    recall_runner="$(PATH=${lib.makeBinPath linuxAgentTools.home.packages} command -v babel-recall-runner)"
+    recall_runner="$(PATH=${lib.makeBinPath agentTools.home.packages} command -v babel-recall-runner)"
     test "$recall_runner" = "${pkgs.babel-recall}/bin/babel-recall-runner"
     test -x "$recall_runner"
     printf '%s\n' 'managed-project-guidance-fixture' > "$rpc_project/.omp/AGENTS.md"

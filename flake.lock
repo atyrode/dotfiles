@@ -24,11 +24,11 @@
     "babel-recall-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1789951820,
-        "narHash": "sha256-IhJvc9dsRjAQr9tA4BlC740xKqFmtqHJAEh/ZsBrlgI=",
+        "lastModified": 1789976353,
+        "narHash": "sha256-HM/5iRDnpAmeWMiULRXbZbmOkT9bKZTUObjrz3kiNcc=",
         "owner": "atyrode",
         "repo": "babel",
-        "rev": "c3c18405f228407aafde36296751ca8904160f1e",
+        "rev": "1ea3838931b4acf92076bceb6214fa35a5ba5cef",
         "type": "github"
       },
       "original": {

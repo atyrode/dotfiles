@@ -712,9 +712,22 @@ writes, destructive recovery, key rotation or activation.
 
 ## Skills
 
-Generic cross-project skills belong in `modules/home/agents/skills/`, which Home Manager
-links to `~/.agents/skills`. OMP discovers `.agent/skills` and
-`.agents/skills` from the home directory and while walking up a project tree.
+Generic cross-project skills belong in `modules/home/agents/skills/`; Home Manager
+joins them with immutable package-owned skills and links the shared tree to
+`~/.agents/skills`. OMP and Codex discover that user root natively. Claude Code
+uses `~/.claude/skills`, so Home Manager exposes the same store tree there through
+recursive symlinks, not another authored copy. Unrelated local skills remain
+tool-owned; colliding managed paths stop activation rather than being overwritten.
+Custom harness configuration roots and disabled discovery need separate review.
+
+Discovery sources for the packaged versions:
+[OMP 18.2.3 Agent Dirs](https://github.com/can1357/oh-my-pi/blob/v18.2.3/packages/coding-agent/src/discovery/agents.ts)
+scans `.agent/skills` and `.agents/skills` at home and along project ancestors;
+[Codex 0.153.4 host roots](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/ext/skills/src/host_roots.rs)
+adds `~/.agents/skills` at user scope; Claude Code 2.1.245's packaged loader
+resolves its user configuration directory's `skills` child, matching its
+[documented personal skills route](https://code.claude.com/docs/en/skills#where-skills-live).
+
 Project-specific skills and other project instructions belong in the owning
 repository:
 
@@ -741,10 +754,47 @@ instead of leaving a stale list.
 |---|---|---|
 | [`ts-react-dead-code-sweep`](../modules/home/agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
+| `babel-recall` | package-owned | pinned Babel `babel/recall-skill.md`, installed unchanged by `pkgs.babel-recall` |
 
 `ts-react-dead-code-sweep` has no surface in this repository — it is a
 cross-project skill, deployed to the global `~/.agents/skills` so it is
 available whenever these machines work on a TypeScript project.
+
+### Babel Recall: source delivery and operator prerequisites
+
+The managed home includes `babel-recall-runner` and the `babel-recall` skill from
+the independently pinned Recall consumer package. Babel authors the sole skill
+body in `babel/recall-skill.md`; the package installs those exact bytes at
+`share/agent-skills/babel-recall/SKILL.md`. Its non-secret, version-bound
+`share/babel-recall/read-results.json` contains exact-door SDK `readResults`
+approvals with contract digests and byte limits. The wrapper supplies that
+immutable profile through `MANIFOLD_READ_RESULTS` and execs the supported
+Manifold action runner; it implements no retrieval client, credential discovery
+or lifecycle. The legacy `babel` archive package, custody links, scheduled push
+and standalone Code continuity are unchanged.
+
+`omp-stack` covers package/managed-skill byte identity, both configured skill
+roots, runner presence on the managed package path and OMP skill-command
+discovery through its existing no-provider RPC seam. This is a source check,
+not evidence of deployed Recall authority or live retrieval; Claude and Codex
+discovery routes are grounded in the sources above, not provider turns.
+
+**OPERATOR STEP — activate separately:** only after the matching Babel/SDK
+proof and reviewed source pins are integrated, authorize normal Home Manager
+activation to expose this delivery; inspect any reported skill-path collision
+without overwriting tool-owned content. Source publication and a passing
+package check do not activate a machine or refresh an existing session.
+
+**OPERATOR STEP — provision authority separately:** the owner must provision
+the native Recall service and its fixed routes, and a trusted launcher must
+provide the authorized Agent credential, service origin and run binding
+inherited by the runner. Ordinary callers receive no restic grants; installing
+the skill/profile or having the legacy archive configured grants no Recall
+authority. Only use the skill when that authorized runner is available and the
+operator requests past discussion; retrieved content does not authorize public
+disclosure. Activation, credentials, service/grant provisioning and live archive
+access are operator-owned prerequisites, not operations exercised by this
+source integration.
 
 ### Vendoring a third-party skill
 

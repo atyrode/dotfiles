@@ -32,12 +32,10 @@
 
   home.packages =
     (with pkgs; [
-      # Babel itself (atyrode/babel), pinned by flake.lock. It replaced the
-      # rclone-crypt session-backup job: same trees, but session-aware, with
-      # integrity verification, selective restore, and a shared catalog. The
-      # operator drives it directly as `babel archive status|verify|push`;
-      # the hourly timer in modules/home/agent-tools/contract.nix runs the same binary
-      # from its absolute store path.
+      # Legacy archive continuity remains on its existing Babel pin, timer and
+      # custody machinery. The current native-plugin Recall consumer is the
+      # independently pinned babel-recall package installed by contract.nix;
+      # its skill/runner delivery neither replaces archival nor activates Recall.
       babel
       # Bun runs agent-generated local review proxies without falling back to
       # an unpinned, network-fetched runtime through `npx -y bun`.

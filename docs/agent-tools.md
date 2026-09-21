@@ -779,6 +779,15 @@ discovery through its existing no-provider RPC seam. This is a source check,
 not evidence of deployed Recall authority or live retrieval; Claude and Codex
 discovery routes are grounded in the sources above, not provider turns.
 
+Source proof on dev-01, 2026-09-21: the Nix-built wrapper ran the supported SDK
+against a synthetic loopback lifecycle peer backed by Babel's actual doors,
+ledger, native HTTP service and archive core. It delivered the unchanged skill
+and redacted evidence, reported one cold snapshot fetch, recovered a withheld
+request handle through the owned action trace, and confirmed every SDK run's
+cleanup. `omp-stack` also passed its byte-identity and no-provider OMP discovery
+checks. This used a local exact source-revision override before publication;
+it proves the package path, not deployed authority or managed activation.
+
 **OPERATOR STEP — activate separately:** only after the matching Babel/SDK
 proof and reviewed source pins are integrated, authorize normal Home Manager
 activation to expose this delivery; inspect any reported skill-path collision

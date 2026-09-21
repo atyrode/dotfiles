@@ -18,6 +18,17 @@
     manifold.url = "github:atyrode/manifold";
     manifold.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Recall's plugin skill and supported SDK runner are independent of the
+    # legacy archive timer and preview executor. No activation follows these pins.
+    babel-recall-src = {
+      url = "github:atyrode/babel";
+      flake = false;
+    };
+    manifold-recall-sdk-src = {
+      url = "github:atyrode/manifold/3e8510c473d84175568ac81012763635112ed7d3";
+      flake = false;
+    };
+
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -79,6 +90,8 @@
       nixpkgs,
       babel,
       manifold,
+      babel-recall-src,
+      manifold-recall-sdk-src,
       clan-core,
       disko,
       home-manager,
@@ -103,6 +116,8 @@
       packagesLib = import ./lib/packages.nix {
         inherit
           babel
+          babel-recall-src
+          manifold-recall-sdk-src
           clan-core
           lib
           nixpkgs
@@ -188,6 +203,8 @@
           inherit (pkgs)
             atyrode
             atyrode-preview
+            babel-recall
+            manifold-action-runner
             codex
             codex-seed
             code

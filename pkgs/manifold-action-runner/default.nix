@@ -9,15 +9,17 @@
 }:
 
 let
-  sourceRevision = src.rev or (throw "manifold-action-runner requires a revision-pinned source input");
+  sourceRevision =
+    src.rev or (throw "manifold-action-runner requires a revision-pinned source input");
   zodVersion = "4.4.3";
   zod = fetchurl {
     url = "https://registry.npmjs.org/zod/-/zod-${zodVersion}.tgz";
     hash = "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==";
   };
 in
-assert lib.assertMsg (builtins.match "[0-9a-f]{40}" sourceRevision != null)
-  "manifold-action-runner requires a full Git source revision";
+assert lib.assertMsg (
+  builtins.match "[0-9a-f]{40}" sourceRevision != null
+) "manifold-action-runner requires a full Git source revision";
 assert lib.assertMsg (lib.versionAtLeast bun.version "1.4.2")
   "manifold-action-runner requires Bun >= 1.4.2";
 stdenvNoCC.mkDerivation {

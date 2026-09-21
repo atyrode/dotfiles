@@ -10,8 +10,9 @@
 let
   sourceRevision = src.rev or (throw "babel-recall requires a revision-pinned source input");
 in
-assert lib.assertMsg (builtins.match "[0-9a-f]{40}" sourceRevision != null)
-  "babel-recall requires a full Git source revision";
+assert lib.assertMsg (
+  builtins.match "[0-9a-f]{40}" sourceRevision != null
+) "babel-recall requires a full Git source revision";
 stdenvNoCC.mkDerivation {
   pname = "babel-recall";
   version = "0-unstable-${builtins.substring 0 12 sourceRevision}";

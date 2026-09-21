@@ -3,6 +3,8 @@
 # and evaluationPkgsFor (empty-registry overlay for portable evaluations).
 {
   babel,
+  babel-recall-src,
+  manifold-recall-sdk-src,
   clan-core,
   lib,
   nixpkgs,
@@ -79,6 +81,12 @@ let
         # right-hand `babel` is the flake input from the enclosing scope: this
         # attribute set is not recursive, so there is no self-reference here.
         babel = babel.packages.${final.stdenv.hostPlatform.system}.default;
+        manifold-action-runner = final.callPackage ../pkgs/manifold-action-runner {
+          src = manifold-recall-sdk-src;
+        };
+        babel-recall = final.callPackage ../pkgs/babel-recall {
+          src = babel-recall-src;
+        };
         # The fleet CLI, from the same clan-core revision that builds the
         # machines, so `clan secrets` and `clan vars` on the operator's
         # machine speak the layout the machines evaluate.

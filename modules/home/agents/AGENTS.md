@@ -38,6 +38,10 @@ it. Never use a conversation excerpt as public proof of authorization. If a
 repository rule requires disclosure, keep the evidence private and resolve the
 rule with the operator instead of publishing it.
 
+Only when the operator requests past discussion and an owner-provisioned
+authorized runner is available, use the `babel-recall` skill for Babel Recall
+without expanding disclosure permission.
+
 ## Instruction feedback
 
 If an instruction appears to cause friction with the operator's expressed intent,

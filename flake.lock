@@ -21,6 +21,22 @@
         "type": "github"
       }
     },
+    "babel-recall-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789976353,
+        "narHash": "sha256-HM/5iRDnpAmeWMiULRXbZbmOkT9bKZTUObjrz3kiNcc=",
+        "owner": "atyrode",
+        "repo": "babel",
+        "rev": "1ea3838931b4acf92076bceb6214fa35a5ba5cef",
+        "type": "github"
+      },
+      "original": {
+        "owner": "atyrode",
+        "repo": "babel",
+        "type": "github"
+      }
+    },
     "brew-src": {
       "flake": false,
       "locked": {
@@ -246,6 +262,23 @@
         "type": "github"
       }
     },
+    "manifold-recall-sdk-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789970905,
+        "narHash": "sha256-XLzoJdhWXCPkcxFkgcVr8eIJX2dtlcCPzNA/CiqD4zk=",
+        "owner": "atyrode",
+        "repo": "manifold",
+        "rev": "3e8510c473d84175568ac81012763635112ed7d3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "atyrode",
+        "repo": "manifold",
+        "rev": "3e8510c473d84175568ac81012763635112ed7d3",
+        "type": "github"
+      }
+    },
     "nix-darwin": {
       "inputs": {
         "nixpkgs": [
@@ -372,12 +405,14 @@
     "root": {
       "inputs": {
         "babel": "babel",
+        "babel-recall-src": "babel-recall-src",
         "clan-core": "clan-core",
         "disko": "disko",
         "home-manager": "home-manager",
         "homebrew-cask": "homebrew-cask",
         "homebrew-core": "homebrew-core",
         "manifold": "manifold",
+        "manifold-recall-sdk-src": "manifold-recall-sdk-src",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
         "nix-index-database": "nix-index-database",

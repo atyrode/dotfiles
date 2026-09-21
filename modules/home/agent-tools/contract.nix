@@ -10,7 +10,10 @@ let
   rgcfg = cfg.resourceGuard;
   managedSkills = pkgs.symlinkJoin {
     name = "atyrode-agent-skills";
-    paths = [ ../agents/skills ];
+    paths = [
+      ../agents/skills
+      "${pkgs.babel-recall}/share/agent-skills"
+    ];
   };
   defaultsConfig = ../../../pkgs/omp-configured/config/defaults.yml;
   policyConfig = ../../../pkgs/omp-configured/config/policy.yml;
@@ -345,6 +348,7 @@ in
       {
         home.packages = [
           cfg.ompPackage
+          pkgs.babel-recall
         ]
         ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 
@@ -355,6 +359,13 @@ in
         };
 
         home.file.".agents/skills" = {
+          source = managedSkills;
+          recursive = true;
+        };
+        # Claude's native user loader uses ~/.claude/skills, not ~/.agents.
+        # Reuse the same immutable tree; recursive links preserve other skills
+        # and Home Manager refuses collisions instead of overwriting them.
+        home.file.".claude/skills" = {
           source = managedSkills;
           recursive = true;
         };

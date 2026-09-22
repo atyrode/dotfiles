@@ -9,8 +9,8 @@ modelRoles:
   scout: openai-codex/gpt-5.6-luna:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
   reviewer: anthropic/claude-sonnet-5:high
-  plan: anthropic/claude-fable-5:high
-  slow: anthropic/claude-opus-5:xhigh
+  plan: anthropic/claude-fable-5-1:high
+  slow: anthropic/claude-opus-5-5:xhigh
   tiny: openai-codex/gpt-5.6-luna:low
   commit: openai-codex/gpt-5.6-luna:low
   # omp routes image description here when the active model is text-only
@@ -44,14 +44,14 @@ retry:
     sonic: []
     default:
       - openai-codex/gpt-5.6-terra:medium
-      - anthropic/claude-opus-5:medium
+      - anthropic/claude-opus-5-5:medium
       - anthropic/claude-sonnet-5:medium
     task:
       - openai-codex/gpt-5.6-sol:medium
       - anthropic/claude-sonnet-5:medium
-      - anthropic/claude-opus-5:medium
+      - anthropic/claude-opus-5-5:medium
     plan:
-      - anthropic/claude-opus-5:high
+      - anthropic/claude-opus-5-5:high
       - openai-codex/gpt-5.6-sol:high
       - openai-codex/gpt-5.6-terra:high
     slow:

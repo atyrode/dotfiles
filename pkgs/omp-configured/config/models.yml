@@ -134,19 +134,25 @@ models:
       The value pick — near-Opus quality at a fraction of the cost. Leads the
       regular Claude tier and the mixed judgment roles.
   opus:
-    id: claude-opus-5
+    id: claude-opus-5-5
     pool: A
     tier: 3
     bucket: claude-main
-    cost_in: 5
-    cost_out: 25
+    cost_in: 4
+    cost_out: 20
+    # speed/ttft carried over from Opus 5's last full refresh. Anthropic's
+    # client-version gate refuses 5.5 to any client older than Claude Code
+    # 2.1.280, so the bench could not run here until the omp pin caught up;
+    # re-run the refresh for measured figures.
     speed: 46.6
     ttft: 1.77
     context: 1000000
     thinking: low→max
     role: >-
       Top Opus tier. Leads the smart Claude judgment roles; the main-plan
-      deliberative sibling across the maps.
+      deliberative sibling across the maps. Cheaper than the Opus 5 it
+      replaces. Needs omp >= 18.2.9: earlier clients are refused by
+      Anthropic's client-version gate.
   fable:
     id: claude-fable-5-1
     pool: A

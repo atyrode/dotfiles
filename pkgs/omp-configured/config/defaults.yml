@@ -9,7 +9,7 @@ modelRoles:
   scout: openai-codex/gpt-5.6-luna:medium
   sonic: openai-codex/gpt-5.6-luna:minimal
   reviewer: anthropic/claude-sonnet-5:high
-  plan: anthropic/claude-fable-5:high
+  plan: anthropic/claude-fable-5-1:high
   slow: anthropic/claude-opus-5-5:xhigh
   tiny: openai-codex/gpt-5.6-luna:low
   commit: openai-codex/gpt-5.6-luna:low

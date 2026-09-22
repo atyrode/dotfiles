@@ -129,9 +129,9 @@ guard_manifold() { # tag version repo
   manifold_terminal_host_protocol="$(curl -fsSL --max-time 20 "$host_protocol_url" |
     sed -nE 's/^export const TERMINAL_HOST_PROTOCOL_VERSION = ([0-9]+);$/\1/p')" || manifold_terminal_host_protocol=""
   case "$manifold_terminal_host_protocol" in
-    1 | 2) ;;
+    1 | 2 | 3) ;;
     *)
-      hold manifold "cannot prove supported terminal-host protocol (accepted: 1, 2) for $tag; update the service contract before pinning"
+      hold manifold "cannot prove supported terminal-host protocol (accepted: 1, 2, 3) for $tag; update the service contract before pinning"
       return 1
       ;;
   esac

@@ -195,6 +195,7 @@ assert lib.all lib.id (
     builtins.elem (pkgs.manifold-agent.terminalHostProtocol or 0) [
       1
       2
+      3
     ]
   )) homeConfigs
 );
@@ -207,6 +208,7 @@ assert lib.all
     0
     1
     2
+    3
   ];
 assert lib.all custody spokesHere;
 pkgs.runCommand "check-manifold-node-${system}" { } ''

@@ -122,14 +122,17 @@ changes and refuses direct stops; macOS keeps an unchanged loaded owner plist.
 The legacy Linux combined agent is retained across activation too, but does
 not refuse a deliberate manager stop after its workloads have finished.
 
-The fleet accepts terminal-host IPC 1 and 2 as the same split service topology;
-only capability 0 selects the legacy combined owner. Unknown capabilities fail
-closed. Accepting IPC 2 does not restart or migrate a retained IPC-1 terminal
-host: its unit, protection properties and stable profile command stay unchanged.
-An IPC-2 transport can read a retained IPC-1 owner's existing terminals, but
-that owner cannot declare IPC-2 unconfined terminal admission. Do not restart
-the owner merely to gain that declaration; new-owner code is a separate
-maintenance boundary.
+The fleet accepts terminal-host IPC 1, 2 and 3 as the same split service
+topology; only capability 0 selects the legacy combined owner. Unknown
+capabilities fail closed. Accepting a newer IPC does not restart or migrate a
+retained older terminal host: its unit, protection properties and stable
+profile command stay unchanged. A newer transport can read a retained IPC-1
+owner and resume its existing terminals, but that owner cannot declare the
+IPC-2 unconfined terminal admission, so no new unconfined shell starts on that
+machine until the owner is replaced. A retained IPC-2 owner keeps admitting
+terminals but cannot provide IPC-3 readiness evidence. Do not restart the owner
+merely to gain either capability; new-owner code is a separate maintenance
+boundary, and `manifold-agent --maintenance` accepts owners at IPC 1, 2 and 3.
 
 The first migration cannot transfer existing PTY masters between processes.
 After promoting a compatible hub, close admission with `core.machines.drain`,
@@ -170,21 +173,22 @@ On dev-01, `atyrode apply` converges that local machine; `atyrode fleet apply
 dev-01 --repo PATH` requests convergence from another operator device. Both paths must obey
 the same activation safety contract.
 
-Manifold v0.15.0 declares terminal-host IPC 2 and machine protocol 31. Publishing
-that pin does not activate it: an operator must first promote the hub to support
-protocol 31, then time `atyrode apply` on each machine using the disruption
-contract above. A hub serving protocol 25 cannot accept that transport, and
-the protocol-31 hub accepts machine protocols 30 and 31, not the older fleet
-transports. Time that reconnect boundary deliberately without replacing their
-terminal owners. This repository's IPC-2 acceptance and pin publication do not
-authorize production promotion or machine activation.
+Manifold v0.18.0 declares terminal-host IPC 3 and machine protocol 42; its hub
+accepts machine protocols 30 through 42. Publishing that pin does not activate
+it: an operator must first promote the hub to support protocol 42, then time
+`atyrode apply` on each machine using the disruption contract above. A hub
+serving protocol 25 cannot accept that transport, and the protocol-42 hub
+refuses the older pre-30 fleet transports. Time that reconnect boundary
+deliberately without replacing their terminal owners. This repository's IPC-3
+acceptance and pin publication do not authorize production promotion or
+machine activation.
 
 The automatic pin refresh enforces hub compatibility. `ci/update-pins.sh` carries a
 `guard_manifold` precondition: it reads the hub's `/healthz` protocol version
 and the candidate tag's `PROTOCOL_VERSION`, and holds the bump whenever the
 candidate is newer, or whenever it cannot prove otherwise (unreachable hub,
 unreadable constant). It also reads the tag's `TERMINAL_HOST_PROTOCOL_VERSION`
-and accepts only IPC 1 or 2; missing or unknown versions hold the bump. A held
+and accepts only IPC 1, 2 or 3; missing or unknown versions hold the bump. A held
 bump prints to stderr and to the Actions job summary, opens no pull request,
 and leaves the pin untouched. Clearing an automatic hold means deploying the
 hub, not overriding the guard; an explicitly reviewed inactive pin does not

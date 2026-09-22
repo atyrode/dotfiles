@@ -8,7 +8,8 @@ omp_required_flags=(
   --cwd --export --extension -e --fork --hook --max-time --mode --model --models
   --plan --plan-yolo-into --plugin-dir --prewalk-into --profile --prompt-cache-key
   --provider --provider-session-id --service-tier --session-dir --skills --slow
-  --smol --system-prompt --thinking --tools --trusted-extension
+  --smol --system-prompt --system-prompt-template --thinking --tools
+  --trusted-extension
 )
 omp_optional_flags=(--resume -r --session)
 omp_boolean_flags=(
@@ -19,10 +20,10 @@ omp_boolean_flags=(
 )
 omp_subcommands=(
   __complete acp agents auth-broker auth-gateway bench browser-relay cleanse
-  collab commit completions compress config dry-balance gallery gc git grep
+  collab commit completions compress config dry-balance find gallery gc git grep
   grievances images img if-bench install join launch models plugin plugins ps q
-  read render say search setup share shell ssh stats tiny-models token ttsr
-  update usage worktree wt
+  read render say search setup share shell ssh stats stream tiny-models token
+  ttsr update usage web-search worktree wt
 )
 
 omp_contains() {

@@ -44,7 +44,6 @@ let
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
     cp ${./config/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
-    cp ${./config/rules/no-shell-text-surgery.md} "$out/rules/no-shell-text-surgery.md"
     cp ${./config/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
     cp ${./config/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
     cat > "$out/package.json" <<'EOF'

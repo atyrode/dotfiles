@@ -327,6 +327,7 @@ let
     omp-seed = import ./omp/omp-seed.nix { inherit pkgs; };
     omp-secret-obfuscation = import ./omp/omp-secret-obfuscation.nix { inherit pkgs; };
     omp-isolated-writer = import ./omp/omp-isolated-writer.nix { inherit pkgs; };
+    omp-forced-tool-choice = import ./omp/omp-forced-tool-choice.nix { inherit pkgs; };
     home-evaluation = homeEvaluation;
     host-registry = registryCheck;
     shell-surface = import ./fleet/shell-surface.nix {

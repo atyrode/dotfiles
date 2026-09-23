@@ -395,7 +395,7 @@ pkgs.runCommand "check-omp-stack"
 
     test "$(
       find ${pkgs.omp-configured.platformRoot}/extensions -maxdepth 1 -name '*.ts' -printf '%f\n' | sort | paste -sd, -
-    )" = "managed-settings-guard.ts"
+    )" = "forced-tool-choice-compat.ts,managed-settings-guard.ts"
     grep -q 'isolated: true' ${parallelWriteRule}
 
     test "$(

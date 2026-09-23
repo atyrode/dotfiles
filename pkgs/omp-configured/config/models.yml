@@ -2,10 +2,9 @@
 # tier, quota bucket, role note) plus a cache of the factual fields omp measures.
 #
 # The factual fields are NOT hand-maintained — omp is the authority for all of
-# them, and `pkgs/omp-configured/config/refresh-model-facts.py` (run: `nix run .#refresh-model-facts`)
-# re-pulls them, rewriting only these fields in place:
+# them, and `code generate init --refresh` re-derives them from the pinned omp:
 #   cost_in / cost_out ($ per 1M tokens), context, thinking  <- `omp models --json`
-#   speed (output tok/s), ttft (time-to-first-token, seconds) <- `omp bench --json`
+#   speed (output tok/s), ttft (time-to-first-token, seconds) <- `omp bench`
 # They live here only because the Nix build sandbox has no network, creds, or
 # ~/.omp and so cannot reach omp itself; this file is that committed cache. Do not
 # edit the factual fields by hand — re-run the refresh instead. (speed/ttft are a
@@ -32,12 +31,15 @@ refreshed: null
 probed: true
 models:
   luna:
-    id: gpt-5.6-luna
+    id: gpt-6-luna
     pool: O
     tier: 1
     bucket: codex-main
-    cost_in: 0.2
-    cost_out: 1.2
+    # cost from omp 18.2.10's openai-codex row. speed/ttft are carried over
+    # from gpt-5.6-luna: every Codex account's weekly window was exhausted
+    # when the id changed, so `code generate init --refresh` could not bench it.
+    cost_in: 0.1
+    cost_out: 0.5
     speed: 52.3
     ttft: 1.18
     context: 1000000
@@ -60,12 +62,15 @@ models:
       Balanced workhorse. Leads the regular GPT tier and the mixed
       workers. Sonnet's price-twin.
   sol:
-    id: gpt-5.6-sol
+    id: gpt-6-sol
     pool: O
     tier: 3
     bucket: codex-main
-    cost_in: 5
-    cost_out: 30
+    # cost from omp 18.2.10's openai-codex row. speed/ttft are carried over
+    # from gpt-5.6-sol: every Codex account's weekly window was exhausted
+    # when the id changed, so `code generate init --refresh` could not bench it.
+    cost_in: 2
+    cost_out: 10
     speed: 31.5
     ttft: 4.59
     context: 1000000

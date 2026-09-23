@@ -23,8 +23,8 @@ task:
   # conversion of both paths (see docs/agent-tools.md).
   agentModelOverrides:
     reviewer: anthropic/claude-sonnet-5:high
-    scout: openai-codex/gpt-5.6-luna:medium
-    sonic: openai-codex/gpt-5.6-luna:minimal
+    scout: openai-codex/gpt-6-luna:medium
+    sonic: openai-codex/gpt-6-luna:minimal
     task: openai-codex/gpt-5.6-terra:medium
   # All bundled agents stay spawnable in plain omp. An unattributed machine
   # edit once disabled every one of them (issue #173); seeding the empty list
@@ -36,14 +36,14 @@ task:
 # roles so commit messages, titles, and subtasks never bill at the main tier.
 # The Code Manifold plugin owns reviewed per-session routing separately.
 modelRoles:
-  default: openai-codex/gpt-5.6-sol:medium
-  advisor: openai-codex/gpt-5.6-luna:medium
-  smol: openai-codex/gpt-5.6-luna:low
-  slow: openai-codex/gpt-5.6-sol:xhigh
+  default: openai-codex/gpt-6-sol:medium
+  advisor: openai-codex/gpt-6-luna:medium
+  smol: openai-codex/gpt-6-luna:low
+  slow: openai-codex/gpt-6-sol:xhigh
   task: openai-codex/gpt-5.6-terra:medium
   plan: anthropic/claude-fable-5-1:high
-  tiny: openai-codex/gpt-5.6-luna:minimal
-  commit: openai-codex/gpt-5.6-luna:low
+  tiny: openai-codex/gpt-6-luna:minimal
+  commit: openai-codex/gpt-6-luna:low
 
 # Cross-provider fallback first for the roles that matter, so a provider-wide
 # outage or a long rate-limit window degrades instead of killing the session.
@@ -62,7 +62,7 @@ retry:
       - openai-codex/gpt-5.6-terra:medium
     task:
       - anthropic/claude-sonnet-5:medium
-      - openai-codex/gpt-5.6-sol:medium
+      - openai-codex/gpt-6-sol:medium
     advisor:
       - openai-codex/gpt-5.6-terra:low
     smol:
@@ -71,7 +71,7 @@ retry:
       - anthropic/claude-sonnet-5:high
       - openai-codex/gpt-5.6-terra:xhigh
     plan:
-      - openai-codex/gpt-5.6-sol:high
+      - openai-codex/gpt-6-sol:high
       - anthropic/claude-sonnet-5:high
     tiny:
       - openai-codex/gpt-5.6-terra:low

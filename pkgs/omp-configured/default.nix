@@ -43,6 +43,7 @@ let
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
     mkdir -p "$out/agents" "$out/extensions" "$out/rules"
     cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
+    cp ${./config/extensions/forced-tool-choice-compat.ts} "$out/extensions/forced-tool-choice-compat.ts"
     cp ${./config/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
     cp ${./config/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
     cp ${./config/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
@@ -53,6 +54,7 @@ let
       "type": "module",
       "omp": {
         "extensions": [
+          "./extensions/forced-tool-choice-compat.ts",
           "./extensions/managed-settings-guard.ts"
         ]
       }

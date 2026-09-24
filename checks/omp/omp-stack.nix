@@ -371,7 +371,7 @@ pkgs.runCommand "check-omp-stack"
       > "$TMPDIR/effective.json"
     # routing: the managed default wins over the user's weak pin
     test "$(jq -r '.effectiveManaged.modelRoles.default' "$TMPDIR/effective.json")" \
-      = "openai-codex/gpt-5.6-sol:medium"
+      = "openai-codex/gpt-6-sol:medium"
     # A persistent direct override cannot erase the managed child's role.
     test "$(jq -r '.effectiveManaged.task.agentModelOverrides.task' "$TMPDIR/effective.json")" = "@task"
     # enforced policy: the user cannot weaken approvals or task isolation

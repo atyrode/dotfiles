@@ -568,7 +568,7 @@ pkgs.runCommand "check-omp-wrapper"
         HOME="$policy_home" XDG_CONFIG_HOME="$policy_home/.config" \
           ${configuredStub}/bin/omp-managed --cwd "$policy_project" \
             config managed --json > "$TMPDIR/managed-policy.json"
-        jq -e '.effectiveManaged.modelRoles.default == "openai-codex/gpt-5.6-sol:medium"' \
+        jq -e '.effectiveManaged.modelRoles.default == "openai-codex/gpt-6-sol:medium"' \
           "$TMPDIR/managed-policy.json" >/dev/null
         jq -e '.effectiveManaged.retry.modelFallback == true' \
           "$TMPDIR/managed-policy.json" >/dev/null

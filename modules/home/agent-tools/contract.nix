@@ -99,9 +99,9 @@ let
 
   # Hourly archive of this machine's agent session history through Babel
   # (atyrode/babel SPEC.md 6.2). Babel replaced an rclone-crypt copy of the
-  # same trees: it archives them with restic under a stable host identity and
-  # catalogues each session in a shared PostgreSQL, so the result is
-  # verifiable and selectively restorable instead of a mirrored directory.
+  # same trees: it archives them with restic under a stable host identity in
+  # the one repository the fleet shares, so the result is verifiable and
+  # selectively restorable instead of a mirrored directory.
   #
   # Babel discovers the source roots itself from its own configuration, so
   # this wrapper deliberately names no transcript paths. It exists to
@@ -119,6 +119,22 @@ let
   #                    become a second, empty archive.
   #   push succeeds    stamp the time so `atyrode apply` can report archive
   #                    freshness without reaching the network.
+  #
+  # The push runs in Babel's local mode, so a snapshot is all it writes. The
+  # placed storage document is shared-mode because it also names the Go-era
+  # PostgreSQL catalog, into which a shared-mode push records each snapshot's
+  # sessions after restic has committed it. That catalog is retired
+  # (atyrode/babel docs/parity.md: sharedcatalog and sync are absent by
+  # decision), and depending on it failed the push for reasons that say
+  # nothing about the archive: its harness CHECK predates Babel's own
+  # analysis sessions, so a machine holding one landed a complete snapshot
+  # and then exited 1, every hour. Babel reads its configuration only from
+  # $XDG_CONFIG_HOME/babel, so the push reads a projection of the placed
+  # document with the catalog removed and the mode set to local: the same
+  # repository, password file, object-store credential and host identity.
+  # The projection holds that credential, so it exists only for the push: a
+  # mode-600 file in a mode-700 directory under the runtime directory,
+  # removed on exit. The placed document is only read.
   #
   # restic is a runtime input rather than an assumed PATH entry: the profile
   # installs it for interactive use, but a user unit's environment is not the
@@ -141,6 +157,16 @@ let
         exit 0
       fi
 
+      scratch="$(mktemp -d "''${XDG_RUNTIME_DIR:-''${TMPDIR:-/tmp}}/babel-archive-push.XXXXXX")"
+      trap 'rm -rf "$scratch"' EXIT
+      mkdir -m 700 "$scratch/babel"
+      # jq's diagnostics are discarded because they can quote the document.
+      if ! (umask 077 && jq '.mode = "local" | del(.catalog)' "$config_file" \
+        2>/dev/null >"$scratch/babel/storage.json"); then
+        echo "babel-archive-push: $config_file is not a readable storage document" >&2
+        exit 1
+      fi
+
       # --json because the stamp has to be earned rather than assumed. A push
       # legitimately succeeds having archived nothing (a machine that runs no
       # harness yet, or whose source roots moved), and it fails having
@@ -148,7 +174,7 @@ let
       # stamp that cannot tell the difference reports health that does not
       # exist.
       push_status=0
-      result="$(babel archive push --json)" || push_status=$?
+      result="$(XDG_CONFIG_HOME="$scratch" babel archive push --json)" || push_status=$?
 
       if (( push_status != 0 )); then
         # Babel has already named the reason on stderr and the journal keeps
@@ -161,7 +187,7 @@ let
 
       snapshot="$(jq -r '.snapshot_id // ""' <<<"$result")"
       incomplete="$(jq -r '.incomplete // false' <<<"$result")"
-      sessions="$(jq -r '.sessions_published // 0' <<<"$result")"
+      files="$(jq -r '.total_files_processed // 0' <<<"$result")"
 
       if [[ -z "$snapshot" ]]; then
         echo "babel-archive-push: no snapshot created; nothing on this host to archive" >&2
@@ -173,7 +199,7 @@ let
         exit 1
       fi
 
-      echo "babel-archive-push: snapshot $snapshot, $sessions session(s) published" >&2
+      echo "babel-archive-push: snapshot $snapshot, $files file(s)" >&2
 
       umask 077
       mkdir -p "$state_dir"

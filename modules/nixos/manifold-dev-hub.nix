@@ -97,6 +97,14 @@ in
         "https://release-assets.githubusercontent.com"
         "https://registry.npmjs.org"
       ];
+      # Named-output scratch shared by every job: each running OMP session's run
+      # directory and every bound-input extraction live here until sealed. The
+      # module's 1 MiB default fills after a dozen concurrent sessions, which then
+      # seal no transcript. A job writing here is refused unless its outputBytes
+      # exceeds this capacity, so it stays below the 1 GiB that OMP's session and
+      # Babel's operations declare, leaving each 256 MiB for stdio.
+      outputBytes = 805306368;
+      outputInodes = 10000;
       # Published runtimes use FHS interpreter paths. Coding tools receive their
       # explicitly selected Nix closures separately, never the ambient store.
       runtimeTools.system =

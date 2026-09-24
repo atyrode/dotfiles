@@ -699,11 +699,20 @@ After a successful push the wrapper stamps
 `atyrode apply` reads that stamp to warn when the archive is unconfigured, has
 never succeeded here, or has not succeeded within 48 hours.
 
-Operator surfaces are Babel's own: `babel archive push` runs a snapshot in the
-foreground, `babel archive status [--json]` reports repository and stamp health,
-`babel archive verify [--deep]` checks repository integrity (`--deep` reads
-the pack data, not just the index), and `babel sessions list` browses the
-catalog.
+The push runs Babel in local mode: the wrapper hands it a run-scoped copy of
+the storage document without its `catalog` block, in a private directory under
+the runtime directory that is removed when the push exits. The Go-era shared
+PostgreSQL catalog is retired, so a complete restic snapshot is the whole of a
+successful push and nothing is published beside it. For the same reason, run
+`babel-archive-push` rather than a bare `babel archive push` to archive by
+hand: the bare command reads the placed shared-mode document and still
+publishes to that catalog.
+
+Other operator surfaces are Babel's own: `babel archive status [--json]`
+reports repository and stamp health, `babel archive verify [--deep]` checks
+repository integrity (`--deep` reads the pack data, not just the index), and
+`babel sessions list` lists this machine's sessions, or with `--host` another
+host's newest snapshot.
 
 These commands have different effects: listing/status inspect state, integrity
 verification accesses the configured repository, and push writes the live

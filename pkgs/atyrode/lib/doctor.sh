@@ -1338,7 +1338,7 @@ probe_babel_archive() {
   if [[ -z "$last" ]]; then
     provisioning_check_add babel-archive degraded never-succeeded \
       "babel is configured here but has never archived successfully" \
-      "babel archive status (then: babel archive push)"
+      "babel archive status (then: babel-archive-push)"
     return 0
   fi
   if last_epoch="$(date -u -d "$last" +%s 2>/dev/null)"; then

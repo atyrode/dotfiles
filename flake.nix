@@ -6,7 +6,7 @@
 
     # Babel is the fleet's archival instrument for agent session history
     # (atyrode/babel SPEC.md 2.3): restic to a Cellar bucket under a stable
-    # host identity, catalogued in a shared PostgreSQL. Pinned as a flake
+    # host identity; the shared catalog is retired. Pinned as a flake
     # input rather than re-packaged under pkgs/, because its derivation is a
     # plain buildGoModule with a fixed vendorHash. flake.lock carries the
     # exact revision the hourly archive timer executes.

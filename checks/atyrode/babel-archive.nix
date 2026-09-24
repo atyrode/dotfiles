@@ -87,6 +87,49 @@ pkgs.runCommand "check-babel-archive"
     grep -Fq 'snapshot_id' "$push"
     grep -Fq 'incomplete' "$push"
 
+    # The push archives without the retired shared catalog. A fleet machine's
+    # document is shared-mode and names that catalog, and a push that
+    # published there failed after restic had committed whenever the catalog
+    # refused a row. This catalog cannot even be dialled (pgx refuses its
+    # sslmode before connecting), which failed the push the same way. The
+    # wrapper must still exit 0, stamp, and leave a snapshot holding Babel's
+    # own analysis session, without altering the placed document or leaving
+    # its run-scoped projection behind.
+    (
+      export HOME="$TMPDIR/push-home"
+      export XDG_CONFIG_HOME="$HOME/.config" XDG_STATE_HOME="$HOME/.local/state" \
+        XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache" \
+        XDG_RUNTIME_DIR="$TMPDIR/push-runtime"
+      # The push finds the repository through the document alone; only the
+      # fixture's own restic calls are given its coordinates.
+      restic() {
+        RESTIC_REPOSITORY="$TMPDIR/push-repo" RESTIC_PASSWORD_FILE="$TMPDIR/push-password" \
+          ${lib.escapeShellArg (lib.getExe pkgs.restic)} "$@"
+      }
+      jq=${lib.escapeShellArg "${pkgs.jq}/bin/jq"}
+      document="$XDG_CONFIG_HOME/babel/storage.json"
+      mkdir -p "$HOME/.omp/agent/sessions/-fixture" "$XDG_DATA_HOME/babel/analysis/run-1" \
+        "$XDG_CONFIG_HOME/babel"
+      mkdir -m 700 "$XDG_RUNTIME_DIR"
+      printf '%s\n' '{"type":"session","id":"s1"}' >"$HOME/.omp/agent/sessions/-fixture/s1.jsonl"
+      printf '%s\n' '{"type":"session","id":"a1"}' >"$XDG_DATA_HOME/babel/analysis/run-1/a1.babel.jsonl"
+      printf 'fixture-only\n' >"$TMPDIR/push-password"
+      restic init --quiet >/dev/null
+      "$jq" -n --arg repo "$TMPDIR/push-repo" --arg password "$TMPDIR/push-password" '{
+        config_schema: 2, mode: "shared", repository: $repo, password_file: $password,
+        host_id: "fixture-host", deployment_id: "fixture", instance_id: "fixture-host",
+        catalog: { host: "127.0.0.1", port: 1, database: "babel", user: "babel",
+                   password: "fixture-only", tls_mode: "unusable" } }' >"$document"
+      cp "$document" "$TMPDIR/push-document"
+
+      "$push"
+      test -s "$XDG_STATE_HOME/babel/last-success"
+      cmp "$document" "$TMPDIR/push-document"
+      test -z "$(ls -A "$XDG_RUNTIME_DIR")"
+      restic ls --no-lock --host fixture-host --tag babel latest >"$TMPDIR/push-listing"
+      grep -q '/babel/analysis/run-1/a1\.babel\.jsonl$' "$TMPDIR/push-listing"
+    )
+
     test ${lib.escapeShellArg linuxArchiveService.Service.Type} = oneshot
     test ${lib.escapeShellArg (lib.concatStringsSep " " linuxArchiveService.Unit.After)} = 'network.target'
     # No Install on the service: a first archive can move multiple GB, and a

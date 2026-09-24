@@ -214,6 +214,7 @@ let
       ++ lib.optionals (name == "dev-01") [
         manifold.nixosModules.native
         ../modules/nixos/manifold-dev-hub.nix
+        ../modules/nixos/manifold-dev-babel-store.nix
       ]
       ++ clanMachineModules;
     };

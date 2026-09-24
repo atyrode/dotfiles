@@ -21,10 +21,8 @@
 #   custody    the repository, password file, object-store credential and
 #              host identity come from the storage document alone. They reach
 #              restic's environment and no other process's: restic hands its
-#              command the environment minus those four names, and ambient
-#              restic selectors are cleared so the document cannot be
-#              overridden. jq's diagnostics are discarded because they can
-#              quote the document.
+#              command the environment minus those four names. jq's
+#              diagnostics are discarded because they can quote the document.
 #   success    stamped like the archive push, in its own file, so the
 #              archive's freshness report never counts a store backup.
 {
@@ -93,7 +91,6 @@ let
 
       status=0
       result="$(
-        unset RESTIC_PASSWORD RESTIC_PASSWORD_COMMAND RESTIC_REPOSITORY_FILE
         export RESTIC_REPOSITORY="$repository" RESTIC_PASSWORD_FILE="$password_file"
         if [[ -n "$access_key_id" ]]; then
           export AWS_ACCESS_KEY_ID="$access_key_id" AWS_SECRET_ACCESS_KEY="$secret_access_key"

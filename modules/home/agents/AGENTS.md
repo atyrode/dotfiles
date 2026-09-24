@@ -69,6 +69,17 @@ live-system prohibitions still apply. Explicit bounded authorization remains
 usable until its stated ending condition or revocation; it is not permission
 to expand scope. Code review and technical preconditions are never waived.
 
+## Standing preview activation
+
+dev-01 is the preview machine. Activating a published dotfiles revision there
+with `atyrode apply dev-01` is authorized without asking each time, provided
+`--preview-json` reports the disruption as `safe` and that fingerprint is
+passed as `--expected-disruption`. First pause the preview workload the
+disruption names; afterwards verify the affected services and report them. This
+does not cover production, other fleet machines, secret generation or
+migration, or any disruption that is not `safe`: each of those still needs its
+own permission.
+
 ## Credentials and tool state
 
 Leave tool-owned configuration, authentication, sessions and caches with their

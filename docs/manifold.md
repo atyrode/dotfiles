@@ -270,6 +270,27 @@ machine's opaque ID. The hub never
 chooses a service owner by display name or falls back to another machine.
 Back up the retained volume before a deployment that crosses a schema version.
 
+Babel runs on this hub as a Manifold plugin, and its results live in one
+SQLite database inside the hub container,
+`/data/plugins/atyrode.babel/data.db` in `manifold-dev-manifold-1`.
+[`modules/nixos/manifold-dev-babel-store.nix`](../modules/nixos/manifold-dev-babel-store.nix)
+backs it up nightly into the restic repository that keeps the session
+transcripts, named by the [placed storage document](secrets.md#declaring-a-secret).
+The `babel-store-backup` user service has the container's Bun serialize the
+database through `bun:sqlite` in one read transaction and streams that image
+into `restic backup --stdin-from-command`, as
+`/manifold-dev/plugins/atyrode.babel/data.db` under the registry host and the
+tag `babel-store`. That tag is never `babel`, which marks transcript
+snapshots. No temporary file holds the database, and a producer that fails
+(missing container or store, or an empty image) leaves no snapshot and fails
+the unit. The timer has the archive timer's gate, the storage document, and
+arms at the activation that declares it on a machine where the document is
+already placed; `systemctl --user start babel-store-backup.timer` arms it by
+hand. A success stamps `~/.local/state/babel/store-last-success`, apart from
+the archive's own stamp. `restic snapshots --tag babel-store` lists the
+backups, and `restic dump <snapshot> /manifold-dev/plugins/atyrode.babel/data.db`
+recovers one.
+
 The separate preview executor is declared in
 `modules/nixos/manifold-dev-hub.nix` through Manifold's `nixosModules.native`
 profile from the separate `manifold` input in `flake.lock`, imported only

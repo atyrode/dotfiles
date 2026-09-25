@@ -92,6 +92,29 @@ in
       # The incumbent token lives beneath the operator's private home. Protect
       # its traversable ancestor instead of weakening that home's permissions.
       protectedDirectories = [ "/home" ];
+      # Read-only views of the operator's session trees for Babel's archive job.
+      # Root presents each as an idmapped read-only bind at
+      # /run/manifold-anchors/<name>; nothing in the home changes and manifold
+      # gains no traversal of it. A view may lie beneath the protected /home,
+      # never contain the token, which the module asserts.
+      operatorAnchors = {
+        omp-sessions = {
+          path = "${homeDirectory}/.omp/agent/sessions";
+          readOnly = true;
+        };
+        omp-blobs = {
+          path = "${homeDirectory}/.omp/agent/blobs";
+          readOnly = true;
+        };
+        codex-home = {
+          path = "${homeDirectory}/.codex";
+          readOnly = true;
+        };
+        claude-home = {
+          path = "${homeDirectory}/.claude";
+          readOnly = true;
+        };
+      };
       artifactOrigins = [
         "https://github.com"
         "https://release-assets.githubusercontent.com"
@@ -145,10 +168,20 @@ in
           kind = "file";
         }
       ];
+      # Babel's archive operations run restic where its machine half looks for
+      # it, /runtime/bin/restic; the closure supplies its exact dependencies.
+      runtimeTools.restic = [
+        {
+          source = "${pkgs.restic}/bin/restic";
+          target = "/runtime/bin/restic";
+          kind = "file";
+        }
+      ];
       # The Nix-built loader still searches its immutable library path even when
       # invoked through the FHS aliases above.
       runtimeToolClosures.system = [ pkgs.glibc ];
       runtimeToolClosures.development = [ developmentRuntime ];
+      runtimeToolClosures.restic = [ pkgs.restic ];
     };
   };
   # Recheck supervisor truth on every start, before the native profile publishes

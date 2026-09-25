@@ -364,6 +364,43 @@ points TLS clients at that bundle; Git receives its explicit CA setting.
 No host `/etc` directory or ambient environment is mounted. The native owner
 starts after the resolver, but resolver restarts do not stop the owner.
 
+Babel's archive operations need three more declarations on this owner, which
+needs native owner RPC 40 (Manifold `operatorAnchors`):
+
+- **Operator anchors.** `omp-sessions`, `omp-blobs`, `codex-home` and
+  `claude-home` present `~/.omp/agent/sessions`, `~/.omp/agent/blobs`,
+  `~/.codex` and `~/.claude`, read-only, as `operator.<name>`. The module's
+  root helper `manifold-operator-anchors.service` binds each one as an idmapped
+  read-only view at `/run/manifold-anchors/<name>`. It changes nothing in the
+  home, and `/home` stays protected: a view may lie beneath it but must never
+  contain the token.
+- **`restic`.** The runtime tool binds `pkgs.restic` at `/runtime/bin/restic`,
+  where Babel's machine half looks for it, and adds its closure.
+- **The `atyrode.babel.restic` storage endpoint**
+  ([`manifold-dev-babel-restic.nix`](../modules/nixos/manifold-dev-babel-restic.nix)).
+  The owner forwards a job's `GET /storage` to `http://127.0.0.1:7811`. It
+  presents the `babel-restic` service credential, a bearer that
+  `babel-restic-storage-bearer.service` places before the owner starts at
+  `/run/babel-restic-storage/bearer` (`manifold:manifold` 0600, in a
+  `root:manifold` 0710 directory, created once per boot and never replaced
+  while it exists). systemd accepts each connection on loopback only and starts
+  one hardened process for it. That process runs as a transient user with no
+  network of its own, and gets the bearer, the
+  [placed storage document](secrets.md#declaring-a-secret) and its repository
+  password as credentials loaded for that connection. With the exact bearer it
+  answers `{repository, password, accessKeyId, secretAccessKey}`, and nothing
+  else. `password` is the password file with surrounding whitespace removed,
+  which is how restic reads a `--password-file`. The service policy's `origin`
+  is `http://127.0.0.1:7811` with `allowLoopbackHttp: true`, and its
+  `credential` is `{ref: "babel-restic", header: "Authorization", prefix:
+  "Bearer "}`.
+
+Anchors, tools and credential sources are all retained owner configuration.
+Activation leaves the running owner and its `job-owner/config.json` alone. They
+take effect only through the drained maintenance below. After the acknowledged
+shutdown, retire the old configuration and run `systemctl restart
+manifold-operator-anchors` before starting the owner.
+
 The pin and declarations are source integration only: no legacy retirement,
 credential handoff, native activation or admission reopening has been performed
 by this change. Source publication (including updating the pinned Manifold

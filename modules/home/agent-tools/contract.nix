@@ -73,6 +73,8 @@ let
   # its children preferred.
   # `MainThread` is in that list because Node renames the main thread of the
   # TypeScript servers, which are routinely the single largest processes here.
+  # The pattern is anchored to the whole process name, so Chromium's
+  # `chromium` processes need their own entry: `chrome` alone never matches.
   #
   # This is a scoring preference, not immunity: earlyoom divides a process'
   # badness rather than exempting it. Negative OOMScoreAdjust would provide
@@ -83,7 +85,7 @@ let
       -s ${toString rgcfg.earlyoom.swapPercent} \
       -r 0 \
       --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*|omp)$' \
-      --prefer '^(bun|node|chrome|MainThread)$'
+      --prefer '^(bun|node|chrome|chromium|MainThread)$'
   '';
 
   # The one document that marks this machine as part of the archive fleet.

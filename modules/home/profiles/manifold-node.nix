@@ -101,6 +101,11 @@ in
           Environment = [ "MANIFOLD_TERMINAL_HOST_SOCKET=${terminalHostSocket}" ];
           Restart = "always";
           RestartSec = 3;
+          # Every terminal and everything started from one shares this cgroup.
+          # systemd's default OOMPolicy=stop would turn a kernel OOM kill of
+          # any descendant into a stop of the whole owner, ending every
+          # terminal; the victim alone is the right cost.
+          OOMPolicy = "continue";
         };
         Install.WantedBy = [ "default.target" ];
       };

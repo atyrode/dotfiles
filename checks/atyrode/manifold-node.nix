@@ -161,6 +161,9 @@ let
             && one unit.Unit."X-SwitchMethod" == [ "keep-old" ]
             && !(unit.Unit.RefuseManualStop or false)
         ) "transport replacement must not stop its independently supervised terminal owner";
+        assert lib.assertMsg (
+          !split || one (hostUnit.Service.OOMPolicy or [ ]) == [ "continue" ]
+        ) "a kernel OOM kill of one process must not stop the terminal owner and every terminal";
         true;
   # The credentials are clan vars: the owner key shared, operator-only and
   # never deployed; the token per machine, placed for the account whose agent

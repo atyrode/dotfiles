@@ -37,20 +37,24 @@ pkgs.runCommand "check-agent-resource-guard" { } ''
   grep -Fq -- '--prefer' "$guard"
   grep -Fq -- '--avoid' "$guard"
 
-  # Victim policy is the point of the flags, so assert the membership rather
-  # than their presence. An `omp` session and the tmux server it lives in own
-  # state that cannot be reconstructed - panes, worktrees, conversation
-  # history - so both belong on the avoid side and must never drift back into
-  # --prefer. What a session spawns is the unbounded, individually recreatable
-  # half and stays preferred.
-  preferList=$(grep -o -- "--prefer '[^']*'" "$guard")
-  avoidList=$(grep -o -- "--avoid '[^']*'" "$guard")
-  for expendable in bun node chrome MainThread; do
-    grep -Fq "$expendable" <<<"$preferList"
+  # Victim policy is the point of the flags, so evaluate the patterns against
+  # real process names rather than grepping their source: the patterns are
+  # anchored (^...$) to the whole name, so a substring such as `chrome` does
+  # not cover Chromium's `chromium` processes. An `omp` session
+  # and the tmux server it lives in own state that cannot be reconstructed -
+  # panes, worktrees, conversation history - so both belong on the avoid side
+  # and must never drift back into --prefer. What a session spawns is the
+  # unbounded, individually recreatable half and stays preferred.
+  preferPattern=$(sed -n "s/.*--prefer '\([^']*\)'.*/\1/p" "$guard")
+  avoidPattern=$(sed -n "s/.*--avoid '\([^']*\)'.*/\1/p" "$guard")
+  test -n "$preferPattern"
+  test -n "$avoidPattern"
+  for expendable in bun node chrome chromium MainThread; do
+    grep -Eq -- "$preferPattern" <<<"$expendable"
   done
-  for protected in omp; do
-    grep -Fq "$protected" <<<"$avoidList"
-    grep -Fq "$protected" <<<"$preferList" && false
+  for protected in omp 'tmux: server'; do
+    grep -Eq -- "$avoidPattern" <<<"$protected"
+    grep -Eq -- "$preferPattern" <<<"$protected" && false
   done
   test ${if linuxEarlyoomService.Service ? Nice then "1" else "0"} = 0
   test ${if linuxEarlyoomService.Service ? OOMScoreAdjust then "1" else "0"} = 0

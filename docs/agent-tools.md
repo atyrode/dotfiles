@@ -631,8 +631,10 @@ plain-OMP preference or changing old migration-key ownership.
 
 The seed may overlap keys owned by managed launchers: `defaults.yml` and
 `policy.yml` layer above the machine configuration, so seeded values cannot
-change managed behavior. The session guard blocks `/settings`; it never rolls
-the shared writable configuration back to a startup snapshot. Seed resets and
+change managed behavior. The session guard blocks `/settings` and `cfg://`
+writes to Nix-owned keys (including session overrides and `/save`); `cfg://`
+reads and writes to unmanaged keys remain available. It never rolls the shared
+writable configuration back to a startup snapshot. Seed resets and
 edits by other sessions must survive while managed sessions are running and
 when they shut down. The flake check asserts agreement wherever seeded and
 enforced values overlap. Writes abort if the machine configuration changes

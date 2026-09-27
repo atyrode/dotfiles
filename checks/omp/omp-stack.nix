@@ -11,7 +11,7 @@ let
     untrustedConfig
     yoloConfig
     ;
-  settingsGuardExtension = ../../pkgs/omp-configured/config/extensions/managed-settings-guard.ts;
+  settingsGuardExtension = "${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts";
   parallelWriteRule = ../../pkgs/omp-configured/config/rules/parallel-write-isolation.md;
   ompRuntimeVersion = builtins.head (lib.splitString "-" (lib.getVersion pkgs.omp));
   agentTools = evalAgentTools pkgs { };
@@ -346,14 +346,33 @@ pkgs.runCommand "check-omp-stack"
     if (await handlers.get("input")?.({ text: "/settingsx" }, { ui: { notify() {} } })) {
       throw new Error("unrelated input was consumed");
     }
+    const guardWrite = async (path: string) =>
+      handlers.get("tool_call")?.({ toolName: "write", input: { path } });
+    for (const path of [
+      "cfg://task/isolation/enabled",
+      "CFG://TASK.ISOLATION.ENABLED/save",
+      "cfg://modelRoles/default:raw",
+      "[cfg://tools/approvalMode#ABCD]",
+    ]) {
+      const result = await guardWrite(path);
+      if (result?.block !== true || !result.reason.includes("Nix-managed")) {
+        throw new Error(`managed cfg write escaped guard: ''${path}`);
+      }
+    }
+    for (const path of ["cfg://providers/cacheWarming", "local://scratch.txt"]) {
+      if (await guardWrite(path)) throw new Error(`unmanaged write blocked: ''${path}`);
+    }
+    if (await handlers.get("tool_call")?.({
+      toolName: "read", input: { path: "cfg://task/isolation/enabled" },
+    })) throw new Error("managed cfg read blocked");
     EOF
     ${pkgs.bun}/bin/bun "$TMPDIR/settings-guard.test.ts"
 
     # #78 — managed launchers are immutable at LAUNCH: a hostile ~/.omp cannot
     # override the managed routing default or enforced policy (approvals,
     # task isolation), and `config set` on a managed path is refused. The
-    # command guard above covers /settings; this covers the launch-layer
-    # precedence that keeps managed values independent of the machine file.
+    # command guard above covers /settings and cfg:// writes; this covers
+    # launch-layer precedence independent of the machine file.
     imm_home="$TMPDIR/immutable-home"
     mkdir -p "$imm_home/.omp/agent"
     cat > "$imm_home/.omp/agent/config.yml" <<'YAML'
@@ -395,7 +414,7 @@ pkgs.runCommand "check-omp-stack"
 
     test "$(
       find ${pkgs.omp-configured.platformRoot}/extensions -maxdepth 1 -name '*.ts' -printf '%f\n' | sort | paste -sd, -
-    )" = "forced-tool-choice-compat.ts,managed-settings-guard.ts"
+    )" = "managed-settings-guard.ts"
     grep -q 'isolated: true' ${parallelWriteRule}
 
     test "$(

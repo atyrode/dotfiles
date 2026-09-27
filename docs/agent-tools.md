@@ -120,9 +120,10 @@ These are useful authoring guidance, not descriptions of OMP. Selecting an
 OpenAI or Anthropic model does not select that vendor's instruction loader.
 
 The loading checks exercise the repository's current OMP package pin. The
-discovery reference below is pinned to version 18.1.14, commit
+discovery reference below documents version 18.1.14, commit
 [`daf07999c2fee9b22edc7bf8fea1fb6272e0df5e`](https://github.com/can1357/oh-my-pi/commit/daf07999c2fee9b22edc7bf8fea1fb6272e0df5e).
-Recheck the source when changing the OMP pin:
+These source links are historical; the maintained checks below exercise the
+current pin. Recheck upstream source when changing discovery behavior:
 
 - Native user `AGENTS.md` follows the active profile or explicit agent directory.
   Foreign user adapters require opt-in; when enabled, native context wins the
@@ -461,12 +462,13 @@ its existing override selector. Explicit empty `tiny`, `commit` and `sonic`
 chains express those utility roles' lead-only intent; other omitted role chains
 inherit the native `default` chain.
 
-The pinned OMP 18.1.14 still drops that identity when initializing a child
-session. Actual retry experiments show a shared lead can borrow the parent's
-or a sibling's chain, including for an explicitly empty chain. Aliases fix the
-configuration boundary but need an upstream runtime repair for complete
-enforcement ([Code #142](https://github.com/atyrode/code/issues/142)); effective
-config and constructor-only checks cannot certify that behavior.
+OMP 18.1.14 dropped that identity when initializing a child
+session. Actual retry experiments on that version showed a shared lead could
+borrow the parent's or a sibling's chain, including for an explicitly empty
+chain. Aliases fix the configuration boundary but are not proof of runtime
+enforcement ([Code #142](https://github.com/atyrode/code/issues/142)); later
+versions changed fallback handling, so repeat the native experiment below
+before asserting the current runtime's behavior.
 
 `omp-managed config managed --json` exposes effective aliases, selectors and
 chains, but is not proof of a child's fallback behavior. For an offline native

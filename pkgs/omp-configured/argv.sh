@@ -16,14 +16,15 @@ omp_boolean_flags=(
   --advisor --allow-home --auto-approve --continue -c --external-thinking
   --from-claude --from-codex --help -h --hide-thinking --no-extensions --no-lsp
   --no-prewalk --no-pty --no-rules --no-session --no-skills --no-title --no-tools
+  --no-ui
   --plan-yolo --prewalk --print -p --print-thoughts --version -v --yolo
 )
 omp_subcommands=(
   __complete acp agents auth-broker auth-gateway bench browser-relay cleanse
   clip collab commit completions compress config dry-balance find gallery gc git
-  grep grievances images img if-bench install join launch models play plugin
-  plugins ps q read render say search setup share shell ssh stats stream
-  tiny-models token ttsr update usage web-search worktree wt
+  grep grievances images img if-bench install join launch login models play plugin
+  plugins predict ps q read render say search setup share shell skill skills ssh
+  stats stream tiny-models token toks ttsr update usage web-search worktree wt
 )
 
 omp_contains() {

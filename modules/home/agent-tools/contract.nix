@@ -13,6 +13,7 @@ let
     paths = [
       ../agents/skills
       "${pkgs.babel-recall}/share/agent-skills"
+      "${pkgs.manifold-terminal-client}/share/agent-skills"
     ];
   };
   defaultsConfig = ../../../pkgs/omp-configured/config/defaults.yml;
@@ -377,6 +378,7 @@ in
         home.packages = [
           cfg.ompPackage
           pkgs.babel-recall
+          pkgs.manifold-terminal-client
         ]
         ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 

@@ -13,8 +13,8 @@
     babel.url = "github:atyrode/babel";
     babel.inputs.nixpkgs.follows = "nixpkgs";
 
-    # The preview executor uses Manifold's own declared owner/transport
-    # profile; the ordinary fleet agent remains independently release-pinned.
+    # Manifold owns the terminal client and the preview executor's declared
+    # owner/transport profile; the fleet agent stays independently release-pinned.
     manifold.url = "github:atyrode/manifold";
     manifold.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -117,6 +117,7 @@
         inherit
           babel
           babel-recall-src
+          manifold
           manifold-recall-sdk-src
           clan-core
           lib
@@ -213,6 +214,7 @@
             omp-configured
             omp-seed
             ;
+          manifold = pkgs.manifold-terminal-client;
           # One root per system for the fleet binary cache: CI builds this
           # and copies its closure, so every host below activates from a
           # download. Members are named by host id for inspection.

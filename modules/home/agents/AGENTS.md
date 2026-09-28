@@ -99,3 +99,9 @@ probes, not authorization to change state. Activation and `atyrode apply` render
 the personal file; the harness loads its applicable instructions at startup.
 Do not infer activated or already-loaded policy from a source revision or
 diagnostic result.
+
+When a Manifold terminal binding is present, use the installed `manifold context`
+and `manifold doctor` from any working directory; consult the `manifold-terminal`
+skill for terminal operations. A missing `manifold` executable means installation
+is missing, not a reason to borrow credentials. Never dump binding values or
+substitute ordinary terminal identity for an Agent/Run action runner.

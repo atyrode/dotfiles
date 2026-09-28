@@ -768,10 +768,32 @@ instead of leaving a stale list.
 | [`ts-react-dead-code-sweep`](../modules/home/agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
 | `babel-recall` | package-owned | pinned Babel `babel/recall-skill.md`, installed unchanged by `pkgs.babel-recall` |
+| `manifold-terminal` | package-owned | pinned Manifold `packages.<system>.manifold`, installed unchanged with `bin/manifold` |
 
 `ts-react-dead-code-sweep` has no surface in this repository — it is a
 cross-project skill, deployed to the global `~/.agents/skills` so it is
 available whenever these machines work on a TypeScript project.
+
+### Manifold terminal client
+
+The common agent-tools profile installs Manifold's compiled `manifold` CLI and
+its `share/agent-skills/manifold-terminal/SKILL.md` from the existing Manifold
+flake input. The skill uses the shared OMP/Codex/Claude routes above; dotfiles
+implements neither the client nor a second skill. The fleet agent release pin
+and Agent/Run action runner remain separate.
+
+With an inherited Manifold terminal binding, `manifold context` and
+`manifold doctor` work outside a checkout. Missing `manifold` means the package
+is not installed. Do not dump binding values, borrow credentials or substitute
+ordinary terminal identity for Agent/Run authority.
+
+`nix build --no-link .#checks.x86_64-linux.omp-context .#checks.x86_64-linux.omp-stack`
+checks fresh personal-context loading outside a repository, the installed
+entrypoint on the managed package path, shared skill bytes and fresh OMP skill
+discovery both inside and outside a project. These no-provider checks do not
+exercise live terminal authority, activate a machine or refresh existing
+sessions. A published Manifold input revision exposing the package is required
+for normal installation; source-override proof is not published-pin proof.
 
 ### Babel Recall: source delivery and operator prerequisites
 

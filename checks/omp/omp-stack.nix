@@ -222,7 +222,7 @@ pkgs.runCommand "check-omp-stack"
     rpc_project="$TMPDIR/rpc-project"
     mkdir -p "$rpc_home" "$rpc_project/.omp" "$rpc_project/.agents/skills/project-fixture"
     # Exercise the evaluated Home Manager sources in a disposable home, not
-    # an invented skill copy. No Recall request or provider turn is sent.
+    # an invented skill copy. No Recall, terminal action or provider turn is sent.
     mkdir -p "$rpc_home/.agents" "$rpc_home/.claude"
     ln -s ${managedSkills} "$rpc_home/.agents/skills"
     ln -s ${claudeSkills} "$rpc_home/.claude/skills"
@@ -235,6 +235,14 @@ pkgs.runCommand "check-omp-stack"
     recall_runner="$(PATH=${lib.makeBinPath agentTools.home.packages} command -v babel-recall-runner)"
     test "$recall_runner" = "${pkgs.babel-recall}/bin/babel-recall-runner"
     test -x "$recall_runner"
+    terminal_skill="$rpc_home/.agents/skills/manifold-terminal/SKILL.md"
+    cmp ${pkgs.manifold-terminal-client}/share/agent-skills/manifold-terminal/SKILL.md "$terminal_skill"
+    cmp "$terminal_skill" "$rpc_home/.claude/skills/manifold-terminal/SKILL.md"
+    test "$(readlink -f "$terminal_skill")" = \
+      "$(readlink -f "$rpc_home/.claude/skills/manifold-terminal/SKILL.md")"
+    terminal_client="$(PATH=${lib.makeBinPath agentTools.home.packages} command -v manifold)"
+    test "$terminal_client" = "${pkgs.manifold-terminal-client}/bin/manifold"
+    test -x "$terminal_client"
     printf '%s\n' 'managed-project-guidance-fixture' > "$rpc_project/.omp/AGENTS.md"
     printf '%s\n' '{"defaultThinkingLevel":"low"}' > "$rpc_project/.omp/settings.json"
     cat > "$rpc_project/.omp/config.yml" <<'EOF'
@@ -275,8 +283,31 @@ pkgs.runCommand "check-omp-stack"
       and
       (map(select(.id == "commands" and .success == true))[0].data.commands
         | any(.name == "skill:babel-recall"))
+      and
+      (map(select(.id == "commands" and .success == true))[0].data.commands
+        | any(.name == "skill:manifold-terminal"))
     ' "$TMPDIR/rpc.jsonl" >/dev/null
     test ! -e "$rpc_home/.pi"
+
+    # A fresh process outside a checkout must still discover the installed
+    # terminal skill, without inheriting the project fixture's skill.
+    mkdir -p "$rpc_home/outside"
+    printf '%s\n' '{"id":"commands","type":"get_available_commands"}' \
+      | env \
+        HOME="$rpc_home" \
+        OPENAI_API_KEY=fixture-placeholder \
+        timeout 20 ${pkgs.omp-configured}/bin/omp \
+          --profile work \
+          --cwd "$rpc_home/outside" \
+          --mode rpc \
+          --no-session \
+          --no-tools \
+          --no-lsp > "$TMPDIR/rpc-outside.jsonl"
+    jq -s -e '
+      (map(select(.id == "commands" and .success == true))[0].data.commands
+        | any(.name == "skill:manifold-terminal")
+          and (any(.name == "skill:project-fixture") | not))
+    ' "$TMPDIR/rpc-outside.jsonl" >/dev/null
 
     cat > "$TMPDIR/settings-guard.test.ts" <<'EOF'
     import guard from "${settingsGuardExtension}";

@@ -249,11 +249,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1790616998,
-        "narHash": "sha256-Egjps0l73A8BhgRp0vWKVpqESz5hCx18ezeuvUbP9zk=",
+        "lastModified": 1790636658,
+        "narHash": "sha256-OjRbao+P5UciDjSfQTTrgfyX39b9fTyBuFsb0nhrjyg=",
         "owner": "atyrode",
         "repo": "manifold",
-        "rev": "d1b3561a6ebb7d59af2593ae5b110f113f4af249",
+        "rev": "879531bb3da082eb14ce510204f862d570627e6c",
         "type": "github"
       },
       "original": {

@@ -8,7 +8,7 @@ modelRoles:
   task: openai-codex/gpt-5.6-terra:medium
   scout: openai-codex/gpt-6-luna:medium
   sonic: openai-codex/gpt-6-luna:minimal
-  reviewer: anthropic/claude-sonnet-5:high
+  reviewer: anthropic/claude-sonnet-5-5:high
   plan: anthropic/claude-fable-5-1:high
   slow: anthropic/claude-opus-5-5:xhigh
   tiny: openai-codex/gpt-6-luna:low
@@ -45,17 +45,17 @@ retry:
     default:
       - openai-codex/gpt-5.6-terra:medium
       - anthropic/claude-opus-5-5:medium
-      - anthropic/claude-sonnet-5:medium
+      - anthropic/claude-sonnet-5-5:medium
     task:
       - openai-codex/gpt-6-sol:medium
-      - anthropic/claude-sonnet-5:medium
+      - anthropic/claude-sonnet-5-5:medium
       - anthropic/claude-opus-5-5:medium
     plan:
       - anthropic/claude-opus-5-5:high
       - openai-codex/gpt-6-sol:high
       - openai-codex/gpt-5.6-terra:high
     slow:
-      - anthropic/claude-sonnet-5:xhigh
+      - anthropic/claude-sonnet-5-5:xhigh
       - openai-codex/gpt-6-sol:xhigh
       - openai-codex/gpt-5.6-terra:xhigh
 

@@ -125,19 +125,21 @@ models:
       Fastest/cheapest Anthropic tier. Leads the speed Claude tier; the
       Anthropic cheap rung and background hum.
   sonnet:
-    id: claude-sonnet-5
+    id: claude-sonnet-5-5
     pool: A
     tier: 2
     bucket: claude-main
     cost_in: 2
     cost_out: 10
-    speed: 35.2
-    ttft: 3.84
+    # Scoped omp 18.4.3 refresh: one 384-token chat benchmark, 2026-09-29.
+    speed: 113.9
+    ttft: 1.07
     context: 1000000
     thinking: low→max
     role: >-
       The value pick — near-Opus quality at a fraction of the cost. Leads the
-      regular Claude tier and the mixed judgment roles.
+      regular Claude tier and the mixed judgment roles. Requires omp >= 18.4.3
+      for Sonnet 5.5's forced-tool-choice compatibility.
   opus:
     id: claude-opus-5-5
     pool: A

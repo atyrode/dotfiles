@@ -446,6 +446,20 @@ The ordinary seed merge preserves an operator's divergent local preference.
 
 ### Agent role identity and fallback
 
+The managed reviewer, existing Sonnet fallback slots, plain-OMP seed and
+standalone Code catalog use `anthropic/claude-sonnet-5-5`, preserving their
+existing effort levels. This requires OMP 18.4.3 or newer: 18.4.2 sends forced
+tool selection on eager-todo turns, which Sonnet 5.5 rejects. The
+`omp-forced-tool-choice` check exercises the packaged request path at the
+reviewer's `high` and the slow fallback's `xhigh` effort, requiring automatic
+tool selection without disabling adaptive thinking.
+
+The Sonnet catalog entry has a scoped metadata/benchmark refresh; the catalog's
+global `refreshed: null` still means no complete refresh of every model is
+attested. Publishing these defaults does not activate machines or rewrite
+running sessions. Native Code's separately pinned Manifold OMP runtime and
+reviewed catalogs are not upgraded by the dotfiles OMP pin.
+
 Managed `task.agentModelOverrides` values are native aliases (`@task`,
 `@reviewer`, `@scout`, `@sonic`); `modelRoles` owns each selector and its
 thinking suffix. The pinned OMP accepts settings-defined roles as well as

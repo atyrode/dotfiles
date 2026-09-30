@@ -446,6 +446,11 @@ The ordinary seed merge preserves an operator's divergent local preference.
 
 ### Agent role identity and fallback
 
+Existing Sol 6 roles and fallbacks in managed defaults, the plain-OMP seed
+and the standalone Code registry use `openai-codex/gpt-6.1-sol`. Their roles,
+effort levels and fallback ordering are unchanged. OMP 18.4.4 is required
+for Codex discovery to expose Sol 6.1.
+
 The managed reviewer, existing Sonnet fallback slots, plain-OMP seed and
 standalone Code catalog use `anthropic/claude-sonnet-5-5`, preserving their
 existing effort levels. This requires OMP 18.4.3 or newer: 18.4.2 sends forced

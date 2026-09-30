@@ -62,13 +62,12 @@ models:
       Balanced workhorse. Leads the regular GPT tier and the mixed
       workers. Sonnet's price-twin.
   sol:
-    id: gpt-6-sol
+    id: gpt-6.1-sol
     pool: O
     tier: 3
     bucket: codex-main
-    # cost from omp 18.2.10's openai-codex row. speed/ttft are carried over
-    # from gpt-5.6-sol: every Codex account's weekly window was exhausted
-    # when the id changed, so `code generate init --refresh` could not bench it.
+    # Selector-only update: context/speed/ttft retain the previous cache,
+    # not Sol 6.1 measurements. Pricing is unchanged at $2/$10 per 1M.
     cost_in: 2
     cost_out: 10
     speed: 31.5

@@ -306,7 +306,22 @@ in
         Referrer-Policy strict-origin-when-cross-origin
       }
 
-      reverse_proxy 127.0.0.1:7912
+      # Hub admission and protocol traffic never pass through the source listener.
+      # Vite's vite-hmr upgrade is on the frontend path, not the hub's /ws namespace.
+      @hub path /api /api/* /auth /auth/* /ws /ws/* /healthz /healthz/*
+      handle @hub {
+        reverse_proxy 127.0.0.1:7912
+      }
+      handle {
+        # Ordered preference, with bounded connection retries to the same hub's
+        # installed frontend when the loopback workshop is stopped/unavailable.
+        reverse_proxy 127.0.0.1:7913 127.0.0.1:7912 {
+          lb_policy first
+          fail_duration 1s
+          lb_try_duration 1s
+          lb_try_interval 50ms
+        }
+      }
     '';
     virtualHosts."*.manifold.tyrode.dev".extraConfig = ''
       tls {

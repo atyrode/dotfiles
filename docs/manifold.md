@@ -242,9 +242,13 @@ everything one iterates on, under one wildcard.
 fronts two names with Caddy, sharing the VPS's ports 80 and 443 with the
 [parcel development edge](hosts.md#current-capabilities):
 
-- `preview.manifold.tyrode.dev` — the integrated instance: every green `main`
+- `preview.manifold.tyrode.dev` — the retained integrated hub: every green `main`
   of atyrode/manifold, on the compose stack the operator runs from
-  `~/manifold-dev` on port 7912.
+  `~/manifold-dev` on port 7912. An optional persistent Code source workshop
+  supplies the frontend on loopback 7913; Caddy prefers it and falls back to
+  this same hub's installed frontend when it is absent. `/api`, `/auth`,
+  `/ws`, `/healthz` and their subpaths always reach 7912, including hub
+  WebSockets; Vite HMR stays on the frontend path.
 - `*.manifold.tyrode.dev` — one hostname per pull request (`283.…`) or live
   worktree (`<name>.…`), proxied to an operator-owned router on 127.0.0.1:7900
   that manifold's `infra/previews/preview.sh` generates as previews come and
@@ -260,6 +264,34 @@ preview up or down. The private half is atyrode/manifold's
 declared here: they are the operator's checkouts, and a vhost whose upstream
 is down answers 502, which is what "not running" should look like. DNS:
 `preview` and `*` A records to this machine; the apex stays the master's.
+
+Manifold owns the workshop launcher and its single user service, documented in
+[`infra/previews/README.md`](https://github.com/atyrode/manifold/blob/main/infra/previews/README.md#persistent-code-workshop-on-the-integrated-preview).
+Its explicit non-secret config keeps Code source at
+`/home/alex/code-workshop/code/plugins`, invokes Code's `pack.ts`, and resolves
+installation authority only through supported delivery to the existing
+`manifold-dev-manifold-1` container. Start has plugin-install authority; it is
+not credential-free source-only Fast Refresh. Stop removes only owned
+frontend/watch resources, retaining source, hub data, the native owner and
+running terminal/OMP work. No new auth audience, public port, native profile
+or production route is introduced. The exact existing TLS hostname remains
+`MANIFOLD_DEV_HOST=preview.manifold.tyrode.dev`; source-file admission is still
+the SDK's approved graph, not unrestricted filesystem serving.
+
+The routing proof uses real disposable Caddy and HTTP/WebSocket upstreams,
+not source-text assertions:
+
+```sh
+nix build .#checks.x86_64-linux.manifold-preview-routing
+```
+
+It adapts this deployed vhost, changes only fixture ports/TLS transport and
+exercises frontend preference, stopped/unavailable fallback, hub namespace
+boundaries and separate hub/HMR upgrades. It does not exercise public TLS,
+browser sign-in or live activation. Publishing these changes is not machine
+activation authority; activate the Caddy change only through the separately
+approved `atyrode` disruption review/fingerprint. Starting/stopping the
+workshop thereafter does not require a proxy reload.
 
 The bounded cutover will retain the existing Compose project and
 `manifold-dev_manifold-data` volume under Manifold's preview receiver.

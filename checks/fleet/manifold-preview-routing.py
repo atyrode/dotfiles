@@ -2,7 +2,7 @@
 """Exercise the configured preview vhost through Caddy, without any live service."""
 import base64
 import hashlib
-import http.client
+from http.client import HTTPConnection
 import json
 import socket
 import subprocess
@@ -46,6 +46,7 @@ def backend(label, port=0):
             self.send_response(418 if self.path == "/frontend-error" else 200)
             self.send_header("X-Fixture-Upstream", label)
             self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(payload)
@@ -76,7 +77,7 @@ def rewrite_upstreams(value, ports):
 
 
 def http(port, path, upstream, method="GET", status=200):
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=4)
+    connection = HTTPConnection("127.0.0.1", port, timeout=4)
     try:
         connection.request(method, path, headers={"Host": HOST})
         response = connection.getresponse()

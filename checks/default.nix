@@ -342,6 +342,11 @@ let
     };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {
+    manifold-preview-routing = import ./fleet/manifold-preview-routing.nix {
+      inherit pkgs;
+      previewVhost =
+        canonicalNixosConfigs.dev-01.config.services.caddy.virtualHosts."preview.manifold.tyrode.dev".extraConfig;
+    };
     manifold-runtime-libraries = import ./fleet/manifold-runtime-libraries.nix {
       inherit lib pkgs;
       execution = canonicalNixosConfigs.dev-01.config.services.manifold.execution;

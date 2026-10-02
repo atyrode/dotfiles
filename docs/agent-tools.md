@@ -786,6 +786,7 @@ instead of leaving a stale list.
 |---|---|---|
 | [`ts-react-dead-code-sweep`](../modules/home/agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
+| [`update-check`](../modules/home/agents/skills/update-check/SKILL.md) | generic | repository-authored |
 | `babel-recall` | package-owned | pinned Babel `babel/recall-skill.md`, installed unchanged by `pkgs.babel-recall` |
 | `manifold-terminal` | package-owned | pinned Manifold `packages.<system>.manifold`, installed unchanged with `bin/manifold` |
 
@@ -898,6 +899,21 @@ A manual OMP bump is `ci/update-pins.sh omp`, or the same file edited by hand
 to a specific release: the four asset hashes and the version are the whole
 pin. Bumps consume upstream `can1357/oh-my-pi` releases directly; there is no
 fork.
+
+When the pin PR has been open for more than a day, the workflow's
+`report-stalled` job opens the issue "Pin refresh PR is not landing". The issue
+names the required checks that are missing or not green on the PR head, any
+parked `action_required` runs, conflicts with `main`, and a disabled
+auto-merge. Each refresh rewrites the issue, and it closes once no pin PR has
+been open that long.
+
+The generic [`update-check`](../modules/home/agents/skills/update-check/SKILL.md)
+skill is the agent-side counterpart. Its single read-only command compares
+these pins, this machine's OMP and Codex, and the `@oh-my-pi/*` SDK pin in
+atyrode/manifold-omp with the latest releases, and it reports a pending pin PR.
+The personal policy runs it at most once per session. When nothing is
+available it says nothing; otherwise it asks the operator before anything is
+bumped.
 
 `omp-agents` regenerates the bundled agents from the pinned OMP binary. The
 `omp-agent-references` check ensures every agent name referenced by managed

@@ -105,3 +105,11 @@ and `manifold doctor` from any working directory; consult the `manifold-terminal
 skill for terminal operations. A missing `manifold` executable means installation
 is missing, not a reason to borrow credentials. Never dump binding values or
 substitute ordinary terminal identity for an Agent/Run action runner.
+
+## Update checks
+
+At the start of substantial work, at most once per session, run the
+`update-check` skill's command. If it reports nothing to do or cannot run,
+continue without mentioning it. Otherwise ask the operator with the available
+question tool which candidates to take, before bumping, merging or activating
+anything.

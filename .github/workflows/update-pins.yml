@@ -12,9 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+  contents: read
 
 concurrency:
   group: update-pins
@@ -22,6 +20,10 @@ concurrency:
 
 jobs:
   update:
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -126,3 +128,74 @@ jobs:
           done
           gh pr merge "$branch" --squash --delete-branch --auto
           gh workflow run nix.yml --ref main
+
+  # A bump that cannot land must not wait unseen: #630 sat blocked for three
+  # weeks while every reported check was green. Once the pin PR has been open
+  # for a day, keep one issue naming what it waits on, rewritten on every
+  # refresh, and close it when no pin PR has been waiting that long.
+  report-stalled:
+    needs: update
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: read
+    steps:
+      - name: Open, update or close the stalled-bump issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Pin refresh PR is not landing"
+          issue="$(gh api "repos/$GH_REPO/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
+            --jq "map(select(.pull_request == null and .title == \"$title\"))[0].number // empty")"
+          pr="$(gh pr list --head bot/update-pins --state open --limit 1 \
+            --json url,createdAt,headRefOid,mergeStateStatus,autoMergeRequest,statusCheckRollup \
+            --jq '.[0] // empty')"
+          if [ -z "$pr" ] ||
+            [ $(($(date +%s) - $(date -d "$(jq -r .createdAt <<<"$pr")" +%s))) -lt 86400 ]; then
+            if [ -n "$issue" ]; then
+              gh issue close "$issue" --comment "No pin refresh PR has been open for more than a day as of $RUN_URL."
+            fi
+            exit 0
+          fi
+          blockers="$RUNNER_TEMP/blockers"
+          # Classic protection and rulesets can each require contexts.
+          {
+            gh api "repos/$GH_REPO/branches/main" --jq '.protection.required_status_checks.contexts[]?'
+            gh api "repos/$GH_REPO/rules/branches/main" \
+              --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'
+          } | sort -u | while IFS= read -r context; do
+            jq -r --arg context "$context" '
+              [.statusCheckRollup[] | select((.name // .context) == $context)
+                | if (.conclusion // "") != "" then .conclusion else (.state // .status) end]
+              | (first // "MISSING") as $state
+              | select(["SUCCESS", "SKIPPED", "NEUTRAL"] | index($state) | not)
+              | "- required check `\($context)` is `\($state)` on the head"' <<<"$pr"
+          done >"$blockers"
+          {
+            gh run list --commit "$(jq -r .headRefOid <<<"$pr")" --status action_required \
+              --json workflowName,url |
+              jq -r '.[] | "- the \(.workflowName) run is parked in `action_required` until approved: \(.url)"'
+            jq -r 'select(.mergeStateStatus == "DIRTY") | "- the branch conflicts with `main`"' <<<"$pr"
+            jq -r 'select(.autoMergeRequest == null) | "- auto-merge is not enabled"' <<<"$pr"
+          } >>"$blockers"
+          if [ ! -s "$blockers" ]; then
+            echo "- no missing, failing or parked required check was found" >"$blockers"
+          fi
+          body="$(jq -r --rawfile blockers "$blockers" --arg run "$RUN_URL" '
+            "\(.url) has been open since \(.createdAt), at head `\(.headRefOid[:12])` with merge state `\(.mergeStateStatus)`.\n\n"
+            + "Blockers:\n\n\($blockers)\n"
+            + "Checked by \($run). This issue is rewritten on every pin refresh and closed once no pin refresh PR has been open for more than a day."' <<<"$pr")"
+          if [ -n "$issue" ]; then
+            gh issue edit "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

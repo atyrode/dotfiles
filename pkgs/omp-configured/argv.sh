@@ -5,7 +5,8 @@
 # successor during upstream command dispatch, but not a flag-shaped successor.
 omp_required_flags=(
   --add-dir --alias --api-key --append-system-prompt --approval-mode --config
-  --cwd --export --extension -e --fork --hook --max-time --mode --model --models
+  --cwd --export --extension -e --fork --goal --hook --max-time --mode --model
+  --models
   --plan --plan-yolo-into --plugin-dir --prewalk-into --profile --prompt-cache-key
   --provider --provider-session-id --service-tier --session-dir --skills --slow
   --smol --system-prompt --system-prompt-template --thinking --tools

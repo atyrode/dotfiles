@@ -886,10 +886,13 @@ unprompted should set `disable-model-invocation: true`, leaving
 ## Updating
 
 The `update-pins` workflow refreshes repository-owned binary pins every six
-hours. `ci/update-pins.sh` updates versions and hashes, a bot pull request
-runs dispatched CI, and a green run merges itself. Pass package names to narrow
-a manual refresh; for example, `ci/update-pins.sh omp` changes only OMP.
+hours. `ci/update-pins.sh` updates versions and hashes, the workflow approves
+the bot pull request's parked `ci-gate` and `agent-policy` runs, and a green
+pair merges itself. Pass package names to narrow a manual refresh; for
+example, `ci/update-pins.sh omp` changes only OMP.
 A red run remains open for curation when upstream bundled content changes.
+Commits pushed onto that open PR survive later refreshes that compute the same
+pins; a newer upstream release replaces the branch with a fresh bump.
 
 A manual OMP bump is `ci/update-pins.sh omp`, or the same file edited by hand
 to a specific release: the four asset hashes and the version are the whole

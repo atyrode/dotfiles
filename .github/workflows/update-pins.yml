@@ -1,8 +1,8 @@
 name: Update pins
 
 # Dependency-update policy (#13):
-# - Narrow, repository-owned binary pins are validated by explicitly dispatched
-#   CI and retain this workflow's existing auto-merge behavior.
+# - Narrow, repository-owned binary pins are validated by their approved
+#   pull-request CI and retain this workflow's existing auto-merge behavior.
 # - Environment-wide flake.lock updates are opened for operator review by
 #   flake-update.yml and are never auto-merged, as required by #13.
 
@@ -45,8 +45,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Bot-created pushes do not trigger workflows on their own, so the
-      # pull-request run that carries the required `ci-gate` context is parked
-      # in `action_required` and must be approved before the merge can proceed.
+      # pull-request runs that carry the required `ci-gate` and `agent-policy`
+      # contexts are parked in `action_required` and must be approved before
+      # the merge can proceed.
       - name: Open and land the bump
         if: steps.refresh.outputs.changed == 'true'
         env:
@@ -56,52 +57,72 @@ jobs:
           branch="bot/update-pins"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add pkgs
-          git commit -m "chore(pins): refresh repository-owned binaries" -m "$SUMMARY"
           # Configure Git's ephemeral credential helper from this step's
           # GH_TOKEN; checkout never persists a token in .git/config.
           gh auth setup-git --hostname github.com
-          git push -f origin "$branch"
-          # An existing open PR for the branch makes `gh pr create` fail on
-          # re-runs; anything else must fail the job here instead of surfacing
-          # later as a confusing `gh pr merge` error with no PR open.
-          if ! gh pr create --base main --head "$branch" \
-            --title "chore(pins): refresh repository-owned binaries" \
-            --body "$SUMMARY"; then
-            gh pr view "$branch" --json url --jq .url
+          # A red bump stays open for curation commits (patches, fixtures,
+          # launcher grammar). Force-pushing a fresh commit on every refresh
+          # erased them, so keep an open PR's head while its pinned files
+          # already match this refresh, and only check and land it below.
+          mapfile -t pinned < <(git diff --name-only -- pkgs)
+          if [ "$(gh pr view "$branch" --json state --jq .state 2>/dev/null)" = OPEN ] &&
+            git fetch --quiet --depth=1 origin "$branch" &&
+            git diff --quiet FETCH_HEAD -- "${pinned[@]}"; then
+            head_sha="$(git rev-parse FETCH_HEAD)"
+          else
+            git checkout -B "$branch"
+            git add pkgs
+            git commit -m "chore(pins): refresh repository-owned binaries" -m "$SUMMARY"
+            git push -f origin "$branch"
+            # An existing open PR for the branch makes `gh pr create` fail on
+            # re-runs; anything else must fail the job here instead of
+            # surfacing later as a confusing `gh pr merge` error with no PR
+            # open. A re-run rewrites the bump, so it also replaces the body.
+            if ! gh pr create --base main --head "$branch" \
+              --title "chore(pins): refresh repository-owned binaries" \
+              --body "$SUMMARY"; then
+              gh pr view "$branch" --json url --jq .url
+              gh pr edit "$branch" --body "$SUMMARY"
+            fi
+            head_sha="$(git rev-parse HEAD)"
           fi
-          # `ci-gate` is the only required context, and only the
-          # pull_request-event run reports it. Dispatching a parallel
-          # workflow_dispatch run instead left the gate unreported, so
-          # auto-merge waited forever: #431 sat green but unmerged for two
-          # days. Approve the parked run — it is the same verification a human
-          # pull request gets, and its verdict is the one branch protection
-          # actually reads. A red run leaves the pull request open: bundled
-          # content changes usually need patch or fixture curation before the
-          # bump can land.
-          head_sha="$(git rev-parse HEAD)"
-          run_id=""
-          for _ in $(seq 1 30); do
-            run_id="$(gh run list --workflow nix.yml --commit "$head_sha" \
-              --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
-            if [ -n "$run_id" ]; then break; fi
-            sleep 10
-          done
-          if [ -z "$run_id" ]; then
-            echo "no pull_request run appeared for $head_sha; ci-gate cannot report" >&2
-            exit 1
-          fi
+          # Branch protection requires `ci-gate` (nix.yml) and `agent-policy`
+          # (agent-policy.yml), and only each workflow's pull_request-event
+          # run reports its context. Dispatching a parallel workflow_dispatch
+          # run instead left the gate unreported, so auto-merge waited
+          # forever: #431 sat green but unmerged for two days. Approving only
+          # nix.yml did the same with `agent-policy`: #630 waited three weeks.
+          # Approve each parked run — the same verification a human pull
+          # request gets, and the verdicts branch protection actually reads.
+          # A red run leaves the pull request open: bundled content changes
+          # usually need patch or fixture curation before the bump can land.
           parked() { [ "$(gh run view "$1" --json conclusion --jq '.conclusion // ""')" = action_required ]; }
-          if parked "$run_id"; then
-            gh api --silent -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/approve"
-            # Approval resumes the same run; wait for it to leave the parked
-            # state so `gh run watch` reads the real verdict, not the stub.
+          run_ids=()
+          for workflow in nix.yml agent-policy.yml; do
+            run_id=""
             for _ in $(seq 1 30); do
-              if ! parked "$run_id"; then break; fi
+              run_id="$(gh run list --workflow "$workflow" --commit "$head_sha" \
+                --event pull_request --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              if [ -n "$run_id" ]; then break; fi
               sleep 10
             done
-          fi
-          gh run watch "$run_id" --exit-status
+            if [ -z "$run_id" ]; then
+              echo "no $workflow pull_request run appeared for $head_sha; its required context cannot report" >&2
+              exit 1
+            fi
+            if parked "$run_id"; then
+              gh api --silent -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/approve"
+              # Approval resumes the same run; wait for it to leave the parked
+              # state so `gh run watch` reads the real verdict, not the stub.
+              for _ in $(seq 1 30); do
+                if ! parked "$run_id"; then break; fi
+                sleep 10
+              done
+            fi
+            run_ids+=("$run_id")
+          done
+          for run_id in "${run_ids[@]}"; do
+            gh run watch "$run_id" --exit-status
+          done
           gh pr merge "$branch" --squash --delete-branch --auto
           gh workflow run nix.yml --ref main

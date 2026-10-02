@@ -57,22 +57,34 @@ jobs:
           branch="bot/update-pins"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add pkgs
-          git commit -m "chore(pins): refresh repository-owned binaries" -m "$SUMMARY"
           # Configure Git's ephemeral credential helper from this step's
           # GH_TOKEN; checkout never persists a token in .git/config.
           gh auth setup-git --hostname github.com
-          git push -f origin "$branch"
-          # An existing open PR for the branch makes `gh pr create` fail on
-          # re-runs; anything else must fail the job here instead of surfacing
-          # later as a confusing `gh pr merge` error with no PR open. A re-run
-          # rewrites the bump, so it also replaces the body to describe it.
-          if ! gh pr create --base main --head "$branch" \
-            --title "chore(pins): refresh repository-owned binaries" \
-            --body "$SUMMARY"; then
-            gh pr view "$branch" --json url --jq .url
-            gh pr edit "$branch" --body "$SUMMARY"
+          # A red bump stays open for curation commits (patches, fixtures,
+          # launcher grammar). Force-pushing a fresh commit on every refresh
+          # erased them, so keep an open PR's head while its pinned files
+          # already match this refresh, and only check and land it below.
+          mapfile -t pinned < <(git diff --name-only -- pkgs)
+          if [ "$(gh pr view "$branch" --json state --jq .state 2>/dev/null)" = OPEN ] &&
+            git fetch --quiet --depth=1 origin "$branch" &&
+            git diff --quiet FETCH_HEAD -- "${pinned[@]}"; then
+            head_sha="$(git rev-parse FETCH_HEAD)"
+          else
+            git checkout -B "$branch"
+            git add pkgs
+            git commit -m "chore(pins): refresh repository-owned binaries" -m "$SUMMARY"
+            git push -f origin "$branch"
+            # An existing open PR for the branch makes `gh pr create` fail on
+            # re-runs; anything else must fail the job here instead of
+            # surfacing later as a confusing `gh pr merge` error with no PR
+            # open. A re-run rewrites the bump, so it also replaces the body.
+            if ! gh pr create --base main --head "$branch" \
+              --title "chore(pins): refresh repository-owned binaries" \
+              --body "$SUMMARY"; then
+              gh pr view "$branch" --json url --jq .url
+              gh pr edit "$branch" --body "$SUMMARY"
+            fi
+            head_sha="$(git rev-parse HEAD)"
           fi
           # Branch protection requires `ci-gate` (nix.yml) and `agent-policy`
           # (agent-policy.yml), and only each workflow's pull_request-event
@@ -84,7 +96,6 @@ jobs:
           # request gets, and the verdicts branch protection actually reads.
           # A red run leaves the pull request open: bundled content changes
           # usually need patch or fixture curation before the bump can land.
-          head_sha="$(git rev-parse HEAD)"
           parked() { [ "$(gh run view "$1" --json conclusion --jq '.conclusion // ""')" = action_required ]; }
           run_ids=()
           for workflow in nix.yml agent-policy.yml; do

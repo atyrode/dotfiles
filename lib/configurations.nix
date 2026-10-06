@@ -216,6 +216,7 @@ let
         ../modules/nixos/manifold-dev-hub.nix
         ../modules/nixos/manifold-dev-babel-store.nix
         ../modules/nixos/manifold-dev-babel-restic.nix
+        ../modules/nixos/manifold-dev-recovery.nix
       ]
       ++ clanMachineModules;
     };

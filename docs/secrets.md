@@ -253,6 +253,22 @@ the operator's terminal, and the placed file is linked from
 `~/.config/cloudflare/api-token`, where the kit and any Cloudflare tool on the
 machine already read it.
 
+dev-01 alone also declares
+[`manifold-dev-recovery`](../modules/nixos/manifold-dev-recovery.nix), the
+recovery custody of the development hub it runs
+([manifold.md](manifold.md#the-preview-tier-on-dev-01)): that hub's owner
+key, the Cellar add-on environment pasted whole as `clever addon env
+<add-on> --format json` prints it, and the name of the add-on's Object Lock
+bucket that holds the hub's checkpoints. It is per machine and prompted,
+never minted, and all three files are secrets that are never deployed
+(`deploy = false`): the owner key is root on that hub and the add-on key can
+delete what the add-on stores, so they exist only as inputs an operator
+device reads with `clan vars get`, and the bucket name stays out of this
+public repository. `clan vars set dev-01 manifold-dev-recovery/<file>` over
+stdin fills one file straight from its source without a paste, but it skips
+the generator's shape checks, so the pipe must carry what the script would
+write.
+
 The pair on every spoke of [`fleet/manifold.json`](../fleet/manifold.json)
 is in [`manifold-agent`](../modules/shared/manifold-agent.nix), and it
 replaces the Bitwarden note that carried the hub's owner key

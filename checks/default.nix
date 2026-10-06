@@ -169,7 +169,8 @@ let
   # activation is plain `nixos` -- also holds the Cloudflare DNS token
   # (modules/nixos/cloudflare-dns.nix), and no other machine may; dev-01,
   # which hosts the development hub, alone holds that hub's recovery custody
-  # (modules/nixos/manifold-dev-recovery.nix).
+  # (modules/nixos/manifold-dev-recovery.nix) and the runner token of its
+  # dev-automation Agent (modules/nixos/manifold-dev-launcher.nix).
   fleetGenerators = [
     "babel-archive"
     "babel-custody"
@@ -185,7 +186,10 @@ let
     lib.sort builtins.lessThan (
       fleetGenerators
       ++ lib.optional (hosts.${name}.activation == "nixos") "cloudflare-dns"
-      ++ lib.optional (name == "dev-01") "manifold-dev-recovery"
+      ++ lib.optionals (name == "dev-01") [
+        "manifold-dev-launcher"
+        "manifold-dev-recovery"
+      ]
     );
   clanMachineSecretsAgree = lib.all (
     name:
@@ -201,7 +205,7 @@ let
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, manifold, omp-auth-broker, and wireguard generators -- plus cloudflare-dns on the VPS alone and manifold-dev-recovery on dev-01 alone";
+      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, manifold, omp-auth-broker, and wireguard generators -- plus cloudflare-dns on the VPS alone and manifold-dev-launcher and manifold-dev-recovery on dev-01 alone";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];

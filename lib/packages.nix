@@ -88,6 +88,12 @@ let
         manifold-action-runner = final.callPackage ../pkgs/manifold-action-runner {
           src = manifold-recall-sdk-src;
         };
+        # The development hub's launcher (modules/nixos/manifold-dev-launcher.nix)
+        # must speak that hub's protocol, so its runner is built from the
+        # preview owner pin, not from Recall's.
+        manifold-dev-action-runner = final.callPackage ../pkgs/manifold-action-runner {
+          src = manifold;
+        };
         babel-recall = final.callPackage ../pkgs/babel-recall {
           src = babel-recall-src;
         };

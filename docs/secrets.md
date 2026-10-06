@@ -269,6 +269,25 @@ stdin fills one file straight from its source without a paste, but it skips
 the generator's shape checks, so the pipe must carry what the script would
 write.
 
+The same machine alone declares
+[`manifold-dev-launcher`](../modules/nixos/manifold-dev-launcher.nix), the
+runner credential of that hub's `dev-automation` Agent
+([manifold.md](manifold.md#the-preview-tier-on-dev-01)). It is per machine
+and prompted, never minted: the hub mints the token when the Agent is
+registered and shows it once beside the Agent ID, and `clan vars generate
+dev-01 --generator manifold-dev-launcher` takes the ID at a visible prompt and
+the token at a hidden one, entered twice. The token is a secret sops-nix
+places owned by root at mode 0400, never by the operator's account, because
+systemd hands it to each runner as a credential and the account that drives
+the Agent must not read it. The Agent ID authorizes nothing and is an
+ordinary value in `vars/`. The script refuses a token that is not 64 lowercase
+hex characters and an ID that is not a UUID, so a swapped paste fails at the
+terminal instead of committing the token as the public ID. The hub never
+reissues a runner credential: replacing one is a new Agent under a new name,
+then `clan vars generate dev-01 --generator manifold-dev-launcher
+--regenerate` and an apply, after which the next connection uses the new
+token.
+
 The pair on every spoke of [`fleet/manifold.json`](../fleet/manifold.json)
 is in [`manifold-agent`](../modules/shared/manifold-agent.nix), and it
 replaces the Bitwarden note that carried the hub's owner key

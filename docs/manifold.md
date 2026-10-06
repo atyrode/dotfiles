@@ -317,6 +317,31 @@ to the same bucket. The add-on environment, the bucket name and the hub's
 owner key are the never-deployed `manifold-dev-recovery` custody
 ([secrets.md](secrets.md#declaring-a-secret)).
 
+Agents on dev-01 verify against that hub through one long-lived Agent,
+`dev-automation`, without ever holding its credential. The operator registers
+it once on the hub, and the runner token the hub shows once becomes the
+`manifold-dev-launcher` custody ([secrets.md](secrets.md#declaring-a-secret)).
+[`modules/nixos/manifold-dev-launcher.nix`](../modules/nixos/manifold-dev-launcher.nix)
+listens on `/run/manifold-dev-launcher.sock`, owned by `alex` at mode 0600,
+and starts one `manifold-action-runner` per connection as a transient user:
+systemd loads the token for it as a credential, and the hub's origin and the
+Agent ID are its environment. A connection is one Agent-mode session of the
+SDK's JSONL contract
+([`packages/sdk/README.md`](https://github.com/atyrode/manifold/blob/main/packages/sdk/README.md#first-action)),
+for example over `socat - UNIX-CONNECT:/run/manifold-dev-launcher.sock`: read
+`discovery`, the `result` carrying the new root `runId`, and the `policy`
+frame; send `ack` with every bundle's `{id, digest}`; `invoke` discovered
+doors; `finish` with the truthful outcome; and read `closed.cleanup`, which is
+clean only as `confirmed`. EOF before `finish` abandons the Run and a signal
+cancels it, and the runner settles and revokes it either way. Any process of
+the account can start Runs inside the Agent's standing grant; none can read
+the token. The runner is built from the `manifold` input, the preview owner
+pin below, so it speaks the hub's protocol; once the hub deploys past that
+pin's protocol, discovery refuses until the pin's review PR merges and dev-01
+is applied. No read-result approval (`MANIFOLD_READ_RESULTS`) is configured,
+so results are mechanical outcomes and trace references only. Nothing listens
+until the custody exists.
+
 Babel runs on this hub as a Manifold plugin, and its results live in one
 SQLite database inside the hub container,
 `/data/plugins/atyrode.babel/data.db` in `manifold-dev-manifold-1`.

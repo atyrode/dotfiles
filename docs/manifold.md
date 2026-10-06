@@ -302,6 +302,21 @@ machine's opaque ID. The hub never
 chooses a service owner by display name or falls back to another machine.
 Back up the retained volume before a deployment that crosses a schema version.
 
+That hub is deliberately unreplicated -- the receiver refuses an owner key and
+replica settings -- so its full-state checkpoint is taken from an operator
+device. With the hub stopped under the receiver's
+`~/manifold-previews/dev.lock`, the volume is read only, streamed as a zstd
+tar and age-encrypted to the admins group, beside a SHA-256 manifest of its
+files. Both go to a Cellar add-on of their own, into a bucket created with
+Object Lock in COMPLIANCE mode, and a receipt naming the checkpoint, source
+build and revision, object version, digest and retain-until date stays at
+mode 0600 under `~/.local/state/manifold-dev-recovery/`. The image that
+produced it keeps a `manifold-dev-retained:<revision>` tag, which the
+receiver's prune of untagged images leaves alone, and an off-host copy goes
+to the same bucket. The add-on environment, the bucket name and the hub's
+owner key are the never-deployed `manifold-dev-recovery` custody
+([secrets.md](secrets.md#declaring-a-secret)).
+
 Babel runs on this hub as a Manifold plugin, and its results live in one
 SQLite database inside the hub container,
 `/data/plugins/atyrode.babel/data.db` in `manifold-dev-manifold-1`.

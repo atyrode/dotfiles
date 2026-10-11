@@ -210,6 +210,7 @@ let
         ../modules/nixos/cloudflare-dns.nix
         ../modules/nixos/myparcelle-dev.nix
         ../modules/nixos/games.nix
+        ../modules/nixos/kroissant-dev.nix
       ]
       ++ lib.optionals (name == "dev-01") [
         manifold.nixosModules.native

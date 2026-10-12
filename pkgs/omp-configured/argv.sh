@@ -21,11 +21,12 @@ omp_boolean_flags=(
   --plan-yolo --prewalk --print -p --print-thoughts --version -v --yolo
 )
 omp_subcommands=(
-  __complete acp agents auth-broker auth-gateway bench browser-relay cleanse
-  clip collab commit completions compress config dry-balance find gallery gc git
-  grep grievances images img if-bench install join launch login models play plugin
-  plugins predict ps q read render say search setup share shell skill skills ssh
-  stats stream tiny-models token toks ttsr update usage web-search worktree wt
+  __complete acp agents anonymize auth-broker auth-gateway bench browser-relay
+  cleanse clip collab commit completions compress config dry-balance find gallery
+  gc git grep grievances images img if-bench install join launch login models play
+  plugin plugins predict ps q read render say search setup share shell skill
+  skills ssh stats stream tiny-models token toks ttsr update usage web-search
+  worktree wt
 )
 
 omp_contains() {

@@ -212,6 +212,7 @@ let
         ../modules/nixos/games.nix
         ../modules/nixos/kroissant-dev.nix
         ../modules/nixos/house-studio-dev.nix
+        ../modules/nixos/parxel-dev.nix
       ]
       ++ lib.optionals (name == "dev-01") [
         manifold.nixosModules.native

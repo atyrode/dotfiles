@@ -88,9 +88,10 @@ halves of that rule. `dev-01`, the persistent development VPS, is the
 first machine of this shape: `modules/nixos/vps.nix` is its policy — SSH plus
 the web ports of exactly the vhosts `modules/nixos/manifold-dev-hub.nix`,
 `modules/nixos/myparcelle-dev.nix`, `modules/nixos/games.nix`,
-`modules/nixos/kroissant-dev.nix`, and `modules/nixos/house-studio-dev.nix`
-name (the Manifold preview tier, parcel fronts, games, the kroissant site's
-development stack, and the house studio), with upstreams bound to loopback,
+`modules/nixos/kroissant-dev.nix`, `modules/nixos/house-studio-dev.nix`, and
+`modules/nixos/parxel-dev.nix` name (the Manifold preview tier, parcel fronts,
+games, the kroissant site's development stack, the house studio, and the
+parxel design preview), with upstreams bound to loopback,
 declarative root-owned SSH keys drawn from the reviewed fleet key registry,
 passwordless sudo for the operator's account alone, and rootless Docker — and
 clan refuses to deploy it unless the operator names it.
@@ -127,6 +128,14 @@ owner key, agent keys) in a directory outside the checkout; the studio
 authenticates its own users and agents, so the edge adds only TLS. Ordinary
 studio edits do not require host configuration changes or activation; stopping
 the stack leaves an unavailable upstream.
+
+The parxel edge sends `parxel.tyrode.dev` to `127.0.0.1:4175`, where the
+parxel design-preview checkout publishes its Vite development server; hot
+reload's WebSocket upgrade passes through the same vhost. The preview is
+static and holds no data, so the edge adds only TLS and compression, and it is
+independent of the parcel edge above. Ordinary preview edits do not require
+host configuration changes or activation; stopping the server leaves an
+unavailable upstream.
 
 `wsl` is a deliberate local-workstation exception: this flake exports its
 complete `nixosConfigurations` entry and owns that WSL guest, while native

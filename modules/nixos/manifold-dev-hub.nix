@@ -20,7 +20,7 @@
 # every handshake with `internal error` (dev-01, 2026-09-05).
 #
 # Ports 80 and 443 are the VPS's reviewed exposure beyond SSH, shared with
-# myparcelle-dev.nix: modules/nixos/vps.nix opens exactly that set.
+# the other edge modules: modules/nixos/vps.nix opens exactly that set.
 # The stacks themselves (images, data volumes, restarts) are not declared
 # here: they are the operator's checkouts, started by the receiver the deploy
 # key runs (`modules/home/ssh/deploy-keys`), and a vhost whose upstream is down

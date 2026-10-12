@@ -114,7 +114,8 @@ in
     hostName = host.hostname;
     inherit (machineAddress) domain;
     # The reviewed public-VPS exposure is TCP 22, and 80 + 443 for exactly the
-    # vhosts manifold-dev-hub.nix and myparcelle-dev.nix declare, plus the UDP
+    # vhosts the edge modules lib/configurations.nix imports beside this one
+    # declare (docs/hosts.md lists them), plus the UDP
     # port of every WireGuard interface clan's service declares here: this
     # machine is the overlay's controller, and a controller listens. mkForce
     # keeps this authoritative over clan-core's recommended-defaults mDNS port

@@ -12,7 +12,7 @@ omp_required_flags=(
   --smol --system-prompt --system-prompt-template --thinking --tools
   --trusted-extension
 )
-omp_optional_flags=(--resume -r --session)
+omp_optional_flags=(--restore --resume -r --session)
 omp_boolean_flags=(
   --advisor --allow-home --auto-approve --continue -c --external-thinking
   --from-claude --from-codex --help -h --hide-thinking --no-extensions --no-lsp
@@ -21,12 +21,12 @@ omp_boolean_flags=(
   --plan-yolo --prewalk --print -p --print-thoughts --version -v --yolo
 )
 omp_subcommands=(
-  __complete acp agents anonymize auth-broker auth-gateway bench browser-relay
-  cleanse clip collab commit completions compress config dry-balance find gallery
-  gc git grep grievances images img if-bench install join launch login models play
-  plugin plugins predict ps q read render say search setup share shell skill
-  skills ssh stats stream tiny-models token toks ttsr update usage web-search
-  worktree wt
+  __complete acp agents anonymize auth auth-broker auth-gateway bench
+  browser-relay cleanse clip collab commit completions compress config
+  dry-balance find gallery gc git grep grievances images img if-bench install
+  join launch login models play plugin plugins predict ps q read render say
+  search session setup share shell skill skills ssh stats stream tiny-models
+  token toks ttsr update usage web-search worktree wt
 )
 
 omp_contains() {

@@ -224,6 +224,9 @@ pkgs.runCommand "check-omp-wrapper"
         ${configuredStub}/bin/omp --resume "''${resume_id:0:12}" > "$TMPDIR/actual"
         printf '%s\n' --profile alternate --resume "''${resume_id:0:12}" > "$TMPDIR/expected"
         diff -u "$TMPDIR/expected" "$TMPDIR/actual"
+        ${configuredStub}/bin/omp --restore "''${resume_id:0:12}" > "$TMPDIR/actual"
+        printf '%s\n' --profile alternate --restore "''${resume_id:0:12}" > "$TMPDIR/expected"
+        diff -u "$TMPDIR/expected" "$TMPDIR/actual"
 
         # Explicit state selection always wins, even when another profile
         # contains the same resume target.
@@ -629,7 +632,8 @@ pkgs.runCommand "check-omp-wrapper"
         for unsafe in '--yolo' '--yolo=false' '--auto-approve=false' '--approval-mode yolo' \
           '--config attacker.yml' '--no-extensions' '--no-extensions=false' \
           '--trusted-extension /tmp/ext' '--add-dir /tmp/elsewhere' \
-          '--continue=false' '--from-codex' '-r0123456789ab'; do
+          '--continue=false' '--from-codex' '-r0123456789ab' \
+          '--restore 0123456789ab' '--restore=0123456789ab'; do
           read -r -a args <<< "$unsafe"
           set +e
           HOME="$untrusted_home" ${configuredEnvReport}/bin/ompu "''${args[@]}" \
@@ -756,7 +760,8 @@ pkgs.runCommand "check-omp-wrapper"
           '--resume 0123456789ab' '-r0123456789ab' '--extension /tmp/ext' \
           '--plugin-dir /tmp/plugins' '--hook /tmp/hook' '--api-key sk-ambient' \
           '--alias analysis' '--fork abc' '--continue' '--continue=false' \
-          '--trusted-extension /tmp/ext' '--from-claude' '--add-dir /tmp/work'; do
+          '--trusted-extension /tmp/ext' '--from-claude' '--add-dir /tmp/work' \
+          '--restore 0123456789ab' '--restore=0123456789ab'; do
           read -r -a args <<< "$refused"
           set +e
           HOME="$analysis_operator_home" ${configuredEnvReport}/bin/omp-analysis "''${args[@]}" \

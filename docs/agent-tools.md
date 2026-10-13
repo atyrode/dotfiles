@@ -370,10 +370,10 @@ native Manifold plugin runtime.
 
 Plain `omp` executes upstream OMP directly, with no managed extension, defaults,
 or policy overlay. `omp update` is blocked so it cannot shadow the Nix-pinned
-binary. For a UUID or UUID prefix passed to `--resume`, the launcher searches
-the default and named-profile session roots and injects the sole matching
-profile; explicit state or profile selection wins, and ambiguous matches require
-`--profile`.
+binary. For a UUID or UUID prefix passed to `--resume` or `--restore`, the
+launcher searches the default and named-profile session roots and injects the
+sole matching profile; explicit state or profile selection wins, and ambiguous
+matches require `--profile`.
 
 `omp-managed` loads configuration in this order:
 

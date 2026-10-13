@@ -841,6 +841,7 @@ let
 
       # Upstream's end-of-session hint omits the active profile, so make a bare
       # UUID resume target profile-aware without changing explicit state choices.
+      # `--restore` selects its session exactly as `--resume` does.
       args=( "$@" )
       resume_target=""
       explicit_state=false
@@ -854,13 +855,13 @@ let
           --profile=*|--session-dir=*)
             explicit_state=true
             ;;
-          --resume|-r)
+          --resume|-r|--restore)
             if (( i + 1 < ''${#args[@]} )) && [[ "''${args[$((i + 1))]}" != -* ]]; then
               resume_target="''${args[$((i + 1))]}"
             fi
             ;;
-          --resume=*)
-            resume_target="''${arg#--resume=}"
+          --resume=*|--restore=*)
+            resume_target="''${arg#*=}"
             ;;
           -r?*)
             resume_target="''${arg#-r}"
@@ -999,10 +1000,10 @@ let
             i=$((i + 1))
             target_cwd="''${original_args[$i]}"
             ;;
-          --profile|--alias|--api-key|--config|--extension|-e|--trusted-extension|--hook|--plugin-dir|--approval-mode|--tools|--skills|--system-prompt|--append-system-prompt|--session-dir|--session|--resume|-r|--fork|--provider-session-id|--add-dir|--continue|-c|--from-claude|--from-codex)
+          --profile|--alias|--api-key|--config|--extension|-e|--trusted-extension|--hook|--plugin-dir|--approval-mode|--tools|--skills|--system-prompt|--append-system-prompt|--session-dir|--session|--resume|-r|--restore|--fork|--provider-session-id|--add-dir|--continue|-c|--from-claude|--from-codex)
             refuse_flag "$arg"
             ;;
-          --profile=*|--alias=*|--api-key=*|--config=*|--extension=*|-e=*|--trusted-extension=*|--hook=*|--plugin-dir=*|--approval-mode=*|--tools=*|--skills=*|--system-prompt=*|--append-system-prompt=*|--session-dir=*|--session=*|--resume=*|-r=*|--fork=*|--provider-session-id=*|--add-dir=*|--continue=*|--from-claude=*|--from-codex=*)
+          --profile=*|--alias=*|--api-key=*|--config=*|--extension=*|-e=*|--trusted-extension=*|--hook=*|--plugin-dir=*|--approval-mode=*|--tools=*|--skills=*|--system-prompt=*|--append-system-prompt=*|--session-dir=*|--session=*|--resume=*|-r=*|--restore=*|--fork=*|--provider-session-id=*|--add-dir=*|--continue=*|--from-claude=*|--from-codex=*)
             refuse_flag "''${arg%%=*}"
             ;;
           --auto-approve|--auto-approve=*|--yolo|--yolo=*|--no-extensions|--no-extensions=*|-r?*)
@@ -1284,10 +1285,10 @@ let
         # Past `--` every word is the session's prompt, not an argument to read.
         [[ "$arg" == -- ]] && break
         case "$arg" in
-          --profile|--session-dir|--session|--resume|-r|--fork|--continue|-c|--from-claude|--from-codex|--provider-session-id|--extension|-e|--trusted-extension|--plugin-dir|--hook|--api-key|--alias|--add-dir)
+          --profile|--session-dir|--session|--resume|-r|--restore|--fork|--continue|-c|--from-claude|--from-codex|--provider-session-id|--extension|-e|--trusted-extension|--plugin-dir|--hook|--api-key|--alias|--add-dir)
             refuse_flag "$arg"
             ;;
-          --profile=*|--session-dir=*|--session=*|--resume=*|--fork=*|--continue=*|--from-claude=*|--from-codex=*|--provider-session-id=*|--extension=*|-e=*|--trusted-extension=*|--plugin-dir=*|--hook=*|--api-key=*|--alias=*|--add-dir=*)
+          --profile=*|--session-dir=*|--session=*|--resume=*|--restore=*|--fork=*|--continue=*|--from-claude=*|--from-codex=*|--provider-session-id=*|--extension=*|-e=*|--trusted-extension=*|--plugin-dir=*|--hook=*|--api-key=*|--alias=*|--add-dir=*)
             refuse_flag "''${arg%%=*}"
             ;;
           -r?*)

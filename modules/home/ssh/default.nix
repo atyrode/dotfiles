@@ -42,10 +42,12 @@ in
 
   # Keep the Keychain populated going forward: a key unlocked once is stored and
   # added to the agent on later use, so the job above has something to load.
-  # UseKeychain is macOS-only and makes ssh reject the config elsewhere.
+  # UseKeychain is Apple SSH-only, but Nix OpenSSH (used by Git's
+  # core.sshCommand) reads this same file. IgnoreUnknown keeps it parseable.
   programs.ssh = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
     enable = true;
     enableDefaultConfig = false;
+    extraOptionOverrides.IgnoreUnknown = "UseKeychain";
     settings."*" = {
       AddKeysToAgent = "yes";
       UseKeychain = "yes";

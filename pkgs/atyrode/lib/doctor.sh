@@ -648,33 +648,6 @@ probe_nix_daemon() {
     "$expected_json" "$actual_json"
 }
 
-# The daemon configuration lines that enrol a standalone Linux host in the
-# fleet cache. `extra-` appends to Nix's built-in defaults, so the file never
-# has to restate the official cache and the result is exactly the reviewed
-# order: official first, fleet second. Bootstrap writes these on a new machine;
-# doctor quotes them when an existing machine lacks them.
-fleet_cache_conf_lines() {
-  jq -r '"extra-substituters = \(.nix.fleetCache.substituter)",
-    "extra-trusted-public-keys = \(.nix.fleetCache.trustedPublicKey)"' "$system_policy"
-}
-
-# The one privileged line that enrols a standalone Linux daemon in the fleet
-# cache, shell-quoted so it can be pasted back verbatim. The daemon trusts
-# only root, so a user nix.conf cannot add a key - the daemon ignores
-# restricted settings from an untrusted client - and the file the daemon
-# reads is the one place the fix can go; it reads that file at start only, so
-# the restart is part of the same line. It lives outside the probe because
-# probes only observe: this is text handed to the operator, never run here.
-fleet_cache_enrolment_command() {
-  local line quoted=""
-
-  while IFS= read -r line; do
-    quoted+=" '${line//\'/\'\\\'\'}'"
-  done < <(fleet_cache_conf_lines)
-  printf '%s%s%s\n' "printf '%s\\n'" "$quoted" \
-    " | sudo tee -a /etc/nix/nix.conf >/dev/null && sudo systemctl restart nix-daemon"
-}
-
 probe_nix_policy() {
   local data="$1" platform="$2" owner config_json='{}'
   local trusted_exact=false substituters_exact=false keys_exact=false signatures=false optimiser=false
@@ -686,10 +659,10 @@ probe_nix_policy() {
   if [[ -z "$expected_users" ]]; then
     expected_users="$(jq -c '.nix.trustedUsers | sort' "$system_policy")"
   fi
-  # Order matters and is part of the contract: Nix asks substituters in the
-  # listed order, and the official cache answers for almost every path.
-  expected_substituters="$(jq -c '[.nix.substituter, .nix.fleetCache.substituter]' "$system_policy")"
-  expected_keys="$(jq -c '[.nix.trustedPublicKey, .nix.fleetCache.trustedPublicKey]' "$system_policy")"
+  # The official cache and its key are the whole reviewed list; anything else
+  # the daemon substitutes from or trusts is drift.
+  expected_substituters="$(jq -c '[.nix.substituter]' "$system_policy")"
+  expected_keys="$(jq -c '[.nix.trustedPublicKey]' "$system_policy")"
   if has_system_fixture; then
     trusted_exact="$(jq -r '.nix.trustedUsersExact // false' <<<"$system_fixture")"
     substituters_exact="$(jq -r '.nix.substitutersExact // false' <<<"$system_fixture")"
@@ -729,20 +702,13 @@ probe_nix_policy() {
     "$signatures" == true && ("$platform" != darwin || "$optimiser" == true) ]]; then
     status=ok
     code=""
-    summary="Nix trust, signed caches, and optimisation ownership match policy"
+    summary="Nix trust, signed cache, and optimisation ownership match policy"
     remediation=""
   else
     status=incomplete
     code="nix-policy-drift"
     summary="effective Nix daemon policy differs from the reviewed system boundary"
-    if [[ "$owner" == system && "$trusted_exact" == true && "$signatures" == true ]]; then
-      # Only the cache lists drift, on a host where no Nix configuration layer
-      # owns the daemon's file, so the remediation is the exact line rather
-      # than a pointer to a configuration nobody has.
-      remediation="the daemon does not list the fleet cache; enrol it with: $(fleet_cache_enrolment_command)"
-    else
-      remediation="repair the owning nix-darwin or NixOS/Nix-daemon configuration; do not use a user nix.conf override"
-    fi
+    remediation="repair the owning nix-darwin or NixOS/Nix-daemon configuration; do not use a user nix.conf override"
   fi
   system_check_add nix-policy "$owner" true "$status" "$code" "$summary" "$remediation" \
     "$expected_json" "$actual_json"

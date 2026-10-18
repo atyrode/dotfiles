@@ -86,14 +86,11 @@ doctor` -- and reports what a machine is missing; converging any of it is
 `atyrode apply`'s job, not another bootstrap phase.
 
 Flakes are enabled only through the process-scoped `NIX_CONFIG`; bootstrap
-does not append to a user-owned `nix.conf`. On standalone Linux it does write
-the daemon-owned `/etc/nix/nix.conf`, once, to enrol the machine in the fleet
-binary cache declared in `fleet/system-boundary.json`, installed with explicit
-`sudo` and announced first, because the daemon trusts only `root` and a user
-file cannot carry the cache's signing key. A refused write is a warning, never
-a failed bootstrap: the machine converges either way and `atyrode doctor`
-keeps naming the exact line. macOS is never touched; nix-darwin declares both
-caches.
+does not append to a user-owned `nix.conf` or enrol a custom binary cache.
+nix-darwin and NixOS declare the official cache and its signing key in their
+system configuration. On standalone Linux the daemon policy belongs to the
+system Nix installation; `atyrode doctor system` reports drift without
+rewriting daemon settings.
 
 `--update` is the only way source moves: bootstrap never pulls implicitly.
 If source changes it re-enters the fetched `install.sh` before writing the

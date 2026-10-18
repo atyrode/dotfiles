@@ -3,8 +3,6 @@
 let
   inherit (import ./harness.nix { inherit pkgs; }) mkScenario;
   system = pkgs.stdenv.hostPlatform.system;
-  fleetCache =
-    (builtins.fromJSON (builtins.readFile ../../../fleet/system-boundary.json)).nix.fleetCache;
 in
 mkScenario "core" ''
   new_fixture plan
@@ -40,12 +38,8 @@ mkScenario "core" ''
     export PATH="$managed_tools:$base_path"
     BOOTSTRAP_NIX_PROFILE_SCRIPT="$TMPDIR/poison-profile" \
       bash "$bootstrap" apply --yes --repo "$repo" --config "$host" \
-      > "$TMPDIR/production-hooks.out" 2> "$TMPDIR/production-hooks.err"
+      > /dev/null
     test ! -e "$BOOTSTRAP_POISON_MARKER"
-    # The same run proves the fleet cache is never load-bearing: the
-    # sandbox's /etc is read-only, so the enrolment is refused, and the
-    # apply still exits zero with the receipt written and no interrupted
-    # marker left behind.
     test "$(cat "$XDG_STATE_HOME/atyrode/dotfiles-config")" = "$host"
     test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
   fi
@@ -219,44 +213,6 @@ mkScenario "core" ''
   test -e "$etc/bash.bashrc.backup-before-nix"
   test -e "$FAKE_INSTALL_EXECUTED"
   test ! -e "$XDG_STATE_HOME/atyrode/install-interrupted"
-
-  # Standalone Linux is the one platform where no Nix layer owns the daemon's
-  # nix.conf, so bootstrap enrols the fleet cache there itself: planned while
-  # the file lacks it, appended below whatever the installer wrote, readable
-  # by the unprivileged client, and settled - never planned again - once
-  # present. Darwin never plans it because nix-darwin declares both caches.
-  if [[ "$FAKE_SYSTEM" == *-linux ]]; then
-    new_fixture fleet-cache-enrolment
-    export PATH="$managed_tools:$base_path"
-    export BOOTSTRAP_PROFILE_TARGET_ROOT="$TMPDIR/fleet-cache-enrolment/etcroot"
-    etc="$BOOTSTRAP_PROFILE_TARGET_ROOT/etc"
-    mkdir -p "$etc/nix"
-    printf 'build-users-group = nixbld\n' > "$etc/nix/nix.conf"
-    "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-plan.out"
-    grep -F '${fleetCache.substituter}' "$TMPDIR/fleet-cache-plan.out" >/dev/null
-    test "$(cat "$etc/nix/nix.conf")" = 'build-users-group = nixbld'
-    "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-apply.out"
-    test "$(sed -n 1p "$etc/nix/nix.conf")" = 'build-users-group = nixbld'
-    grep -Fxq 'extra-substituters = ${fleetCache.substituter}' "$etc/nix/nix.conf"
-    grep -Fxq 'extra-trusted-public-keys = ${fleetCache.trustedPublicKey}' "$etc/nix/nix.conf"
-    test "$(stat -c %a "$etc/nix/nix.conf")" = 644
-    test "$(wc -l < "$etc/nix/nix.conf")" -eq 3
-    archive="$(find "$XDG_STATE_HOME/atyrode/bootstrap/repairs" -name 'nix.conf.*' -print -quit)"
-    test "$(cat "$archive")" = 'build-users-group = nixbld'
-    grep -F "undo: cp '$archive' '$etc/nix/nix.conf'" \
-      "$XDG_STATE_HOME/atyrode/bootstrap/repairs/undo.log" >/dev/null
-    "$repo/bootstrap/install.sh" plan --repo "$repo" --config "$host" > "$TMPDIR/fleet-cache-settled.out"
-    if grep -Fq '${fleetCache.substituter}' "$TMPDIR/fleet-cache-settled.out"; then
-      echo 'an enrolled daemon was unexpectedly planned for enrolment again' >&2
-      exit 1
-    fi
-    # A fresh single-user machine has no /etc/nix at all; bootstrap creates
-    # it rather than treating the absence as somebody else's.
-    rm -rf "$etc/nix"
-    "$repo/bootstrap/install.sh" apply --yes --repo "$repo" --config "$host" >/dev/null
-    test "$(wc -l < "$etc/nix/nix.conf")" -eq 2
-    grep -Fxq 'extra-substituters = ${fleetCache.substituter}' "$etc/nix/nix.conf"
-  fi
 
   # Fresh installation verifies the artifact, activates, verifies, and remains
   # idempotent on a repeated upgrade-style invocation.

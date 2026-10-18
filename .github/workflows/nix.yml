@@ -70,8 +70,6 @@ jobs:
       contents: read
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    env:
-      HAVE_CACHE: ${{ secrets.CELLAR_ADDON_KEY_ID != '' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
@@ -82,27 +80,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # The fleet cache holds what main compiled, intermediate derivations
-      # included, so a pull request rebuilds what it changed and downloads the
-      # rest. Without it every platform rebuilt every check from an empty
-      # store on every push, which is most of what a pull request used to wait
-      # for.
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
-            extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
-
-      # There is deliberately no Nix store cache here. One existed while the
-      # fleet cache held only finished closures: without it a run rebuilt
-      # every local derivation from an empty store. Now that a green main
-      # publishes the intermediate work the same paths arrive by substitution,
-      # and the tarball cost more than it saved -- restoring and saving it was
-      # the largest remaining step on macOS, larger than the check it was
-      # there to accelerate. One cache, ours, is also one fewer thing that can
-      # be stale.
+            substituters = https://cache.nixos.org
 
       # --print-build-logs: without it a failing check prints "run nix log" for
       # a store path on a runner that no longer exists, so the one job that can
@@ -110,31 +93,8 @@ jobs:
       - name: Check flake
         run: nix flake check --show-trace --print-build-logs
 
-      # Only green main publishes: what a machine can substitute is what a
-      # reviewed revision produced. Every platform publishes, because the
-      # consumer that matters here is the next pull request's runner, and
-      # there is one of those per platform.
-      - name: Publish what this run built
-        if: github.ref == 'refs/heads/main' && env.HAVE_CACHE == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.CELLAR_ADDON_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLAR_ADDON_KEY_SECRET }}
-          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
-        run: ./ci/publish-store.sh
-
-  # Every host closure this system can realise, built as the fleet's only
-  # builder and, on Linux, published for the fleet to download instead of
-  # rebuild. Deliberately a separate job with no store cache: the closures are
-  # several gigabytes each, and saving a store that holds them would blow the
-  # repository's 10 GiB Actions cache quota and evict the check caches every
-  # run. With nothing to restore, the job substitutes from cache.nixos.org and
-  # from the fleet cache itself, so once a revision's own derivations have been
-  # pushed the next run is almost entirely downloads.
-  #
-  # Darwin is published too. The reasoning that kept it out -- one Mac, one
-  # consumer -- forgot the consumer that runs on every pull request: the
-  # Darwin runner itself, which used to compile the Mac's closure from
-  # scratch every time because nothing it had ever built was kept.
+  # Build every host closure for each platform, rebuilding repository-specific
+  # paths locally when the official cache does not provide them.
   closures:
     name: closures ${{ matrix.system }}
     needs: changes
@@ -143,11 +103,6 @@ jobs:
       contents: read
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    env:
-      # Forks and pull-request branches have no repository secrets, so they
-      # build every closure and simply never push. Evaluated at the job level
-      # because secrets cannot be read from a step's `if` directly.
-      HAVE_CACHE: ${{ secrets.CELLAR_ADDON_KEY_ID != '' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
@@ -157,26 +112,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # There is deliberately no disk cleanup here. One existed for the store
-      # tarball the GitHub cache restored on top of the closure; measured after
-      # that tarball was retired, the macOS runner starts with 44 GiB free and
-      # this build needs 3.5 GiB to download and 9.7 GiB unpacked. Deleting
-      # the Xcode versions bought 40 GiB the build never used and cost 2.6
-      # minutes of the critical path waiting for it.
-
-      # Nix >= 2.33 is required for the push: the S3 store moved from the AWS
-      # SDK to native curl SigV4, which is what makes Cellar (Ceph RGW,
-      # path-style, no checksum negotiation) a reliable target. The action's
-      # default only moves forward; do not pass an older nix_version. The
-      # fleet cache is a substituter here too, so a revision whose own
-      # derivations are already published is not rebuilt.
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
-            extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
+            substituters = https://cache.nixos.org
 
       # No dry run in front of the build: the build prints the same list of
       # derivations it will compile before it starts them, and a dry run is a
@@ -186,25 +127,11 @@ jobs:
       # compile that looked like a hung job, which is what the timeout below
       # names.
 
-      # Twenty minutes is generous for downloading a closure and building the
-      # handful of derivations that are ours; anything longer is compiling a
-      # package that belongs in a cache or a vendor release, and the job fails
-      # with that name in the log instead of timing out in silence.
+      # Keep the existing build bound: an unexpectedly expensive upstream
+      # source build must still fail visibly.
       - name: Build fleet closures
         timeout-minutes: 20
         run: nix build .#fleet-closures --print-build-logs --min-free 2G --max-free 6G
-
-      # Only green main is published: machines converge to what CI built from
-      # main and nothing else. Everything this runner compiled goes, not just
-      # the finished closures, so the next pull request downloads the
-      # intermediate work instead of repeating it.
-      - name: Publish what this run built
-        if: github.ref == 'refs/heads/main' && env.HAVE_CACHE == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.CELLAR_ADDON_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLAR_ADDON_KEY_SECRET }}
-          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
-        run: ./ci/publish-store.sh
 
   development-image:
     name: development image ${{ matrix.system }}
@@ -235,8 +162,7 @@ jobs:
         with:
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            extra-substituters = https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com
-            extra-trusted-public-keys = atyrode-cache-1:ZTyrQ0+itTPQ2/74z2AoDzwwsoAS9uZ62lWMA8UlQy0=
+            substituters = https://cache.nixos.org
 
       - name: Build standalone development environment
         run: nix build .#development-image --print-build-logs

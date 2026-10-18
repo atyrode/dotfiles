@@ -199,11 +199,12 @@ writable checkout and repeat the same failed ceremony.
 
 `atyrode changelog` compares the revision this CLI was built from with the
 head of `main` (one `git ls-remote`), then reads GitHub's compare and
-check-runs for the commit list and whether `ci-gate` passed: green means every
-system and closure built and the fleet cache holds them, so `apply` downloads
-rather than builds. Offline it says so rather than guessing; a development
-build has no revision to compare and refuses. Nothing is activated: an update
-is a prompt, and `atyrode apply` is the answer. `--record` writes
+check-runs for the commit list and whether `ci-gate` passed. Green means the
+required verification passed, not that custom binaries were published:
+`apply` substitutes from the official Nix cache and builds missing paths
+locally. Offline it says so rather than guessing; a development build has no
+revision to compare and refuses. Nothing is activated: an update is a prompt,
+and `atyrode apply` is the answer. `--record` writes
 `~/.local/state/atyrode/update.json`, and every new interactive shell on a
 terminal prints one muted line from that record while it names a revision this
 CLI is not, on every shell until the machine runs `main`; `doctor
@@ -266,9 +267,9 @@ needs no previous render and does not read the startup file: absent, stale or
 corrupt deployed content does not affect its diagnostics. It displays the CLI's
 embedded personal policy first, then live host/platform/capabilities, fleet
 roster, authenticated CLI accounts and login commands, readable clan-var names
-and paths, and Nix cache trust. `context [show] --json` retains the public inventory fields, including
+and paths. `context [show] --json` retains the public inventory fields, including
 `schemaVersion`, `command`, `generatedAt`, `revision`, `target`, `host`, `fleet`,
-`authentication`, `secrets`, `fleetCache`, `cloneRoot` and `dotfilesCheckout`.
+`authentication`, `secrets`, `cloneRoot` and `dotfilesCheckout`.
 Neither form prints secret values or writes the startup file. Authentication
 checks may contact providers: GitHub status is bounded to 10 seconds, and Clever
 status/profile to at most two calls of 15 seconds each. This is diagnostic

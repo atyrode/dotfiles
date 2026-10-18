@@ -56,9 +56,10 @@ atyrode: 3 commit(s) waiting on main (9d09992e6afc, CI green) -- read: atyrode c
 It repeats on every shell -- a shell an agent opened and closed must not be
 the one that dismissed it -- and stops the moment the machine runs `main`.
 `atyrode changelog` lists the commits, oldest first, and says whether CI has
-passed that head (green means the closures are already in the fleet cache, so
-`apply` downloads rather than builds). `atyrode doctor` reports the same
-drift. Then `atyrode apply`, in front of you.
+passed that head. Green confirms verification, not published custom binaries:
+`apply` downloads available paths from the official Nix cache and builds the
+rest locally. `atyrode doctor` reports the same drift. Then `atyrode apply`,
+in front of you.
 
 ## Asking a machine what is wrong
 

@@ -76,27 +76,6 @@ context_secrets_json() {
       | map({name: ltrimstr($root + "/"), path: .})'
 }
 
-# The fleet cache is trusted when the daemon lists both its URL and its key,
-# read from the same effective configuration doctor's nix-policy probe reads,
-# and from the same fixture when a check drives it.
-context_fleet_cache_json() {
-  local substituter key trusted=false config_json
-  substituter="$(jq -r '.nix.fleetCache.substituter' "$system_policy")"
-  key="$(jq -r '.nix.fleetCache.trustedPublicKey' "$system_policy")"
-  system_fixture="$(load_system_fixture)"
-  if has_system_fixture; then
-    trusted="$(jq -r '(.nix.substitutersExact // false) and (.nix.trustedKeysExact // false)' <<<"$system_fixture")"
-  else
-    config_json="$(nix config show --json 2>/dev/null || printf '{}')"
-    jq -e --arg substituter "$substituter" --arg key "$key" \
-      '(.substituters.value | index($substituter)) != null
-        and (.["trusted-public-keys"].value | index($key)) != null' <<<"$config_json" >/dev/null &&
-      trusted=true
-  fi
-  jq -nc --arg substituter "$substituter" --argjson trusted "$trusted" \
-    '{substituter:$substituter,trusted:$trusted}'
-}
-
 # Explicit diagnostic inventory. The text display and public JSON share this
 # document; startup rendering never calls it.
 context_machine_json() {
@@ -119,12 +98,10 @@ context_machine_json() {
     --argjson gh "$(context_gh_json)" \
     --argjson clever "$(context_clever_json)" \
     --argjson secrets "$(context_secrets_json)" \
-    --argjson fleetCache "$(context_fleet_cache_json)" \
     '{schemaVersion:1,command:"context",generatedAt:$generatedAt,revision:$revision,target:$target,
       host:$host,fleet:$fleet,
       authentication:{gh:$gh,clever:$clever},
       secrets:{readable:$secrets},
-      fleetCache:$fleetCache,
       cloneRoot:null,
       dotfilesCheckout:null}'
 }
@@ -166,12 +143,6 @@ context_render_section() { # machine-json
     "",
     (if (.secrets.readable | length) == 0 then "- None placed for this account."
      else (.secrets.readable[] | "- `\(.name)`: `\(.path)`") end),
-    "",
-    "### Nix cache",
-    "",
-    "- Fleet cache substituter: `\(.fleetCache.substituter)`",
-    (if .fleetCache.trusted then "- This machine trusts it: its URL and signing key are in the effective Nix configuration."
-     else "- This machine does not trust it yet; `atyrode doctor system` reports the nix-policy drift and names the enrolment line." end),
     "",
     "### Clone root",
     "",

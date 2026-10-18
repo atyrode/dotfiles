@@ -70,11 +70,11 @@ in
       "nix-command"
       "flakes"
     ];
-    # The same two caches nix-darwin declares, so a WSL apply downloads the
-    # closure CI built instead of rebuilding it on the Windows machine. Forced
-    # because the NixOS module and NixOS-WSL each contribute the official
-    # entries as well, and merging would list them twice; doctor asserts the
-    # exact reviewed list.
+    # The same official cache nix-darwin declares: a WSL apply substitutes
+    # what the official cache has and rebuilds the rest locally on the Windows
+    # machine. Forced because the NixOS module and NixOS-WSL each contribute
+    # the official entries as well, and merging would list them twice; doctor
+    # asserts the exact reviewed list.
     substituters = lib.mkForce binaryCaches.substituters;
     trusted-public-keys = lib.mkForce binaryCaches.trusted-public-keys;
   };

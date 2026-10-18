@@ -669,8 +669,6 @@ pkgs.runCommand "check-atyrode-apply"
       and .authentication.clever.authenticated == true
       and (.authentication | has("bitwarden") | not)
       and (.secrets.readable | length) == 0
-      and .fleetCache.substituter == "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com"
-      and .fleetCache.trusted == false
       and .cloneRoot == null
       and .dotfilesCheckout == null
       and (.generatedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
@@ -1578,7 +1576,7 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$TMPDIR/changelog-fetch-args"
     ${targetAtyrode}/bin/atyrode changelog --json | jq -e '.outcome == "current" and .ahead == 0 and .commits == []' >/dev/null
     # Behind, with a green main: both commits listed oldest first as subjects
-    # only, the verdict names the cache, and the remedy is apply.
+    # only, and the remedy is apply.
     printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"success"},{"name":"classify","status":"completed","conclusion":"success"}]}' \
       > "$TMPDIR/changelog-check-runs"
     ${launcherAtyrode}/bin/atyrode changelog > "$TMPDIR/changelog-behind.out" 2> "$TMPDIR/changelog-behind.err" \
@@ -1801,35 +1799,27 @@ pkgs.runCommand "check-atyrode-apply"
       and (.checks[] | select(.id == "container-engine") | .actual.mode) == "rootless"
       and (.checks[] | select(.id == "antivirus-data") | .code) == "not-configured"
       and (.checks[] | select(.id == "homebrew-drift") | .status) == "not-applicable"
-      and (.checks[] | select(.id == "nix-policy") | .expected.substituters) == [
-        "https://cache.nixos.org/",
-        "https://atyrode-nix-cache.cellar-c2.services.clever-cloud.com"
-      ]
-      and (.checks[] | select(.id == "nix-policy") | .expected.trustedPublicKeys | length) == 2
     ' <<< "$system_result" >/dev/null
     if grep -q 'super-secret' <<< "$system_result"; then
       echo 'system diagnostics exposed raw Nix configuration' >&2
       exit 1
     fi
 
-    # A Home Manager-only Linux host whose daemon predates the fleet cache: trust and
-    # signatures are right, only the cache lists lag. No Nix layer owns
-    # /etc/nix/nix.conf there, so the remediation must be the exact privileged
-    # line that enrols the daemon, not a pointer to a configuration nobody has.
-    linux_stale_cache="$TMPDIR/linux-stale-cache.json"
-    jq '.nix.substitutersExact = false | .nix.trustedKeysExact = false' "$linux_ready" > "$linux_stale_cache"
-    export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_stale_cache"
-    if atyrode doctor system fixture-desktop --json > "$TMPDIR/linux-stale-cache.out"; then
-      echo 'a daemon without the fleet cache unexpectedly passed diagnostics' >&2
+    # A Home Manager-only Linux host whose daemon lists caches or keys beyond
+    # the reviewed ones: trust and signatures are right, and the cache lists
+    # alone still make the policy drift.
+    linux_cache_drift="$TMPDIR/linux-cache-drift.json"
+    jq '.nix.substitutersExact = false | .nix.trustedKeysExact = false' "$linux_ready" > "$linux_cache_drift"
+    export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_cache_drift"
+    if atyrode doctor system fixture-desktop --json > "$TMPDIR/linux-cache-drift.out"; then
+      echo 'a daemon with unreviewed cache lists unexpectedly passed diagnostics' >&2
       exit 1
     else
       test "$?" -eq 69
     fi
     jq -e '
       (.checks[] | select(.id == "nix-policy") | .code) == "nix-policy-drift"
-      and (.checks[] | select(.id == "nix-policy") | .remediation
-        | test("^the daemon does not list the fleet cache; enrol it with: printf .%s\\\\n. .extra-substituters = https://atyrode-nix-cache[^ ]*. .extra-trusted-public-keys = atyrode-cache-1:[^ ]*. \\| sudo tee -a /etc/nix/nix.conf >/dev/null && sudo systemctl restart nix-daemon$"))
-    ' "$TMPDIR/linux-stale-cache.out" >/dev/null
+    ' "$TMPDIR/linux-cache-drift.out" >/dev/null
     export _ATYRODE_TEST_SYSTEM_FIXTURE="$linux_ready"
 
     minimal_result="$(atyrode doctor system development-x86_64-linux --json)"

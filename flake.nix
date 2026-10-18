@@ -215,9 +215,8 @@
             omp-seed
             ;
           manifold = pkgs.manifold-terminal-client;
-          # One root per system for the fleet binary cache: CI builds this
-          # and copies its closure, so every host below activates from a
-          # download. Members are named by host id for inspection.
+          # One verification root per system; CI builds each host closure.
+          # Members are named by host id for inspection.
           fleet-closures = pkgs.linkFarm "fleet-closures-${system}" (
             lib.mapAttrsToList (name: path: { inherit name path; }) (fleetClosuresFor system)
           );

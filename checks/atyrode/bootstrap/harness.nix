@@ -53,7 +53,6 @@ let
     trap 'report_check_failure' ERR
 
     bootstrap=${../../../bootstrap/install.sh}
-    system_policy=${../../../fleet/system-boundary.json}
     real_git=${pkgs.git}/bin/git
     base_path="$PATH"
     host="alex-${system}"
@@ -502,15 +501,11 @@ let
       chmod +x "$repo/bootstrap/install.sh"
       patchShebangs "$repo/bootstrap/install.sh"
       printf '{ outputs = _: {}; }\n' > "$repo/flake.nix"
-      # Bootstrap reads the fleet cache from the inventory, so the fixture
-      # checkout carries the real file rather than a stand-in.
-      mkdir -p "$repo/fleet"
-      cp "$system_policy" "$repo/fleet/system-boundary.json"
       "$real_git" -C "$repo" init -q -b main
       "$real_git" -C "$repo" config user.name fixture
       "$real_git" -C "$repo" config user.email fixture@example.invalid
       "$real_git" -C "$repo" remote add origin https://github.com/atyrode/dotfiles.git
-      "$real_git" -C "$repo" add flake.nix bootstrap fleet
+      "$real_git" -C "$repo" add flake.nix bootstrap
       "$real_git" -C "$repo" commit -q -m fixture
       "$real_git" -C "$repo" update-ref refs/remotes/origin/main HEAD
     }

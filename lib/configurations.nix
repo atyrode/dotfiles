@@ -299,8 +299,7 @@ let
   # Every host closure a given system can realise, keyed by host id, as the
   # artifact `atyrode apply` activates on that host: the system toplevel,
   # whose Home Manager profile is embedded rather than activated on its own.
-  # CI builds this set per system and pushes it to the fleet binary cache, so
-  # a host missing here is a host whose apply rebuilds from source.
+  # CI builds this set per system so every declared host closure is verified.
   fleetClosuresFor =
     system:
     let

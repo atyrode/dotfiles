@@ -194,9 +194,9 @@ links the default OMP user file and Claude/Codex adapters to it; activation and
 apply render through their existing CLI owner.
 context [show] prints the policy followed by on-demand machine diagnostics;
 --json emits the diagnostic inventory, not the startup file. These read-only
-diagnostics include host/fleet, auth accounts, readable-secret names/paths and
-cache trust, never secret values. Auth checks may contact providers (gh: up to
-10s; Clever: up to two 15s calls). Undeclared clone/checkout paths remain null.
+diagnostics include host/fleet, auth accounts and readable-secret names/paths,
+never secret values. Auth checks may contact providers (gh: up to 10s; Clever:
+up to two 15s calls). Undeclared clone/checkout paths remain null.
 operator is this device's own age identity, the one that edits secrets: every
 fixed host holds one, minted where it is used and never copied. On a Mac it is
 minted inside the Secure Enclave by age-plugin-se and asks for Touch ID on every

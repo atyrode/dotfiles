@@ -94,7 +94,7 @@ An undeclared checkout remains unknown/null rather than inferred from a
 conventional directory. [Agent context](atyrode.md#agent-context) owns the
 command contract; the provisioning probe compares policy/revision, not age alone.
 OMP's own workstation/environment block is separate and unchanged; moving the
-fleet/authentication/cache inventory out of this file does not remove OMP's
+fleet/authentication inventory out of this file does not remove OMP's
 basic platform information.
 
 Home Manager links `~/.omp/agent/AGENTS.md`, `~/.claude/CLAUDE.md` and

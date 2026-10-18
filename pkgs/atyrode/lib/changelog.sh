@@ -47,10 +47,8 @@ changelog_compare() { # running target
   }' <<<"$response" 2>/dev/null
 }
 
-# Whether CI has passed main's head: the `ci-gate` check-run is the one job
-# that requires all three systems and every closure, and a green one is what
-# publishes closures to the fleet cache. true, false, or null while it runs or
-# when GitHub could not be asked.
+# Whether main's head passed its required `ci-gate`: true, false, or null
+# while verification runs or GitHub cannot be asked.
 changelog_green() { # target
   local response
   response="$(changelog_api "commits/$1/check-runs")" || {
@@ -107,9 +105,9 @@ changelog_render() { # document
   [[ "$(jq -r '.commits | length' <<<"$document")" != 0 ]] ||
     printf '  %s\n' "$(muted 'the commit list could not be read from GitHub')"
   case "$(jq -r '.green' <<<"$document")" in
-    true) printf '%s\n' "CI: $(paint '1;32' 'green') -- closures published to the fleet cache" ;;
-    false) printf '%s\n' "CI: $(paint '1;31' 'red') -- apply would build locally, and main is not fit to take" ;;
-    *) printf '%s\n' "CI: $(paint '1;33' 'not finished') -- apply would build what the cache does not have yet" ;;
+    true) printf '%s\n' "CI: $(paint '1;32' 'green') -- required verification passed; apply may build locally" ;;
+    false) printf '%s\n' "CI: $(paint '1;31' 'red') -- main has not passed required verification" ;;
+    *) printf '%s\n' "CI: $(paint '1;33' 'not finished') -- verification is not confirmed; apply may build locally" ;;
   esac
   printf '%s\n' "$(muted 'take it with: atyrode apply')"
 }

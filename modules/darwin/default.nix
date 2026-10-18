@@ -61,6 +61,7 @@ in
     require-sigs = true;
     # Forced rather than merged: nix-darwin and its inputs may add substituters
     # of their own, and the reviewed boundary is an exact list, not a floor.
+    # Paths the official cache lacks are built locally.
     substituters = lib.mkForce binaryCaches.substituters;
     trusted-public-keys = lib.mkForce binaryCaches.trusted-public-keys;
     trusted-users = lib.mkForce [ "root" ];

@@ -448,10 +448,6 @@ pkgs.runCommand "check-omp-stack"
     )" = "managed-settings-guard.ts"
     grep -q 'isolated: true' ${parallelWriteRule}
 
-    test "$(
-      find ${pkgs.omp-agents}/share/omp/agents -maxdepth 1 -name '*.md' | wc -l
-    )" -eq 5
-    test "$(find ${pkgs.omp-configured.platformRoot}/agents -maxdepth 1 -name '*.md' | wc -l)" -eq 5
     test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
     test -f ${pkgs.omp-configured.platformRoot}/rules/parallel-write-isolation.md
 

@@ -915,7 +915,8 @@ The personal policy runs it at most once per session. When nothing is
 available it says nothing; otherwise it asks the operator before anything is
 bumped.
 
-`omp-agents` regenerates the bundled agents from the pinned OMP binary. The
+`omp-agents` installs every bundled agent from the pinned OMP binary, without
+fixing the bundle's size: upstream additions are included automatically. The
 `omp-agent-references` check ensures every agent name referenced by managed
 defaults still exists, so an upstream rename or removal fails the build rather
 than silently misrouting a role.

@@ -12,9 +12,11 @@ tools:
   approvalMode: yolo
 secrets:
   enabled: true
+isolation:
+  backend: auto
 task:
   isolation:
-    mode: auto
+    enabled: true
     merge: patch
   showResolvedModelBadge: true
   # Preserve the persistent direct-selector preference: migrating to @role
@@ -123,7 +125,6 @@ mnemopi:
 providers:
   anthropic:
     serverSideFallback: false
-  memoryModel: online
 
 # Never spend scarce weekly reset credits without the operator.
 codexResets:

@@ -435,8 +435,12 @@ not a model image-understanding turn, and does not activate a machine.
 The diagnostic now reports current isolation keys (`task.isolation.enabled`
 and `isolation.backend`), not the retired combined `task.isolation.mode`.
 Enablement permits per-spawn requests; it is not a default to isolate every task.
-The persistent plain-OMP seed retains its legacy key because upstream still
-migrates it and changing seeded keys could override a local opt-out on reseed.
+The persistent plain-OMP seed writes the same current keys. It no longer seeds
+the retired `task.isolation.mode` or `providers.memoryModel`: OMP migrates both
+away and deletes them, so seeding them only produced `deleted-locally` drift.
+OMP's migration prefers an existing `task.isolation.enabled` over a legacy
+`mode`, so a machine whose config still holds an unmigrated `mode: none`
+opt-out is seeded back to enabled; set `task.isolation.enabled: false` there.
 
 Managed defaults and the plain seed disable `startup.checkUpdate`: Nix owns
 upgrades and repository pin-update automation still reports release drift.
@@ -631,7 +635,7 @@ requires another review. Quit and EOF leave remaining choices unreviewed;
 PTY-backed automation.
 
 The persistent seed intentionally retains direct `task.agentModelOverrides`
-selectors and supported legacy migration keys (including `task.isolation.mode`).
+selectors.
 Unlike immutable managed defaults, a seed has per-leaf ownership history:
 changing an untouched override to `@task` can silently switch its model to an
 independently customized `modelRoles.task`. Adding new role leaves can likewise
@@ -646,7 +650,7 @@ declare any custom role and select `@role` only after preserving that intended
 routing. Keep the resulting differences during seed drift review rather than
 using `--reset-all`, which deliberately restores the legacy seeded values.
 Managed aliases preserve managed dispatch identity without rewriting any
-plain-OMP preference or changing old migration-key ownership.
+plain-OMP preference.
 
 The seed may overlap keys owned by managed launchers: `defaults.yml` and
 `policy.yml` layer above the machine configuration, so seeded values cannot

@@ -72,6 +72,8 @@ pkgs.runCommand "check-omp-seed"
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "first boot did not seed secrets.enabled"
     [ "$(yq eval '.task.disabledAgents | length' "$config")" = "0" ] || fail "first boot did not seed empty disabledAgents"
     [ "$(yq eval 'has("inspect_image")' "$config")" = "false" ] || fail "first boot seeded inspect_image settings omp removed"
+    [ "$(yq eval '(.task.isolation | has("mode")) or (.providers | has("memoryModel"))' "$config")" = "false" ] \
+      || fail "first boot seeded settings omp migrates away"
 
     # Scenario: a profile-scoped agent environment must never redirect the
     # seeder. PI_CODING_AGENT_DIR points at a decoy profile root; apply must
@@ -121,11 +123,11 @@ pkgs.runCommand "check-omp-seed"
     [ "$(yq eval '.task' "$config")" = "manual-note" ] || fail "local scalar was destroyed by seeding"
     [ "$(yq eval '.dev.autoqa.consent' "$config")" = "granted" ] || fail "unmanaged key lost in blocked scenario"
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "blocked scenario did not seed unrelated keys"
-    jq -e '.drift[] | select(.key == "task.isolation.mode" and .reason == "blocked-by-local-value")' \
+    jq -e '.drift[] | select(.key == "task.isolation.enabled" and .reason == "blocked-by-local-value")' \
       "$state/drift.json" >/dev/null || fail "blocked leaf not reported as drift"
     # resolve --reset-all may displace the blocking scalar: operator choice.
     atyrode-omp-seed resolve --reset-all >"$TMPDIR/blocked-resolve.log"
-    [ "$(yq eval '.task.isolation.mode' "$config")" = "auto" ] || fail "reset did not displace the blocking scalar"
+    [ "$(yq eval '.task.isolation.enabled' "$config")" = "true" ] || fail "reset did not displace the blocking scalar"
 
     # Main flow: fresh machine with an unmanaged local key.
     export HOME="$TMPDIR/home"
@@ -141,7 +143,8 @@ pkgs.runCommand "check-omp-seed"
 
     atyrode-omp-seed apply >/dev/null
     [ "$(yq eval '.secrets.enabled' "$config")" = "true" ] || fail "fresh seed did not write secrets.enabled"
-    [ "$(yq eval '.task.isolation.mode' "$config")" = "auto" ] || fail "fresh seed did not write task.isolation.mode"
+    [ "$(yq eval '.task.isolation.enabled' "$config")" = "true" ] || fail "fresh seed did not write task.isolation.enabled"
+    [ "$(yq eval '.isolation.backend' "$config")" = "auto" ] || fail "fresh seed did not write isolation.backend"
     [ "$(yq eval '.advisor.syncBacklog' "$config")" = "3" ] || fail "fresh seed did not write advisor.syncBacklog"
     [ "$(yq eval '.todo.eager' "$config")" = "always" ] || fail "fresh seed did not require todo creation"
     [ "$(yq eval '.todo.reminders' "$config")" = "true" ] || fail "fresh seed did not enable todo reminders"

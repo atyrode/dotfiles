@@ -9,19 +9,19 @@
 # platform tracks the official release binaries, mirroring the omp repackage.
 # The Linux assets are static musl builds and need no loader fixup.
 let
-  version = "0.164.0";
+  version = "0.165.0";
   sources = {
     "aarch64-darwin" = {
       asset = "codex-aarch64-apple-darwin";
-      hash = "sha256-qoKZwWnYARGqwFVDrSYhyb2+25vCUskF/j9aW6+aQUI=";
+      hash = "sha256-eOqcF40tyP3nHWSU3zueq5Av1tbeCoTmUjQiDZO7YUQ=";
     };
     "x86_64-linux" = {
       asset = "codex-x86_64-unknown-linux-musl";
-      hash = "sha256-kN0LA7KK/Lf6czpPc7QT2ykWpHNH79Q/tmnMHHdO6OQ=";
+      hash = "sha256-vmNdNIalvQYND/9YKubTAWAoDDE0TdhXGXB/qSDhh/A=";
     };
     "aarch64-linux" = {
       asset = "codex-aarch64-unknown-linux-musl";
-      hash = "sha256-KaUHoqP9j2zZS5a3YtKB0pnRXXkC3uYTLTFLeM+RCOs=";
+      hash = "sha256-ZSLgVtC+f1MdqRXJqBrgW8cIEbeCVCSZzAqXdtOr9dM=";
     };
   };
   source =

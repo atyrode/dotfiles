@@ -5,20 +5,21 @@
 # successor during upstream command dispatch, but not a flag-shaped successor.
 omp_required_flags=(
   --add-dir --alias --api-key --append-system-prompt --approval-mode --config
-  --cwd --export --extension -e --fork --goal --hook --max-time --mode --model
-  --models
+  --cwd --export --extension -e --fork --goal --hook --max-cost --max-time
+  --mode --model --models
   --plan --plan-yolo-into --plugin-dir --prewalk-into --profile --prompt-cache-key
   --provider --provider-session-id --service-tier --session-dir --skills --slow
   --smol --system-prompt --system-prompt-template --thinking --tools
-  --trusted-extension
+  --trusted-extension --warn-cost
 )
 omp_optional_flags=(--restore --resume -r --session)
 omp_boolean_flags=(
   --advisor --allow-home --auto-approve --continue -c --external-thinking
-  --from-claude --from-codex --help -h --hide-thinking --no-extensions --no-lsp
-  --no-prewalk --no-pty --no-rules --no-session --no-skills --no-title --no-tools
-  --no-ui
-  --plan-yolo --prewalk --print -p --print-thoughts --version -v --yolo
+  --from-claude --from-codex --help -h --hide-thinking --no-context-files
+  --no-extensions --no-lsp --no-prewalk --no-pty --no-rules --no-session
+  --no-skills --no-title --no-tools --no-ui
+  --plan-yolo --prewalk --print -p --print-thoughts --version -v --wait-async
+  --yolo
 )
 omp_subcommands=(
   __complete acp agents anonymize auth auth-broker auth-gateway bench

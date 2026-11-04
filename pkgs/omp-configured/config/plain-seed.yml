@@ -27,7 +27,7 @@ task:
     reviewer: anthropic/claude-sonnet-5-5:high
     scout: openai-codex/gpt-6-luna:medium
     sonic: openai-codex/gpt-6-luna:minimal
-    task: openai-codex/gpt-5.6-terra:medium
+    task: openai-codex/gpt-6.1-terra:medium
   # All bundled agents stay spawnable in plain omp. An unattributed machine
   # edit once disabled every one of them (issue #173); seeding the empty list
   # makes any future non-empty value surface as reviewable drift instead of
@@ -42,7 +42,7 @@ modelRoles:
   advisor: openai-codex/gpt-6-luna:medium
   smol: openai-codex/gpt-6-luna:low
   slow: openai-codex/gpt-6.1-sol:xhigh
-  task: openai-codex/gpt-5.6-terra:medium
+  task: openai-codex/gpt-6.1-terra:medium
   plan: anthropic/claude-fable-5-1:high
   tiny: openai-codex/gpt-6-luna:minimal
   commit: openai-codex/gpt-6-luna:low
@@ -61,24 +61,24 @@ retry:
   fallbackChains:
     default:
       - anthropic/claude-sonnet-5-5:medium
-      - openai-codex/gpt-5.6-terra:medium
+      - openai-codex/gpt-6.1-terra:medium
     task:
       - anthropic/claude-sonnet-5-5:medium
       - openai-codex/gpt-6.1-sol:medium
     advisor:
-      - openai-codex/gpt-5.6-terra:low
+      - openai-codex/gpt-6.1-terra:low
     smol:
-      - openai-codex/gpt-5.6-terra:low
+      - openai-codex/gpt-6.1-terra:low
     slow:
       - anthropic/claude-sonnet-5-5:high
-      - openai-codex/gpt-5.6-terra:xhigh
+      - openai-codex/gpt-6.1-terra:xhigh
     plan:
       - openai-codex/gpt-6.1-sol:high
       - anthropic/claude-sonnet-5-5:high
     tiny:
-      - openai-codex/gpt-5.6-terra:low
+      - openai-codex/gpt-6.1-terra:low
     commit:
-      - openai-codex/gpt-5.6-terra:low
+      - openai-codex/gpt-6.1-terra:low
 
 # Advisor on a cheap fast model. xhigh thinking on a per-turn watchdog buys
 # latency, not much review quality. Subagent advisors (17.3.0: per-agent
@@ -130,8 +130,9 @@ providers:
 codexResets:
   autoRedeem: "no"
 
-# GPT-5.6's 1M window bills the whole request at 2x input / 1.5x output
-# after 272K input. Compact at the standard-price boundary by default; use
+# Long-context tiers bill a premium past the standard window: Haiku 5.5 bills
+# 5x input and output beyond 100K input, and OMP caps its window at 100K while
+# this is off. Compact at the standard-price boundary by default; use
 # /extended-context for the exceptional session that benefits from the premium tier.
 extendedContext: false
 

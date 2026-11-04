@@ -4,24 +4,38 @@
 # The factual fields are NOT hand-maintained — omp is the authority for all of
 # them, and `code generate init --refresh` re-derives them from the pinned omp:
 #   cost_in / cost_out ($ per 1M tokens), context, thinking  <- `omp models --json`
+#   image (text-only marker)                                 <- `omp models --json`
 #   speed (output tok/s), ttft (time-to-first-token, seconds) <- `omp bench`
 # They live here only because the Nix build sandbox has no network, creds, or
 # ~/.omp and so cannot reach omp itself; this file is that committed cache. Do not
 # edit the factual fields by hand — re-run the refresh instead. (speed/ttft are a
 # live benchmark, so they drift with load; re-run when you want fresh figures.)
 #
+# `context` is the largest window omp grants the model: `omp models --json` run
+# with an `extendedContext: true` overlay (`--config`). Managed and seeded configs
+# keep extended context off, where omp reports each standard window instead
+# (Haiku 5.5 100K, GPT-6 272K, GPT-6.1 500K). `code generate` reads context only
+# to reject a rung that offers less than a cheaper rung below it.
+#
 #   pool:   O = openai-codex   ·   A = anthropic   ·   D = deepseek (optional)
-#   tier:   0 trivial/fast · 1 speed · 2 regular · 3 smart · 4 elite
-#           Tiers 1..3 form the per-pool fallback ladder; 0 and 4 are special
-#           leads (spark drains an idle bucket; fable is a scarce elite lead).
+#   tier:   1 speed · 2 regular · 3 smart · 4 elite
+#           Tiers 1..3 form the per-pool fallback ladder; 4 is the top rung the
+#           model dial's `elite` notch leads with. Tier 0 is the generator's
+#           idle-bucket drain lead (the spark dial); no callable model fills it,
+#           so `code generate` renders no `_sp` combos and Code hides the dial.
+#   image:  false marks a text-only model, which the vision role then avoids.
 #   bucket: the quota window a model draws (a separate rate bucket per provider).
 #
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
 # Date of the last complete metadata AND chat benchmark refresh for every model.
 # Partial or --skip-bench runs retain it; null means no complete refresh is attested.
-# The former date did not distinguish carried-forward measurements from new ones.
-refreshed: null
+# 2026-11-04 (omp 18.14.1): `code generate init --refresh` probed every id below
+# and its `omp models --json` read supplied cost, thinking and image; context
+# comes from the extended-context read above; speed/ttft from `omp bench
+# --profile chat --runs 3 --par 1 --max-tokens 384`. The refresh's own probe
+# stops at 4 output tokens, so its speed column is not a throughput figure.
+refreshed: 2026-11-04
 # probed: `code generate` refuses a catalog that is not marked verified, because
 # omp lists models an account cannot actually call and nothing in their metadata
 # says so. This file is a curated committed cache rather than a live scaffold, so
@@ -35,44 +49,39 @@ models:
     pool: O
     tier: 1
     bucket: codex-main
-    # cost from omp 18.2.10's openai-codex row. speed/ttft are carried over
-    # from gpt-5.6-luna: every Codex account's weekly window was exhausted
-    # when the id changed, so `code generate init --refresh` could not bench it.
     cost_in: 0.1
     cost_out: 0.5
-    speed: 52.3
-    ttft: 1.18
-    context: 1000000
+    speed: 55.6
+    ttft: 1.59
+    context: 872000
     thinking: low→max
     role: >-
       Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
       tier; the cheap rung and same-bucket sibling everywhere.
   terra:
-    id: gpt-5.6-terra
+    id: gpt-6.1-terra
     pool: O
     tier: 2
     bucket: codex-main
-    cost_in: 2
-    cost_out: 12
-    speed: 51.8
-    ttft: 1.74
-    context: 1000000
+    cost_in: 1
+    cost_out: 5
+    speed: 56.8
+    ttft: 1.68
+    context: 922000
     thinking: low→max
     role: >-
       Balanced workhorse. Leads the regular GPT tier and the mixed
-      workers. Sonnet's price-twin.
+      workers. Half Sonnet's per-token price.
   sol:
     id: gpt-6.1-sol
     pool: O
     tier: 3
     bucket: codex-main
-    # Selector-only update: context/speed/ttft retain the previous cache,
-    # not Sol 6.1 measurements. Pricing is unchanged at $2/$10 per 1M.
     cost_in: 2
     cost_out: 10
-    speed: 31.5
-    ttft: 4.59
-    context: 1000000
+    speed: 37.6
+    ttft: 2.04
+    context: 922000
     thinking: low→max
     role: Flagship. Leads the smart GPT tier.
   astra:
@@ -80,49 +89,32 @@ models:
     pool: O
     tier: 4
     bucket: codex-main
-    # cost from omp's openrouter row (openai/gpt-6-astra): the openai-codex
-    # row still lists this model at $0, and the refresh script fills a $0 row
-    # from its priced sibling. speed/ttft from `code generate init --refresh`
-    # on dev-01 (single run, omp 18.1.10).
     cost_in: 10
     cost_out: 50
-    speed: 61.5
-    ttft: 2.24
-    context: 1000000
+    speed: 33.1
+    ttft: 2.7
+    context: 922000
     thinking: low→max
     role: >-
       Most capable OpenAI rung, and the top of pool O's ladder (tier 4). The
       `elite` notch on the model dial leads with it on the gpt-only, gpt-led
       and mixed lanes; at `smart` the deliberative bump already reaches it for
       the plan/judgment roles. Draws the ordinary codex-main quota.
-  spark:
-    id: gpt-5.3-codex-spark
-    pool: O
-    tier: 0
-    bucket: codex-spark
-    cost_in: 1.75
-    cost_out: 14
-    speed: 286.7
-    ttft: 5.56
-    context: 128000
-    thinking: low→xhigh
-    role: >-
-      Coding-tuned and fast. Draws a separate, usually-idle Codex bucket, so the
-      fast-execution and background roles lead on it to drain it.
   haiku:
-    id: claude-haiku-4-5
+    id: claude-haiku-5-5
     pool: A
     tier: 1
     bucket: claude-main
-    cost_in: 1
-    cost_out: 5
-    speed: 48.9
-    ttft: 1.7
-    context: 200000
-    thinking: minimal→xhigh
+    cost_in: 0.1
+    cost_out: 0.5
+    speed: 199.2
+    ttft: 0.57
+    context: 1000000
+    thinking: low→max
     role: >-
       Fastest/cheapest Anthropic tier. Leads the speed Claude tier; the
-      Anthropic cheap rung and background hum.
+      Anthropic cheap rung and background hum. Its window is 100K unless
+      extended context is on, and input past 100K bills at 5x.
   sonnet:
     id: claude-sonnet-5-5
     pool: A
@@ -130,9 +122,8 @@ models:
     bucket: claude-main
     cost_in: 2
     cost_out: 10
-    # Scoped omp 18.4.3 refresh: one 384-token chat benchmark, 2026-09-29.
-    speed: 113.9
-    ttft: 1.07
+    speed: 116.6
+    ttft: 2.01
     context: 1000000
     thinking: low→max
     role: >-
@@ -146,12 +137,8 @@ models:
     bucket: claude-main
     cost_in: 4
     cost_out: 20
-    # speed/ttft carried over from Opus 5's last full refresh. Anthropic's
-    # client-version gate refuses 5.5 to any client older than Claude Code
-    # 2.1.280, so the bench could not run here until the omp pin caught up;
-    # re-run the refresh for measured figures.
-    speed: 46.6
-    ttft: 1.77
+    speed: 102.6
+    ttft: 2.07
     context: 1000000
     thinking: low→max
     role: >-
@@ -166,11 +153,8 @@ models:
     bucket: claude-main
     cost_in: 10
     cost_out: 50
-    # speed from a clean 3-run bench on omp 18.1.2 (65.2 tok/s); ttft carried
-    # over from the last full refresh, which omp 18's bench no longer reports
-    # for this model.
-    speed: 65.2
-    ttft: 6.9
+    speed: 69.5
+    ttft: 0.5
     context: 1000000
     thinking: low→max
     role: >-
@@ -185,11 +169,11 @@ models:
     pool: D
     tier: 1
     bucket: deepseek-main
-    cost_in: 0.14
-    cost_out: 0.28
-    speed: 33.6
-    ttft: 0.92
-    context: 1000000
+    cost_in: 0.3
+    cost_out: 1.2
+    speed: 152
+    ttft: 0.9
+    context: 1048576
     thinking: low,high,max
     role: >-
       Pay-as-you-go cheap rung. Leads the fast ds tier and hosts the
@@ -199,12 +183,13 @@ models:
     pool: D
     tier: 2
     bucket: deepseek-main
-    cost_in: 0.435
-    cost_out: 0.87
-    speed: 23.2
-    ttft: 0.83
-    context: 1000000
+    cost_in: 1.32
+    cost_out: 3.96
+    speed: 88.6
+    ttft: 1.01
+    context: 1048576
     thinking: low,high,max
+    image: false
     role: >-
       Pay-as-you-go workhorse. Leads the regular ds tier and is the relief
       tail the metered-led lanes spill into; the smart tier borrows it (the

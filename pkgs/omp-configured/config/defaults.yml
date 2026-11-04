@@ -3,9 +3,9 @@ colorBlindMode: true
 
 modelRoles:
   default: openai-codex/gpt-6.1-sol:medium
-  advisor: anthropic/claude-haiku-4-5:low
+  advisor: anthropic/claude-haiku-5-5:low
   smol: openai-codex/gpt-6-luna:low
-  task: openai-codex/gpt-5.6-terra:medium
+  task: openai-codex/gpt-6.1-terra:medium
   scout: openai-codex/gpt-6-luna:medium
   sonic: openai-codex/gpt-6-luna:minimal
   reviewer: anthropic/claude-sonnet-5-5:high
@@ -14,7 +14,8 @@ modelRoles:
   tiny: openai-codex/gpt-6-luna:low
   commit: openai-codex/gpt-6-luna:low
   # omp routes image description here when the active model is text-only
-  # (today only the codex spark variants). Unset, it lands on `default`.
+  # (of the catalog's models, today only deepseek-v4-pro). Unset, it lands
+  # on `default`.
   vision: openai-codex/gpt-6-luna:low
 
 retry:
@@ -28,10 +29,10 @@ retry:
   usageReservePolicy: confirm
   # Redundancy first: a same-provider sibling backs each lead before the cross,
   # so a single-model outage never leaves its bucket; then the matched pair on
-  # the other provider. Chains never route below the lead's tier. Spark (drain)
-  # and Fable (elite) draw separate quota and never appear as a net — plan leads
-  # on Fable deliberately and falls back to main-plan Opus. Trivial leads have
-  # explicit empty chains: omitting them would inherit the default chain.
+  # the other provider. Chains never route below the lead's tier. Fable (elite)
+  # never appears as a net — plan leads on Fable deliberately and falls back to
+  # main-plan Opus. Trivial leads have explicit empty chains: omitting them
+  # would inherit the default chain.
   # Role-keyed chains require role identity: task.agentModelOverrides uses
   # native @role aliases below, with selectors/thinking owned by modelRoles.
   # An agent name alone (including `task`) does not preserve that identity
@@ -43,7 +44,7 @@ retry:
     commit: []
     sonic: []
     default:
-      - openai-codex/gpt-5.6-terra:medium
+      - openai-codex/gpt-6.1-terra:medium
       - anthropic/claude-opus-5-5:medium
       - anthropic/claude-sonnet-5-5:medium
     task:
@@ -53,11 +54,11 @@ retry:
     plan:
       - anthropic/claude-opus-5-5:high
       - openai-codex/gpt-6.1-sol:high
-      - openai-codex/gpt-5.6-terra:high
+      - openai-codex/gpt-6.1-terra:high
     slow:
       - anthropic/claude-sonnet-5-5:xhigh
       - openai-codex/gpt-6.1-sol:xhigh
-      - openai-codex/gpt-5.6-terra:xhigh
+      - openai-codex/gpt-6.1-terra:xhigh
 
 personality: pragmatic
 
@@ -71,8 +72,9 @@ stt:
 branchSummary:
   enabled: true
 
-# GPT-5.6's 1M window bills the whole request at 2x input / 1.5x output
-# after 272K input. Compact at the standard-price boundary by default; use
+# Long-context tiers bill a premium past the standard window: Haiku 5.5 bills
+# 5x input and output beyond 100K input, and OMP caps its window at 100K while
+# this is off. Compact at the standard-price boundary by default; use
 # /extended-context for the exceptional session that benefits from the premium tier.
 extendedContext: false
 

@@ -50,6 +50,9 @@ def main():
     for prefix in (("--prewalk",), ("--external-thinking=false",), ("--no-prewalk",)):
         actual = run(args.managed_stub, *prefix, "models", "--json").splitlines()
         assert actual == [*prefix, "models", "--json"], actual
+    for shell in ("bash", "sh", "zsh"):
+        actual = run(args.managed_stub, shell, "-c", "printf shell-command").splitlines()
+        assert actual == [shell, "-c", "printf shell-command"], (shell, actual)
     actual = run(args.managed_stub, "launch", "--system-prompt", "models").splitlines()
     assert actual[0] == "--extension" and actual[-2:] == ["--system-prompt", "models"], actual
     actual = run(args.managed_stub, "--", "--no-extensions", "--config", "literal").splitlines()

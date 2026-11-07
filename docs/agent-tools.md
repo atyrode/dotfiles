@@ -418,8 +418,11 @@ startup and does not resolve extension-registered flags.
 
 The shared launcher grammar in `pkgs/omp-configured/argv.sh` follows the pinned
 CLI's value consumption, including flag-shaped string values, optional session
-values, boolean `--flag=value` spellings and the `--` prompt boundary. Restricted
-launchers reject state/resource/approval overrides only in flag positions.
+values, boolean `--flag=value` spellings and the `--` prompt boundary. Rendering
+options `--motion`, `--spinner-interval` and `--max-fps` consume required values
+and pass through unchanged. Native `bash`, `sh` and `zsh` subcommands bypass
+launch configuration. Restricted launchers reject state/resource/approval
+overrides only in flag positions.
 `nix build --no-link .#checks.x86_64-linux.omp-wrapper` checks argv preservation,
 restricted boundaries, native diagnostics and live CLI grammar drift; `omp-stack`
 additionally exercises real RPC/ACP startup. Neither requires provider credentials.

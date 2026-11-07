@@ -5,11 +5,11 @@
 # successor during upstream command dispatch, but not a flag-shaped successor.
 omp_required_flags=(
   --add-dir --alias --api-key --append-system-prompt --approval-mode --config
-  --cwd --export --extension -e --fork --goal --hook --max-cost --max-time
-  --mode --model --models
+  --cwd --export --extension -e --fork --goal --hook --max-cost --max-fps --max-time
+  --mode --model --models --motion
   --plan --plan-yolo-into --plugin-dir --prewalk-into --profile --prompt-cache-key
   --provider --provider-session-id --service-tier --session-dir --skills --slow
-  --smol --system-prompt --system-prompt-template --thinking --tools
+  --smol --spinner-interval --system-prompt --system-prompt-template --thinking --tools
   --trusted-extension --warn-cost
 )
 omp_optional_flags=(--restore --resume -r --session)
@@ -22,12 +22,12 @@ omp_boolean_flags=(
   --yolo
 )
 omp_subcommands=(
-  __complete acp agents anonymize auth auth-broker auth-gateway bench
+  __complete acp agents anonymize auth auth-broker auth-gateway bash bench
   browser-relay cleanse clip collab commit completions compress config
   dry-balance find gallery gc git grep grievances images img if-bench install
   join launch login models play plugin plugins predict ps q read render say
-  search session setup share shell skill skills ssh stats stream tiny-models
-  token toks ttsr update usage web-search worktree wt
+  search session setup sh share shell skill skills ssh stats stream tiny-models
+  token toks ttsr update usage web-search worktree wt zsh
 )
 
 omp_contains() {

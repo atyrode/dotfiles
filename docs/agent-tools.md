@@ -466,11 +466,17 @@ tool selection on eager-todo turns, which Sonnet 5.5 rejects. The
 reviewer's `high` and the slow fallback's `xhigh` effort, requiring automatic
 tool selection without disabling adaptive thinking.
 
-The Sonnet catalog entry has a scoped metadata/benchmark refresh; the catalog's
-global `refreshed: null` still means no complete refresh of every model is
-attested. Publishing these defaults does not activate machines or rewrite
-running sessions. Native Code's separately pinned Manifold OMP runtime and
-reviewed catalogs are not upgraded by the dotfiles OMP pin.
+Managed and plain-seeded `plan` roles use `anthropic/claude-fable-5-2:high`.
+The standalone Code generator uses Fable 5.2 everywhere its Anthropic elite
+rung appears, including generated reviewer/security-reviewer roles and their
+task overrides. Existing lanes, dials, thinking levels and fallback order are
+unchanged.
+
+Fable 5.2 has a scoped metadata/benchmark refresh; the catalog's global
+`refreshed: null` means no complete refresh of the current model set is attested.
+Publishing these defaults does not activate machines or rewrite running sessions
+or their already-generated overlays. Native Code's separately pinned Manifold
+OMP runtime and reviewed catalogs are not upgraded by the dotfiles OMP pin.
 
 Managed `task.agentModelOverrides` values are native aliases (`@task`,
 `@reviewer`, `@scout`, `@sonic`); `modelRoles` owns each selector and its

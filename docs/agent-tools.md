@@ -455,6 +455,10 @@ OMP 18.18.7 splits `codexResets.autoRedeem` into `autoRedeem5h` and
 `autoRedeemWeekly`. Managed defaults and the plain seed set both to `"no"`,
 preserving the existing no-automatic-credit-spending preference. OMP migrates
 legacy values to both windows unless a window already has an explicit value.
+Before its three-way merge, the plain seeder translates that owned preference
+in both the live configuration and the prior seed baseline, removing the legacy
+key. Custom boolean/tri-state choices and explicit window values stay local
+choices instead of being shadowed by newly seeded defaults.
 
 ### Agent role identity and fallback
 

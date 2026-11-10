@@ -129,6 +129,69 @@ pkgs.runCommand "check-omp-seed"
     atyrode-omp-seed resolve --reset-all >"$TMPDIR/blocked-resolve.log"
     [ "$(yq eval '.task.isolation.enabled' "$config")" = "true" ] || fail "reset did not displace the blocking scalar"
 
+    # A native reset-window split must not turn an existing local opt-in into
+    # the new repository opt-out. Migrate the prior baseline too, so defaults
+    # still follow the seed while local boolean and tri-state choices drift.
+    reset_seed="$TMPDIR/reset-seed.yml"
+    cat >"$reset_seed" <<'YAML'
+    codexResets:
+      autoRedeem5h: "no"
+      autoRedeemWeekly: "no"
+    YAML
+    reset_case=0
+    for legacy in true false '"yes"' '"no"' '"unset"'; do
+      reset_case=$((reset_case + 1))
+      export HOME="$TMPDIR/reset-legacy-$reset_case"
+      config="$HOME/.omp/agent/config.yml"
+      state="$HOME/.local/state/atyrode/omp-plain-seed"
+      mkdir -p "$(dirname "$config")" "$state"
+      jq -n --argjson legacy "$legacy" '{codexResets: {autoRedeem: $legacy}}' >"$config"
+      printf 'codexResets:\n  autoRedeem: "no"\n' >"$state/last-applied.yml"
+      expected="$(jq -rn --argjson legacy "$legacy" '$legacy | if type == "boolean" then (if . then "yes" else "no" end) else . end')"
+      before="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
+      AGENT_TOOLS_DRY_RUN=1 OMP_SEED_FILE="$reset_seed" atyrode-omp-seed apply >/dev/null
+      after="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
+      [ "$before" = "$after" ] || fail "reset migration dry run modified state"
+      OMP_SEED_FILE="$reset_seed" atyrode-omp-seed apply >/dev/null
+      yq eval -o=json '.' "$config" | jq -e --arg expected "$expected" '
+        .codexResets == {autoRedeem5h: $expected, autoRedeemWeekly: $expected}
+      ' >/dev/null || fail "legacy reset preference was lost while seeding new windows"
+      if [ "$expected" = no ]; then expected_drift=0; else expected_drift=2; fi
+      jq -e --argjson expected "$expected_drift" '.drift | length == $expected' \
+        "$state/drift.json" >/dev/null || fail "reset migration lost three-way ownership"
+      before="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
+      OMP_SEED_FILE="$reset_seed" atyrode-omp-seed apply >/dev/null
+      after="$(sha256sum "$config" "$state/last-applied.yml" | sha256sum)"
+      [ "$before" = "$after" ] || fail "reset migration was not idempotent"
+    done
+
+    # Explicit per-window choices beat a legacy opt-in, including dotted
+    # native setting keys; unrelated configuration remains untouched.
+    export HOME="$TMPDIR/reset-explicit"
+    config="$HOME/.omp/agent/config.yml"
+    mkdir -p "$(dirname "$config")"
+    cat >"$config" <<'YAML'
+    codexResets:
+      autoRedeem: true
+      autoRedeem5h: "no"
+    unrelated: preserved
+    YAML
+    OMP_SEED_FILE="$reset_seed" atyrode-omp-seed apply >/dev/null
+    yq eval -o=json '.' "$config" | jq -e '
+      .codexResets == {autoRedeem5h: "no", autoRedeemWeekly: "yes"}
+      and .unrelated == "preserved"
+    ' >/dev/null || fail "explicit reset window did not beat the legacy choice"
+    cat >"$config" <<'YAML'
+    codexResets.autoRedeem: false
+    codexResets.autoRedeem5h: "yes"
+    codexResets.autoRedeemWeekly: "unset"
+    unrelated: preserved
+    YAML
+    OMP_SEED_FILE="$reset_seed" atyrode-omp-seed apply >/dev/null
+    yq eval -o=json '.' "$config" | jq -e '
+      . == {codexResets: {autoRedeem5h: "yes", autoRedeemWeekly: "unset"}, unrelated: "preserved"}
+    ' >/dev/null || fail "dotted explicit reset windows were shadowed by seed defaults"
+
     # Main flow: fresh machine with an unmanaged local key.
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME/.omp/agent"

@@ -451,6 +451,11 @@ This removes the interactive upstream release reminder (and its startup network
 check), not the pinned-version check or the repository's latest-release warning.
 The ordinary seed merge preserves an operator's divergent local preference.
 
+OMP 18.18.7 splits `codexResets.autoRedeem` into `autoRedeem5h` and
+`autoRedeemWeekly`. Managed defaults and the plain seed set both to `"no"`,
+preserving the existing no-automatic-credit-spending preference. OMP migrates
+legacy values to both windows unless a window already has an explicit value.
+
 ### Agent role identity and fallback
 
 Existing Sol 6 roles and fallbacks in managed defaults, the plain-OMP seed

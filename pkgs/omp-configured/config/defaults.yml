@@ -126,7 +126,8 @@ display:
   cacheMissMarker: false
 
 codexResets:
-  autoRedeem: "no"
+  autoRedeem5h: "no"
+  autoRedeemWeekly: "no"
 
 task:
   showResolvedModelBadge: true

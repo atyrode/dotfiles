@@ -126,9 +126,10 @@ providers:
   anthropic:
     serverSideFallback: false
 
-# Never spend scarce weekly reset credits without the operator.
+# Never spend scarce reset credits without the operator.
 codexResets:
-  autoRedeem: "no"
+  autoRedeem5h: "no"
+  autoRedeemWeekly: "no"
 
 # Long-context tiers bill a premium past the standard window: Haiku 5.5 bills
 # 5x input and output beyond 100K input, and OMP caps its window at 100K while

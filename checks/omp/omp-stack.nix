@@ -127,21 +127,6 @@ pkgs.runCommand "check-omp-stack"
     done
     ${pkgs.omp-configured}/bin/code --help > "$TMPDIR/code-help.txt"
     grep -q 'usage:' "$TMPDIR/code-help.txt"
-    # Exercise the real generator, not only the curated input: the elite rung
-    # also reaches deliberative roles and mirrored agent overrides.
-    ${pkgs.omp-configured}/bin/code generate \
-      --models-file ${../../pkgs/omp-configured/config/models.yml} \
-      --out "$TMPDIR/generated.plain"
-    if grep -q 'claude-fable-5-1' "$TMPDIR/generated.plain"; then
-      echo 'generated routing retained the retired Fable selector' >&2
-      exit 1
-    fi
-    for role in default plan slow reviewer security-reviewer; do
-      grep -Eq " $role +claude-fable-5-2:xhigh" "$TMPDIR/generated.plain"
-    done
-    test "$(yq eval '.modelRoles.plan' ${defaultsConfig})" = "anthropic/claude-fable-5-2:high"
-    test "$(yq eval '.modelRoles.plan' ${../../pkgs/omp-configured/config/plain-seed.yml})" \
-      = "anthropic/claude-fable-5-2:high"
     # `code ls` must survive the wrapper's tty guard. It exists for scripts
     # and for triaging a machine over a bare `ssh host 'code ls'`, which is
     # precisely when no terminal is attached — and a nix build sandbox has

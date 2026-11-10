@@ -226,6 +226,31 @@ print_summary() {
   fi
 }
 
+# OMP split this owned preference into two windows. Normalize both the live
+# document and old seed baseline before classifying; otherwise new "no" leaves
+# would shadow a local legacy "yes". Explicit window choices take precedence.
+migrate_codex_reset_windows() {
+  jq '
+    def mode:
+      if type == "boolean" then (if . then "yes" else "no" end) else . end;
+    if has("codexResets") and (.codexResets | type) != "object" then .
+    else
+      . as $source
+      | (.codexResets // {}) as $reset
+      | (if $reset.autoRedeem != null then {present: true, value: $reset.autoRedeem}
+         elif has("codexResets.autoRedeem") then {present: true, value: .["codexResets.autoRedeem"]}
+         else {present: false} end) as $legacy
+      | (reduce ["autoRedeem5h", "autoRedeemWeekly"][] as $key ($reset | del(.autoRedeem);
+          if has($key) then .
+          elif ($source | has("codexResets." + $key)) then .[$key] = $source["codexResets." + $key]
+          elif $legacy.present then .[$key] = ($legacy.value | mode)
+          else . end)) as $windows
+      | del(.["codexResets.autoRedeem"], .["codexResets.autoRedeem5h"], .["codexResets.autoRedeemWeekly"])
+      | if ($windows | length) != 0 or ($source | has("codexResets"))
+        then .codexResets = $windows else . end
+    end'
+}
+
 load_documents() {
   config_path="$(resolve_config_path)"
   live_digest="$(file_digest "$config_path")"
@@ -239,6 +264,17 @@ load_documents() {
   fi
   jq -e 'type == "object"' <<<"$live_json" >/dev/null || fail "$config_path is not a YAML mapping"
   jq -e 'type == "object"' <<<"$seed_json" >/dev/null || fail "seed $seed_file is not a YAML mapping"
+  reset_migration_pending=false
+  if jq -e '.codexResets | type == "object" and has("autoRedeem5h") and has("autoRedeemWeekly")' \
+    <<<"$seed_json" >/dev/null; then
+    local migrated
+    migrated="$(migrate_codex_reset_windows <<<"$live_json")" ||
+      fail "could not migrate saved-reset preferences in $config_path"
+    reset_migration_pending="$(jq -n --argjson before "$live_json" --argjson after "$migrated" '$before != $after')"
+    live_json="$migrated"
+    snap_json="$(migrate_codex_reset_windows <<<"$snap_json")" ||
+      fail "could not migrate the saved-reset seed baseline"
+  fi
 }
 
 apply_sets() {
@@ -262,7 +298,7 @@ cmd_apply() {
   local classification merged
   classification="$(classify "$live_json" "$seed_json" "$snap_json")"
 
-  if [[ "$(jq -r '.set | length' <<<"$classification")" != 0 ]]; then
+  if [[ "$reset_migration_pending" == true || "$(jq -r '.set | length' <<<"$classification")" != 0 ]]; then
     merged="$(apply_sets "$classification")" ||
       fail "could not merge seed values into $config_path"
     write_yaml_atomically "$merged" "$config_path" "$live_digest"
@@ -302,6 +338,9 @@ cmd_resolve() {
   fi
   drift_count="$(jq -r '.drift | length' <<<"$classification")"
   if [[ "$drift_count" == 0 ]]; then
+    if [[ "$reset_migration_pending" == true ]]; then
+      write_yaml_atomically "$live_json" "$config_path" "$live_digest"
+    fi
     printf 'omp seed: no drift to resolve\n'
     return 0
   fi
@@ -364,7 +403,7 @@ cmd_resolve() {
     esac
   done 3< <(jq -r '.drift[] | [.key, (.live | tojson), (.seed | tojson)] | @tsv' <<<"$classification")
 
-  if [[ "$updated" != "$live_json" ]]; then
+  if [[ "$reset_migration_pending" == true || "$updated" != "$live_json" ]]; then
     write_yaml_atomically "$updated" "$config_path" "$live_digest"
     live_json="$updated"
     live_digest="$(file_digest "$config_path")"

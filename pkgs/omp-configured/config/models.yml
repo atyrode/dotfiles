@@ -29,13 +29,12 @@
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
 # Date of the last complete metadata AND chat benchmark refresh for every model.
-# Partial or --skip-bench runs retain it; null means no complete refresh is attested.
-# 2026-11-04 (omp 18.14.1): `code generate init --refresh` probed every id below
-# and its `omp models --json` read supplied cost, thinking and image; context
-# comes from the extended-context read above; speed/ttft from `omp bench
-# --profile chat --runs 3 --par 1 --max-tokens 384`. The refresh's own probe
-# stops at 4 output tokens, so its speed column is not a throughput figure.
-refreshed: 2026-11-04
+# null means no complete refresh of the current set of model ids is attested.
+# 2026-11-10 (omp 18.18.1): Fable 5.2 metadata from `omp models --json`;
+# speed/ttft from `omp bench anthropic/claude-fable-5-2 --profile chat
+# --runs 3 --par 1 --max-tokens 384 --json` (all three requests succeeded).
+# Other model facts retain their existing snapshots.
+refreshed: null
 # probed: `code generate` refuses a catalog that is not marked verified, because
 # omp lists models an account cannot actually call and nothing in their metadata
 # says so. This file is a curated committed cache rather than a live scaffold, so
@@ -147,14 +146,14 @@ models:
       replaces. Needs omp >= 18.2.9: earlier clients are refused by
       Anthropic's client-version gate.
   fable:
-    id: claude-fable-5-1
+    id: claude-fable-5-2
     pool: A
     tier: 4
     bucket: claude-main
     cost_in: 10
     cost_out: 50
-    speed: 69.5
-    ttft: 0.5
+    speed: 76.7
+    ttft: 0.69
     context: 1000000
     thinking: low→max
     role: >-

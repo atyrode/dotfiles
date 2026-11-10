@@ -466,7 +466,8 @@ pkgs.runCommand "check-omp-wrapper"
     theme:
       dark: custom-dark
     codexResets:
-      autoRedeem: "yes"
+      autoRedeem5h: "yes"
+      autoRedeemWeekly: "yes"
     memory:
       backend: "off"
     EOF
@@ -480,7 +481,8 @@ pkgs.runCommand "check-omp-wrapper"
           config managed --json > "$TMPDIR/current-managed.json"
         jq -e --arg oneShot "$current_project/relative.yml" '
           .effectiveManaged.theme.dark == "custom-dark"
-          and .effectiveManaged.codexResets.autoRedeem == "yes"
+          and .effectiveManaged.codexResets.autoRedeem5h == "yes"
+          and .effectiveManaged.codexResets.autoRedeemWeekly == "yes"
           and .effectiveManaged.memory.backend == "off"
           and .effectiveManaged.modelRoles.default == "relative/one-shot:high"
           and (.sources[] | select(.kind == "one-shot-config") | .path == $oneShot)
@@ -503,7 +505,8 @@ pkgs.runCommand "check-omp-wrapper"
           config managed --json > "$TMPDIR/legacy-managed.json"
         jq -e '
           .effectiveManaged.theme.dark == "custom-dark"
-          and .effectiveManaged.codexResets.autoRedeem == "yes"
+          and .effectiveManaged.codexResets.autoRedeem5h == "yes"
+          and .effectiveManaged.codexResets.autoRedeemWeekly == "yes"
           and .effectiveManaged.memory.backend == "off"
         ' "$TMPDIR/legacy-managed.json" >/dev/null
         cmp "$legacy_project/.omp/config.yml" "$TMPDIR/legacy-before.yml"

@@ -451,6 +451,15 @@ This removes the interactive upstream release reminder (and its startup network
 check), not the pinned-version check or the repository's latest-release warning.
 The ordinary seed merge preserves an operator's divergent local preference.
 
+OMP 18.18.7 splits `codexResets.autoRedeem` into `autoRedeem5h` and
+`autoRedeemWeekly`. Managed defaults and the plain seed set both to `"no"`,
+preserving the existing no-automatic-credit-spending preference. OMP migrates
+legacy values to both windows unless a window already has an explicit value.
+Before its three-way merge, the plain seeder translates that owned preference
+in both the live configuration and the prior seed baseline, removing the legacy
+key. Custom boolean/tri-state choices and explicit window values stay local
+choices instead of being shadowed by newly seeded defaults.
+
 ### Agent role identity and fallback
 
 Existing Sol 6 roles and fallbacks in managed defaults, the plain-OMP seed
@@ -466,11 +475,17 @@ tool selection on eager-todo turns, which Sonnet 5.5 rejects. The
 reviewer's `high` and the slow fallback's `xhigh` effort, requiring automatic
 tool selection without disabling adaptive thinking.
 
-The Sonnet catalog entry has a scoped metadata/benchmark refresh; the catalog's
-global `refreshed: null` still means no complete refresh of every model is
-attested. Publishing these defaults does not activate machines or rewrite
-running sessions. Native Code's separately pinned Manifold OMP runtime and
-reviewed catalogs are not upgraded by the dotfiles OMP pin.
+Managed and plain-seeded `plan` roles use `anthropic/claude-fable-5-2:high`.
+The standalone Code generator uses Fable 5.2 everywhere its Anthropic elite
+rung appears, including generated reviewer/security-reviewer roles and their
+task overrides. Existing lanes, dials, thinking levels and fallback order are
+unchanged.
+
+Fable 5.2 has a scoped metadata/benchmark refresh; the catalog's global
+`refreshed: null` means no complete refresh of the current model set is attested.
+Publishing these defaults does not activate machines or rewrite running sessions
+or their already-generated overlays. Native Code's separately pinned Manifold
+OMP runtime and reviewed catalogs are not upgraded by the dotfiles OMP pin.
 
 Managed `task.agentModelOverrides` values are native aliases (`@task`,
 `@reviewer`, `@scout`, `@sonic`); `modelRoles` owns each selector and its

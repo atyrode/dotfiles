@@ -483,7 +483,7 @@ Managed defaults and fresh plain-OMP seeds configure only OMP's shared roles:
 | `advisor`, `tiny`, `commit`, `widget` | Haiku 5.5 | low |
 | `vision` | Sonnet 5.5 | low |
 
-The bundled OMP 18.20.0 agents retain their upstream prompts, tools and routing:
+The bundled OMP 18.20.1 agents retain their upstream prompts, tools and routing:
 
 | Bundled agent | Native model declaration | Native effort declaration |
 | --- | --- | --- |
@@ -509,7 +509,7 @@ tiny/commit have explicit empty chains; the plain seed permits Luna-low fallback
 for tiny/commit. Both sources keep Sonnet-low vision on its own empty chain,
 without a GPT-quota dependency. Both sources give `widget`
 and `memory` their own explicit empty chains, so neither inherits the default
-chain or escalates to a utility fallback. OMP 18.20.0 widget calls use
+chain or escalates to a utility fallback. OMP 18.20.1 widget calls use
 `disableReasoning: true`: the declared low suffix is inert for those calls.
 Hosted memory requests use the native `memory` role at Haiku medium, not smol
 or tiny. Mnemopi consolidation is deterministic (`llm_used: false`), not an

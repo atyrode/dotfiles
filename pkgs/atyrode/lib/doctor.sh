@@ -1189,7 +1189,11 @@ doctor_system() {
   probe_device_permissions "$data" "$platform" "$user"
   probe_homebrew_drift "$platform"
   probe_bootstrap_residue "$platform" "$host"
-  jq -e --argjson expected "$(jq -c '.checkOrder' "$system_policy")" \
+  if jq -e --arg host "$host" '.hostChecks[$host] // [] | index("manifold-dev-isolates") != null' \
+    "$system_policy" >/dev/null; then
+    probe_manifold_isolates
+  fi
+  jq -e --argjson expected "$(jq -c --arg host "$host" '.checkOrder + (.hostChecks[$host] // [])' "$system_policy")" \
     'map(.id) == $expected' <<<"$system_checks" >/dev/null ||
     die "$EX_SOFTWARE" "system diagnostics do not match the policy order"
 

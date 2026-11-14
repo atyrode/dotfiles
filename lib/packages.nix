@@ -90,12 +90,12 @@ let
         };
       })
       (
-        final: _previous:
-        lib.optionalAttrs final.stdenv.hostPlatform.isLinux {
+        _final: previous:
+        lib.optionalAttrs previous.stdenv.hostPlatform.isLinux {
           # Receiver implementation, dependency closure and runtime PATH belong
           # to Manifold. A missing upstream export must fail, never fall back
           # to the mutable application checkout.
-          preview-tools = manifold.packages.${final.stdenv.hostPlatform.system}.preview-tools;
+          preview-tools = manifold.packages.${previous.stdenv.hostPlatform.system}.preview-tools;
         }
       )
       (

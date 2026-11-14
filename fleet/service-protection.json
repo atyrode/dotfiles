@@ -27,6 +27,18 @@
       "reason": "retained terminal owner; replacing its loaded plist stops live workloads"
     },
     {
+      "scope": "user",
+      "service": "manifold-dev-isolates.service",
+      "owner": "modules/home/manifold-dev-isolates",
+      "reason": "retains the dev-only delegated hierarchy independently of receiver and hub updates"
+    },
+    {
+      "scope": "user",
+      "service": "manifold-dev-isolates.slice",
+      "owner": "modules/home/manifold-dev-isolates",
+      "reason": "contains only the opted-in dev hub scope and its hardened plugin cgroups; stopping the slice destroys those workloads"
+    },
+    {
       "scope": "system",
       "service": "sshd.service",
       "owner": "modules/nixos/vps.nix, modules/nixos/wsl.nix (services.openssh)",

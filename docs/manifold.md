@@ -271,6 +271,72 @@ qualification and a separately authorized dev-01 activation are distinct;
 this change authorizes no production promotion, credential rotation, data
 deletion or terminal-host retirement.
 
+### Opt-in hardened dev execution prerequisite
+
+`dev-01` alone declares the retained user `manifold-dev-isolates.service`
+and `manifold-dev-isolates.slice`. The holder moves itself into its service's
+`keeper` child before enabling `cpu`, `memory` and `pids`. The slice has no
+direct processes: only that holder, an explicitly opted-in Docker scope and
+the product's isolate children belong there. This is machine delegation,
+not a sandbox implementation or an automatic change to all previews.
+
+After the qualified machine apply, provision through the owning CLI:
+
+```sh
+atyrode apply dev-01 --repo PATH --preview-json
+# Apply that reviewed candidate through atyrode's usual disruption gate.
+atyrode runtime provision manifold-dev-isolates
+atyrode runtime status manifold-dev-isolates --json
+atyrode doctor system dev-01 --json
+systemctl --user status manifold-dev-isolates.service manifold-dev-isolates.slice
+journalctl --user -u manifold-dev-isolates.service
+```
+
+Apply installs the helper and root-owned, no-argument scoped provisioner and
+starts the previously absent user holder. Runtime provisioning starts an
+inactive holder without restarting an active one, then uses the normal
+operator `sudo` boundary. It derives container UID/GID 1000 from the declared
+`/etc/subuid` and `/etc/subgid` allocations, verifies those against the managed
+rootless Docker process's live namespace maps, and grants only the dedicated
+slice directory, `cgroup.procs` and `cgroup.subtree_control` to the mapped UID.
+The operator's primary group retains manager access. No ancestor, Docker
+socket, unrelated hierarchy or existing guest cgroup is changed. Initial
+ownership changes refuse if any child other than the holder already exists;
+an already-converged grant does not mutate active workloads.
+
+The stable private host path is
+`/run/user/1000/manifold-dev-isolates/cgroup`, a symlink to the dedicated
+slice. The product's **explicit dev opt-in** must set Docker
+`cgroup_parent: manifold-dev-isolates.slice`, bind only that path read/write
+at `/run/manifold-isolates`, and set
+`MANIFOLD_ISOLATE_CGROUP_ROOT=/run/manifold-isolates`. Thus the container scope
+and isolate groups have a common ancestor inside the delegated boundary:
+binding a writable sibling subtree alone cannot satisfy the kernel's
+`cgroup.procs` migration permission check. Keep private cgroup namespaces
+unless an actual final-image probe demonstrates that `nsdelegate` requires
+host cgroup namespace visibility for this sibling topology. Neither namespace
+visibility nor the subtree grant changes product seccomp, grants
+`CAP_SYS_ADMIN`, makes the container privileged, or relaxes host LSM/sysctls.
+
+Both owner units use the existing `X-Atyrode-SessionOwner`, `keep-old` and
+service-protection policy. Ordinary applies retain loaded owners; direct
+runtime stop/restart goes through the same disruption guard. The holder
+refuses manual stops and uses `KillMode=process`, `SendSIGKILL=false`; a TERM
+retains it while any guest child exists or inspection is unknown. It never
+recursively deletes cgroups. Deliberate drained owner maintenance is separate
+from receiver updates and does not retire the terminal host.
+
+Qualification must cover the dedicated `manifold-isolates` check (actual
+rendered-unit disruption, ambiguous subordinate allocations and TERM with an
+existing guest), then the real final image as UID/GID 1000: verify its Docker
+scope lies under the dedicated slice, create/configure/attach/kill/remove a
+throwaway isolate child, and test private namespace membership before any
+host-namespace opt-in. A writable root or successful group creation alone
+does not prove guardian migration. Verify that unrelated preview workflows,
+the rootless engine and existing terminal owner remain unchanged. This source
+declaration is not evidence that the delegation or hardened container has
+been activated.
+
 The stacks themselves are not declared here: they are the operator's
 checkouts, and a vhost whose upstream is down answers 502, which is what
 "not running" should look like. DNS: `preview` and `*` A records point to

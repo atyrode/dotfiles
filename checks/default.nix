@@ -352,6 +352,10 @@ let
       inherit lib pkgs;
       hostConfig = canonicalNixosConfigs.dev-01.config;
     };
+    manifold-isolates = import ./fleet/manifold-isolates.nix {
+      inherit lib pkgs;
+      nixosConfigs = canonicalNixosConfigs;
+    };
     # Two unrelated reasons land checks on this one leg.
     #
     # Platform-independent lints: their output is a pure function of the

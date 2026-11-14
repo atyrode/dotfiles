@@ -78,6 +78,8 @@ apply_job_worker=0
 . "$lib_dir/authbroker.sh"
 # shellcheck source=lib/manifold.sh
 . "$lib_dir/manifold.sh"
+# shellcheck source=lib/manifold-isolates.sh
+. "$lib_dir/manifold-isolates.sh"
 # shellcheck source=lib/windows.sh
 . "$lib_dir/windows.sh"
 # shellcheck source=lib/fleet.sh
@@ -96,10 +98,11 @@ Usage:
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode runtime list [--json]
-  atyrode runtime status [local-qwen|manifold-agent] [--json]
+  atyrode runtime status [local-qwen|manifold-agent|manifold-dev-isolates] [--json]
   atyrode runtime provision local-qwen [--data-dir PATH] [--yes]
   atyrode runtime enroll manifold-agent HOST --repo PATH [--rotate-token]
   atyrode runtime provision manifold-agent
+  atyrode runtime provision manifold-dev-isolates
   atyrode runtime start|stop|run [local-qwen]
   atyrode runtime start|stop|restart manifold-agent
   atyrode runtime autostart [local-qwen] on|off

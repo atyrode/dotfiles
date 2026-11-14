@@ -10,6 +10,9 @@
     "homebrew-drift",
     "bootstrap-residue"
   ],
+  "hostChecks": {
+    "dev-01": ["manifold-dev-isolates"]
+  },
   "loginShell": {
     "program": "zsh",
     "linuxPath": "$HOME/.nix-profile/bin/zsh",

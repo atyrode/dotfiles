@@ -26,11 +26,33 @@
 # key runs (`modules/home/ssh/deploy-keys`), and a vhost whose upstream is down
 # answers 502, which is the state "not running" should
 # have -- never a fallback to some other hub.
-{ pkgs, ... }:
+{
+  host,
+  hostId,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  isolateProvisioner = pkgs.writeScriptBin "manifold-dev-isolates-provision" (
+    "#!${pkgs.python3}/bin/python3\n"
+    + builtins.replaceStrings
+      [ "@username@" "@systemctl@" ]
+      [ host.username "${pkgs.systemd}/bin/systemctl" ]
+      (builtins.readFile ../home/manifold-dev-isolates/provision.py)
+  );
+in
 {
   # /run/current-system/sw/bin is root-owned and follows the activated closure,
   # independently of revisions the receiver deploys into mutable checkouts.
-  environment.systemPackages = [ pkgs.preview-tools ];
+  environment.systemPackages = [ pkgs.preview-tools ]
+    ++ lib.optionals (hostId == "dev-01") [ isolateProvisioner ];
+
+  # The machine supplies only a retained delegation owner. Manifold owns the
+  # sandbox policy and which dev container explicitly binds this slice.
+  home-manager.users.${host.username}.imports = lib.optionals (hostId == "dev-01") [
+    ../home/manifold-dev-isolates
+  ];
 
   services.caddy = {
     enable = true;

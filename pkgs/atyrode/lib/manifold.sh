@@ -486,6 +486,10 @@ cmd_runtime() {
     local verb="${1:-}"
     shift 2
     cmd_runtime_manifold "$verb" "$@"
+  elif [[ "${2:-}" == manifold-dev-isolates ]]; then
+    local verb="${1:-}"
+    shift 2
+    cmd_runtime_manifold_isolates "$verb" "$@"
   else
     exec "$atyrode_runtime" "$@"
   fi

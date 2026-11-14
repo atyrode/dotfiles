@@ -470,12 +470,21 @@ pkgs.runCommand "check-omp-stack"
       = "openai-codex/gpt-5.6-luna:minimal"
     test "$(yq eval '.modelRoles.vision' "$imm_home/.omp/agent/config.yml")" \
       = "openai-codex/gpt-6-luna:low"
-    # The retired path remains an explicit writable operator preference.
+    # The retired map remains an explicit writable operator preference; native
+    # config commands address the registered atomic setting, not nested keys.
+    env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config get \
+      task.agentModelOverrides --json > "$TMPDIR/local-override-before.json"
+    jq -e '.value.task == "openai-codex/gpt-5.6-luna:minimal"' \
+      "$TMPDIR/local-override-before.json" >/dev/null
     env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config set \
-      task.agentModelOverrides.task openai-codex/gpt-6-luna:low \
+      task.agentModelOverrides '{"task":"openai-codex/gpt-6-luna:low"}' \
       > "$TMPDIR/local-override-set.out"
     test "$(yq eval '.task.agentModelOverrides.task' "$imm_home/.omp/agent/config.yml")" \
       = "openai-codex/gpt-6-luna:low"
+    env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config get \
+      task.agentModelOverrides --json > "$TMPDIR/local-override-after.json"
+    jq -e '.value.task == "openai-codex/gpt-6-luna:low"' \
+      "$TMPDIR/local-override-after.json" >/dev/null
     # and the CLI refuses to set a managed path from a managed launcher
     set +e
     env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config set \

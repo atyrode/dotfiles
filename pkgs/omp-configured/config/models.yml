@@ -63,11 +63,10 @@ models:
     cost_out: 0.5
     speed: 55.6
     ttft: 1.59
-    context: 872000
+    context: 272000
     thinking: low→max
     role: >-
-      Cheap Codex rung for high-volume work and utility roles. Leads the
-      explicitly selected speed GPT tier; shares the codex-main quota.
+      Cheap Codex rung for high-volume work and utility roles. Leads the explicitly selected speed GPT tier; shares the codex-main quota.
   terra:
     id: gpt-6.1-terra
     pool: O
@@ -77,11 +76,10 @@ models:
     cost_out: 5
     speed: 56.8
     ttft: 1.68
-    context: 922000
+    context: 500000
     thinking: low→max
     role: >-
-      Regular GPT rung for explicit selection and cross-provider fallback.
-      Its base API estimate is half Sonnet's, not an OAuth bill comparison.
+      Regular GPT rung for explicit selection and cross-provider fallback. Its base API estimate is half Sonnet's, not an OAuth bill comparison.
   sol:
     id: gpt-6.1-sol
     pool: O
@@ -91,7 +89,7 @@ models:
     cost_out: 10
     speed: 37.6
     ttft: 2.04
-    context: 922000
+    context: 500000
     thinking: low→max
     role: Routine GPT-only workhorse; leads the explicitly selected smart GPT tier.
   astra:
@@ -103,12 +101,10 @@ models:
     cost_out: 50
     speed: 33.1
     ttft: 2.7
-    context: 922000
+    context: 272000
     thinking: low→max
     role: >-
-      Explicit elite OpenAI rung (tier 4). The elite dial leads with it on
-      GPT-only, GPT-led and mixed lanes; smart does not automatically promote
-      planning or judgment to this premium rung. Shares codex-main quota.
+      Explicit elite OpenAI rung (tier 4). The elite dial leads with it on GPT-only, GPT-led and mixed lanes; smart does not automatically promote planning or judgment to this premium rung. Shares codex-main quota.
   haiku:
     id: claude-haiku-5-5
     pool: A
@@ -118,12 +114,10 @@ models:
     cost_out: 0.5
     speed: 199.2
     ttft: 0.57
-    context: 1000000
+    context: 100000
     thinking: low→max
     role: >-
-      Cheap Anthropic rung for utility roles and the explicit speed Claude
-      tier. Standard context is deliberately capped at 100K; the API estimate
-      above excludes the 5x long-context premium past 100K, not an OAuth bill.
+      Cheap Anthropic rung for utility roles and the explicit speed Claude tier. Standard context is deliberately capped at 100K; the API estimate above excludes the 5x long-context premium past 100K, not an OAuth bill.
   sonnet:
     id: claude-sonnet-5-5
     pool: A
@@ -136,9 +130,7 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Routine Anthropic default/task workhorse at medium effort; routine
-      slow/plan use high without an automatic premium-tier promotion. Leads
-      the regular Claude tier. Explicit model selections remain visible.
+      Routine Anthropic default/task workhorse at medium effort; routine slow/plan use high without an automatic premium-tier promotion. Leads the regular Claude tier. Explicit model selections remain visible.
   opus:
     id: claude-opus-5-5
     pool: A
@@ -151,25 +143,20 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Explicit smart Claude rung. Available when deliberately selected,
-      not an automatic premium sibling for routine Sonnet plan/judgment.
-      Shares the ordinary claude-main quota.
+      Explicit smart Claude rung. Available when deliberately selected, not an automatic premium sibling for routine Sonnet plan/judgment. Shares the ordinary claude-main quota.
   fable:
     id: claude-fable-5-2
     pool: A
     tier: 4
     bucket: claude-main
-    cost_in: 10
-    cost_out: 50
+    cost_in: 8
+    cost_out: 40
     speed: 76.7
     ttft: 0.69
     context: 1000000
     thinking: low→max
     role: >-
-      Explicit elite Anthropic rung (tier 4). The elite dial leads with it;
-      smart does not automatically promote planning or judgment here.
-      Draws the ordinary claude-main quota. Its prior three-run benchmark
-      is retained, not remeasured by the metadata-only refresh.
+      Explicit elite Anthropic rung (tier 4). The elite dial leads with it; smart does not automatically promote planning or judgment here. Draws the ordinary claude-main quota. Its prior three-run benchmark is retained, not remeasured by the metadata-only refresh.
   flash:
     id: deepseek-v4-flash
     pool: D
@@ -182,8 +169,7 @@ models:
     context: 1048576
     thinking: low,high,max
     role: >-
-      Pay-as-you-go cheap rung. Leads the fast ds tier and hosts the
-      high-volume background on the ds lanes.
+      Pay-as-you-go cheap rung. Leads the fast ds tier and hosts the high-volume background on the ds lanes.
   pro:
     id: deepseek-v4-pro
     pool: D
@@ -197,6 +183,4 @@ models:
     thinking: low,high,max
     image: false
     role: >-
-      Pay-as-you-go workhorse. Leads the regular ds tier and is the relief
-      tail the metered-led lanes spill into; the smart tier borrows it (the
-      D ladder fills missing tiers from the nearest rung).
+      Pay-as-you-go workhorse. Leads the regular ds tier and is the relief tail the metered-led lanes spill into; the smart tier borrows it (the D ladder fills missing tiers from the nearest rung).

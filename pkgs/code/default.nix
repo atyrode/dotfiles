@@ -35,7 +35,7 @@ buildGoModule {
   # when Nix uses a long build root. Do not replace stdenv's EXIT handler.
   preCheck = ''
     codeCheckSavedTmpdir="$TMPDIR"
-    codeCheckTmpdir="$(mktemp -d /tmp/code-check.XXXXXX)"
+    codeCheckTmpdir="$(mktemp -d /tmp/c.XXXXXX)"
     cleanupCodeCheckTmpdir() {
       if [ -n "''${codeCheckTmpdir:-}" ]; then
         rm -rf -- "$codeCheckTmpdir"

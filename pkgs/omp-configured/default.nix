@@ -11,7 +11,6 @@
   jq,
   lib,
   omp,
-  omp-agents,
   patch,
   python3,
   runCommand,
@@ -41,8 +40,9 @@ let
     '';
   };
   platformRoot = runCommand "omp-managed-platform-${lib.getVersion omp}" { } ''
-    mkdir -p "$out/agents" "$out/extensions" "$out/rules"
-    cp ${omp-agents}/share/omp/agents/*.md "$out/agents/"
+    # Agent definitions stay inside OMP: copying them here would shadow the
+    # bundled source identity required by native behavior such as seance.
+    mkdir -p "$out/extensions" "$out/rules"
     cp ${./config/extensions/managed-settings-guard.ts} "$out/extensions/managed-settings-guard.ts"
     cat > "$out/extensions/managed-paths.json" <<'EOF'
     ${builtins.toJSON allManagedPaths}
@@ -98,7 +98,6 @@ let
     "codexResets.autoRedeem5h"
     "codexResets.autoRedeemWeekly"
     "task.showResolvedModelBadge"
-    "task.agentModelOverrides"
     "task.disabledAgents"
     "memory.backend"
     "theme.dark"
@@ -745,7 +744,7 @@ let
             fi
             if [[ "''${arg%%=*}" == --no-extensions ]]; then
               printf '%s\n' \
-                'OMP --no-extensions is unavailable for managed sessions because it disables the Nix-owned settings guard, agents, and rules. Use a dedicated restricted launcher instead.' >&2
+                'OMP --no-extensions is unavailable for managed sessions because it disables the Nix-owned settings guard and rules. Use a dedicated restricted launcher instead.' >&2
               return 2
             fi
             if (( i + 1 < ''${#argv[@]} )) &&
@@ -935,14 +934,10 @@ let
   # First-principles facet grid: `code generate` renders a routing block for
   # every valid (lane, model-tier, thinking, spark) combination from the model
   # catalog, baked at build time so the generator view stays immutable and
-  # reviewable. The binary that browses the grid also renders it — the second
-  # implementation this replaced had drifted from it, which is also why the two
-  # can never disagree about the combo-id format across a version bump.
-  #
-  # The model-tier dial carries a fourth notch, `elite`, on lanes whose lead
-  # pool ladders to tier 4 (Anthropic today). The `fable` and `fable-as-main`
-  # toggles this comment used to name are gone: Anthropic retired that model's
-  # separate quota window, so it is now simply pool A's top rung.
+  # reviewable. The patched standalone executable that browses the grid also
+  # renders it, keeping profile IDs and native shared-role policy in one owner.
+  # Explicit strong/elite choices remain available; ordinary deliberative roles
+  # do not silently advance the selected model tier.
   generatedProfiles = runCommand "omp-generated-profiles" { } ''
     mkdir -p "$out/share/omp"
     ${lib.getExe code} generate \

@@ -262,6 +262,27 @@
         "type": "github"
       }
     },
+    "manifold-client": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793487008,
+        "narHash": "sha256-jehc8lRL28UGGkaZuzXT9xVOWdicZ3HGjjFst+tNSqY=",
+        "owner": "atyrode",
+        "repo": "manifold",
+        "rev": "a7c2237b7cf8829ca93928339703c699300d6937",
+        "type": "github"
+      },
+      "original": {
+        "owner": "atyrode",
+        "repo": "manifold",
+        "rev": "a7c2237b7cf8829ca93928339703c699300d6937",
+        "type": "github"
+      }
+    },
     "manifold-recall-sdk-src": {
       "flake": false,
       "locked": {
@@ -412,6 +433,7 @@
         "homebrew-cask": "homebrew-cask",
         "homebrew-core": "homebrew-core",
         "manifold": "manifold",
+        "manifold-client": "manifold-client",
         "manifold-recall-sdk-src": "manifold-recall-sdk-src",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",

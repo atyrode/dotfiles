@@ -19,36 +19,30 @@ task:
     enabled: true
     merge: patch
   showResolvedModelBadge: true
-  # Preserve the persistent direct-selector preference: migrating to @role
-  # also transfers selector ownership to modelRoles, whose local value may
-  # differ. Managed launches use aliases; plain omp needs an operator-reviewed
-  # conversion of both paths (see docs/agent-tools.md).
-  agentModelOverrides:
-    reviewer: anthropic/claude-sonnet-5-5:high
-    scout: openai-codex/gpt-6-luna:medium
-    sonic: openai-codex/gpt-6-luna:minimal
-    task: openai-codex/gpt-6.1-terra:medium
+  # Native bundled agents choose shared roles. Retired per-agent overrides in
+  # existing writable configurations remain local until explicitly reviewed.
   # All bundled agents stay spawnable in plain omp. An unattributed machine
   # edit once disabled every one of them (issue #173); seeding the empty list
   # makes any future non-empty value surface as reviewable drift instead of
   # silently killing subagent spawns.
   disabledAgents: []
 
-# Sol for interactive work; cheap Luna/Terra routes for recurring background
-# roles so commit messages, titles, and subtasks never bill at the main tier.
-# The Code Manifold plugin owns reviewed per-session routing separately.
+# Everyday shared roles; the Code Manifold plugin owns reviewed per-session
+# routing separately. Local changes to these leaves survive future reseeding.
 modelRoles:
-  default: openai-codex/gpt-6.1-sol:medium
-  advisor: openai-codex/gpt-6-luna:medium
-  smol: openai-codex/gpt-6-luna:low
-  slow: openai-codex/gpt-6.1-sol:xhigh
-  task: openai-codex/gpt-6.1-terra:medium
-  plan: anthropic/claude-fable-5-2:high
-  tiny: openai-codex/gpt-6-luna:minimal
-  commit: openai-codex/gpt-6-luna:low
+  default: anthropic/claude-sonnet-5-5:medium
+  advisor: anthropic/claude-haiku-5-5:low
+  smol: anthropic/claude-haiku-5-5:medium
+  slow: anthropic/claude-sonnet-5-5:high
+  task: anthropic/claude-sonnet-5-5:medium
+  plan: anthropic/claude-sonnet-5-5:high
+  tiny: anthropic/claude-haiku-5-5:low
+  commit: anthropic/claude-haiku-5-5:low
+  widget: anthropic/claude-haiku-5-5:low
+  memory: anthropic/claude-haiku-5-5:medium
+  vision: anthropic/claude-sonnet-5-5:low
 
-# Cross-provider fallback first for the roles that matter, so a provider-wide
-# outage or a long rate-limit window degrades instead of killing the session.
+# Cross-provider fallback for shared roles, without premium-tier promotion.
 retry:
   enabled: true
   modelFallback: true
@@ -60,25 +54,28 @@ retry:
   usageReservePolicy: confirm
   fallbackChains:
     default:
-      - anthropic/claude-sonnet-5-5:medium
+      - openai-codex/gpt-6.1-sol:medium
       - openai-codex/gpt-6.1-terra:medium
     task:
-      - anthropic/claude-sonnet-5-5:medium
       - openai-codex/gpt-6.1-sol:medium
+      - openai-codex/gpt-6.1-terra:medium
     advisor:
-      - openai-codex/gpt-6.1-terra:low
+      - openai-codex/gpt-6-luna:low
     smol:
-      - openai-codex/gpt-6.1-terra:low
+      - openai-codex/gpt-6-luna:medium
     slow:
-      - anthropic/claude-sonnet-5-5:high
-      - openai-codex/gpt-6.1-terra:xhigh
+      - openai-codex/gpt-6.1-sol:high
+      - openai-codex/gpt-6.1-terra:high
     plan:
       - openai-codex/gpt-6.1-sol:high
-      - anthropic/claude-sonnet-5-5:high
+      - openai-codex/gpt-6.1-terra:high
     tiny:
-      - openai-codex/gpt-6.1-terra:low
+      - openai-codex/gpt-6-luna:low
     commit:
-      - openai-codex/gpt-6.1-terra:low
+      - openai-codex/gpt-6-luna:low
+    vision: []
+    widget: []
+    memory: []
 
 # Advisor on a cheap fast model. xhigh thinking on a per-turn watchdog buys
 # latency, not much review quality. Subagent advisors (17.3.0: per-agent
@@ -113,9 +110,10 @@ edit:
   mode: hashline
 
 # Local-first memory: mnemopi SQLite banks, one global bank so recall works
-# across projects (provenance stays in each memory's metadata). Extraction
-# runs on the hosted tiny role (Luna minimal) — better facts than a local
-# 1.2B model, no new provider involved. Storage never leaves the machine.
+# across projects (provenance stays in each memory's metadata). Hosted memory
+# requests use the native memory role (Haiku medium), not smol or tiny.
+# Mnemopi consolidation is deterministic (llm_used: false), not an LLM call.
+# Storage never leaves the machine.
 memory:
   backend: mnemopi
 mnemopi:
@@ -143,7 +141,7 @@ compaction:
 features:
   unexpectedStopDetection: smart
 
-defaultThinkingLevel: auto
+defaultThinkingLevel: medium
 personality: pragmatic
 
 # Interaction posture.

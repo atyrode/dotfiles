@@ -18,6 +18,11 @@
     manifold.url = "github:atyrode/manifold";
     manifold.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Client protocol compatibility must not advance the preview owner/transport
+    # source or the fleet agent's independently pinned release asset.
+    manifold-client.url = "github:atyrode/manifold/a7c2237b7cf8829ca93928339703c699300d6937";
+    manifold-client.inputs.nixpkgs.follows = "nixpkgs";
+
     # Recall's plugin skill and supported SDK runner are independent of the
     # legacy archive timer and preview executor. No activation follows these pins.
     babel-recall-src = {
@@ -90,6 +95,7 @@
       nixpkgs,
       babel,
       manifold,
+      manifold-client,
       babel-recall-src,
       manifold-recall-sdk-src,
       clan-core,
@@ -117,7 +123,7 @@
         inherit
           babel
           babel-recall-src
-          manifold
+          manifold-client
           manifold-recall-sdk-src
           clan-core
           lib

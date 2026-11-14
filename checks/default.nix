@@ -266,6 +266,7 @@ let
     omp-wrapper = import ./omp/omp-wrapper.nix { inherit lib pkgs; };
     omp-interactive = import ./omp/omp-interactive.nix { inherit lib pkgs; };
     omp-agent-references = import ./omp/omp-agent-references.nix { inherit lib pkgs; };
+    omp-native-routing = import ./omp/omp-native-routing.nix { inherit pkgs; };
     agent-tools-terminal-viewing = import ./atyrode/agent-terminal-viewing.nix { inherit pkgs; };
     babel-archive = import ./atyrode/babel-archive.nix {
       inherit lib pkgs;

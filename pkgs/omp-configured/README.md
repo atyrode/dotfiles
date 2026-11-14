@@ -1,8 +1,9 @@
 # omp-configured — managed, untrusted, and continuity launchers
 
 `omp-configured` packages [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`)
-with declarative launch policy and temporarily restores the frozen standalone
-[Code](https://github.com/atyrode/code) 0.19.0 launcher.
+with declarative launch policy and temporarily retains the standalone
+[Code](https://github.com/atyrode/code) 0.19.0 launcher, built from its public
+ancestor with a narrow downstream native-routing patch.
 
 ## What you get
 
@@ -14,6 +15,12 @@ with declarative launch policy and temporarily restores the frozen standalone
   restricted tools/approvals, sanitized state).
 - **`code`** — the pinned facet-dial catalog and launcher retained for daily
   continuity while native Manifold workflows are proven and accepted.
+
+Agent prompts and routing come from the pinned OMP bundle: task uses `task`,
+scout/sonic use `smol`, and reviewer uses `slow`; security-reviewer and seance
+retain native inheritance. The launchers do not emit per-agent model overrides.
+Existing writable overrides are preserved, not silently migrated by seeding;
+review and remove those separately before expecting native routing.
 
 Use the pinned binaries' `--help` output for upstream behavior; this README
 describes the four operator launchers. `omp-analysis` is also exposed only as

@@ -23,10 +23,12 @@ Dotfiles owns deployment and the operator's authored configuration:
 - Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
-Code owns catalog generation, routing selection, session overlays and its
-account-management interface as native Manifold plugins. Manifold owns their
-governed execution, shared workspace state and resource consent. Dotfiles owns
-neither a second product runtime nor a generated catalog.
+Native Code owns catalog generation, routing selection, session overlays and
+its account-management interface as Manifold plugins. Manifold owns their
+governed execution, shared workspace state and resource consent. Separately,
+dotfiles packages the historical standalone continuity bridge and generates
+its immutable routing catalog from the reviewed model registry; that is not
+the current native Code product or a second native runtime.
 
 OMP owns execution: role resolution, retries, live credential selection,
 compaction, terminal protocols, and mutable runtime data such as authentication,
@@ -36,16 +38,16 @@ repository or the Nix store.
 
 
 Activation does not rewrite or back up pre-existing mutable paths before Home
-Manager links the managed agents, rules, extensions, and skills. If
+Manager links managed configuration and skills. If
 `checkLinkTargets` reports a collision, inspect the exact path named by Home
 Manager, preserve wanted content outside the managed namespace, move or remove
 the collision, and rerun `atyrode apply`.
 
-Agents, rules, and the settings guard are assembled into
-a read-only OMP extension-package root in the Nix store and injected explicitly
-by every managed session. They are not copied into OMP's mutable agent
-directory, so named profiles and custom `PI_CODING_AGENT_DIR` roots receive the
-same platform assets without sharing authentication, sessions, or caches.
+Rules and the settings guard are assembled into a read-only OMP extension-package
+root in the Nix store and injected explicitly by every managed session. Agents
+remain built into OMP, preserving their native source identity and inheritance.
+Named profiles and custom `PI_CODING_AGENT_DIR` roots receive the same platform
+assets without sharing authentication, sessions, or caches.
 
 Reusable package derivations live in `pkgs/`, Home Manager deployment lives in
 `modules/home/agent-tools/contract.nix`, and the package overlay is assembled by
@@ -308,9 +310,18 @@ nix build .#development-image --print-build-logs
 docker load --input result
 image="$(nix eval --raw .#development-image.imageName):$(nix eval --raw .#development-image.imageTag)"
 docker run --rm -it "$image"
+code_path="$(nix eval --raw .#code.outPath)/bin/code"
+catalog="$(mktemp)"
+"$code_path" generate --models-file pkgs/omp-configured/config/models.yml --out "$catalog"
 nix shell --inputs-from . nixpkgs#tmux nixpkgs#python3 \
-  --command python3 ci/verify-development-image.py "$image"
+  --command python3 ci/verify-development-image.py "$image" \
+    --code-executable "$code_path" --catalog "$catalog"
+rm "$catalog"
 ```
+
+The smoke first checks the genuine credential-free chooser state, then exercises
+the real packaged Code with public availability-only input. It neither creates
+credentials nor launches model inference.
 
 The default command is the real login zsh, running as `developer` (UID/GID
 1000) in `/workspace`. Supplying another command retains home activation and
@@ -462,74 +473,95 @@ choices instead of being shadowed by newly seeded defaults.
 
 ### Agent role identity and fallback
 
-Existing Sol 6 roles and fallbacks in managed defaults, the plain-OMP seed
-and the standalone Code registry use `openai-codex/gpt-6.1-sol`. Their roles,
-effort levels and fallback ordering are unchanged. OMP 18.4.4 is required
-for Codex discovery to expose Sol 6.1.
+Managed defaults and fresh plain-OMP seeds configure only OMP's shared roles:
 
-The managed reviewer, existing Sonnet fallback slots, plain-OMP seed and
-standalone Code catalog use `anthropic/claude-sonnet-5-5`, preserving their
-existing effort levels. This requires OMP 18.4.3 or newer: 18.4.2 sends forced
-tool selection on eager-todo turns, which Sonnet 5.5 rejects. The
-`omp-forced-tool-choice` check exercises the packaged request path at the
-reviewer's `high` and the slow fallback's `xhigh` effort, requiring automatic
-tool selection without disabling adaptive thinking.
+| Shared roles | Routine model | Effort |
+| --- | --- | --- |
+| `default`, `task` | Sonnet 5.5 | medium |
+| `smol`, `memory` | Haiku 5.5 | medium |
+| `slow`, `plan` | Sonnet 5.5 | high |
+| `advisor`, `tiny`, `commit`, `widget` | Haiku 5.5 | low |
+| `vision` | Sonnet 5.5 | low |
 
-Managed and plain-seeded `plan` roles use `anthropic/claude-fable-5-2:high`.
-The standalone Code generator uses Fable 5.2 everywhere its Anthropic elite
-rung appears, including generated reviewer/security-reviewer roles and their
-task overrides. Existing lanes, dials, thinking levels and fallback order are
-unchanged.
+The bundled OMP 18.20.0 agents retain their upstream prompts, tools and routing:
 
-Fable 5.2 has a scoped metadata/benchmark refresh; the catalog's global
-`refreshed: null` means no complete refresh of the current model set is attested.
-Publishing these defaults does not activate machines or rewrite running sessions
-or their already-generated overlays. Native Code's separately pinned Manifold
-OMP runtime and reviewed catalogs are not upgraded by the dotfiles OMP pin.
+| Bundled agent | Native model declaration | Native effort declaration |
+| --- | --- | --- |
+| `task` | `@task` | auto |
+| `scout` | `@smol` | medium |
+| `sonic` | `@smol` | medium |
+| `reviewer` | `@slow` | inherited |
+| `security-reviewer` | none; native inheritance | inherited |
+| `seance` | none; native inheritance | inherited |
 
-Managed `task.agentModelOverrides` values are native aliases (`@task`,
-`@reviewer`, `@scout`, `@sonic`); `modelRoles` owns each selector and its
-thinking suffix. The pinned OMP accepts settings-defined roles as well as
-built-ins. Merely naming an agent `task` does not retain the `task` model role
-when its override is a concrete selector: the child loses that identity and
-cannot select the intended role-keyed `retry.fallbackChains.task`.
-Declaring the role and selecting it through `@task` preserves dispatch identity.
+There is no bundled `librarian`. Agent names are not additional model roles:
+do not create `scout`, `sonic`, `reviewer`, `security-reviewer` or `librarian`
+role rows, custom replacement agents, or per-agent model overrides to route
+them. Neither source layer emits or owns `task.agentModelOverrides`.
+An existing explicit writable override can still take precedence; source
+publication does not remove it. See [seed preservation](#seeded-plain-omp-defaults).
 
-Do not duplicate chains under concrete selectors to compensate. Two roles may
-share the same lead model but need different fallback chains; a selector-keyed
-map cannot express that distinction. Existing managed lead selectors/thinking
-levels and non-empty chains are unchanged. The additional `scout` role carries
-its existing override selector. Explicit empty `tiny`, `commit` and `sonic`
-chains express those utility roles' lead-only intent; other omitted role chains
-inherit the native `default` chain.
+Role-keyed fallback chains follow native shared-role identity rather than an
+agent-name alias policy. Sonnet default/task fall back to Sol 6.1 then Terra
+6.1 at medium; slow/plan use the same cross-provider order at high. Haiku
+`smol` falls back to Luna at medium, and advisor uses Luna at low. Managed
+tiny/commit have explicit empty chains; the plain seed permits Luna-low fallback
+for tiny/commit. Both sources keep Sonnet-low vision on its own empty chain,
+without a GPT-quota dependency. Both sources give `widget`
+and `memory` their own explicit empty chains, so neither inherits the default
+chain or escalates to a utility fallback. OMP 18.20.0 widget calls use
+`disableReasoning: true`: the declared low suffix is inert for those calls.
+Hosted memory requests use the native `memory` role at Haiku medium, not smol
+or tiny. Mnemopi consolidation is deterministic (`llm_used: false`), not an
+LLM call. The memory budget does not enable a backend or learning: managed
+memory stays off, the plain seed retains mnemopi, and existing
+enablement/autolearn preferences are unchanged.
+Empty chains prevent inheriting the default chain. No routine chain silently
+promotes to Opus, Astra or Fable, and a main-role high/max choice is not a
+utility-role effort setting. Advisor enablement and other local feature
+preferences remain separate from model selection.
 
-OMP 18.1.14 dropped that identity when initializing a child
-session. Actual retry experiments on that version showed a shared lead could
-borrow the parent's or a sibling's chain, including for an explicitly empty
-chain. Aliases fix the configuration boundary but are not proof of runtime
-enforcement ([Code #142](https://github.com/atyrode/code/issues/142)); later
-versions changed fallback handling, so repeat the native experiment below
-before asserting the current runtime's behavior.
+Usage-aware fallback retains the 5% reserve with confirmation, explicit account
+pools and provider capability/consent checks. It does not grant access to a new
+account or automatically spend either reset-credit window. A fallback entry
+is not evidence that a provider is currently served or above reserve.
 
-`omp-managed config managed --json` exposes effective aliases, selectors and
-chains, but is not proof of a child's fallback behavior. For an offline native
-regression check when changing the OMP pin or routing:
+The standalone generator retains explicit lane, tier and effort controls and
+the eight latest model families, but removes automatic deliberative tier
+promotion. Routine Anthropic-capable routing uses Sonnet medium; eligible
+OpenAI-only routing uses Sol medium. Explicit strong/elite selections remain
+visible choices, including Opus, Astra and Fable where served. Native Code's
+separately pinned Manifold OMP runtime and reviewed catalogs are not upgraded
+by the dotfiles OMP pin.
 
-1. Use disposable HOME/state/configuration with no operator credentials,
-   project extensions or network model access. Register a deterministic local
-   test provider with a failing lead and distinct successful fallback models.
-2. Configure two declared roles with the same lead and thinking level, native
-   `@role` agent overrides, and different role-keyed chains. Exercise one
-   built-in role and one settings-defined role.
-3. Spawn real task children through the pinned OMP. Make the lead return a
-   retry-eligible failure, then inspect provider calls and child output: each
-   child must use its own role's fallback, with the configured thinking level,
-   rather than the parent's/default chain or the other role's fallback.
-4. Repeat with a direct-selector override to reproduce the lost-role defect.
-   Resolving an alias or inspecting generated YAML alone is insufficient.
-5. Remove disposable state. No paid provider calls or host activation are
-   required. `omp-stack` separately checks that a persistent direct override
-   cannot displace the managed alias and that the writable preference survives.
+Routine `plan`/`slow` high is not a fixed effort for every profile: the explicit
+main-effort choices minimal, low, medium, high, xhigh and max map respectively
+to minimal, medium, high, xhigh, xhigh and max, subject to model/local capability
+clamps. This changes effort, never the selected model tier.
+
+`omp-managed config managed --json` reports owned shared selectors and chains,
+not proof of native child retries. Historical OMP 18.1.14 role-identity failures
+([Code #142](https://github.com/atyrode/code/issues/142)) cannot establish
+current behavior. When changing routing or the OMP pin, use disposable
+credential-free state and a deterministic local provider: spawn real bundled
+task/scout/sonic/reviewer children, fail shared leads, and inspect child calls
+and outputs for the intended role, effort and role-specific fallback,
+including empty chains. Check security-reviewer/seance native inheritance
+without adding aliases. No paid provider call or host activation is required.
+`omp-stack` covers managed ownership and retention of writable local overrides;
+`omp-seed` covers fresh routing and three-way preservation, not live cleanup.
+`omp-native-routing` automates this offline experiment for both raw and managed
+launchers, including a real saved source session for seance and strict native
+specialist output schemas. It preserves the bundle's source identity rather
+than installing same-name extension copies.
+
+`atyrode runtime run local-qwen` emits only native shared `modelRoles`, all
+pointing to the selected local Qwen model, including advisor if later enabled.
+Widget and vision declare that local selector at low and memory at medium,
+each with its own empty fallback chain; global model fallback remains disabled.
+Its isolated profile disables model fallback and advisor by default, retains
+the local compaction reserve, and does not forward cloud broker credentials.
+It never needs named-agent roles or per-agent overrides to select local work.
 
 ### Speech models
 
@@ -542,21 +574,38 @@ host or download/remove its models.
 
 ### Code continuity bridge
 
-[Code](https://github.com/atyrode/code) 0.19.0 is temporarily restored as the
-last accepted standalone daily launcher. Nix fetches immutable release assets
-with fixed hashes, and the pin is intentionally absent from automatic update
-jobs.
+[Code](https://github.com/atyrode/code) v0.19.0 is the historical standalone
+Go launcher retained for daily continuity, not current native Code main.
+Nix builds its already-public ancestor tag from source with fixed hashes and
+a narrow downstream routing patch. The patch changes shared-role generation
+and provides the metadata-only refresh described below; it does not revive a
+Go product in the native TypeScript plugin repository. The temporary package
+is intentionally absent from automatic pin-update jobs.
 
-The Code/Manifold transition owns coordinated updates to this temporary pin:
-when a reviewed plugin stage requires a newer CLI contract such as headless
-launch, its dotfiles follow-up may advance the binary, wrapper and catalog
-together. The freeze prevents unrelated release automation from moving the
-daily launcher; it does not make 0.19.0 a constraint on transition work.
+The Code/Manifold transition owns coordinated changes to this bridge's source,
+patch, wrapper and catalog. It must preserve supported standalone launch and
+account boundaries without creating another native/runtime owner.
 
 `omp-configured` carries the generated catalog, `CODE_*` wrapper integration
 and restricted `omp-analysis` RPC launcher required by `code engine`. The
 wrapper reuses OMP's existing auth-broker target and the general
 `atyrode runtime` interface; it creates no second broker or runtime authority.
+
+The reviewed registry is `pkgs/omp-configured/config/models.yml`. For an
+authorized metadata-only refresh, supply a scoped projection of the pinned
+`omp models --json` catalog, not a prompt or benchmark result:
+
+```text
+code generate refresh --metadata-only --models-file pkgs/omp-configured/config/models.yml --from-json <omp-models.json>
+```
+
+The OMP 18.20.0 catalog projection dated 2026-11-14 refreshes metadata for the
+eight latest families. This path performs no model probes or benchmark calls
+and preserves prior speed, TTFT and `probed` measurements. Global
+`refreshed: null` remains: this is not a complete fresh benchmark or calibration.
+Provider-reported output tokens divided by full request time are not visible
+answer throughput, intelligence rankings or OAuth billing. Do not overwrite
+those historical measurements with a one-shot latency sample.
 
 This bridge does **not** install Manifold plugin bundles, start or configure a
 Manifold hub, alter `manifold-agent`, or claim the native plugin workspace. The
@@ -652,23 +701,41 @@ requires another review. Quit and EOF leave remaining choices unreviewed;
 `ATYRODE_SEED_REVIEW=0` suppresses apply-time interactive review for
 PTY-backed automation.
 
-The persistent seed intentionally retains direct `task.agentModelOverrides`
-selectors.
-Unlike immutable managed defaults, a seed has per-leaf ownership history:
-changing an untouched override to `@task` can silently switch its model to an
-independently customized `modelRoles.task`. Adding new role leaves can likewise
-conflict with existing local routing. The current seeder has one seed for both
-fresh and existing state, not a separate fresh-only alias path; this change does
-not introduce a second seed or migration engine. Consequently even a fresh
-plain-OMP seed retains the direct-selector limitation described above.
+The source seed no longer emits per-agent overrides or named-agent special
+roles. Fresh configurations use the native grid above. For an existing
+configuration, removal from the seed retires ownership; it does not delete
+the live leaf, even if that leaf matched the old seed. Existing explicit
+`task.agentModelOverrides` and custom role rows therefore remain operator-owned
+until a separately authorized local cleanup. Untouched still-seeded role
+leaves follow the new defaults; deliberate shared-role edits and unrelated
+preferences remain local and reviewable.
+Fresh and untouched seeded `defaultThinkingLevel` intentionally moves from
+`auto` to `medium`; a deliberate local `auto` change remains reviewable drift
+under the same three-way merge. No per-agent effort declaration is rewritten.
 
-For plain OMP, an operator-reviewed conversion must compare each live override,
-the desired role selector/thinking level, and its fallback chain together;
-declare any custom role and select `@role` only after preserving that intended
-routing. Keep the resulting differences during seed drift review rather than
-using `--reset-all`, which deliberately restores the legacy seeded values.
-Managed aliases preserve managed dispatch identity without rewriting any
-plain-OMP preference.
+Before explicitly removing old live routing, compare each override and custom
+agent file with the intended native shared role, effort and fallback chain.
+Review wanted local behavior instead of converting old agent aliases into new
+custom roles or resetting unrelated preferences. Removing custom files and
+writable overrides is a local migration, not an effect of publication,
+catalog regeneration, or activation's ordinary three-way seed merge.
+
+Inspect the supported whole-setting records before an approved cleanup:
+
+```sh
+omp config get modelRoles --json
+omp config get retry.fallbackChains --json
+omp config get task.agentModelOverrides --json
+```
+
+After confirming the intended shared roles and fallbacks, an authorized
+native-routing cutover clears only the retired override record with
+`omp config reset task.agentModelOverrides`. Review custom definitions under
+`~/.omp/agent/agents/` (or the corresponding profile root) and migrate their
+callers before retiring them; do not publish a private file inventory.
+
+`--reset-all` intentionally resets still-seeded preferences; it is not the
+native-routing cleanup command and does not delete retired unowned leaves.
 
 The seed may overlap keys owned by managed launchers: `defaults.yml` and
 `policy.yml` layer above the machine configuration, so seeded values cannot
@@ -937,8 +1004,9 @@ The personal policy runs it at most once per session. When nothing is
 available it says nothing; otherwise it asks the operator before anything is
 bumped.
 
-`omp-agents` installs every bundled agent from the pinned OMP binary, without
-fixing the bundle's size: upstream additions are included automatically. The
-`omp-agent-references` check ensures every agent name referenced by managed
-defaults still exists, so an upstream rename or removal fails the build rather
-than silently misrouting a role.
+`omp-agents` exposes the pinned binary's bundle for inspection and checks,
+without fixing its size. Managed launchers use OMP's built-in agents directly,
+not extension copies that would shadow native identity (notably seance).
+`omp-agent-references` rejects source per-agent overrides and non-native shared
+role rows, validates disabled-agent references against that bundle, and checks
+that role-keyed fallback chains have declared shared selectors.

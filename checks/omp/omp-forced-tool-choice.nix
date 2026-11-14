@@ -68,7 +68,7 @@ pkgs.runCommand "check-omp-forced-tool-choice"
     # accommodate the unsupported forced choice.
     first_request claude-sonnet-5-5 | jq -e \
       '.tool_choice == {type: "auto"} and .thinking.type == "adaptive" and .output_config.effort == "high"' >/dev/null
-    # The slow-role fallback uses xhigh, which requires adaptive thinking.
+    # Explicit xhigh selections also require adaptive thinking.
     first_request claude-sonnet-5-5 xhigh | jq -e \
       '.tool_choice == {type: "auto"} and .thinking.type == "adaptive" and .output_config.effort == "xhigh"' >/dev/null
 

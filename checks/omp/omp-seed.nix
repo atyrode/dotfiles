@@ -74,6 +74,141 @@ pkgs.runCommand "check-omp-seed"
     [ "$(yq eval 'has("inspect_image")' "$config")" = "false" ] || fail "first boot seeded inspect_image settings omp removed"
     [ "$(yq eval '(.task.isolation | has("mode")) or (.providers | has("memoryModel"))' "$config")" = "false" ] \
       || fail "first boot seeded settings omp migrates away"
+    yq eval -o=json '.' "$config" | jq -e '
+      (.task | has("agentModelOverrides") | not)
+      and (.modelRoles | keys) ==
+        ["advisor", "commit", "default", "memory", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
+      and .modelRoles.widget == "anthropic/claude-haiku-5-5:low"
+      and (.retry.fallbackChains | has("widget"))
+      and .retry.fallbackChains.widget == []
+      and .modelRoles.memory == "anthropic/claude-haiku-5-5:medium"
+      and (.retry.fallbackChains | has("memory"))
+      and .retry.fallbackChains.memory == []
+      and .modelRoles.vision == "anthropic/claude-sonnet-5-5:low"
+      and (.retry.fallbackChains | has("vision"))
+      and .retry.fallbackChains.vision == []
+      and .memory.backend == "mnemopi"
+      and .mnemopi.llmMode == "smol"
+      and .autolearn.enabled == true
+      and .autolearn.autoContinue == false
+      and .defaultThinkingLevel == "medium"
+      and .retry.usageReservePct == 5
+      and .retry.usageReservePolicy == "confirm"
+      and .codexResets.autoRedeem5h == "no"
+      and .codexResets.autoRedeemWeekly == "no"
+    ' >/dev/null || fail "fresh seed lost native routing or quota guardrails"
+
+    # A deliberate AUTO choice made after the fresh medium baseline is local
+    # drift, not permission to reset that choice or other operator preferences.
+    yq eval -i '
+      .defaultThinkingLevel = "auto" |
+      .theme.dark = "operator-theme" |
+      .unrelatedPreference = "preserved"
+    ' "$config"
+    atyrode-omp-seed apply >/dev/null
+    yq eval -o=json '.' "$config" | jq -e '
+      .defaultThinkingLevel == "auto"
+      and .theme.dark == "operator-theme"
+      and .unrelatedPreference == "preserved"
+    ' >/dev/null || fail "reseed reset deliberate auto effort or unrelated preferences"
+    atyrode-omp-seed status --json | jq -e '
+      .drift | any(.key == "defaultThinkingLevel" and .reason == "local-edit")
+    ' >/dev/null || fail "deliberate auto effort was not reviewable local drift"
+
+    # Source cutover is not permission to delete persistent routing choices.
+    # Both untouched retired overrides and deliberate local edits survive;
+    # owned shared-role leaves still follow a real three-way seed update.
+    previous_seed="$TMPDIR/previous-routing-seed.yml"
+    cp "$seed" "$previous_seed"
+    yq eval -i '
+      .modelRoles.default = "fixture/previous-default:medium" |
+      .modelRoles.task = "fixture/previous-task:medium" |
+      .modelRoles.scout = "fixture/previous-scout:medium" |
+      .modelRoles.vision = "fixture/previous-vision:low" |
+      .retry.fallbackChains.vision = ["fixture/previous-vision-backup:low"] |
+      .task.agentModelOverrides = {
+        "task": "fixture/previous-task:medium",
+        "scout": "fixture/previous-scout:medium"
+      } |
+      .retry.fallbackChains.default = ["fixture/previous-fallback:medium"] |
+      del(.modelRoles.widget) |
+      del(.retry.fallbackChains.widget) |
+      del(.modelRoles.memory) |
+      del(.retry.fallbackChains.memory)
+    ' "$previous_seed"
+    for local_edit in untouched customized; do
+      export HOME="$TMPDIR/routing-$local_edit"
+      mkdir -p "$HOME"
+      OMP_SEED_FILE="$previous_seed" atyrode-omp-seed apply >/dev/null
+      config="$HOME/.omp/agent/config.yml"
+      if [ "$local_edit" = customized ]; then
+        yq eval -i '
+          .modelRoles.task = "fixture/operator-task:high" |
+          .modelRoles.widget = "fixture/operator-widget:low" |
+          .retry.fallbackChains.widget = ["fixture/operator-widget-backup:low"] |
+          .modelRoles.memory = "fixture/operator-memory:medium" |
+          .retry.fallbackChains.memory = ["fixture/operator-memory-backup:medium"] |
+          .modelRoles.vision = "fixture/operator-vision:low" |
+          .retry.fallbackChains.vision = ["fixture/operator-vision-backup:low"] |
+          .task.agentModelOverrides.task = "fixture/operator-child:low" |
+          .advisor.enabled = false |
+          .theme.dark = "operator-theme" |
+          .providers.anthropic.serverSideFallback = true |
+          .unrelatedPreference = "preserved"
+        ' "$config"
+      fi
+      retired_routes="$(yq eval -o=json '.task.agentModelOverrides' "$config")"
+      atyrode-omp-seed apply >/dev/null
+      [ "$(yq eval -o=json '.task.agentModelOverrides' "$config")" = "$retired_routes" ] \
+        || fail "source cutover implicitly rewrote persistent agent overrides"
+      [ "$(yq eval '.modelRoles.scout' "$config")" = "fixture/previous-scout:medium" ] \
+        || fail "source cutover removed a retired writable custom role"
+      [ "$(yq eval '.modelRoles.default' "$config")" = "$(yq eval '.modelRoles.default' "$seed")" ] \
+        || fail "untouched shared role did not follow the seed update"
+      [ "$(yq eval -o=json '.retry.fallbackChains.default' "$config")" = \
+        "$(yq eval -o=json '.retry.fallbackChains.default' "$seed")" ] \
+        || fail "untouched shared fallback did not follow the seed update"
+      if [ "$local_edit" = customized ]; then
+        yq eval -o=json '.' "$config" | jq -e '
+          .modelRoles.task == "fixture/operator-task:high"
+          and .modelRoles.widget == "fixture/operator-widget:low"
+          and .retry.fallbackChains.widget == ["fixture/operator-widget-backup:low"]
+          and .modelRoles.memory == "fixture/operator-memory:medium"
+          and .retry.fallbackChains.memory == ["fixture/operator-memory-backup:medium"]
+          and .modelRoles.vision == "fixture/operator-vision:low"
+          and .retry.fallbackChains.vision == ["fixture/operator-vision-backup:low"]
+          and .advisor.enabled == false
+          and .theme.dark == "operator-theme"
+          and .providers.anthropic.serverSideFallback == true
+          and .unrelatedPreference == "preserved"
+          and .retry.usageReservePct == 5
+          and .retry.usageReservePolicy == "confirm"
+          and .codexResets.autoRedeem5h == "no"
+          and .codexResets.autoRedeemWeekly == "no"
+        ' >/dev/null || fail "routing refresh reset operator preferences or quota boundaries"
+        atyrode-omp-seed status --json | jq -e '
+          .drift | any(.key == "modelRoles.task" and .reason == "local-edit")
+        ' >/dev/null || fail "local shared-role choice was not reviewable drift"
+      else
+        [ "$(yq eval '.modelRoles.task' "$config")" = "$(yq eval '.modelRoles.task' "$seed")" ] \
+          || fail "untouched task role did not follow the seed update"
+        yq eval -o=json '.' "$config" | jq -e '
+          .modelRoles.widget == "anthropic/claude-haiku-5-5:low"
+          and (.retry.fallbackChains | has("widget"))
+          and .retry.fallbackChains.widget == []
+          and .modelRoles.memory == "anthropic/claude-haiku-5-5:medium"
+          and (.retry.fallbackChains | has("memory"))
+          and .retry.fallbackChains.memory == []
+          and .modelRoles.vision == "anthropic/claude-sonnet-5-5:low"
+          and (.retry.fallbackChains | has("vision"))
+          and .retry.fallbackChains.vision == []
+        ' >/dev/null || fail "new utility role inherited the default fallback chain"
+      fi
+      before="$(sha256sum "$config" | sha256sum)"
+      atyrode-omp-seed apply >/dev/null
+      [ "$(sha256sum "$config" | sha256sum)" = "$before" ] \
+        || fail "routing refresh was not idempotent"
+    done
 
     # Scenario: a profile-scoped agent environment must never redirect the
     # seeder. PI_CODING_AGENT_DIR points at a decoy profile root; apply must

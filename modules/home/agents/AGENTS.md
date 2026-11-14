@@ -52,11 +52,14 @@ do not silently ignore, weaken or rewrite the rule.
 
 ## Task tracking
 
-For non-trivial work, treat an available task tracker as canonical live state.
-Initialize the complete scope before substantive work, and update it immediately
-when work completes, blocks, unblocks, changes scope or is abandoned. Before
-every user-facing response, reconcile the tracker with actual progress; never
-leave completed work marked open.
+Keep tracking proportional to multi-step work and continuity across interruptions.
+Use an available tracker when useful, and keep its scope, status and blockers
+accurate as work changes; do not leave completed work marked open. At a handoff,
+record what is done, what remains, unverified checks and the next safe action.
+Simple read-only work needs no separate tracker, and a response does not itself
+require a tracker update. Repository-required implementation issue gates and
+coordination for overlapping ownership still apply.
+
 ## Standing merge authorization
 
 Within explicitly operator-approved scope, default to squash-merging verified

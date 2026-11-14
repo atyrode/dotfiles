@@ -26,7 +26,7 @@ let
   ];
 
   # A managed path may name a leaf ("retry.enabled") or a whole subtree
-  # ("modelRoles", "task.agentModelOverrides"), so a YAML leaf counts as
+  # ("modelRoles", "retry.fallbackChains"), so a YAML leaf counts as
   # covered when some managed path equals it or is a dotted prefix of it.
   compare = ''
     ($nixPaths | split("\n") | map(select(length > 0))) as $managed

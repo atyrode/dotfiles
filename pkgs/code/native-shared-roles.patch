@@ -1,0 +1,3330 @@
+Public baseline: atyrode/code v0.19.0
+Commit: 23f89adec1ff4b3b85018d4c77a38b79de227bad
+
+Downstream continuity-bridge patch only; not a new Go/native Code product.
+Route native shared roles without named-agent overrides; retain explicit dials,
+account pools, independent task settings, and utility effort boundaries.
+Routine intent survives unrelated saves/restarts and rejected suggestion previews,
+and skips only known-down main quota. Legacy lane/model maps stay explicit.
+Plan/slow use the exact six-effort deliberative table without model-tier promotion.
+Local utilities respect the honest local effort ceiling; hosted memory remains
+cheap medium. Widget and memory each have an explicit empty chain;
+backend/enabled/autolearn preferences are untouched.
+Refresh exact-identity metadata without paid probes or new entitlements.
+Retain authoritative standard windows independently of authored capability tiers;
+do not infer extended windows or reject smaller windows on premium rungs.
+Tests render authored input fixtures and assert parsed consumer contracts, not
+copied generated-output snapshots. The obsolete snapshot file is removed by the
+package's explicit postPatch step, without reproducing its generated rows here.
+
+diff --git a/AGENTS.md b/AGENTS.md
+index 18fd7ab..b406b08 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -46,19 +46,22 @@ the `tui-visual-verification` skill (`~/.agents/skills`), never by eye: the rend
+ functions' unit tests do not see what reaches the terminal.
+ 
+ ```
++/tmp/code generate --models-file "$MODELS_FILE" --out /tmp/code-grid.plain
+ SESSION="tui-$$"
+ tmux new-session -d -s "$SESSION" -x 150 -y 44 \
+   "env -u NO_COLOR -u CI CLICOLOR_FORCE=1 COLORTERM=truecolor TERM=xterm-256color \
+-   CODE_GENERATED=$PWD/testdata/two-pool-golden.plain CODE_SELECTION_STATE=off \
++   CODE_GENERATED=/tmp/code-grid.plain CODE_SELECTION_STATE=off \
+    CODE_SESSION_STATE=off /tmp/code; sleep 300"
+ tmux send-keys -t "$SESSION" Down Right                  # drive a dial
+ tmux capture-pane -t "$SESSION" -pe > /tmp/frame.ansi    # the grid with SGR; -p for plain text
+ tmux kill-session -t "$SESSION"                          # your session only, never kill-server
+ ```
+ 
+-`testdata/two-pool-golden.plain` is a complete catalog (`TestGoldenCatalogTwoPool`),
+-so the generator comes up with real routing and no broker. Nerd Font glyphs are
+-Private Use Area codepoints: grep the capture for the codepoint (skill §1).
++`MODELS_FILE` names an already-reviewed authored input catalog; rendering it is
++offline and does not probe. Tests render their authored YAML fixture into a
++temporary catalog and check parsed consumer behavior, not generated snapshots.
++Nerd Font glyphs are Private Use Area codepoints: inspect the capture by
++codepoint (skill §1).
+ 
+ ## Issues and pull requests
+ 
+@@ -215,9 +218,9 @@ transcript — id, timestamp, cwd, title — never a body, and `ompu` roots neve
+    convenience.
+ 7. **Nothing new TUI-bound** (the transition rule, above). A TUI change is
+    proven with the `tui-visual-verification` skill — a tmux capture at fixed
+-   dimensions — and a catalog change against the golden
+-   (`testdata/two-pool-golden.plain`), re-recorded deliberately and reviewed,
+-   never regenerated to make a test pass.
++   dimensions — and catalog changes through the generated-catalog consumer,
++   native role/effort/tier/account boundaries and effective OMP configuration.
++   Keep authored input fixtures, not copied generated-output snapshots.
+ 8. **The sandbox declaration is the truth.** What `code engine` writes to the
+    runtime report about the containment it established (`sandbox.go`) is the
+    whole basis on which a reviewer trusts a
+diff --git a/configure_test.go b/configure_test.go
+index 8ddecc9..a63e3ba 100644
+--- a/configure_test.go
++++ b/configure_test.go
+@@ -64,7 +64,7 @@ func confirm(t *testing.T, m model) model {
+ func turnDial(t *testing.T, m model, dial string) model {
+ 	t.Helper()
+ 	found := false
+-	for i, f := range m.facets {
++	for i, f := range m.visibleFacets() {
+ 		if f.key == dial {
+ 			m.fcur, found = i, true
+ 			break
+diff --git a/docs/configuration.md b/docs/configuration.md
+index bc1342f..abdac75 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -7,12 +7,34 @@
+ | `pool` | `O` (OpenAI/Codex), `A` (Anthropic), or `D` (DeepSeek). `O` and `A` must fill tiers 1..3; `D` is optional — one verified model is enough, missing tiers borrow the nearest rung |
+ | `tier` | position on the pool's capability ladder. `1` cheap, `2` regular, `3` smart, and an optional `4` — a fourth rung the model dial's `elite` notch reaches. Ladder depth is per pool, and a provider shipping a fourth model needs no code change to light its own `elite` up: Anthropic's is `claude-fable-5`, OpenAI's `gpt-6-astra`. `0` is off the ladder entirely: the fast idle-bucket model the `spark` toggle drains |
+ | `bucket` | the quota window the model draws — drives the usage meter |
++| `context` | authoritative standard context window, not a capability-tier ranking. Different tiers may have smaller or larger windows; extended-window limits are not inferred into this value |
+ | `image` | `false` marks a text-only model, which the vision role then avoids |
+ 
+-The `elite` notch is offered only on lanes whose **lead** pool has a tier-4
+-rung. That is not the same as "any pool in the lane" — the deliberative bump
+-already gives plan/slow/reviewer the top rung at `smart`, so on a lane
+-led by a three-rung pool `elite` would render a block identical to `smart`.
++The `elite` notch is offered only on lanes whose **lead** pool serves a tier-4
++rung. `plan` and `slow` use the selected rung, with higher deliberative effort,
++never an automatic premium-tier promotion. Their effort mapping is
++`minimal→minimal`, `low→medium`, `medium→high`, `high→xhigh`, `xhigh→xhigh`,
++`max→max`, subject to actual model capabilities. Explicit lane, tier and effort
++choices remain visible. Main `max` does not propagate to utility roles:
++`smol` and `memory` use the cheap first rung at medium; `tiny`/`commit`/`widget`
++stay cheap at low, and vision stays low. Widget and memory each have an explicit
++empty fallback chain (`[]`), never an implicit main/default fallback. OMP 18.20's
++job widget disables reasoning itself, so widget's low setting is declarative
++there. Memory backend/enabled/autolearn preferences and the independent advisor
++dial are retained.
++Local utility efforts are additionally clamped to the local lane's honest
++`minimal`/`low` levels; hosted `smol`/`memory` remain medium.
++
++Routine selections prefer served Sonnet at medium when Anthropic credentials
++are available and its known main quota is not down, otherwise served Sol at
++medium. Unknown quota is not treated as exhaustion; reserve/confirmation and
++account-pool controls are unchanged. Saved `_routingIntent: "routine"` preserves
++this intent through unrelated advisor/effort changes and restarts. Rejecting a
++suggestion restores its pre-preview selection and routing intent. Explicit
++lane/model choices stay explicit; legacy saved maps containing lane/model
++remain explicit without a routine marker. Only native shared roles are configured:
++task uses `@task`/auto, reviewer `@slow`, scout/sonic `@smol`/medium; seance and
++security-reviewer retain native inheritance. No named-agent overrides are emitted.
+ 
+ `code generate init` ranks a pool's ladder by price, so it needs one for every
+ model. omp's model table lags a launch unevenly — a brand-new flagship arrives
+@@ -42,7 +64,7 @@ switches back but leaves it open, and it is never persisted with the dials.
+ | `fast` | `tier:` overlay key, per provider | buys every priority service tier the lane's pools sell. Offered on exactly those lanes: a pool declares one by setting `ServiceTier` in the provider registry, and nothing else needs editing |
+ | `prewalk` | `prewalk.enabled` + `task.prewalk` | hands the run to the `smol` role at the first edit once the plan's todo list exists. Main session and spawned task agents both move — half a run on the cheap model would not be what the label says. The target needs no setting: omp defaults it to `smol`, which the grid already routes |
+ | `planyolo` | `--plan-yolo` argv flag | starts read-only in plan mode, auto-approves the plan on the model's first resolve call, then implements. omp exposes this on the command line only, so it rides argv rather than the overlay |
+-| `fallback` | `retry.modelFallback` | on by default. Off keeps every role on its lead: the overlay writes `modelFallback: false` and carries no `fallbackChains` — omp gates every model switch it makes on retry (the error path, the usage-aware preflight, the advisor's) on that one key, so the chains would be inert and are left out rather than shown. `retry.enabled` stays on: same-model retries are not fallback. The account/broker fallback is a separate system and is untouched. The routing preview shows leads only while it is off, and the `f` chain toggle gives way to a note saying the chains are disabled for this launch |
++| `fallback` | `retry.modelFallback` | on by default. Off keeps every role on its lead: the overlay writes `modelFallback: false` and omits nonempty fallback routes. Widget and memory retain their own explicit empty chains. `retry.enabled` stays on: same-model retries are not fallback. The account/broker fallback is a separate system and is untouched. The routing preview shows leads only while it is off, and the `f` chain toggle gives way to a note saying the chains are disabled for this launch |
+ 
+ A forwarded flag of your own still wins: the dials' flags are inserted before
+ whatever you passed through.
+diff --git a/docs/manifold-transition.md b/docs/manifold-transition.md
+index 2f77466..fa46494 100644
+--- a/docs/manifold-transition.md
++++ b/docs/manifold-transition.md
+@@ -307,7 +307,7 @@ bytes, 51.6 % of it, and is out of this record's scope (D6). The launcher half:
+ | `CODE_WORKTREE_DIR`, `CODE_WORKTREE_STATE` | git worktrees and one JSON record each | `worktree.go:72,103,207-208,637-639` |
+ | `CODE_AUTH_ACCOUNT_STATE` | manual-disabled set and named presets, non-secret | `vault.go:461,615` |
+ | `CODE_USAGE_CACHE` | last availability snapshot; balance value, never a key | `usage.go:440,498` |
+-| `CODE_GENERATED` (`models.yml`, `generated.plain`) | the catalog; `testdata/two-pool-golden.plain` is 211,213 bytes (206 KiB) for two pools | `generate.go:1033-1034`; `facts.go:11` |
++| `CODE_GENERATED` (`models.yml`, `generated.plain`) | generated catalog; tests render authored YAML into temporary files rather than storing output snapshots | `generate.go`; `facts.go:11` |
+ | temp `code-auth-account-pool-*`, `code-gen-*.yml` | per-launch pool file and overlay | `vault.go:788-789`; `launch.go:157` |
+ 
+ ### 3.6 External services
+@@ -694,7 +694,7 @@ binaries it has or that it was refused at dial.
+ Every ceiling or rule that bites code specifically, in the order it bites.
+ 
+ - **64 KiB values against a 206 KiB catalog.** `MAX_STORAGE_VALUE_BYTES = 64 *
+-  1024` (`storage.ts:74`) and `testdata/two-pool-golden.plain` is 211,213
++  1024` (`storage.ts:74`); the historical two-pool catalog measured 211,213
+   bytes. One key per combo (`comboID`, `routing.go:385`), keys at most 128
+   characters (`storage.ts:58`); an index key lists the combos and a hash.
+ - **The keystroke race.** `terminal_opened` answers when the PTY exists, not
+@@ -851,7 +851,7 @@ on failure `removeContainerTile` or kill), or one door does both.
+ **`[improvement] MAX_STORAGE_VALUE_BYTES's 64 KiB ceiling has no stated
+ rationale, and no blob class for catalog-sized plugin data`** (atyrode/manifold#189,
+ references atyrode/manifold#159). Evidence: `storage.ts:74`; `http.ts:36`
+-(1 MiB bodies); `testdata/two-pool-golden.plain` at 211,213 bytes.
++(1 MiB bodies); the historical two-pool catalog measurement of 211,213 bytes.
+ Acceptance: a comment or ADR line naming the tradeoff; atyrode/manifold#159 cites a value
+ read whole and written rarely as its second instance.
+ 
+diff --git a/generate.go b/generate.go
+index 5461e89..a24d504 100644
+--- a/generate.go
++++ b/generate.go
+@@ -241,10 +241,8 @@ func (c *catalog) top(pool string) int {
+ }
+ 
+ // rung reads a pool's ladder with the requested tier clamped into what that
+-// pool actually has. Lanes and dials ask for tiers, not models: a deliberative
+-// bump or the `elite` notch can ask a pool for tier 4 when that pool only
+-// ladders to 3, and the answer must be that pool's best rung — never the empty
+-// model id, which would silently drop a role out of a rendered profile.
++// pool actually serves. The explicit elite notch may request a fourth rung
++// from a shallower pool; it must never resolve to an empty model id.
+ func (c *catalog) rung(pool string, tier int) string {
+ 	t := c.top(pool)
+ 	if t == 0 {
+@@ -259,15 +257,10 @@ func (c *catalog) rung(pool string, tier int) string {
+ 	return c.ladder[pool][tier]
+ }
+ 
+-// checkLadder rejects a ladder whose rungs are out of order. Input price used
+-// to be a fair proxy for capability, so the scaffolder ranked by it — then
+-// providers started repricing new models below predecessors they never
+-// delisted, and a $15 claude-opus-4-1 (200k context, no max thinking) outranked
+-// a $5 claude-opus-5 (1M, max) on price alone. Rather than trust the ranking,
+-// assert the property it is supposed to produce: a dearer rung must not offer
+-// less. Tiers 1..4 are one capability ladder — tier 4 is simply its optional
+-// top rung, so it must not regress on tier 3 either. Tier 0 stays off the
+-// ladder: it is a bucket-drain lead chosen for speed, not for capability.
++// checkLadder rejects a pricier rung with less thinking headroom. Context
++// windows are an independent model capability, not a universal tier ordering:
++// a deliberately selected premium rung may have a smaller standard window.
++// Tier 0 remains an off-ladder quota-bucket lead.
+ func (c *catalog) checkLadder(path string) error {
+ 	// Optional pools join only when declared; an absent pool has no rungs to
+ 	// compare and the empty-rung guard below skips it.
+@@ -288,17 +281,13 @@ func (c *catalog) checkLadder(path string) error {
+ 	return nil
+ }
+ 
+-// regression reports why rung hi is worse than the cheaper rung lo, or "" when
+-// it isn't. A pricier model with more context and more thinking headroom is the
+-// ladder working; a pricier model with less of either is a stale pick.
++// regression reports a thinking-ceiling regression on a no-cheaper rung.
++// Authored tiers and factual context windows are otherwise retained as-is.
+ func (c *catalog) regression(lo, hi string) string {
+ 	l, h := c.models[lo], c.models[hi]
+ 	if h.CostIn < l.CostIn {
+ 		return "" // cheaper up the ladder is odd but not a capability loss
+ 	}
+-	if l.Context > 0 && h.Context > 0 && h.Context < l.Context {
+-		return fmt.Sprintf("%d context at $%s/1M vs %d at $%s", h.Context, trimFloat(h.CostIn), l.Context, trimFloat(l.CostIn))
+-	}
+ 	ll, hl := c.levels[lo], c.levels[hi]
+ 	if hl[len(hl)-1] < ll[len(ll)-1] {
+ 		return fmt.Sprintf("thinking tops out at %s vs %s, and costs $%s/1M vs $%s", thScale[hl[len(hl)-1]], thScale[ll[len(ll)-1]], trimFloat(h.CostIn), trimFloat(l.CostIn))
+@@ -487,61 +476,23 @@ func (c *catalog) visionCross(pool string, tier int) string {
+ // ── the facet grid ────────────────────────────────────────────────────────────
+ 
+ var (
+-	genRoleOrder = []string{"default", "task", "plan", "slow", "reviewer",
+-		"security-reviewer", "librarian", "scout", "sonic", "advisor", "vision", "smol", "tiny", "commit"}
+-	// The bundled agents this grid routes: every ●-marked role is mirrored
+-	// into task.agentModelOverrides. security-reviewer gets reviewer's exact
+-	// routing membership; note `omp security` still injects the scan's own
+-	// model into task.agentModelOverrides at runtime, superseding this value
+-	// inside that workflow — the catalog route covers ad-hoc spawns.
+-	genAgentRoles = map[string]bool{"librarian": true, "reviewer": true,
+-		"security-reviewer": true, "scout": true, "sonic": true, "task": true}
+-	genDelib = map[string]bool{"plan": true, "slow": true,
+-		"reviewer": true, "security-reviewer": true}
+-	// Anti-tunnel-vision: on a *-led lane the reviewers cross to the opposite
+-	// provider so the output always gets an independent second eye (the advisor
+-	// crosses too, in its own branch).
+-	genCrossLed = map[string]bool{"reviewer": true, "security-reviewer": true}
+-	genUtil     = map[string]bool{"scout": true, "sonic": true, "smol": true, "tiny": true, "commit": true}
+-	// Utility roles respond to the dials but are tier-capped so none can ever
+-	// become expensive. `elite` therefore shares `smart`'s cap exactly: the cap
+-	// exists so that no notch of the model dial — not even the top one — can
+-	// make a role that runs on every keystroke cost real money.
+-	genUtilModel = map[string]map[string]int{
+-		"commit": {"fast": 1, "normal": 1, "smart": 1, "elite": 1},
+-		"tiny":   {"fast": 1, "normal": 1, "smart": 2, "elite": 2},
+-		"smol":   {"fast": 1, "normal": 2, "smart": 2, "elite": 2},
+-		"sonic":  {"fast": 1, "normal": 2, "smart": 2, "elite": 2},
+-		"scout":  {"fast": 1, "normal": 2, "smart": 2, "elite": 2},
+-	}
+-	genUtilThink = map[string]map[string]string{
+-		"commit": {"low": "minimal", "medium": "minimal", "high": "minimal", "xhigh": "low"},
+-		"tiny":   {"low": "minimal", "medium": "low", "high": "low", "xhigh": "low"},
+-		"smol":   {"low": "low", "medium": "low", "high": "medium", "xhigh": "medium"},
+-		"sonic":  {"low": "low", "medium": "medium", "high": "medium", "xhigh": "medium"},
+-		// omp's bundled scout runs at medium; it reads broadly, so it keeps a
+-		// step more thinking than smol at the same rung.
+-		"scout": {"low": "low", "medium": "medium", "high": "medium", "xhigh": "medium"},
+-	}
+-	genTierMap   = map[string]int{"fast": 1, "normal": 2, "smart": 3, "elite": 4}
+-	genBump      = map[string]string{"minimal": "low", "low": "medium", "medium": "high", "high": "xhigh", "xhigh": "xhigh"}
+-	genBaseLanes = []string{"gpt-only", "gpt-led", "mixed", "claude-led", "claude-only"}
+-	genMTiers    = []string{"fast", "normal", "smart", "elite"}
+-	genThinking  = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+-	genExtremes  = map[string]bool{"minimal": true, "max": true}
++	genRoleOrder = []string{"default", "task", "plan", "slow", "advisor", "vision", "smol", "tiny", "commit", "widget", "memory"}
++	// These are shared roles consumed by bundled agents, not agent names or
++	// task.agentModelOverrides. Native prompts, effort and inheritance remain
++	// OMP's: task uses @task/auto, reviewer @slow, scout and sonic @smol/medium.
++	genAgentRoles = map[string]bool{"task": true, "slow": true, "smol": true}
++	genDelib      = map[string]bool{"plan": true, "slow": true}
++	genUtil       = map[string]bool{"smol": true, "tiny": true, "commit": true, "widget": true, "memory": true}
++	genTierMap    = map[string]int{"fast": 1, "normal": 2, "smart": 3, "elite": 4}
++	genBump       = map[string]string{"minimal": "minimal", "low": "medium", "medium": "high", "high": "xhigh", "xhigh": "xhigh", "max": "max"}
++	genBaseLanes  = []string{"gpt-only", "gpt-led", "mixed", "claude-led", "claude-only"}
++	genMTiers     = []string{"fast", "normal", "smart", "elite"}
++	genThinking   = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+ )
+ 
+-// lanePolicy is a lane's whole role-mapping, as data. primary answers for
+-// default/task/librarian; delib hosts plan/slow/reviewer ("" = the
+-// primary); visionSmart overrides the image rung's pool at the top of the model
+-// dial (smart or elite — mixed prefers Claude's top rung there). pure lanes
+-// never cross: reviewer and advisor stay in-primary.
+-//
+-// This table is the whole generator's sense of "a lane". A new setup — a new
+-// pool pairing, a new emphasis — is a row here, not new branches in genCombo;
+-// keep it that way. The reviewer always ends up off its lead pool unless the
+-// lane is pure (the anti-tunnel-vision rule), and the advisor leads on the
+-// minimum-diversity pool (delib when set, else the crossing target).
++// lanePolicy maps only native shared roles. Explicit lanes retain their lead
++// and deliberative pools; reviewer follows @slow rather than a second route.
++// The advisor remains independently controlled by its own dial.
+ type lanePolicy struct {
+ 	primary     string
+ 	delib       string
+@@ -569,9 +520,6 @@ func (p lanePolicy) pool(role string) string {
+ 	if genDelib[role] && p.delib != "" {
+ 		return p.delib
+ 	}
+-	if genCrossLed[role] {
+-		return otherPool(p.primary)
+-	}
+ 	return p.primary
+ }
+ 
+@@ -607,7 +555,6 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 	p := pol.primary
+ 	base := genTierMap[mtier]
+ 	isPure := pol.pure
+-	extreme := genExtremes[thinking]
+ 	sparkKey := c.specialKey("spark")
+ 
+ 	// Roles that used to branch on mtier == "smart" branch on this instead:
+@@ -624,30 +571,12 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 	for _, r := range genRoleOrder {
+ 		if genUtil[r] {
+ 			rp := rprov(r)
+-			t := genUtilModel[r][mtier]
+-			th := thinking
+-			if !extreme {
+-				th = genUtilThink[r][thinking]
+-			}
+-			sparkHere := spark && sparkKey != "" &&
+-				(r == "tiny" || r == "commit" || (r == "sonic" && mtier == "fast"))
+-			var lead string
++			th := roleThinking(r, thinking)
++			lead := c.rung(rp, 1)
+ 			var fb []string
+-			if sparkHere {
++			if spark && sparkKey != "" && (r == "tiny" || r == "commit") {
++				fb = []string{lead}
+ 				lead = sparkKey
+-				if !extreme {
+-					th = "low"
+-				}
+-				fb = []string{c.rung(rp, t)}
+-			} else {
+-				lead = c.rung(rp, t)
+-				// scout and sonic are spawned constantly and block their caller,
+-				// so they keep a net; the rest are cheap enough to just retry.
+-				if r == "sonic" || r == "scout" {
+-					if sd := c.sibDown(lead); sd != "" {
+-						fb = []string{sd}
+-					}
+-				}
+ 			}
+ 			chain := dedup(fb, lead)
+ 			out[r] = roleRoute{lead, th, chain, repeatLvl(th, len(chain))}
+@@ -671,12 +600,8 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 				out[r] = roleRoute{}
+ 				continue
+ 			}
+-			// Describing an image is not a reasoning task; keep it cheap unless
+-			// the dial sits at an extreme, where the operator asked for uniformity.
++			// Image description is a utility task, even when the main dial is max.
+ 			th := "low"
+-			if extreme {
+-				th = thinking
+-			}
+ 			var chain []string
+ 			for _, k := range c.buildChain(lead, isPure) {
+ 				if c.models[k].multimodal() {
+@@ -687,47 +612,22 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 			continue
+ 		}
+ 		if r == "advisor" {
+-			if mtier == "fast" {
+-				out[r] = roleRoute{}
+-				continue
+-			}
+-			// The advisor leads on the opposite provider whenever the lane
+-			// allows crossing — the minimum diversity guarantee.
++			// The independent advisor dial applies its explicit intensity later.
++			// The catalog's routine route is always a cheap, low-effort opinion.
+ 			ap := p
+ 			if !isPure {
+ 				ap = c.advisorPool(p)
+ 			}
+ 			amod := c.rung(ap, 1)
+-			if topDial {
+-				amod = c.rung(ap, 2)
+-			}
+-			lvl, fbl := thinking, thinking
+-			if !extreme {
+-				fbl = "low"
+-				if topDial {
+-					lvl = "high"
+-				} else {
+-					lvl = "low"
+-				}
+-			}
++			lvl, fbl := "low", "low"
+ 			chain := c.buildChain(amod, isPure)
+ 			out[r] = roleRoute{amod, lvl, chain, repeatLvl(fbl, len(chain))}
+ 			continue
+ 		}
+ 		rp := rprov(r)
+ 		t := base
+-		if genDelib[r] {
+-			// The deliberative bump: one rung above the dial, capped at the
+-			// pool's own top. On a pool that ladders to 4 this is how a
+-			// deliberative role reaches the top rung straight from the `smart`
+-			// notch — the routing the retired elite-lead toggle produced by hand.
+-			t = base + 1
+-			if top := c.top(rp); t > top {
+-				t = top
+-			}
+-		}
+ 		th := thinking
+-		if !extreme && genDelib[r] {
++		if genDelib[r] {
+ 			th = genBump[thinking]
+ 		}
+ 		lead := c.rung(rp, t)
+@@ -737,6 +637,19 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 	return out
+ }
+ 
++// roleThinking keeps native utility work independent of the main effort dial,
++// including local profiles that otherwise inherit defaultThinkingLevel.
++func roleThinking(role, thinking string) string {
++	switch role {
++	case "smol", "memory":
++		return "medium"
++	case "tiny", "commit", "vision", "advisor", "widget":
++		return "low"
++	default:
++		return thinking
++	}
++}
++
+ func repeatLvl(lvl string, n int) []string {
+ 	out := make([]string, n)
+ 	for i := range out {
+@@ -753,26 +666,9 @@ func genComboID(lane, mtier, thinking string, spark bool) string {
+ 	return fmt.Sprintf("%s_%s_%s_%s", lane, mtier, thinking, sp)
+ }
+ 
+-// genValid rejects facet combos the lane cannot host. The spark facet is valid
+-// only when its provider's pool is in the lane's pool-set — a pure lane hosts
+-// only its own pool.
+-//
+-// The `elite` notch is gated on the lane's LEAD pool, not its whole pool-set,
+-// and the distinction is not pedantic: the deliberative bump (t = base+1,
+-// capped at the pool's top rung) already hands plan/slow/reviewer the
+-// tier-4 rung at `smart`, which is precisely the routing the retired `fable`
+-// toggle used to produce. So on a lane led by a pool that tops out at 3, every
+-// seat elite could change is already saturated at `smart`, and elite would
+-// render byte-identical to it — which is what the O-led lanes looked like
+-// before gpt-6-astra gave pool O a fourth rung, and what the D-led lanes
+-// still look like. On a blend the lead pool's depth alone decides: mixed with a
+-// three-rung lead would diverge in one seat only — its visionSmart override
+-// points at A, so the vision role would lead on A's tier-4 rung — but a whole
+-// notch of the model dial whose only effect is which model describes an image
+-// is not a routing choice worth offering, and it would carry a full grid of
+-// otherwise-identical blocks. What elite genuinely means is "put the lead
+-// pool's best model in the lead seats", so it exists only where the lead pool
+-// has a fourth rung to give.
++// genValid rejects facet combos the lane cannot host. Spark requires its
++// provider in the lane's pool-set. Elite is an explicit lead-pool selection,
++// offered only when that pool serves a fourth rung; no role is promoted to it.
+ func (c *catalog) genValid(lane, mtier string, spark bool) bool {
+ 	if spark && !laneHostsSpecial(lane, "spark") {
+ 		return false // no spark outside its pool's lanes
+@@ -905,16 +801,8 @@ func (c *catalog) renderAdvisors() string {
+ func (c *catalog) renderCatalog() string {
+ 	var b strings.Builder
+ 	b.WriteString("OMP generated routing — first-principles facet grid\n")
+-	// Derived, not retyped: this legend named five agents while genAgentRoles
+-	// carried six, so the grid marked a scout row the header denied existed.
+-	var agents []string
+-	for _, r := range genRoleOrder {
+-		if genAgentRoles[r] {
+-			agents = append(agents, r)
+-		}
+-	}
+-	b.WriteString("agent-backed roles: " + strings.Join(agents, " ") +
+-		" — ● marks a role mirrored into task.agentModelOverrides\n\n")
++	b.WriteString("native agent roles: task → @task (auto); reviewer → @slow; scout/sonic → @smol (medium)\n")
++	b.WriteString("seance/security-reviewer inherit native OMP routing; ● marks a shared native-agent role\n\n")
+ 	b.WriteString(c.renderAdvisors() + "\n")
+ 	b.WriteString(c.renderModelFacts() + "\n")
+ 	hasSpark := c.specialKey("spark") != ""
+@@ -953,11 +841,14 @@ func defaultCatalogPath() string {
+ 	return filepath.Join(base, "code", "generated.plain")
+ }
+ 
+-// runGenerate implements `code generate [init]`. Returns a process exit code.
++// runGenerate implements `code generate [init|refresh]`. Returns a process exit code.
+ func runGenerate(args []string) int {
+ 	if len(args) > 0 && args[0] == "init" {
+ 		return runGenerateInit(args[1:])
+ 	}
++	if len(args) > 0 && args[0] == "refresh" {
++		return runGenerateMetadataRefresh(args[1:])
++	}
+ 	modelsFile, out := defaultModelsPath(), defaultCatalogPath()
+ 	for i := 0; i < len(args); i++ {
+ 		switch args[i] {
+@@ -1027,6 +918,10 @@ const generateHelp = `code generate — render the facet-grid catalog the TUI br
+                    probe. Offline inspection only: the result is marked
+                    'probed: false' and 'code generate' will refuse to render it.
+ 
++  code generate refresh --metadata-only --models-file FILE [--from-json JSON]
++      Refresh authoritative metadata without probes, paid calls, or new account
++      entitlements. Retains measured throughput and existing reachability evidence.
++
+   code generate [--models-file FILE] [--out FILE|-]
+       Render the catalog. Defaults: models file at
+       $XDG_CONFIG_HOME/code/models.yml, output at
+diff --git a/generate_metadata.go b/generate_metadata.go
+new file mode 100644
+index 0000000..3ccdfad
+--- /dev/null
++++ b/generate_metadata.go
+@@ -0,0 +1,286 @@
++package main
++
++// Metadata refresh changes facts for existing identities, not the operator's
++// ladder or its reachability attestation. It never measures or calls a model.
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++
++	"gopkg.in/yaml.v3"
++)
++
++type metadataModel struct {
++	Provider      string   `json:"provider"`
++	ID            string   `json:"id"`
++	ContextWindow int      `json:"contextWindow"`
++	Thinking      []string `json:"thinking"`
++	Input         []string `json:"input"`
++	Cost          *struct {
++		Input  *float64 `json:"input"`
++		Output *float64 `json:"output"`
++	} `json:"cost"`
++}
++
++// metadataFields keeps the syntax tree intact, including comments, ordering,
++// folded role notes and unknown authored fields. Ambiguous mappings cannot be
++// safely updated in place.
++func metadataFields(node *yaml.Node, label string) (map[string]*yaml.Node, error) {
++	if node == nil || node.Kind != yaml.MappingNode {
++		return nil, fmt.Errorf("%s must be a mapping", label)
++	}
++	fields := make(map[string]*yaml.Node, len(node.Content)/2)
++	for i := 0; i+1 < len(node.Content); i += 2 {
++		key := node.Content[i]
++		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
++			return nil, fmt.Errorf("%s has a non-string key", label)
++		}
++		if _, exists := fields[key.Value]; exists {
++			return nil, fmt.Errorf("%s has duplicate key %q", label, key.Value)
++		}
++		fields[key.Value] = node.Content[i+1]
++	}
++	return fields, nil
++}
++
++func metadataSetScalar(node *yaml.Node, fields map[string]*yaml.Node, key, tag, value string) {
++	if tag == "!!float" && !strings.ContainsAny(value, ".eE") {
++		tag = "!!int"
++	}
++	if field := fields[key]; field != nil {
++		field.Tag, field.Value = tag, value
++		return
++	}
++	field := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
++	node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, field)
++	fields[key] = field
++}
++
++func refreshCatalogMetadata(catalogRaw, modelsRaw []byte) ([]byte, []string, int, error) {
++	var source struct {
++		Models []metadataModel `json:"models"`
++	}
++	if err := json.Unmarshal(modelsRaw, &source); err != nil {
++		return nil, nil, 0, fmt.Errorf("parsing OMP metadata: %w", err)
++	}
++	if len(source.Models) == 0 {
++		return nil, nil, 0, fmt.Errorf("OMP metadata contains no models")
++	}
++	bySelector := make(map[string]metadataModel, len(source.Models))
++	for _, model := range source.Models {
++		if model.Provider == "" || model.ID == "" {
++			return nil, nil, 0, fmt.Errorf("OMP metadata has a model without an exact provider/id")
++		}
++		selector := model.Provider + "/" + model.ID
++		if _, exists := bySelector[selector]; exists {
++			return nil, nil, 0, fmt.Errorf("OMP metadata repeats exact model %s", selector)
++		}
++		bySelector[selector] = model
++	}
++
++	var doc yaml.Node
++	decoder := yaml.NewDecoder(bytes.NewReader(catalogRaw))
++	if err := decoder.Decode(&doc); err != nil {
++		return nil, nil, 0, fmt.Errorf("parsing models file: %w", err)
++	}
++	if len(doc.Content) != 1 {
++		return nil, nil, 0, fmt.Errorf("models file must contain one document")
++	}
++	var extra yaml.Node
++	if err := decoder.Decode(&extra); err != io.EOF {
++		return nil, nil, 0, fmt.Errorf("models file must contain only one document")
++	}
++	root := doc.Content[0]
++	rootFields, err := metadataFields(root, "models file")
++	if err != nil {
++		return nil, nil, 0, err
++	}
++	if field := rootFields["refreshed"]; field != nil && field.Kind != yaml.ScalarNode {
++		return nil, nil, 0, fmt.Errorf("refreshed must be a scalar")
++	}
++	models := rootFields["models"]
++	if _, err := metadataFields(models, "models"); err != nil {
++		return nil, nil, 0, err
++	}
++	var unmatched []string
++	updated := 0
++	for i := 0; i+1 < len(models.Content); i += 2 {
++		key, node := models.Content[i].Value, models.Content[i+1]
++		fields, err := metadataFields(node, "model "+key)
++		if err != nil {
++			return nil, nil, 0, err
++		}
++		id, pool := fields["id"], fields["pool"]
++		if id == nil || pool == nil || id.Kind != yaml.ScalarNode || pool.Kind != yaml.ScalarNode || id.Value == "" {
++			return nil, nil, 0, fmt.Errorf("model %s needs an existing scalar id and pool", key)
++		}
++		provider := providerByPool(pool.Value)
++		if provider == nil {
++			return nil, nil, 0, fmt.Errorf("model %s has unknown pool %q", key, pool.Value)
++		}
++		selector := provider.ID + "/" + id.Value
++		model, found := bySelector[selector]
++		if !found {
++			if provider.Required {
++				return nil, nil, 0, fmt.Errorf("missing exact OMP metadata for %s (%s); models file unchanged", key, selector)
++			}
++			unmatched = append(unmatched, key+" ("+selector+")")
++			continue
++		}
++		if model.Cost == nil || model.Cost.Input == nil || model.Cost.Output == nil ||
++			*model.Cost.Input < 0 || *model.Cost.Output < 0 || model.ContextWindow <= 0 || len(model.Input) == 0 {
++			return nil, nil, 0, fmt.Errorf("incomplete cost/context/input metadata for %s", selector)
++		}
++		seenLevels := make(map[string]bool, len(model.Thinking))
++		knownLevels := 0
++		for _, level := range model.Thinking {
++			if level == "off" {
++				continue
++			}
++			if _, known := thIdx(level); !known || seenLevels[level] {
++				return nil, nil, 0, fmt.Errorf("unsupported or repeated thinking level %q for %s", level, selector)
++			}
++			seenLevels[level] = true
++			knownLevels++
++		}
++		if knownLevels == 0 {
++			return nil, nil, 0, fmt.Errorf("missing supported thinking metadata for %s", selector)
++		}
++		for _, field := range []string{"cost_in", "cost_out", "context", "thinking", "image"} {
++			if value := fields[field]; value != nil && value.Kind != yaml.ScalarNode {
++				return nil, nil, 0, fmt.Errorf("model %s field %s must be a scalar", key, field)
++			}
++		}
++		// Preserve the captured scope: a separately advertised extension must
++		// not replace the authoritative standard contextWindow.
++		metadataSetScalar(node, fields, "cost_in", "!!float", trimFloat(*model.Cost.Input))
++		metadataSetScalar(node, fields, "cost_out", "!!float", trimFloat(*model.Cost.Output))
++		metadataSetScalar(node, fields, "context", "!!int", strconv.Itoa(model.ContextWindow))
++		metadataSetScalar(node, fields, "thinking", "!!str", thinkingField(model.Thinking))
++		image := false
++		for _, modality := range model.Input {
++			image = image || modality == "image"
++		}
++		// Absent image means true to the renderer. Keep that compact convention,
++		// but retain an existing marker (and its comments) when capability changes.
++		if fields["image"] != nil || !image {
++			metadataSetScalar(node, fields, "image", "!!bool", strconv.FormatBool(image))
++		}
++		updated++
++	}
++	if updated == 0 {
++		return nil, nil, 0, fmt.Errorf("no existing catalog identities matched OMP metadata")
++	}
++	// A metadata-only update cannot attest a complete metadata/benchmark run.
++	metadataSetScalar(root, rootFields, "refreshed", "!!null", "null")
++	var out bytes.Buffer
++	encoder := yaml.NewEncoder(&out)
++	encoder.SetIndent(2)
++	if err := encoder.Encode(&doc); err != nil {
++		return nil, nil, 0, err
++	}
++	if err := encoder.Close(); err != nil {
++		return nil, nil, 0, err
++	}
++	return out.Bytes(), unmatched, updated, nil
++}
++
++func runGenerateMetadataRefresh(args []string) int {
++	modelsFile, fromJSON := defaultModelsPath(), ""
++	metadataOnly := false
++	for i := 0; i < len(args); i++ {
++		switch args[i] {
++		case "--metadata-only":
++			metadataOnly = true
++		case "--models-file", "--from-json":
++			flag := args[i]
++			i++
++			if i >= len(args) || args[i] == "" || strings.HasPrefix(args[i], "--") {
++				fmt.Fprintf(os.Stderr, "code generate refresh: %s needs a path\n", flag)
++				return 2
++			}
++			if flag == "--models-file" {
++				modelsFile = args[i]
++			} else {
++				fromJSON = args[i]
++			}
++		case "-h", "--help":
++			fmt.Print(generateHelp)
++			return 0
++		default:
++			fmt.Fprintf(os.Stderr, "code generate refresh: unknown flag %q\n", args[i])
++			return 2
++		}
++	}
++	if !metadataOnly {
++		fmt.Fprintln(os.Stderr, "code generate refresh: --metadata-only is required; no benchmarks or entitlement probes are performed")
++		return 2
++	}
++	fail := func(err error) int {
++		fmt.Fprintf(os.Stderr, "code generate refresh: %v\n", err)
++		return 1
++	}
++	info, err := os.Lstat(modelsFile)
++	if err != nil {
++		return fail(err)
++	}
++	if !info.Mode().IsRegular() {
++		return fail(fmt.Errorf("%s must be an existing regular models file (not a symlink)", modelsFile))
++	}
++	catalogRaw, err := os.ReadFile(modelsFile)
++	if err != nil {
++		return fail(err)
++	}
++	var modelsRaw []byte
++	source := fromJSON
++	if fromJSON != "" {
++		modelsRaw, err = os.ReadFile(fromJSON)
++	} else {
++		// This existing seam only runs `omp models --json`: neither usage nor
++		// bench is consulted, and its listing grants no account entitlement.
++		source = "omp models --json"
++		modelsRaw, err = ompModelsJSON()
++	}
++	if err != nil {
++		return fail(fmt.Errorf("reading %s: %w", source, err))
++	}
++	data, unmatched, updated, err := refreshCatalogMetadata(catalogRaw, modelsRaw)
++	if err != nil {
++		return fail(err)
++	}
++	tmp, err := os.CreateTemp(filepath.Dir(modelsFile), ".code-model-metadata-*")
++	if err != nil {
++		return fail(err)
++	}
++	defer os.Remove(tmp.Name())
++	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
++		tmp.Close()
++		return fail(err)
++	}
++	if _, err := tmp.Write(data); err != nil {
++		tmp.Close()
++		return fail(err)
++	}
++	if err := tmp.Sync(); err != nil {
++		tmp.Close()
++		return fail(err)
++	}
++	if err := tmp.Close(); err != nil {
++		return fail(err)
++	}
++	if err := os.Rename(tmp.Name(), modelsFile); err != nil {
++		return fail(err)
++	}
++	fmt.Printf("metadata-only: updated %d existing models in %s from %s; API prices are estimates, not OAuth bills\n", updated, modelsFile, source)
++	fmt.Println("speed/ttft and probed identity attestation unchanged; refreshed: null; no model calls or full benchmark refresh")
++	if len(unmatched) > 0 {
++		fmt.Fprintf(os.Stderr, "unmatched optional models (prior facts preserved): %s\n", strings.Join(unmatched, ", "))
++	}
++	return 0
++}
+diff --git a/generate_metadata_test.go b/generate_metadata_test.go
+new file mode 100644
+index 0000000..14a5f43
+--- /dev/null
++++ b/generate_metadata_test.go
+@@ -0,0 +1,309 @@
++package main
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++
++	"gopkg.in/yaml.v3"
++)
++
++const metadataCatalogFixture = `# Curated catalog comment.
++refreshed: null # No complete benchmark attestation.
++probed: true # Existing identity attestation only.
++preferences:
++  keep: operator preference
++models:
++  chosen:
++    id: exact-model
++    pool: A
++    tier: 3
++    bucket: private-window
++    cost_in: 9 # Price comment survives.
++    cost_out: 45
++    speed: 76.7 # Historical full-request rate.
++    ttft: 0.69
++    context: 100
++    thinking: low→max
++    image: false # Capability comment survives.
++    role: >-
++      Authored role note
++      with a second line.
++    custom: preserve me
++  optional:
++    id: optional-model
++    pool: D
++    tier: 1
++    bucket: separate-window
++    cost_in: 0.3
++    cost_out: 1.2
++    speed: 152
++    ttft: 0.9
++    context: 1048576
++    thinking: low,high,max
++    role: Keep this optional rung.
++`
++
++const metadataJSONFixture = `{"models":[{"provider":"anthropic","id":"exact-model","cost":{"input":0.125,"output":4},"contextWindow":200,"extendedContextWindow":1000,"thinking":["low","high","max"],"input":["text","image"]}]}`
++
++func metadataDocument(t *testing.T, raw []byte) map[string]any {
++	t.Helper()
++	var doc map[string]any
++	if err := yaml.Unmarshal(raw, &doc); err != nil {
++		t.Fatal(err)
++	}
++	return doc
++}
++
++func TestMetadataRefreshPreservesAuthoredCatalogAndMeasurements(t *testing.T) {
++	out, unmatched, count, err := refreshCatalogMetadata([]byte(metadataCatalogFixture), []byte(metadataJSONFixture))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if count != 1 || !reflect.DeepEqual(unmatched, []string{"optional (deepseek/optional-model)"}) {
++		t.Fatalf("updated=%d unmatched=%v", count, unmatched)
++	}
++	before := metadataDocument(t, []byte(metadataCatalogFixture))
++	after := metadataDocument(t, out)
++	oldModels := before["models"].(map[string]any)
++	newModels := after["models"].(map[string]any)
++	chosen := newModels["chosen"].(map[string]any)
++	// A separate extended window cannot replace this scoped standard window.
++	if chosen["cost_in"] != 0.125 || chosen["cost_out"] != 4 || chosen["context"] != 200 ||
++		chosen["thinking"] != "low,high,max" || chosen["image"] != true {
++		t.Fatalf("metadata facts were not refreshed: %v", chosen)
++	}
++	for _, field := range []string{"cost_in", "cost_out", "context", "thinking", "image"} {
++		delete(oldModels["chosen"].(map[string]any), field)
++		delete(chosen, field)
++	}
++	if !reflect.DeepEqual(before, after) {
++		t.Fatalf("authored data, identity attestation or measurements changed:\nbefore=%v\nafter=%v", before, after)
++	}
++	for _, comment := range []string{
++		"# Curated catalog comment.", "# No complete benchmark attestation.",
++		"# Existing identity attestation only.", "# Price comment survives.",
++		"# Historical full-request rate.", "# Capability comment survives.",
++	} {
++		if !bytes.Contains(out, []byte(comment)) {
++			t.Errorf("lost authored comment %q", comment)
++		}
++	}
++}
++
++func TestMetadataRefreshUpdatesEveryMatchedIdentityOnly(t *testing.T) {
++	var catalog strings.Builder
++	catalog.WriteString("refreshed: null\nprobed: true\nmodels:\n")
++	rows := make([]map[string]any, 0, 9)
++	for i := range 8 {
++		provider, pool := "anthropic", "A"
++		if i >= 4 {
++			provider, pool = "openai-codex", "O"
++		}
++		id := fmt.Sprintf("exact-%d", i)
++		fmt.Fprintf(&catalog, "  key%d:\n    id: %s\n    pool: %s\n    tier: %d\n    cost_in: 99\n    cost_out: 99\n    context: 1\n    thinking: low→max\n    speed: 42\n    ttft: 2\n", i, id, pool, i%4+1)
++		rows = append(rows, map[string]any{
++			"provider": provider, "id": id, "cost": map[string]int{"input": i + 1, "output": i + 10},
++			"contextWindow": 100 + i, "thinking": []string{"low", "medium", "high"}, "input": []string{"text"},
++		})
++	}
++	// Unselected metadata must never expand the catalog or attest a new ID.
++	rows = append(rows, map[string]any{"provider": "anthropic", "id": "not-selected"})
++	raw, err := json.Marshal(map[string]any{"models": rows})
++	if err != nil {
++		t.Fatal(err)
++	}
++	out, unmatched, count, err := refreshCatalogMetadata([]byte(catalog.String()), raw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	models := metadataDocument(t, out)["models"].(map[string]any)
++	if count != 8 || len(models) != 8 || len(unmatched) != 0 {
++		t.Fatalf("updated=%d models=%d unmatched=%v", count, len(models), unmatched)
++	}
++	for i := range 8 {
++		model := models[fmt.Sprintf("key%d", i)].(map[string]any)
++		if model["cost_in"] != i+1 || model["cost_out"] != i+10 || model["context"] != 100+i ||
++			model["image"] != false || model["thinking"] != "low→high" || model["speed"] != 42 || model["ttft"] != 2 {
++			t.Errorf("model %d: %v", i, model)
++		}
++	}
++}
++
++func TestMetadataRefreshNeverAttestsReachabilityOrCompleteBenchmarks(t *testing.T) {
++	for _, probed := range []string{"probed: true", "probed: false", ""} {
++		t.Run(probed, func(t *testing.T) {
++			raw := strings.Replace(metadataCatalogFixture, "probed: true # Existing identity attestation only.", probed, 1)
++			raw = strings.Replace(raw, "refreshed: null", "refreshed: 2020-01-01", 1)
++			out, _, _, err := refreshCatalogMetadata([]byte(raw), []byte(metadataJSONFixture))
++			if err != nil {
++				t.Fatal(err)
++			}
++			before, after := metadataDocument(t, []byte(raw)), metadataDocument(t, out)
++			oldProbed, oldExists := before["probed"]
++			newProbed, newExists := after["probed"]
++			if oldExists != newExists || !reflect.DeepEqual(oldProbed, newProbed) || after["refreshed"] != nil {
++				t.Fatalf("metadata refresh changed attestation: %v", after)
++			}
++		})
++	}
++}
++
++func TestMetadataRefreshImageDefaultAndCapabilityChanges(t *testing.T) {
++	for _, tc := range []struct {
++		name, marker, input string
++		want                any
++	}{
++		{"implicit-capable", "", `["text","image"]`, nil},
++		{"becomes-text-only", "", `["text"]`, false},
++		{"explicit-capable", "    image: true\n", `["text"]`, false},
++		{"becomes-capable", "    image: false\n", `["text","image"]`, true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			catalog := strings.Replace(metadataCatalogFixture, "    image: false # Capability comment survives.\n", tc.marker, 1)
++			metadata := strings.Replace(metadataJSONFixture, `["text","image"]`, tc.input, 1)
++			out, _, _, err := refreshCatalogMetadata([]byte(catalog), []byte(metadata))
++			if err != nil {
++				t.Fatal(err)
++			}
++			model := metadataDocument(t, out)["models"].(map[string]any)["chosen"].(map[string]any)
++			if model["image"] != tc.want {
++				t.Errorf("image=%v, want %v", model["image"], tc.want)
++			}
++		})
++	}
++}
++
++func metadataForbidProbes(t *testing.T) {
++	t.Helper()
++	oldBench, oldUsage := ompBenchJSON, ompUsageJSON
++	ompBenchJSON = func([]string) ([]byte, error) {
++		t.Error("metadata refresh must not call bench or probe a model")
++		return nil, fmt.Errorf("unexpected bench")
++	}
++	ompUsageJSON = func() ([]byte, error) {
++		t.Error("metadata refresh must not inspect account usage")
++		return nil, fmt.Errorf("unexpected usage")
++	}
++	t.Cleanup(func() { ompBenchJSON, ompUsageJSON = oldBench, oldUsage })
++}
++
++func TestMetadataRefreshCommandOfflineAndMetadataOnlyLive(t *testing.T) {
++	for _, offline := range []bool{true, false} {
++		t.Run(fmt.Sprintf("offline=%t", offline), func(t *testing.T) {
++			metadataForbidProbes(t)
++			calls := 0
++			oldModels := ompModelsJSON
++			ompModelsJSON = func() ([]byte, error) {
++				calls++
++				return []byte(metadataJSONFixture), nil
++			}
++			t.Cleanup(func() { ompModelsJSON = oldModels })
++			dir := t.TempDir()
++			path := filepath.Join(dir, "models.yml")
++			if err := os.WriteFile(path, []byte(metadataCatalogFixture), 0o640); err != nil {
++				t.Fatal(err)
++			}
++			args := []string{"--metadata-only", "--models-file", path}
++			if offline {
++				jsonPath := filepath.Join(dir, "metadata.json")
++				if err := os.WriteFile(jsonPath, []byte(metadataJSONFixture), 0o600); err != nil {
++					t.Fatal(err)
++				}
++				args = append(args, "--from-json", jsonPath)
++			}
++			if code := runGenerateMetadataRefresh(args); code != 0 {
++				t.Fatalf("refresh exit=%d", code)
++			}
++			wantCalls := 1
++			if offline {
++				wantCalls = 0
++			}
++			if calls != wantCalls {
++				t.Errorf("model metadata calls=%d, want %d", calls, wantCalls)
++			}
++			out, err := os.ReadFile(path)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if metadataDocument(t, out)["models"].(map[string]any)["chosen"].(map[string]any)["cost_in"] != 0.125 {
++				t.Fatal("command did not commit metadata")
++			}
++			info, err := os.Stat(path)
++			if err != nil || info.Mode().Perm() != 0o640 {
++				t.Fatalf("file permissions were not preserved: info=%v err=%v", info, err)
++			}
++		})
++	}
++}
++
++func TestMetadataRefreshFailuresLeaveExistingFileUntouched(t *testing.T) {
++	for _, tc := range []struct {
++		name, catalog, metadata string
++	}{
++		{"missing-exact-id", metadataCatalogFixture, strings.Replace(metadataJSONFixture, `"exact-model"`, `"exact-model-new"`, 1)},
++		{"wrong-provider", metadataCatalogFixture, strings.Replace(metadataJSONFixture, `"anthropic"`, `"openai-codex"`, 1)},
++		{"missing-later-required", metadataCatalogFixture + "  later:\n    id: absent\n    pool: O\n", metadataJSONFixture},
++		{"incomplete-cost", metadataCatalogFixture, strings.Replace(metadataJSONFixture, `"output":4`, `"other":4`, 1)},
++		{"incomplete-input", metadataCatalogFixture, strings.Replace(metadataJSONFixture, `"input":["text","image"]`, `"input":[]`, 1)},
++		{"invalid-json", metadataCatalogFixture, `{`},
++		{"empty-metadata", metadataCatalogFixture, `{"models":[]}`},
++		{"duplicate-id", metadataCatalogFixture, `{"models":[{"provider":"anthropic","id":"exact-model"},{"provider":"anthropic","id":"exact-model"}]}`},
++		{"second-document", metadataCatalogFixture + "---\nkeep: this too\n", metadataJSONFixture},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			metadataForbidProbes(t)
++			dir := t.TempDir()
++			path, jsonPath := filepath.Join(dir, "models.yml"), filepath.Join(dir, "metadata.json")
++			if err := os.WriteFile(path, []byte(tc.catalog), 0o600); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.WriteFile(jsonPath, []byte(tc.metadata), 0o600); err != nil {
++				t.Fatal(err)
++			}
++			if code := runGenerateMetadataRefresh([]string{"--metadata-only", "--models-file", path, "--from-json", jsonPath}); code != 1 {
++				t.Fatalf("invalid refresh exit=%d, want 1", code)
++			}
++			got, err := os.ReadFile(path)
++			if err != nil || string(got) != tc.catalog {
++				t.Fatalf("failed refresh changed original file: %q err=%v", got, err)
++			}
++			entries, err := os.ReadDir(dir)
++			if err != nil || len(entries) != 2 {
++				t.Fatalf("failed refresh left temporary files: %v err=%v", entries, err)
++			}
++		})
++	}
++}
++
++func TestMetadataRefreshRequiresExplicitGuardAndExistingFile(t *testing.T) {
++	metadataForbidProbes(t)
++	oldModels := ompModelsJSON
++	ompModelsJSON = func() ([]byte, error) {
++		t.Error("invalid refresh must fail before retrieving metadata")
++		return nil, fmt.Errorf("unexpected metadata request")
++	}
++	t.Cleanup(func() { ompModelsJSON = oldModels })
++	path := filepath.Join(t.TempDir(), "missing.yml")
++	for _, args := range [][]string{
++		{"--models-file", path},
++		{"--metadata-only", "--from-json"},
++		{"--metadata-only", "--models-file", "--from-json", "unused"},
++		{"--metadata-only", "--refresh"},
++	} {
++		if code := runGenerateMetadataRefresh(args); code != 2 {
++			t.Errorf("args=%v exit=%d, want 2", args, code)
++		}
++	}
++	if code := runGenerateMetadataRefresh([]string{"--metadata-only", "--models-file", path}); code != 1 {
++		t.Errorf("missing existing file exit=%d, want 1", code)
++	}
++	if _, err := os.Stat(path); !os.IsNotExist(err) {
++		t.Fatalf("metadata refresh created a new catalog: %v", err)
++	}
++}
+diff --git a/generate_test.go b/generate_test.go
+index ac39f37..7afe2fe 100644
+--- a/generate_test.go
++++ b/generate_test.go
+@@ -7,6 +7,8 @@ import (
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
++
++	"gopkg.in/yaml.v3"
+ )
+ 
+ // fixtureYML mirrors the shape of a real catalog: both pools filled, the
+@@ -124,107 +126,58 @@ func fixtureCatalog(t *testing.T) *catalog {
+ 	return c
+ }
+ 
+-const goldenAdvisors = `__advisors__  advisor dial (level context → chain)
+-  glance gpt gpt-5.6-luna:low
+-  review gpt gpt-5.6-terra:medium → gpt-5.6-luna:low
+-  audit gpt gpt-5.6-sol:high → gpt-5.6-terra:high → gpt-5.6-luna:low
+-  glance claude claude-haiku-4-5:low
+-  review claude claude-sonnet-5:medium → claude-haiku-4-5:low
+-  audit claude claude-opus-5:high → claude-sonnet-5:high → claude-haiku-4-5:low
+-`
+-
+-// goldenFacts pins the trailing bucket column the TUI's quota meter reads.
+-const goldenFacts = `__models__  model facts (id in out speed ttft bucket provider — $/1M in·out, tok/s, s)
+-  gpt-5.6-luna 1 6 52.3 1.18 codex-main openai-codex
+-  gpt-5.6-terra 2.5 15 51.8 1.74 codex-main openai-codex
+-  gpt-5.6-sol 5 30 31.5 4.59 codex-main openai-codex
+-  gpt-5.3-codex-spark 1.75 14 286.7 5.56 codex-spark openai-codex
+-  claude-haiku-4-5 1 5 48.9 1.7 claude-main anthropic
+-  claude-sonnet-5 2 10 35.2 3.84 claude-main anthropic
+-  claude-opus-5 5 25 46.6 1.77 claude-main anthropic
+-  claude-fable-5 10 50 54 6.9 claude-fable anthropic
+-`
+-
+-// goldenMixedSmart is the routing the retired `fable` toggle used to produce by
+-// hand: on a mixed lane at `smart` the deliberative bump (t = base+1, capped at
+-// the pool's own top rung) lands plan/slow/reviewer on pool A's tier-4
+-// rung. The toggle is gone; the block it produced must not be.
+-const goldenMixedSmart = `mixed_smart_medium_sp  mixed · smart · medium · spark
+-  thinking medium · fallback on · advisor on
+-    default    gpt-5.6-sol:medium       → gpt-5.6-terra:medium → claude-opus-5:medium → claude-sonnet-5:medium
+-  ● task       gpt-5.6-sol:medium       → gpt-5.6-terra:medium → claude-opus-5:medium → claude-sonnet-5:medium
+-    plan       claude-fable-5:high      → claude-opus-5:high → gpt-5.6-sol:high → gpt-5.6-terra:high
+-    slow       claude-fable-5:high      → claude-opus-5:high → gpt-5.6-sol:high → gpt-5.6-terra:high
+-  ● reviewer   claude-fable-5:high      → claude-opus-5:high → gpt-5.6-sol:high → gpt-5.6-terra:high
+-  ● security-reviewer claude-fable-5:high      → claude-opus-5:high → gpt-5.6-sol:high → gpt-5.6-terra:high
+-  ● librarian  gpt-5.6-sol:medium       → gpt-5.6-terra:medium → claude-opus-5:medium → claude-sonnet-5:medium
+-  ● scout      gpt-5.6-terra:medium     → gpt-5.6-luna:medium
+-  ● sonic      gpt-5.6-terra:medium     → gpt-5.6-luna:medium
+-    advisor    claude-sonnet-5:high     → claude-haiku-4-5:low → gpt-5.6-terra:low → gpt-5.6-luna:low
+-    vision     claude-opus-5:low        → claude-sonnet-5:low → gpt-5.6-sol:low → gpt-5.6-terra:low
+-    smol       gpt-5.6-terra:low
+-    tiny       gpt-5.3-codex-spark:low  → gpt-5.6-terra:low
+-    commit     gpt-5.3-codex-spark:low  → gpt-5.6-luna:low
+-`
+-
+-// goldenClaudeElite is the other half of what the retired toggles produced: the
+-// old `fable`+`main` pair put the tier-4 rung in the `default` seat as well as
+-// the deliberative ones. That is now exactly the `elite` notch — base = 4, so
+-// every capability seat reads the pool's top rung directly rather than through
+-// the deliberative bump. The utility seats stay capped (scout/smol/tiny on
+-// tier 2, commit on tier 1): no notch of the model dial may make a role that
+-// runs on every keystroke expensive.
+-const goldenClaudeElite = `claude-only_elite_max_nosp  claude-only · elite · max
+-  thinking max · fallback on · advisor on
+-    default    claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-  ● task       claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-    plan       claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-    slow       claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-  ● reviewer   claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-  ● security-reviewer claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-  ● librarian  claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-  ● scout      claude-sonnet-5:max      → claude-haiku-4-5:xhigh
+-  ● sonic      claude-sonnet-5:max      → claude-haiku-4-5:xhigh
+-    advisor    claude-sonnet-5:max      → claude-haiku-4-5:xhigh
+-    vision     claude-fable-5:max       → claude-opus-5:max → claude-sonnet-5:max
+-    smol       claude-sonnet-5:max
+-    tiny       claude-sonnet-5:max
+-    commit     claude-haiku-4-5:xhigh
+-`
+-
+-// goldenClaudeSmart is the one combo where the Anthropic smart rung is itself
+-// the padded lead column, so a change to that model's id shifts the padding
+-// rather than just swapping a chain token. Every other golden here has a pool-O
+-// model or the tier-4 rung in the lead.
+-const goldenClaudeSmart = `claude-only_smart_medium_nosp  claude-only · smart · medium
+-  thinking medium · fallback on · advisor on
+-    default    claude-opus-5:medium     → claude-sonnet-5:medium → claude-haiku-4-5:medium
+-  ● task       claude-opus-5:medium     → claude-sonnet-5:medium → claude-haiku-4-5:medium
+-    plan       claude-fable-5:high      → claude-opus-5:high → claude-sonnet-5:high
+-    slow       claude-fable-5:high      → claude-opus-5:high → claude-sonnet-5:high
+-  ● reviewer   claude-fable-5:high      → claude-opus-5:high → claude-sonnet-5:high
+-  ● security-reviewer claude-fable-5:high      → claude-opus-5:high → claude-sonnet-5:high
+-  ● librarian  claude-opus-5:medium     → claude-sonnet-5:medium → claude-haiku-4-5:medium
+-  ● scout      claude-sonnet-5:medium   → claude-haiku-4-5:medium
+-  ● sonic      claude-sonnet-5:medium   → claude-haiku-4-5:medium
+-    advisor    claude-sonnet-5:high     → claude-haiku-4-5:low
+-    vision     claude-opus-5:low        → claude-sonnet-5:low → claude-haiku-4-5:low
+-    smol       claude-sonnet-5:low
+-    tiny       claude-sonnet-5:low
+-    commit     claude-haiku-4-5:minimal
+-`
++// Consumers read a freshly rendered catalog from authored input, never a
++// checked-in generated-output snapshot.
++func fixtureCatalogPath(t *testing.T) string {
++	t.Helper()
++	path := filepath.Join(t.TempDir(), "generated.plain")
++	if err := os.WriteFile(path, []byte(fixtureCatalog(t).renderCatalog()), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	return path
++}
+ 
+-func TestGoldenAdvisors(t *testing.T) {
++func TestRenderedAdvisorChainsKeepExplicitIntensity(t *testing.T) {
+ 	c := fixtureCatalog(t)
+-	if got := c.renderAdvisors(); got != goldenAdvisors {
+-		t.Errorf("advisors mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, goldenAdvisors)
++	advisors := parseAdvisors(strings.Split(c.renderAdvisors(), "\n"))
++	for _, pool := range []string{"O", "A"} {
++		context := providerByPool(pool).Lane
++		for _, intensity := range []struct {
++			name   string
++			tiers  []int
++			levels []string
++		}{
++			{"glance", []int{1}, []string{"low"}},
++			{"review", []int{2, 1}, []string{"medium", "low"}},
++			{"audit", []int{3, 2, 1}, []string{"high", "high", "low"}},
++		} {
++			chain := advisors[intensity.name+"/"+context]
++			if len(chain) != len(intensity.tiers) {
++				t.Fatalf("%s/%s has %d advisor rungs, want %d", context, intensity.name, len(chain), len(intensity.tiers))
++			}
++			for i, tier := range intensity.tiers {
++				want := c.models[c.rung(pool, tier)].ID + ":" + intensity.levels[i]
++				if chain[i] != want {
++					t.Errorf("%s/%s rung %d = %s, want %s", context, intensity.name, i, chain[i], want)
++				}
++			}
++		}
+ 	}
+ }
+ 
+-func TestGoldenModelFacts(t *testing.T) {
++func TestRenderedModelFactsRoundTrip(t *testing.T) {
+ 	c := fixtureCatalog(t)
+-	if got := c.renderModelFacts(); got != goldenFacts {
+-		t.Errorf("model facts mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, goldenFacts)
++	facts := parseFacts(strings.Split(c.renderModelFacts(), "\n"))
++	if len(facts) != len(c.models) {
++		t.Fatalf("parsed %d model facts, want %d authored models", len(facts), len(c.models))
++	}
++	for _, authored := range c.models {
++		got, exists := facts[authored.ID]
++		if !exists || got.in != authored.CostIn || got.out != authored.CostOut ||
++			got.speed != authored.Speed || got.ttft != authored.TTFT ||
++			got.bucket != authored.Bucket || got.pool != authored.Pool {
++			t.Errorf("model %s facts lost through the renderer/parser: %+v", authored.ID, got)
++		}
+ 	}
+ }
+ 
+@@ -236,30 +189,9 @@ func TestModelFactsWithoutBuckets(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatalf("loadCatalog: %v", err)
+ 	}
+-	if !strings.Contains(c.renderModelFacts(), "  gpt-5.6-luna 1 6 52.3 1.18 codex-main openai-codex\n") {
+-		t.Errorf("bucketless model row should derive the pool's main bucket:\n%s", c.renderModelFacts())
+-	}
+-}
+-
+-func TestGoldenCombos(t *testing.T) {
+-	c := fixtureCatalog(t)
+-	for _, tc := range []struct {
+-		name, want string
+-		render     func() string
+-	}{
+-		{"mixed_smart_medium_sp", goldenMixedSmart, func() string {
+-			return c.renderCombo("mixed", "smart", "medium", true)
+-		}},
+-		{"claude-only_elite_max_nosp", goldenClaudeElite, func() string {
+-			return c.renderCombo("claude-only", "elite", "max", false)
+-		}},
+-		{"claude-only_smart_medium_nosp", goldenClaudeSmart, func() string {
+-			return c.renderCombo("claude-only", "smart", "medium", false)
+-		}},
+-	} {
+-		if got := tc.render(); got != tc.want {
+-			t.Errorf("%s mismatch:\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, tc.want)
+-		}
++	facts := parseFacts(strings.Split(c.renderModelFacts(), "\n"))
++	if got := facts["gpt-5.6-luna"]; got.bucket != "codex-main" || got.pool != "O" {
++		t.Errorf("bucketless model did not derive its native pool/window: %+v", got)
+ 	}
+ }
+ 
+@@ -382,57 +314,16 @@ func TestEveryEmittedRoleIsWeighted(t *testing.T) {
+ 	}
+ }
+ 
+-// scout is an agent-backed role; it must carry the agent marker so
+-// genConfigYAML mirrors it into task.agentModelOverrides.
+-func TestScoutIsAgentBacked(t *testing.T) {
++func TestNativeSharedRoleInventory(t *testing.T) {
+ 	c := fixtureCatalog(t)
+-	block := c.renderCombo("mixed", "normal", "medium", false)
+-	if !strings.Contains(block, "● scout ") {
+-		t.Errorf("scout must render as an agent-backed role:\n%s", block)
++	want := []string{"default", "task", "plan", "slow", "advisor", "vision", "smol", "tiny", "commit", "widget", "memory"}
++	routes := c.genCombo("claude-only", "normal", "medium", false)
++	if len(routes) != len(want) {
++		t.Fatalf("generated %d roles, want only %v", len(routes), want)
+ 	}
+-}
+-
+-// The header legend tells the reader which roles the ● marker can appear on.
+-// It used to be a hand-typed list beside genAgentRoles, so adding scout marked
+-// a row the header denied existed. Derive-or-drift: the legend must name
+-// exactly the roles the grid actually marks.
+-func TestAgentLegendMatchesMarkedRoles(t *testing.T) {
+-	c := fixtureCatalog(t)
+-	out := c.renderCatalog()
+-	var legend string
+-	for _, l := range strings.Split(out, "\n") {
+-		if strings.HasPrefix(l, "agent-backed roles: ") {
+-			legend = strings.TrimPrefix(l, "agent-backed roles: ")
+-			break
+-		}
+-	}
+-	if legend == "" {
+-		t.Fatal("catalog header must carry an agent-backed-roles legend")
+-	}
+-	named := map[string]bool{}
+-	for _, f := range strings.Fields(legend) {
+-		if f == "—" {
+-			break
+-		}
+-		named[f] = true
+-	}
+-	marked := map[string]bool{}
+-	for _, l := range strings.Split(out, "\n") {
+-		if f := strings.Fields(l); len(f) > 1 && f[0] == "●" {
+-			marked[f[1]] = true
+-		}
+-	}
+-	if len(marked) == 0 {
+-		t.Fatal("no ● rows rendered - the marker or the fixture regressed")
+-	}
+-	for r := range marked {
+-		if !named[r] {
+-			t.Errorf("role %q renders with ● but the legend omits it", r)
+-		}
+-	}
+-	for r := range named {
+-		if !marked[r] {
+-			t.Errorf("legend names %q but no row carries the marker", r)
++	for _, role := range want {
++		if routes[role].lead == "" {
++			t.Errorf("native role %s has no route", role)
+ 		}
+ 	}
+ }
+@@ -569,13 +460,10 @@ func TestLoadCatalogValidation(t *testing.T) {
+ 	}
+ }
+ 
+-// A dearer rung offering less context or less thinking headroom is the exact
+-// shape a price-ranked scaffold used to produce, so the catalog refuses it.
++// A dearer rung with a lower thinking ceiling still indicates a stale pick;
++// differing context windows alone do not determine authored capability tiers.
+ func TestLadderRegressionRejected(t *testing.T) {
+ 	cases := map[string]string{
+-		"smaller context at a higher price": strings.Replace(fixtureYML,
+-			"    id: claude-opus-5\n    pool: A\n    tier: 3\n    bucket: claude-main\n    cost_in: 5\n    cost_out: 25\n    speed: 46.6\n    ttft: 1.77\n    context: 1000000\n    thinking: low→max\n",
+-			"    id: claude-opus-4-1\n    pool: A\n    tier: 3\n    bucket: claude-main\n    cost_in: 15\n    cost_out: 75\n    speed: 46.6\n    ttft: 1.77\n    context: 200000\n    thinking: minimal→xhigh\n", 1),
+ 		"lower thinking ceiling at a higher price": strings.Replace(fixtureYML,
+ 			"    id: claude-opus-5\n    pool: A\n    tier: 3\n    bucket: claude-main\n    cost_in: 5\n    cost_out: 25\n    speed: 46.6\n    ttft: 1.77\n    context: 1000000\n    thinking: low→max\n",
+ 			"    id: claude-opus-4-1\n    pool: A\n    tier: 3\n    bucket: claude-main\n    cost_in: 15\n    cost_out: 75\n    speed: 46.6\n    ttft: 1.77\n    context: 1000000\n    thinking: low→xhigh\n", 1),
+@@ -590,8 +478,7 @@ func TestLadderRegressionRejected(t *testing.T) {
+ 			t.Errorf("%s: error should name the regression, got %v", name, err)
+ 		}
+ 	}
+-	// The healthy fixture must not trip it: tier 3 costs more than tier 2 while
+-	// matching it on context and thinking, which is the ladder working.
++	// The healthy fixture's thinking headroom must not trip the check.
+ 	if _, err := catalogFrom(t, fixtureYML); err != nil {
+ 		t.Errorf("healthy ladder rejected: %v", err)
+ 	}
+@@ -1514,19 +1401,50 @@ const fixtureYMLDeepSeekOneRung = fixtureYML + `  v4:
+     image: false
+ `
+ 
+-// TestGoldenCatalogTwoPool is the byte-compat contract of the N-pool
+-// generalisation: a two-pool models file renders the exact catalog the old
+-// binary-pool renderer produced (modulo the reviewed additions the golden
+-// carries: the __models__ bucket+provider columns and the security-reviewer
+-// role).
+-func TestGoldenCatalogTwoPool(t *testing.T) {
+-	want, err := os.ReadFile(filepath.Join("testdata", "two-pool-golden.plain"))
+-	if err != nil {
+-		t.Fatal(err)
+-	}
++func TestRenderedCatalogRoutesSurviveConsumerRoundTrip(t *testing.T) {
+ 	c := fixtureCatalog(t)
+-	if got := c.renderCatalog(); got != string(want) {
+-		t.Errorf("two-pool catalog is no longer byte-identical to the golden (diff it against testdata/two-pool-golden.plain to review)\ngot %d bytes, want %d", len(got), len(want))
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	m := model{
++		generated: blocks,
++		facts:     parseFacts(blocks["__models__"]),
++	}
++	for _, lane := range c.lanes() {
++		for _, tier := range genMTiers {
++			for _, effort := range genThinking {
++				for _, spark := range []bool{false, true} {
++					if !c.genValid(lane, tier, spark) {
++						continue
++					}
++					m.sel = map[string]string{"lane": lane, "model": tier, "thinking": effort, "spark": "off", "advisor": "off"}
++					if spark {
++						m.sel["spark"] = "on"
++					}
++					id := comboID(m.sel)
++					if len(blocks[id]) == 0 {
++						t.Fatalf("rendered catalog consumer lost selectable combination %s", id)
++					}
++					overlay := m.genConfigYAML()
++					assertNativeUtilityEmptyFallbacks(t, overlay)
++					var parsed struct {
++						ModelRoles map[string]string `yaml:"modelRoles"`
++					}
++					if err := yaml.Unmarshal([]byte(overlay), &parsed); err != nil {
++						t.Fatalf("%s overlay is invalid YAML: %v", id, err)
++					}
++					routes := c.genCombo(lane, tier, effort, spark)
++					for _, role := range genRoleOrder {
++						if role == "advisor" {
++							continue
++						}
++						route := routes[role]
++						want := m.prefixed(c.models[route.lead].ID + ":" + c.clampTh(route.lead, route.level))
++						if got := parsed.ModelRoles[role]; got != want {
++							t.Errorf("%s @%s lost its selected native route: got %q, want %q", id, role, got, want)
++						}
++					}
++				}
++			}
++		}
+ 	}
+ }
+ 
+@@ -1620,7 +1538,7 @@ func TestThreePoolCatalog(t *testing.T) {
+ 		t.Errorf("ds-only vision must cross to an image-capable pool: %q", r)
+ 	}
+ 	// …and every other ds-only role stays on DeepSeek.
+-	for _, role := range []string{"default", "task", "plan", "reviewer", "advisor", "commit"} {
++	for _, role := range []string{"default", "task", "plan", "slow", "advisor", "commit"} {
+ 		if r := row(dsOnly, role); strings.Contains(r, "gpt") || strings.Contains(r, "claude") {
+ 			t.Errorf("ds-only %s left the pool: %q", role, r)
+ 		}
+@@ -1698,11 +1616,7 @@ func TestRetiredPoolRejected(t *testing.T) {
+ 
+ // ── ladder depth ─────────────────────────────────────────────────────────────
+ 
+-// Ladder depth is per-pool data, never a constant. Every tier read goes through
+-// top/rung precisely so a dial or a deliberative bump can ask a shallow pool for
+-// tier 4 and get that pool's best rung back — the alternative, indexing the
+-// ladder array directly, hands back the empty model id and silently drops the
+-// role out of the rendered profile.
++// Explicit tier requests clamp only to the pool's actually served ladder.
+ func TestLadderDepthTopAndRung(t *testing.T) {
+ 	c := fixtureCatalog(t)
+ 	// The two-pool fixture: A ships a fourth rung, O stops at three, D is absent.
+@@ -1740,18 +1654,7 @@ func TestLadderDepthTopAndRung(t *testing.T) {
+ 	}
+ }
+ 
+-// The `elite` notch is gated on the lane's LEAD pool declaring a tier-4 rung,
+-// not on the lane's whole pool-set. The reason is duplicate suppression: the
+-// deliberative bump already lands plan/slow/reviewer on the lead
+-// pool's top rung at `smart`, so where that pool stops at three there is no
+-// seat left for elite to change and the block renders byte-identical to smart.
+-// gpt-led is the clean case — proved below by rendering both. mixed is the
+-// subtle one: pool A is in its pool-set, yet its lead is O, and the only seat
+-// that would differ is vision (lanePolicy.visionSmart sends images to A, and
+-// visionLead(A, 4) is the tier-4 rung where visionLead(A, 3) is tier 3). One
+-// diverging row is not worth a whole grid of near-duplicate blocks, so mixed is
+-// gated out too — and gating on the pool-set, as an earlier cut did, emitted
+-// exactly those near-duplicates.
++// Elite remains an explicit choice gated on the lead pool's served fourth rung.
+ func TestEliteNotchGatedOnLeadPool(t *testing.T) {
+ 	c := fixtureCatalog(t)
+ 	for lane, want := range map[string]bool{
+@@ -1802,81 +1705,64 @@ func TestEliteNotchGatedOnLeadPool(t *testing.T) {
+ 	}
+ }
+ 
+-// The two routings the retired `fable` and `fable`+`main` toggles used to
+-// produce must still be reachable, now as ordinary consequences of the ladder:
+-// the deliberative bump (t = base+1, capped at the pool's top) puts the tier-4
+-// rung in the deliberative seats straight from `smart`, and the `elite` notch
+-// (base = 4) puts it in the `default` seat as well. Losing either is losing the
+-// routing the toggles existed to reach, with no dial left to ask for it.
+-func TestTierFourReachableWithoutTheRetiredToggles(t *testing.T) {
++var wantDeliberativeEffort = map[string]string{
++	"minimal": "minimal", "low": "medium", "medium": "high",
++	"high": "xhigh", "xhigh": "xhigh", "max": "max",
++}
++
++func TestDeliberativeRolesNeverPromoteTheSelectedRung(t *testing.T) {
+ 	c := fixtureCatalog(t)
+-	lead := func(lane, mtier, role string) string {
+-		rt := c.genCombo(lane, mtier, "medium", false)[role]
+-		if rt.lead == "" {
+-			t.Fatalf("%s/%s: role %s has no lead", lane, mtier, role)
+-		}
+-		return c.models[rt.lead].ID
+-	}
+-	// `smart` on an A-led lane: the deliberative bump reaches tier 4 while the
+-	// non-deliberative seats stay on tier 3. That split is the whole point —
+-	// the expensive rung goes where the deliberation happens, not everywhere.
+-	for _, role := range []string{"plan", "slow", "reviewer", "security-reviewer"} {
+-		if got := lead("claude-only", "smart", role); got != "claude-fable-5" {
+-			t.Errorf("claude-only/smart %s = %q, want the tier-4 rung claude-fable-5", role, got)
+-		}
+-	}
+-	for _, role := range []string{"default", "task", "librarian"} {
+-		if got := lead("claude-only", "smart", role); got != "claude-opus-5" {
+-			t.Errorf("claude-only/smart %s = %q, want the tier-3 rung claude-opus-5", role, got)
+-		}
+-	}
+-	// The bump also crosses lanes: on mixed the deliberative roles live on pool
+-	// A, so they reach A's tier 4 while the O-led seats stay on O's tier 3 —
+-	// this is exactly the block the `fable` toggle used to gate.
+-	if got := lead("mixed", "smart", "plan"); got != "claude-fable-5" {
+-		t.Errorf("mixed/smart plan = %q, want claude-fable-5", got)
+-	}
+-	if got := lead("mixed", "smart", "default"); got != "gpt-5.6-sol" {
+-		t.Errorf("mixed/smart default = %q, want gpt-5.6-sol", got)
+-	}
+-	// `elite`: the tier-4 rung takes the default seat too — the old fable+main
+-	// pair. The bump is already saturated, so the deliberative seats do not
+-	// climb any further.
+-	for _, role := range []string{"default", "task", "librarian", "plan", "slow", "reviewer", "security-reviewer", "vision"} {
+-		if got := lead("claude-only", "elite", role); got != "claude-fable-5" {
+-			t.Errorf("claude-only/elite %s = %q, want claude-fable-5", role, got)
++	for _, lane := range c.lanes() {
++		for _, tier := range genMTiers {
++			if !c.genValid(lane, tier, false) {
++				continue
++			}
++			for thinking, wantEffort := range wantDeliberativeEffort {
++				routes := c.genCombo(lane, tier, thinking, false)
++				for _, role := range []string{"default", "task", "plan", "slow"} {
++					route := routes[role]
++					pool := genLanePolicies[lane].pool(role)
++					if want := c.rung(pool, genTierMap[tier]); route.lead != want {
++						t.Errorf("%s/%s/%s %s = %s, want selected rung %s", lane, tier, thinking, role, route.lead, want)
++					}
++					if genDelib[role] && route.level != wantEffort {
++						t.Errorf("%s/%s/%s %s effort = %s, want %s", lane, tier, thinking, role, route.level, wantEffort)
++					}
++					if thinking == "max" && route.level != "max" {
++						t.Errorf("%s/%s %s lost explicit max", lane, tier, role)
++					}
++				}
++			}
+ 		}
+ 	}
+ }
+ 
+-// The utility roles are tier-capped so that no notch of the model dial can make
+-// a role that runs on every keystroke expensive. `elite` is the notch that
+-// would have broken that if the cap table had simply been read with a missing
+-// key: genUtilModel[r]["elite"] would be the zero value, rung() would clamp it
+-// up to tier 1, and the caps would silently rewrite themselves.
+-func TestUtilRolesCappedAtTheEliteNotch(t *testing.T) {
++func TestUtilityRolesStayCheapAtEveryEffortAndTier(t *testing.T) {
+ 	c := fixtureCatalog(t)
+-	for role, caps := range genUtilModel {
+-		if _, ok := caps["elite"]; !ok {
+-			t.Errorf("utility role %q has no elite cap — the dial's top notch would read tier 0", role)
+-			continue
+-		}
+-		if caps["elite"] != caps["smart"] {
+-			t.Errorf("utility role %q: elite cap %d must equal the smart cap %d", role, caps["elite"], caps["smart"])
+-		}
+-	}
+-	// Rendered, on the one lane that actually reaches tier 4: no utility role
+-	// may lead on the tier-4 rung, whatever the dial says.
+-	roles := c.genCombo("claude-only", "elite", "medium", false)
+-	for _, tc := range []struct{ role, want string }{
+-		{"scout", "claude-sonnet-5"},
+-		{"sonic", "claude-sonnet-5"},
+-		{"smol", "claude-sonnet-5"},
+-		{"tiny", "claude-sonnet-5"},
+-		{"commit", "claude-haiku-4-5"},
+-	} {
+-		if got := c.models[roles[tc.role].lead].ID; got != tc.want {
+-			t.Errorf("claude-only/elite %s = %q, want the capped rung %q", tc.role, got, tc.want)
++	for _, lane := range c.lanes() {
++		for _, tier := range genMTiers {
++			for _, thinking := range genThinking {
++				routes := c.genCombo(lane, tier, thinking, false)
++				for _, role := range []string{"smol", "tiny", "commit", "advisor", "widget", "memory"} {
++					route := routes[role]
++					if got := c.models[route.lead].Tier; got != 1 {
++						t.Errorf("%s/%s/%s %s tier = %d, want cheap rung 1", lane, tier, thinking, role, got)
++					}
++					want := "low"
++					if role == "smol" || role == "memory" {
++						want = "medium"
++					}
++					if route.level != want {
++						t.Errorf("%s/%s/%s %s effort = %s, want %s", lane, tier, thinking, role, route.level, want)
++					}
++					if (role == "widget" || role == "memory") && len(route.chain) != 0 {
++						t.Errorf("%s/%s/%s %s has an implicit fallback chain: %v", lane, tier, thinking, role, route.chain)
++					}
++				}
++				if routes["vision"].level != "low" {
++					t.Errorf("%s/%s/%s leaked main effort to vision", lane, tier, thinking)
++				}
++			}
+ 		}
+ 	}
+ }
+@@ -1900,10 +1786,6 @@ func TestCheckLadderValidatesTierFour(t *testing.T) {
+ `
+ 	base := withoutModel(fixtureYML, "fable")
+ 	for name, replacement := range map[string]string{
+-		// A dearer top rung with less context than the rungs below it: the
+-		// price-ranked scaffold's signature mistake.
+-		"smaller context at a higher price": strings.Replace(tier4, "    context: 1000000\n", "    context: 200000\n", 1),
+-		// …or with less thinking headroom.
+ 		"lower thinking ceiling at a higher price": strings.Replace(tier4, "    thinking: low→max\n", "    thinking: low→xhigh\n", 1),
+ 	} {
+ 		_, err := catalogFrom(t, base+replacement)
+@@ -1915,9 +1797,129 @@ func TestCheckLadderValidatesTierFour(t *testing.T) {
+ 			t.Errorf("%s: error must name tier 4 as the regressing rung, got %v", name, err)
+ 		}
+ 	}
+-	// The healthy fixture's tier-4 rung costs more while matching the ladder on
+-	// context and thinking, so the widened check must not reject it.
+-	if _, err := catalogFrom(t, base+tier4); err != nil {
+-		t.Errorf("healthy tier-4 rung rejected: %v", err)
++	// Standard context is independent of the authored tier, for every pool.
++	for _, context := range []int{1000000, 200000} {
++		yml := base + strings.Replace(tier4, "    context: 1000000\n", fmt.Sprintf("    context: %d\n", context), 1)
++		if _, err := catalogFrom(t, yml); err != nil {
++			t.Errorf("tier-4 context %d was incorrectly rejected: %v", context, err)
++		}
++	}
++}
++
++func TestDifferentStandardWindowsRetainAllAuthoredRungs(t *testing.T) {
++	// Current standard windows are independent of relative price/capability.
++	// Throughput here is synthetic fixture data, not benchmark evidence.
++	const models = `probed: true
++models:
++  luna: {id: gpt-6-luna, pool: O, tier: 1, cost_in: 0.1, cost_out: 0.5, speed: 1, ttft: 1, context: 272000, thinking: low→max}
++  terra: {id: gpt-6.1-terra, pool: O, tier: 2, cost_in: 1, cost_out: 5, speed: 1, ttft: 1, context: 500000, thinking: low→max}
++  sol: {id: gpt-6.1-sol, pool: O, tier: 3, cost_in: 2, cost_out: 10, speed: 1, ttft: 1, context: 500000, thinking: low→max}
++  astra: {id: gpt-6-astra, pool: O, tier: 4, cost_in: 10, cost_out: 50, speed: 1, ttft: 1, context: 272000, thinking: low→max}
++  haiku: {id: claude-haiku-5-5, pool: A, tier: 1, cost_in: 0.1, cost_out: 0.5, speed: 1, ttft: 1, context: 100000, thinking: low→max}
++  sonnet: {id: claude-sonnet-5-5, pool: A, tier: 2, cost_in: 2, cost_out: 10, speed: 1, ttft: 1, context: 1000000, thinking: low→max}
++  opus: {id: claude-opus-5-5, pool: A, tier: 3, cost_in: 4, cost_out: 20, speed: 1, ttft: 1, context: 1000000, thinking: low→max}
++  fable: {id: claude-fable-5-2, pool: A, tier: 4, cost_in: 8, cost_out: 40, speed: 1, ttft: 1, context: 1000000, thinking: low→max}
++`
++	c, err := catalogFrom(t, models)
++	if err != nil {
++		t.Fatalf("honest standard windows must coexist without reranking: %v", err)
++	}
++	catalog := c.renderCatalog()
++	if len(c.keys) != 8 {
++		t.Fatalf("retained %d models, want all eight authored families", len(c.keys))
++	}
++	for key, context := range map[string]int{
++		"luna": 272000, "terra": 500000, "sol": 500000, "astra": 272000,
++		"haiku": 100000, "sonnet": 1000000, "opus": 1000000, "fable": 1000000,
++	} {
++		if c.models[key].Context != context || !strings.Contains(catalog, "  "+c.models[key].ID+" ") {
++			t.Errorf("%s factual context/model identity was lost: %+v", key, c.models[key])
++		}
++	}
++	for _, choice := range []struct{ lane, tier, key string }{
++		{"gpt-only", "normal", "terra"},
++		{"gpt-only", "smart", "sol"},
++		{"gpt-only", "elite", "astra"},
++		{"claude-only", "normal", "sonnet"},
++		{"claude-only", "smart", "opus"},
++		{"claude-only", "elite", "fable"},
++	} {
++		for _, effort := range []string{"medium", "max"} {
++			id := genComboID(choice.lane, choice.tier, effort, false)
++			if !strings.Contains(catalog, "\n"+id+"  ") {
++				t.Errorf("explicit selection %s is no longer renderable", id)
++			}
++			routes := c.genCombo(choice.lane, choice.tier, effort, false)
++			for _, role := range []string{"default", "task", "plan", "slow"} {
++				if routes[role].lead != choice.key {
++					t.Errorf("%s %s silently reranked/promoted to %s, want %s", id, role, routes[role].lead, choice.key)
++				}
++			}
++		}
++	}
++	for _, lane := range c.lanes() {
++		for _, tier := range genMTiers {
++			for effort := range wantDeliberativeEffort {
++				if !c.genValid(lane, tier, false) {
++					continue
++				}
++				id := genComboID(lane, tier, effort, false)
++				m := model{
++					sel:       map[string]string{"lane": lane, "model": tier, "thinking": effort, "spark": "off", "advisor": "off"},
++					generated: map[string][]string{id: strings.Split(c.renderCombo(lane, tier, effort, false), "\n")},
++				}
++				var overlay struct {
++					ModelRoles map[string]string `yaml:"modelRoles"`
++					Retry      struct {
++						FallbackChains map[string][]string `yaml:"fallbackChains"`
++					} `yaml:"retry"`
++				}
++				if err := yaml.Unmarshal([]byte(m.genConfigYAML()), &overlay); err != nil {
++					t.Fatalf("%s emitted invalid overlay: %v", id, err)
++				}
++				for _, role := range []string{"default", "task", "plan", "slow"} {
++					wantEffort := effort
++					if role == "plan" || role == "slow" {
++						wantEffort = wantDeliberativeEffort[effort]
++					}
++					// Every model in this authored eight-family fixture has a
++					// low floor. Declared minimal must clamp, not change tiers.
++					if wantEffort == "minimal" {
++						wantEffort = "low"
++					}
++					tokens := append([]string{overlay.ModelRoles[role]}, overlay.Retry.FallbackChains[role]...)
++					for _, token := range tokens {
++						_, model, qualified := strings.Cut(token, "/")
++						model, gotEffort, explicitEffort := strings.Cut(model, ":")
++						key := ""
++						for _, candidate := range c.keys {
++							if c.models[candidate].ID == model {
++								key = candidate
++								break
++							}
++						}
++						if !qualified || !explicitEffort || key == "" {
++							t.Fatalf("%s %s emitted unknown model token %q", id, role, token)
++						}
++						if got := c.models[key].Tier; got > genTierMap[tier] {
++							t.Errorf("%s %s fallback/lead %s silently promotes authored tier %d to %d", id, role, model, genTierMap[tier], got)
++						}
++						if gotEffort != wantEffort {
++							t.Errorf("%s %s effort after model clamping = %s, want %s", id, role, gotEffort, wantEffort)
++						}
++					}
++				}
++				for role, wantEffort := range map[string]string{
++					"smol": "medium", "memory": "medium", "tiny": "low",
++					"commit": "low", "widget": "low", "vision": "low",
++				} {
++					_, qualified, hasProvider := strings.Cut(overlay.ModelRoles[role], "/")
++					_, gotEffort, explicitEffort := strings.Cut(qualified, ":")
++					if !hasProvider || !explicitEffort || gotEffort != wantEffort {
++						t.Errorf("%s utility %s leaked main effort: %q, want %s", id, role, overlay.ModelRoles[role], wantEffort)
++					}
++				}
++			}
++		}
+ 	}
+ }
+diff --git a/keys.go b/keys.go
+index a746414..3f7e10a 100644
+--- a/keys.go
++++ b/keys.go
+@@ -45,7 +45,7 @@ var keys = keyMap{
+ // defaultSel returns a fresh copy of the generator's default facet selection —
+ // used both to seed the model and to restore it via the reset key.
+ func defaultSel() map[string]string {
+-	return map[string]string{"lane": "mixed", "model": "smart", "thinking": "medium", "advisor": "glance", "spark": "on", "fast": "off",
++	return map[string]string{"lane": "claude-only", "model": "normal", "thinking": "medium", "advisor": "glance", "spark": "off", "fast": "off",
+ 		// omp's own session switches. prewalk and planyolo are off by default:
+ 		// neither changes routing, and both change how a run behaves, so they
+ 		// are opt-in. fallback is on: the catalog's chains run unless the
+diff --git a/launch_test.go b/launch_test.go
+index 61d8377..d978c79 100644
+--- a/launch_test.go
++++ b/launch_test.go
+@@ -245,3 +245,46 @@ func TestLaunchIntentTierFollowsDefaultLead(t *testing.T) {
+ 		t.Fatalf("anthropic tier = %q, want main for an ordinary lead", intent.tier(anthropicProvider))
+ 	}
+ }
++
++func TestGeneratedEffortDoesNotChangePremiumAccountBudget(t *testing.T) {
++	c := fixtureCatalog(t)
++	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
++	disabled := accountKey{Provider: anthropicProvider, IdentityKey: "disabled"}
++	accounts := map[string][]account{anthropicProvider: {
++		{Provider: anthropicProvider, IdentityKey: "enabled", blocks: []accountBlock{{Scope: "tier:fable", Until: now.Add(time.Hour)}}},
++		{Provider: anthropicProvider, IdentityKey: disabled.IdentityKey},
++	}}
++	state := defaultAccountSelectionState()
++	state.SetManualDisabled(map[accountKey]bool{disabled: true})
++	for _, tier := range []string{"normal", "smart", "elite"} {
++		for _, effort := range []string{"medium", "max"} {
++			m := model{sel: defaultSel(), facts: parseFacts(strings.Split(c.renderModelFacts(), "\n"))}
++			m.sel["model"], m.sel["thinking"], m.sel["advisor"] = tier, effort, "off"
++			m.generated = map[string][]string{comboID(m.sel): strings.Split(c.renderCombo("claude-only", tier, effort, false), "\n")}
++			overlay := m.genConfigYAML()
++			assertNativeUtilityEmptyFallbacks(t, overlay)
++			if !strings.Contains(overlay, "  memory: anthropic/claude-haiku-4-5:medium\n") {
++				t.Errorf("%s/%s silently promoted memory effort or account budget:\n%s", tier, effort, overlay)
++			}
++			wantTier := launchTierMain
++			if tier == "elite" {
++				wantTier = "fable"
++			}
++			intent := m.launchIntent()
++			if got := intent.tier(anthropicProvider); got != wantTier {
++				t.Errorf("%s/%s requested account budget %s, want %s", tier, effort, got, wantTier)
++			}
++			report := launchAccountReport(accounts, state.CurrentDisabled(), intent, now)
++			if got := report.pool()[anthropicProvider]; len(got) != 1 || got[0] != "enabled" {
++				t.Fatalf("%s/%s broadened explicit account pool: %v", tier, effort, got)
++			}
++			warnings := strings.Join(report.warnings(now), "\n")
++			if strings.Contains(warnings, "Fable is rate-limit blocked") != (tier == "elite") {
++				t.Errorf("%s/%s changed premium block handling:\n%s", tier, effort, warnings)
++			}
++			if !state.CurrentDisabled()[disabled] {
++				t.Fatal("routing changed independent account settings")
++			}
++		}
++	}
++}
+diff --git a/locallane.go b/locallane.go
+index c54f8ca..8ba28c7 100644
+--- a/locallane.go
++++ b/locallane.go
+@@ -535,28 +535,27 @@ func localServedList(lane localLane) string {
+ // falls to omp's own defaults, which name a hosted provider — and a run that
+ // resolved no credential would then fail its first call for a reason a receipt
+ // cannot explain, or, on a machine where something ambient did resolve, quietly
+-// send the corpus to a provider this profile promised it would not. There is no
+-// fallback chain: one endpoint serving one model has nothing to fall back to,
+-// and an empty chain claiming otherwise would be worse than none.
++// send the corpus to a hosted provider. There are no nonempty fallback chains:
++// one endpoint serves one model. Widget and memory have explicit empty chains
++// so utility fallback cannot implicitly escalate to the main/default role.
+ func (t localTarget) overlayYAML() string {
+ 	qualified := yamlQuote(t.Engine + "/" + t.Model)
+-	var roles, agents strings.Builder
++	var roles strings.Builder
+ 	for _, role := range genRoleOrder {
+ 		if role == "advisor" {
+ 			// The advisor is a second opinion from a different model, which a
+ 			// single-model endpoint cannot give. It is off below.
+ 			continue
+ 		}
+-		roles.WriteString("  " + role + ": " + qualified + "\n")
+-		if genAgentRoles[role] {
+-			agents.WriteString("    " + role + ": " + qualified + "\n")
++		model := qualified
++		if genUtil[role] || role == "vision" {
++			model = yamlQuote(t.Engine + "/" + t.Model + ":" + localThinking(roleThinking(role, t.Thinking)))
+ 		}
++		roles.WriteString("  " + role + ": " + model + "\n")
+ 	}
+ 	var b strings.Builder
+ 	b.WriteString("modelRoles:\n" + roles.String())
+-	if agents.Len() > 0 {
+-		b.WriteString("task:\n  agentModelOverrides:\n" + agents.String())
+-	}
++	b.WriteString("retry:\n  fallbackChains:\n    widget: []\n    memory: []\n")
+ 	b.WriteString("defaultThinkingLevel: " + t.Thinking + "\n")
+ 	b.WriteString("advisor:\n  enabled: false\n")
+ 	return b.String()
+diff --git a/locallane_test.go b/locallane_test.go
+index 4a360cd..f699011 100644
+--- a/locallane_test.go
++++ b/locallane_test.go
+@@ -419,7 +419,7 @@ func TestLocalCeremonyMintsWhatTheEndpointServes(t *testing.T) {
+ 	for _, want := range []string{
+ 		"modelRoles:\n",
+ 		`  default: "ollama/qwen2.5:3b"`,
+-		`    reviewer: "ollama/qwen2.5:3b"`,
++		`  slow: "ollama/qwen2.5:3b"`,
+ 		"defaultThinkingLevel: " + saved.Metadata["thinking"] + "\n",
+ 		"advisor:\n  enabled: false\n",
+ 	} {
+@@ -427,8 +427,13 @@ func TestLocalCeremonyMintsWhatTheEndpointServes(t *testing.T) {
+ 			t.Errorf("the local overlay lacks %q:\n%s", want, overlay)
+ 		}
+ 	}
+-	if strings.Contains(overlay, "fallbackChains") {
+-		t.Errorf("the local overlay claims a fallback chain it has no second model for:\n%s", overlay)
++	for _, obsolete := range []string{"agentModelOverrides", "reviewer:", "security-reviewer:", "librarian:", "scout:", "sonic:"} {
++		if strings.Contains(overlay, obsolete) {
++			t.Errorf("local overlay replaces native routing with %q:\n%s", obsolete, overlay)
++		}
++	}
++	if !strings.Contains(overlay, "retry:\n  fallbackChains:\n    widget: []\n    memory: []\n") {
++		t.Errorf("local widget/memory lack explicit empty fallback chains:\n%s", overlay)
+ 	}
+ 	if strings.Contains(overlay, "advisor: ") {
+ 		t.Errorf("the local overlay routes an advisor role:\n%s", overlay)
+@@ -861,3 +866,21 @@ func TestLocalThinkingIsClamped(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestLocalOverlayKeepsUtilityEffortWithinHonestCeiling(t *testing.T) {
++	for _, mainEffort := range localThinkingLevels {
++		target := localTarget{Engine: localEngineOllama, Model: "qwen2.5:3b", Thinking: mainEffort}
++		overlay := target.overlayYAML()
++		assertNativeUtilityEmptyFallbacks(t, overlay)
++		for _, role := range []string{"smol", "tiny", "commit", "vision", "widget", "memory"} {
++			want := "  " + role + ": \"ollama/qwen2.5:3b:low\"\n"
++			if !strings.Contains(overlay, want) {
++				t.Errorf("local %s exceeds its honest low ceiling with main %s:\n%s", role, mainEffort, overlay)
++			}
++		}
++		if !strings.Contains(overlay, "defaultThinkingLevel: "+mainEffort+"\n") ||
++			!strings.Contains(overlay, "  task: \"ollama/qwen2.5:3b\"\n") {
++			t.Errorf("local utility policy rewrote the supported main effort %s:\n%s", mainEffort, overlay)
++		}
++	}
++}
+diff --git a/main.go b/main.go
+index 951d105..45fb19b 100644
+--- a/main.go
++++ b/main.go
+@@ -222,7 +222,8 @@ func newInteractiveApp(mode interactiveMode) tea.Model {
+ 		// finds them.
+ 		selectionState, selectionHandoff = defaultSelectionStatePath(), ""
+ 	}
+-	selection := loadSelectionState(selectionState, facets)
++	var routineRouting bool
++	selection := loadSelectionState(selectionState, facets, &routineRouting)
+ 	if len(runtimeTargets) > 0 {
+ 		if _, ok := selection["runtime"]; !ok {
+ 			selection["runtime"] = "hosted"
+@@ -275,6 +276,7 @@ func newInteractiveApp(mode interactiveMode) tea.Model {
+ 		local:             local,
+ 		facets:            facets,
+ 		sel:               selection,
++		routineRouting:    routineRouting,
+ 		selectionState:    selectionState,
+ 		selectionHandoff:  selectionHandoff,
+ 		hasSandbox:        hasSandbox,
+diff --git a/main_test.go b/main_test.go
+index a72649f..711532e 100644
+--- a/main_test.go
++++ b/main_test.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/charmbracelet/bubbles/viewport"
+ 	tea "github.com/charmbracelet/bubbletea"
+ 	"github.com/charmbracelet/lipgloss"
++	"gopkg.in/yaml.v3"
+ )
+ 
+ // ansiRe strips SGR sequences so tests assert on visible text regardless of the
+@@ -233,7 +234,7 @@ func TestComboID(t *testing.T) {
+ 
+ // TestDefaultSelValid guards the reset-to-defaults key (atyrode/dotfiles#119) against facet
+ // drift: every default must name a real facet and a value that facet offers,
+-// every facet must be seeded exactly once, and the model default is smart (atyrode/dotfiles#178).
++// every facet must be seeded exactly once.
+ func TestDefaultSelValid(t *testing.T) {
+ 	facets := facetDefs(map[string]string{})
+ 	byKey := map[string][]string{}
+@@ -261,9 +262,6 @@ func TestDefaultSelValid(t *testing.T) {
+ 			t.Errorf("defaultSel[%q]=%q is not a valid value (allowed: %v)", k, v, values)
+ 		}
+ 	}
+-	if def["model"] != "smart" {
+-		t.Errorf(`defaultSel["model"] = %q, want "smart"`, def["model"])
+-	}
+ }
+ 
+ // TestEliteNotchVisibility is the direct successor to the retired main-facet
+@@ -339,6 +337,7 @@ func TestCatalogCapabilityGatesDials(t *testing.T) {
+ 			"mixed_elite_medium_sp":   nil,
+ 			"mixed_elite_medium_nosp": nil,
+ 		}}
++	full.sel["spark"] = "on"
+ 	full.applyCatalog()
+ 	if full.noSpark {
+ 		t.Fatalf("a catalog serving spark disabled the dial: noSpark=%v", full.noSpark)
+@@ -388,7 +387,7 @@ func TestCatalogCapabilityGatesDials(t *testing.T) {
+ 	// map has to leave every ladder notch reachable.
+ 	empty := model{facets: facetDefs(map[string]string{}), sel: defaultSel()}
+ 	empty.applyCatalog()
+-	if empty.noSpark || empty.sel["spark"] != "on" || empty.mtiers != nil {
++	if empty.noSpark || empty.sel["spark"] != "off" || empty.mtiers != nil {
+ 		t.Errorf("an unread catalog must leave every dial alone: noSpark=%v spark=%q mtiers=%v",
+ 			empty.noSpark, empty.sel["spark"], empty.mtiers)
+ 	}
+@@ -512,44 +511,69 @@ func TestEnterRefusesMissingCombo(t *testing.T) {
+ 	}
+ }
+ 
+-// TestGenConfigYAMLAgentOverrides locks the atyrode/dotfiles#173 fix: every ●-marked
+-// agent-backed role in the generated block is mirrored into
+-// task.agentModelOverrides (so spawned agents follow the generated profile),
+-// while unmarked roles and the advisor never are. Prompt-focused keystrokes
+-// never reach the launch keybinds — clikit's promptbox owns that routing and
+-// its tests live in cli-kit.
+-func TestGenConfigYAMLAgentOverrides(t *testing.T) {
+-	rows := []string{
+-		"    default    gpt-5.6-sol:high",
+-		"    plan       claude-fable-5:xhigh",
+-		"  ● librarian  gpt-5.6-sol:high",
+-		"  ● reviewer   claude-fable-5:xhigh",
+-		"  ● sonic      gpt-5.6-luna:minimal",
+-		"  ● task       gpt-5.6-terra:medium",
+-		"    smol       gpt-5.6-luna:low",
+-	}
+-	m := model{
+-		sel:       defaultSel(),
+-		generated: map[string][]string{comboID(defaultSel()): rows},
+-	}
+-	m.sel["advisor"] = "off"
+-	got := m.genConfigYAML()
+-
+-	// The override block is emitted in row order with a fixed shape; assert it
+-	// verbatim so any drift in keys, values, or nesting fails loudly.
+-	want := "task:\n  agentModelOverrides:\n" +
+-		"    librarian: openai-codex/gpt-5.6-sol:high\n" +
+-		"    reviewer: anthropic/claude-fable-5:xhigh\n" +
+-		"    sonic: openai-codex/gpt-5.6-luna:minimal\n" +
+-		"    task: openai-codex/gpt-5.6-terra:medium\n" +
+-		"defaultThinkingLevel:"
+-	if !strings.Contains(got, want) {
+-		t.Errorf("generated config must mirror exactly the ● roles into agentModelOverrides, got:\n%s", got)
+-	}
+-	// Override entries are 4-space-indented; assert no non-agent role sneaks in.
+-	for _, role := range []string{"plan", "smol", "default", "advisor"} {
+-		if strings.Contains(got, "    "+role+": ") {
+-			t.Errorf("non-agent role %q must not be overridden, got:\n%s", role, got)
++func assertNativeUtilityEmptyFallbacks(t *testing.T, overlay string) {
++	t.Helper()
++	var config map[string]any
++	if err := yaml.Unmarshal([]byte(overlay), &config); err != nil {
++		t.Fatalf("parsing generated overlay: %v", err)
++	}
++	retry, _ := config["retry"].(map[string]any)
++	chains, _ := retry["fallbackChains"].(map[string]any)
++	for _, role := range []string{"widget", "memory"} {
++		value, own := chains[role]
++		chain, sequence := value.([]any)
++		if !own || !sequence || len(chain) != 0 {
++			t.Fatalf("%s requires its own explicit [] chain, got present=%t value=%v:\n%s", role, own, value, overlay)
++		}
++	}
++	for _, preference := range []string{"memory", "autolearn"} {
++		if _, overwritten := config[preference]; overwritten {
++			t.Errorf("routing overlay must not change independent %s preferences:\n%s", preference, overlay)
++		}
++	}
++}
++
++func TestGeneratedOverlayUsesNativeRolesAndIndependentTaskSettings(t *testing.T) {
++	c := fixtureCatalog(t)
++	for _, advisor := range []string{"off", "glance", "audit"} {
++		for _, prewalk := range []string{"off", "on"} {
++			m := model{sel: defaultSel(), ompMajor: 18, ompMinor: 20}
++			m.sel["thinking"], m.sel["advisor"], m.sel["prewalk"] = "max", advisor, prewalk
++			m.generated = map[string][]string{comboID(m.sel): strings.Split(c.renderCombo("claude-only", "normal", "max", false), "\n")}
++			m.advisors = parseAdvisors(strings.Split(c.renderAdvisors(), "\n"))
++			got := m.genConfigYAML()
++			assertNativeUtilityEmptyFallbacks(t, got)
++			for _, want := range []string{
++				"  default: anthropic/claude-sonnet-5:max\n",
++				"  task: anthropic/claude-sonnet-5:max\n",
++				"  slow: anthropic/claude-sonnet-5:max\n",
++				"  smol: anthropic/claude-haiku-4-5:medium\n",
++				"  tiny: anthropic/claude-haiku-4-5:low\n",
++				"  commit: anthropic/claude-haiku-4-5:low\n",
++				"  vision: anthropic/claude-sonnet-5:low\n",
++				"  widget: anthropic/claude-haiku-4-5:low\n",
++				"  memory: anthropic/claude-haiku-4-5:medium\n",
++			} {
++				if !strings.Contains(got, want) {
++					t.Errorf("advisor=%s prewalk=%s lacks %q:\n%s", advisor, prewalk, want, got)
++				}
++			}
++			for _, obsolete := range []string{"agentModelOverrides", "reviewer:", "security-reviewer:", "librarian:", "scout:", "sonic:"} {
++				if strings.Contains(got, obsolete) {
++					t.Errorf("overlay overrides native identity with %q:\n%s", obsolete, got)
++				}
++			}
++			if strings.Contains(got, "  agentAdvisor:\n") != (advisor == "audit") {
++				t.Errorf("independent task advisor lost for %s:\n%s", advisor, got)
++			}
++			if strings.Contains(got, "  prewalk: true\n") != (prewalk == "on") {
++				t.Errorf("independent task prewalk lost for %s:\n%s", prewalk, got)
++			}
++			if strings.Contains(got, "advisor:\n  enabled: true\n") != (advisor != "off") {
++				t.Errorf("advisor preference was forced for %s:\n%s", advisor, got)
++			}
++			m.sel["fallback"] = "off"
++			assertNativeUtilityEmptyFallbacks(t, m.genConfigYAML())
+ 		}
+ 	}
+ }
+@@ -837,12 +861,14 @@ func TestPreviewColumn(t *testing.T) {
+ // tests exercise the actual compositions rather than skeleton fixtures.
+ func layoutModel() model {
+ 	glyphs := defaultGlyphs()
+-	id := comboID(defaultSel())
++	selection := defaultSel()
++	selection["lane"], selection["model"], selection["spark"] = "mixed", "smart", "on"
++	id := comboID(selection)
+ 	rows := []string{
+ 		"  thinking medium · fallback on · advisor on",
+ 		"    default    gpt-5.6-terra:medium → gpt-5.6-luna:medium → claude-sonnet-5:medium",
+ 		"  ● task       gpt-5.6-terra:medium → gpt-5.6-luna:medium → claude-sonnet-5:medium",
+-		"  ● scout      gpt-5.6-luna:low → claude-haiku-4-5:low",
++		"  ● smol       gpt-5.6-luna:medium → claude-haiku-4-5:medium",
+ 		"    advisor    claude-opus-5:high",
+ 		"    commit     gpt-5.6-luna:minimal",
+ 	}
+@@ -880,7 +906,7 @@ func layoutModel() model {
+ 		help:        clikit.NewHelp(),
+ 		glyphs:      glyphs,
+ 		facets:      facetDefs(glyphs),
+-		sel:         defaultSel(),
++		sel:         selection,
+ 		nextRefresh: time.Now().Add(refreshEvery),
+ 	}
+ }
+@@ -957,7 +983,7 @@ func TestFallbackDialTurnsOmpModelFallbackOff(t *testing.T) {
+ 	const chains = "retry:\n  enabled: true\n  modelFallback: true\n  fallbackRevertPolicy: cooldown-expiry\n  fallbackChains:\n" +
+ 		"    default: [openai-codex/gpt-5.6-luna:medium, anthropic/claude-sonnet-5:medium]\n" +
+ 		"    task: [openai-codex/gpt-5.6-luna:medium, anthropic/claude-sonnet-5:medium]\n" +
+-		"    scout: [anthropic/claude-haiku-4-5:low]\n"
++		"    smol: [anthropic/claude-haiku-4-5:medium]\n"
+ 	if !strings.Contains(on, chains) {
+ 		t.Fatalf("fallback on must write the chains it always did:\n%s", on)
+ 	}
+@@ -1254,7 +1280,7 @@ func TestRepeatedResizeCrossingsPreserveState(t *testing.T) {
+ // shrinks the panel; a facet change still resets to the top.
+ func TestResizeScrollClamp(t *testing.T) {
+ 	m := layoutModel()
+-	id := comboID(defaultSel())
++	id := comboID(m.sel)
+ 	rows := []string{"  thinking medium · fallback on · advisor on"}
+ 	for i := range 40 {
+ 		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
+@@ -1418,8 +1444,9 @@ func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
+ 	}
+ 	nm, _ := m.Update(msg)
+ 	m = nm.(model)
+-	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "gpt-led" {
+-		t.Fatalf("persisted lane after wheel-left = %q, want gpt-led", got)
++	var routineRouting bool
++	if got := loadSelectionState(m.selectionState, m.facets, &routineRouting)["lane"]; got != "gpt-led" || routineRouting {
++		t.Fatalf("persisted lane after wheel-left = %q (routine=%t), want explicit gpt-led", got, routineRouting)
+ 	}
+ 
+ 	filter.last = time.Now().Add(-wheelGestureGap - time.Millisecond)
+@@ -1432,8 +1459,8 @@ func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
+ 	}
+ 	nm, _ = m.Update(msg)
+ 	m = nm.(model)
+-	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "mixed" {
+-		t.Fatalf("persisted lane after wheel-right burst = %q, want mixed", got)
++	if got := loadSelectionState(m.selectionState, m.facets, &routineRouting)["lane"]; got != "mixed" || routineRouting {
++		t.Fatalf("persisted lane after wheel-right burst = %q (routine=%t), want explicit mixed", got, routineRouting)
+ 	}
+ }
+ 
+@@ -2126,7 +2153,7 @@ func TestSectionStatePreservation(t *testing.T) {
+ 
+ 	// Restoring routing recovers the prior scroll position.
+ 	sc := layoutModel()
+-	id := comboID(defaultSel())
++	id := comboID(sc.sel)
+ 	rows := []string{"  thinking medium · fallback on · advisor on"}
+ 	for i := range 40 {
+ 		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
+@@ -2270,7 +2297,7 @@ func TestRoutingFallbackCuePinned(t *testing.T) {
+ 		lines := strings.Split(stripAnsi(m.View()), "\n")
+ 		cue := lineIndex(lines, "f · show fallback chains")
+ 		title := lineIndex(lines, "routing", "p · hide")
+-		route := lineIndex(lines, "scout") // an agent-backed routing role row
++		route := lineIndex(lines, "smol") // shared role consumed by scout and sonic
+ 		if cue < 0 || title < 0 || route < 0 {
+ 			t.Fatalf("%s: missing cue (%d), title (%d), or route content (%d):\n%s",
+ 				label, cue, title, route, strings.Join(lines, "\n"))
+@@ -2843,7 +2870,7 @@ func TestFirstLoadBarFill(t *testing.T) {
+ // facet selection.
+ func TestRoutingWheelScroll(t *testing.T) {
+ 	long := layoutModel()
+-	id := comboID(defaultSel())
++	id := comboID(long.sel)
+ 	rows := []string{"  thinking medium · fallback on · advisor on"}
+ 	for i := range 60 {
+ 		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
+@@ -4244,10 +4271,10 @@ func threePoolModel(t *testing.T) model {
+ }
+ 
+ // TestGenConfigYAMLDeepSeekLane: a ds-led selection launches deepseek-prefixed
+-// roles, mirrors security-reviewer into the agent overrides, and version-gates
+-// task.agentAdvisor on the probed omp (17.2 hard-errors on the unknown key).
++// roles and version-gates task.agentAdvisor on the probed omp.
+ func TestGenConfigYAMLDeepSeekLane(t *testing.T) {
+ 	m := threePoolModel(t)
++	m.sel["model"] = "smart"
+ 	m.sel["lane"] = "ds-led"
+ 	m.sel["spark"], m.sel["fast"] = "off", "off"
+ 	m.sel["advisor"] = "audit"
+@@ -4260,7 +4287,7 @@ func TestGenConfigYAMLDeepSeekLane(t *testing.T) {
+ 	got := m.genConfigYAML()
+ 	for _, want := range []string{
+ 		"  default: deepseek/deepseek-v4-pro:medium\n",
+-		"    security-reviewer: ",
++		"  slow: deepseek/deepseek-v4-pro:high\n",
+ 		"  agentAdvisor:\n    task: \"on\"\n",
+ 	} {
+ 		if !strings.Contains(got, want) {
+@@ -4354,8 +4381,8 @@ func TestProviderAvailabilityMarksDisconnectedLanes(t *testing.T) {
+ 	if m.laneUsable("ds-only") {
+ 		t.Fatal("ds-only usable without a DeepSeek credential")
+ 	}
+-	if m.sel["lane"] != "mixed" || m.noProviders {
+-		t.Fatalf("selection = %q noProviders=%v, want mixed/false", m.sel["lane"], m.noProviders)
++	if m.sel["lane"] != "claude-only" || m.noProviders {
++		t.Fatalf("selection = %q noProviders=%v, want claude-only/false", m.sel["lane"], m.noProviders)
+ 	}
+ 	if note := m.disconnectedLeads([]string{"mixed", "gpt", "claude", "ds"}); note != "DeepSeek" {
+ 		t.Fatalf("lead note = %q, want DeepSeek", note)
+@@ -4766,6 +4793,7 @@ func TestSegmentGaugeRendersAsMeter(t *testing.T) {
+ // persisted state still stores only "lane".
+ func TestLaneSplitDials(t *testing.T) {
+ 	m := model{facets: facetDefs(defaultGlyphs()), sel: defaultSel()}
++	m.sel["lane"] = "mixed"
+ 
+ 	// mixed: a single lead row, no blend child, no lane word list.
+ 	vf := m.visibleFacets()
+diff --git a/model.go b/model.go
+index 41bf72e..3f1dae7 100644
+--- a/model.go
++++ b/model.go
+@@ -59,6 +59,7 @@ type model struct {
+ 	facets         []facet
+ 	fcur           int
+ 	sel            map[string]string
++	routineRouting bool   // no explicit lane/model choice; prefer served Sonnet, else Sol
+ 	selectionState string // resolved by selectionStatePath; empty is the "off" opt-out
+ 	// selectionHandoff is the default location a relocated selection is also
+ 	// mirrored to, because an engine launch sees no CODE_SELECTION_STATE at all.
+@@ -108,6 +109,9 @@ type model struct {
+ 	genConfig          string            // generated config YAML to launch omp with (generator Enter)
+ 	firstPrompt        string            // prompt from the suggest box, forwarded as omp's first message
+ 	savedSel           map[string]string // selection snapshot before a live suggest preview (for revert)
++
++	savedRoutineRouting bool // routing intent paired with savedSel during a live preview
++
+ 	// The probed omp version (omp/<semver> from `omp --version`), fetched
+ 	// async at startup. Zero = unknown: 17.3-only overlay keys are omitted so
+ 	// a lagging CODE_OMP wrapper never hard-errors at launch.
+diff --git a/ompsmoke_test.go b/ompsmoke_test.go
+index a7b27a5..f1f7e00 100644
+--- a/ompsmoke_test.go
++++ b/ompsmoke_test.go
+@@ -6,7 +6,6 @@ import (
+ 	"os/exec"
+ 	"path/filepath"
+ 	"reflect"
+-	"regexp"
+ 	"sort"
+ 	"strconv"
+ 	"strings"
+@@ -95,14 +94,14 @@ func (o *smokeOmp) run(t *testing.T, args ...string) []byte {
+ 	return out
+ }
+ 
+-// smokeOverlay is the overlay under test: the two-pool golden catalog on the
++// smokeOverlay renders the authored two-pool input fixture for the native
+ // dials that make the generator emit every key it knows how to emit — the
+ // audit advisor (advisor.enabled and, on omp ≥ 17.3, task.agentAdvisor), fast
+-// (tier), prewalk (prewalk.enabled and task.prewalk), and the agent-backed
+-// roles (task.agentModelOverrides) that every hosted combo carries.
++// (tier) and prewalk (prewalk.enabled and task.prewalk). Native agent model
++// routing is inherited from shared roles, with no named-agent override rows.
+ func (o *smokeOmp) smokeOverlay(t *testing.T) string {
+ 	t.Helper()
+-	blocks := loadBlocks(filepath.Join("testdata", "two-pool-golden.plain"))
++	blocks := loadBlocks(fixtureCatalogPath(t))
+ 	m := model{
+ 		sel:       defaultSel(),
+ 		generated: blocks,
+@@ -115,7 +114,7 @@ func (o *smokeOmp) smokeOverlay(t *testing.T) string {
+ 	m.sel["fast"] = "on"
+ 	m.sel["prewalk"] = "on"
+ 	if len(m.generated[comboID(m.sel)]) == 0 {
+-		t.Fatalf("the golden catalog has no block for %s", comboID(m.sel))
++		t.Fatalf("the freshly rendered fixture has no block for %s", comboID(m.sel))
+ 	}
+ 	return m.genConfigYAML()
+ }
+@@ -128,6 +127,7 @@ func (o *smokeOmp) smokeOverlay(t *testing.T) string {
+ // so the home's config.yml is the same schema through the same parser.
+ func (o *smokeOmp) checkEffectiveConfig(t *testing.T) {
+ 	overlay := o.smokeOverlay(t)
++	assertNativeUtilityEmptyFallbacks(t, overlay)
+ 	t.Logf("overlay under test:\n%s", overlay)
+ 	if err := os.WriteFile(filepath.Join(o.agentDir, "config.yml"), []byte(overlay), 0o644); err != nil {
+ 		t.Fatal(err)
+@@ -266,49 +266,44 @@ func (o *smokeOmp) checkUsageSchema(t *testing.T) {
+ 	}
+ }
+ 
+-var (
+-	// rolesHeading marks the role inventory in omp's bundled models.md; the
+-	// roles follow on the next non-empty line as backticked names.
+-	rolesHeading = "Supported model roles:"
+-	backticked   = regexp.MustCompile("`([a-z][a-z0-9-]*)`")
+-)
+-
+-// checkRoles diffs omp's role inventory against what the generator routes. A
+-// role omp grows that the generator never routes stops the catalog covering it
+-// with no key removed or renamed — the one drift mode no assertion on our own
+-// keys can catch (issue #3, the vision role). Two inventories: the model roles
+-// omp documents in its bundled models.md, and the bundled task agents, which
+-// `omp agents unpack --json` lists without a TUI.
++// checkRoles verifies native bundled identities against the configured shared
++// roles read back by OMP. Documentation headings are not a consumer API.
+ func (o *smokeOmp) checkRoles(t *testing.T) {
+-	routed := map[string]bool{}
+-	for _, r := range genRoleOrder {
+-		routed[r] = true
++	overlay := o.smokeOverlay(t)
++	var configured struct {
++		ModelRoles map[string]string `yaml:"modelRoles"`
++		Task       map[string]any    `yaml:"task"`
+ 	}
+-
+-	var roles []string
+-	lines := strings.Split(string(o.run(t, "read", "omp://models.md")), "\n")
+-	for i, line := range lines {
+-		if !strings.Contains(line, rolesHeading) {
+-			continue
+-		}
+-		for _, next := range lines[i+1:] {
+-			if strings.TrimSpace(next) == "" {
+-				continue
+-			}
+-			for _, m := range backticked.FindAllStringSubmatch(next, -1) {
+-				roles = append(roles, m[1])
+-			}
+-			break
++	if err := yaml.Unmarshal([]byte(overlay), &configured); err != nil {
++		t.Fatalf("parsing generated native routes: %v", err)
++	}
++	if _, overridden := configured.Task["agentModelOverrides"]; overridden {
++		t.Fatal("generated overlay replaces native bundled-agent model routing")
++	}
++	if len(configured.ModelRoles) != len(genRoleOrder) {
++		t.Fatalf("generated overlay has %d shared roles, want %d", len(configured.ModelRoles), len(genRoleOrder))
++	}
++	for _, role := range genRoleOrder {
++		if configured.ModelRoles[role] == "" {
++			t.Errorf("generated overlay omits native shared role %q", role)
+ 		}
+-		break
+ 	}
+-	if len(roles) == 0 {
+-		t.Fatalf("omp://models.md no longer lists roles under %q; the inventory moved and this check needs a new source", rolesHeading)
++	if err := os.WriteFile(filepath.Join(o.agentDir, "config.yml"), []byte(overlay), 0o644); err != nil {
++		t.Fatal(err)
+ 	}
+-	t.Logf("omp model roles: %s", strings.Join(roles, " "))
+-	for _, r := range roles {
+-		if !routed[r] {
+-			t.Errorf("omp has a model role %q the generator never routes", r)
++	var settings map[string]struct {
++		Value json.RawMessage `json:"value"`
++	}
++	if err := json.Unmarshal(o.run(t, "config", "list", "--json"), &settings); err != nil {
++		t.Fatalf("reading native effective shared roles: %v", err)
++	}
++	var effective map[string]string
++	if err := json.Unmarshal(settings["modelRoles"].Value, &effective); err != nil {
++		t.Fatalf("OMP no longer exposes effective modelRoles: %v", err)
++	}
++	for role, want := range configured.ModelRoles {
++		if got := effective[role]; got != want {
++			t.Errorf("OMP effective @%s = %q, want generated %q", role, got, want)
+ 		}
+ 	}
+ 
+@@ -322,19 +317,53 @@ func (o *smokeOmp) checkRoles(t *testing.T) {
+ 		t.Fatal("omp agents unpack wrote no agents")
+ 	}
+ 	agents := map[string]bool{}
++	type nativeRoute struct {
++		Model         []string `yaml:"model"`
++		ThinkingLevel string   `yaml:"thinkingLevel"`
++	}
++	expected := map[string]nativeRoute{
++		"task":              {Model: []string{"@task"}, ThinkingLevel: "auto"},
++		"scout":             {Model: []string{"@smol"}, ThinkingLevel: "medium"},
++		"sonic":             {Model: []string{"@smol"}, ThinkingLevel: "medium"},
++		"reviewer":          {Model: []string{"@slow"}},
++		"security-reviewer": {},
++		"seance":            {},
++	}
+ 	for _, p := range unpacked.Written {
+ 		name := strings.TrimSuffix(filepath.Base(p), ".md")
+ 		agents[name] = true
+-		if !genAgentRoles[name] {
+-			t.Errorf("omp bundles a task agent %q the generator never routes into task.agentModelOverrides", name)
++		want, known := expected[name]
++		if !known {
++			continue
++		}
++		raw, err := os.ReadFile(p)
++		if err != nil {
++			t.Fatalf("reading native agent %s: %v", name, err)
++		}
++		parts := strings.SplitN(string(raw), "---", 3)
++		if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" {
++			t.Fatalf("native agent %s has no YAML frontmatter", name)
++		}
++		var got nativeRoute
++		if err := yaml.Unmarshal([]byte(parts[1]), &got); err != nil {
++			t.Fatalf("native agent %s frontmatter: %v", name, err)
++		}
++		if !reflect.DeepEqual(got, want) {
++			t.Errorf("native agent %s route = %+v, want %+v", name, got, want)
++		}
++		for _, reference := range got.Model {
++			role := strings.TrimPrefix(reference, "@")
++			if role == reference || configured.ModelRoles[role] == "" || effective[role] != configured.ModelRoles[role] {
++				t.Errorf("native agent %s cannot consume configured shared role %q", name, reference)
++			}
+ 		}
+ 	}
+-	for name := range genAgentRoles {
++	for _, name := range []string{"task", "scout", "sonic", "reviewer", "security-reviewer", "seance"} {
+ 		if !agents[name] {
+-			// The reverse drift: an override for an agent omp no longer ships
+-			// is inert. Not a failure, since the generator's routing is not
+-			// this check's to change, but it is named so the run says so.
+-			t.Logf("the generator routes an agent %q that %s no longer bundles (its task.agentModelOverrides entry is inert)", name, o.version)
++			t.Errorf("omp no longer bundles native agent %q", name)
+ 		}
+ 	}
++	if agents["librarian"] {
++		t.Error("stale librarian replacement remains in the native inventory")
++	}
+ }
+diff --git a/render.go b/render.go
+index c7e99b1..340c9ce 100644
+--- a/render.go
++++ b/render.go
+@@ -130,7 +130,7 @@ func (m *model) syncPreviewAt(yoff int) {
+ 			if genAgentRoles[r] {
+ 				marker = "●"
+ 			}
+-			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, chosen, m.sel["thinking"]))
++			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, chosen, localThinking(roleThinking(r, m.sel["thinking"]))))
+ 		}
+ 		b.WriteString(m.renderRoute(rows, m.depth, m.selectedLaunchAvailability(), rw))
+ 		b.WriteString("\n" + stDim.Render("on-device inference · no provider credential · cost 0.00 USD") + "\n")
+@@ -158,7 +158,7 @@ func (m *model) syncPreviewAt(yoff int) {
+ 			if genAgentRoles[r] {
+ 				marker = "●"
+ 			}
+-			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, target.Model, m.sel["thinking"]))
++			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, target.Model, roleThinking(r, m.sel["thinking"])))
+ 		}
+ 		b.WriteString(m.renderRoute(rows, m.depth, m.selectedLaunchAvailability(), rw))
+ 		b.WriteString("\n" + stDim.Render("broker-owned profile · cloud auth excluded · weights provisioned by the runtime") + "\n")
+diff --git a/routing.go b/routing.go
+index 1d924cd..92439e2 100644
+--- a/routing.go
++++ b/routing.go
+@@ -26,11 +26,8 @@ import (
+ // appear here: weightedModels silently skips a role it cannot weigh, so an
+ // omission drops that model out of both meters with no trace.
+ var roleWeight = map[string]float64{
+-	"default": 10, "task": 6, "reviewer": 3, "sonic": 3, "plan": 3, "advisor": 4, "slow": 2,
+-	"librarian": 2, "scout": 2, "smol": 1, "tiny": 0.5, "commit": 0.5, "vision": 0.5,
+-	// security-reviewer routes like reviewer but is spawned far more rarely
+-	// (ad-hoc scans), so it barely moves the needle.
+-	"security-reviewer": 1,
++	"default": 10, "task": 6, "plan": 3, "advisor": 4, "slow": 5,
++	"smol": 6, "tiny": 0.5, "commit": 0.5, "vision": 0.5, "widget": 0.5, "memory": 0.5,
+ }
+ var thinkMult = map[string]float64{ // reasoning tokens grow with effort → pricier
+ 	"minimal": 0.6, "low": 0.8, "medium": 1.0, "high": 1.3, "xhigh": 1.6, "max": 2.0,
+@@ -642,7 +639,7 @@ func (m *model) trimLanes(served map[string]bool) {
+ 		break
+ 	}
+ 	if !served[m.sel["lane"]] {
+-		for _, fallback := range []string{"mixed", "gpt-only", "claude-only"} {
++		for _, fallback := range []string{"claude-only", "gpt-only", "mixed"} {
+ 			if served[fallback] {
+ 				m.sel["lane"] = fallback
+ 				break
+@@ -651,9 +648,52 @@ func (m *model) trimLanes(served map[string]bool) {
+ 	}
+ }
+ 
++// applyRoutineRouting chooses only catalog-served, credential-available rungs
++// for routine intent, skipping a main quota only when its status is known down.
++// Explicit lane/model choices never enter this branch.
++func (m *model) applyRoutineRouting() {
++	if !m.routineRouting || len(m.generated) == 0 {
++		return
++	}
++	var disabled map[accountKey]bool
++	if m.avail.accountsOK {
++		disabled = m.accountSelections.CurrentDisabled()
++	}
++	for _, choice := range []struct{ lane, tier string }{
++		{"claude-only", "normal"},
++		{"gpt-only", "smart"},
++	} {
++		provider := providerByPool(genLanePolicies[choice.lane].primary)
++		if m.providersResolved && !m.connected[provider.Pool] {
++			continue
++		}
++		if m.avail.ok && m.avail.down(provider.mainBucket()) {
++			continue
++		}
++		if m.avail.accountsOK {
++			enabled := false
++			for _, acct := range m.avail.accounts[provider.ID] {
++				if acct.Provider == provider.ID && acct.IdentityKey != "" && !selectionDisabled(disabled, acct) {
++					enabled = true
++					break
++				}
++			}
++			if !enabled {
++				continue
++			}
++		}
++		id := genComboID(choice.lane, choice.tier, m.sel["thinking"], false)
++		if _, served := m.generated[id]; served {
++			m.sel["lane"], m.sel["model"] = choice.lane, choice.tier
++			return
++		}
++	}
++}
++
+ // clampSel turns off every dial the catalog cannot serve, and snaps the rest
+ // onto a value it does.
+ func (m *model) clampSel() {
++	m.applyRoutineRouting()
+ 	if m.noSpark {
+ 		m.sel["spark"] = "off"
+ 	}
+@@ -678,7 +718,7 @@ func (m *model) clampSel() {
+ 	// one, preferring the canonical defaults — the dial keeps showing it,
+ 	// struck, but the selection never rests on it.
+ 	if m.providersResolved && !m.noProviders && !laneAvailable(m.sel["lane"], m.connected) {
+-		for _, lane := range append([]string{"mixed", "gpt-only", "claude-only"}, m.laneValues()...) {
++		for _, lane := range append([]string{"claude-only", "gpt-only", "mixed"}, m.laneValues()...) {
+ 			if m.laneUsable(lane) {
+ 				m.sel["lane"] = lane
+ 				break
+@@ -761,16 +801,12 @@ func (m model) poolOfModel(id string) string {
+ 	return ""
+ }
+ 
+-// genConfigYAML reconstructs an omp config (modelRoles, task-agent model
+-// overrides for the ●-marked agent-backed roles, fallback chains unless the
+-// fallback dial is off, thinking, advisor, and the priority tier when fast is
+-// on) from the generated routing block for the current facets — what Enter
+-// launches omp with. The agent overrides mirror the preview: without them the
+-// static managed defaults would keep the five agent-backed types pinned
+-// regardless of the generated profile (issue atyrode/dotfiles#173).
++// genConfigYAML reconstructs an overlay using only native shared model roles.
++// Native bundled agent prompts, declared effort and inheritance remain OMP's;
++// task advisor and prewalk are independent settings, never model overrides.
+ func (m model) genConfigYAML() string {
+ 	rows := m.currentRows()
+-	var mr, fc, ao strings.Builder
++	var mr, fc, emptyFallbacks strings.Builder
+ 	advisorOn := false
+ 	for _, r := range rows {
+ 		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
+@@ -782,6 +818,9 @@ func (m model) genConfigYAML() string {
+ 			continue
+ 		}
+ 		role := f[i]
++		if !slices.Contains(genRoleOrder, role) {
++			continue
++		}
+ 		var models []string
+ 		for _, t := range f[i+1:] {
+ 			if modelRe.MatchString(t) {
+@@ -794,12 +833,12 @@ func (m model) genConfigYAML() string {
+ 		if role == "advisor" {
+ 			advisorOn = true
+ 		}
+-		if i == 1 && role != "advisor" {
+-			// ●-marked agent-backed role: mirror its lead route as the task-agent
+-			// model override so spawned agents follow the generated profile.
+-			ao.WriteString("    " + role + ": " + m.prefixed(models[0]) + "\n")
+-		}
+ 		mr.WriteString("  " + role + ": " + m.prefixed(models[0]) + "\n")
++		if role == "widget" || role == "memory" {
++			// An explicit empty chain prevents implicit fallback to @default.
++			emptyFallbacks.WriteString("    " + role + ": []\n")
++			continue
++		}
+ 		if len(models) > 1 {
+ 			var fbs []string
+ 			for _, x := range models[1:] {
+@@ -813,16 +852,18 @@ func (m model) genConfigYAML() string {
+ 	// The fallback dial is omp's retry.modelFallback: every model switch omp
+ 	// makes on retry — the error path, the usage-aware preflight, the
+ 	// advisor's — is gated on that one key (verified against the 18.1.10
+-	// bundle), so false is enough to keep every role on its lead. The chains
+-	// are left out rather than emptied because they are inert under it, and
+-	// an overlay that carried them would put a route in front of the operator
+-	// that cannot run. retry.enabled stays: same-model retries are not
+-	// fallback, and turning them off would make a transient error terminal.
++	// bundle), so false is enough to keep every role on its lead. Nonempty
++	// chains are omitted when off; widget/memory [] remain explicit so no
++	// main/default fallback is inherited. retry.enabled stays: same-model
++	// retries are not fallback, and disabling them makes transient errors terminal.
+ 	// The account/broker fallback is a different system and is untouched.
+ 	if m.sel["fallback"] == "off" {
+ 		b.WriteString("retry:\n  enabled: true\n  modelFallback: false\n")
++		if emptyFallbacks.Len() > 0 {
++			b.WriteString("  fallbackChains:\n" + emptyFallbacks.String())
++		}
+ 	} else {
+-		b.WriteString("retry:\n  enabled: true\n  modelFallback: true\n  fallbackRevertPolicy: cooldown-expiry\n  fallbackChains:\n" + fc.String())
++		b.WriteString("retry:\n  enabled: true\n  modelFallback: true\n  fallbackRevertPolicy: cooldown-expiry\n  fallbackChains:\n" + fc.String() + emptyFallbacks.String())
+ 	}
+ 	// task.agentAdvisor (omp ≥ 17.3; earlier omps hard-error on the unknown
+ 	// key, and CODE_OMP wrappers can lag the store during a dotfiles rollout,
+@@ -838,11 +879,8 @@ func (m model) genConfigYAML() string {
+ 	// target to the smol role, which modelRoles above already routes, so there
+ 	// is no second model for this dial to choose.
+ 	prewalk := m.sel["prewalk"] == "on"
+-	if ao.Len() > 0 || agentAdvisor || prewalk {
++	if agentAdvisor || prewalk {
+ 		b.WriteString("task:\n")
+-		if ao.Len() > 0 {
+-			b.WriteString("  agentModelOverrides:\n" + ao.String())
+-		}
+ 		if agentAdvisor {
+ 			b.WriteString("  agentAdvisor:\n    task: \"on\"\n")
+ 		}
+diff --git a/selection_state.go b/selection_state.go
+index f3ec079..5cb907f 100644
+--- a/selection_state.go
++++ b/selection_state.go
+@@ -28,6 +28,11 @@ const codeSelectionStateEnv = "CODE_SELECTION_STATE"
+ // absence, so forgetting to set the variable never silently disables the feature.
+ const codeSelectionDisabled = "off"
+ 
++// Positive routine intent distinguishes automatically chosen lane/model values
++// from explicit choices. Legacy files with lane/model but no marker stay explicit.
++const selectionRoutingIntentKey = "_routingIntent"
++const selectionRoutineIntent = "routine"
++
+ // defaultSelectionStatePath derives the choice file exactly the way the profile
+ // store derives its directory (defaultProfileDir): XDG_STATE_HOME, else
+ // $HOME/.local/state, then under code/. HOME is all a stripped environment
+@@ -78,11 +83,13 @@ func selectionStateTargets() (state, handoff string) {
+ 	return state, handoff
+ }
+ 
+-// loadSelectionState overlays a persisted choice set onto the current defaults.
+-// The state is deliberately only facet values: all transient TUI state remains
+-// owned by the running model.
+-func loadSelectionState(path string, facets []facet) map[string]string {
++// loadSelectionState overlays persisted facets and routing intent onto current
++// defaults. Transient view state is never persisted.
++func loadSelectionState(path string, facets []facet, routineRouting *bool) map[string]string {
+ 	sel := defaultSel()
++	if routineRouting != nil {
++		*routineRouting = true
++	}
+ 	if path == "" {
+ 		return sel
+ 	}
+@@ -105,6 +112,15 @@ func loadSelectionState(path string, facets []facet) map[string]string {
+ 		var value string
+ 		if err := json.Unmarshal(raw, &value); err == nil && values[value] {
+ 			sel[key] = value
++			if routineRouting != nil && (key == "lane" || key == "model") {
++				*routineRouting = false
++			}
++		}
++	}
++	if routineRouting != nil {
++		var intent string
++		if err := json.Unmarshal(stored[selectionRoutingIntentKey], &intent); err == nil && intent == selectionRoutineIntent {
++			*routineRouting = true
+ 		}
+ 	}
+ 	repairPersistedSelection(sel)
+@@ -153,11 +169,11 @@ func selectionChoices(sel map[string]string, facets []facet) map[string]string {
+ 
+ // saveSelectionState atomically replaces the choice file. An empty path is the
+ // standalone-package opt-out: it performs no filesystem work and succeeds.
+-func saveSelectionState(path string, sel map[string]string, facets []facet) error {
+-	return saveSelectionStateWithRename(path, sel, facets, os.Rename)
++func saveSelectionState(path string, sel map[string]string, facets []facet, routineRouting bool) error {
++	return saveSelectionStateWithRename(path, sel, facets, routineRouting, os.Rename)
+ }
+ 
+-func saveSelectionStateWithRename(path string, sel map[string]string, facets []facet, rename func(string, string) error) error {
++func saveSelectionStateWithRename(path string, sel map[string]string, facets []facet, routineRouting bool, rename func(string, string) error) error {
+ 	if path == "" {
+ 		return nil
+ 	}
+@@ -191,8 +207,12 @@ func saveSelectionStateWithRename(path string, sel map[string]string, facets []f
+ 		tmp.Close()
+ 		return err
+ 	}
++	choices := selectionChoices(sel, facets)
++	if routineRouting {
++		choices[selectionRoutingIntentKey] = selectionRoutineIntent
++	}
+ 	enc := json.NewEncoder(tmp)
+-	if err := enc.Encode(selectionChoices(sel, facets)); err != nil {
++	if err := enc.Encode(choices); err != nil {
+ 		tmp.Close()
+ 		return err
+ 	}
+@@ -224,6 +244,6 @@ func saveSelectionStateWithRename(path string, sel map[string]string, facets []f
+ // saveSelectionState treats an empty path as a no-op, so the common case is one
+ // write.
+ func (m *model) persistSelection() {
+-	_ = saveSelectionState(m.selectionState, m.sel, m.facets)
+-	_ = saveSelectionState(m.selectionHandoff, m.sel, m.facets)
++	_ = saveSelectionState(m.selectionState, m.sel, m.facets, m.routineRouting)
++	_ = saveSelectionState(m.selectionHandoff, m.sel, m.facets, m.routineRouting)
+ }
+diff --git a/selection_state_test.go b/selection_state_test.go
+index be24187..77f8173 100644
+--- a/selection_state_test.go
++++ b/selection_state_test.go
+@@ -26,7 +26,7 @@ func writeSelectionFixture(t *testing.T, path, body string) {
+ 
+ func TestSelectionStateFirstRun(t *testing.T) {
+ 	path := filepath.Join(t.TempDir(), "missing", "selection.json")
+-	if got := loadSelectionState(path, testFacets()); !reflect.DeepEqual(got, defaultSel()) {
++	if got := loadSelectionState(path, testFacets(), nil); !reflect.DeepEqual(got, defaultSel()) {
+ 		t.Fatalf("first run selection = %v, want defaults %v", got, defaultSel())
+ 	}
+ 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+@@ -40,12 +40,12 @@ func TestSelectionStateRoundTripStoresOnlyFacets(t *testing.T) {
+ 	sel["lane"] = "claude-led"
+ 	sel["thinking"] = "xhigh"
+ 	sel["transient-cursor"] = "7"
+-	if err := saveSelectionState(path, sel, testFacets()); err != nil {
++	if err := saveSelectionState(path, sel, testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if got := loadSelectionState(path, testFacets()); !reflect.DeepEqual(got, map[string]string{
+-		"lane": "claude-led", "model": "smart", "thinking": "xhigh", "advisor": "glance",
+-		"fast": "off", "spark": "on", "prewalk": "off", "planyolo": "off", "fallback": "on",
++	if got := loadSelectionState(path, testFacets(), nil); !reflect.DeepEqual(got, map[string]string{
++		"lane": "claude-led", "model": "normal", "thinking": "xhigh", "advisor": "glance",
++		"fast": "off", "spark": "off", "prewalk": "off", "planyolo": "off", "fallback": "on",
+ 	}) {
+ 		t.Fatalf("round-trip selection = %v", got)
+ 	}
+@@ -94,7 +94,7 @@ func TestSelectionStateInvalidEntriesKeepCurrentDefaults(t *testing.T) {
+ 		t.Run(tc.name, func(t *testing.T) {
+ 			path := filepath.Join(t.TempDir(), "selection.json")
+ 			writeSelectionFixture(t, path, tc.body)
+-			if got := loadSelectionState(path, facets); !reflect.DeepEqual(got, tc.want) {
++			if got := loadSelectionState(path, facets, nil); !reflect.DeepEqual(got, tc.want) {
+ 				t.Fatalf("selection = %v, want %v", got, tc.want)
+ 			}
+ 		})
+@@ -104,7 +104,7 @@ func TestSelectionStateInvalidEntriesKeepCurrentDefaults(t *testing.T) {
+ func TestSelectionStatePrivateModes(t *testing.T) {
+ 	dir := filepath.Join(t.TempDir(), "code")
+ 	path := filepath.Join(dir, "selection.json")
+-	if err := saveSelectionState(path, defaultSel(), testFacets()); err != nil {
++	if err := saveSelectionState(path, defaultSel(), testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	for name, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+@@ -124,7 +124,7 @@ func TestSelectionStatePreservesExistingParentMode(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	path := filepath.Join(dir, "selection.json")
+-	if err := saveSelectionState(path, defaultSel(), testFacets()); err != nil {
++	if err := saveSelectionState(path, defaultSel(), testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	info, err := os.Stat(dir)
+@@ -146,13 +146,13 @@ func TestSelectionStateAtomicReplacementFailureKeepsLastGoodFile(t *testing.T) {
+ 	path := filepath.Join(t.TempDir(), "code", "selection.json")
+ 	old := defaultSel()
+ 	old["thinking"] = "low"
+-	if err := saveSelectionState(path, old, testFacets()); err != nil {
++	if err := saveSelectionState(path, old, testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	replacement := defaultSel()
+ 	replacement["thinking"] = "high"
+ 	renamed := false
+-	err := saveSelectionStateWithRename(path, replacement, testFacets(), func(from, to string) error {
++	err := saveSelectionStateWithRename(path, replacement, testFacets(), false, func(from, to string) error {
+ 		renamed = true
+ 		if filepath.Dir(from) != filepath.Dir(to) {
+ 			t.Fatalf("temporary file %q is not beside destination %q", from, to)
+@@ -165,7 +165,7 @@ func TestSelectionStateAtomicReplacementFailureKeepsLastGoodFile(t *testing.T) {
+ 	if !renamed {
+ 		t.Fatal("atomic save did not rename a completed temporary file")
+ 	}
+-	if got := loadSelectionState(path, testFacets()); got["thinking"] != "high" {
++	if got := loadSelectionState(path, testFacets(), nil); got["thinking"] != "high" {
+ 		t.Fatalf("replacement stored thinking %q, want high", got["thinking"])
+ 	}
+ 	before, err := os.ReadFile(path)
+@@ -176,7 +176,7 @@ func TestSelectionStateAtomicReplacementFailureKeepsLastGoodFile(t *testing.T) {
+ 	next := defaultSel()
+ 	next["thinking"] = "max"
+ 	wantErr := errors.New("injected rename failure")
+-	err = saveSelectionStateWithRename(path, next, testFacets(), func(_, _ string) error { return wantErr })
++	err = saveSelectionStateWithRename(path, next, testFacets(), false, func(_, _ string) error { return wantErr })
+ 	if !errors.Is(err, wantErr) {
+ 		t.Fatalf("save error = %v, want injected rename error", err)
+ 	}
+@@ -218,7 +218,7 @@ func TestSelectionStateImpossibleSparkNotResurrected(t *testing.T) {
+ 		t.Run(tc.name, func(t *testing.T) {
+ 			path := filepath.Join(t.TempDir(), "selection.json")
+ 			writeSelectionFixture(t, path, tc.body)
+-			got := loadSelectionState(path, testFacets())
++			got := loadSelectionState(path, testFacets(), nil)
+ 			if got["spark"] != tc.want {
+ 				t.Fatalf("loaded spark = %q, want %q: %v", got["spark"], tc.want, got)
+ 			}
+@@ -230,11 +230,15 @@ func TestFacetChangeAndResetPersistSelection(t *testing.T) {
+ 	path := filepath.Join(t.TempDir(), "code", "selection.json")
+ 	m := model{facets: testFacets(), sel: defaultSel(), selectionState: path}
+ 
+-	changedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
++	before := m.sel["lane"]
++	changedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+ 	changed := changedModel.(model)
++	if changed.sel["lane"] == before {
++		t.Fatal("interactive lead dial did not change before persistence was checked")
++	}
+ 	// changed.sel also carries the transient lead/blend derivations of lane;
+ 	// what persists (and reloads) is the facet-only projection.
+-	if got := loadSelectionState(path, testFacets()); !reflect.DeepEqual(got, selectionChoices(changed.sel, testFacets())) {
++	if got := loadSelectionState(path, testFacets(), nil); !reflect.DeepEqual(got, selectionChoices(changed.sel, testFacets())) {
+ 		t.Fatalf("facet change persisted %v, want %v", got, selectionChoices(changed.sel, testFacets()))
+ 	}
+ 
+@@ -243,7 +247,7 @@ func TestFacetChangeAndResetPersistSelection(t *testing.T) {
+ 	if got := selectionChoices(reset.sel, testFacets()); !reflect.DeepEqual(got, defaultSel()) {
+ 		t.Fatalf("reset selection = %v, want defaults", got)
+ 	}
+-	if got := loadSelectionState(path, testFacets()); !reflect.DeepEqual(got, defaultSel()) {
++	if got := loadSelectionState(path, testFacets(), nil); !reflect.DeepEqual(got, defaultSel()) {
+ 		t.Fatalf("reset persisted %v, want defaults", got)
+ 	}
+ }
+@@ -259,7 +263,7 @@ func TestSelectionPersistenceFailureDoesNotBlockFacetChange(t *testing.T) {
+ 		selectionState: filepath.Join(blockedParent, "selection.json"),
+ 	}
+ 	before := m.sel["lane"]
+-	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
++	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+ 	updated := updatedModel.(model)
+ 	if updated.sel["lane"] == before {
+ 		t.Fatalf("facet did not change after persistence failure: %v", updated.sel)
+@@ -272,10 +276,10 @@ func TestSelectionPersistenceFailureDoesNotBlockFacetChange(t *testing.T) {
+ func TestSelectionStateDisabledPath(t *testing.T) {
+ 	sel := defaultSel()
+ 	sel["thinking"] = "max"
+-	if err := saveSelectionState("", sel, testFacets()); err != nil {
++	if err := saveSelectionState("", sel, testFacets(), false); err != nil {
+ 		t.Fatalf("disabled save returned error: %v", err)
+ 	}
+-	if got := loadSelectionState("", testFacets()); !reflect.DeepEqual(got, defaultSel()) {
++	if got := loadSelectionState("", testFacets(), nil); !reflect.DeepEqual(got, defaultSel()) {
+ 		t.Fatalf("disabled load = %v, want defaults", got)
+ 	}
+ }
+@@ -331,14 +335,18 @@ func TestInteractiveDialChangeWritesTheDefaultLocation(t *testing.T) {
+ 		t.Fatalf("no override is in force, so nothing should need mirroring: %q", handoff)
+ 	}
+ 	m := model{facets: testFacets(), sel: defaultSel(), selectionState: state}
+-	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
++	before := m.sel["lane"]
++	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+ 	turned := turnedModel.(model)
++	if turned.sel["lane"] == before {
++		t.Fatal("interactive lead dial did not change before the state write")
++	}
+ 
+ 	if _, err := os.Stat(path); err != nil {
+ 		t.Fatalf("turning a dial did not write %s: %v", path, err)
+ 	}
+ 	// A second process, resolving the location for itself, must see the choice.
+-	reloaded := loadSelectionState(selectionStatePath(), testFacets())
++	reloaded := loadSelectionState(selectionStatePath(), testFacets(), nil)
+ 	if !reflect.DeepEqual(reloaded, selectionChoices(turned.sel, testFacets())) {
+ 		t.Fatalf("reloaded %v, want the turned dials %v", reloaded, selectionChoices(turned.sel, testFacets()))
+ 	}
+@@ -364,11 +372,16 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
+ 	}
+ 
+ 	m := model{facets: testFacets(), sel: defaultSel(), selectionState: state, selectionHandoff: handoff}
+-	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+-	want := selectionChoices(turnedModel.(model).sel, testFacets())
++	before := m.sel["lane"]
++	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
++	turned := turnedModel.(model)
++	if turned.sel["lane"] == before {
++		t.Fatal("interactive lead dial did not change before mirror writes")
++	}
++	want := selectionChoices(turned.sel, testFacets())
+ 
+ 	// The override keeps owning the read this process does.
+-	if got := loadSelectionState(override, testFacets()); !reflect.DeepEqual(got, want) {
++	if got := loadSelectionState(override, testFacets(), nil); !reflect.DeepEqual(got, want) {
+ 		t.Errorf("override holds %v, want the turned dials %v", got, want)
+ 	}
+ 	// And a worker resolving the location with a stripped environment — no
+@@ -376,7 +389,243 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
+ 	if err := os.Unsetenv(codeSelectionStateEnv); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if got := loadSelectionState(selectionStatePath(), testFacets()); !reflect.DeepEqual(got, want) {
++	if got := loadSelectionState(selectionStatePath(), testFacets(), nil); !reflect.DeepEqual(got, want) {
+ 		t.Errorf("a stripped-environment reader sees %v, want the turned dials %v", got, want)
+ 	}
+ }
++
++func TestRoutineRoutingUsesServedAvailableAccounts(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, tc := range []struct {
++		name        string
++		connected   map[string]bool
++		serveClaude bool
++		wantLane    string
++		wantTier    string
++	}{
++		{"both available prefer everyday Sonnet", map[string]bool{"A": true, "O": true}, true, "claude-only", "normal"},
++		{"Anthropic only", map[string]bool{"A": true}, true, "claude-only", "normal"},
++		{"OpenAI only uses Sol", map[string]bool{"O": true}, true, "gpt-only", "smart"},
++		{"credentials do not invent a served rung", map[string]bool{"A": true, "O": true}, false, "gpt-only", "smart"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			generated := map[string][]string{}
++			for id, rows := range blocks {
++				if tc.serveClaude || strings.HasPrefix(id, "gpt-only_") {
++					generated[id] = rows
++				}
++			}
++			var routine bool
++			sel := loadSelectionState("", testFacets(), &routine)
++			m := model{sel: sel, routineRouting: routine, facets: testFacets(), generated: generated}
++			m.applyCatalog()
++			m.applyProviderAvailability(tc.connected)
++			if m.sel["lane"] != tc.wantLane || m.sel["model"] != tc.wantTier {
++				t.Fatalf("fresh selection = %v, want %s/%s", m.sel, tc.wantLane, tc.wantTier)
++			}
++			overlay := m.genConfigYAML()
++			want := "anthropic/claude-sonnet-5:medium"
++			if tc.wantLane == "gpt-only" {
++				want = "openai-codex/gpt-5.6-sol:medium"
++			}
++			if !strings.Contains(overlay, "  default: "+want+"\n") {
++				t.Fatalf("fresh overlay does not route %s:\n%s", want, overlay)
++			}
++		})
++	}
++}
++
++func TestExplicitPersistedRoutingSurvivesNewDefaults(t *testing.T) {
++	for _, tier := range []string{"normal", "smart", "elite"} {
++		t.Run(tier, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			writeSelectionFixture(t, path, `{"lane":"claude-only","model":"`+tier+`","thinking":"max","advisor":"off","prewalk":"on"}`)
++			var routine bool
++			sel := loadSelectionState(path, testFacets(), &routine)
++			m := model{sel: sel, routineRouting: routine, facets: testFacets(),
++				generated: loadBlocks(fixtureCatalogPath(t))}
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			if routine || m.sel["lane"] != "claude-only" || m.sel["model"] != tier ||
++				m.sel["thinking"] != "max" || m.sel["advisor"] != "off" || m.sel["prewalk"] != "on" {
++				t.Fatalf("explicit choices were silently reinterpreted: %v (routine=%t)", m.sel, routine)
++			}
++		})
++	}
++}
++
++func TestFreshRoutingDoesNotBroadenDisabledAccountPools(t *testing.T) {
++	anthropic := accountKey{Provider: anthropicProvider, IdentityKey: "disabled"}
++	m := model{
++		sel: defaultSel(), routineRouting: true, facets: testFacets(),
++		generated: loadBlocks(fixtureCatalogPath(t)),
++		avail: availability{accountsOK: true, accounts: map[string][]account{
++			anthropicProvider: {{Provider: anthropicProvider, IdentityKey: anthropic.IdentityKey}},
++			openAIProvider:    {{Provider: openAIProvider, IdentityKey: "enabled"}},
++		}},
++	}
++	m.accountSelections.SetManualDisabled(map[accountKey]bool{anthropic: true})
++	m.applyCatalog()
++	m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++	if m.sel["lane"] != "gpt-only" || m.sel["model"] != "smart" {
++		t.Fatalf("disabled Anthropic pool was selected: %v", m.sel)
++	}
++	if !m.accountSelections.CurrentDisabled()[anthropic] {
++		t.Fatal("routine routing broadened the account pool")
++	}
++}
++
++func TestRoutineRoutingSkipsOnlyKnownDownMainQuota(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, tc := range []struct {
++		name, anthropic, openai string
++		known                   bool
++		wantLane, wantTier      string
++	}{
++		{"Anthropic exhausted", "maxed", "ok", true, "gpt-only", "smart"},
++		{"Anthropic unauthenticated", "unauthed", "ok", true, "gpt-only", "smart"},
++		{"OpenAI exhausted but Anthropic healthy", "ok", "maxed", true, "claude-only", "normal"},
++		{"unknown refresh does not reuse stale exhaustion", "maxed", "ok", false, "claude-only", "normal"},
++		{"unreported Anthropic quota stays unknown", "", "ok", true, "claude-only", "normal"},
++		{"reported headroom preserves reserve confirmation policy", "ok", "ok", true, "claude-only", "normal"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			m := model{
++				sel: defaultSel(), routineRouting: true, facets: testFacets(), generated: blocks,
++				avail: availability{
++					ok: tc.known, bucket: map[string]string{"claude-main": tc.anthropic, "codex-main": tc.openai},
++					wins: []usageWin{{prov: anthropicProvider, pct: 95}},
++				},
++			}
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			if m.sel["lane"] != tc.wantLane || m.sel["model"] != tc.wantTier {
++				t.Fatalf("routine selection = %v, want %s/%s", m.sel, tc.wantLane, tc.wantTier)
++			}
++			if m.sel["thinking"] != "medium" || !m.routineRouting {
++				t.Fatalf("quota availability changed effort or explicit intent: %v routine=%t", m.sel, m.routineRouting)
++			}
++		})
++	}
++}
++
++func TestRoutineQuotaFallbackCannotEnableADisabledPool(t *testing.T) {
++	disabled := accountKey{Provider: openAIProvider, IdentityKey: "disabled"}
++	m := model{
++		sel: defaultSel(), routineRouting: true, facets: testFacets(),
++		generated: loadBlocks(fixtureCatalogPath(t)),
++		avail: availability{
++			ok: true, accountsOK: true,
++			bucket: map[string]string{"claude-main": "maxed", "codex-main": "ok"},
++			accounts: map[string][]account{
++				anthropicProvider: {{Provider: anthropicProvider, IdentityKey: "enabled"}},
++				openAIProvider:    {{Provider: openAIProvider, IdentityKey: disabled.IdentityKey}},
++			},
++		},
++	}
++	m.accountSelections.SetManualDisabled(map[accountKey]bool{disabled: true})
++	m.applyCatalog()
++	m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++	if genLanePolicies[m.sel["lane"]].primary == "O" || !m.accountSelections.CurrentDisabled()[disabled] {
++		t.Fatalf("quota fallback broadened the explicit account pool: %v", m.sel)
++	}
++}
++
++func TestRoutineIntentSurvivesUnrelatedDialSaveAndRestart(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, dial := range []string{"advisor", "thinking"} {
++		t.Run(dial, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			handoff := filepath.Join(t.TempDir(), "handoff.json")
++			m := model{
++				sel: defaultSel(), routineRouting: true, facets: testFacets(), generated: blocks,
++				selectionState: path, selectionHandoff: handoff,
++			}
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			m = turnDial(t, m, dial)
++			chosen := m.sel[dial]
++			if !m.routineRouting {
++				t.Fatal("an unrelated dial silently froze routine routing")
++			}
++			for _, persisted := range []string{path, handoff} {
++				raw, err := os.ReadFile(persisted)
++				if err != nil {
++					t.Fatal(err)
++				}
++				var stored map[string]string
++				if err := json.Unmarshal(raw, &stored); err != nil {
++					t.Fatal(err)
++				}
++				if stored[selectionRoutingIntentKey] != selectionRoutineIntent {
++					t.Fatalf("routine intent was not saved to %s", persisted)
++				}
++				var routine bool
++				sel := loadSelectionState(persisted, testFacets(), &routine)
++				restarted := model{
++					sel: sel, routineRouting: routine, facets: testFacets(), generated: blocks,
++					avail: availability{ok: true, bucket: map[string]string{"claude-main": "maxed", "codex-main": "ok"}},
++				}
++				restarted.applyCatalog()
++				restarted.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++				if !routine || restarted.sel["lane"] != "gpt-only" || restarted.sel["model"] != "smart" ||
++					restarted.sel[dial] != chosen {
++					t.Fatalf("restart lost routine intent or visible %s choice: %v routine=%t", dial, restarted.sel, routine)
++				}
++			}
++		})
++	}
++}
++
++func TestExplicitRoutingDialSaveKeepsIntentFrozen(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, dial := range []string{"model", "lead", "blend"} {
++		t.Run(dial, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			m := model{
++				sel: defaultSel(), routineRouting: true, facets: testFacets(), generated: blocks,
++				selectionState: path,
++			}
++			m.sel["thinking"] = "max"
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			m = turnDial(t, m, dial)
++			wantLane, wantTier := m.sel["lane"], m.sel["model"]
++			var routine bool
++			sel := loadSelectionState(path, testFacets(), &routine)
++			restarted := model{sel: sel, routineRouting: routine, facets: testFacets(), generated: blocks}
++			restarted.applyCatalog()
++			restarted.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			if routine || restarted.sel["lane"] != wantLane || restarted.sel["model"] != wantTier ||
++				restarted.sel["thinking"] != "max" {
++				t.Fatalf("explicit %s choice was reinterpreted on restart: %v routine=%t", dial, restarted.sel, routine)
++			}
++		})
++	}
++}
++
++func TestPersistedRoutingIntentIsLegacyCompatible(t *testing.T) {
++	for _, tc := range []struct {
++		name, body string
++		routine    bool
++	}{
++		{"legacy full choice stays explicit", `{"lane":"claude-only","model":"normal","thinking":"max"}`, false},
++		{"legacy unrelated-only state stays routine", `{"advisor":"off","thinking":"max"}`, true},
++		{"positive routine marker survives saved facets", `{"_routingIntent":"routine","lane":"claude-only","model":"normal","thinking":"max"}`, true},
++		{"unknown intent does not reinterpret old choices", `{"_routingIntent":"future","lane":"claude-only","model":"normal","thinking":"max"}`, false},
++		{"invalid intent does not reinterpret old choices", `{"_routingIntent":true,"lane":"claude-only","model":"normal","thinking":"max"}`, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			writeSelectionFixture(t, path, tc.body)
++			var routine bool
++			sel := loadSelectionState(path, testFacets(), &routine)
++			if routine != tc.routine || sel["thinking"] != "max" {
++				t.Fatalf("loaded %v routine=%t, want routine=%t with explicit max retained", sel, routine, tc.routine)
++			}
++			if _, leaked := sel[selectionRoutingIntentKey]; leaked {
++				t.Fatal("intent metadata leaked into the visible facet selection")
++			}
++		})
++	}
++}
+diff --git a/suggest.go b/suggest.go
+index d05b837..cffdf49 100644
+--- a/suggest.go
++++ b/suggest.go
+@@ -142,6 +142,9 @@ func validFacetActions(facets []facet, actions []clikit.Action) []clikit.Action
+ func (m *model) applyActions(actions []clikit.Action) {
+ 	for _, a := range validFacetActions(m.facets, actions) {
+ 		m.sel[a.Key] = a.Value
++		if a.Key == "lane" || a.Key == "model" {
++			m.routineRouting = false
++		}
+ 	}
+ 	m.deriveToggles()
+ 	m.repairConstraints()
+diff --git a/suggest_test.go b/suggest_test.go
+index c1469d8..0d4d95b 100644
+--- a/suggest_test.go
++++ b/suggest_test.go
+@@ -1,6 +1,8 @@
+ package main
+ 
+ import (
++	"path/filepath"
++	"reflect"
+ 	"strings"
+ 	"testing"
+ 
+@@ -290,3 +292,57 @@ func TestBalanceGuardOptionalLane(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestRejectedRoutingSuggestionRestoresIntentThroughSaveAndRestart(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, wasRoutine := range []bool{false, true} {
++		name := "explicit"
++		if wasRoutine {
++			name = "routine"
++		}
++		t.Run(name, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			m := model{
++				sel: defaultSel(), routineRouting: wasRoutine, facets: testFacets(), generated: blocks,
++				selectionState: path,
++			}
++			m.sel["thinking"] = "max"
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			before := selectionChoices(m.sel, m.facets)
++			next, feedback := m.Update(clikit.ActionsProposedMsg{Actions: []clikit.Action{
++				{Key: "model", Value: "smart"},
++				{Key: "thinking", Value: "low"},
++				{Key: "advisor", Value: "audit"},
++			}})
++			preview := next.(model)
++			if feedback == nil || preview.sel["model"] != "smart" || preview.routineRouting {
++				t.Fatalf("proposal did not create an explicit routing preview: %v routine=%t", preview.sel, preview.routineRouting)
++			}
++			next, _ = preview.Update(clikit.ActionsRevertedMsg{})
++			rejected := next.(model)
++			if !reflect.DeepEqual(selectionChoices(rejected.sel, rejected.facets), before) ||
++				rejected.routineRouting != wasRoutine || rejected.savedSel != nil {
++				t.Fatalf("reject did not restore the complete prior selection/intent: %v routine=%t", rejected.sel, rejected.routineRouting)
++			}
++			rejected = turnDial(t, rejected, "advisor")
++			chosenAdvisor := rejected.sel["advisor"]
++			var routine bool
++			loaded := loadSelectionState(path, testFacets(), &routine)
++			restarted := model{
++				sel: loaded, routineRouting: routine, facets: testFacets(), generated: blocks,
++				avail: availability{ok: true, bucket: map[string]string{"claude-main": "maxed", "codex-main": "ok"}},
++			}
++			restarted.applyCatalog()
++			restarted.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			wantLane, wantTier := before["lane"], before["model"]
++			if wasRoutine {
++				wantLane, wantTier = "gpt-only", "smart"
++			}
++			if routine != wasRoutine || restarted.sel["lane"] != wantLane || restarted.sel["model"] != wantTier ||
++				restarted.sel["thinking"] != "max" || restarted.sel["advisor"] != chosenAdvisor {
++				t.Fatalf("cancel plus unrelated save froze or reset prior intent: %v routine=%t", restarted.sel, routine)
++			}
++		})
++	}
++}
+diff --git a/update.go b/update.go
+index 868f671..f8da2a9 100644
+--- a/update.go
++++ b/update.go
+@@ -184,6 +184,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 			// back, it does not close the section the cursor is sitting in.
+ 			fold := m.sel[moreFacetKey]
+ 			m.sel = defaultSel()
++			m.routineRouting = true
+ 			if fold != "" {
+ 				m.sel[moreFacetKey] = fold
+ 			}
+@@ -294,6 +295,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 		// applied diff back to the box (the model's picks plus the derived toggles),
+ 		// so its "applied" list reflects everything that changed, not just the three
+ 		// facets the model named directly.
++		m.savedRoutineRouting = m.routineRouting
+ 		m.savedSel = map[string]string{}
+ 		for k, v := range m.sel {
+ 			m.savedSel[k] = v
+@@ -309,6 +311,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 	case clikit.ActionsConfirmedMsg:
+ 		// Kept: the preview stays; remember the prompt for the launched session.
+ 		m.savedSel = nil
++		m.savedRoutineRouting = false
+ 		m.firstPrompt = msg.Prompt
+ 		m.persistSelection()
+ 
+@@ -316,7 +319,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 		// Rejected: restore the pre-preview selection.
+ 		if m.savedSel != nil {
+ 			m.sel = m.savedSel
++			m.routineRouting = m.savedRoutineRouting
+ 			m.savedSel = nil
++			m.savedRoutineRouting = false
+ 			m.syncPreview()
+ 		}
+ 	}
+@@ -447,6 +452,9 @@ func (m *model) cycleFacet(dir int) {
+ 		return
+ 	}
+ 	m.sel[f.key] = f.values[next]
++	if f.key == "lead" || f.key == "blend" || f.key == "lane" || f.key == "model" {
++		m.routineRouting = false
++	}
+ 	// lead/blend are lane's rendered halves: recompose the canonical value
+ 	// before anything re-derives them (visibleFacets syncs from lane).
+ 	switch f.key {

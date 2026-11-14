@@ -1,3 +1,16 @@
+diff --git a/configure_test.go b/configure_test.go
+index 8ddecc9..a63e3ba 100644
+--- a/configure_test.go
++++ b/configure_test.go
+@@ -64,7 +64,7 @@ func confirm(t *testing.T, m model) model {
+ func turnDial(t *testing.T, m model, dial string) model {
+ 	t.Helper()
+ 	found := false
+-	for i, f := range m.facets {
++	for i, f := range m.visibleFacets() {
+ 		if f.key == dial {
+ 			m.fcur, found = i, true
+ 			break
 diff --git a/docs/configuration.md b/docs/configuration.md
 index bc1342f..0e0a63f 100644
 --- a/docs/configuration.md
@@ -1963,10 +1976,18 @@ index 41bf72e..1c4e91a 100644
  	// selectionHandoff is the default location a relocated selection is also
  	// mirrored to, because an engine launch sees no CODE_SELECTION_STATE at all.
 diff --git a/ompsmoke_test.go b/ompsmoke_test.go
-index a7b27a5..1b909cc 100644
+index a7b27a5..45d6773 100644
 --- a/ompsmoke_test.go
 +++ b/ompsmoke_test.go
-@@ -98,8 +98,8 @@ func (o *smokeOmp) run(t *testing.T, args ...string) []byte {
+@@ -6,7 +6,6 @@ import (
+ 	"os/exec"
+ 	"path/filepath"
+ 	"reflect"
+-	"regexp"
+ 	"sort"
+ 	"strconv"
+ 	"strings"
+@@ -98,8 +97,8 @@ func (o *smokeOmp) run(t *testing.T, args ...string) []byte {
  // smokeOverlay is the overlay under test: the two-pool golden catalog on the
  // dials that make the generator emit every key it knows how to emit — the
  // audit advisor (advisor.enabled and, on omp ≥ 17.3, task.agentAdvisor), fast
@@ -1977,7 +1998,7 @@ index a7b27a5..1b909cc 100644
  func (o *smokeOmp) smokeOverlay(t *testing.T) string {
  	t.Helper()
  	blocks := loadBlocks(filepath.Join("testdata", "two-pool-golden.plain"))
-@@ -128,6 +128,7 @@ func (o *smokeOmp) smokeOverlay(t *testing.T) string {
+@@ -128,6 +127,7 @@ func (o *smokeOmp) smokeOverlay(t *testing.T) string {
  // so the home's config.yml is the same schema through the same parser.
  func (o *smokeOmp) checkEffectiveConfig(t *testing.T) {
  	overlay := o.smokeOverlay(t)
@@ -1985,7 +2006,90 @@ index a7b27a5..1b909cc 100644
  	t.Logf("overlay under test:\n%s", overlay)
  	if err := os.WriteFile(filepath.Join(o.agentDir, "config.yml"), []byte(overlay), 0o644); err != nil {
  		t.Fatal(err)
-@@ -322,19 +323,47 @@ func (o *smokeOmp) checkRoles(t *testing.T) {
+@@ -266,49 +266,44 @@ func (o *smokeOmp) checkUsageSchema(t *testing.T) {
+ 	}
+ }
+ 
+-var (
+-	// rolesHeading marks the role inventory in omp's bundled models.md; the
+-	// roles follow on the next non-empty line as backticked names.
+-	rolesHeading = "Supported model roles:"
+-	backticked   = regexp.MustCompile("`([a-z][a-z0-9-]*)`")
+-)
+-
+-// checkRoles diffs omp's role inventory against what the generator routes. A
+-// role omp grows that the generator never routes stops the catalog covering it
+-// with no key removed or renamed — the one drift mode no assertion on our own
+-// keys can catch (issue #3, the vision role). Two inventories: the model roles
+-// omp documents in its bundled models.md, and the bundled task agents, which
+-// `omp agents unpack --json` lists without a TUI.
++// checkRoles verifies native bundled identities against the configured shared
++// roles read back by OMP. Documentation headings are not a consumer API.
+ func (o *smokeOmp) checkRoles(t *testing.T) {
+-	routed := map[string]bool{}
+-	for _, r := range genRoleOrder {
+-		routed[r] = true
++	overlay := o.smokeOverlay(t)
++	var configured struct {
++		ModelRoles map[string]string `yaml:"modelRoles"`
++		Task       map[string]any    `yaml:"task"`
+ 	}
+-
+-	var roles []string
+-	lines := strings.Split(string(o.run(t, "read", "omp://models.md")), "\n")
+-	for i, line := range lines {
+-		if !strings.Contains(line, rolesHeading) {
+-			continue
+-		}
+-		for _, next := range lines[i+1:] {
+-			if strings.TrimSpace(next) == "" {
+-				continue
+-			}
+-			for _, m := range backticked.FindAllStringSubmatch(next, -1) {
+-				roles = append(roles, m[1])
+-			}
+-			break
++	if err := yaml.Unmarshal([]byte(overlay), &configured); err != nil {
++		t.Fatalf("parsing generated native routes: %v", err)
++	}
++	if _, overridden := configured.Task["agentModelOverrides"]; overridden {
++		t.Fatal("generated overlay replaces native bundled-agent model routing")
++	}
++	if len(configured.ModelRoles) != len(genRoleOrder) {
++		t.Fatalf("generated overlay has %d shared roles, want %d", len(configured.ModelRoles), len(genRoleOrder))
++	}
++	for _, role := range genRoleOrder {
++		if configured.ModelRoles[role] == "" {
++			t.Errorf("generated overlay omits native shared role %q", role)
+ 		}
+-		break
+ 	}
+-	if len(roles) == 0 {
+-		t.Fatalf("omp://models.md no longer lists roles under %q; the inventory moved and this check needs a new source", rolesHeading)
++	if err := os.WriteFile(filepath.Join(o.agentDir, "config.yml"), []byte(overlay), 0o644); err != nil {
++		t.Fatal(err)
+ 	}
+-	t.Logf("omp model roles: %s", strings.Join(roles, " "))
+-	for _, r := range roles {
+-		if !routed[r] {
+-			t.Errorf("omp has a model role %q the generator never routes", r)
++	var settings map[string]struct {
++		Value json.RawMessage `json:"value"`
++	}
++	if err := json.Unmarshal(o.run(t, "config", "list", "--json"), &settings); err != nil {
++		t.Fatalf("reading native effective shared roles: %v", err)
++	}
++	var effective map[string]string
++	if err := json.Unmarshal(settings["modelRoles"].Value, &effective); err != nil {
++		t.Fatalf("OMP no longer exposes effective modelRoles: %v", err)
++	}
++	for role, want := range configured.ModelRoles {
++		if got := effective[role]; got != want {
++			t.Errorf("OMP effective @%s = %q, want generated %q", role, got, want)
+ 		}
+ 	}
+ 
+@@ -322,19 +317,53 @@ func (o *smokeOmp) checkRoles(t *testing.T) {
  		t.Fatal("omp agents unpack wrote no agents")
  	}
  	agents := map[string]bool{}
@@ -2024,6 +2128,12 @@ index a7b27a5..1b909cc 100644
 +		}
 +		if !reflect.DeepEqual(got, want) {
 +			t.Errorf("native agent %s route = %+v, want %+v", name, got, want)
++		}
++		for _, reference := range got.Model {
++			role := strings.TrimPrefix(reference, "@")
++			if role == reference || configured.ModelRoles[role] == "" || effective[role] != configured.ModelRoles[role] {
++				t.Errorf("native agent %s cannot consume configured shared role %q", name, reference)
++			}
  		}
  	}
 -	for name := range genAgentRoles {
@@ -2263,7 +2373,7 @@ index f3ec079..cb447ab 100644
  	}
  	repairPersistedSelection(sel)
 diff --git a/selection_state_test.go b/selection_state_test.go
-index be24187..62728b4 100644
+index be24187..c1126b0 100644
 --- a/selection_state_test.go
 +++ b/selection_state_test.go
 @@ -26,7 +26,7 @@ func writeSelectionFixture(t *testing.T, path, body string) {
@@ -2315,8 +2425,17 @@ index be24187..62728b4 100644
  			if got["spark"] != tc.want {
  				t.Fatalf("loaded spark = %q, want %q: %v", got["spark"], tc.want, got)
  			}
-@@ -234,7 +234,7 @@ func TestFacetChangeAndResetPersistSelection(t *testing.T) {
+@@ -230,11 +230,15 @@ func TestFacetChangeAndResetPersistSelection(t *testing.T) {
+ 	path := filepath.Join(t.TempDir(), "code", "selection.json")
+ 	m := model{facets: testFacets(), sel: defaultSel(), selectionState: path}
+ 
+-	changedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
++	before := m.sel["lane"]
++	changedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
  	changed := changedModel.(model)
++	if changed.sel["lane"] == before {
++		t.Fatal("interactive lead dial did not change before persistence was checked")
++	}
  	// changed.sel also carries the transient lead/blend derivations of lane;
  	// what persists (and reloads) is the facet-only projection.
 -	if got := loadSelectionState(path, testFacets()); !reflect.DeepEqual(got, selectionChoices(changed.sel, testFacets())) {
@@ -2324,7 +2443,7 @@ index be24187..62728b4 100644
  		t.Fatalf("facet change persisted %v, want %v", got, selectionChoices(changed.sel, testFacets()))
  	}
  
-@@ -243,7 +243,7 @@ func TestFacetChangeAndResetPersistSelection(t *testing.T) {
+@@ -243,7 +247,7 @@ func TestFacetChangeAndResetPersistSelection(t *testing.T) {
  	if got := selectionChoices(reset.sel, testFacets()); !reflect.DeepEqual(got, defaultSel()) {
  		t.Fatalf("reset selection = %v, want defaults", got)
  	}
@@ -2333,7 +2452,16 @@ index be24187..62728b4 100644
  		t.Fatalf("reset persisted %v, want defaults", got)
  	}
  }
-@@ -275,7 +275,7 @@ func TestSelectionStateDisabledPath(t *testing.T) {
+@@ -259,7 +263,7 @@ func TestSelectionPersistenceFailureDoesNotBlockFacetChange(t *testing.T) {
+ 		selectionState: filepath.Join(blockedParent, "selection.json"),
+ 	}
+ 	before := m.sel["lane"]
+-	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
++	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+ 	updated := updatedModel.(model)
+ 	if updated.sel["lane"] == before {
+ 		t.Fatalf("facet did not change after persistence failure: %v", updated.sel)
+@@ -275,7 +279,7 @@ func TestSelectionStateDisabledPath(t *testing.T) {
  	if err := saveSelectionState("", sel, testFacets()); err != nil {
  		t.Fatalf("disabled save returned error: %v", err)
  	}
@@ -2342,7 +2470,19 @@ index be24187..62728b4 100644
  		t.Fatalf("disabled load = %v, want defaults", got)
  	}
  }
-@@ -338,7 +338,7 @@ func TestInteractiveDialChangeWritesTheDefaultLocation(t *testing.T) {
+@@ -331,14 +335,18 @@ func TestInteractiveDialChangeWritesTheDefaultLocation(t *testing.T) {
+ 		t.Fatalf("no override is in force, so nothing should need mirroring: %q", handoff)
+ 	}
+ 	m := model{facets: testFacets(), sel: defaultSel(), selectionState: state}
+-	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
++	before := m.sel["lane"]
++	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+ 	turned := turnedModel.(model)
++	if turned.sel["lane"] == before {
++		t.Fatal("interactive lead dial did not change before the state write")
++	}
+ 
+ 	if _, err := os.Stat(path); err != nil {
  		t.Fatalf("turning a dial did not write %s: %v", path, err)
  	}
  	// A second process, resolving the location for itself, must see the choice.
@@ -2351,8 +2491,19 @@ index be24187..62728b4 100644
  	if !reflect.DeepEqual(reloaded, selectionChoices(turned.sel, testFacets())) {
  		t.Fatalf("reloaded %v, want the turned dials %v", reloaded, selectionChoices(turned.sel, testFacets()))
  	}
-@@ -368,7 +368,7 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
- 	want := selectionChoices(turnedModel.(model).sel, testFacets())
+@@ -364,11 +372,16 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
+ 	}
+ 
+ 	m := model{facets: testFacets(), sel: defaultSel(), selectionState: state, selectionHandoff: handoff}
+-	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+-	want := selectionChoices(turnedModel.(model).sel, testFacets())
++	before := m.sel["lane"]
++	turnedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
++	turned := turnedModel.(model)
++	if turned.sel["lane"] == before {
++		t.Fatal("interactive lead dial did not change before mirror writes")
++	}
++	want := selectionChoices(turned.sel, testFacets())
  
  	// The override keeps owning the read this process does.
 -	if got := loadSelectionState(override, testFacets()); !reflect.DeepEqual(got, want) {
@@ -2360,7 +2511,7 @@ index be24187..62728b4 100644
  		t.Errorf("override holds %v, want the turned dials %v", got, want)
  	}
  	// And a worker resolving the location with a stripped environment — no
-@@ -376,7 +376,88 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
+@@ -376,7 +389,88 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
  	if err := os.Unsetenv(codeSelectionStateEnv); err != nil {
  		t.Fatal(err)
  	}

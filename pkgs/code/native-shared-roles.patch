@@ -4,8 +4,10 @@ Commit: 23f89adec1ff4b3b85018d4c77a38b79de227bad
 Downstream continuity-bridge patch only; not a new Go/native Code product.
 Route native shared roles without named-agent overrides; retain explicit dials,
 account pools, independent task settings, and utility effort boundaries.
-Widget uses the cheap first rung at low; memory uses it at medium. Each has its
-own explicit empty chain. Memory backend/enabled/autolearn preferences are untouched.
+Routine intent survives unrelated saves/restarts and skips only known-down main
+quota. Legacy lane/model maps stay explicit. Local utilities respect the honest
+local effort ceiling; hosted memory remains cheap medium. Widget and memory each
+have an explicit empty chain; backend/enabled/autolearn preferences are untouched.
 Refresh exact-identity metadata without paid probes or new entitlements.
 Retain authoritative standard windows independently of authored capability tiers;
 do not infer extended windows or reject smaller windows on premium rungs.
@@ -71,10 +73,10 @@ index 8ddecc9..a63e3ba 100644
  			m.fcur, found = i, true
  			break
 diff --git a/docs/configuration.md b/docs/configuration.md
-index bc1342f..89f854d 100644
+index bc1342f..a64807d 100644
 --- a/docs/configuration.md
 +++ b/docs/configuration.md
-@@ -7,12 +7,25 @@
+@@ -7,12 +7,31 @@
  | `pool` | `O` (OpenAI/Codex), `A` (Anthropic), or `D` (DeepSeek). `O` and `A` must fill tiers 1..3; `D` is optional — one verified model is enough, missing tiers borrow the nearest rung |
  | `tier` | position on the pool's capability ladder. `1` cheap, `2` regular, `3` smart, and an optional `4` — a fourth rung the model dial's `elite` notch reaches. Ladder depth is per pool, and a provider shipping a fourth model needs no code change to light its own `elite` up: Anthropic's is `claude-fable-5`, OpenAI's `gpt-6-astra`. `0` is off the ladder entirely: the fast idle-bucket model the `spark` toggle drains |
  | `bucket` | the quota window the model draws — drives the usage meter |
@@ -95,16 +97,22 @@ index bc1342f..89f854d 100644
 +job widget disables reasoning itself, so widget's low setting is declarative
 +there. Memory backend/enabled/autolearn preferences and the independent advisor
 +dial are retained.
++Local utility efforts are additionally clamped to the local lane's honest
++`minimal`/`low` levels; hosted `smol`/`memory` remain medium.
 +
-+Fresh selections prefer served Sonnet at medium when Anthropic credentials are
-+available, otherwise served Sol at medium. Existing persisted routing choices
-+are not reset. Only native shared roles are configured: bundled task uses
-+`@task`/auto, reviewer `@slow`, and scout/sonic `@smol`/medium; seance and
++Routine selections prefer served Sonnet at medium when Anthropic credentials
++are available and its known main quota is not down, otherwise served Sol at
++medium. Unknown quota is not treated as exhaustion; reserve/confirmation and
++account-pool controls are unchanged. Saved `_routingIntent: "routine"` preserves
++this intent through unrelated advisor/effort changes and restarts. Explicit
++lane/model choices stay explicit; legacy saved maps containing lane/model
++remain explicit without a routine marker. Only native shared roles are configured:
++task uses `@task`/auto, reviewer `@slow`, scout/sonic `@smol`/medium; seance and
 +security-reviewer retain native inheritance. No named-agent overrides are emitted.
  
  `code generate init` ranks a pool's ladder by price, so it needs one for every
  model. omp's model table lags a launch unevenly — a brand-new flagship arrives
-@@ -42,7 +55,7 @@ switches back but leaves it open, and it is never persisted with the dials.
+@@ -42,7 +61,7 @@ switches back but leaves it open, and it is never persisted with the dials.
  | `fast` | `tier:` overlay key, per provider | buys every priority service tier the lane's pools sell. Offered on exactly those lanes: a pool declares one by setting `ServiceTier` in the provider registry, and nothing else needs editing |
  | `prewalk` | `prewalk.enabled` + `task.prewalk` | hands the run to the `smol` role at the first edit once the plan's todo list exists. Main session and spawned task agents both move — half a run on the cheap model would not be what the label says. The target needs no setting: omp defaults it to `smol`, which the grid already routes |
  | `planyolo` | `--plan-yolo` argv flag | starts read-only in plan mode, auto-approves the plan on the model's first resolve call, then implements. omp exposes this on the command line only, so it rides argv rather than the overlay |
@@ -1805,7 +1813,7 @@ index 61d8377..d978c79 100644
 +	}
 +}
 diff --git a/locallane.go b/locallane.go
-index c54f8ca..707655a 100644
+index c54f8ca..8ba28c7 100644
 --- a/locallane.go
 +++ b/locallane.go
 @@ -535,28 +535,27 @@ func localServedList(lane localLane) string {
@@ -1833,7 +1841,7 @@ index c54f8ca..707655a 100644
 -			agents.WriteString("    " + role + ": " + qualified + "\n")
 +		model := qualified
 +		if genUtil[role] || role == "vision" {
-+			model = yamlQuote(t.Engine + "/" + t.Model + ":" + roleThinking(role, t.Thinking))
++			model = yamlQuote(t.Engine + "/" + t.Model + ":" + localThinking(roleThinking(role, t.Thinking)))
  		}
 +		roles.WriteString("  " + role + ": " + model + "\n")
  	}
@@ -1847,7 +1855,7 @@ index c54f8ca..707655a 100644
  	b.WriteString("advisor:\n  enabled: false\n")
  	return b.String()
 diff --git a/locallane_test.go b/locallane_test.go
-index 4a360cd..49b34d7 100644
+index 4a360cd..f699011 100644
 --- a/locallane_test.go
 +++ b/locallane_test.go
 @@ -419,7 +419,7 @@ func TestLocalCeremonyMintsWhatTheEndpointServes(t *testing.T) {
@@ -1875,24 +1883,26 @@ index 4a360cd..49b34d7 100644
  	}
  	if strings.Contains(overlay, "advisor: ") {
  		t.Errorf("the local overlay routes an advisor role:\n%s", overlay)
-@@ -861,3 +866,19 @@ func TestLocalThinkingIsClamped(t *testing.T) {
+@@ -861,3 +866,21 @@ func TestLocalThinkingIsClamped(t *testing.T) {
  		}
  	}
  }
 +
-+func TestLocalOverlayKeepsNativeUtilityEffortIndependent(t *testing.T) {
-+	target := localTarget{Engine: localEngineOllama, Model: "qwen2.5:3b", Thinking: "high"}
-+	overlay := target.overlayYAML()
-+	assertNativeUtilityEmptyFallbacks(t, overlay)
-+	for role, effort := range map[string]string{"smol": "medium", "tiny": "low", "commit": "low", "vision": "low", "widget": "low", "memory": "medium"} {
-+		want := "  " + role + ": \"ollama/qwen2.5:3b:" + effort + "\"\n"
-+		if !strings.Contains(overlay, want) {
-+			t.Errorf("local utility %s inherited main high instead of %s:\n%s", role, effort, overlay)
++func TestLocalOverlayKeepsUtilityEffortWithinHonestCeiling(t *testing.T) {
++	for _, mainEffort := range localThinkingLevels {
++		target := localTarget{Engine: localEngineOllama, Model: "qwen2.5:3b", Thinking: mainEffort}
++		overlay := target.overlayYAML()
++		assertNativeUtilityEmptyFallbacks(t, overlay)
++		for _, role := range []string{"smol", "tiny", "commit", "vision", "widget", "memory"} {
++			want := "  " + role + ": \"ollama/qwen2.5:3b:low\"\n"
++			if !strings.Contains(overlay, want) {
++				t.Errorf("local %s exceeds its honest low ceiling with main %s:\n%s", role, mainEffort, overlay)
++			}
 +		}
-+	}
-+	if !strings.Contains(overlay, "defaultThinkingLevel: high\n") ||
-+		!strings.Contains(overlay, "  task: \"ollama/qwen2.5:3b\"\n") {
-+		t.Errorf("local utility policy rewrote the explicitly chosen main effort:\n%s", overlay)
++		if !strings.Contains(overlay, "defaultThinkingLevel: "+mainEffort+"\n") ||
++			!strings.Contains(overlay, "  task: \"ollama/qwen2.5:3b\"\n") {
++			t.Errorf("local utility policy rewrote the supported main effort %s:\n%s", mainEffort, overlay)
++		}
 +	}
 +}
 diff --git a/main.go b/main.go
@@ -2413,7 +2423,7 @@ index a7b27a5..f1f7e00 100644
 +	}
  }
 diff --git a/render.go b/render.go
-index c7e99b1..1feba7e 100644
+index c7e99b1..340c9ce 100644
 --- a/render.go
 +++ b/render.go
 @@ -130,7 +130,7 @@ func (m *model) syncPreviewAt(yoff int) {
@@ -2421,7 +2431,7 @@ index c7e99b1..1feba7e 100644
  				marker = "●"
  			}
 -			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, chosen, m.sel["thinking"]))
-+			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, chosen, roleThinking(r, m.sel["thinking"])))
++			rows = append(rows, fmt.Sprintf("  %s %-10s %s:%s", marker, r, chosen, localThinking(roleThinking(r, m.sel["thinking"]))))
  		}
  		b.WriteString(m.renderRoute(rows, m.depth, m.selectedLaunchAvailability(), rw))
  		b.WriteString("\n" + stDim.Render("on-device inference · no provider credential · cost 0.00 USD") + "\n")
@@ -2435,7 +2445,7 @@ index c7e99b1..1feba7e 100644
  		b.WriteString(m.renderRoute(rows, m.depth, m.selectedLaunchAvailability(), rw))
  		b.WriteString("\n" + stDim.Render("broker-owned profile · cloud auth excluded · weights provisioned by the runtime") + "\n")
 diff --git a/routing.go b/routing.go
-index 1d924cd..6d4ed68 100644
+index 1d924cd..92439e2 100644
 --- a/routing.go
 +++ b/routing.go
 @@ -26,11 +26,8 @@ import (
@@ -2461,13 +2471,13 @@ index 1d924cd..6d4ed68 100644
  			if served[fallback] {
  				m.sel["lane"] = fallback
  				break
-@@ -651,9 +648,49 @@ func (m *model) trimLanes(served map[string]bool) {
+@@ -651,9 +648,52 @@ func (m *model) trimLanes(served map[string]bool) {
  	}
  }
  
 +// applyRoutineRouting chooses only catalog-served, credential-available rungs
-+// for a fresh selection. Persisted or explicitly turned routing dials never
-+// enter this branch. Sol is the everyday fallback, not an invented entitlement.
++// for routine intent, skipping a main quota only when its status is known down.
++// Explicit lane/model choices never enter this branch.
 +func (m *model) applyRoutineRouting() {
 +	if !m.routineRouting || len(m.generated) == 0 {
 +		return
@@ -2480,11 +2490,14 @@ index 1d924cd..6d4ed68 100644
 +		{"claude-only", "normal"},
 +		{"gpt-only", "smart"},
 +	} {
-+		if m.providersResolved && !m.connected[genLanePolicies[choice.lane].primary] {
++		provider := providerByPool(genLanePolicies[choice.lane].primary)
++		if m.providersResolved && !m.connected[provider.Pool] {
++			continue
++		}
++		if m.avail.ok && m.avail.down(provider.mainBucket()) {
 +			continue
 +		}
 +		if m.avail.accountsOK {
-+			provider := providerByPool(genLanePolicies[choice.lane].primary)
 +			enabled := false
 +			for _, acct := range m.avail.accounts[provider.ID] {
 +				if acct.Provider == provider.ID && acct.IdentityKey != "" && !selectionDisabled(disabled, acct) {
@@ -2511,7 +2524,7 @@ index 1d924cd..6d4ed68 100644
  	if m.noSpark {
  		m.sel["spark"] = "off"
  	}
-@@ -678,7 +715,7 @@ func (m *model) clampSel() {
+@@ -678,7 +718,7 @@ func (m *model) clampSel() {
  	// one, preferring the canonical defaults — the dial keeps showing it,
  	// struck, but the selection never rests on it.
  	if m.providersResolved && !m.noProviders && !laneAvailable(m.sel["lane"], m.connected) {
@@ -2520,7 +2533,7 @@ index 1d924cd..6d4ed68 100644
  			if m.laneUsable(lane) {
  				m.sel["lane"] = lane
  				break
-@@ -761,16 +798,12 @@ func (m model) poolOfModel(id string) string {
+@@ -761,16 +801,12 @@ func (m model) poolOfModel(id string) string {
  	return ""
  }
  
@@ -2541,7 +2554,7 @@ index 1d924cd..6d4ed68 100644
  	advisorOn := false
  	for _, r := range rows {
  		f := strings.Fields(strings.ReplaceAll(r, "→", " "))
-@@ -782,6 +815,9 @@ func (m model) genConfigYAML() string {
+@@ -782,6 +818,9 @@ func (m model) genConfigYAML() string {
  			continue
  		}
  		role := f[i]
@@ -2551,7 +2564,7 @@ index 1d924cd..6d4ed68 100644
  		var models []string
  		for _, t := range f[i+1:] {
  			if modelRe.MatchString(t) {
-@@ -794,12 +830,12 @@ func (m model) genConfigYAML() string {
+@@ -794,12 +833,12 @@ func (m model) genConfigYAML() string {
  		if role == "advisor" {
  			advisorOn = true
  		}
@@ -2569,7 +2582,7 @@ index 1d924cd..6d4ed68 100644
  		if len(models) > 1 {
  			var fbs []string
  			for _, x := range models[1:] {
-@@ -813,16 +849,18 @@ func (m model) genConfigYAML() string {
+@@ -813,16 +852,18 @@ func (m model) genConfigYAML() string {
  	// The fallback dial is omp's retry.modelFallback: every model switch omp
  	// makes on retry — the error path, the usage-aware preflight, the
  	// advisor's — is gated on that one key (verified against the 18.1.10
@@ -2594,7 +2607,7 @@ index 1d924cd..6d4ed68 100644
  	}
  	// task.agentAdvisor (omp ≥ 17.3; earlier omps hard-error on the unknown
  	// key, and CODE_OMP wrappers can lag the store during a dotfiles rollout,
-@@ -838,11 +876,8 @@ func (m model) genConfigYAML() string {
+@@ -838,11 +879,8 @@ func (m model) genConfigYAML() string {
  	// target to the smol role, which modelRoles above already routes, so there
  	// is no second model for this dial to choose.
  	prewalk := m.sel["prewalk"] == "on"
@@ -2608,14 +2621,31 @@ index 1d924cd..6d4ed68 100644
  			b.WriteString("  agentAdvisor:\n    task: \"on\"\n")
  		}
 diff --git a/selection_state.go b/selection_state.go
-index f3ec079..cb447ab 100644
+index f3ec079..5cb907f 100644
 --- a/selection_state.go
 +++ b/selection_state.go
-@@ -81,8 +81,11 @@ func selectionStateTargets() (state, handoff string) {
- // loadSelectionState overlays a persisted choice set onto the current defaults.
- // The state is deliberately only facet values: all transient TUI state remains
- // owned by the running model.
+@@ -28,6 +28,11 @@ const codeSelectionStateEnv = "CODE_SELECTION_STATE"
+ // absence, so forgetting to set the variable never silently disables the feature.
+ const codeSelectionDisabled = "off"
+ 
++// Positive routine intent distinguishes automatically chosen lane/model values
++// from explicit choices. Legacy files with lane/model but no marker stay explicit.
++const selectionRoutingIntentKey = "_routingIntent"
++const selectionRoutineIntent = "routine"
++
+ // defaultSelectionStatePath derives the choice file exactly the way the profile
+ // store derives its directory (defaultProfileDir): XDG_STATE_HOME, else
+ // $HOME/.local/state, then under code/. HOME is all a stripped environment
+@@ -78,11 +83,13 @@ func selectionStateTargets() (state, handoff string) {
+ 	return state, handoff
+ }
+ 
+-// loadSelectionState overlays a persisted choice set onto the current defaults.
+-// The state is deliberately only facet values: all transient TUI state remains
+-// owned by the running model.
 -func loadSelectionState(path string, facets []facet) map[string]string {
++// loadSelectionState overlays persisted facets and routing intent onto current
++// defaults. Transient view state is never persisted.
 +func loadSelectionState(path string, facets []facet, routineRouting *bool) map[string]string {
  	sel := defaultSel()
 +	if routineRouting != nil {
@@ -2624,18 +2654,62 @@ index f3ec079..cb447ab 100644
  	if path == "" {
  		return sel
  	}
-@@ -105,6 +108,9 @@ func loadSelectionState(path string, facets []facet) map[string]string {
+@@ -105,6 +112,15 @@ func loadSelectionState(path string, facets []facet) map[string]string {
  		var value string
  		if err := json.Unmarshal(raw, &value); err == nil && values[value] {
  			sel[key] = value
 +			if routineRouting != nil && (key == "lane" || key == "model") {
 +				*routineRouting = false
 +			}
++		}
++	}
++	if routineRouting != nil {
++		var intent string
++		if err := json.Unmarshal(stored[selectionRoutingIntentKey], &intent); err == nil && intent == selectionRoutineIntent {
++			*routineRouting = true
  		}
  	}
  	repairPersistedSelection(sel)
+@@ -153,11 +169,11 @@ func selectionChoices(sel map[string]string, facets []facet) map[string]string {
+ 
+ // saveSelectionState atomically replaces the choice file. An empty path is the
+ // standalone-package opt-out: it performs no filesystem work and succeeds.
+-func saveSelectionState(path string, sel map[string]string, facets []facet) error {
+-	return saveSelectionStateWithRename(path, sel, facets, os.Rename)
++func saveSelectionState(path string, sel map[string]string, facets []facet, routineRouting bool) error {
++	return saveSelectionStateWithRename(path, sel, facets, routineRouting, os.Rename)
+ }
+ 
+-func saveSelectionStateWithRename(path string, sel map[string]string, facets []facet, rename func(string, string) error) error {
++func saveSelectionStateWithRename(path string, sel map[string]string, facets []facet, routineRouting bool, rename func(string, string) error) error {
+ 	if path == "" {
+ 		return nil
+ 	}
+@@ -191,8 +207,12 @@ func saveSelectionStateWithRename(path string, sel map[string]string, facets []f
+ 		tmp.Close()
+ 		return err
+ 	}
++	choices := selectionChoices(sel, facets)
++	if routineRouting {
++		choices[selectionRoutingIntentKey] = selectionRoutineIntent
++	}
+ 	enc := json.NewEncoder(tmp)
+-	if err := enc.Encode(selectionChoices(sel, facets)); err != nil {
++	if err := enc.Encode(choices); err != nil {
+ 		tmp.Close()
+ 		return err
+ 	}
+@@ -224,6 +244,6 @@ func saveSelectionStateWithRename(path string, sel map[string]string, facets []f
+ // saveSelectionState treats an empty path as a no-op, so the common case is one
+ // write.
+ func (m *model) persistSelection() {
+-	_ = saveSelectionState(m.selectionState, m.sel, m.facets)
+-	_ = saveSelectionState(m.selectionHandoff, m.sel, m.facets)
++	_ = saveSelectionState(m.selectionState, m.sel, m.facets, m.routineRouting)
++	_ = saveSelectionState(m.selectionHandoff, m.sel, m.facets, m.routineRouting)
+ }
 diff --git a/selection_state_test.go b/selection_state_test.go
-index be24187..f603018 100644
+index be24187..77f8173 100644
 --- a/selection_state_test.go
 +++ b/selection_state_test.go
 @@ -26,7 +26,7 @@ func writeSelectionFixture(t *testing.T, path, body string) {
@@ -2647,8 +2721,12 @@ index be24187..f603018 100644
  		t.Fatalf("first run selection = %v, want defaults %v", got, defaultSel())
  	}
  	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-@@ -43,9 +43,9 @@ func TestSelectionStateRoundTripStoresOnlyFacets(t *testing.T) {
- 	if err := saveSelectionState(path, sel, testFacets()); err != nil {
+@@ -40,12 +40,12 @@ func TestSelectionStateRoundTripStoresOnlyFacets(t *testing.T) {
+ 	sel["lane"] = "claude-led"
+ 	sel["thinking"] = "xhigh"
+ 	sel["transient-cursor"] = "7"
+-	if err := saveSelectionState(path, sel, testFacets()); err != nil {
++	if err := saveSelectionState(path, sel, testFacets(), false); err != nil {
  		t.Fatal(err)
  	}
 -	if got := loadSelectionState(path, testFacets()); !reflect.DeepEqual(got, map[string]string{
@@ -2669,6 +2747,40 @@ index be24187..f603018 100644
  				t.Fatalf("selection = %v, want %v", got, tc.want)
  			}
  		})
+@@ -104,7 +104,7 @@ func TestSelectionStateInvalidEntriesKeepCurrentDefaults(t *testing.T) {
+ func TestSelectionStatePrivateModes(t *testing.T) {
+ 	dir := filepath.Join(t.TempDir(), "code")
+ 	path := filepath.Join(dir, "selection.json")
+-	if err := saveSelectionState(path, defaultSel(), testFacets()); err != nil {
++	if err := saveSelectionState(path, defaultSel(), testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	for name, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+@@ -124,7 +124,7 @@ func TestSelectionStatePreservesExistingParentMode(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	path := filepath.Join(dir, "selection.json")
+-	if err := saveSelectionState(path, defaultSel(), testFacets()); err != nil {
++	if err := saveSelectionState(path, defaultSel(), testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	info, err := os.Stat(dir)
+@@ -146,13 +146,13 @@ func TestSelectionStateAtomicReplacementFailureKeepsLastGoodFile(t *testing.T) {
+ 	path := filepath.Join(t.TempDir(), "code", "selection.json")
+ 	old := defaultSel()
+ 	old["thinking"] = "low"
+-	if err := saveSelectionState(path, old, testFacets()); err != nil {
++	if err := saveSelectionState(path, old, testFacets(), false); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	replacement := defaultSel()
+ 	replacement["thinking"] = "high"
+ 	renamed := false
+-	err := saveSelectionStateWithRename(path, replacement, testFacets(), func(from, to string) error {
++	err := saveSelectionStateWithRename(path, replacement, testFacets(), false, func(from, to string) error {
+ 		renamed = true
+ 		if filepath.Dir(from) != filepath.Dir(to) {
+ 			t.Fatalf("temporary file %q is not beside destination %q", from, to)
 @@ -165,7 +165,7 @@ func TestSelectionStateAtomicReplacementFailureKeepsLastGoodFile(t *testing.T) {
  	if !renamed {
  		t.Fatal("atomic save did not rename a completed temporary file")
@@ -2678,6 +2790,15 @@ index be24187..f603018 100644
  		t.Fatalf("replacement stored thinking %q, want high", got["thinking"])
  	}
  	before, err := os.ReadFile(path)
+@@ -176,7 +176,7 @@ func TestSelectionStateAtomicReplacementFailureKeepsLastGoodFile(t *testing.T) {
+ 	next := defaultSel()
+ 	next["thinking"] = "max"
+ 	wantErr := errors.New("injected rename failure")
+-	err = saveSelectionStateWithRename(path, next, testFacets(), func(_, _ string) error { return wantErr })
++	err = saveSelectionStateWithRename(path, next, testFacets(), false, func(_, _ string) error { return wantErr })
+ 	if !errors.Is(err, wantErr) {
+ 		t.Fatalf("save error = %v, want injected rename error", err)
+ 	}
 @@ -218,7 +218,7 @@ func TestSelectionStateImpossibleSparkNotResurrected(t *testing.T) {
  		t.Run(tc.name, func(t *testing.T) {
  			path := filepath.Join(t.TempDir(), "selection.json")
@@ -2723,8 +2844,12 @@ index be24187..f603018 100644
  	updated := updatedModel.(model)
  	if updated.sel["lane"] == before {
  		t.Fatalf("facet did not change after persistence failure: %v", updated.sel)
-@@ -275,7 +279,7 @@ func TestSelectionStateDisabledPath(t *testing.T) {
- 	if err := saveSelectionState("", sel, testFacets()); err != nil {
+@@ -272,10 +276,10 @@ func TestSelectionPersistenceFailureDoesNotBlockFacetChange(t *testing.T) {
+ func TestSelectionStateDisabledPath(t *testing.T) {
+ 	sel := defaultSel()
+ 	sel["thinking"] = "max"
+-	if err := saveSelectionState("", sel, testFacets()); err != nil {
++	if err := saveSelectionState("", sel, testFacets(), false); err != nil {
  		t.Fatalf("disabled save returned error: %v", err)
  	}
 -	if got := loadSelectionState("", testFacets()); !reflect.DeepEqual(got, defaultSel()) {
@@ -2773,7 +2898,7 @@ index be24187..f603018 100644
  		t.Errorf("override holds %v, want the turned dials %v", got, want)
  	}
  	// And a worker resolving the location with a stripped environment — no
-@@ -376,7 +389,88 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
+@@ -376,7 +389,243 @@ func TestRelocatedSelectionIsMirroredForTheWorker(t *testing.T) {
  	if err := os.Unsetenv(codeSelectionStateEnv); err != nil {
  		t.Fatal(err)
  	}
@@ -2861,6 +2986,161 @@ index be24187..f603018 100644
 +	}
 +	if !m.accountSelections.CurrentDisabled()[anthropic] {
 +		t.Fatal("routine routing broadened the account pool")
++	}
++}
++
++func TestRoutineRoutingSkipsOnlyKnownDownMainQuota(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, tc := range []struct {
++		name, anthropic, openai string
++		known                   bool
++		wantLane, wantTier      string
++	}{
++		{"Anthropic exhausted", "maxed", "ok", true, "gpt-only", "smart"},
++		{"Anthropic unauthenticated", "unauthed", "ok", true, "gpt-only", "smart"},
++		{"OpenAI exhausted but Anthropic healthy", "ok", "maxed", true, "claude-only", "normal"},
++		{"unknown refresh does not reuse stale exhaustion", "maxed", "ok", false, "claude-only", "normal"},
++		{"unreported Anthropic quota stays unknown", "", "ok", true, "claude-only", "normal"},
++		{"reported headroom preserves reserve confirmation policy", "ok", "ok", true, "claude-only", "normal"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			m := model{
++				sel: defaultSel(), routineRouting: true, facets: testFacets(), generated: blocks,
++				avail: availability{
++					ok: tc.known, bucket: map[string]string{"claude-main": tc.anthropic, "codex-main": tc.openai},
++					wins: []usageWin{{prov: anthropicProvider, pct: 95}},
++				},
++			}
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			if m.sel["lane"] != tc.wantLane || m.sel["model"] != tc.wantTier {
++				t.Fatalf("routine selection = %v, want %s/%s", m.sel, tc.wantLane, tc.wantTier)
++			}
++			if m.sel["thinking"] != "medium" || !m.routineRouting {
++				t.Fatalf("quota availability changed effort or explicit intent: %v routine=%t", m.sel, m.routineRouting)
++			}
++		})
++	}
++}
++
++func TestRoutineQuotaFallbackCannotEnableADisabledPool(t *testing.T) {
++	disabled := accountKey{Provider: openAIProvider, IdentityKey: "disabled"}
++	m := model{
++		sel: defaultSel(), routineRouting: true, facets: testFacets(),
++		generated: loadBlocks(fixtureCatalogPath(t)),
++		avail: availability{
++			ok: true, accountsOK: true,
++			bucket: map[string]string{"claude-main": "maxed", "codex-main": "ok"},
++			accounts: map[string][]account{
++				anthropicProvider: {{Provider: anthropicProvider, IdentityKey: "enabled"}},
++				openAIProvider:    {{Provider: openAIProvider, IdentityKey: disabled.IdentityKey}},
++			},
++		},
++	}
++	m.accountSelections.SetManualDisabled(map[accountKey]bool{disabled: true})
++	m.applyCatalog()
++	m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++	if genLanePolicies[m.sel["lane"]].primary == "O" || !m.accountSelections.CurrentDisabled()[disabled] {
++		t.Fatalf("quota fallback broadened the explicit account pool: %v", m.sel)
++	}
++}
++
++func TestRoutineIntentSurvivesUnrelatedDialSaveAndRestart(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, dial := range []string{"advisor", "thinking"} {
++		t.Run(dial, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			handoff := filepath.Join(t.TempDir(), "handoff.json")
++			m := model{
++				sel: defaultSel(), routineRouting: true, facets: testFacets(), generated: blocks,
++				selectionState: path, selectionHandoff: handoff,
++			}
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			m = turnDial(t, m, dial)
++			chosen := m.sel[dial]
++			if !m.routineRouting {
++				t.Fatal("an unrelated dial silently froze routine routing")
++			}
++			for _, persisted := range []string{path, handoff} {
++				raw, err := os.ReadFile(persisted)
++				if err != nil {
++					t.Fatal(err)
++				}
++				var stored map[string]string
++				if err := json.Unmarshal(raw, &stored); err != nil {
++					t.Fatal(err)
++				}
++				if stored[selectionRoutingIntentKey] != selectionRoutineIntent {
++					t.Fatalf("routine intent was not saved to %s", persisted)
++				}
++				var routine bool
++				sel := loadSelectionState(persisted, testFacets(), &routine)
++				restarted := model{
++					sel: sel, routineRouting: routine, facets: testFacets(), generated: blocks,
++					avail: availability{ok: true, bucket: map[string]string{"claude-main": "maxed", "codex-main": "ok"}},
++				}
++				restarted.applyCatalog()
++				restarted.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++				if !routine || restarted.sel["lane"] != "gpt-only" || restarted.sel["model"] != "smart" ||
++					restarted.sel[dial] != chosen {
++					t.Fatalf("restart lost routine intent or visible %s choice: %v routine=%t", dial, restarted.sel, routine)
++				}
++			}
++		})
++	}
++}
++
++func TestExplicitRoutingDialSaveKeepsIntentFrozen(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, dial := range []string{"model", "lead", "blend"} {
++		t.Run(dial, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			m := model{
++				sel: defaultSel(), routineRouting: true, facets: testFacets(), generated: blocks,
++				selectionState: path,
++			}
++			m.sel["thinking"] = "max"
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			m = turnDial(t, m, dial)
++			wantLane, wantTier := m.sel["lane"], m.sel["model"]
++			var routine bool
++			sel := loadSelectionState(path, testFacets(), &routine)
++			restarted := model{sel: sel, routineRouting: routine, facets: testFacets(), generated: blocks}
++			restarted.applyCatalog()
++			restarted.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			if routine || restarted.sel["lane"] != wantLane || restarted.sel["model"] != wantTier ||
++				restarted.sel["thinking"] != "max" {
++				t.Fatalf("explicit %s choice was reinterpreted on restart: %v routine=%t", dial, restarted.sel, routine)
++			}
++		})
++	}
++}
++
++func TestPersistedRoutingIntentIsLegacyCompatible(t *testing.T) {
++	for _, tc := range []struct {
++		name, body string
++		routine    bool
++	}{
++		{"legacy full choice stays explicit", `{"lane":"claude-only","model":"normal","thinking":"max"}`, false},
++		{"legacy unrelated-only state stays routine", `{"advisor":"off","thinking":"max"}`, true},
++		{"positive routine marker survives saved facets", `{"_routingIntent":"routine","lane":"claude-only","model":"normal","thinking":"max"}`, true},
++		{"unknown intent does not reinterpret old choices", `{"_routingIntent":"future","lane":"claude-only","model":"normal","thinking":"max"}`, false},
++		{"invalid intent does not reinterpret old choices", `{"_routingIntent":true,"lane":"claude-only","model":"normal","thinking":"max"}`, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			writeSelectionFixture(t, path, tc.body)
++			var routine bool
++			sel := loadSelectionState(path, testFacets(), &routine)
++			if routine != tc.routine || sel["thinking"] != "max" {
++				t.Fatalf("loaded %v routine=%t, want routine=%t with explicit max retained", sel, routine, tc.routine)
++			}
++			if _, leaked := sel[selectionRoutingIntentKey]; leaked {
++				t.Fatal("intent metadata leaked into the visible facet selection")
++			}
++		})
 +	}
 +}
 diff --git a/suggest.go b/suggest.go

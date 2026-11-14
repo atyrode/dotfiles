@@ -141,7 +141,7 @@ compaction:
 features:
   unexpectedStopDetection: smart
 
-defaultThinkingLevel: auto
+defaultThinkingLevel: medium
 personality: pragmatic
 
 # Interaction posture.

@@ -91,11 +91,29 @@ pkgs.runCommand "check-omp-seed"
       and .mnemopi.llmMode == "smol"
       and .autolearn.enabled == true
       and .autolearn.autoContinue == false
+      and .defaultThinkingLevel == "medium"
       and .retry.usageReservePct == 5
       and .retry.usageReservePolicy == "confirm"
       and .codexResets.autoRedeem5h == "no"
       and .codexResets.autoRedeemWeekly == "no"
     ' >/dev/null || fail "fresh seed lost native routing or quota guardrails"
+
+    # A deliberate AUTO choice made after the fresh medium baseline is local
+    # drift, not permission to reset that choice or other operator preferences.
+    yq eval -i '
+      .defaultThinkingLevel = "auto" |
+      .theme.dark = "operator-theme" |
+      .unrelatedPreference = "preserved"
+    ' "$config"
+    atyrode-omp-seed apply >/dev/null
+    yq eval -o=json '.' "$config" | jq -e '
+      .defaultThinkingLevel == "auto"
+      and .theme.dark == "operator-theme"
+      and .unrelatedPreference == "preserved"
+    ' >/dev/null || fail "reseed reset deliberate auto effort or unrelated preferences"
+    atyrode-omp-seed status --json | jq -e '
+      .drift | any(.key == "defaultThinkingLevel" and .reason == "local-edit")
+    ' >/dev/null || fail "deliberate auto effort was not reviewable local drift"
 
     # Source cutover is not permission to delete persistent routing choices.
     # Both untouched retired overrides and deliberate local edits survive;

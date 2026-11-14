@@ -711,6 +711,21 @@ Review wanted local behavior instead of converting old agent aliases into new
 custom roles or resetting unrelated preferences. Removing custom files and
 writable overrides is a local migration, not an effect of publication,
 catalog regeneration, or activation's ordinary three-way seed merge.
+
+Inspect the supported whole-setting records before an approved cleanup:
+
+```sh
+omp config get modelRoles --json
+omp config get retry.fallbackChains --json
+omp config get task.agentModelOverrides --json
+```
+
+After confirming the intended shared roles and fallbacks, an authorized
+native-routing cutover clears only the retired override record with
+`omp config reset task.agentModelOverrides`. Review custom definitions under
+`~/.omp/agent/agents/` (or the corresponding profile root) and migrate their
+callers before retiring them; do not publish a private file inventory.
+
 `--reset-all` intentionally resets still-seeded preferences; it is not the
 native-routing cleanup command and does not delete retired unowned leaves.
 

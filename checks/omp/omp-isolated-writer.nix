@@ -14,10 +14,10 @@ let
       enabled: false
     retry:
       enabled: false
+    modelRoles:
+      task: issue17-isolation-fixture/writer
     task:
       batch: false
-      agentModelOverrides:
-        task: issue17-isolation-fixture/writer
   '';
   scriptedProvider = pkgs.writeText "omp-isolated-writer-provider.ts" ''
     import { realpathSync, writeFileSync } from "node:fs";

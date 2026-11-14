@@ -38,7 +38,7 @@ pkgs.runCommand "check-omp-agent-references"
       fi
       while IFS= read -r role; do
         case "$role" in
-          default|smol|slow|plan|task|advisor|tiny|commit|vision|widget) ;;
+          default|smol|slow|plan|task|advisor|tiny|commit|vision|widget|memory) ;;
           *)
             printf 'non-native shared model role %s in %s\n' "$role" "$config" >&2
             status=1

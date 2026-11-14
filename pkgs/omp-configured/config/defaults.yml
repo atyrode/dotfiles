@@ -11,10 +11,11 @@ modelRoles:
   tiny: anthropic/claude-haiku-5-5:low
   commit: anthropic/claude-haiku-5-5:low
   widget: anthropic/claude-haiku-5-5:low
+  memory: anthropic/claude-haiku-5-5:medium
   # omp routes image description here when the active model is text-only
   # (of the catalog's models, today only deepseek-v4-pro). Unset, it lands
   # on `default`.
-  vision: openai-codex/gpt-6-luna:low
+  vision: anthropic/claude-sonnet-5-5:low
 
 retry:
   enabled: true
@@ -33,6 +34,7 @@ retry:
     commit: []
     vision: []
     widget: []
+    memory: []
     advisor:
       - openai-codex/gpt-6-luna:low
     smol:

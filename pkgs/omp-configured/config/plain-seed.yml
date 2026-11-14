@@ -39,7 +39,8 @@ modelRoles:
   tiny: anthropic/claude-haiku-5-5:low
   commit: anthropic/claude-haiku-5-5:low
   widget: anthropic/claude-haiku-5-5:low
-  vision: openai-codex/gpt-6-luna:low
+  memory: anthropic/claude-haiku-5-5:medium
+  vision: anthropic/claude-sonnet-5-5:low
 
 # Cross-provider fallback for shared roles, without premium-tier promotion.
 retry:
@@ -74,6 +75,7 @@ retry:
       - openai-codex/gpt-6-luna:low
     vision: []
     widget: []
+    memory: []
 
 # Advisor on a cheap fast model. xhigh thinking on a per-turn watchdog buys
 # latency, not much review quality. Subagent advisors (17.3.0: per-agent
@@ -108,8 +110,9 @@ edit:
   mode: hashline
 
 # Local-first memory: mnemopi SQLite banks, one global bank so recall works
-# across projects (provenance stays in each memory's metadata). Extraction
-# runs on the hosted smol role (Haiku medium), not a separate local model.
+# across projects (provenance stays in each memory's metadata). Hosted memory
+# requests use the native memory role (Haiku medium), not smol or tiny.
+# Mnemopi consolidation is deterministic (llm_used: false), not an LLM call.
 # Storage never leaves the machine.
 memory:
   backend: mnemopi

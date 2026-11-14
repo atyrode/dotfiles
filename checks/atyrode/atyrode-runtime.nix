@@ -382,14 +382,18 @@ pkgs.runCommand "check-atyrode-runtime"
     # or hosted fallback may escape the explicitly selected local capability.
     ${pkgs.yq-go}/bin/yq -o=json '.' "$local_only_profile" | jq -e '
       (.modelRoles | keys) ==
-        ["advisor", "commit", "default", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
-      and (.modelRoles | del(.widget) | all(. == "local-qwen/qwen3.8-27b"))
+        ["advisor", "commit", "default", "memory", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
+      and (.modelRoles | del(.widget, .memory, .vision) | all(. == "local-qwen/qwen3.8-27b"))
       and .modelRoles.widget == "local-qwen/qwen3.8-27b:low"
+      and .modelRoles.memory == "local-qwen/qwen3.8-27b:medium"
+      and .modelRoles.vision == "local-qwen/qwen3.8-27b:low"
       and (.task // {} | has("agentModelOverrides") | not)
       and .retry.enabled == true
       and .retry.modelFallback == false
       and (.retry.fallbackChains | has("widget"))
-      and .retry.fallbackChains == {widget: []}
+      and (.retry.fallbackChains | has("memory"))
+      and (.retry.fallbackChains | has("vision"))
+      and .retry.fallbackChains == {widget: [], memory: [], vision: []}
       and .advisor.enabled == false
     ' >/dev/null
     test "$(stat -c %a "$models_profile")" = 600

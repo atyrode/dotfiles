@@ -77,10 +77,20 @@ pkgs.runCommand "check-omp-seed"
     yq eval -o=json '.' "$config" | jq -e '
       (.task | has("agentModelOverrides") | not)
       and (.modelRoles | keys) ==
-        ["advisor", "commit", "default", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
+        ["advisor", "commit", "default", "memory", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
       and .modelRoles.widget == "anthropic/claude-haiku-5-5:low"
       and (.retry.fallbackChains | has("widget"))
       and .retry.fallbackChains.widget == []
+      and .modelRoles.memory == "anthropic/claude-haiku-5-5:medium"
+      and (.retry.fallbackChains | has("memory"))
+      and .retry.fallbackChains.memory == []
+      and .modelRoles.vision == "anthropic/claude-sonnet-5-5:low"
+      and (.retry.fallbackChains | has("vision"))
+      and .retry.fallbackChains.vision == []
+      and .memory.backend == "mnemopi"
+      and .mnemopi.llmMode == "smol"
+      and .autolearn.enabled == true
+      and .autolearn.autoContinue == false
       and .retry.usageReservePct == 5
       and .retry.usageReservePolicy == "confirm"
       and .codexResets.autoRedeem5h == "no"
@@ -96,13 +106,17 @@ pkgs.runCommand "check-omp-seed"
       .modelRoles.default = "fixture/previous-default:medium" |
       .modelRoles.task = "fixture/previous-task:medium" |
       .modelRoles.scout = "fixture/previous-scout:medium" |
+      .modelRoles.vision = "fixture/previous-vision:low" |
+      .retry.fallbackChains.vision = ["fixture/previous-vision-backup:low"] |
       .task.agentModelOverrides = {
         "task": "fixture/previous-task:medium",
         "scout": "fixture/previous-scout:medium"
       } |
       .retry.fallbackChains.default = ["fixture/previous-fallback:medium"] |
       del(.modelRoles.widget) |
-      del(.retry.fallbackChains.widget)
+      del(.retry.fallbackChains.widget) |
+      del(.modelRoles.memory) |
+      del(.retry.fallbackChains.memory)
     ' "$previous_seed"
     for local_edit in untouched customized; do
       export HOME="$TMPDIR/routing-$local_edit"
@@ -114,6 +128,10 @@ pkgs.runCommand "check-omp-seed"
           .modelRoles.task = "fixture/operator-task:high" |
           .modelRoles.widget = "fixture/operator-widget:low" |
           .retry.fallbackChains.widget = ["fixture/operator-widget-backup:low"] |
+          .modelRoles.memory = "fixture/operator-memory:medium" |
+          .retry.fallbackChains.memory = ["fixture/operator-memory-backup:medium"] |
+          .modelRoles.vision = "fixture/operator-vision:low" |
+          .retry.fallbackChains.vision = ["fixture/operator-vision-backup:low"] |
           .task.agentModelOverrides.task = "fixture/operator-child:low" |
           .advisor.enabled = false |
           .theme.dark = "operator-theme" |
@@ -137,6 +155,10 @@ pkgs.runCommand "check-omp-seed"
           .modelRoles.task == "fixture/operator-task:high"
           and .modelRoles.widget == "fixture/operator-widget:low"
           and .retry.fallbackChains.widget == ["fixture/operator-widget-backup:low"]
+          and .modelRoles.memory == "fixture/operator-memory:medium"
+          and .retry.fallbackChains.memory == ["fixture/operator-memory-backup:medium"]
+          and .modelRoles.vision == "fixture/operator-vision:low"
+          and .retry.fallbackChains.vision == ["fixture/operator-vision-backup:low"]
           and .advisor.enabled == false
           and .theme.dark == "operator-theme"
           and .providers.anthropic.serverSideFallback == true
@@ -156,7 +178,13 @@ pkgs.runCommand "check-omp-seed"
           .modelRoles.widget == "anthropic/claude-haiku-5-5:low"
           and (.retry.fallbackChains | has("widget"))
           and .retry.fallbackChains.widget == []
-        ' >/dev/null || fail "new widget role inherited the default fallback chain"
+          and .modelRoles.memory == "anthropic/claude-haiku-5-5:medium"
+          and (.retry.fallbackChains | has("memory"))
+          and .retry.fallbackChains.memory == []
+          and .modelRoles.vision == "anthropic/claude-sonnet-5-5:low"
+          and (.retry.fallbackChains | has("vision"))
+          and .retry.fallbackChains.vision == []
+        ' >/dev/null || fail "new utility role inherited the default fallback chain"
       fi
       before="$(sha256sum "$config" | sha256sum)"
       atyrode-omp-seed apply >/dev/null

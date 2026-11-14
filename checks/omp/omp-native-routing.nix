@@ -44,6 +44,8 @@ let
         usageAwareFallback: false
         fallbackChains:
           widget: []
+          tiny: []
+          memory: []
       modelRoles:
         default: native-routing-fixture/default:medium
         task: native-routing-fixture/task:medium
@@ -55,6 +57,7 @@ let
         commit: native-routing-fixture/smol:low
         vision: native-routing-fixture/smol:low
         widget: native-routing-fixture/smol:low
+        memory: native-routing-fixture/smol:medium
     ''
   );
   retryConfig = pkgs.writeText "omp-native-routing-retry.yml" (
@@ -67,10 +70,11 @@ let
         smol: native-routing-fixture/lead:medium
         plan: native-routing-fixture/lead:medium
         advisor: native-routing-fixture/lead:medium
-        tiny: native-routing-fixture/lead:medium
+        tiny: native-routing-fixture/smol:low
         commit: native-routing-fixture/lead:medium
         vision: native-routing-fixture/lead:medium
         widget: native-routing-fixture/smol:low
+        memory: native-routing-fixture/smol:medium
       retry:
         enabled: true
         maxRetries: 1
@@ -95,6 +99,7 @@ let
           commit: []
           vision: []
           widget: []
+          memory: []
     ''
   );
 in
@@ -117,12 +122,23 @@ pkgs.runCommand "check-omp-native-routing"
     mkdir -m 700 "$fixture"
     trap 'rm -rf "$fixture"' EXIT
 
+    dump_evidence() {
+      if [ -f "$trace" ]; then cat "$trace" >&2; fi
+      for results in "$trace".*-results.json; do
+        if [ -f "$results" ]; then
+          printf '\nNative task results: %s\n' "$results" >&2
+          cat "$results" >&2
+          printf '\n' >&2
+        fi
+      done
+    }
+
     assert_json() {
       local label="$1"
       shift
       if ! jq -e "$@" >/dev/null; then
         printf 'Native routing assertion failed: %s (%s)\n' "$label" "$launcher_name" >&2
-        cat "$trace" >&2
+        dump_evidence
         exit 1
       fi
     }
@@ -145,7 +161,7 @@ pkgs.runCommand "check-omp-native-routing"
           > "$fixture/$launcher_name-$label.out" \
           2> "$fixture/$launcher_name-$label.err"; then
         cat "$fixture/$launcher_name-$label.out" "$fixture/$launcher_name-$label.err" >&2
-        if [ -f "$trace" ]; then cat "$trace" >&2; fi
+        dump_evidence
         exit 1
       fi
     }
@@ -184,7 +200,7 @@ pkgs.runCommand "check-omp-native-routing"
       # Security inherits main's active model, but a fresh child's effort is
       # the configured session default (low), not main's CLI-only max.
       assert_json 'six native child model/effort choices' -s '
-        def calls($agent): [.[] | select(.scenario == "grid" and .agent == $agent)];
+        def calls($agent): [.[] | select(.scenario == "grid" and .kind == "child" and .agent == $agent)];
         . as $all
         | {
             task: ["task", "medium"],
@@ -206,10 +222,19 @@ pkgs.runCommand "check-omp-native-routing"
         any(.[]; .scenario == "grid" and .agent == "parent" and .model == "main" and .thinking == "max")
         and any(.[]; .scenario == "source" and .model == "archive" and .thinking == "xhigh")
       ' "$trace"
+      # Native task UI labels are separate tiny-role requests with no tools;
+      # they are not widget requests or child turns. Native utility inference
+      # forces reasoning off, so the observed effort is null, not role low.
+      assert_json 'auxiliary tiny labels remain cheap with reasoning disabled' -s '
+        any(.[]; .scenario == "grid" and .kind == "auxiliary")
+        and all(.[] | select(.kind == "auxiliary");
+          .provider == "native-routing-fixture" and .model == "smol"
+          and .thinking == null and .disableReasoning == true and .tools == [])
+      ' "$trace"
       assert_json 'task keeps native full tools; specialists stay read-only' -s '
-        def child($name): [.[] | select(.scenario == "grid" and .agent == $name)];
+        def child($name): [.[] | select(.scenario == "grid" and .kind == "child" and .agent == $name)];
         (child("task") | all(.[]; (.tools | index("write")) != null and (.tools | index("bash")) != null))
-        and all(.[] | select(.scenario == "grid" and (.agent == "scout" or .agent == "security-reviewer" or .agent == "seance"));
+        and all(.[] | select(.scenario == "grid" and .kind == "child" and (.agent == "scout" or .agent == "security-reviewer" or .agent == "seance"));
           (.tools | index("write")) == null and (.tools | index("bash")) == null)
         and (child("seance") | all(.[]; .tools == ["glob", "grep", "read", "yield"]))
       ' "$trace"
@@ -219,7 +244,7 @@ pkgs.runCommand "check-omp-native-routing"
         and ([.[].details.results[0].agent] | sort) == ["reviewer", "scout", "seance", "security-reviewer", "sonic", "task"]
         and all(.[].details.results[0];
           .agentSource == "bundled" and .exitCode == 0 and (.error == null) and (.aborted != true)
-          and all(.extractedToolData[]?; .schemaOverridden != true))
+          and all(.extractedToolData.yield[]?; .schemaOverridden != true))
         and all(.[].details.results[0] | select(.agent == "reviewer" or .agent == "scout" or .agent == "security-reviewer");
           .structuredOutput.source == "agent" and .structuredOutput.mode == "strict" and .structuredOutput.status == "valid")
         and any(.[].details.results[0]; .agent == "reviewer" and .structuredOutput.data.overall_correctness == "correct")
@@ -234,14 +259,17 @@ pkgs.runCommand "check-omp-native-routing"
         --model native-routing-fixture/lead --thinking medium --no-session \
         'OMP_NATIVE_ROUTING:retry:parent'
       assert_json 'retry uses each native role own fallback' -s '
-        def calls($agent): [.[] | select(.scenario == "retry" and .agent == $agent)];
+        def calls($agent): [.[] | select(.scenario == "retry" and .kind == "child" and .agent == $agent)];
         def route($agent): calls($agent) | map(.model)
           | reduce .[] as $model ([]; if .[-1] == $model then . else . + [$model] end);
         (route("task") == ["lead", "task-fallback"])
         and (route("reviewer") == ["lead", "slow-fallback"])
         and (calls("scout") | length > 0 and all(.[]; .model == "lead"))
-        and all(.[] | select(.scenario == "retry"); .thinking == "medium")
-        and all(.[] | select(.scenario == "retry" and .agent != "parent"); .model != "default-fallback")
+        and all(.[] | select(.scenario == "retry" and .kind != "auxiliary"); .thinking == "medium")
+        and all(.[] | select(.scenario == "retry" and .kind == "child"); .model != "default-fallback")
+        and all(.[] | select(.scenario == "retry" and .kind == "auxiliary");
+          .provider == "native-routing-fixture" and .model == "smol"
+          and .thinking == null and .disableReasoning == true and .tools == [])
       ' "$trace"
       assert_json 'own chains succeed; explicit empty chain surfaces failure' '
         length == 3

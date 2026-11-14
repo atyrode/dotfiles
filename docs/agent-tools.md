@@ -469,10 +469,10 @@ Managed defaults and fresh plain-OMP seeds configure only OMP's shared roles:
 | Shared roles | Routine model | Effort |
 | --- | --- | --- |
 | `default`, `task` | Sonnet 5.5 | medium |
-| `smol` | Haiku 5.5 | medium |
+| `smol`, `memory` | Haiku 5.5 | medium |
 | `slow`, `plan` | Sonnet 5.5 | high |
 | `advisor`, `tiny`, `commit`, `widget` | Haiku 5.5 | low |
-| `vision` | Luna 6 | low |
+| `vision` | Sonnet 5.5 | low |
 
 The bundled OMP 18.20.0 agents retain their upstream prompts, tools and routing:
 
@@ -496,15 +496,21 @@ Role-keyed fallback chains follow native shared-role identity rather than an
 agent-name alias policy. Sonnet default/task fall back to Sol 6.1 then Terra
 6.1 at medium; slow/plan use the same cross-provider order at high. Haiku
 `smol` falls back to Luna at medium, and advisor uses Luna at low. Managed
-tiny/commit/vision have explicit empty chains; the plain seed permits Luna-low
-fallback for tiny/commit and keeps vision lead-only. Both sources give `widget`
-its own explicit empty chain, so it never inherits the default chain or
-escalates to a utility fallback. OMP 18.20.0 widget calls use
+tiny/commit have explicit empty chains; the plain seed permits Luna-low fallback
+for tiny/commit. Both sources keep Sonnet-low vision on its own empty chain,
+without a GPT-quota dependency. Both sources give `widget`
+and `memory` their own explicit empty chains, so neither inherits the default
+chain or escalates to a utility fallback. OMP 18.20.0 widget calls use
 `disableReasoning: true`: the declared low suffix is inert for those calls.
+Hosted memory requests use the native `memory` role at Haiku medium, not smol
+or tiny. Mnemopi consolidation is deterministic (`llm_used: false`), not an
+LLM call. The memory budget does not enable a backend or learning: managed
+memory stays off, the plain seed retains mnemopi, and existing
+enablement/autolearn preferences are unchanged.
 Empty chains prevent inheriting the default chain. No routine chain silently
 promotes to Opus, Astra or Fable, and a main-role high/max choice is not a
-utility-role effort setting. Advisor enablement and other local feature preferences remain
-separate from model selection.
+utility-role effort setting. Advisor enablement and other local feature
+preferences remain separate from model selection.
 
 Usage-aware fallback retains the 5% reserve with confirmation, explicit account
 pools and provider capability/consent checks. It does not grant access to a new
@@ -537,8 +543,8 @@ than installing same-name extension copies.
 
 `atyrode runtime run local-qwen` emits only native shared `modelRoles`, all
 pointing to the selected local Qwen model, including advisor if later enabled.
-Widget declares that local selector at low with its own empty fallback chain;
-global model fallback remains disabled.
+Widget and vision declare that local selector at low and memory at medium,
+each with its own empty fallback chain; global model fallback remains disabled.
 Its isolated profile disables model fallback and advisor by default, retains
 the local compaction reserve, and does not forward cloud broker credentials.
 It never needs named-agent roles or per-agent overrides to select local work.

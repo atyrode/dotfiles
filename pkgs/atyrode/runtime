@@ -500,13 +500,16 @@ modelRoles:
   task: ${local_model}
   tiny: ${local_model}
   commit: ${local_model}
-  vision: ${local_model}
+  vision: ${local_model}:low
   widget: ${local_model}:low
+  memory: ${local_model}:medium
 retry:
   enabled: true
   modelFallback: false
   fallbackChains:
     widget: []
+    memory: []
+    vision: []
 advisor:
   enabled: false
 compaction:

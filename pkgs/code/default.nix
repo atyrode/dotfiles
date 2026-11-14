@@ -21,6 +21,11 @@ buildGoModule {
   };
 
   patches = [ ./native-shared-roles.patch ];
+  # Drop the obsolete generated snapshot without copying its thousands of
+  # output lines into the routing patch; tests render authored YAML fixtures.
+  postPatch = ''
+    rm testdata/two-pool-golden.plain
+  '';
   vendorHash = "sha256-WcdZL74OHaccfNA9aI/SgkMmj3yfV7bkA0ELa02enMI=";
   subPackages = [ "." ];
   # Raw OMP is independent of the configured launcher. The native smoke uses a

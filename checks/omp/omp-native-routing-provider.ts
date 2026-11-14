@@ -90,11 +90,17 @@ function childResponse(model: Model, context: Context, scenario: string, agent: 
     throw new Error(`Native ${agent} rejected its fixture yield: ${JSON.stringify(yieldResults)}`);
   }
   if (yieldResults.length > 0) {
-    // Incremental reviewer sections are finalized by native idle finalization.
+    // Native array-typed sections are nonterminal. A data-less string-typed
+    // yield closes the flow while preserving the already validated sections.
     if (agent !== "reviewer" || yieldResults.length !== 3) {
       throw new Error(`Unexpected continuation after ${agent}'s terminal yield`);
     }
-    return emit(model, []);
+    return emit(model, [{
+      type: "toolCall",
+      id: `native-routing-${scenario}-${agent}-final`,
+      name: "yield",
+      arguments: { type: "result" },
+    }]);
   }
   const id = `native-routing-${scenario}-${agent}-yield`;
   switch (agent) {
@@ -143,14 +149,24 @@ export default function nativeRoutingProvider(pi: ExtensionAPI): void {
       })),
     streamSimple(model, context, options) {
       const { scenario, agent } = invocation(context);
+      const tools = context.tools?.map(tool => tool.name).sort() ?? [];
+      const kind = tools.length === 0 ? "auxiliary" : agent === "parent" ? "parent" : "child";
+      if (kind === "child" && !tools.includes("yield")) {
+        throw new Error(`Unexpected ${agent} child request without its native yield tool`);
+      }
       appendFileSync(observation, JSON.stringify({
         scenario,
         agent,
+        kind,
         provider: model.provider,
         model: model.id,
         thinking: options?.reasoning ?? null,
-        tools: context.tools?.map(tool => tool.name).sort() ?? [],
+        disableReasoning: options?.disableReasoning === true,
+        tools,
       }) + "\n");
+      // Task labels use the tiny role and have no tool slate. They are real
+      // utility inference, not a child turn, and require a plain-text answer.
+      if (kind === "auxiliary") return emit(model, [{ type: "text", text: "Observe native routing fixture" }]);
       if (scenario === "source") return emit(model, [{ type: "text", text: "Disposable source session for native seance inheritance." }]);
       if (agent !== "parent") {
         if (scenario === "retry" && model.id === "lead") return emit(model, [], true);

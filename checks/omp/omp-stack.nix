@@ -414,10 +414,16 @@ pkgs.runCommand "check-omp-stack"
     modelRoles:
       default: openai-codex/gpt-5.6-luna:minimal
       widget: anthropic/claude-fable-5-2:high
+      memory: anthropic/claude-fable-5-2:high
+      vision: openai-codex/gpt-6-luna:low
     retry:
       fallbackChains:
         widget:
           - openai-codex/gpt-6-astra:high
+        memory:
+          - openai-codex/gpt-6-astra:high
+        vision:
+          - openai-codex/gpt-6.1-sol:high
     tools:
       approvalMode: always-ask
     task:
@@ -437,12 +443,21 @@ pkgs.runCommand "check-omp-stack"
       and ([.ownership.defaults[], .ownership.policy[]]
         | any(. == "task.agentModelOverrides") | not)
     ' "$TMPDIR/effective.json" >/dev/null
-    # The background widget has its own cheap role and cannot inherit the
-    # default model's retry escalation.
+    # Background utility roles have their own cheap budgets and cannot
+    # inherit the default model's retry escalation.
     jq -e '
       .effectiveManaged.modelRoles.widget == "anthropic/claude-haiku-5-5:low"
       and (.effectiveManaged.retry.fallbackChains | has("widget"))
       and .effectiveManaged.retry.fallbackChains.widget == []
+      and .effectiveManaged.modelRoles.memory == "anthropic/claude-haiku-5-5:medium"
+      and (.effectiveManaged.retry.fallbackChains | has("memory"))
+      and .effectiveManaged.retry.fallbackChains.memory == []
+      and .effectiveManaged.modelRoles.vision == "anthropic/claude-sonnet-5-5:low"
+      and (.effectiveManaged.retry.fallbackChains | has("vision"))
+      and .effectiveManaged.retry.fallbackChains.vision == []
+      and .effectiveManaged.memory.backend == "off"
+      and .effectiveManaged.autolearn.enabled == false
+      and .effectiveManaged.autolearn.autoContinue == false
     ' "$TMPDIR/effective.json" >/dev/null
     # enforced policy: the user cannot weaken approvals or task isolation
     test "$(jq -r '.effectiveManaged.tools.approvalMode' "$TMPDIR/effective.json")" = "yolo"
@@ -453,6 +468,8 @@ pkgs.runCommand "check-omp-stack"
       = "openai-codex/gpt-5.6-luna:minimal"
     test "$(yq eval '.task.agentModelOverrides.task' "$imm_home/.omp/agent/config.yml")" \
       = "openai-codex/gpt-5.6-luna:minimal"
+    test "$(yq eval '.modelRoles.vision' "$imm_home/.omp/agent/config.yml")" \
+      = "openai-codex/gpt-6-luna:low"
     # The retired path remains an explicit writable operator preference.
     env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config set \
       task.agentModelOverrides.task openai-codex/gpt-6-luna:low \

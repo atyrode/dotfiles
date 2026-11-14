@@ -493,26 +493,20 @@ EOF
   cat >"$profile_root/local-only.yml" <<EOF
 modelRoles:
   default: ${local_model}
+  advisor: ${local_model}
   smol: ${local_model}
   slow: ${local_model}
   plan: ${local_model}
   task: ${local_model}
-  reviewer: ${local_model}
-  sonic: ${local_model}
-  scout: ${local_model}
   tiny: ${local_model}
   commit: ${local_model}
   vision: ${local_model}
+  widget: ${local_model}:low
 retry:
   enabled: true
   modelFallback: false
-  fallbackChains: {}
-task:
-  agentModelOverrides:
-    task: ${local_model}
-    reviewer: ${local_model}
-    sonic: ${local_model}
-    scout: ${local_model}
+  fallbackChains:
+    widget: []
 advisor:
   enabled: false
 compaction:

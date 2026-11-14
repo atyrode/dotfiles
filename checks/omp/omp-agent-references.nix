@@ -10,8 +10,8 @@ let
     ;
   plainSeedConfig = ../../pkgs/omp-configured/config/plain-seed.yml;
 in
-# Upstream agent renames and removals must fail the build instead of silently
-# misrouting models: every referenced agent must exist in the pinned set.
+# Native routing must remain shared-role-only; disabled agent references must
+# still exist in the pinned bundle.
 pkgs.runCommand "check-omp-agent-references"
   {
     nativeBuildInputs = [
@@ -31,9 +31,20 @@ pkgs.runCommand "check-omp-agent-references"
       ${policyConfig} \
       ${plainSeedConfig}
     do
-      # Repository role routes declare their selectors in this layer; a bundled
-      # agent name is not itself a model role. Custom declared roles are valid.
       yq eval '.modelRoles // {} | keys | .[]' "$config" > "$TMPDIR/roles"
+      if [ "$(yq eval '.task // {} | has("agentModelOverrides")' "$config")" != false ]; then
+        printf 'per-agent model routing emitted by %s\n' "$config" >&2
+        status=1
+      fi
+      while IFS= read -r role; do
+        case "$role" in
+          default|smol|slow|plan|task|advisor|tiny|commit|vision|widget) ;;
+          *)
+            printf 'non-native shared model role %s in %s\n' "$role" "$config" >&2
+            status=1
+            ;;
+        esac
+      done < "$TMPDIR/roles"
       while IFS= read -r name; do
         [ -n "$name" ] || continue
         if ! grep -qxF "$name" "$TMPDIR/agents"; then
@@ -41,21 +52,8 @@ pkgs.runCommand "check-omp-agent-references"
           status=1
         fi
       done < <(
-        yq eval \
-          '(.task.agentModelOverrides // {} | keys | .[]), (.task.disabledAgents // [] | .[])' \
-          "$config"
+        yq eval '.task.disabledAgents // [] | .[]' "$config"
       )
-      while IFS= read -r alias; do
-        case "$alias" in
-          @*)
-            if ! grep -qxF "''${alias#@}" "$TMPDIR/roles"; then
-              printf 'model alias %s in %s has no declared modelRoles selector\n' \
-                "$alias" "$config" >&2
-              status=1
-            fi
-            ;;
-        esac
-      done < <(yq eval '.task.agentModelOverrides // {} | .[]' "$config")
       while IFS= read -r name; do
         [ -n "$name" ] || continue
         # Concrete provider/model fallback keys are also supported upstream.

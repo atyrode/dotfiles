@@ -1,21 +1,25 @@
-# Model catalog for the routing tooling: the curated fields (short key, pool,
-# tier, quota bucket, role note) plus a cache of the factual fields omp measures.
+# Model catalog for routing: authored short keys, pools, tiers, quota buckets
+# and role notes alongside cached OMP metadata and prior measurements.
 #
-# The factual fields are NOT hand-maintained — omp is the authority for all of
-# them, and `code generate init --refresh` re-derives them from the pinned omp:
-#   cost_in / cost_out ($ per 1M tokens), context, thinking  <- `omp models --json`
-#   image (text-only marker)                                 <- `omp models --json`
-#   speed (output tok/s), ttft (time-to-first-token, seconds) <- `omp bench`
-# They live here only because the Nix build sandbox has no network, creds, or
-# ~/.omp and so cannot reach omp itself; this file is that committed cache. Do not
-# edit the factual fields by hand — re-run the refresh instead. (speed/ttft are a
-# live benchmark, so they drift with load; re-run when you want fresh figures.)
+# OMP is the factual authority; do not hand-edit cached facts. Refresh existing
+# exact IDs without probes or ladder changes using:
+#   code generate refresh --metadata-only --models-file FILE --from-json JSON
+# The JSON must be an authoritative `omp models --json` snapshot/projection.
+#   cost_in / cost_out: base API estimates, $ per 1M input/output tokens.
+#   context / thinking / image: listed capabilities, not account entitlement.
+# API estimates are NOT OAuth subscription bills. Cache pricing and long-context
+# premiums are not represented by these two base-price fields.
 #
-# `context` is the largest window omp grants the model: `omp models --json` run
-# with an `extendedContext: true` overlay (`--config`). Managed and seeded configs
-# keep extended context off, where omp reports each standard window instead
-# (Haiku 5.5 100K, GPT-6 272K, GPT-6.1 500K). `code generate` reads context only
-# to reject a rung that offers less than a cheaper rung below it.
+# Metadata-only refresh preserves speed/ttft, authored policy and the existing
+# probed identity attestation. Prior output-token rates and TTFT (first-token
+# latency, seconds) retain their measurement provenance. Provider-reported
+# output/full-request rates are not visible-answer throughput or intelligence;
+# none was remeasured here, and historical snapshots drift with provider load.
+#
+# `context` records the scoped contextWindow in the captured standard-window
+# metadata, not an inferred extended maximum. Managed and seeded configs keep
+# extended context off: Haiku 5.5 100K, Luna/Astra 6 272K, Terra/Sol 6.1 500K.
+# Model tiers are authored policy; a higher tier need not have a larger window.
 #
 #   pool:   O = openai-codex   ·   A = anthropic   ·   D = deepseek (optional)
 #   tier:   1 speed · 2 regular · 3 smart · 4 elite
@@ -29,11 +33,18 @@
 # Consumed by `code generate` to render the facet grid the `code` generator
 # browses (cost/model catalog + routing).
 # Date of the last complete metadata AND chat benchmark refresh for every model.
-# null means no complete refresh of the current set of model ids is attested.
-# 2026-11-10 (omp 18.18.1): Fable 5.2 metadata from `omp models --json`;
-# speed/ttft from `omp bench anthropic/claude-fable-5-2 --profile chat
-# --runs 3 --par 1 --max-tokens 384 --json` (all three requests succeeded).
-# Other model facts retain their existing snapshots.
+# null means no complete refresh of the current set of model IDs is attested.
+# 2026-11-14 (OMP 18.20.0): metadata-only scope is the eight latest A/O models:
+# Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.2, Luna 6, Terra 6.1, Sol 6.1,
+# Astra 6. Authority: exact captured live rows from the supported managed Code
+# launch `models --json`, 2026-11-14; standard-window scoped, with no inferred
+# extendedContextWindow. Refresh only from that authoritative projection.
+# Optional D models absent from it retain prior facts and are reported unmatched;
+# no model calls, benchmark refresh or entitlement probes are implied.
+# Fable's prior 2026-11-10 (OMP 18.18.1) three-run benchmark is unchanged:
+# `omp bench anthropic/claude-fable-5-2 --profile chat --runs 3 --par 1
+# --max-tokens 384 --json` (all three requests succeeded). No latency or speed
+# was remeasured here; refreshed remains null rather than claiming full refresh.
 refreshed: null
 # probed: `code generate` refuses a catalog that is not marked verified, because
 # omp lists models an account cannot actually call and nothing in their metadata
@@ -55,8 +66,8 @@ models:
     context: 872000
     thinking: low→max
     role: >-
-      Fast, high-volume — the cheapest supported Codex tier. Leads the speed GPT
-      tier; the cheap rung and same-bucket sibling everywhere.
+      Cheap Codex rung for high-volume work and utility roles. Leads the
+      explicitly selected speed GPT tier; shares the codex-main quota.
   terra:
     id: gpt-6.1-terra
     pool: O
@@ -69,8 +80,8 @@ models:
     context: 922000
     thinking: low→max
     role: >-
-      Balanced workhorse. Leads the regular GPT tier and the mixed
-      workers. Half Sonnet's per-token price.
+      Regular GPT rung for explicit selection and cross-provider fallback.
+      Its base API estimate is half Sonnet's, not an OAuth bill comparison.
   sol:
     id: gpt-6.1-sol
     pool: O
@@ -82,7 +93,7 @@ models:
     ttft: 2.04
     context: 922000
     thinking: low→max
-    role: Flagship. Leads the smart GPT tier.
+    role: Routine GPT-only workhorse; leads the explicitly selected smart GPT tier.
   astra:
     id: gpt-6-astra
     pool: O
@@ -95,10 +106,9 @@ models:
     context: 922000
     thinking: low→max
     role: >-
-      Most capable OpenAI rung, and the top of pool O's ladder (tier 4). The
-      `elite` notch on the model dial leads with it on the gpt-only, gpt-led
-      and mixed lanes; at `smart` the deliberative bump already reaches it for
-      the plan/judgment roles. Draws the ordinary codex-main quota.
+      Explicit elite OpenAI rung (tier 4). The elite dial leads with it on
+      GPT-only, GPT-led and mixed lanes; smart does not automatically promote
+      planning or judgment to this premium rung. Shares codex-main quota.
   haiku:
     id: claude-haiku-5-5
     pool: A
@@ -111,9 +121,9 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Fastest/cheapest Anthropic tier. Leads the speed Claude tier; the
-      Anthropic cheap rung and background hum. Its window is 100K unless
-      extended context is on, and input past 100K bills at 5x.
+      Cheap Anthropic rung for utility roles and the explicit speed Claude
+      tier. Standard context is deliberately capped at 100K; the API estimate
+      above excludes the 5x long-context premium past 100K, not an OAuth bill.
   sonnet:
     id: claude-sonnet-5-5
     pool: A
@@ -126,9 +136,9 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      The value pick — near-Opus quality at a fraction of the cost. Leads the
-      regular Claude tier and the mixed judgment roles. Requires omp >= 18.4.3
-      for Sonnet 5.5's forced-tool-choice compatibility.
+      Routine Anthropic default/task workhorse at medium effort; routine
+      slow/plan use high without an automatic premium-tier promotion. Leads
+      the regular Claude tier. Explicit model selections remain visible.
   opus:
     id: claude-opus-5-5
     pool: A
@@ -141,10 +151,9 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Top Opus tier. Leads the smart Claude judgment roles; the main-plan
-      deliberative sibling across the maps. Cheaper than the Opus 5 it
-      replaces. Needs omp >= 18.2.9: earlier clients are refused by
-      Anthropic's client-version gate.
+      Explicit smart Claude rung. Available when deliberately selected,
+      not an automatic premium sibling for routine Sonnet plan/judgment.
+      Shares the ordinary claude-main quota.
   fable:
     id: claude-fable-5-2
     pool: A
@@ -157,12 +166,10 @@ models:
     context: 1000000
     thinking: low→max
     role: >-
-      Most capable Anthropic rung, and the top of pool A's ladder (tier 4). The
-      `elite` notch on the model dial leads with it; at `smart` the deliberative
-      bump already reaches it for the plan/judgment roles. Anthropic retired its
-      separate 7-day window, so it now draws the ordinary claude-main quota.
-      Needs omp >= 18.1.2: earlier clients are refused by Anthropic's
-      client-version gate.
+      Explicit elite Anthropic rung (tier 4). The elite dial leads with it;
+      smart does not automatically promote planning or judgment here.
+      Draws the ordinary claude-main quota. Its prior three-run benchmark
+      is retained, not remeasured by the metadata-only refresh.
   flash:
     id: deepseek-v4-flash
     pool: D

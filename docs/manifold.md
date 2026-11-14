@@ -103,6 +103,15 @@ An empty replacement inventory is a maintenance failure, not recovery.
 
 ## Upgrades
 
+The ordinary-terminal CLI and its bundled skill use the dedicated `manifold-client`
+source input at public `main` revision
+[`a7c2237b7cf8829ca93928339703c699300d6937`](https://github.com/atyrode/manifold/commit/a7c2237b7cf8829ca93928339703c699300d6937)
+(protocol 59), built by Manifold's per-system `packages.manifold`. This client
+compatibility pin is independent of the preview owner/transport's `manifold`
+source input, the fleet `manifold-agent` release asset and the Recall SDK runner
+source. Updating source is not activation authority: it does not authorize a hub,
+executor, owner, fleet-agent or native-profile deployment or restart.
+
 The released combined agent owns its PTY masters and deliberately terminates
 them on shutdown. Starting a second combined agent with the same token can also
 supersede the incumbent and reconcile away its inventory. Never use a production

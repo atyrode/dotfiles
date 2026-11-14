@@ -336,7 +336,7 @@ pkgs.runCommand "check-omp-stack"
       await seed("apply");
       const original = Bun.YAML.parse(await Bun.file(path).text());
       const missing = structuredClone(original);
-      delete missing.task.agentModelOverrides;
+      delete missing.modelRoles.task;
       delete missing.edit.enforceSeenLines;
       await Bun.write(path, Bun.YAML.stringify(missing));
 
@@ -390,7 +390,11 @@ pkgs.runCommand "check-omp-stack"
         throw new Error(`managed cfg write escaped guard: ''${path}`);
       }
     }
-    for (const path of ["cfg://providers/cacheWarming", "local://scratch.txt"]) {
+    for (const path of [
+      "cfg://providers/cacheWarming",
+      "cfg://task/agentModelOverrides/task",
+      "local://scratch.txt",
+    ]) {
       if (await guardWrite(path)) throw new Error(`unmanaged write blocked: ''${path}`);
     }
     if (await handlers.get("tool_call")?.({
@@ -409,6 +413,11 @@ pkgs.runCommand "check-omp-stack"
     cat > "$imm_home/.omp/agent/config.yml" <<'YAML'
     modelRoles:
       default: openai-codex/gpt-5.6-luna:minimal
+      widget: anthropic/claude-fable-5-2:high
+    retry:
+      fallbackChains:
+        widget:
+          - openai-codex/gpt-6-astra:high
     tools:
       approvalMode: always-ask
     task:
@@ -422,8 +431,19 @@ pkgs.runCommand "check-omp-stack"
     # routing: the managed default wins over the user's weak pin
     test "$(jq -r '.effectiveManaged.modelRoles.default' "$TMPDIR/effective.json")" \
       = "$(yq eval '.modelRoles.default' ${defaultsConfig})"
-    # A persistent direct override cannot erase the managed child's role.
-    test "$(jq -r '.effectiveManaged.task.agentModelOverrides.task' "$TMPDIR/effective.json")" = "@task"
+    # Per-agent overrides are no longer owned or emitted by managed defaults.
+    jq -e '
+      (.effectiveManaged.task | has("agentModelOverrides") | not)
+      and ([.ownership.defaults[], .ownership.policy[]]
+        | any(. == "task.agentModelOverrides") | not)
+    ' "$TMPDIR/effective.json" >/dev/null
+    # The background widget has its own cheap role and cannot inherit the
+    # default model's retry escalation.
+    jq -e '
+      .effectiveManaged.modelRoles.widget == "anthropic/claude-haiku-5-5:low"
+      and (.effectiveManaged.retry.fallbackChains | has("widget"))
+      and .effectiveManaged.retry.fallbackChains.widget == []
+    ' "$TMPDIR/effective.json" >/dev/null
     # enforced policy: the user cannot weaken approvals or task isolation
     test "$(jq -r '.effectiveManaged.tools.approvalMode' "$TMPDIR/effective.json")" = "yolo"
     test "$(jq -r '.effectiveManaged.task.isolation.enabled' "$TMPDIR/effective.json")" = "true"
@@ -433,6 +453,12 @@ pkgs.runCommand "check-omp-stack"
       = "openai-codex/gpt-5.6-luna:minimal"
     test "$(yq eval '.task.agentModelOverrides.task' "$imm_home/.omp/agent/config.yml")" \
       = "openai-codex/gpt-5.6-luna:minimal"
+    # The retired path remains an explicit writable operator preference.
+    env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config set \
+      task.agentModelOverrides.task openai-codex/gpt-6-luna:low \
+      > "$TMPDIR/local-override-set.out"
+    test "$(yq eval '.task.agentModelOverrides.task' "$imm_home/.omp/agent/config.yml")" \
+      = "openai-codex/gpt-6-luna:low"
     # and the CLI refuses to set a managed path from a managed launcher
     set +e
     env HOME="$imm_home" ${pkgs.omp-configured}/bin/omp-managed config set \

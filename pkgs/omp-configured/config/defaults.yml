@@ -2,17 +2,15 @@ symbolPreset: unicode
 colorBlindMode: true
 
 modelRoles:
-  default: openai-codex/gpt-6.1-sol:medium
+  default: anthropic/claude-sonnet-5-5:medium
   advisor: anthropic/claude-haiku-5-5:low
-  smol: openai-codex/gpt-6-luna:low
-  task: openai-codex/gpt-6.1-terra:medium
-  scout: openai-codex/gpt-6-luna:medium
-  sonic: openai-codex/gpt-6-luna:minimal
-  reviewer: anthropic/claude-sonnet-5-5:high
-  plan: anthropic/claude-fable-5-2:high
-  slow: anthropic/claude-opus-5-5:xhigh
-  tiny: openai-codex/gpt-6-luna:low
-  commit: openai-codex/gpt-6-luna:low
+  smol: anthropic/claude-haiku-5-5:medium
+  task: anthropic/claude-sonnet-5-5:medium
+  plan: anthropic/claude-sonnet-5-5:high
+  slow: anthropic/claude-sonnet-5-5:high
+  tiny: anthropic/claude-haiku-5-5:low
+  commit: anthropic/claude-haiku-5-5:low
+  widget: anthropic/claude-haiku-5-5:low
   # omp routes image description here when the active model is text-only
   # (of the catalog's models, today only deepseek-v4-pro). Unset, it lands
   # on `default`.
@@ -27,38 +25,30 @@ retry:
   usageAwareFallback: true
   usageReservePct: 5
   usageReservePolicy: confirm
-  # Redundancy first: a same-provider sibling backs each lead before the cross,
-  # so a single-model outage never leaves its bucket; then the matched pair on
-  # the other provider. Chains never route below the lead's tier. Fable (elite)
-  # never appears as a net — plan leads on Fable deliberately and falls back to
-  # main-plan Opus. Trivial leads have explicit empty chains: omitting them
-  # would inherit the default chain.
-  # Role-keyed chains require role identity: task.agentModelOverrides uses
-  # native @role aliases below, with selectors/thinking owned by modelRoles.
-  # An agent name alone (including `task`) does not preserve that identity
-  # when its override is a concrete selector. Settings-defined roles work too.
-  # Do not duplicate chains under selectors: roles can share a lead yet need
-  # different fallback chains.
+  # Native agents select shared roles; retain that identity for retries.
+  # Routine fallbacks do not promote to premium models or higher effort.
+  # Explicit empty utility chains prevent inheriting the default chain.
   fallbackChains:
     tiny: []
     commit: []
-    sonic: []
+    vision: []
+    widget: []
+    advisor:
+      - openai-codex/gpt-6-luna:low
+    smol:
+      - openai-codex/gpt-6-luna:medium
     default:
+      - openai-codex/gpt-6.1-sol:medium
       - openai-codex/gpt-6.1-terra:medium
-      - anthropic/claude-opus-5-5:medium
-      - anthropic/claude-sonnet-5-5:medium
     task:
       - openai-codex/gpt-6.1-sol:medium
-      - anthropic/claude-sonnet-5-5:medium
-      - anthropic/claude-opus-5-5:medium
+      - openai-codex/gpt-6.1-terra:medium
     plan:
-      - anthropic/claude-opus-5-5:high
       - openai-codex/gpt-6.1-sol:high
       - openai-codex/gpt-6.1-terra:high
     slow:
-      - anthropic/claude-sonnet-5-5:xhigh
-      - openai-codex/gpt-6.1-sol:xhigh
-      - openai-codex/gpt-6.1-terra:xhigh
+      - openai-codex/gpt-6.1-sol:high
+      - openai-codex/gpt-6.1-terra:high
 
 personality: pragmatic
 
@@ -131,11 +121,6 @@ codexResets:
 
 task:
   showResolvedModelBadge: true
-  agentModelOverrides:
-    reviewer: "@reviewer"
-    scout: "@scout"
-    sonic: "@sonic"
-    task: "@task"
   disabledAgents: []
 
 # Memory guidance in the system prompt pollutes agent context for no

@@ -378,6 +378,20 @@ pkgs.runCommand "check-atyrode-runtime"
       .compaction.autoContinue == true and
       (.compaction | has("snapcompact") | not)
     ' >/dev/null
+    # All native shared roles stay on the local model. No named-agent routes
+    # or hosted fallback may escape the explicitly selected local capability.
+    ${pkgs.yq-go}/bin/yq -o=json '.' "$local_only_profile" | jq -e '
+      (.modelRoles | keys) ==
+        ["advisor", "commit", "default", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
+      and (.modelRoles | del(.widget) | all(. == "local-qwen/qwen3.8-27b"))
+      and .modelRoles.widget == "local-qwen/qwen3.8-27b:low"
+      and (.task // {} | has("agentModelOverrides") | not)
+      and .retry.enabled == true
+      and .retry.modelFallback == false
+      and (.retry.fallbackChains | has("widget"))
+      and .retry.fallbackChains == {widget: []}
+      and .advisor.enabled == false
+    ' >/dev/null
     test "$(stat -c %a "$models_profile")" = 600
     test "$(stat -c %a "$local_only_profile")" = 600
     mkdir "$TMPDIR/coder-home" "$TMPDIR/developer-home"

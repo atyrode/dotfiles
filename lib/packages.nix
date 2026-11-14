@@ -4,7 +4,7 @@
 {
   babel,
   babel-recall-src,
-  manifold,
+  manifold-client,
   manifold-recall-sdk-src,
   clan-core,
   lib,
@@ -80,7 +80,7 @@ let
         manifold-agent = final.callPackage ../pkgs/manifold-agent { };
         # The ordinary-terminal client and its skill stay product-owned.
         # Do not shadow Nixpkgs' unrelated manifold geometry library.
-        manifold-terminal-client = manifold.packages.${final.stdenv.hostPlatform.system}.manifold;
+        manifold-terminal-client = manifold-client.packages.${final.stdenv.hostPlatform.system}.manifold;
         # Archival instrument for this machine's agent session history. The
         # right-hand `babel` is the flake input from the enclosing scope: this
         # attribute set is not recursive, so there is no self-reference here.

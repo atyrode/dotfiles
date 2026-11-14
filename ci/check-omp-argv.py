@@ -50,6 +50,32 @@ def main():
     for prefix in (("--prewalk",), ("--external-thinking=false",), ("--no-prewalk",)):
         actual = run(args.managed_stub, *prefix, "models", "--json").splitlines()
         assert actual == [*prefix, "models", "--json"], actual
+    # Auxiliary-service restrictions are opt-in booleans, not prompt/model
+    # values. Compare the real wrappers' downstream argv, including bare starts.
+    restrictions = ("--no-judge", "--no-spotlight", "--offline")
+    managed_bare = run(args.managed_stub).splitlines()
+    assert not any(arg.split("=", 1)[0] in restrictions for arg in managed_bare), managed_bare
+    plain_stub = str(Path(args.managed_stub).with_name("omp"))
+    for flag in restrictions:
+        # Upstream also accepts =payload on booleans without consuming the next
+        # argument; preserve that spelling rather than interpreting its payload.
+        for option in (flag, f"{flag}=false"):
+            for trailing in (
+                (),
+                ("review this change", "--model", "models"),
+                ("--model", "models", "review this change"),
+                ("--", "models", "--config", "literal"),
+            ):
+                requested = [option, *trailing]
+                actual = run(args.managed_stub, *requested).splitlines()
+                assert actual == [*managed_bare, *requested], (requested, actual)
+                actual = run(plain_stub, *requested).splitlines()
+                assert actual == requested, (requested, actual)
+            requested = [option, "models", "--json"]
+            actual = run(args.managed_stub, *requested).splitlines()
+            assert actual == requested, (requested, actual)
+            actual = run(args.managed_stub, "--model", option).splitlines()
+            assert actual == [*managed_bare, "--model", option], (option, actual)
     for shell in ("bash", "sh", "zsh"):
         actual = run(args.managed_stub, shell, "-c", "printf shell-command").splitlines()
         assert actual == [shell, "-c", "printf shell-command"], (shell, actual)

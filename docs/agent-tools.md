@@ -310,9 +310,18 @@ nix build .#development-image --print-build-logs
 docker load --input result
 image="$(nix eval --raw .#development-image.imageName):$(nix eval --raw .#development-image.imageTag)"
 docker run --rm -it "$image"
+code_path="$(nix eval --raw .#code.outPath)/bin/code"
+catalog="$(mktemp)"
+"$code_path" generate --models-file pkgs/omp-configured/config/models.yml --out "$catalog"
 nix shell --inputs-from . nixpkgs#tmux nixpkgs#python3 \
-  --command python3 ci/verify-development-image.py "$image"
+  --command python3 ci/verify-development-image.py "$image" \
+    --code-executable "$code_path" --catalog "$catalog"
+rm "$catalog"
 ```
+
+The smoke first checks the genuine credential-free chooser state, then exercises
+the real packaged Code with public availability-only input. It neither creates
+credentials nor launches model inference.
 
 The default command is the real login zsh, running as `developer` (UID/GID
 1000) in `/workspace`. Supplying another command retains home activation and

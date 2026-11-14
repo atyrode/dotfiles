@@ -50,6 +50,11 @@ def main():
     for prefix in (("--prewalk",), ("--external-thinking=false",), ("--no-prewalk",)):
         actual = run(args.managed_stub, *prefix, "models", "--json").splitlines()
         assert actual == [*prefix, "models", "--json"], actual
+    # Boolean restrictions must not consume a following subcommand name.
+    # Unknown arity previously ate "models" and injected the managed overlay.
+    for flag in ("--no-judge", "--no-spotlight", "--offline"):
+        actual = run(args.managed_stub, flag, "models", "--json").splitlines()
+        assert actual == [flag, "models", "--json"], (flag, actual)
     for shell in ("bash", "sh", "zsh"):
         actual = run(args.managed_stub, shell, "-c", "printf shell-command").splitlines()
         assert actual == [shell, "-c", "printf shell-command"], (shell, actual)

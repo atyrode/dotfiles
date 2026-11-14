@@ -16,8 +16,8 @@ omp_optional_flags=(--restore --resume -r --session)
 omp_boolean_flags=(
   --advisor --allow-home --auto-approve --continue -c --external-thinking
   --from-claude --from-codex --help -h --hide-thinking --no-context-files
-  --no-extensions --no-lsp --no-prewalk --no-pty --no-rules --no-session
-  --no-skills --no-title --no-tools --no-ui
+  --no-extensions --no-judge --no-lsp --no-prewalk --no-pty --no-rules --no-session
+  --no-skills --no-spotlight --no-title --no-tools --no-ui --offline
   --plan-yolo --prewalk --print -p --print-thoughts --version -v --wait-async
   --yolo
 )

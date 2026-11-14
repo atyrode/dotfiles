@@ -1667,7 +1667,7 @@ index 951d105..45fb19b 100644
  		selectionHandoff:  selectionHandoff,
  		hasSandbox:        hasSandbox,
 diff --git a/main_test.go b/main_test.go
-index a72649f..47d3f3c 100644
+index a72649f..b91233d 100644
 --- a/main_test.go
 +++ b/main_test.go
 @@ -21,6 +21,7 @@ import (
@@ -1859,7 +1859,30 @@ index a72649f..47d3f3c 100644
  	rows := []string{"  thinking medium · fallback on · advisor on"}
  	for i := range 40 {
  		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
-@@ -2126,7 +2145,7 @@ func TestSectionStatePreservation(t *testing.T) {
+@@ -1418,8 +1437,9 @@ func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
+ 	}
+ 	nm, _ := m.Update(msg)
+ 	m = nm.(model)
+-	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "gpt-led" {
+-		t.Fatalf("persisted lane after wheel-left = %q, want gpt-led", got)
++	var routineRouting bool
++	if got := loadSelectionState(m.selectionState, m.facets, &routineRouting)["lane"]; got != "gpt-led" || routineRouting {
++		t.Fatalf("persisted lane after wheel-left = %q (routine=%t), want explicit gpt-led", got, routineRouting)
+ 	}
+ 
+ 	filter.last = time.Now().Add(-wheelGestureGap - time.Millisecond)
+@@ -1432,8 +1452,8 @@ func TestFilteredWheelPreservesSelectionPersistence(t *testing.T) {
+ 	}
+ 	nm, _ = m.Update(msg)
+ 	m = nm.(model)
+-	if got := loadSelectionState(m.selectionState, m.facets)["lane"]; got != "mixed" {
+-		t.Fatalf("persisted lane after wheel-right burst = %q, want mixed", got)
++	if got := loadSelectionState(m.selectionState, m.facets, &routineRouting)["lane"]; got != "mixed" || routineRouting {
++		t.Fatalf("persisted lane after wheel-right burst = %q (routine=%t), want explicit mixed", got, routineRouting)
+ 	}
+ }
+ 
+@@ -2126,7 +2146,7 @@ func TestSectionStatePreservation(t *testing.T) {
  
  	// Restoring routing recovers the prior scroll position.
  	sc := layoutModel()
@@ -1868,7 +1891,7 @@ index a72649f..47d3f3c 100644
  	rows := []string{"  thinking medium · fallback on · advisor on"}
  	for i := range 40 {
  		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
-@@ -2270,7 +2289,7 @@ func TestRoutingFallbackCuePinned(t *testing.T) {
+@@ -2270,7 +2290,7 @@ func TestRoutingFallbackCuePinned(t *testing.T) {
  		lines := strings.Split(stripAnsi(m.View()), "\n")
  		cue := lineIndex(lines, "f · show fallback chains")
  		title := lineIndex(lines, "routing", "p · hide")
@@ -1877,7 +1900,7 @@ index a72649f..47d3f3c 100644
  		if cue < 0 || title < 0 || route < 0 {
  			t.Fatalf("%s: missing cue (%d), title (%d), or route content (%d):\n%s",
  				label, cue, title, route, strings.Join(lines, "\n"))
-@@ -2843,7 +2862,7 @@ func TestFirstLoadBarFill(t *testing.T) {
+@@ -2843,7 +2863,7 @@ func TestFirstLoadBarFill(t *testing.T) {
  // facet selection.
  func TestRoutingWheelScroll(t *testing.T) {
  	long := layoutModel()
@@ -1886,7 +1909,7 @@ index a72649f..47d3f3c 100644
  	rows := []string{"  thinking medium · fallback on · advisor on"}
  	for i := range 60 {
  		rows = append(rows, fmt.Sprintf("    role%02d     gpt-5.6-terra:medium", i))
-@@ -4244,10 +4263,10 @@ func threePoolModel(t *testing.T) model {
+@@ -4244,10 +4264,10 @@ func threePoolModel(t *testing.T) model {
  }
  
  // TestGenConfigYAMLDeepSeekLane: a ds-led selection launches deepseek-prefixed
@@ -1899,7 +1922,7 @@ index a72649f..47d3f3c 100644
  	m.sel["lane"] = "ds-led"
  	m.sel["spark"], m.sel["fast"] = "off", "off"
  	m.sel["advisor"] = "audit"
-@@ -4260,7 +4279,7 @@ func TestGenConfigYAMLDeepSeekLane(t *testing.T) {
+@@ -4260,7 +4280,7 @@ func TestGenConfigYAMLDeepSeekLane(t *testing.T) {
  	got := m.genConfigYAML()
  	for _, want := range []string{
  		"  default: deepseek/deepseek-v4-pro:medium\n",
@@ -1908,7 +1931,7 @@ index a72649f..47d3f3c 100644
  		"  agentAdvisor:\n    task: \"on\"\n",
  	} {
  		if !strings.Contains(got, want) {
-@@ -4354,8 +4373,8 @@ func TestProviderAvailabilityMarksDisconnectedLanes(t *testing.T) {
+@@ -4354,8 +4374,8 @@ func TestProviderAvailabilityMarksDisconnectedLanes(t *testing.T) {
  	if m.laneUsable("ds-only") {
  		t.Fatal("ds-only usable without a DeepSeek credential")
  	}
@@ -1919,7 +1942,7 @@ index a72649f..47d3f3c 100644
  	}
  	if note := m.disconnectedLeads([]string{"mixed", "gpt", "claude", "ds"}); note != "DeepSeek" {
  		t.Fatalf("lead note = %q, want DeepSeek", note)
-@@ -4766,6 +4785,7 @@ func TestSegmentGaugeRendersAsMeter(t *testing.T) {
+@@ -4766,6 +4786,7 @@ func TestSegmentGaugeRendersAsMeter(t *testing.T) {
  // persisted state still stores only "lane".
  func TestLaneSplitDials(t *testing.T) {
  	m := model{facets: facetDefs(defaultGlyphs()), sel: defaultSel()}

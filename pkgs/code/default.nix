@@ -45,7 +45,9 @@ buildGoModule {
     }
     failureHooks+=(cleanupCodeCheckTmpdir)
     exitHooks+=(cleanupCodeCheckTmpdir)
-    export TMPDIR="$codeCheckTmpdir"
+    # Git reports physical worktree paths; /tmp is a symlink on Darwin.
+    TMPDIR="$(realpath "$codeCheckTmpdir")"
+    export TMPDIR
   '';
   postCheck = ''
     cleanupCodeCheckTmpdir

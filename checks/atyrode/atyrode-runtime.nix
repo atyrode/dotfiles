@@ -367,9 +367,18 @@ pkgs.runCommand "check-atyrode-runtime"
     models_profile="$HOME/.omp/profiles/local-qwen/agent/models.yml"
     local_only_profile="$HOME/.omp/profiles/local-qwen/agent/local-only.yml"
     ${pkgs.yq-go}/bin/yq -o=json '.' "$models_profile" | jq -e '
+      (.providers | keys) == ["local-qwen"] and
+      .providers["local-qwen"].api == "openai-completions" and
+      (.providers["local-qwen"].models | length) == 1 and
+      .providers["local-qwen"].models[0].reasoning == true and
       .providers["local-qwen"].models[0].maxTokens == 32768 and
       .providers["local-qwen"].models[0].contextWindow == 150000
     ' >/dev/null
+    local_model_selector="$(
+      ${pkgs.yq-go}/bin/yq -o=json '.' "$models_profile" | jq -r '
+        .providers | to_entries[] | .key + "/" + .value.models[0].id
+      '
+    )"
     ${pkgs.yq-go}/bin/yq -o=json '.' "$local_only_profile" | jq -e '
       .compaction.methodOrder == ["soft"] and
       .compaction.asyncEnabled == true and
@@ -378,15 +387,21 @@ pkgs.runCommand "check-atyrode-runtime"
       .compaction.autoContinue == true and
       (.compaction | has("snapcompact") | not)
     ' >/dev/null
-    # All native shared roles stay on the local model. No named-agent routes
-    # or hosted fallback may escape the explicitly selected local capability.
-    ${pkgs.yq-go}/bin/yq -o=json '.' "$local_only_profile" | jq -e '
-      (.modelRoles | keys) ==
+    # Parse the selectors against the declared reasoning-capable local model.
+    # Utility efforts must not inherit a forwarded main-thinking selection,
+    # while every role and retry remains inside the local capability boundary.
+    ${pkgs.yq-go}/bin/yq -o=json '.' "$local_only_profile" | jq -e \
+      --arg model "$local_model_selector" '
+      . as $profile
+      | (.modelRoles | keys) ==
         ["advisor", "commit", "default", "memory", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
-      and (.modelRoles | del(.widget, .memory, .vision) | all(. == "local-qwen/qwen3.8-27b"))
-      and .modelRoles.widget == "local-qwen/qwen3.8-27b:low"
-      and .modelRoles.memory == "local-qwen/qwen3.8-27b:medium"
-      and .modelRoles.vision == "local-qwen/qwen3.8-27b:low"
+      and (.modelRoles | all(split(":")[0] == $model))
+      and (["smol", "memory"] | all(
+        . as $role | $profile.modelRoles[$role] | split(":")[1] == "medium"
+      ))
+      and (["tiny", "commit", "vision", "widget"] | all(
+        . as $role | $profile.modelRoles[$role] | split(":")[1] == "low"
+      ))
       and (.task // {} | has("agentModelOverrides") | not)
       and .retry.enabled == true
       and .retry.modelFallback == false

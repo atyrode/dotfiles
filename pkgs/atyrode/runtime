@@ -494,12 +494,12 @@ EOF
 modelRoles:
   default: ${local_model}
   advisor: ${local_model}
-  smol: ${local_model}
+  smol: ${local_model}:medium
   slow: ${local_model}
   plan: ${local_model}
   task: ${local_model}
-  tiny: ${local_model}
-  commit: ${local_model}
+  tiny: ${local_model}:low
+  commit: ${local_model}:low
   vision: ${local_model}:low
   widget: ${local_model}:low
   memory: ${local_model}:medium

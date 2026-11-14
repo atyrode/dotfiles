@@ -4,10 +4,12 @@ Commit: 23f89adec1ff4b3b85018d4c77a38b79de227bad
 Downstream continuity-bridge patch only; not a new Go/native Code product.
 Route native shared roles without named-agent overrides; retain explicit dials,
 account pools, independent task settings, and utility effort boundaries.
-Routine intent survives unrelated saves/restarts and skips only known-down main
-quota. Legacy lane/model maps stay explicit. Local utilities respect the honest
-local effort ceiling; hosted memory remains cheap medium. Widget and memory each
-have an explicit empty chain; backend/enabled/autolearn preferences are untouched.
+Routine intent survives unrelated saves/restarts and rejected suggestion previews,
+and skips only known-down main quota. Legacy lane/model maps stay explicit.
+Plan/slow use the exact six-effort deliberative table without model-tier promotion.
+Local utilities respect the honest local effort ceiling; hosted memory remains
+cheap medium. Widget and memory each have an explicit empty chain;
+backend/enabled/autolearn preferences are untouched.
 Refresh exact-identity metadata without paid probes or new entitlements.
 Retain authoritative standard windows independently of authored capability tiers;
 do not infer extended windows or reject smaller windows on premium rungs.
@@ -73,10 +75,10 @@ index 8ddecc9..a63e3ba 100644
  			m.fcur, found = i, true
  			break
 diff --git a/docs/configuration.md b/docs/configuration.md
-index bc1342f..a64807d 100644
+index bc1342f..abdac75 100644
 --- a/docs/configuration.md
 +++ b/docs/configuration.md
-@@ -7,12 +7,31 @@
+@@ -7,12 +7,34 @@
  | `pool` | `O` (OpenAI/Codex), `A` (Anthropic), or `D` (DeepSeek). `O` and `A` must fill tiers 1..3; `D` is optional — one verified model is enough, missing tiers borrow the nearest rung |
  | `tier` | position on the pool's capability ladder. `1` cheap, `2` regular, `3` smart, and an optional `4` — a fourth rung the model dial's `elite` notch reaches. Ladder depth is per pool, and a provider shipping a fourth model needs no code change to light its own `elite` up: Anthropic's is `claude-fable-5`, OpenAI's `gpt-6-astra`. `0` is off the ladder entirely: the fast idle-bucket model the `spark` toggle drains |
  | `bucket` | the quota window the model draws — drives the usage meter |
@@ -89,7 +91,9 @@ index bc1342f..a64807d 100644
 -led by a three-rung pool `elite` would render a block identical to `smart`.
 +The `elite` notch is offered only on lanes whose **lead** pool serves a tier-4
 +rung. `plan` and `slow` use the selected rung, with higher deliberative effort,
-+never an automatic premium-tier promotion. Explicit lane, tier and effort
++never an automatic premium-tier promotion. Their effort mapping is
++`minimal→minimal`, `low→medium`, `medium→high`, `high→xhigh`, `xhigh→xhigh`,
++`max→max`, subject to actual model capabilities. Explicit lane, tier and effort
 +choices remain visible. Main `max` does not propagate to utility roles:
 +`smol` and `memory` use the cheap first rung at medium; `tiny`/`commit`/`widget`
 +stay cheap at low, and vision stays low. Widget and memory each have an explicit
@@ -104,7 +108,8 @@ index bc1342f..a64807d 100644
 +are available and its known main quota is not down, otherwise served Sol at
 +medium. Unknown quota is not treated as exhaustion; reserve/confirmation and
 +account-pool controls are unchanged. Saved `_routingIntent: "routine"` preserves
-+this intent through unrelated advisor/effort changes and restarts. Explicit
++this intent through unrelated advisor/effort changes and restarts. Rejecting a
++suggestion restores its pre-preview selection and routing intent. Explicit
 +lane/model choices stay explicit; legacy saved maps containing lane/model
 +remain explicit without a routine marker. Only native shared roles are configured:
 +task uses `@task`/auto, reviewer `@slow`, scout/sonic `@smol`/medium; seance and
@@ -112,7 +117,7 @@ index bc1342f..a64807d 100644
  
  `code generate init` ranks a pool's ladder by price, so it needs one for every
  model. omp's model table lags a launch unevenly — a brand-new flagship arrives
-@@ -42,7 +61,7 @@ switches back but leaves it open, and it is never persisted with the dials.
+@@ -42,7 +64,7 @@ switches back but leaves it open, and it is never persisted with the dials.
  | `fast` | `tier:` overlay key, per provider | buys every priority service tier the lane's pools sell. Offered on exactly those lanes: a pool declares one by setting `ServiceTier` in the provider registry, and nothing else needs editing |
  | `prewalk` | `prewalk.enabled` + `task.prewalk` | hands the run to the `smol` role at the first edit once the plan's todo list exists. Main session and spawned task agents both move — half a run on the cheap model would not be what the label says. The target needs no setting: omp defaults it to `smol`, which the grid already routes |
  | `planyolo` | `--plan-yolo` argv flag | starts read-only in plan mode, auto-approves the plan on the model's first resolve call, then implements. omp exposes this on the command line only, so it rides argv rather than the overlay |
@@ -153,7 +158,7 @@ index 2f77466..fa46494 100644
  read whole and written rarely as its second instance.
  
 diff --git a/generate.go b/generate.go
-index 5461e89..abfe593 100644
+index 5461e89..a24d504 100644
 --- a/generate.go
 +++ b/generate.go
 @@ -241,10 +241,8 @@ func (c *catalog) top(pool string) int {
@@ -209,7 +214,7 @@ index 5461e89..abfe593 100644
  	ll, hl := c.levels[lo], c.levels[hi]
  	if hl[len(hl)-1] < ll[len(ll)-1] {
  		return fmt.Sprintf("thinking tops out at %s vs %s, and costs $%s/1M vs $%s", thScale[hl[len(hl)-1]], thScale[ll[len(ll)-1]], trimFloat(h.CostIn), trimFloat(l.CostIn))
-@@ -487,61 +476,24 @@ func (c *catalog) visionCross(pool string, tier int) string {
+@@ -487,61 +476,23 @@ func (c *catalog) visionCross(pool string, tier int) string {
  // ── the facet grid ────────────────────────────────────────────────────────────
  
  var (
@@ -263,11 +268,10 @@ index 5461e89..abfe593 100644
 +	genDelib      = map[string]bool{"plan": true, "slow": true}
 +	genUtil       = map[string]bool{"smol": true, "tiny": true, "commit": true, "widget": true, "memory": true}
 +	genTierMap    = map[string]int{"fast": 1, "normal": 2, "smart": 3, "elite": 4}
-+	genBump       = map[string]string{"minimal": "low", "low": "medium", "medium": "high", "high": "xhigh", "xhigh": "xhigh"}
++	genBump       = map[string]string{"minimal": "minimal", "low": "medium", "medium": "high", "high": "xhigh", "xhigh": "xhigh", "max": "max"}
 +	genBaseLanes  = []string{"gpt-only", "gpt-led", "mixed", "claude-led", "claude-only"}
 +	genMTiers     = []string{"fast", "normal", "smart", "elite"}
 +	genThinking   = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
-+	genExtremes   = map[string]bool{"minimal": true, "max": true}
  )
  
 -// lanePolicy is a lane's whole role-mapping, as data. primary answers for
@@ -287,7 +291,7 @@ index 5461e89..abfe593 100644
  type lanePolicy struct {
  	primary     string
  	delib       string
-@@ -569,9 +521,6 @@ func (p lanePolicy) pool(role string) string {
+@@ -569,9 +520,6 @@ func (p lanePolicy) pool(role string) string {
  	if genDelib[role] && p.delib != "" {
  		return p.delib
  	}
@@ -297,7 +301,15 @@ index 5461e89..abfe593 100644
  	return p.primary
  }
  
-@@ -624,30 +573,12 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+@@ -607,7 +555,6 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 	p := pol.primary
+ 	base := genTierMap[mtier]
+ 	isPure := pol.pure
+-	extreme := genExtremes[thinking]
+ 	sparkKey := c.specialKey("spark")
+ 
+ 	// Roles that used to branch on mtier == "smart" branch on this instead:
+@@ -624,30 +571,12 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
  	for _, r := range genRoleOrder {
  		if genUtil[r] {
  			rp := rprov(r)
@@ -332,7 +344,7 @@ index 5461e89..abfe593 100644
  			}
  			chain := dedup(fb, lead)
  			out[r] = roleRoute{lead, th, chain, repeatLvl(th, len(chain))}
-@@ -671,12 +602,8 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+@@ -671,12 +600,8 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
  				out[r] = roleRoute{}
  				continue
  			}
@@ -346,7 +358,7 @@ index 5461e89..abfe593 100644
  			var chain []string
  			for _, k := range c.buildChain(lead, isPure) {
  				if c.models[k].multimodal() {
-@@ -687,45 +614,20 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+@@ -687,47 +612,22 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
  			continue
  		}
  		if r == "advisor" {
@@ -393,9 +405,12 @@ index 5461e89..abfe593 100644
 -			}
 -		}
  		th := thinking
- 		if !extreme && genDelib[r] {
+-		if !extreme && genDelib[r] {
++		if genDelib[r] {
  			th = genBump[thinking]
-@@ -737,6 +639,19 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
+ 		}
+ 		lead := c.rung(rp, t)
+@@ -737,6 +637,19 @@ func (c *catalog) genCombo(lane, mtier, thinking string, spark bool) map[string]
  	return out
  }
  
@@ -415,7 +430,7 @@ index 5461e89..abfe593 100644
  func repeatLvl(lvl string, n int) []string {
  	out := make([]string, n)
  	for i := range out {
-@@ -753,26 +668,9 @@ func genComboID(lane, mtier, thinking string, spark bool) string {
+@@ -753,26 +666,9 @@ func genComboID(lane, mtier, thinking string, spark bool) string {
  	return fmt.Sprintf("%s_%s_%s_%s", lane, mtier, thinking, sp)
  }
  
@@ -445,7 +460,7 @@ index 5461e89..abfe593 100644
  func (c *catalog) genValid(lane, mtier string, spark bool) bool {
  	if spark && !laneHostsSpecial(lane, "spark") {
  		return false // no spark outside its pool's lanes
-@@ -905,16 +803,8 @@ func (c *catalog) renderAdvisors() string {
+@@ -905,16 +801,8 @@ func (c *catalog) renderAdvisors() string {
  func (c *catalog) renderCatalog() string {
  	var b strings.Builder
  	b.WriteString("OMP generated routing — first-principles facet grid\n")
@@ -464,7 +479,7 @@ index 5461e89..abfe593 100644
  	b.WriteString(c.renderAdvisors() + "\n")
  	b.WriteString(c.renderModelFacts() + "\n")
  	hasSpark := c.specialKey("spark") != ""
-@@ -953,11 +843,14 @@ func defaultCatalogPath() string {
+@@ -953,11 +841,14 @@ func defaultCatalogPath() string {
  	return filepath.Join(base, "code", "generated.plain")
  }
  
@@ -480,7 +495,7 @@ index 5461e89..abfe593 100644
  	modelsFile, out := defaultModelsPath(), defaultCatalogPath()
  	for i := 0; i < len(args); i++ {
  		switch args[i] {
-@@ -1027,6 +920,10 @@ const generateHelp = `code generate — render the facet-grid catalog the TUI br
+@@ -1027,6 +918,10 @@ const generateHelp = `code generate — render the facet-grid catalog the TUI br
                     probe. Offline inspection only: the result is marked
                     'probed: false' and 'code generate' will refuse to render it.
  
@@ -1099,7 +1114,7 @@ index 0000000..14a5f43
 +	}
 +}
 diff --git a/generate_test.go b/generate_test.go
-index ac39f37..ca02a45 100644
+index ac39f37..7afe2fe 100644
 --- a/generate_test.go
 +++ b/generate_test.go
 @@ -7,6 +7,8 @@ import (
@@ -1306,11 +1321,16 @@ index ac39f37..ca02a45 100644
 -// scout is an agent-backed role; it must carry the agent marker so
 -// genConfigYAML mirrors it into task.agentModelOverrides.
 -func TestScoutIsAgentBacked(t *testing.T) {
--	c := fixtureCatalog(t)
++func TestNativeSharedRoleInventory(t *testing.T) {
+ 	c := fixtureCatalog(t)
 -	block := c.renderCombo("mixed", "normal", "medium", false)
 -	if !strings.Contains(block, "● scout ") {
 -		t.Errorf("scout must render as an agent-backed role:\n%s", block)
--	}
++	want := []string{"default", "task", "plan", "slow", "advisor", "vision", "smol", "tiny", "commit", "widget", "memory"}
++	routes := c.genCombo("claude-only", "normal", "medium", false)
++	if len(routes) != len(want) {
++		t.Fatalf("generated %d roles, want only %v", len(routes), want)
+ 	}
 -}
 -
 -// The header legend tells the reader which roles the ● marker can appear on.
@@ -1318,8 +1338,7 @@ index ac39f37..ca02a45 100644
 -// a row the header denied existed. Derive-or-drift: the legend must name
 -// exactly the roles the grid actually marks.
 -func TestAgentLegendMatchesMarkedRoles(t *testing.T) {
-+func TestNativeSharedRoleInventory(t *testing.T) {
- 	c := fixtureCatalog(t)
+-	c := fixtureCatalog(t)
 -	out := c.renderCatalog()
 -	var legend string
 -	for _, l := range strings.Split(out, "\n") {
@@ -1330,11 +1349,7 @@ index ac39f37..ca02a45 100644
 -	}
 -	if legend == "" {
 -		t.Fatal("catalog header must carry an agent-backed-roles legend")
-+	want := []string{"default", "task", "plan", "slow", "advisor", "vision", "smol", "tiny", "commit", "widget", "memory"}
-+	routes := c.genCombo("claude-only", "normal", "medium", false)
-+	if len(routes) != len(want) {
-+		t.Fatalf("generated %d roles, want only %v", len(routes), want)
- 	}
+-	}
 -	named := map[string]bool{}
 -	for _, f := range strings.Fields(legend) {
 -		if f == "—" {
@@ -1496,7 +1511,7 @@ index ac39f37..ca02a45 100644
  func TestEliteNotchGatedOnLeadPool(t *testing.T) {
  	c := fixtureCatalog(t)
  	for lane, want := range map[string]bool{
-@@ -1802,81 +1705,59 @@ func TestEliteNotchGatedOnLeadPool(t *testing.T) {
+@@ -1802,81 +1705,64 @@ func TestEliteNotchGatedOnLeadPool(t *testing.T) {
  	}
  }
  
@@ -1507,6 +1522,11 @@ index ac39f37..ca02a45 100644
 -// (base = 4) puts it in the `default` seat as well. Losing either is losing the
 -// routing the toggles existed to reach, with no dial left to ask for it.
 -func TestTierFourReachableWithoutTheRetiredToggles(t *testing.T) {
++var wantDeliberativeEffort = map[string]string{
++	"minimal": "minimal", "low": "medium", "medium": "high",
++	"high": "xhigh", "xhigh": "xhigh", "max": "max",
++}
++
 +func TestDeliberativeRolesNeverPromoteTheSelectedRung(t *testing.T) {
  	c := fixtureCatalog(t)
 -	lead := func(lane, mtier, role string) string {
@@ -1549,7 +1569,7 @@ index ac39f37..ca02a45 100644
 +			if !c.genValid(lane, tier, false) {
 +				continue
 +			}
-+			for _, thinking := range genThinking {
++			for thinking, wantEffort := range wantDeliberativeEffort {
 +				routes := c.genCombo(lane, tier, thinking, false)
 +				for _, role := range []string{"default", "task", "plan", "slow"} {
 +					route := routes[role]
@@ -1557,8 +1577,8 @@ index ac39f37..ca02a45 100644
 +					if want := c.rung(pool, genTierMap[tier]); route.lead != want {
 +						t.Errorf("%s/%s/%s %s = %s, want selected rung %s", lane, tier, thinking, role, route.lead, want)
 +					}
-+					if thinking == "medium" && genDelib[role] && route.level != "high" {
-+						t.Errorf("%s/%s %s effort = %s, want high", lane, tier, role, route.level)
++					if genDelib[role] && route.level != wantEffort {
++						t.Errorf("%s/%s/%s %s effort = %s, want %s", lane, tier, thinking, role, route.level, wantEffort)
 +					}
 +					if thinking == "max" && route.level != "max" {
 +						t.Errorf("%s/%s %s lost explicit max", lane, tier, role)
@@ -1625,7 +1645,7 @@ index ac39f37..ca02a45 100644
  		}
  	}
  }
-@@ -1900,10 +1781,6 @@ func TestCheckLadderValidatesTierFour(t *testing.T) {
+@@ -1900,10 +1786,6 @@ func TestCheckLadderValidatesTierFour(t *testing.T) {
  `
  	base := withoutModel(fixtureYML, "fable")
  	for name, replacement := range map[string]string{
@@ -1636,7 +1656,7 @@ index ac39f37..ca02a45 100644
  		"lower thinking ceiling at a higher price": strings.Replace(tier4, "    thinking: low→max\n", "    thinking: low→xhigh\n", 1),
  	} {
  		_, err := catalogFrom(t, base+replacement)
-@@ -1915,9 +1792,107 @@ func TestCheckLadderValidatesTierFour(t *testing.T) {
+@@ -1915,9 +1797,129 @@ func TestCheckLadderValidatesTierFour(t *testing.T) {
  			t.Errorf("%s: error must name tier 4 as the regressing rung, got %v", name, err)
  		}
  	}
@@ -1706,7 +1726,7 @@ index ac39f37..ca02a45 100644
 +	}
 +	for _, lane := range c.lanes() {
 +		for _, tier := range genMTiers {
-+			for _, effort := range genThinking {
++			for effort := range wantDeliberativeEffort {
 +				if !c.genValid(lane, tier, false) {
 +					continue
 +				}
@@ -1725,10 +1745,19 @@ index ac39f37..ca02a45 100644
 +					t.Fatalf("%s emitted invalid overlay: %v", id, err)
 +				}
 +				for _, role := range []string{"default", "task", "plan", "slow"} {
++					wantEffort := effort
++					if role == "plan" || role == "slow" {
++						wantEffort = wantDeliberativeEffort[effort]
++					}
++					// Every model in this authored eight-family fixture has a
++					// low floor. Declared minimal must clamp, not change tiers.
++					if wantEffort == "minimal" {
++						wantEffort = "low"
++					}
 +					tokens := append([]string{overlay.ModelRoles[role]}, overlay.Retry.FallbackChains[role]...)
 +					for _, token := range tokens {
 +						_, model, qualified := strings.Cut(token, "/")
-+						model, _, _ = strings.Cut(model, ":")
++						model, gotEffort, explicitEffort := strings.Cut(model, ":")
 +						key := ""
 +						for _, candidate := range c.keys {
 +							if c.models[candidate].ID == model {
@@ -1736,12 +1765,25 @@ index ac39f37..ca02a45 100644
 +								break
 +							}
 +						}
-+						if !qualified || key == "" {
++						if !qualified || !explicitEffort || key == "" {
 +							t.Fatalf("%s %s emitted unknown model token %q", id, role, token)
 +						}
 +						if got := c.models[key].Tier; got > genTierMap[tier] {
 +							t.Errorf("%s %s fallback/lead %s silently promotes authored tier %d to %d", id, role, model, genTierMap[tier], got)
 +						}
++						if gotEffort != wantEffort {
++							t.Errorf("%s %s effort after model clamping = %s, want %s", id, role, gotEffort, wantEffort)
++						}
++					}
++				}
++				for role, wantEffort := range map[string]string{
++					"smol": "medium", "memory": "medium", "tiny": "low",
++					"commit": "low", "widget": "low", "vision": "low",
++				} {
++					_, qualified, hasProvider := strings.Cut(overlay.ModelRoles[role], "/")
++					_, gotEffort, explicitEffort := strings.Cut(qualified, ":")
++					if !hasProvider || !explicitEffort || gotEffort != wantEffort {
++						t.Errorf("%s utility %s leaked main effort: %q, want %s", id, role, overlay.ModelRoles[role], wantEffort)
 +					}
 +				}
 +			}
@@ -2219,7 +2261,7 @@ index a72649f..711532e 100644
  	// mixed: a single lead row, no blend child, no lane word list.
  	vf := m.visibleFacets()
 diff --git a/model.go b/model.go
-index 41bf72e..1c4e91a 100644
+index 41bf72e..3f1dae7 100644
 --- a/model.go
 +++ b/model.go
 @@ -59,6 +59,7 @@ type model struct {
@@ -2230,6 +2272,16 @@ index 41bf72e..1c4e91a 100644
  	selectionState string // resolved by selectionStatePath; empty is the "off" opt-out
  	// selectionHandoff is the default location a relocated selection is also
  	// mirrored to, because an engine launch sees no CODE_SELECTION_STATE at all.
+@@ -108,6 +109,9 @@ type model struct {
+ 	genConfig          string            // generated config YAML to launch omp with (generator Enter)
+ 	firstPrompt        string            // prompt from the suggest box, forwarded as omp's first message
+ 	savedSel           map[string]string // selection snapshot before a live suggest preview (for revert)
++
++	savedRoutineRouting bool // routing intent paired with savedSel during a live preview
++
+ 	// The probed omp version (omp/<semver> from `omp --version`), fetched
+ 	// async at startup. Zero = unknown: 17.3-only overlay keys are omitted so
+ 	// a lagging CODE_OMP wrapper never hard-errors at launch.
 diff --git a/ompsmoke_test.go b/ompsmoke_test.go
 index a7b27a5..f1f7e00 100644
 --- a/ompsmoke_test.go
@@ -3157,8 +3209,79 @@ index d05b837..cffdf49 100644
  	}
  	m.deriveToggles()
  	m.repairConstraints()
+diff --git a/suggest_test.go b/suggest_test.go
+index c1469d8..0d4d95b 100644
+--- a/suggest_test.go
++++ b/suggest_test.go
+@@ -1,6 +1,8 @@
+ package main
+ 
+ import (
++	"path/filepath"
++	"reflect"
+ 	"strings"
+ 	"testing"
+ 
+@@ -290,3 +292,57 @@ func TestBalanceGuardOptionalLane(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestRejectedRoutingSuggestionRestoresIntentThroughSaveAndRestart(t *testing.T) {
++	blocks := loadBlocks(fixtureCatalogPath(t))
++	for _, wasRoutine := range []bool{false, true} {
++		name := "explicit"
++		if wasRoutine {
++			name = "routine"
++		}
++		t.Run(name, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "selection.json")
++			m := model{
++				sel: defaultSel(), routineRouting: wasRoutine, facets: testFacets(), generated: blocks,
++				selectionState: path,
++			}
++			m.sel["thinking"] = "max"
++			m.applyCatalog()
++			m.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			before := selectionChoices(m.sel, m.facets)
++			next, feedback := m.Update(clikit.ActionsProposedMsg{Actions: []clikit.Action{
++				{Key: "model", Value: "smart"},
++				{Key: "thinking", Value: "low"},
++				{Key: "advisor", Value: "audit"},
++			}})
++			preview := next.(model)
++			if feedback == nil || preview.sel["model"] != "smart" || preview.routineRouting {
++				t.Fatalf("proposal did not create an explicit routing preview: %v routine=%t", preview.sel, preview.routineRouting)
++			}
++			next, _ = preview.Update(clikit.ActionsRevertedMsg{})
++			rejected := next.(model)
++			if !reflect.DeepEqual(selectionChoices(rejected.sel, rejected.facets), before) ||
++				rejected.routineRouting != wasRoutine || rejected.savedSel != nil {
++				t.Fatalf("reject did not restore the complete prior selection/intent: %v routine=%t", rejected.sel, rejected.routineRouting)
++			}
++			rejected = turnDial(t, rejected, "advisor")
++			chosenAdvisor := rejected.sel["advisor"]
++			var routine bool
++			loaded := loadSelectionState(path, testFacets(), &routine)
++			restarted := model{
++				sel: loaded, routineRouting: routine, facets: testFacets(), generated: blocks,
++				avail: availability{ok: true, bucket: map[string]string{"claude-main": "maxed", "codex-main": "ok"}},
++			}
++			restarted.applyCatalog()
++			restarted.applyProviderAvailability(map[string]bool{"A": true, "O": true})
++			wantLane, wantTier := before["lane"], before["model"]
++			if wasRoutine {
++				wantLane, wantTier = "gpt-only", "smart"
++			}
++			if routine != wasRoutine || restarted.sel["lane"] != wantLane || restarted.sel["model"] != wantTier ||
++				restarted.sel["thinking"] != "max" || restarted.sel["advisor"] != chosenAdvisor {
++				t.Fatalf("cancel plus unrelated save froze or reset prior intent: %v routine=%t", restarted.sel, routine)
++			}
++		})
++	}
++}
 diff --git a/update.go b/update.go
-index 868f671..b376cf8 100644
+index 868f671..f8da2a9 100644
 --- a/update.go
 +++ b/update.go
 @@ -184,6 +184,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -3169,7 +3292,33 @@ index 868f671..b376cf8 100644
  			if fold != "" {
  				m.sel[moreFacetKey] = fold
  			}
-@@ -447,6 +448,9 @@ func (m *model) cycleFacet(dir int) {
+@@ -294,6 +295,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 		// applied diff back to the box (the model's picks plus the derived toggles),
+ 		// so its "applied" list reflects everything that changed, not just the three
+ 		// facets the model named directly.
++		m.savedRoutineRouting = m.routineRouting
+ 		m.savedSel = map[string]string{}
+ 		for k, v := range m.sel {
+ 			m.savedSel[k] = v
+@@ -309,6 +311,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 	case clikit.ActionsConfirmedMsg:
+ 		// Kept: the preview stays; remember the prompt for the launched session.
+ 		m.savedSel = nil
++		m.savedRoutineRouting = false
+ 		m.firstPrompt = msg.Prompt
+ 		m.persistSelection()
+ 
+@@ -316,7 +319,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+ 		// Rejected: restore the pre-preview selection.
+ 		if m.savedSel != nil {
+ 			m.sel = m.savedSel
++			m.routineRouting = m.savedRoutineRouting
+ 			m.savedSel = nil
++			m.savedRoutineRouting = false
+ 			m.syncPreview()
+ 		}
+ 	}
+@@ -447,6 +452,9 @@ func (m *model) cycleFacet(dir int) {
  		return
  	}
  	m.sel[f.key] = f.values[next]

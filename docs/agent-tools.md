@@ -534,6 +534,11 @@ visible choices, including Opus, Astra and Fable where served. Native Code's
 separately pinned Manifold OMP runtime and reviewed catalogs are not upgraded
 by the dotfiles OMP pin.
 
+Routine `plan`/`slow` high is not a fixed effort for every profile: the explicit
+main-effort choices minimal, low, medium, high, xhigh and max map respectively
+to minimal, medium, high, xhigh, xhigh and max, subject to model/local capability
+clamps. This changes effort, never the selected model tier.
+
 `omp-managed config managed --json` reports owned shared selectors and chains,
 not proof of native child retries. Historical OMP 18.1.14 role-identity failures
 ([Code #142](https://github.com/atyrode/code/issues/142)) cannot establish
@@ -704,6 +709,9 @@ the live leaf, even if that leaf matched the old seed. Existing explicit
 until a separately authorized local cleanup. Untouched still-seeded role
 leaves follow the new defaults; deliberate shared-role edits and unrelated
 preferences remain local and reviewable.
+Fresh and untouched seeded `defaultThinkingLevel` intentionally moves from
+`auto` to `medium`; a deliberate local `auto` change remains reviewable drift
+under the same three-way merge. No per-agent effort declaration is rewritten.
 
 Before explicitly removing old live routing, compare each override and custom
 agent file with the intended native shared role, effort and fallback chain.

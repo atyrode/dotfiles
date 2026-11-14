@@ -178,7 +178,7 @@ pkgs.runCommand "check-omp-native-routing"
       source_session=""
       mkdir -p "$home" "$project/.omp/extensions" "$source_sessions"
       cp ${./omp-native-routing-provider.ts} "$project/.omp/extensions/native-routing-fixture.ts"
-      cp ${gridConfig} "$project/.omp/config.yml"
+      install -m600 ${gridConfig} "$project/.omp/config.yml"
 
       # A real saved session, with a model and effort different from both main
       # and default. Native seance restores this source, not its caller's model.
@@ -254,7 +254,7 @@ pkgs.runCommand "check-omp-native-routing"
       # Genuine retry oracle: task/slow/smol AND default share one lead and
       # effort. Distinct fallbacks make role loss observable at the provider;
       # an explicitly empty smol chain must fail, not borrow another role.
-      cp ${retryConfig} "$project/.omp/config.yml"
+      install -m600 ${retryConfig} "$project/.omp/config.yml"
       run_omp retry \
         --model native-routing-fixture/lead --thinking medium --no-session \
         'OMP_NATIVE_ROUTING:retry:parent'

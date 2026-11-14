@@ -31,6 +31,25 @@ buildGoModule {
   # Raw OMP is independent of the configured launcher. The native smoke uses a
   # disposable HOME with auth cleared: schema/role metadata only, never probes.
   nativeCheckInputs = [ omp ];
+  # Keep t.TempDir socket paths below the production UNIX-domain limit even
+  # when Nix uses a long build root. Do not replace stdenv's EXIT handler.
+  preCheck = ''
+    codeCheckSavedTmpdir="$TMPDIR"
+    codeCheckTmpdir="$(mktemp -d /tmp/code-check.XXXXXX)"
+    cleanupCodeCheckTmpdir() {
+      if [ -n "''${codeCheckTmpdir:-}" ]; then
+        rm -rf -- "$codeCheckTmpdir"
+        unset codeCheckTmpdir
+      fi
+      export TMPDIR="$codeCheckSavedTmpdir"
+    }
+    failureHooks+=(cleanupCodeCheckTmpdir)
+    exitHooks+=(cleanupCodeCheckTmpdir)
+    export TMPDIR="$codeCheckTmpdir"
+  '';
+  postCheck = ''
+    cleanupCodeCheckTmpdir
+  '';
   env = {
     CGO_ENABLED = "0";
     CODE_OMP = lib.getExe omp;

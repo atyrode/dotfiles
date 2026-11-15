@@ -369,6 +369,7 @@ let
     docs-drift-guard = import ./lints/docs-drift-guard.nix { inherit pkgs; };
     classify-ci-paths = import ./lints/classify-ci-paths.nix { inherit pkgs; };
     preview-owner-pin = import ./lints/preview-owner-pin.nix { inherit pkgs; };
+    development-image-publish = import ./lints/development-image-publish.nix { inherit pkgs; };
     macos-bash = import ./lints/macos-bash.nix { inherit pkgs; };
     production-facts = import ./lints/production-facts.nix { inherit pkgs; };
     secret-shapes = import ./lints/secret-shapes.nix { inherit lib pkgs; };

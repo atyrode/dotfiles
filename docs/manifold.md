@@ -262,7 +262,9 @@ fronts two names with Caddy, sharing the VPS's ports 80 and 443 with the
   worktree (`<name>.…`), proxied to an operator-owned router on 127.0.0.1:7900
   that manifold's `infra/previews/preview.sh` generates as previews come and
   go. Certificates are issued on demand, per hostname, only for names the
-  router vouches for.
+  router vouches for, through the shared on-demand dispatcher
+  ([`modules/nixos/caddy-on-demand-ask.nix`](../modules/nixos/caddy-on-demand-ask.nix))
+  that also serves myParcelle's pull-request previews.
 
 Both are driven from GitHub through one deploy key
 ([`modules/home/ssh/deploy-keys`](../modules/home/ssh/deploy-keys)): a

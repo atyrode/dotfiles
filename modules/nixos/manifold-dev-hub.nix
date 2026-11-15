@@ -287,13 +287,11 @@ in
     # when `sd-switch` tried to start the unit it still wanted.
     atyrode.agentTools.authBroker.nativeCustody = true;
   };
+  # The router's `/__preview/ask` gates this zone's certificates through the
+  # shared on-demand dispatcher (modules/nixos/caddy-on-demand-ask.nix).
+  atyrode.caddy.onDemandAsk."manifold.tyrode.dev" = "127.0.0.1:7900";
   services.caddy = {
     enable = true;
-    globalConfig = ''
-      on_demand_tls {
-        ask http://127.0.0.1:7900/__preview/ask
-      }
-    '';
     virtualHosts."preview.manifold.tyrode.dev".extraConfig = ''
       tls {
         on_demand

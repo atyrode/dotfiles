@@ -122,6 +122,18 @@ Source delivery does not authorize activation: any future activation needs
 an independently reviewed service-disruption plan and the
 [terminal-preservation safeguards](manifold.md#upgrades).
 
+myParcelle's CI also runs here:
+[`modules/nixos/myparcelle-ci-runners.nix`](../modules/nixos/myparcelle-ci-runners.nix)
+declares three ephemeral self-hosted GitHub Actions runners (labels
+`self-hosted`, `linux`, `x64`, `dev-01`) under the `myparcelle-ci` system
+account and its own rootless Docker engine. Each job runs in a fresh
+Docker-in-Docker engine and runner container pair, capped per job and as a
+whole slice, and deleted when the job ends; each start mints a single-use
+runner configuration from a root-only token the operator places at
+`/var/lib/myparcelle-ci-runners/github-token` (a fine-grained token on that
+one repository, Administration: write). Until the file exists the runners
+wait and retry.
+
 The games edge sends `games.tyrode.dev` to `127.0.0.1:8093`. The
 [game checkout](https://github.com/atyrode/scrabble/tree/dev) owns its path
 routing and Docker Compose runtime, including hot reload during development.

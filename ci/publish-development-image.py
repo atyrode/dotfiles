@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -28,6 +29,8 @@ ACCEPT = ", ".join(
         "application/vnd.docker.distribution.manifest.v2+json",
     ]
 )
+# The registry can answer 404 for a just-pushed reference until it becomes readable.
+VISIBILITY_DELAYS = (2, 4, 8, 16, 30)
 
 
 class PublicationError(Exception):
@@ -140,6 +143,18 @@ def verify_index(manifest, platforms):
             "Immutable index does not match the two verified platform digests; refusing overwrite")
 
 
+def await_published(registry, reference, message):
+    """Wait a bounded time for a reference this run pushed; never push it again."""
+    existing = registry.manifest(reference)
+    for delay in VISIBILITY_DELAYS:
+        if existing is not None:
+            break
+        time.sleep(delay)
+        existing = registry.manifest(reference)
+    require(existing is not None, message)
+    return existing
+
+
 def publish(args, password, environment):
     registry = Registry(args.username, password)
     command(["docker", "login", "ghcr.io", "--username", args.username, "--password-stdin"],
@@ -164,8 +179,7 @@ def publish(args, password, environment):
             print(f"Publishing tested linux/{architecture} revision", flush=True)
             command(["docker", "tag", image_id, f"{IMAGE}:{tag}"], environment)
             command(["docker", "push", f"{IMAGE}:{tag}"], environment)
-            existing = registry.manifest(tag)
-            require(existing is not None, "Published platform manifest is missing")
+            existing = await_published(registry, tag, "Published platform manifest is missing")
         else:
             print(f"Reusing immutable linux/{architecture} revision", flush=True)
         verify_platform(existing[0], config_digest)
@@ -181,8 +195,7 @@ def publish(args, password, environment):
             command(["docker", "manifest", "annotate", reference, f"{IMAGE}@{digest}",
                      "--os", "linux", "--arch", architecture], environment)
         command(["docker", "manifest", "push", reference], environment)
-        existing = registry.manifest(args.revision)
-        require(existing is not None, "Published index is missing")
+        existing = await_published(registry, args.revision, "Published index is missing")
     else:
         print("Reusing immutable multi-platform index", flush=True)
     verify_index(existing[0], platforms)

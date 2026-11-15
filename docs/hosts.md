@@ -104,6 +104,20 @@ Keycloak administration stays on loopback. The application edge adds nothing
 but TLS and compression: caching and the admin gate on `/storybook/` are the
 application's, exactly as on production, so a reviewer sees on the
 development surface what production would show.
+Its pull-request previews are `pr-<n>.preview.myparcelle.tyrode.dev`, one
+wildcard vhost forwarded whole to the loopback router on port 4300 that
+myParcelle's `scripts/preview/` tooling generates as previews come and go
+(its `deploy/README.md` § Pull-request previews).
+Their certificates are issued on demand like the Manifold tier's. Caddy's
+on-demand permission is one global `ask` endpoint, so
+[`modules/nixos/caddy-on-demand-ask.nix`](../modules/nixos/caddy-on-demand-ask.nix)
+owns it: a loopback dispatcher on 7899 forwards each question to the router
+of the zone that owns the name, one label deep, and refuses everything else.
+A tier registers its zone there instead of setting `on_demand_tls` itself;
+`nix build .#checks.x86_64-linux.caddy-on-demand-ask` exercises the deployed
+dispatcher through real Caddy. The extra `preview.` label keeps the wildcard
+off `auth.myparcelle.tyrode.dev`, whose managed certificate a covering
+wildcard site would suppress.
 Source delivery does not authorize activation: any future activation needs
 an independently reviewed service-disruption plan and the
 [terminal-preservation safeguards](manifold.md#upgrades).

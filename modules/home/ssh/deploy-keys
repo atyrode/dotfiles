@@ -25,3 +25,6 @@
 
 manifold-deploy  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIINhtNvQ1OSskawGaz6rKvHFg3J95BF1ref1QwwupxXu  /home/alex/manifold-dev/infra/previews/receiver.sh
 plugins-deploy   dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAINQnbB1ko44SXqwsfzn3/C7qJoyyQXgEPKHrtlxwInLl  /home/alex/manifold-dev/infra/previews/receiver.sh
+# The private half is the preview environment's DEV_DEPLOY_SSH_KEY on the
+# myParcelle repository; its receiver moves its own clone to origin/main first.
+myparcelle-preview  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIEk2KS48t8xtkyMTGJ/s/FO2dI+jPaySPVNhixOsECI9  /home/alex/myparcelle-previews/tooling/scripts/preview/receiver.sh

@@ -347,6 +347,13 @@ let
     };
   }
   // lib.optionalAttrs (system == "x86_64-linux") {
+    caddy-on-demand-ask = import ./fleet/caddy-on-demand-ask.nix {
+      inherit pkgs;
+      caddy = {
+        inherit (canonicalNixosConfigs.dev-01.config.services.caddy) globalConfig virtualHosts;
+        zones = canonicalNixosConfigs.dev-01.config.atyrode.caddy.onDemandAsk;
+      };
+    };
     manifold-preview-routing = import ./fleet/manifold-preview-routing.nix {
       inherit pkgs;
       previewVhost =

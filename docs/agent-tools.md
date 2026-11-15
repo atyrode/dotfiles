@@ -579,8 +579,12 @@ Go launcher retained for daily continuity, not current native Code main.
 Nix builds its already-public ancestor tag from source with fixed hashes and
 a narrow downstream routing patch. The patch changes shared-role generation
 and provides the metadata-only refresh described below; it does not revive a
-Go product in the native TypeScript plugin repository. The temporary package
-is intentionally absent from automatic pin-update jobs.
+Go product in the native TypeScript plugin repository. It also keeps the
+legacy `code generate init` scaffolder from compressing tiers: known families
+(Haiku/Sonnet/Opus/Fable, Luna/Terra/Sol/Astra) keep tiers 1–4, and in a pool
+with any of them a missing tier-1..3 family refuses before any models file is
+written or refreshed. The temporary package is intentionally absent from
+automatic pin-update jobs.
 
 The Code/Manifold transition owns coordinated changes to this bridge's source,
 patch, wrapper and catalog. It must preserve supported standalone launch and

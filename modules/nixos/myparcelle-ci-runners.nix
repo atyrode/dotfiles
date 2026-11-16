@@ -195,10 +195,21 @@ let
         'chown 1001:1001 /home/runner/_work && exec dockerd-entrypoint.sh dockerd --host unix:///var/run/engine/docker.sock --group 123 --registry-mirror http://${mirrorName}:5000' \
         >/dev/null
 
+      # The Clever CI controller's state directory (its cost ledger, daily
+      # costs, status; world-readable, nothing secret), read-only at
+      # /clever-ledger, for myParcelle's CI observatory collector
+      # (.github/workflows/ci-metrics.yml): the cost data reaches the dataset
+      # without any credential. Absent until that controller runs here.
+      ledger=()
+      if [[ -d /var/lib/myparcelle-ci-clever ]]; then
+        ledger=(--mount "type=bind,source=/var/lib/myparcelle-ci-clever,target=/clever-ledger,readonly")
+      fi
+
       docker run --rm --name "$name" --network "container:$name-engine" \
         ${lib.escapeShellArgs runnerLimits} \
         --env ACTIONS_RUNNER_INPUT_JITCONFIG --env DOCKER_HOST=unix:///var/run/engine/docker.sock \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
+        "''${ledger[@]}" \
         --entrypoint bash ${runnerImage} -c \
         'for _ in $(seq 60); do docker version >/dev/null 2>&1 && exec /home/runner/run.sh; sleep 1; done; echo "the job engine did not start" >&2; exit 1'
     '';

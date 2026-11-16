@@ -154,6 +154,15 @@ the consumer in his browser. Until that file and the source copy exist, the
 units do not start.
 Its cost ledger and daily cost lines are in `/var/lib/myparcelle-ci-clever`.
 
+[`modules/nixos/myparcelle-ci-clever-guard.nix`](../modules/nixos/myparcelle-ci-clever-guard.nix)
+is its cost guard, apart from it and sharing no state with it: every two
+minutes it reads Clever itself and stops CI machines running over 70 min, any
+beyond the controller's limit, and all of them when it cannot read Clever for
+15 min. Today's CI spend reaching €15, or the month's €100, pulls a kill switch:
+the controller stopped and refused, every machine stopped, CI back on dev-01,
+and a latch in `/var/lib/myparcelle-ci-clever-guard` that only a human removes.
+The caps are in `/etc/myparcelle-ci-clever-guard.env`, from the module.
+
 The games edge sends `games.tyrode.dev` to `127.0.0.1:8093`. The
 [game checkout](https://github.com/atyrode/scrabble/tree/dev) owns its path
 routing and Docker Compose runtime, including hot reload during development.

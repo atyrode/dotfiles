@@ -223,6 +223,7 @@ let
         ../modules/nixos/manifold-dev-recovery.nix
         ../modules/nixos/myparcelle-ci-runners.nix
         ../modules/nixos/myparcelle-ci-clever.nix
+        ../modules/nixos/myparcelle-ci-clever-guard.nix
       ]
       ++ clanMachineModules;
     };

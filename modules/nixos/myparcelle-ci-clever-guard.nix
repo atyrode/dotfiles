@@ -25,15 +25,17 @@
 #   credentials the controller's Clever OAuth token, the runners' GitHub token
 #               (CI_RUNS_ON) and the Discord env file (#alertes), as systemd
 #               credentials, never in the environment, argv or logs.
-#   test        one tick by hand with other caps, posting nothing:
+#   test        one tick by hand with other caps, posting nothing (the
+#               program's defaults are the caps below, the dated override
+#               aside; an EnvironmentFile would override every -E):
 #                 sudo systemd-run --wait --pipe --collect \
 #                   -p User=myparcelle-ci-clever-guard \
 #                   -p StateDirectory=myparcelle-ci-clever-guard \
-#                   -p EnvironmentFile=/etc/myparcelle-ci-clever-guard.env \
 #                   -p LoadCredential=clever-oauth:/var/lib/myparcelle-ci-runners/clever-oauth.json \
 #                   -p LoadCredential=github-token:/var/lib/myparcelle-ci-runners/github-token \
-#                   -E CI_CLEVER_QUIET=1 -E CI_CLEVER_GUARD_MAX_AGE_MIN=1 \
-#                   myparcelle-ci-clever-guard [--report]
+#                   -E TZDIR=/etc/zoneinfo -E CI_CLEVER_QUIET=1 \
+#                   -E CI_CLEVER_GUARD_MAX_AGE_MIN=1 \
+#                   /run/current-system/sw/bin/myparcelle-ci-clever-guard [--report]
 #               `--report` only reads and prints.
 { lib, pkgs, ... }:
 let

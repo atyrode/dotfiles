@@ -41,7 +41,7 @@ let
   docker = config.virtualisation.docker.rootless.package;
 
   repository = "tyrode-dev/myParcelle";
-  runnerCount = 3;
+  runnerCount = 5;
   labels = [
     "self-hosted"
     "linux"
@@ -241,13 +241,16 @@ in
 
     # The whole CI account (its engine and every job in it) is held under
     # this, whatever the per-job limits add up to: dev (5 GB), Keycloak
-    # (1.5 GB) and the agents keep the rest of the machine.
+    # (1.5 GB) and the agents keep the rest of the machine's 32 GB; most of
+    # what the jobs hold is reclaimable page cache. CPU: the half weight
+    # yields to dev and the agents under contention, and the quota keeps
+    # three of the twelve cores out of CI's reach.
     slices."user-${toString uid}" = {
       overrideStrategy = "asDropin";
       sliceConfig = {
-        MemoryHigh = "10G";
-        MemoryMax = "11G";
-        CPUQuota = "700%";
+        MemoryHigh = "17G";
+        MemoryMax = "18G";
+        CPUQuota = "900%";
         CPUWeight = 50;
       };
     };

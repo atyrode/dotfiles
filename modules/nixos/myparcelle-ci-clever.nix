@@ -37,8 +37,10 @@ let
   tokenDirectory = "/var/lib/myparcelle-ci-runners";
   checkout = "/home/alex/myParcelle";
   source = "${stateDirectory}/source";
+  watchdogSource = "${stateDirectory}/watchdog-source";
 
-  # Root, before each start: the controller's files from origin/main.
+  # Root, before each start: the CI runner code from origin/main into the
+  # directory given (the controller and its watchdog each have their own).
   exportController = pkgs.writeShellApplication {
     name = "myparcelle-ci-clever-export";
     runtimeInputs = [
@@ -47,13 +49,24 @@ let
       pkgs.gnutar
     ];
     text = ''
-      rm -rf ${source}.next
-      install -d -m 0755 ${source}.next
+      target=$1
+      rm -rf "$target.next"
+      install -d -m 0755 "$target.next"
       git -c safe.directory='*' --git-dir=${checkout}/.git archive refs/remotes/origin/main deploy/ci-runners |
-        tar -x -C ${source}.next
-      rm -rf ${source}
-      mv ${source}.next ${source}
+        tar -x -C "$target.next"
+      rm -rf "$target"
+      mv "$target.next" "$target"
     '';
+  };
+
+  hardening = {
+    NoNewPrivileges = true;
+    PrivateTmp = true;
+    ProtectHome = true;
+    ProtectSystem = "strict";
+    ProtectKernelTunables = true;
+    ProtectControlGroups = true;
+    RestrictSUIDSGID = true;
   };
 in
 {
@@ -75,13 +88,13 @@ in
     # GitHub or Clever unreachable: retry forever.
     startLimitIntervalSec = 0;
     environment.HOME = stateDirectory;
-    serviceConfig = {
+    serviceConfig = hardening // {
       User = user;
       Group = user;
       StateDirectory = user;
       StateDirectoryMode = "0755";
       UMask = "0022";
-      ExecStartPre = "+${lib.getExe exportController}";
+      ExecStartPre = "+${lib.getExe exportController} ${source}";
       ExecStart = "${lib.getExe pkgs.bun} ${source}/deploy/ci-runners/controller.ts";
       LoadCredential = [
         "github-token:${tokenDirectory}/github-token"
@@ -93,13 +106,39 @@ in
       # Stopping closes the message session only: running machines keep their
       # jobs and the next start adopts them.
       TimeoutStopSec = 30;
-      NoNewPrivileges = true;
-      PrivateTmp = true;
-      ProtectHome = true;
-      ProtectSystem = "strict";
-      ProtectKernelTunables = true;
-      ProtectControlGroups = true;
-      RestrictSUIDSGID = true;
+    };
+  };
+
+  # The dead-man's switch, apart from the controller: while CI_RUNS_ON names
+  # the `clever` labels, jobs waiting three minutes with the controller down
+  # (or no runner registered at all) send CI back to dev-01 and alert
+  # #alertes (myParcelle's deploy/ci-runners/watchdog.ts).
+  systemd.services.myparcelle-ci-clever-watchdog = {
+    description = "myParcelle CI on Clever Cloud: route back to dev-01 when nothing serves the jobs";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    environment.HOME = stateDirectory;
+    serviceConfig = hardening // {
+      Type = "oneshot";
+      User = user;
+      Group = user;
+      StateDirectory = user;
+      StateDirectoryMode = "0755";
+      ExecStartPre = "+${lib.getExe exportController} ${watchdogSource}";
+      ExecStart = "${lib.getExe pkgs.bun} ${watchdogSource}/deploy/ci-runners/watchdog.ts";
+      LoadCredential = [
+        "github-token:${tokenDirectory}/github-token"
+        "discord:/home/alex/.config/myparcelle/discord-bot.env"
+      ];
+      TimeoutStartSec = 50;
+    };
+  };
+  systemd.timers.myparcelle-ci-clever-watchdog = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "1min";
+      AccuracySec = "5s";
     };
   };
 }

@@ -134,6 +134,19 @@ runner configuration from a root-only token the operator places at
 one repository, Administration: write). Until the file exists the runners
 wait and retry.
 
+[`modules/nixos/myparcelle-ci-clever.nix`](../modules/nixos/myparcelle-ci-clever.nix)
+runs the controller of myParcelle's on-demand CI machines on Clever Cloud
+(labels `self-hosted`, `linux`, `x64`, `clever`; a trial until 2026-11-30).
+The machines run on Clever; only the controller runs here, as the
+`myparcelle-ci-clever` system account, from the development checkout's
+`origin/main` (`deploy/ci-runners/`). Its credentials are systemd
+credentials from root-only files: the runners' GitHub token and the
+controller's own Clever OAuth token at
+`/var/lib/myparcelle-ci-runners/clever-oauth.json`, which myParcelle's
+`deploy/ci-runners/mint-clever-token.ts` writes after the operator approves
+the consumer in his browser. Until that file exists the unit does not start.
+Its cost ledger and daily cost lines are in `/var/lib/myparcelle-ci-clever`.
+
 The games edge sends `games.tyrode.dev` to `127.0.0.1:8093`. The
 [game checkout](https://github.com/atyrode/scrabble/tree/dev) owns its path
 routing and Docker Compose runtime, including hot reload during development.

@@ -84,11 +84,11 @@ let
   # Job budget: GitHub's hosted runner for private repositories is 2 vCPU,
   # 7 GB. The runner container holds the job's own processes (Bun, Vite,
   # Chromium); the engine holds its services (PostgreSQL, Keycloak, buildx).
-  runnerLimits = [
-    "--cpus=2"
-    "--memory=3584m"
-    "--memory-swap=3584m"
-  ];
+  # The runner container has no memory limit of its own: the application
+  # under test reads its cgroup's memory.max and refuses heavy work near it,
+  # as it must in production, and a job then sees what a GitHub-hosted VM
+  # shows it (no limit). The account's slice below still bounds every job.
+  runnerLimits = [ "--cpus=2" ];
   engineLimits = [
     "--cpus=2"
     "--memory=2g"

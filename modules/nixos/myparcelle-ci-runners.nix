@@ -61,12 +61,17 @@ let
   mirrorImage = "registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e";
 
   # The upstream runner image plus what GitHub's hosted Ubuntu image gives the
-  # workflows and the runner image lacks: Compose, gh, Node on PATH, and the
-  # Chromium libraries Playwright installs (pre-installed so a job's
-  # `install-deps` finds them present).
+  # workflows and the runner image lacks: Compose, gh, Node on PATH, and
+  # Playwright's Chromium with its libraries. The browser lives at
+  # PLAYWRIGHT_BROWSERS_PATH, owned by the runner user, so a job's
+  # `playwright install --with-deps chromium` finds it present instead of
+  # restoring ~170 MB from the Actions cache in every browser lane; a version
+  # myParcelle's bun.lock moves to is downloaded by the job until this pin
+  # follows it.
   dockerfile = pkgs.writeText "myparcelle-ci-runner.Dockerfile" ''
     FROM ${runnerBase}
     USER root
+    ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
     COPY --from=${composeBin} /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
     RUN apt-get update \
      && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -74,7 +79,8 @@ let
      && ln -s /home/runner/externals/node24/bin/node /usr/local/bin/node \
      && ln -s /home/runner/externals/node24/bin/npm /usr/local/bin/npm \
      && ln -s /home/runner/externals/node24/bin/npx /usr/local/bin/npx \
-     && npx --yes playwright@1.60.0 install-deps chromium \
+     && npx --yes playwright@1.60.0 install --with-deps chromium \
+     && chown -R runner:runner /ms-playwright \
      && rm -rf /var/lib/apt/lists/* /root/.npm \
      && install -d -o runner -g runner /home/runner/_work
     USER runner

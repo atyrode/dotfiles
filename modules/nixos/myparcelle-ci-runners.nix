@@ -23,6 +23,11 @@
 #   limits     each job's containers are capped (CPU, memory), and the CI
 #              account's whole slice is capped below what dev, Keycloak and
 #              the agents need.
+#   queue      the first `pullRequestRunners` slots carry the extra label
+#              `pull-request`, the others do not. myParcelle's pull-request
+#              jobs ask for that label (its CI_RUNS_ON_PR variable), so they
+#              never hold the last slots; merge-queue groups, main and deploys
+#              ask for `dev-01` alone and take any slot.
 #
 # Docker Hub limits anonymous pulls per address, and every job's engine starts
 # empty, so a pull-through mirror of Docker Hub serves the jobs' images.
@@ -42,12 +47,14 @@ let
 
   repository = "tyrode-dev/myParcelle";
   runnerCount = 5;
+  pullRequestRunners = 3;
   labels = [
     "self-hosted"
     "linux"
     "x64"
     "dev-01"
   ];
+  slotLabels = slot: labels ++ lib.optional (slot <= pullRequestRunners) "pull-request";
   # Root-only; the operator places it, nothing in this repository holds it.
   tokenDirectory = "/var/lib/myparcelle-ci-runners";
   tokenFile = "${tokenDirectory}/github-token";
@@ -119,11 +126,12 @@ let
     ];
     text = ''
       slot=$1
+      labels=$2
       [[ -s ${tokenFile} ]] || {
         echo "myparcelle-ci: ${tokenFile} is not placed; the runner waits for it" >&2
         exit 1
       }
-      body=$(jq -cn --arg name "dev-01-$slot-$(date +%s)" --argjson labels ${lib.escapeShellArg (builtins.toJSON labels)} \
+      body=$(jq -cn --arg name "dev-01-$slot-$(date +%s)" --argjson labels "$labels" \
         '{name: $name, runner_group_id: 1, labels: $labels, work_folder: "_work"}')
       umask 077
       response=$(printf 'Authorization: Bearer %s\n' "$(<${tokenFile})" |
@@ -334,7 +342,7 @@ in
             Environment = dockerEnvironment;
             RuntimeDirectory = "myparcelle-ci-runner-${toString slot}";
             RuntimeDirectoryMode = "0700";
-            ExecStartPre = "+${lib.getExe mintRunner} ${toString slot}";
+            ExecStartPre = "+${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotLabels slot))}";
             ExecStart = "${lib.getExe runJob} ${toString slot}";
             ExecStopPost = [
               "${lib.getExe removeJob} ${toString slot}"

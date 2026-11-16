@@ -124,8 +124,10 @@ an independently reviewed service-disruption plan and the
 
 myParcelle's CI also runs here:
 [`modules/nixos/myparcelle-ci-runners.nix`](../modules/nixos/myparcelle-ci-runners.nix)
-declares three ephemeral self-hosted GitHub Actions runners (labels
-`self-hosted`, `linux`, `x64`, `dev-01`) under the `myparcelle-ci` system
+declares five ephemeral self-hosted GitHub Actions runners (labels
+`self-hosted`, `linux`, `x64`, `dev-01`; the first three also `pull-request`,
+which myParcelle's pull-request jobs require, so the last two stay free for
+its merge queue) under the `myparcelle-ci` system
 account and its own rootless Docker engine. Each job runs in a fresh
 Docker-in-Docker engine and runner container pair, capped per job and as a
 whole slice, and deleted when the job ends; each start mints a single-use

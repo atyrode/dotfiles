@@ -89,9 +89,9 @@ in
       ];
       Restart = "always";
       RestartSec = 30;
-      # Stopping closes the message session only: running machines keep their
-      # jobs and the next start adopts them.
-      TimeoutStopSec = 30;
+      # Stopping stops every machine it runs (Clever's stop calls, retried),
+      # then closes the message session: nothing keeps running unwatched.
+      TimeoutStopSec = 90;
     };
   };
 

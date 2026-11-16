@@ -5,9 +5,15 @@
 # here, beside the dev-01 runners it does not replace (they stay registered as
 # the fallback, see myparcelle-ci-runners.nix).
 #
-#   code        myParcelle's deploy/ci-runners/, taken from the development
-#               checkout's origin/main (the reviewed code, never its working
-#               tree) at each start; restart the unit to pick up a newer main.
+#   code        myParcelle's deploy/ci-runners/ from a root-owned copy,
+#               /var/lib/myparcelle-ci-clever-source/deploy/ci-runners,
+#               placed by hand from a reviewed commit (myParcelle's
+#               deploy/README.md § CI runners on Clever Cloud); the service
+#               account can read it but not change it. Refresh, then restart:
+#                 sudo rm -rf /var/lib/myparcelle-ci-clever-source/deploy
+#                 git -C ~/myParcelle archive <commit> deploy/ci-runners |
+#                   sudo tar -x -C /var/lib/myparcelle-ci-clever-source
+#               Until the copy is placed, neither unit starts.
 #   user        `myparcelle-ci-clever`, a system account with no login, no
 #               Docker and no access to /home.
 #   credentials root-only files, handed to the unit as systemd credentials and
@@ -35,29 +41,7 @@ let
   user = "myparcelle-ci-clever";
   stateDirectory = "/var/lib/${user}";
   tokenDirectory = "/var/lib/myparcelle-ci-runners";
-  checkout = "/home/alex/myParcelle";
-  source = "${stateDirectory}/source";
-  watchdogSource = "${stateDirectory}/watchdog-source";
-
-  # Root, before each start: the CI runner code from origin/main into the
-  # directory given (the controller and its watchdog each have their own).
-  exportController = pkgs.writeShellApplication {
-    name = "myparcelle-ci-clever-export";
-    runtimeInputs = [
-      pkgs.coreutils
-      pkgs.git
-      pkgs.gnutar
-    ];
-    text = ''
-      target=$1
-      rm -rf "$target.next"
-      install -d -m 0755 "$target.next"
-      git -c safe.directory='*' --git-dir=${checkout}/.git archive refs/remotes/origin/main deploy/ci-runners |
-        tar -x -C "$target.next"
-      rm -rf "$target"
-      mv "$target.next" "$target"
-    '';
-  };
+  source = "/var/lib/myparcelle-ci-clever-source";
 
   hardening = {
     NoNewPrivileges = true;
@@ -84,7 +68,10 @@ in
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
-    unitConfig.ConditionPathExists = "${tokenDirectory}/clever-oauth.json";
+    unitConfig.ConditionPathExists = [
+      "${tokenDirectory}/clever-oauth.json"
+      "${source}/deploy/ci-runners/controller.ts"
+    ];
     # GitHub or Clever unreachable: retry forever.
     startLimitIntervalSec = 0;
     environment.HOME = stateDirectory;
@@ -94,7 +81,6 @@ in
       StateDirectory = user;
       StateDirectoryMode = "0755";
       UMask = "0022";
-      ExecStartPre = "+${lib.getExe exportController} ${source}";
       ExecStart = "${lib.getExe pkgs.bun} ${source}/deploy/ci-runners/controller.ts";
       LoadCredential = [
         "github-token:${tokenDirectory}/github-token"
@@ -117,6 +103,7 @@ in
     description = "myParcelle CI on Clever Cloud: route back to dev-01 when nothing serves the jobs";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
+    unitConfig.ConditionPathExists = "${source}/deploy/ci-runners/watchdog.ts";
     environment.HOME = stateDirectory;
     serviceConfig = hardening // {
       Type = "oneshot";
@@ -124,8 +111,7 @@ in
       Group = user;
       StateDirectory = user;
       StateDirectoryMode = "0755";
-      ExecStartPre = "+${lib.getExe exportController} ${watchdogSource}";
-      ExecStart = "${lib.getExe pkgs.bun} ${watchdogSource}/deploy/ci-runners/watchdog.ts";
+      ExecStart = "${lib.getExe pkgs.bun} ${source}/deploy/ci-runners/watchdog.ts";
       LoadCredential = [
         "github-token:${tokenDirectory}/github-token"
         "discord:/home/alex/.config/myparcelle/discord-bot.env"

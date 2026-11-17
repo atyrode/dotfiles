@@ -52,6 +52,7 @@ FALLBACK_PRICES = {"XS": 0.01111, "S": 0.04444, "M": 0.10556, "L": 0.21111, "XL"
 # Telemetry samples each instance once a minute: it ran until a minute after its last sample.
 SAMPLE_MS = 60_000
 DEV_01_LABELS = '["self-hosted","linux","x64","dev-01"]'
+USER_AGENT = "myparcelle-ci-clever-guard (https://github.com/atyrode/dotfiles)"
 
 
 def number(name, default):
@@ -88,9 +89,12 @@ def credential(name):
 
 
 def request(method, url, headers=None, body=None, timeout=30):
-    """The answer's body; an error names the method, the path and the status, never a credential."""
+    """The answer's body; an error names the method, the path and the status, never a credential.
+
+    Discord's edge refuses urllib's default User-Agent (403, Cloudflare 1010): every call names the guard.
+    """
     data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
-    call = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    call = urllib.request.Request(url, data=data, method=method, headers={"User-Agent": USER_AGENT, **(headers or {})})
     try:
         with urllib.request.urlopen(call, timeout=timeout) as response:
             return response.status, response.read()

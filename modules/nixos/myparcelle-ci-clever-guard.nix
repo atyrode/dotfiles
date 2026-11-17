@@ -7,7 +7,7 @@
 # Clever. The program's header lists the rules.
 #
 #   caps        /etc/myparcelle-ci-clever-guard.env, from `caps` below:
-#               €15 a Paris day, €100 a month (Clever's prices, excluding
+#               €25 a Paris day, €100 a month (Clever's prices, excluding
 #               VAT), 70 min per instance, CI_CLEVER_MAX_MACHINES at once
 #               (keep it equal to the controller's), 15 min blind before
 #               failing closed. A one-day exception to the day cap names its
@@ -17,9 +17,13 @@
 #               While it exists, systemd stops the controller and refuses to
 #               start it (and the controller refuses by itself), the guard
 #               stops any CI machine it sees and keeps CI_RUNS_ON on dev-01.
-#               Only a human removes it, after reading why (`cat` it):
+#               Only a human removes it, after reading why (`cat` it): it
+#               outlives the Paris midnight, and nothing sends CI back to
+#               Clever by itself:
 #                 sudo rm ${latch}
 #                 sudo systemctl start myparcelle-ci-clever.service
+#                 gh variable set CI_RUNS_ON -R tyrode-dev/myParcelle \
+#                   --body '["self-hosted","linux","x64","clever"]'
 #   user        `myparcelle-ci-clever-guard`, a system account with no login;
 #               it cannot stop units itself: the latch's path unit does.
 #   credentials the controller's Clever OAuth token, the runners' GitHub token
@@ -46,9 +50,7 @@ let
   controller = "myparcelle-ci-clever.service";
 
   caps = {
-    CI_CLEVER_GUARD_DAY_EUR = "15";
-    # The operator's exception for the first day of the trial's full load.
-    CI_CLEVER_GUARD_DAY_EUR_OVERRIDE = "2026-11-16:30";
+    CI_CLEVER_GUARD_DAY_EUR = "25";
     CI_CLEVER_GUARD_MONTH_EUR = "100";
     CI_CLEVER_GUARD_MAX_AGE_MIN = "70";
     CI_CLEVER_MAX_MACHINES = "40";

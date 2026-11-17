@@ -6,7 +6,11 @@
 #
 #   manifold-terminal-host  every agent terminal and everything started from
 #                           one (builds, tests, browsers) shares its cgroup:
-#                           at most four cores, half weight.
+#                           at most eight cores, half weight. A four-core cap
+#                           left the machine at a load near 3 while agents
+#                           queued behind it; the agents' heavy-command locks
+#                           now serialize browsers and builds, and the half
+#                           weight keeps dev responsive under contention.
 #   myparcelle-dev-follow   the follow-main rebuilds (client, gate map entry,
 #                           /storybook/) are batch work nobody waits on: at
 #                           most two cores, weight 20.
@@ -34,7 +38,7 @@ let
 in
 {
   home-manager.users.${host.username}.xdg.configFile = {
-    "systemd/user/manifold-terminal-host.service.d/cpu-share.conf".text = cpuShare "400%" 50;
+    "systemd/user/manifold-terminal-host.service.d/cpu-share.conf".text = cpuShare "800%" 50;
     "systemd/user/myparcelle-dev-follow.service.d/cpu-share.conf".text = cpuShare "200%" 20;
   };
 }

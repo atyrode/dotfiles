@@ -224,6 +224,7 @@ let
         ../modules/nixos/myparcelle-ci-runners.nix
         ../modules/nixos/myparcelle-ci-clever.nix
         ../modules/nixos/myparcelle-ci-clever-guard.nix
+        ../modules/nixos/dev-cpu-shares.nix
       ]
       ++ clanMachineModules;
     };

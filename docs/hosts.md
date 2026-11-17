@@ -136,6 +136,13 @@ runner configuration from a root-only token the operator places at
 one repository, Administration: write). Until the file exists the runners
 wait and retry.
 
+Within the operator's own account,
+[`modules/nixos/dev-cpu-shares.nix`](../modules/nixos/dev-cpu-shares.nix)
+caps the agent terminals (`manifold-terminal-host`: four cores, half weight)
+and myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
+weight 20) as drop-ins, so the development surface and the terminals keep
+their share of the twelve cores when CI and rebuilds run at once.
+
 [`modules/nixos/myparcelle-ci-clever.nix`](../modules/nixos/myparcelle-ci-clever.nix)
 runs the controller of myParcelle's on-demand CI machines on Clever Cloud
 (labels `self-hosted`, `linux`, `x64`, `clever`; a trial until 2026-11-30).

@@ -138,7 +138,7 @@ wait and retry.
 
 Within the operator's own account,
 [`modules/nixos/dev-cpu-shares.nix`](../modules/nixos/dev-cpu-shares.nix)
-caps the agent terminals (`manifold-terminal-host`: four cores, half weight)
+caps the agent terminals (`manifold-terminal-host`: eight cores, half weight)
 and myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
 weight 20) as drop-ins, so the development surface and the terminals keep
 their share of the twelve cores when CI and rebuilds run at once.

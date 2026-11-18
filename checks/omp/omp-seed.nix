@@ -78,6 +78,11 @@ pkgs.runCommand "check-omp-seed"
       (.task | has("agentModelOverrides") | not)
       and (.modelRoles | keys) ==
         ["advisor", "commit", "default", "memory", "plan", "slow", "smol", "task", "tiny", "vision", "widget"]
+      and (.retry.fallbackChains |
+        .default == ["openai-codex/gpt-6.2-sol:medium", "openai-codex/gpt-6.1-terra:medium"]
+        and .task == ["openai-codex/gpt-6.2-sol:medium", "openai-codex/gpt-6.1-terra:medium"]
+        and .plan == ["openai-codex/gpt-6.2-sol:high", "openai-codex/gpt-6.1-terra:high"]
+        and .slow == ["openai-codex/gpt-6.2-sol:high", "openai-codex/gpt-6.1-terra:high"])
       and .modelRoles.widget == "anthropic/claude-haiku-5-5:low"
       and (.retry.fallbackChains | has("widget"))
       and .retry.fallbackChains.widget == []
@@ -130,7 +135,7 @@ pkgs.runCommand "check-omp-seed"
         "task": "fixture/previous-task:medium",
         "scout": "fixture/previous-scout:medium"
       } |
-      .retry.fallbackChains.default = ["fixture/previous-fallback:medium"] |
+      .retry.fallbackChains.default = ["openai-codex/gpt-6.1-sol:medium", "openai-codex/gpt-6.1-terra:medium"] |
       del(.modelRoles.widget) |
       del(.retry.fallbackChains.widget) |
       del(.modelRoles.memory) |
@@ -144,6 +149,7 @@ pkgs.runCommand "check-omp-seed"
       if [ "$local_edit" = customized ]; then
         yq eval -i '
           .modelRoles.task = "fixture/operator-task:high" |
+          .retry.fallbackChains.task = ["openai-codex/gpt-6.1-sol:high", "openai-codex/gpt-6.1-terra:high"] |
           .modelRoles.widget = "fixture/operator-widget:low" |
           .retry.fallbackChains.widget = ["fixture/operator-widget-backup:low"] |
           .modelRoles.memory = "fixture/operator-memory:medium" |
@@ -171,6 +177,7 @@ pkgs.runCommand "check-omp-seed"
       if [ "$local_edit" = customized ]; then
         yq eval -o=json '.' "$config" | jq -e '
           .modelRoles.task == "fixture/operator-task:high"
+          and .retry.fallbackChains.task == ["openai-codex/gpt-6.1-sol:high", "openai-codex/gpt-6.1-terra:high"]
           and .modelRoles.widget == "fixture/operator-widget:low"
           and .retry.fallbackChains.widget == ["fixture/operator-widget-backup:low"]
           and .modelRoles.memory == "fixture/operator-memory:medium"
@@ -187,7 +194,8 @@ pkgs.runCommand "check-omp-seed"
           and .codexResets.autoRedeemWeekly == "no"
         ' >/dev/null || fail "routing refresh reset operator preferences or quota boundaries"
         atyrode-omp-seed status --json | jq -e '
-          .drift | any(.key == "modelRoles.task" and .reason == "local-edit")
+          (.drift | any(.key == "modelRoles.task" and .reason == "local-edit"))
+          and (.drift | any(.key == "retry.fallbackChains.task" and .reason == "local-edit"))
         ' >/dev/null || fail "local shared-role choice was not reviewable drift"
       else
         [ "$(yq eval '.modelRoles.task' "$config")" = "$(yq eval '.modelRoles.task' "$seed")" ] \

@@ -7,6 +7,66 @@ tools:
     task: allow
     github: allow
 
+# « Contourner les hooks git est interdit : corrigez ce que le hook refuse. »
+# A hook that refuses a commit or push reports a defect the work still has;
+# skipping it only moves the failure to CI or to main. OMP's pattern schema
+# carries no message, so a denial names the matching pattern and the managed
+# rule `git-hooks` states this sentence to every agent. Rules are literal,
+# case-sensitive `*` globs matched against the whole command and against each
+# shell segment, quotes removed. Coverage, trade-offs and gaps:
+# docs/agent-security.md#git-hooks.
+bash:
+  patterns:
+    # --no-verify on any git subcommand (commit, push, merge, am, rebase),
+    # down to git's shortest unambiguous abbreviation of the option.
+    - match: "*git *--no-veri*"
+      approval: deny
+    # git commit -n, alone or bundled after commit's argument-less flags.
+    - match: "*git *commit* -n*"
+      approval: deny
+    - match: "*git *commit* -an*"
+      approval: deny
+    - match: "*git *commit* -sn*"
+      approval: deny
+    - match: "*git *commit* -qn*"
+      approval: deny
+    - match: "*git *commit* -vn*"
+      approval: deny
+    - match: "*git *commit* -asn*"
+      approval: deny
+    - match: "*git *commit* -san*"
+      approval: deny
+    # core.hooksPath overrides: git -c / --config-env, git config (read or
+    # write), and the GIT_CONFIG_KEY_<n> / GIT_CONFIG_PARAMETERS environment.
+    # Config keys are case-insensitive; the usual spellings are listed.
+    - match: "*git *-c*.hooksPath*"
+      approval: deny
+    - match: "*git *-c*.hookspath*"
+      approval: deny
+    - match: "*git *-c*.HooksPath*"
+      approval: deny
+    - match: "*git *-c*.HOOKSPATH*"
+      approval: deny
+    - match: "*git *config*.hooksPath*"
+      approval: deny
+    - match: "*git *config*.hookspath*"
+      approval: deny
+    - match: "*git *config*.HooksPath*"
+      approval: deny
+    - match: "*git *config*.HOOKSPATH*"
+      approval: deny
+    - match: "*GIT_CONFIG_*.hooksPath*"
+      approval: deny
+    - match: "*GIT_CONFIG_*.hookspath*"
+      approval: deny
+    - match: "*GIT_CONFIG_*.HooksPath*"
+      approval: deny
+    - match: "*GIT_CONFIG_*.HOOKSPATH*"
+      approval: deny
+    # Dropping or renaming the [core] section drops core.hooksPath with it.
+    - match: "*git *config*-section*core*"
+      approval: deny
+
 secrets:
   enabled: true
 

@@ -48,6 +48,7 @@ let
     ${builtins.toJSON allManagedPaths}
     EOF
     cp ${./config/rules/parallel-write-isolation.md} "$out/rules/parallel-write-isolation.md"
+    cp ${./config/rules/git-hooks.md} "$out/rules/git-hooks.md"
     cp ${./config/rules/untrusted-external-content.md} "$out/rules/untrusted-external-content.md"
     cat > "$out/package.json" <<'EOF'
     {
@@ -119,6 +120,7 @@ let
     "isolation.backend"
     "task.isolation.merge"
     "task.isolation.commits"
+    "bash.patterns"
   ];
   allManagedPaths = managedDefaultPaths ++ enforcedPolicyPaths;
 

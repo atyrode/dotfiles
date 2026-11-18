@@ -302,7 +302,7 @@ pkgs.runCommand "check-omp-wrapper"
         jq -e '.effectiveManaged.isolation.backend == "auto"' "$TMPDIR/managed.json" >/dev/null
         jq -e '.effectiveManaged.privateToken == null' "$TMPDIR/managed.json" >/dev/null
         grep -q 'do-not-print' "$TMPDIR/managed.json" && false
-        jq -e '.enforcedPolicy == {
+        jq -e '.enforcedPolicy | del(.bash) == {
           "tools":{"approvalMode":"yolo","approval":{
             "bash":"allow","eval":"allow","browser":"allow","task":"allow","github":"allow"
           }},
@@ -310,6 +310,13 @@ pkgs.runCommand "check-omp-wrapper"
           "isolation":{"backend":"auto"},
           "task":{"isolation":{"enabled":true,"merge":"patch","commits":"generic"}}
         }' \
+          "$TMPDIR/managed.json" >/dev/null
+        # The git-hook denials survive project and one-shot layers: OMP
+        # prepends their bash.patterns, it never replaces the policy's.
+        jq -e '
+          (.enforcedPolicy.bash.patterns | length > 0 and all(.approval == "deny"))
+          and (.enforcedPolicy.bash.patterns - .effectiveManaged.bash.patterns == [])
+        ' \
           "$TMPDIR/managed.json" >/dev/null
         test "$(jq -r '[.sources[].kind] | join(",")' "$TMPDIR/managed.json")" = \
           'writable-machine-state,managed-defaults,native-project,native-project,machine-local,one-shot-config,managed-policy,runtime-flags'

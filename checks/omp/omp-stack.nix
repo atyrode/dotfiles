@@ -41,6 +41,53 @@ let
     omp = stubOmp;
     code = codeEnvironmentStub;
   };
+  # OMP's bash.patterns semantics, applied to the whole command: whitespace
+  # runs collapse, `*` matches anything, every other character is literal and
+  # case-sensitive, and the glob is anchored at both ends. OMP also matches
+  # each shell segment, which only adds denials to what this proves.
+  denyMatches = ''
+    any(
+      .bash.patterns[]
+      | select(.approval == "deny")
+      | .match
+      | split("*")
+      | map(gsub("(?<x>[.+?^$()|\\[\\]{}\\\\])"; "\\\(.x)"))
+      | join(".*");
+      . as $glob
+      | $command | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")
+      | test("^" + $glob + "$")
+    )
+  '';
+  hookBypassCommands = [
+    "git commit --no-verify -m fix"
+    "cd /repo && git commit -m fix --no-verify"
+    "git push --no-verify origin HEAD"
+    "git commit --no-veri -m fix"
+    "env git merge --no-verify topic"
+    "bash -c 'git commit --no-verify'"
+    "git -C /repo commit -n -m fix"
+    "git commit -nm fix"
+    "git commit -anm fix"
+    "git commit -am fix -n"
+    "git -c core.hooksPath=/dev/null commit -m fix"
+    "git -c core.hookspath=/dev/null commit -m fix"
+    "git --config-env=core.hooksPath=EMPTY commit -m fix"
+    "git config core.hooksPath /dev/null"
+    "git config --unset core.hooksPath"
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m fix"
+    "export GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/dev/null'\""
+    "git config --remove-section core"
+  ];
+  innocentCommands = [
+    "echo test --no-verify"
+    "rg -n -- --no-verify docs"
+    "git commit --amend --no-edit"
+    "git commit -a -m 'fix login and nothing else'"
+    "git log -n 5"
+    "git diff --cached .githooks/pre-commit"
+    "git grep core.hooksPath"
+    "rg core.hooksPath .git/config"
+  ];
 in
 pkgs.runCommand "check-omp-stack"
   {
@@ -72,8 +119,22 @@ pkgs.runCommand "check-omp-stack"
     test "$(yq eval '.secrets.enabled' ${defaultsConfig})" = "null"
     test "$(yq eval '.tools.approvalMode' ${policyConfig})" = "yolo"
     test "$(yq eval '.secrets.enabled' ${policyConfig})" = "true"
-    test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "isolation,secrets,task,tools"
+    test "$(yq eval 'keys | sort | join(",")' ${policyConfig})" = "bash,isolation,secrets,task,tools"
     test "$(yq eval '.tools | keys | sort | join(",")' ${policyConfig})" = "approval,approvalMode"
+    test "$(yq eval '.bash | keys | join(",")' ${policyConfig})" = "patterns"
+    yq -o=json '.' ${policyConfig} > "$TMPDIR/policy.json"
+    for command in ${lib.escapeShellArgs hookBypassCommands}; do
+      jq -e --arg command "$command" ${lib.escapeShellArg denyMatches} "$TMPDIR/policy.json" >/dev/null || {
+        printf 'managed policy lets a git hook bypass through: %s\n' "$command" >&2
+        exit 1
+      }
+    done
+    for command in ${lib.escapeShellArgs innocentCommands}; do
+      if jq -e --arg command "$command" ${lib.escapeShellArg denyMatches} "$TMPDIR/policy.json" >/dev/null; then
+        printf 'managed policy denies an innocent command: %s\n' "$command" >&2
+        exit 1
+      fi
+    done
     for tool in bash eval browser task github; do
       test "$(yq eval ".tools.approval.$tool" ${policyConfig})" = "allow"
       test "$(yq eval ".tools.approval.$tool" ${yoloConfig})" = "allow"
@@ -502,6 +563,7 @@ pkgs.runCommand "check-omp-stack"
 
     test -f ${pkgs.omp-configured.platformRoot}/extensions/managed-settings-guard.ts
     test -f ${pkgs.omp-configured.platformRoot}/rules/parallel-write-isolation.md
+    test -f ${pkgs.omp-configured.platformRoot}/rules/git-hooks.md
 
     mkdir "$out"
   ''

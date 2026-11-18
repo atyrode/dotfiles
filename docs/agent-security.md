@@ -69,6 +69,66 @@ that contain executable or policy-bearing roots such as OMP/Pi extensions,
 hooks, plugins, commands, tools, package metadata, or project secret files.
 Review or remove such content before choosing a trusted launcher.
 
+## Git hooks
+
+« Contourner les hooks git est interdit : corrigez ce que le hook refuse. » A
+hook that refuses a commit or a push reports a defect the work still has;
+skipping it moves the failure to CI, to a reviewer or to main. The managed
+policy (`pkgs/omp-configured/config/policy.yml`, `bash.patterns`) therefore
+denies, in the `bash` tool of every managed session and subagent:
+
+- `--no-verify` on any git subcommand, down to git's shortest unambiguous
+  abbreviation `--no-veri`;
+- `git commit -n`, alone or bundled after `-a`, `-s`, `-q` or `-v`;
+- `core.hooksPath` overrides: `git -c` and `--config-env`, any `git config`
+  naming the key (reads included), `GIT_CONFIG_KEY_<n>` and
+  `GIT_CONFIG_PARAMETERS`, and `git config --remove-section`/`--rename-section
+  core`.
+
+`deny` is absolute: it holds in yolo mode, over `tools.approval.bash: allow`,
+and project or one-shot `bash.patterns` layers cannot lift it (they prepend
+their rules, and an `allow` never overrides a `deny`). OMP's pattern schema has
+no message field, so the agent sees `Blocked by bash pattern: <glob>`; the
+managed rule `git-hooks` gives every agent the sentence above and the
+instruction to fix what the hook refuses.
+
+Patterns are OMP globs: literal and case-sensitive, `*` the only wildcard,
+matched against the whole command and against each shell segment with quotes
+removed. The trade-offs that follow from that:
+
+- A pattern requires `git ` before the flag, so `echo test --no-verify`,
+  `rg -- --no-verify docs` or `git commit --no-edit` still run, but any command
+  whose text contains `git ` and later `--no-veri` is denied — `echo git commit
+  --no-verify`, `rg "git push --no-verify"`, a `gh pr create --body` quoting
+  it, a `git log --grep=--no-verify`. Search for `no-verify` without the `git `
+  prefix, or pass long bodies with `--body-file`.
+- `git commit` followed by ` -n` anywhere is denied, including a message such
+  as `-m "add -n flag"` (rare, and the message can be rephrased).
+- `git config … core.hooksPath` is denied even as a read; read `.git/config`
+  instead. `git grep core.hooksPath` still runs.
+- Config keys are case-insensitive to git; the patterns cover `hooksPath`,
+  `hookspath`, `HooksPath` and `HOOKSPATH`, not other mixed spellings.
+
+Known gaps — the policy governs the `bash` tool's command text, not what a
+process eventually does:
+
+- **The `eval` tool's subprocesses.** `bash.patterns` does not apply to
+  `eval`; `sh("git commit --no-verify")` in its prelude, Python
+  `subprocess`/`os.system` or Bun `$` all run unchecked, and managed sessions
+  allow `eval` without prompting. Gating it would need
+  `tools.approval.eval: prompt` or `deny`, which headless subagents cannot
+  satisfy.
+- Indirection the text does not show: variables
+  (`f=--no-verify; git commit $f`), git aliases defined in a file, scripts that
+  call git, `git commit-tree` plus `git update-ref`, and `GIT_CONFIG_GLOBAL`
+  or `GIT_CONFIG_SYSTEM` files (repository-local `core.hooksPath` still wins
+  over those two).
+- Editing `.git/config` or the hook script itself with `edit`/`write`, or
+  removing its executable bit.
+- Plain `omp` (unmanaged configuration) does not load this policy. `ompu`
+  does not either; it prompts for every shell command instead, and loads the
+  `git-hooks` rule.
+
 ## Limits
 
 OMP task isolation is a worktree/copy-and-patch boundary, not process, kernel,

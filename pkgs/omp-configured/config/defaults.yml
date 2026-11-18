@@ -40,16 +40,16 @@ retry:
     smol:
       - openai-codex/gpt-6-luna:medium
     default:
-      - openai-codex/gpt-6.1-sol:medium
+      - openai-codex/gpt-6.2-sol:medium
       - openai-codex/gpt-6.1-terra:medium
     task:
-      - openai-codex/gpt-6.1-sol:medium
+      - openai-codex/gpt-6.2-sol:medium
       - openai-codex/gpt-6.1-terra:medium
     plan:
-      - openai-codex/gpt-6.1-sol:high
+      - openai-codex/gpt-6.2-sol:high
       - openai-codex/gpt-6.1-terra:high
     slow:
-      - openai-codex/gpt-6.1-sol:high
+      - openai-codex/gpt-6.2-sol:high
       - openai-codex/gpt-6.1-terra:high
 
 personality: pragmatic

@@ -509,7 +509,7 @@ An existing explicit writable override can still take precedence; source
 publication does not remove it. See [seed preservation](#seeded-plain-omp-defaults).
 
 Role-keyed fallback chains follow native shared-role identity rather than an
-agent-name alias policy. Sonnet default/task fall back to Sol 6.1 then Terra
+agent-name alias policy. Sonnet default/task fall back to Sol 6.2 then Terra
 6.1 at medium; slow/plan use the same cross-provider order at high. Haiku
 `smol` falls back to Luna at medium, and advisor uses Luna at low. Managed
 tiny/commit have explicit empty chains; the plain seed permits Luna-low fallback
@@ -536,10 +536,12 @@ is not evidence that a provider is currently served or above reserve.
 The standalone generator retains explicit lane, tier and effort controls and
 the eight latest model families, but removes automatic deliberative tier
 promotion. Routine Anthropic-capable routing uses Sonnet medium; eligible
-OpenAI-only routing uses Sol medium. Explicit strong/elite selections remain
-visible choices, including Opus, Astra and Fable where served. Native Code's
-separately pinned Manifold OMP runtime and reviewed catalogs are not upgraded
-by the dotfiles OMP pin.
+OpenAI-only routing uses Sol 6.2 medium. The curated `sol` and `astra` shortkeys
+resolve to `openai-codex/gpt-6.2-sol` (smart, tier 3) and
+`openai-codex/gpt-6.2-astra` (elite, tier 4); their pool and quota bucket stay
+unchanged. Explicit strong/elite selections remain visible choices, including
+Opus, Astra and Fable where served. Native Code's separately pinned Manifold OMP
+runtime and reviewed catalogs are not upgraded by the dotfiles OMP pin.
 
 Routine `plan`/`slow` high is not a fixed effort for every profile: the explicit
 main-effort choices minimal, low, medium, high, xhigh and max map respectively
@@ -614,13 +616,36 @@ authorized metadata-only refresh, supply a scoped projection of the pinned
 code generate refresh --metadata-only --models-file pkgs/omp-configured/config/models.yml --from-json <omp-models.json>
 ```
 
-The OMP 18.20.0 catalog projection dated 2026-11-14 refreshes metadata for the
-eight latest families. This path performs no model probes or benchmark calls
-and preserves prior speed, TTFT and `probed` measurements. Global
-`refreshed: null` remains: this is not a complete fresh benchmark or calibration.
-Provider-reported output tokens divided by full request time are not visible
-answer throughput, intelligence rankings or OAuth billing. Do not overwrite
-those historical measurements with a one-shot latency sample.
+The OMP 18.20.0 catalog projection dated 2026-11-14 supplied the prior metadata
+for eight families; that capture does not establish facts or measurements for
+replacement identities. Metadata-only refresh performs no model probes or
+benchmark calls and preserves speed, TTFT and the existing `probed` attestation.
+Changing a curated ID separately requires exact metadata and successful
+CLI-owned chat reachability for that new ID; never carry its predecessor's
+measurements forward. Keep the authored shortkey, pool, tier, bucket and role.
+Global `refreshed: null` remains until every current ID has a complete metadata
+and chat benchmark refresh. Provider-reported output tokens divided by full
+request time are not visible-answer decode throughput, intelligence rankings
+or OAuth billing. Do not overwrite historical measurements with a one-shot
+latency sample.
+
+Sol/Astra 6.2 metadata comes separately from exact installed OMP 18.22.2
+`omp-managed models openai-codex --json` rows captured on 2026-11-18, retaining
+their listed standard windows and image/thinking capabilities. Their new-ID
+reachability is attested by a separate CLI-owned chat benchmark: three successful
+requests each, low thinking, parallelism 1, requested maximum 384 tokens.
+The catalog records mean `generationTps` (reported output tokens divided by
+generation time, excluding TTFT), rounded to one decimal, and mean TTFT in
+seconds, rounded to two decimals:
+
+| Curated family | Reported output-generation rate (tok/s) | TTFT (s) |
+| --- | --- | --- |
+| Sol 6.2 | 42.3 | 1.51 |
+| Astra 6.2 | 31.2 | 6.09 |
+
+Reported output tokens can include reasoning, so these are not measured
+visible-answer decode rates or intelligence scores. Other model measurements
+remain historical; these six calls do not qualify the entire catalog.
 
 This bridge does **not** install Manifold plugin bundles, start or configure a
 Manifold hub, alter `manifold-agent`, or claim the native plugin workspace. The

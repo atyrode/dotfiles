@@ -54,20 +54,20 @@ retry:
   usageReservePolicy: confirm
   fallbackChains:
     default:
-      - openai-codex/gpt-6.1-sol:medium
+      - openai-codex/gpt-6.2-sol:medium
       - openai-codex/gpt-6.1-terra:medium
     task:
-      - openai-codex/gpt-6.1-sol:medium
+      - openai-codex/gpt-6.2-sol:medium
       - openai-codex/gpt-6.1-terra:medium
     advisor:
       - openai-codex/gpt-6-luna:low
     smol:
       - openai-codex/gpt-6-luna:medium
     slow:
-      - openai-codex/gpt-6.1-sol:high
+      - openai-codex/gpt-6.2-sol:high
       - openai-codex/gpt-6.1-terra:high
     plan:
-      - openai-codex/gpt-6.1-sol:high
+      - openai-codex/gpt-6.2-sol:high
       - openai-codex/gpt-6.1-terra:high
     tiny:
       - openai-codex/gpt-6-luna:low

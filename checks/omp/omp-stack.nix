@@ -498,6 +498,13 @@ pkgs.runCommand "check-omp-stack"
     # routing: the managed default wins over the user's weak pin
     test "$(jq -r '.effectiveManaged.modelRoles.default' "$TMPDIR/effective.json")" \
       = "$(yq eval '.modelRoles.default' ${defaultsConfig})"
+    jq -e '
+      .effectiveManaged.retry.fallbackChains |
+      .default == ["openai-codex/gpt-6.2-sol:medium", "openai-codex/gpt-6.1-terra:medium"]
+      and .task == ["openai-codex/gpt-6.2-sol:medium", "openai-codex/gpt-6.1-terra:medium"]
+      and .plan == ["openai-codex/gpt-6.2-sol:high", "openai-codex/gpt-6.1-terra:high"]
+      and .slow == ["openai-codex/gpt-6.2-sol:high", "openai-codex/gpt-6.1-terra:high"]
+    ' "$TMPDIR/effective.json" >/dev/null
     # Per-agent overrides are no longer owned or emitted by managed defaults.
     jq -e '
       (.effectiveManaged.task | has("agentModelOverrides") | not)

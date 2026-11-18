@@ -483,7 +483,7 @@ Managed defaults and fresh plain-OMP seeds configure only OMP's shared roles:
 | `advisor`, `tiny`, `commit`, `widget` | Haiku 5.5 | low |
 | `vision` | Sonnet 5.5 | low |
 
-The bundled OMP 18.20.1 agents retain their upstream prompts, tools and routing:
+The bundled OMP 18.22.2 agents retain their upstream prompts, tools and routing:
 
 | Bundled agent | Native model declaration | Native effort declaration |
 | --- | --- | --- |
@@ -492,12 +492,19 @@ The bundled OMP 18.20.1 agents retain their upstream prompts, tools and routing:
 | `sonic` | `@smol` | medium |
 | `reviewer` | `@slow` | inherited |
 | `security-reviewer` | none; native inheritance | inherited |
-| `seance` | none; native inheritance | inherited |
+
+OMP 18.22.1 removed `yield` from agents without an output schema; those
+agents return their final message instead. Schema-bearing specialists retain
+their structured `yield` contract.
 
 There is no bundled `librarian`. Agent names are not additional model roles:
 do not create `scout`, `sonic`, `reviewer`, `security-reviewer` or `librarian`
 role rows, custom replacement agents, or per-agent model overrides to route
 them. Neither source layer emits or owns `task.agentModelOverrides`.
+OMP 18.20.3 [removed `seance`, `/seance`, and the task tool's `sourceSession`
+parameter](https://github.com/can1357/oh-my-pi/blob/v18.22.0/packages/coding-agent/CHANGELOG.md#18203---2026-11-16);
+managed profiles do not install a replacement or replay shim.
+
 An existing explicit writable override can still take precedence; source
 publication does not remove it. See [seed preservation](#seeded-plain-omp-defaults).
 
@@ -546,14 +553,13 @@ current behavior. When changing routing or the OMP pin, use disposable
 credential-free state and a deterministic local provider: spawn real bundled
 task/scout/sonic/reviewer children, fail shared leads, and inspect child calls
 and outputs for the intended role, effort and role-specific fallback,
-including empty chains. Check security-reviewer/seance native inheritance
-without adding aliases. No paid provider call or host activation is required.
+including empty chains. Check security-reviewer native inheritance without
+adding aliases. No paid provider call or host activation is required.
 `omp-stack` covers managed ownership and retention of writable local overrides;
 `omp-seed` covers fresh routing and three-way preservation, not live cleanup.
 `omp-native-routing` automates this offline experiment for both raw and managed
-launchers, including a real saved source session for seance and strict native
-specialist output schemas. It preserves the bundle's source identity rather
-than installing same-name extension copies.
+launchers, including strict native specialist output schemas. It preserves the
+bundle's source identity rather than installing same-name extension copies.
 
 `atyrode runtime run local-qwen` emits only native shared `modelRoles`, all
 pointing to the selected local Qwen model, including advisor if later enabled.
@@ -585,6 +591,11 @@ legacy `code generate init` scaffolder from compressing tiers: known families
 with any of them a missing tier-1..3 family refuses before any models file is
 written or refreshed. The temporary package is intentionally absent from
 automatic pin-update jobs.
+
+OMP qualification also runs the bridge's real model-list decoder, metadata-only
+refresh command and bundled-agent routing smoke against the pinned binary in a
+disposable home. Refresh preserves catalog identities, reachability attestation
+and historical measurements; it does not call a provider or a benchmark.
 
 The Code/Manifold transition owns coordinated changes to this bridge's source,
 patch, wrapper and catalog. It must preserve supported standalone launch and
@@ -1010,7 +1021,7 @@ bumped.
 
 `omp-agents` exposes the pinned binary's bundle for inspection and checks,
 without fixing its size. Managed launchers use OMP's built-in agents directly,
-not extension copies that would shadow native identity (notably seance).
+not extension copies that would shadow native identity.
 `omp-agent-references` rejects source per-agent overrides and non-native shared
 role rows, validates disabled-agent references against that bundle, and checks
 that role-keyed fallback chains have declared shared selectors.

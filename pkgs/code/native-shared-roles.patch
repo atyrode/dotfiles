@@ -114,8 +114,8 @@ index bc1342f..696a6df 100644
 +suggestion restores its pre-preview selection and routing intent. Explicit
 +lane/model choices stay explicit; legacy saved maps containing lane/model
 +remain explicit without a routine marker. Only native shared roles are configured:
-+task uses `@task`/auto, reviewer `@slow`, scout/sonic `@smol`/medium; seance and
-+security-reviewer retain native inheritance. No named-agent overrides are emitted.
++task uses `@task`/auto, reviewer `@slow`, scout/sonic `@smol`/medium;
++security-reviewer retains native inheritance. No named-agent overrides are emitted.
  
  `code generate init` ranks a pool's ladder by price, so it needs one for every
  model. omp's model table lags a launch unevenly — a brand-new flagship arrives
@@ -494,7 +494,7 @@ index 5461e89..a24d504 100644
 -	b.WriteString("agent-backed roles: " + strings.Join(agents, " ") +
 -		" — ● marks a role mirrored into task.agentModelOverrides\n\n")
 +	b.WriteString("native agent roles: task → @task (auto); reviewer → @slow; scout/sonic → @smol (medium)\n")
-+	b.WriteString("seance/security-reviewer inherit native OMP routing; ● marks a shared native-agent role\n\n")
++	b.WriteString("security-reviewer inherits native OMP routing; ● marks a shared native-agent role\n\n")
  	b.WriteString(c.renderAdvisors() + "\n")
  	b.WriteString(c.renderModelFacts() + "\n")
  	hasSpark := c.specialKey("spark") != ""
@@ -1002,7 +1002,7 @@ new file mode 100644
 index 0000000..14a5f43
 --- /dev/null
 +++ b/generate_metadata_test.go
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,364 @@
 +package main
 +
 +import (
@@ -1310,6 +1310,61 @@ index 0000000..14a5f43
 +	}
 +	if _, err := os.Stat(path); !os.IsNotExist(err) {
 +		t.Fatalf("metadata refresh created a new catalog: %v", err)
++	}
++}
++
++func TestMetadataRefreshPinnedOmpSmoke(t *testing.T) {
++	if os.Getenv("CODE_OMP_SMOKE") != "1" {
++		t.Skip("set CODE_OMP_SMOKE=1 to refresh metadata from real OMP")
++	}
++	metadataForbidProbes(t)
++	omp := newSmokeOmp(t)
++	t.Setenv("PATH", filepath.Dir(omp.path)+string(os.PathListSeparator)+os.Getenv("PATH"))
++	t.Setenv("ANTHROPIC_API_KEY", "omp-smoke-placeholder")
++	t.Setenv("OPENAI_API_KEY", "omp-smoke-placeholder")
++	raw := omp.run(t, "models", "--json")
++	var parsed ompModels
++	if err := json.Unmarshal(raw, &parsed); err != nil {
++		t.Fatal(err)
++	}
++	modelID := ""
++	for _, model := range parsed.Models {
++		if model.Provider == "anthropic" && model.Reasoning && len(model.Thinking) > 0 {
++			modelID = model.ID
++			break
++		}
++	}
++	if modelID == "" {
++		t.Fatal("real OMP listing contains no reasoning Anthropic model")
++	}
++	catalog := strings.Replace(metadataCatalogFixture, "id: exact-model", "id: "+modelID, 1)
++	path := filepath.Join(t.TempDir(), "models.yml")
++	if err := os.WriteFile(path, []byte(catalog), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if code := runGenerateMetadataRefresh([]string{"--metadata-only", "--models-file", path}); code != 0 {
++		t.Fatalf("real OMP metadata refresh exited %d", code)
++	}
++	refreshed, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	before, after := metadataDocument(t, []byte(catalog)), metadataDocument(t, refreshed)
++	if after["refreshed"] != nil || !reflect.DeepEqual(before["probed"], after["probed"]) {
++		t.Fatal("real metadata refresh changed benchmark or reachability attestation")
++	}
++	modelsBefore := before["models"].(map[string]any)
++	modelsAfter := after["models"].(map[string]any)
++	if len(modelsBefore) == 0 || len(modelsBefore) != len(modelsAfter) {
++		t.Fatal("real metadata refresh changed catalog identities")
++	}
++	for key, model := range modelsBefore {
++		got := modelsAfter[key].(map[string]any)
++		for _, field := range []string{"id", "pool", "tier", "role", "speed", "ttft"} {
++			if !reflect.DeepEqual(model.(map[string]any)[field], got[field]) {
++				t.Fatalf("real metadata refresh changed %s.%s", key, field)
++			}
++		}
 +	}
 +}
 diff --git a/generate_test.go b/generate_test.go
@@ -2816,7 +2871,7 @@ index a7b27a5..f1f7e00 100644
  		}
  	}
  
-@@ -322,19 +317,53 @@ func (o *smokeOmp) checkRoles(t *testing.T) {
+@@ -322,19 +317,52 @@ func (o *smokeOmp) checkRoles(t *testing.T) {
  		t.Fatal("omp agents unpack wrote no agents")
  	}
  	agents := map[string]bool{}
@@ -2830,7 +2885,6 @@ index a7b27a5..f1f7e00 100644
 +		"sonic":             {Model: []string{"@smol"}, ThinkingLevel: "medium"},
 +		"reviewer":          {Model: []string{"@slow"}},
 +		"security-reviewer": {},
-+		"seance":            {},
 +	}
  	for _, p := range unpacked.Written {
  		name := strings.TrimSuffix(filepath.Base(p), ".md")
@@ -2864,7 +2918,7 @@ index a7b27a5..f1f7e00 100644
  		}
  	}
 -	for name := range genAgentRoles {
-+	for _, name := range []string{"task", "scout", "sonic", "reviewer", "security-reviewer", "seance"} {
++	for _, name := range []string{"task", "scout", "sonic", "reviewer", "security-reviewer"} {
  		if !agents[name] {
 -			// The reverse drift: an override for an agent omp no longer ships
 -			// is inert. Not a failure, since the generator's routing is not

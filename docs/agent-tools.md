@@ -353,7 +353,9 @@ mount. Application exit status is preserved; unexpected daemon loss ends the
 session instead of leaving a shell with broken Nix access.
 
 CI verifies real offline containers and terminal interaction on both native
-architectures. Green main publishes those tested archives, without rebuilding,
+architectures. Before driving a multibyte cursor edit, it waits for Zsh's line
+editor to enable bracketed paste; echoed text alone does not prove the editor
+is reading keys. Green main publishes those tested archives, without rebuilding,
 to immutable revision tags under `ghcr.io/atyrode/development` and a
 multi-platform index. The publication job's summary and
 `development-image-reference` artifact give the immutable digest for consumers.

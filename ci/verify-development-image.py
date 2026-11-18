@@ -102,6 +102,11 @@ class Fixture:
     def expect(self, session, text, timeout=30):
         return eventually(lambda: text in self.capture(session), f"terminal displays {text!r}", timeout)
 
+    def expect_zle(self, session):
+        # The PTY can echo input after command output but before ZLE takes over.
+        mode = ("tmux", "display-message", "-p", "-t", session, "#{bracket_paste_flag}")
+        eventually(lambda: run(*mode).stdout.strip() == "1", "Zsh line editor ready for input")
+
     def frame(self, session, label, width, height):
         plain = self.capture(session)
         ansi = self.capture(session, True)
@@ -155,6 +160,7 @@ def verify_terminal(f, width, height, code_executable, catalog):
     f.text(pane, "printf 'COMPLETED:%s\\n' $PWD")
     f.keys(pane, "Enter")
     f.expect(pane, "COMPLETED:/workspace/completion-fixture")
+    f.expect_zle(pane)
     f.text(pane, "print caféλX")
     f.expect(pane, "print caféλX")
     f.keys(pane, "Left", "BSpace")

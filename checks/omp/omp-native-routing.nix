@@ -155,7 +155,6 @@ pkgs.runCommand "check-omp-native-routing"
         XDG_DATA_HOME="$home/data" XDG_STATE_HOME="$home/state" \
         TERM=dumb LANG=C.UTF-8 PI_BASH_NO_LOGIN=1 \
         OMP_NATIVE_ROUTING_OBSERVATION="$trace" \
-        OMP_NATIVE_ROUTING_SOURCE_SESSION="''${source_session:-}" \
         timeout 240 "$launcher" \
           --cwd "$project" --no-lsp --no-title --print "$@" \
           > "$fixture/$launcher_name-$label.out" \
@@ -174,23 +173,9 @@ pkgs.runCommand "check-omp-native-routing"
       home="$fixture/$launcher_name-home"
       project="$fixture/$launcher_name-project"
       trace="$out/$launcher_name-calls.jsonl"
-      source_sessions="$fixture/$launcher_name-source-sessions"
-      source_session=""
-      mkdir -p "$home" "$project/.omp/extensions" "$source_sessions"
+      mkdir -p "$home" "$project/.omp/extensions"
       cp ${./omp-native-routing-provider.ts} "$project/.omp/extensions/native-routing-fixture.ts"
       install -m600 ${gridConfig} "$project/.omp/config.yml"
-
-      # A real saved session, with a model and effort different from both main
-      # and default. Native seance restores this source, not its caller's model.
-      run_omp source \
-        --model native-routing-fixture/archive --thinking xhigh \
-        --session-dir "$source_sessions" \
-        'OMP_NATIVE_ROUTING:source:parent'
-      sessions=( "$source_sessions"/*.jsonl )
-      test "''${#sessions[@]}" -eq 1
-      test -f "''${sessions[0]}"
-      source_session="''${sessions[0]}"
-
       run_omp grid \
         --model native-routing-fixture/main --thinking max --no-session \
         'OMP_NATIVE_ROUTING:grid:parent'
@@ -199,7 +184,7 @@ pkgs.runCommand "check-omp-native-routing"
       # strings or version text. Every continuation must retain its effort.
       # Security inherits main's active model, but a fresh child's effort is
       # the configured session default (low), not main's CLI-only max.
-      assert_json 'six native child model/effort choices' -s '
+      assert_json 'five native child model/effort choices' -s '
         def calls($agent): [.[] | select(.scenario == "grid" and .kind == "child" and .agent == $agent)];
         . as $all
         | {
@@ -207,8 +192,7 @@ pkgs.runCommand "check-omp-native-routing"
             scout: ["smol", "medium"],
             sonic: ["smol", "medium"],
             reviewer: ["slow", "high"],
-            "security-reviewer": ["main", "low"],
-            seance: ["archive", "xhigh"]
+            "security-reviewer": ["main", "low"]
           }
         | to_entries
         | all(.[]; . as $expected
@@ -218,9 +202,8 @@ pkgs.runCommand "check-omp-native-routing"
                 .provider == "native-routing-fixture"
                 and [.model, .thinking] == $expected.value))
       ' "$trace"
-      assert_json 'main max control and persisted source effort' -s '
+      assert_json 'main max control' -s '
         any(.[]; .scenario == "grid" and .agent == "parent" and .model == "main" and .thinking == "max")
-        and any(.[]; .scenario == "source" and .model == "archive" and .thinking == "xhigh")
       ' "$trace"
       # Native task UI labels are separate tiny-role requests with no tools;
       # they are not widget requests or child turns. Native utility inference
@@ -234,14 +217,13 @@ pkgs.runCommand "check-omp-native-routing"
       assert_json 'task keeps native full tools; specialists stay read-only' -s '
         def child($name): [.[] | select(.scenario == "grid" and .kind == "child" and .agent == $name)];
         (child("task") | all(.[]; (.tools | index("write")) != null and (.tools | index("bash")) != null))
-        and all(.[] | select(.scenario == "grid" and .kind == "child" and (.agent == "scout" or .agent == "security-reviewer" or .agent == "seance"));
+        and all(.[] | select(.scenario == "grid" and .kind == "child" and (.agent == "scout" or .agent == "security-reviewer"));
           (.tools | index("write")) == null and (.tools | index("bash")) == null)
-        and (child("seance") | all(.[]; .tools == ["glob", "grep", "read", "yield"]))
       ' "$trace"
-      assert_json 'six bundled identities complete without schema overrides' '
-        length == 6
+      assert_json 'five bundled identities complete without schema overrides' '
+        length == 5
         and all(.[]; (.isError | not) and (.details.results | length == 1))
-        and ([.[].details.results[0].agent] | sort) == ["reviewer", "scout", "seance", "security-reviewer", "sonic", "task"]
+        and ([.[].details.results[0].agent] | sort) == ["reviewer", "scout", "security-reviewer", "sonic", "task"]
         and all(.[].details.results[0];
           .agentSource == "bundled" and .exitCode == 0 and (.error == null) and (.aborted != true)
           and all(.extractedToolData.yield[]?; .schemaOverridden != true))

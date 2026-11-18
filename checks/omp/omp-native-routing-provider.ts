@@ -20,7 +20,7 @@ const zeroUsage: Usage = {
   totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
-const gridAgents = ["task", "scout", "sonic", "reviewer", "security-reviewer", "seance"];
+const gridAgents = ["task", "scout", "sonic", "reviewer", "security-reviewer"];
 const retryAgents = ["task", "reviewer", "scout"];
 type Block = TextContent | ToolCall;
 
@@ -64,15 +64,13 @@ function emit(model: Model, blocks: Block[], fail = false): AssistantMessageEven
 }
 
 function invocation(context: Context): { scenario: string; agent: string } {
-  // A seance sees its saved conversation before its new assignment. The last
-  // user marker, not a global call counter or the selected model, identifies it.
   const userText = context.messages
     .filter(message => message.role === "user")
     .map(message => typeof message.content === "string"
       ? message.content
       : message.content.filter(block => block.type === "text").map(block => block.text).join("\n"))
     .join("\n");
-  const matches = [...userText.matchAll(/OMP_NATIVE_ROUTING:(source|grid|retry):([a-z-]+)/g)];
+  const matches = [...userText.matchAll(/OMP_NATIVE_ROUTING:(grid|retry):([a-z-]+)/g)];
   const match = matches.at(-1);
   if (!match) throw new Error("Unexpected model request without a native routing assignment");
   return { scenario: match[1], agent: match[2] };
@@ -123,7 +121,7 @@ function childResponse(model: Model, context: Context, scenario: string, agent: 
         architecture: "The pinned OMP task tool selected the bundled scout.",
       })]);
     default:
-      return emit(model, [yielded(id, `native routing ${agent} completed`)]);
+      return emit(model, [{ type: "text", text: `native routing ${agent} completed` }]);
   }
 }
 
@@ -136,7 +134,7 @@ export default function nativeRoutingProvider(pi: ExtensionAPI): void {
     baseUrl: "fixture://native-routing",
     apiKey: "public-zero-cost-fixture-key",
     api: "native-routing-script",
-    models: ["main", "default", "task", "smol", "slow", "archive", "lead", "default-fallback", "task-fallback", "slow-fallback"]
+    models: ["main", "default", "task", "smol", "slow", "lead", "default-fallback", "task-fallback", "slow-fallback"]
       .map(id => ({
         id,
         name: `Native routing fixture ${id}`,
@@ -151,8 +149,11 @@ export default function nativeRoutingProvider(pi: ExtensionAPI): void {
       const { scenario, agent } = invocation(context);
       const tools = context.tools?.map(tool => tool.name).sort() ?? [];
       const kind = tools.length === 0 ? "auxiliary" : agent === "parent" ? "parent" : "child";
-      if (kind === "child" && !tools.includes("yield")) {
+      if (kind === "child" && ["reviewer", "scout", "security-reviewer"].includes(agent) && !tools.includes("yield")) {
         throw new Error(`Unexpected ${agent} child request without its native yield tool`);
+      }
+      if (kind === "child" && ["task", "sonic"].includes(agent) && tools.includes("yield")) {
+        throw new Error(`Unexpected ${agent} child request with a schema-only yield tool`);
       }
       appendFileSync(observation, JSON.stringify({
         scenario,
@@ -167,7 +168,6 @@ export default function nativeRoutingProvider(pi: ExtensionAPI): void {
       // Task labels use the tiny role and have no tool slate. They are real
       // utility inference, not a child turn, and require a plain-text answer.
       if (kind === "auxiliary") return emit(model, [{ type: "text", text: "Observe native routing fixture" }]);
-      if (scenario === "source") return emit(model, [{ type: "text", text: "Disposable source session for native seance inheritance." }]);
       if (agent !== "parent") {
         if (scenario === "retry" && model.id === "lead") return emit(model, [], true);
         return childResponse(model, context, scenario, agent);
@@ -191,7 +191,6 @@ export default function nativeRoutingProvider(pi: ExtensionAPI): void {
           agent: child,
           task: `OMP_NATIVE_ROUTING:${scenario}:${child}\nComplete this disposable routing observation without reading or changing repository files.`,
           schemaMode: "strict",
-          ...(child === "seance" ? { sourceSession: requiredEnvironment("OMP_NATIVE_ROUTING_SOURCE_SESSION") } : {}),
         },
       }]);
     },

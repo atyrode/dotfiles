@@ -13,14 +13,18 @@ let
     liveTopology
     // {
       peers = liveTopology.peers // {
-        windows = liveTopology.peers.windows // { inherit publicKey; };
+        windows = liveTopology.peers.windows // {
+          inherit publicKey;
+        };
       };
     };
   # Exercise enrollment pending independently of the fleet's registered peer.
   ternWorkspace = withWindowsPublicKey null;
   fixtureAtyrode = atyrode.override { inherit ternWorkspace; };
   developmentAtyrode = fixtureAtyrode.override { revision = "unknown"; };
-  launcherAtyrode = fixtureAtyrode.override { revision = "1111111111111111111111111111111111111111"; };
+  launcherAtyrode = fixtureAtyrode.override {
+    revision = "1111111111111111111111111111111111111111";
+  };
   targetPolicy = pkgs.writeText "candidate-personal-policy" ''
     # Candidate personal policy
 

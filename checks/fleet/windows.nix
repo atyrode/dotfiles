@@ -47,7 +47,7 @@ pkgs.runCommand "check-windows-control-plane"
 
     jq -e '
       .schemaVersion == 2
-      and (.packages | length) == 2
+      and (.packages | length) == 3
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .source == "winget"
@@ -62,6 +62,12 @@ pkgs.runCommand "check-windows-control-plane"
         and .conflicts == []
         and .versionPolicy == "installed; WinGet owns normal font updates"
         and (.mutableStateOwner | contains("Windows owns the installed font files"))
+      )] | length == 1)
+      and ([.packages[] | select(
+        .id == "WireGuard.WireGuard"
+        and .source == "winget"
+        and .installVersion == null
+        and .conflicts == []
       )] | length == 1)
     ' ${packageFile} >/dev/null
 

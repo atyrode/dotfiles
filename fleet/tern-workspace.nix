@@ -17,8 +17,10 @@ in
   interface = "wg-tern";
   port = 51837;
   serverAddress = "10.219.83.1";
-  webPort = 18377;
-  proxyPort = 18443;
+  # Reserved listeners prevent an unrelated VPS user from taking either end
+  # of the reverse proxy while a service is restarting.
+  webPort = 977;
+  proxyPort = 943;
   serverPublicKey = generatedKey "dev-01";
   peers = {
     macbook = {

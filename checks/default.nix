@@ -355,6 +355,17 @@ let
         zones = canonicalNixosConfigs.dev-01.config.atyrode.caddy.onDemandAsk;
       };
     };
+    tern-workspace-ingress =
+      let
+        probe = import ./fleet/tern-workspace-ingress.nix {
+          inherit pkgs;
+          inherit (canonicalNixosConfigs.dev-01) config;
+        };
+      in
+      pkgs.runCommand "check-tern-workspace-ingress" { } ''
+        ${lib.getExe probe}
+        touch "$out"
+      '';
     manifold-preview-routing = import ./fleet/manifold-preview-routing.nix {
       inherit pkgs;
       previewVhost =

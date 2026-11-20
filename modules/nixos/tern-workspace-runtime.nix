@@ -1,4 +1,10 @@
-{ config, pkgs, ... }:
+{
+  config,
+  host,
+  lib,
+  pkgs,
+  ...
+}:
 let
   workspace = import ../../fleet/tern-workspace.nix;
   user = "tern-workspace";
@@ -7,16 +13,25 @@ let
   socket = "${runtime}/daemon.sock";
   binaryDirectory = "/var/lib/tern-workspace-bin";
   tern = "${binaryDirectory}/tern";
+  installUnit = "tern-workspace-install.service";
+  installTern = pkgs.writeShellApplication {
+    name = "tern-workspace-install";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.util-linux
+    ];
+    text = builtins.readFile ./tern-workspace-install.sh;
+  };
   daemonUnit = "tern-workspace-daemon.service";
   webUnit = "tern-workspace-web.service";
 
   common = {
-    unitConfig.ConditionFileIsExecutable = tern;
     environment = {
       # System services do not inherit nix-ld's login environment.
       inherit (config.environment.sessionVariables) NIX_LD NIX_LD_LIBRARY_PATH;
       HOME = home;
-      PATH = "${binaryDirectory}:/run/current-system/sw/bin";
+      # Native agent blocks need the fleet's pinned omp, not the operator's user profile.
+      PATH = lib.mkForce "${binaryDirectory}:${lib.makeBinPath [ pkgs.omp pkgs.git ]}:/run/current-system/sw/bin";
       SHELL = "${pkgs.bashInteractive}/bin/bash";
       TERN_CONFIG_DIR = "${home}/.config/tern";
       TERN_DAEMON_SOCKET = socket;
@@ -49,13 +64,31 @@ in
     shell = pkgs.bashInteractive;
   };
 
-  # The operator installs the upstream executable here, outside the Nix store.
-  systemd.tmpfiles.rules = [ "d ${binaryDirectory} 0755 root root -" ];
+  # Copy only the approved executable from the existing local installation;
+  # the vendor binary and the operator's account state stay outside the store.
+  systemd.services.tern-workspace-install = {
+    description = "Provision the approved private Tern workspace executable";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${lib.getExe installTern} ${host.username} ${host.homeDirectory} ${binaryDirectory}";
+      TimeoutStartSec = "45s";
+      UMask = "0077";
+      NoNewPrivileges = true;
+      PrivateNetwork = true;
+      PrivateTmp = true;
+      ProtectHome = "read-only";
+      ProtectSystem = "full";
+      LimitCORE = 0;
+    };
+  };
 
   systemd.services.tern-workspace-daemon = common // {
     description = "Private Tern workspace session daemon";
     wantedBy = [ "multi-user.target" ];
     wants = [ webUnit ];
+    requires = [ installUnit ];
+    after = [ installUnit ];
+    unitConfig."X-Atyrode-SessionOwner" = true;
     serviceConfig = common.serviceConfig // {
       RuntimeDirectory = user;
       RuntimeDirectoryMode = "0700";
@@ -73,6 +106,10 @@ in
     partOf = [ daemonUnit ];
     serviceConfig = common.serviceConfig // {
       ExecStart = "${tern} web serve --listen 127.0.0.1:${toString workspace.webPort} --allow-origin https://${workspace.hostname}";
+      AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+      CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+      SocketBindDeny = "any";
+      SocketBindAllow = "ipv4:tcp:${toString workspace.webPort}";
       # Tern creates and reuses .config/tern/web-token, but prints it to both streams.
       StandardOutput = "null";
       StandardError = "null";

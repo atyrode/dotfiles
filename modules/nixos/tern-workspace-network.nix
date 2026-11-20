@@ -17,7 +17,10 @@ let
   vars = config.clan.core.vars.generators;
   wireguardKey = vars.tern-workspace-wireguard.files.privatekey;
   dnsToken = vars.tern-workspace-dns.files.api-token;
-  wireguardReady = workspace.serverPublicKey != null && wireguardKey.exists;
+  # Clan exposes the public half at evaluation time. Secret presence is a
+  # runtime question: only the host can check what sops has placed.
+  wireguardReady = workspace.serverPublicKey != null;
+  dnsTokenPath = "/run/secrets/vars/tern-workspace-dns/api-token";
 
   wireguardService = "wireguard-${interface}";
   ingressService = "tern-workspace-ingress";
@@ -46,6 +49,7 @@ let
     https://${hostname}:${toString proxyPort} {
       bind ${serverAddress}
       tls ${certDir}/fullchain.pem ${certDir}/key.pem
+      header Referrer-Policy "no-referrer"
 
       @wrongOrigin {
         header Origin *
@@ -87,10 +91,19 @@ in
     }
 
     (lib.mkIf wireguardReady {
+      boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start" = lib.mkDefault 1024;
       assertions = [
         {
           assertion = config.networking.firewall.enable && config.networking.firewall.backend == "iptables";
           message = "Tern workspace ingress requires the VPS's iptables firewall backend.";
+        }
+        {
+          assertion = lib.toInt (toString config.boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start") > lib.max webPort proxyPort;
+          message = "Both private Tern listeners must be in the privileged port range.";
+        }
+        {
+          assertion = dnsToken.path == "/no-such-path" || dnsToken.path == dnsTokenPath;
+          message = "Tern expects its DNS-01 credential at ${dnsTokenPath}.";
         }
       ];
 
@@ -165,7 +178,7 @@ in
       };
     })
 
-    (lib.mkIf (wireguardReady && dnsToken.exists) {
+    (lib.mkIf wireguardReady {
       users.groups.${tlsGroup} = { };
 
       security.acme = {
@@ -174,7 +187,7 @@ in
           email = null;
           dnsProvider = "cloudflare";
           enableDebugLogs = false;
-          credentialFiles.CLOUDFLARE_DNS_API_TOKEN_FILE = dnsToken.path;
+          credentialFiles.CLOUDFLARE_DNS_API_TOKEN_FILE = dnsTokenPath;
           group = tlsGroup;
           # Lego follows a public _acme-challenge CNAME if validation uses a
           # delegated zone. Only systemd and the isolated renewer see the token.
@@ -186,7 +199,7 @@ in
 
       systemd.services.${acmeOrder} = {
         after = [ secretInstallUnit ];
-        unitConfig.ConditionFileNotEmpty = dnsToken.path;
+        unitConfig.ConditionFileNotEmpty = dnsTokenPath;
       };
 
       systemd.services.${caddyService} = {
@@ -201,7 +214,7 @@ in
           secretInstallUnit
         ];
         unitConfig = {
-          ConditionFileNotEmpty = dnsToken.path;
+          ConditionFileNotEmpty = dnsTokenPath;
           # NixOS initially puts a self-signed certificate in the same paths.
           # Serve nothing until ACME has issued a real certificate.
           ConditionPathExists = "${certDir}/acme-success";
@@ -210,6 +223,10 @@ in
         serviceConfig = {
           ExecStart = "${lib.getExe pkgs.caddy} run --config ${caddyfile} --adapter caddyfile";
           DynamicUser = true;
+          AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+          CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+          SocketBindDeny = "any";
+          SocketBindAllow = "ipv4:tcp:${toString proxyPort}";
           SupplementaryGroups = [ tlsGroup ];
           StateDirectory = caddyService;
           StateDirectoryMode = "0700";

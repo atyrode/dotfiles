@@ -41,6 +41,9 @@ The home Windows machine deliberately has two ownership domains:
   package declaration consumed by `atyrode windows plan/apply`; the controller
   invokes the existing `winget.exe` as the interactive Windows user to
   reconcile the declared exact package IDs.
+  The same phase manages one named native WireGuard tunnel for the
+  [Tern workspace](tern-workspace.md). Its private key stays on Windows:
+  WSL supplies public desired state, not a VPN configuration containing keys.
 
 `get.ps1` is the one native bootstrap boundary. Its default action is a
 non-mutating plan. Apply verifies a pinned NixOS-WSL image, refuses to reuse an
@@ -66,8 +69,9 @@ No session's `WSL_INTEROP` socket is cached or substituted; an unset variable
 can use WSL's distro interop server. Failure to discover or execute Windows
 commands is diagnosed separately from a genuinely missing WinGet alias.
 
-Windows application accounts, profiles, update services, caches, and other
-mutable state remain application-owned. In particular, Zen's Mozilla account,
+Apart from that dedicated tunnel, Windows application accounts, profiles,
+update services, caches, and other mutable state remain application-owned.
+In particular, Zen's Mozilla account,
 sync tokens, cookies, sessions, and browser profile never enter the Nix store
 or repository; Mozilla sign-in remains an interactive step on each device.
 

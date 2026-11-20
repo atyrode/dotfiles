@@ -96,9 +96,10 @@ declarative root-owned SSH keys drawn from the reviewed fleet key registry,
 passwordless sudo for the operator's account alone, and rootless Docker — and
 clan refuses to deploy it unless the operator names it.
 
-`dev-01` enables `nix-ld` so the Tern desktop app can run its upstream Linux
-binary during SSH setup. Tern still manages its own per-user service; the host
-configuration does not start Tern or open a port for it.
+`dev-01` enables `nix-ld` for Stencil's Tern executable. Native desktop SSH
+setup still owns its per-user remote service. The separate [private Tern
+workspace](tern-workspace.md) runs as an unprivileged account and is reached
+through its own WireGuard peers, not the public Caddy edge or fleet admin VPN.
 
 The parcel development edge serves `myparcelle.tyrode.dev` from port 4173
 and `auth.myparcelle.tyrode.dev` from port 8082. Caddy owns TLS; the

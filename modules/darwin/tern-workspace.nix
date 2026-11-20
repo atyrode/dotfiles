@@ -8,7 +8,7 @@ let
   workspace = import ../../fleet/tern-workspace.nix;
   peer = workspace.peers.macbook;
   privateKey = config.clan.core.vars.generators.tern-workspace-wireguard.files.privatekey;
-  enrolled = peer.publicKey != null && workspace.serverPublicKey != null && privateKey.exists;
+  enrolled = peer.publicKey != null && workspace.serverPublicKey != null;
 in
 {
   imports = [ ../shared/tern-workspace-wireguard.nix ];

@@ -290,6 +290,11 @@ path they always have; until the value exists the link dangles, which the
 units read as "not enrolled". Rotation is `--rotate-token` on the same
 enroll command, then an apply and an agent restart on the machine.
 
+The [private Tern workspace](tern-workspace.md#first-provision) has separate
+per-machine WireGuard keys and a dev-01-only DNS-01 credential. Windows and
+iOS generate their own private keys; only their public peers enter the fleet
+inventory. The Tern browser token is application state, not a Clan secret.
+
 ## Git identity
 
 A machine's Git identity is the `git-identity` var and nothing else: no vault,

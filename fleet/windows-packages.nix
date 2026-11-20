@@ -18,5 +18,13 @@
       versionPolicy = "installed; WinGet owns normal font updates";
       mutableStateOwner = "Windows owns the installed font files; Nix owns package presence";
     }
+    {
+      id = "WireGuard.WireGuard";
+      name = "WireGuard";
+      source = "winget";
+      conflicts = [ ];
+      versionPolicy = "installed; WireGuard owns normal updates";
+      mutableStateOwner = "Windows keeps the private key; atyrode manages only the dedicated Tern tunnel";
+    }
   ];
 }

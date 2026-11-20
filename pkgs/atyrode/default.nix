@@ -3,6 +3,7 @@
   age-plugin-se,
   atyrode-preview,
   bubblewrap,
+  callPackage,
   capabilities,
   claude-code,
   clever-tools,
@@ -81,6 +82,23 @@ let
   registry = builtins.toFile "atyrode-host-registry.json" (builtins.toJSON hostRegistry);
   windowsPackageInventory = builtins.toFile "atyrode-windows-packages.json" (
     builtins.toJSON windowsPackages
+  );
+  # The fleet's Windows phase is only available from its x86_64 WSL guest.
+  # Keep the native helper in that platform's CLI package for conformance too.
+  buildsTernTunnel = stdenvNoCC.hostPlatform.system == "x86_64-linux";
+  ternTunnel = callPackage ./windows { };
+  ternWorkspace = import ../../fleet/tern-workspace.nix;
+  ternTunnelManifest = builtins.toFile "atyrode-tern-tunnel.json" (
+    builtins.toJSON {
+      inherit (ternWorkspace)
+        endpoint
+        port
+        serverAddress
+        serverPublicKey
+        ;
+      inherit (ternWorkspace.peers.windows) address;
+      expectedPublicKey = ternWorkspace.peers.windows.publicKey;
+    }
   );
   manifoldInventory = ../../fleet/manifold.json;
   authBrokerInventory = ../../fleet/auth-broker.json;
@@ -246,9 +264,13 @@ stdenvNoCC.mkDerivation {
   inputsSrc = ./inputs;
   wslPathSrc = ./wsl-path;
   nativeBuildInputs = [ makeWrapper ];
+  stripExclude = lib.optional buildsTernTunnel "tern-tunnel.exe";
 
   dontUnpack = true;
   installPhase = ''
+    ${lib.optionalString buildsTernTunnel ''
+      install -D -m0555 '${ternTunnel}/bin/tern-tunnel.exe' "$out/libexec/atyrode/windows/tern-tunnel.exe"
+    ''}
     install -D -m755 "$src" "$out/bin/atyrode"
     install -d -m755 "$out/libexec/atyrode/lib"
     install -m644 "$libSrc"/*.sh "$out/libexec/atyrode/lib/"
@@ -266,6 +288,9 @@ stdenvNoCC.mkDerivation {
     install -D -m755 "$wslPathSrc" "$out/libexec/atyrode-wsl-path"
     substituteInPlace "$out/libexec/atyrode-wsl-path" \
       --replace-fail '@python3@' '${python3.interpreter}'
+    ${lib.optionalString (buildsTernTunnel || enableTestHooks) ''
+      install -D -m0444 '${ternTunnelManifest}' "$out/libexec/atyrode/windows/tern-tunnel.json"
+    ''}
     substituteInPlace "$out/bin/atyrode" \
       --replace-fail '@agents_policy@' '${agentsPolicy}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe atyrode-preview}' \
@@ -289,7 +314,8 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@lib_dir@' "$out/libexec/atyrode/lib" \
       --replace-fail '@test_hooks@' '${if enableTestHooks then "1" else "0"}' \
       --replace-fail '@tools@' '${tools}' \
-      --replace-fail '@windows_packages@' '${windowsPackageInventory}'
+      --replace-fail '@windows_packages@' '${windowsPackageInventory}' \
+      --replace-fail '@windows_tunnel_exe@' "$out/libexec/atyrode/windows/tern-tunnel.exe"
     wrapProgram "$out/bin/atyrode" \
       --prefix PATH : ${
         lib.makeBinPath (

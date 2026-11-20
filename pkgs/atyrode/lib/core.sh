@@ -213,7 +213,7 @@ tool_exec() { # quiet|visible override_variable program argv...
 guard_production_mutation() {
   [[ "$test_hooks" == 1 ]] && return 0
   local v
-  for v in ATYRODE_AGE_KEYGEN ATYRODE_AGE_PLUGIN_SE ATYRODE_CLAN ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
+  for v in ATYRODE_AGE_KEYGEN ATYRODE_AGE_PLUGIN_SE ATYRODE_CLAN ATYRODE_NH ATYRODE_NIX ATYRODE_NIX_ENV ATYRODE_GIT ATYRODE_SSH ATYRODE_GH ATYRODE_GEN_PROFILE ATYRODE_WINGET ATYRODE_TERN_TUNNEL ATYRODE_FETCH ATYRODE_SYSTEMCTL ATYRODE_SYSTEMD_RUN ATYRODE_JOURNALCTL ATYRODE_LAUNCHCTL; do
     [[ -z "${!v:-}" ]] || die "$EX_USAGE" \
       "$1 refuses to run: $v is set but a production build ignores it, so this would drive the real tool against the live store — unset $v, or use a build with enableTestHooks = true for stubs"
   done

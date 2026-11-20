@@ -121,7 +121,7 @@ check_traffic() {
   local plain latest
   # Compare both the fixture file and kernel identity with the known test key.
   if [[ $(wg pubkey <"$fixture/server.key") != "$server_public_key" ||
-    $(wg show "$interface" public-key) != "$server_public_key" ]]; then
+  $(wg show "$interface" public-key) != "$server_public_key" ]]; then
     printf >&2 'WireGuard did not load the guest key\n'
     return 1
   fi

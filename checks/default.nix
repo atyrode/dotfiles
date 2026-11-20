@@ -363,7 +363,6 @@ let
     };
     tern-workspace-ingress = import ./fleet/tern-workspace-ingress.nix {
       inherit pkgs;
-      inherit (canonicalNixosConfigs.dev-01) config;
     };
     manifold-preview-routing = import ./fleet/manifold-preview-routing.nix {
       inherit pkgs;

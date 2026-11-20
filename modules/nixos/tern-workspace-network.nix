@@ -3,9 +3,9 @@
   lib,
   pkgs,
   ...
-}:
+}@args:
 let
-  workspace = import ../../fleet/tern-workspace.nix;
+  workspace = args.ternWorkspaceFixture or (import ../../fleet/tern-workspace.nix);
   inherit (workspace)
     hostname
     interface
@@ -13,7 +13,13 @@ let
     serverAddress
     webPort
     ;
-  peers = lib.filterAttrs (_: peer: peer.publicKey != null) workspace.peers;
+  peers = lib.attrValues (lib.filterAttrs (_: peer: peer.publicKey != null) workspace.peers);
+  peerArgs = lib.concatMap (peer: [
+    "peer"
+    peer.publicKey
+    "allowed-ips"
+    "${peer.address}/32"
+  ]) peers;
   vars = config.clan.core.vars.generators;
   wireguardKey = vars.tern-workspace-wireguard.files.privatekey;
   dnsToken = vars.tern-workspace-dns.files.api-token;
@@ -91,6 +97,7 @@ in
     }
 
     (lib.mkIf wireguardReady {
+      boot.kernelModules = [ "wireguard" ];
       boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start" = lib.mkDefault 1024;
       assertions = [
         {
@@ -109,20 +116,18 @@ in
         }
       ];
 
-      networking.wireguard.interfaces.${interface} = {
-        ips = [ "${serverAddress}/32" ];
-        privateKeyFile = wireguardKey.path;
-        listenPort = workspace.port;
-        peers = lib.mapAttrsToList (name: peer: {
-          inherit name;
-          inherit (peer) publicKey;
-          allowedIPs = [ "${peer.address}/32" ];
-        }) peers;
+      networking.firewall = {
+        # Merge at the priority of the reviewed VPS UDP allowlist.
+        allowedUDPPorts = lib.mkForce [ workspace.port ];
+        interfaces.${interface}.allowedTCPPorts = [ proxyPort ];
       };
 
-      networking.firewall.interfaces.${interface}.allowedTCPPorts = [ proxyPort ];
-
       systemd.services.${wireguardService} = {
+        # dev-01 uses networkd for its static uplink. Keep this interface under
+        # one service so neither networkd nor a generated peer unit can assign
+        # its addresses before the ingress hooks are active.
+        description = "Private Tern workspace WireGuard tunnel";
+        wantedBy = [ "multi-user.target" ];
         bindsTo = [ "${ingressService}.service" ];
         partOf = [ "${ingressService}.service" ];
         after = [
@@ -130,6 +135,29 @@ in
           secretInstallUnit
         ];
         unitConfig.ConditionFileNotEmpty = wireguardKey.path;
+        path = [
+          pkgs.iproute2
+          pkgs.wireguard-tools
+        ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          LoadCredential = [ "privatekey:${wireguardKey.path}" ];
+          CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+        };
+        script = ''
+          ip link add dev ${interface} type wireguard
+          trap 'ip link delete dev ${interface}' EXIT
+          wg set ${interface} private-key "$CREDENTIALS_DIRECTORY/privatekey" \
+            listen-port ${toString workspace.port} ${lib.escapeShellArgs peerArgs}
+          ip -4 address add ${serverAddress}/32 dev ${interface}
+          ${lib.concatMapStringsSep "\n" (peer: ''
+            ip -4 route add ${peer.address}/32 dev ${interface} src ${serverAddress}
+          '') peers}
+          ip link set dev ${interface} up
+          trap - EXIT
+        '';
+        preStop = "ip link delete dev ${interface}";
       };
 
       # Own these hooks outside the VPS firewall's non-atomic reload lifecycle.
@@ -139,6 +167,9 @@ in
       # the public wildcard listener, even if the main firewall is reloading.
       systemd.services.${ingressService} = {
         description = "Restrict and translate IPv4 Tern workspace ingress";
+        bindsTo = [ "firewall.service" ];
+        partOf = [ "firewall.service" ];
+        after = [ "firewall.service" ];
         path = [ config.networking.firewall.package ];
         serviceConfig = {
           Type = "oneshot";
@@ -149,7 +180,7 @@ in
           ${lib.concatMapStringsSep "\n" (peer: ''
             iptables -w -t raw -A ${ingressChain} -i ${interface} -s ${peer.address}/32 \
               -d ${serverAddress}/32 -p tcp --dport 443 -j RETURN
-          '') (lib.attrValues peers)}
+          '') peers}
           iptables -w -t raw -A ${ingressChain} -i ${interface} -j DROP
           iptables -w -t raw -A ${ingressChain} -d ${serverAddress}/32 -j DROP
           iptables -w -t raw -I PREROUTING -j ${ingressChain}

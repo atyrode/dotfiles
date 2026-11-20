@@ -89,10 +89,13 @@ function Test-Administrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Test-DistroFile {
-    param([Parameter(Mandatory = $true)][string]$Path)
+function Test-DistroPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [ValidateSet('-f', '-x')][string]$Mode = '-f'
+    )
 
-    & $script:WslExe -d $DistroName -u root --exec /run/current-system/sw/bin/test -f $Path 2>$null
+    & $script:WslExe -d $DistroName -u root --exec /run/current-system/sw/bin/test $Mode $Path 2>$null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -106,6 +109,32 @@ function Invoke-ManagedDistro {
     }
 }
 
+function Get-ManagedDistroOutput {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+
+    $lines = @(& $script:WslExe -d $DistroName -u root --exec @Arguments)
+    return [pscustomobject]@{
+        Status = $LASTEXITCODE
+        Text = ($lines -join "`n").Trim()
+    }
+}
+
+function Get-CandidateAtyrode {
+    param([Parameter(Mandatory = $true)][string]$Candidate)
+
+    foreach ($bin in @(
+        "$Candidate/home-path/bin",
+        "$Candidate/etc/profiles/per-user/$Username/bin",
+        "$Candidate/sw/bin"
+    )) {
+        $program = "$bin/atyrode"
+        if (Test-DistroPath -Mode '-x' -Path $program) {
+            return $program
+        }
+    }
+    throw "Candidate $Candidate does not contain atyrode; no generation was activated"
+}
+
 if ($env:OS -ne 'Windows_NT') {
     throw 'get.ps1 requires native Windows PowerShell; run get.sh on macOS or Linux'
 }
@@ -117,8 +146,7 @@ if ($null -eq $wslCommand) {
 $script:WslExe = $wslCommand.Source
 
 $revision = Resolve-Revision -RequestedRef $Ref
-$flake = "github:$Repository/$revision#$HostId"
-$rebuildPackage = "github:$Repository/$revision#nixosConfigurations.$HostId.pkgs.nixos-rebuild"
+$candidateInstallable = "github:$Repository/$revision#nixosConfigurations.$HostId.config.system.build.toplevel"
 $wslVersion = Get-WslVersion
 $distros = Get-WslDistros
 $distroExists = ($distros -contains $DistroName)
@@ -133,10 +161,11 @@ Write-Host "  install location: $InstallLocation"
 Write-Host "  WSL version:      $(if ($null -eq $wslVersion) { 'unavailable or legacy' } else { $wslVersion })"
 Write-Host "  existing distro:  $distroExists"
 Write-Host "  image:            NixOS-WSL $NixosWslVersion ($NixosWslSha256)"
-Write-Host '  phase 1:          install or verify the pinned NixOS-WSL image'
-Write-Host '  phase 2:          activate the exact dotfiles revision with nixos-rebuild'
-Write-Host '  phase 3:          reconcile native Windows packages through winget.exe'
-Write-Host '  rollback boundary: Nix generations cover phase 2 only; Windows package state is non-transactional'
+Write-Host '  apply token:      elevated PowerShell as the same Windows user that owns the distribution'
+Write-Host '  phase 1:          provision a pinned stock image if needed and build the exact dotfiles revision'
+Write-Host '  phase 2:          preflight Windows through the candidate, then activate only that closure'
+Write-Host '  phase 3:          reconcile WinGet packages and the reserved Tern tunnel'
+Write-Host '  rollback boundary: Nix generations cover guest activation only; Windows state is non-transactional'
 
 if (-not $Apply) {
     Write-Host 'Plan only; no files, distributions, Nix generations, or Windows packages were changed.'
@@ -144,10 +173,11 @@ if (-not $Apply) {
     return
 }
 
+if (-not (Test-Administrator)) {
+    throw 'Bootstrap apply requires an elevated PowerShell as the same Windows user that owns or will own the WSL distribution. No distribution or Windows package state was changed.'
+}
+
 if (-not $wslReady) {
-    if (-not (Test-Administrator)) {
-        throw "WSL $MinimumWslVersion or newer is required. Re-run this bootstrap from an elevated PowerShell once to install or update WSL, then reboot if Windows requests it."
-    }
     Write-Host 'Installing or updating the native WSL prerequisite...'
     Invoke-Wsl -Arguments @('--install', '--no-distribution') | Out-Null
     Invoke-Wsl -Arguments @('--update') | Out-Null
@@ -156,12 +186,17 @@ if (-not $wslReady) {
 }
 
 if ($distroExists) {
-    $managed = Test-DistroFile -Path $ManagedMarker
-    $pending = Test-DistroFile -Path $PendingMarker
+    $managed = Test-DistroPath -Path $ManagedMarker
+    $pending = Test-DistroPath -Path $PendingMarker
     if (-not $managed -and -not $pending) {
         throw "WSL distribution '$DistroName' already exists but has no atyrode ownership marker; refusing to reuse or overwrite it"
     }
-    Write-Host "Reusing verified atyrode distribution '$DistroName'."
+    if ($managed) {
+        Write-Host "Reusing managed distribution '$DistroName'."
+    }
+    else {
+        Write-Host "Resuming pending bootstrap for '$DistroName'."
+    }
 }
 else {
     if (Test-Path -LiteralPath $InstallLocation) {
@@ -206,29 +241,57 @@ else {
     )
 }
 
-Write-Host "Activating $flake inside NixOS-WSL..."
-Invoke-ManagedDistro -Arguments @(
+Write-Host "Building $candidateInstallable inside NixOS-WSL..."
+$build = Get-ManagedDistroOutput -Arguments @(
     '/run/current-system/sw/bin/env',
     "PATH=$NixosBootstrapPath",
     '/run/current-system/sw/bin/nix',
     '--extra-experimental-features', 'nix-command flakes',
-    'shell', $rebuildPackage,
-    '--command',
-    'nixos-rebuild', 'switch', '--flake', $flake,
-    '--option', 'experimental-features', 'nix-command flakes'
+    'build', '--no-link', '--print-out-paths', $candidateInstallable
 )
-if (-not (Test-DistroFile -Path $ManagedMarker)) {
+if ($build.Status -ne 0 -or $build.Text -cnotmatch '^/nix/store/[0-9a-df-np-sv-z]{32}-[A-Za-z0-9.+_-]+$') {
+    throw "Nix did not return one NixOS-WSL candidate closure (exit $($build.Status)); no generation was activated"
+}
+$candidate = $build.Text
+if (-not (Test-DistroPath -Mode '-x' -Path "$candidate/bin/switch-to-configuration")) {
+    throw "Candidate $candidate is not a NixOS system; no generation was activated"
+}
+$candidateAtyrode = Get-CandidateAtyrode -Candidate $candidate
+Write-Host 'Checking native Windows readiness with the candidate before switching...'
+# A stock guest has no alex/wsl identity yet. This probe only plans and uses
+# the existing WSL interop context of the already-elevated Windows caller.
+$preflight = Get-ManagedDistroOutput -Arguments @(
+    $candidateAtyrode, 'windows', 'bootstrap-preflight', '--json'
+)
+if ($preflight.Text) {
+    Write-Host $preflight.Text
+}
+if ($preflight.Status -ne 0 -or -not $preflight.Text) {
+    throw "Candidate Windows preflight failed (exit $($preflight.Status)); no generation was activated"
+}
+$plan = ConvertFrom-Json -InputObject $preflight.Text
+if ($plan.schemaVersion -cne 2 -or $plan.command -cne 'windows plan' -or $plan.host -cne $HostId -or
+    $plan.ready -isnot [bool] -or -not $plan.ready -or $plan.canApply -isnot [bool] -or -not $plan.canApply) {
+    throw 'Candidate Windows preflight did not authorize native reconciliation; no generation was activated'
+}
+
+Write-Host "Activating the inspected closure $candidate..."
+Invoke-ManagedDistro -Arguments @(
+    '/run/current-system/sw/bin/nix-env', '--profile', '/nix/var/nix/profiles/system', '--set', $candidate
+)
+Invoke-ManagedDistro -Arguments @("$candidate/bin/switch-to-configuration", 'switch')
+if (-not (Test-DistroPath -Path $ManagedMarker)) {
     throw "NixOS activation completed without creating $ManagedMarker"
 }
 Invoke-ManagedDistro -Arguments @('/run/current-system/sw/bin/rm', '-f', $PendingMarker)
 Invoke-Wsl -Arguments @('--terminate', $DistroName) | Out-Null
 
-Write-Host 'Reconciling native Windows packages from the managed WSL control plane...'
+Write-Host 'Reconciling native Windows packages and the reserved Tern tunnel from the managed WSL control plane...'
 $windowsArguments = @(
     '-d', $DistroName,
     '-u', $Username,
     '--cd', "/home/$Username",
-    '--exec', "/etc/profiles/per-user/$Username/bin/atyrode", 'windows', 'apply'
+    '--exec', $candidateAtyrode, 'windows', 'apply', $HostId
 )
 $status = Invoke-Wsl -Arguments $windowsArguments -AllowFailure
 if ($status -ne 0) {

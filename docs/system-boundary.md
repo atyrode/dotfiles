@@ -46,15 +46,21 @@ The home Windows machine deliberately has two ownership domains:
   WSL supplies public desired state, not a VPN configuration containing keys.
 
 `get.ps1` is the one native bootstrap boundary. Its default action is a
-non-mutating plan. Apply verifies a pinned NixOS-WSL image, refuses to reuse an
-unmarked distribution or non-empty install location, activates an exact Git
-revision, and only then starts native package reconciliation. The activation
-marker at `/etc/atyrode/wsl-host.json` distinguishes the managed distribution
-from an unrelated WSL instance.
+non-mutating plan. Apply requires PowerShell elevated as the Windows account
+that owns or will own the distribution. It refuses to reuse an unmarked
+distribution or non-empty install location. On first install it imports the
+hash-pinned stock NixOS-WSL image, marks it pending, and builds the exact Git
+revision. The candidate checks WinGet and the reserved tunnel through WSL
+interop before any generation is switched. If preflight blocks, the stock
+guest stays pending for a retry without switching generations or changing the
+native packages or tunnel. On success, bootstrap switches the same closure it checked
+and then runs native reconciliation through that closure as `alex`. The
+activation marker at `/etc/atyrode/wsl-host.json` identifies the managed guest,
+not the state of Windows reconciliation.
 
-The two apply phases are intentionally explicit rather than pretending to be
-one transaction. Nix generations can roll back the WSL guest; they cannot roll
-back WinGet. A failed Windows phase therefore reports the exact
+The guest switch and native reconciliation are separate. Nix generations can
+roll back the WSL guest; they cannot roll back Windows state. A failed Windows
+phase therefore reports the exact
 `atyrode windows plan` / `atyrode windows apply` recovery path. Reconciliation
 installs reviewed exact package IDs, but does not silently uninstall a
 conflicting Zen channel.

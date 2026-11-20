@@ -49,6 +49,19 @@ let
     ln -s ${targetAtyrode} "$out/home-path"
   '';
   ternWorkspace = import ../../fleet/tern-workspace.nix;
+  mismatchedWindowsKey = builtins.concatStringsSep "" (builtins.genList (_: "1") 43) + "=";
+  mismatchedWindowsManifest = pkgs.writeText "fixture-mismatched-tern-tunnel.json" (
+    builtins.toJSON {
+      inherit (ternWorkspace) endpoint port serverAddress serverPublicKey;
+      inherit (ternWorkspace.peers.windows) address;
+      expectedPublicKey = mismatchedWindowsKey;
+    }
+  );
+  mismatchedWslLauncher = developmentAtyrode.overrideAttrs (old: {
+    installPhase = old.installPhase + ''
+      install -m0444 ${mismatchedWindowsManifest} "$out/libexec/atyrode/windows/tern-tunnel.json"
+    '';
+  });
   wslCandidate = pkgs.runCommand "fixture-wsl-generation-with-atyrode" { } ''
     mkdir -p "$out/etc/systemd/system" "$out/etc/systemd/user" \
       "$out/etc/profiles/per-user" "$out/etc/atyrode"
@@ -1337,6 +1350,8 @@ pkgs.runCommand "check-atyrode-apply"
 
     # NixOS-WSL switches the guest first; the Windows phase installs packages
     # before applying the reserved Tern tunnel. Stub only the native boundary.
+    before_wsl_candidate="$ATYRODE_TEST_CANDIDATE"
+    export ATYRODE_TEST_CANDIDATE=${wslCandidate}
     native_tunnel="${productionAtyrode}/libexec/atyrode/windows/tern-tunnel.exe"
     ${
       if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then
@@ -1408,23 +1423,34 @@ pkgs.runCommand "check-atyrode-apply"
     set -eu
     [[ $# == 2 && "$1" == /nix/store/*/libexec/atyrode/windows/tern-tunnel.exe ]]
     [[ "$2" == Plan || "$2" == Apply ]]
+    expectedKey='${builtins.toJSON ternWorkspace.peers.windows.publicKey}'
+    if [[ "$1" == '${mismatchedWslLauncher}/libexec/atyrode/windows/tern-tunnel.exe' ]]; then
+      expectedKey='${builtins.toJSON mismatchedWindowsKey}'
+    fi
     jq -e \
       --arg address '${ternWorkspace.peers.windows.address}' \
       --arg serverAddress '${ternWorkspace.serverAddress}' \
       --argjson serverPublicKey '${builtins.toJSON ternWorkspace.serverPublicKey}' \
-      --argjson expectedPublicKey '${builtins.toJSON ternWorkspace.peers.windows.publicKey}' \
+      --argjson expectedPublicKey "$expectedKey" \
       --arg endpoint '${ternWorkspace.endpoint}' --argjson port '${toString ternWorkspace.port}' \
       '. == {$address,$serverAddress,$serverPublicKey,$expectedPublicKey,$endpoint,$port}' \
       "$(dirname -- "$1")/tern-tunnel.json" >/dev/null
     printf '%s %s\n' "$2" "$1" >> "$TUNNEL_LOG"
     status=missing
     if [[ "$2" == Plan ]]; then
-      if [[ -f "$TUNNEL_STATE" ]]; then status=inspect; fi
+      if [[ -f "$TUNNEL_STATE" ]]; then
+        if [[ "$expectedKey" == null || "$expectedKey" == "\"$TUNNEL_PUBLIC_KEY\"" ]]; then
+          status=configured
+        else
+          status=blocked
+        fi
+      fi
+      if [[ "''${TUNNEL_NOT_ELEVATED:-0}" == 1 ]]; then status=inspect; fi
       status="''${TUNNEL_PLAN_STATUS:-$status}"
     else
       [[ -f "$WINGET_STATE/twilight" && -f "$WINGET_STATE/jetbrains-nerd-font" && -f "$WINGET_STATE/wireguard" ]]
       [[ "''${WANT_WSL_SWITCH_FIRST:-0}" == 0 || -s "$TMPDIR/nh-activations" ]]
-      if [[ "''${TUNNEL_NOT_ELEVATED:-0}" == 1 ]]; then
+      if [[ "''${TUNNEL_APPLY_NOT_ELEVATED:-0}" == 1 ]]; then
         status=inspect
       else
         touch "$TUNNEL_STATE"
@@ -1447,6 +1473,7 @@ pkgs.runCommand "check-atyrode-apply"
       and .host == "wsl"
       and .wingetVersion == "v1.11.510"
       and .ready
+      and .canApply
       and (.converged | not)
       and .changes == 3
       and (.packages | length) == 3
@@ -1503,6 +1530,46 @@ pkgs.runCommand "check-atyrode-apply"
     test ! -e "$WINGET_STATE/wireguard"
     test ! -e "$TUNNEL_STATE"
     grep -q '^Apply ' "$TUNNEL_LOG" && false
+
+    # Fresh Windows state is readable without elevation, but no mutation is
+    # permitted. Test both standalone Windows apply and a copied closure.
+    : > "$TUNNEL_LOG"
+    rm -f "$TMPDIR/nh-activations"
+    fresh_inspect="$(TUNNEL_NOT_ELEVATED=1 atyrode windows plan wsl --json)"
+    jq -e '.ready and (.canApply | not) and .tunnel.status == "inspect"' <<<"$fresh_inspect" >/dev/null
+    fresh_apply_plan="$(TUNNEL_NOT_ELEVATED=1 atyrode apply wsl --repo "$HOME/nix-dotfiles" --plan --json)"
+    jq -e '.windowsPlan.ready and (.windowsPlan.canApply | not)
+      and .windowsPlan.tunnel.status == "inspect"' <<<"$fresh_apply_plan" >/dev/null
+    set +e
+    inspect_only="$(TUNNEL_NOT_ELEVATED=1 atyrode apply wsl --candidate ${wslCandidate} --json)"
+    inspect_only_status="$?"
+    inspect_windows="$(TUNNEL_NOT_ELEVATED=1 atyrode windows apply wsl --json)"
+    inspect_windows_status="$?"
+    atyrode apply wsl --candidate ${unknownCandidate} --json > "$TMPDIR/wsl-no-candidate-cli.out" \
+      2> "$TMPDIR/wsl-no-candidate-cli.err"
+    no_candidate_cli_status="$?"
+    _ATYRODE_TEST_HOSTNAME=fixture-linux atyrode windows apply wsl --json \
+      > "$TMPDIR/windows-wrong-host.out" 2> "$TMPDIR/windows-wrong-host.err"
+    wrong_host_status="$?"
+    set -e
+    test "$inspect_only_status" = 69
+    test "$inspect_windows_status" = 69
+    test "$no_candidate_cli_status" = 69
+    test ! -s "$TMPDIR/wsl-no-candidate-cli.out"
+    grep -qF 'has no atyrode executable to preflight native Windows' "$TMPDIR/wsl-no-candidate-cli.err"
+    test "$wrong_host_status" = 65
+    test ! -s "$TMPDIR/windows-wrong-host.out"
+    grep -qF 'host identity does not match' "$TMPDIR/windows-wrong-host.err"
+    jq -e '.source == "closure" and .windowsPlan.tunnel.status == "inspect"
+      and (.windowsPlan.canApply | not) and (has("windowsResult") | not)' <<<"$inspect_only" >/dev/null
+    jq -e '.tunnel.status == "inspect" and (.canApply | not)' <<<"$inspect_windows" >/dev/null
+    grep -Fx "Plan ${targetAtyrode}/libexec/atyrode/windows/tern-tunnel.exe" "$TUNNEL_LOG" >/dev/null
+    test ! -e "$TMPDIR/nh-args"
+    test ! -e "$TMPDIR/nh-activations"
+    test ! -e "$WINGET_STATE/wireguard"
+    test ! -e "$TUNNEL_STATE"
+    grep -q '^Apply ' "$TUNNEL_LOG" && false
+    grep -q '^install ' "$WINGET_LOG" && false
 
     # The machine key is placed before the switch, so the activation that
     # follows can decrypt this machine's vars. clan is stubbed to hand out a
@@ -1600,9 +1667,26 @@ pkgs.runCommand "check-atyrode-apply"
     mv "$TMPDIR/operator-key.saved" "$operator_key"
     rm "$SOPS_CIPHERTEXT"
     unset SOPS_CIPHERTEXT
-    # Placed once: the next apply skips it without asking clan again.
-    rm -f "$TMPDIR/clan-args"
-    atyrode apply wsl --repo "$HOME/nix-dotfiles" --json >/dev/null 2>"$TMPDIR/wsl-apply-placed.err"
+    # The installed CLI has a different expected key and cannot Plan this
+    # identity. A reviewed closure with the corrected manifest can recover
+    # without losing the already-placed machine key or issuing a new identity.
+    old_manifest_plan_status=0
+    old_manifest_plan="$(${mismatchedWslLauncher}/bin/atyrode windows plan wsl --json)" ||
+      old_manifest_plan_status=$?
+    test "$old_manifest_plan_status" = 69
+    jq -e '.tunnel.status == "blocked" and (.canApply | not)' <<<"$old_manifest_plan" >/dev/null
+    : > "$TUNNEL_LOG"
+    rm -f "$TMPDIR/clan-args" "$TMPDIR/nh-activations"
+    matching_apply="$(${mismatchedWslLauncher}/bin/atyrode apply wsl --repo "$HOME/nix-dotfiles" --json \
+      2>"$TMPDIR/wsl-apply-placed.err")"
+    jq -e --arg key "$TUNNEL_PUBLIC_KEY" '
+      .windowsPlan.canApply and .windowsPlan.tunnel.status == "configured"
+      and .windowsPlan.tunnel.publicKey == $key
+      and .windowsResult.nativeConverged and .windowsResult.tunnel.publicKey == $key
+    ' <<<"$matching_apply" >/dev/null
+    grep -Fx "Plan ${targetAtyrode}/libexec/atyrode/windows/tern-tunnel.exe" "$TUNNEL_LOG" >/dev/null
+    grep -qF "${mismatchedWslLauncher}/libexec/atyrode/windows/tern-tunnel.exe" "$TUNNEL_LOG" && false
+    grep -Fx "os switch ${wslCandidate} --diff always" "$TMPDIR/nh-activations" >/dev/null
     test ! -e "$TMPDIR/clan-args"
     # A spoke applies a published revision, not a checkout: the key is read
     # from the flake's fetched tree -- the bytes nh builds -- and never from
@@ -1741,15 +1825,15 @@ pkgs.runCommand "check-atyrode-apply"
     test -f "$WINGET_STATE/twilight"
     test -f "$WINGET_STATE/jetbrains-nerd-font"
     test -f "$WINGET_STATE/wireguard"
-    protected_plan="$(atyrode windows plan wsl --json)"
-    jq -e '.ready and (.nativeConverged | not) and (.converged | not)
+    protected_plan="$(TUNNEL_NOT_ELEVATED=1 atyrode windows plan wsl --json)"
+    jq -e '.ready and (.canApply | not) and (.nativeConverged | not) and (.converged | not)
       and (.enrollmentPending | not) and .tunnel.status == "inspect"
       and .changes == 0 and all(.packages[]; .status == "installed")' <<<"$protected_plan" >/dev/null
     configured_plan="$(TUNNEL_PLAN_STATUS=configured atyrode windows plan wsl --json)"
     jq -e '.ready and .nativeConverged and (.converged | not) and .enrollmentPending
       and .tunnel.status == "configured" and (.tunnel.enrolled | not)' <<<"$configured_plan" >/dev/null
     set +e
-    protected_apply="$(TUNNEL_NOT_ELEVATED=1 atyrode windows apply wsl --json)"
+    protected_apply="$(TUNNEL_APPLY_NOT_ELEVATED=1 atyrode windows apply wsl --json)"
     protected_apply_status="$?"
     set -e
     test "$protected_apply_status" = 70
@@ -1887,6 +1971,7 @@ pkgs.runCommand "check-atyrode-apply"
     grep -qF 'install --id' "$WINGET_LOG" && false
 
     unset ATYRODE_WINGET ATYRODE_TERN_TUNNEL WINGET_LOG WINGET_STATE TUNNEL_LOG TUNNEL_STATE TUNNEL_PUBLIC_KEY _ATYRODE_TEST_WSL
+    export ATYRODE_TEST_CANDIDATE="$before_wsl_candidate"
     export _ATYRODE_TEST_HOSTNAME=fixture-linux
     printf '%s\n' development-x86_64-linux > "$XDG_STATE_HOME/atyrode/dotfiles-config"
 

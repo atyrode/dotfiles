@@ -95,6 +95,7 @@ windows_with_tunnel() {
   jq -c --argjson tunnel "$2" '
     .tunnel = $tunnel
     | .ready = (all(.packages[]; .status != "blocked") and ($tunnel.status != "blocked" and $tunnel.status != "unknown"))
+    | .canApply = (.ready and ($tunnel.status as $status | ["missing","change","configured"] | index($status) != null))
     | .nativeConverged = (all(.packages[]; .status == "installed") and $tunnel.status == "configured")
     | .enrollmentPending = ($tunnel.publicKey != null and
         ($tunnel.status == "configured" or $tunnel.status == "change") and ($tunnel.enrolled | not))
@@ -103,10 +104,15 @@ windows_with_tunnel() {
 }
 
 windows_plan() {
-  local host="$1" data winget winget_version package id name installed status remediation
-  local rows='[]' conflicts conflict_id packages tunnel
+  local host="$1"
   doctor_host "$host" 1 >/dev/null ||
     die "$EX_DATAERR" "host identity does not match the registered NixOS-WSL host $host"
+  windows_inventory_plan "$host"
+}
+
+windows_inventory_plan() { # host, after caller identity check
+  local host="$1" data winget winget_version package id name installed status remediation
+  local rows='[]' conflicts conflict_id packages tunnel
   data="$(host_json "$host")"
   [[ "$(jq -r '.activation' <<<"$data")" == nixos-wsl ]] ||
     die "$EX_USAGE" "Windows reconciliation is owned only by a registered nixos-wsl host"
@@ -177,6 +183,30 @@ windows_emit() {
   if [[ "$2" == 1 ]]; then printf '%s\n' "$1"; else windows_render_plan "$1"; fi
 }
 
+# Unlike context rendering, native readiness cannot be inferred using the
+# launcher's inventory or its pinned tunnel manifest.
+windows_candidate_cli() { # candidate user
+  local program
+  if ! program="$(activated_atyrode "$1" "$2")" || [[ "$program" != "$1/"* ]]; then
+    die "$EX_UNAVAILABLE" "candidate $1 has no atyrode executable to preflight native Windows"
+  fi
+  printf '%s\n' "$program"
+}
+
+windows_candidate_plan() { # candidate-cli host
+  local report status=0
+  report="$("$1" windows plan "$2" --json)" || status=$?
+  # A blocked probe can still explain the refusal. Older CLI releases did
+  # not prove elevation for a fresh tunnel and lack the canApply field.
+  jq -cse --arg host "$2" --argjson status "$status" '
+    select(length == 1) | .[0]
+    | select(.schemaVersion == 2 and .command == "windows plan" and .host == $host
+      and .ready == ($status == 0) and (.canApply | type == "boolean")
+      and (.ready or (.canApply | not)))
+  ' <<<"$report" ||
+    die "$EX_UNAVAILABLE" "candidate Windows preflight did not report native mutation readiness; nothing was activated"
+}
+
 windows_reconcile() {
   local action="$1" host="$2" json="$3" plan winget package id source status version tunnel final
   local -a install_args
@@ -186,7 +216,7 @@ windows_reconcile() {
     jq -e '.ready' <<<"$plan" >/dev/null || return "$EX_UNAVAILABLE"
     return 0
   fi
-  if ! jq -e '.ready' <<<"$plan" >/dev/null; then
+  if ! jq -e '.canApply' <<<"$plan" >/dev/null; then
     windows_emit "$plan" "$json"
     return "$EX_UNAVAILABLE"
   fi
@@ -209,7 +239,7 @@ windows_reconcile() {
       fi
     done < <(jq -c '.packages[] | select(.status != "installed")' <<<"$plan")
     plan="$(windows_plan "$host")"
-    if ! jq -e '.ready and .changes == 0' <<<"$plan" >/dev/null; then
+    if ! jq -e '.canApply and .changes == 0' <<<"$plan" >/dev/null; then
       windows_emit "$plan" "$json"
       return "$EX_UNAVAILABLE"
     fi
@@ -225,6 +255,18 @@ windows_reconcile() {
 
 cmd_windows() {
   local action="${1:-}" requested="" json=0 host
+  # The verified stock guest does not have the managed Linux user or hostname
+  # yet. Its root can inspect native state, never reconcile it via this path.
+  if [[ "$action" == bootstrap-preflight ]]; then
+    [[ $# == 2 && "$2" == --json ]] ||
+      die "$EX_USAGE" "windows bootstrap-preflight requires --json and accepts no host"
+    [[ "$EUID" == 0 ]] || die "$EX_DATAERR" "Windows bootstrap preflight requires guest root"
+    local plan
+    plan="$(windows_inventory_plan wsl)" || return $?
+    printf '%s\n' "$plan"
+    jq -e '.ready' <<<"$plan" >/dev/null || return "$EX_UNAVAILABLE"
+    return 0
+  fi
   case "$action" in
     plan | apply) shift ;;
     *) die "$EX_USAGE" "windows expects plan or apply" ;;

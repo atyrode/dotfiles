@@ -15,7 +15,6 @@ function Invoke-Captured {
         [string[]]$NativeArguments,
         [string]$Step,
         [int]$TimeoutSeconds = 30,
-        [string]$InputLine,
         [switch]$AllowFailure
     )
     $start = [Diagnostics.ProcessStartInfo]::new($File)
@@ -23,7 +22,6 @@ function Invoke-Captured {
     $start.CreateNoWindow = $true
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    $start.RedirectStandardInput = $PSBoundParameters.ContainsKey('InputLine')
     $start.Arguments = ($NativeArguments | ForEach-Object {
         Assert-That ($_ -notmatch '["\r\n]|\\$') 'Unsupported argument to native process.'
         if ($_ -match '\s') { '"' + $_ + '"' } else { $_ }
@@ -37,10 +35,6 @@ function Invoke-Captured {
     try {
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if ($start.RedirectStandardInput) {
-            $process.StandardInput.WriteLine($InputLine)
-            $process.StandardInput.Close()
-        }
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try { $process.Kill() } catch { }
             throw "Acceptance: $Step timed out after $TimeoutSeconds seconds."
@@ -74,6 +68,15 @@ function Get-ServiceProcess {
     try { '{0}:{1}' -f $process.Id, $process.StartTime.ToUniversalTime().Ticks } finally { $process.Dispose() }
 }
 
+function Get-TestPublicKey([string]$PrivateKey) {
+    # Windows PowerShell's native pipeline honors this encoding. A .NET
+    # Framework Process.StandardInput writer can prepend a BOM to wg's input.
+    $OutputEncoding = [Text.Encoding]::ASCII
+    $public = $PrivateKey | & $wg pubkey 2>$null
+    Assert-That ($LASTEXITCODE -eq 0 -and $public -is [string] -and $public -cmatch $publicKeyPattern) 'WireGuard did not derive a public key from ASCII stdin.'
+    $public
+}
+
 function New-TestPeer {
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     $privateBytes = [byte[]]::new(32)
@@ -81,10 +84,7 @@ function New-TestPeer {
         $rng.GetBytes($privateBytes)
         $privateBytes[0] = $privateBytes[0] -band 248
         $privateBytes[31] = ($privateBytes[31] -band 127) -bor 64
-        $result = Invoke-Captured $wg @('pubkey') 'Derive throwaway peer public key' -InputLine ([Convert]::ToBase64String($privateBytes))
-        $key = $result.Stdout.Trim()
-        Assert-That ($key -cmatch $publicKeyPattern) 'WireGuard did not derive a public key.'
-        $key
+        Get-TestPublicKey ([Convert]::ToBase64String($privateBytes))
     } finally {
         [Array]::Clear($privateBytes, 0, $privateBytes.Length)
         $rng.Dispose()
@@ -110,7 +110,9 @@ function Invoke-Tern([string]$Mode, [string]$Step, [switch]$ExpectFailure) {
     if ($ExpectFailure) {
         Assert-That ($result.Code -ne 0) "$Step unexpectedly succeeded (status $($status.status))."
     } else {
-        Assert-That ($result.Code -eq 0) "$Step failed (exit $($result.Code), status $($status.status)); verify the native helper and runner prerequisites."
+        # Only the helper's public diagnostic; never print raw streams or key-shaped values.
+        $detail = $status.detail -replace '[A-Za-z0-9+/=_-]{32,}', '[redacted]' -replace '[\r\n]', ' '
+        Assert-That ($result.Code -eq 0) "$Step failed (exit $($result.Code), status $($status.status)): $detail"
     }
     $status
 }
@@ -170,8 +172,7 @@ function Assert-NoPlaintext([string]$PublicKey) {
         $match = [regex]::Match([Text.Encoding]::UTF8.GetString($plaintext), '(?im)^\s*PrivateKey\s*=\s*([A-Za-z0-9+/]{43}=)\s*$')
         Assert-That $match.Success 'The native DPAPI file did not yield a valid private key in memory.'
         $privateKey = $match.Groups[1].Value
-        $derived = Invoke-Captured $wg @('pubkey') 'Derive public key from the ephemeral DPAPI profile' -InputLine $privateKey
-        Assert-That ($derived.Stdout.Trim() -ceq $PublicKey) 'The DPAPI profile private key did not match the live public key.'
+        Assert-That ((Get-TestPublicKey $privateKey) -ceq $PublicKey) 'The DPAPI profile private key did not match the live public key.'
     } finally {
         if ($null -ne $plaintext) { [Array]::Clear($plaintext, 0, $plaintext.Length) }
         [Array]::Clear($encrypted, 0, $encrypted.Length)

@@ -105,7 +105,8 @@ namespace Atyrode.Windows
                 // Exception messages and native command output may contain protected profile data.
                 string detail = IsDenied(ex)
                     ? "Access denied while " + action + ". Check Windows permissions and administrator access."
-                    : "Windows failed while " + action + ". Check the native WireGuard installation and the reserved service.";
+                    : "Windows failed while " + action + " (" + ex.GetType().Name + ", HRESULT 0x" +
+                      ex.HResult.ToString("X8", CultureInfo.InvariantCulture) + "). Check the native WireGuard installation and the reserved service.";
                 return Report("blocked", detail, exitCode: 1);
             }
         }

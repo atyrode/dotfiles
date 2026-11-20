@@ -68,6 +68,17 @@ function Get-ServiceProcess {
     try { '{0}:{1}' -f $process.Id, $process.StartTime.ToUniversalTime().Ticks } finally { $process.Dispose() }
 }
 
+function Get-ServerRoutes {
+    Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore |
+        Where-Object DestinationPrefix -eq "$serverAddress/32"
+}
+
+function Get-ServerRouteState {
+    (Get-ServerRoutes | ForEach-Object {
+        '{0}|{1}|{2}|{3}|{4}' -f $_.InterfaceIndex, $_.InterfaceAlias, $_.NextHop, $_.RouteMetric, $_.Protocol
+    } | Sort-Object) -join "`n"
+}
+
 function Set-TestManifest {
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestFile -Encoding Ascii
 }
@@ -133,6 +144,77 @@ function Assert-LiveTunnel([string]$PublicKey, [string]$PeerKey) {
         $result = Invoke-Captured $wg @('show', $tunnel, $field) "Read live WireGuard $field"
         Assert-That (($result.Stdout.Trim() -replace '\s+', ' ') -ceq $peerFields[$field]) "Unexpected live WireGuard $field."
     }
+}
+
+function New-IsolatedAliasProfile([string]$Path, [string]$Name) {
+    # WireGuard checks the DPAPI description against the tunnel basename.
+    # Generate the key and seal the fixture before anything is written to disk.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+
+public static class TernAliasProfileFixture
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Blob
+    {
+        internal int Size;
+        internal IntPtr Data;
+    }
+
+    [DllImport("crypt32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptProtectData(ref Blob input, string description, IntPtr entropy,
+        IntPtr reserved, IntPtr prompt, uint flags, out Blob output);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    public static void Write(string path, string name)
+    {
+        const string header = "[Interface]\nPrivateKey = ";
+        var key = new byte[32];
+        var base64 = new char[44];
+        var config = new byte[header.Length + base64.Length + 1];
+        GCHandle pin = GCHandle.Alloc(config, GCHandleType.Pinned);
+        Blob output = new Blob();
+        try
+        {
+            using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+                random.GetBytes(key);
+            key[0] &= 248;
+            key[31] = (byte)((key[31] & 127) | 64);
+            Convert.ToBase64CharArray(key, 0, key.Length, base64, 0);
+            Encoding.ASCII.GetBytes(header, 0, header.Length, config, 0);
+            Encoding.ASCII.GetBytes(base64, 0, base64.Length, config, header.Length);
+            config[config.Length - 1] = (byte)'\n';
+
+            var input = new Blob { Size = config.Length, Data = pin.AddrOfPinnedObject() };
+            const uint uiForbidden = 1, localMachine = 4;
+            if (!CryptProtectData(ref input, name, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                uiForbidden | localMachine, out output))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var encrypted = new byte[output.Size];
+            Marshal.Copy(output.Data, encrypted, 0, encrypted.Length);
+            File.WriteAllBytes(path, encrypted);
+        }
+        finally
+        {
+            Array.Clear(key, 0, key.Length);
+            Array.Clear(base64, 0, base64.Length);
+            Array.Clear(config, 0, config.Length);
+            pin.Free();
+            if (output.Data != IntPtr.Zero)
+                LocalFree(output.Data);
+        }
+    }
+}
+'@
+    [TernAliasProfileFixture]::Write($Path, $Name)
 }
 
 function Assert-NoPlaintext {
@@ -211,6 +293,7 @@ try {
     $publicKeyPattern = '\A[A-Za-z0-9+/]{43}=\z'
     $streams = [Collections.Generic.List[string]]::new()
     Assert-That (-not (Test-Path -LiteralPath $store) -and $null -eq (Get-ReservedService)) 'The reserved service or profile store predates this test; refusing to touch it.'
+    Assert-That ($null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue)) 'A reserved adapter predates this test; refusing to touch it.'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'WireGuard')) -and
         $null -eq (Get-Service -Name 'WireGuardManager' -ErrorAction SilentlyContinue)) 'WireGuard is already present; refusing to use pre-existing WireGuard state.'
     $ownsReserved = $true
@@ -268,6 +351,32 @@ try {
     }
     Set-TestManifest
 
+    $phase = 'refuse an existing stopped foreign service without replacing it'
+    Write-Host $phase
+    # The test service has nothing executable to start, even if a regression tries.
+    $foreignImage = '"{0}"' -f (Join-Path $scratch 'nonexistent-foreign-service.exe')
+    New-Service -Name $serviceName -BinaryPathName $foreignImage -StartupType Manual -Description 'Tern acceptance foreign service' |
+        ForEach-Object { $_.Dispose() }
+    try {
+        $foreign = Get-ReservedService
+        Assert-That ($null -ne $foreign -and $foreign.State -eq 'Stopped' -and $foreign.PathName -ceq $foreignImage) 'The foreign service fixture was not installed as stopped.'
+        foreach ($mode in @('Plan', 'Apply')) {
+            $blocked = Invoke-Tern $mode "$mode with stopped foreign service" -ExpectFailure
+            Assert-That ($blocked.status -ceq 'blocked' -and -not $blocked.enrolled -and $null -eq $blocked.publicKey -and
+                $blocked.detail -like '*foreign executable, profile, or identity*') "$mode did not report foreign service ownership."
+            $service = Get-ReservedService
+            Assert-That ($null -ne $service -and $service.State -eq 'Stopped' -and $service.ProcessId -eq 0 -and
+                $service.ExitCode -eq $foreign.ExitCode -and $service.PathName -ceq $foreign.PathName -and
+                $service.StartMode -ceq $foreign.StartMode -and $service.StartName -ceq $foreign.StartName -and
+                $service.Description -ceq $foreign.Description) "$mode changed or attempted to start the stopped foreign service."
+            Assert-That (-not (Test-Path -LiteralPath $store) -and @(Get-ServerRoutes).Count -eq 0 -and
+                $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue)) "$mode created a protected store, reserved adapter or server route."
+        }
+    } finally {
+        $null = Invoke-Captured $sc @('delete', $serviceName) 'Remove the stopped service fixture'
+        Wait-Until 'Stopped service fixture removal' { $null -eq (Get-ReservedService) }
+    }
+
     $phase = 'fresh read-only plan and native provisioning'
     Write-Host $phase
     $stagedBeforePlan = @(Get-ChildItem -LiteralPath $scratch -Recurse -Force -File | Sort-Object FullName | Get-FileHash | ForEach-Object { "$($_.Path) $($_.Hash)" }) -join "`n"
@@ -301,20 +410,125 @@ try {
     Assert-That ((Get-FileHash -LiteralPath $profilePath).Hash -ceq $originalHash -and (Get-ServiceProcess) -eq $originalProcess) 'Plan, no-op apply or mismatched identity altered the encrypted config or restarted the service.'
     Assert-LiveTunnel $identity $peer
 
-    $phase = 'reenroll the server peer without rotating client identity'
-    Write-Host $phase
     $manifest.expectedPublicKey = $identity
     $manifest.serverPublicKey = $newPeer
     Set-TestManifest
+
+    $phase = 'refuse a conflicting server /32 without changing the live tunnel'
+    Write-Host $phase
+    # Add only an ActiveStore route via the runner's existing IPv4 gateway.
+    # The higher metric leaves the live Tern /32 preferred; the default is untouched.
+    $gatewayRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -AddressFamily IPv4 -PolicyStore ActiveStore |
+        Where-Object { $_.InterfaceAlias -ine $tunnel -and $_.NextHop -ne '0.0.0.0' } |
+        Sort-Object RouteMetric, InterfaceIndex, NextHop | Select-Object -First 1
+    Assert-That ($null -ne $gatewayRoute) 'The hosted runner has no separate IPv4 gateway interface for a route fixture.'
+    $originalRoutes = Get-ServerRouteState
+    $originalProfileAcl = (Get-Acl -LiteralPath $profilePath).Sddl
+    $conflict = New-NetRoute -DestinationPrefix "$serverAddress/32" -InterfaceIndex $gatewayRoute.InterfaceIndex `
+        -NextHop $gatewayRoute.NextHop -RouteMetric 60000 -PolicyStore ActiveStore
+    try {
+        Assert-That (@(Get-ServerRoutes | Where-Object InterfaceIndex -eq $gatewayRoute.InterfaceIndex).Count -eq 1) 'The conflicting /32 was not present on the separate interface.'
+        $conflictingRoutes = Get-ServerRouteState
+        foreach ($mode in @('Plan', 'Apply')) {
+            $blocked = Invoke-Tern $mode "$mode with conflicting server route" -ExpectFailure
+            Assert-That ($blocked.status -ceq 'blocked' -and -not $blocked.enrolled -and $null -eq $blocked.publicKey -and
+                $blocked.detail -like '*Another adapter*Tern server /32 route*') "$mode did not report the conflicting /32."
+            Assert-That ((Get-ServerRouteState) -ceq $conflictingRoutes -and
+                (Get-FileHash -LiteralPath $profilePath).Hash -ceq $originalHash -and
+                (Get-Acl -LiteralPath $profilePath).Sddl -ceq $originalProfileAcl -and
+                (Get-ServiceProcess) -ceq $originalProcess) "$mode changed the routes, protected profile or running service."
+            Assert-LiveTunnel $identity $peer
+        }
+    } finally {
+        Remove-NetRoute -InputObject $conflict -Confirm:$false
+    }
+    Assert-That ((Get-ServerRouteState) -ceq $originalRoutes) 'Removing the fixture did not restore the original server route state.'
+
+    $phase = 'reenroll the server peer without rotating client identity'
+    Write-Host $phase
     $changed = Invoke-Tern Plan 'Changed peer plan'
-    Assert-That ($changed.status -eq 'change' -and (Get-FileHash -LiteralPath $profilePath).Hash -ceq $originalHash -and
-        (Get-ServiceProcess) -eq $originalProcess) 'Changed peer plan did not report drift, or it changed managed state.'
+    Assert-That ($changed.status -eq 'change' -and $changed.enrolled -and $changed.publicKey -ceq $identity -and
+        (Get-FileHash -LiteralPath $profilePath).Hash -ceq $originalHash -and (Get-Acl -LiteralPath $profilePath).Sddl -ceq $originalProfileAcl -and
+        (Get-ServiceProcess) -ceq $originalProcess -and (Get-ServerRouteState) -ceq $originalRoutes) 'Changed peer plan did not report enrolled drift, or it changed managed state.'
+    Assert-LiveTunnel $identity $peer
     $updated = Invoke-Tern Apply 'Apply changed peer'
     Assert-That ($updated.status -eq 'configured' -and $updated.enrolled -and $updated.publicKey -ceq $identity) 'Reapplying the server peer did not preserve the enrolled client identity.'
     Assert-OwnedProfile
     Assert-LiveTunnel $identity $newPeer
     $updatedHash = (Get-FileHash -LiteralPath $profilePath).Hash
     Assert-That ($updatedHash -cne $originalHash) 'The server peer changed only at runtime, not in the encrypted config.'
+
+    $phase = 'stage the owned stopped service without removing its SCM registration'
+    Write-Host $phase
+    $serviceMarker = 'Tern acceptance stopped service canary'
+    $null = Invoke-Captured $sc @('description', $serviceName, $serviceMarker) 'Mark the reserved service registration'
+    $null = Invoke-Captured $sc @('stop', $serviceName) 'Stop the reserved tunnel before native Apply'
+    Wait-Until 'Owned service stopped and adapter removed' {
+        $service = Get-ReservedService
+        $null -ne $service -and $service.State -eq 'Stopped' -and $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue)
+    }
+    Assert-That ((Get-ReservedService).Description -ceq $serviceMarker) 'The stopped service fixture lost its registration marker.'
+
+    $phase = 'reject a foreign WireGuard adapter at the reserved alias'
+    Write-Host $phase
+    $aliasName = 'wg-alias-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+    $aliasServiceName = 'WireGuardTunnel$' + $aliasName
+    $aliasServiceFilter = "Name='$aliasServiceName'"
+    $aliasProfile = Join-Path $scratch "$aliasName.conf.dpapi"
+    Assert-That ($null -eq (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5) -and
+        $null -eq (Get-NetAdapter -Name $aliasName -IncludeHidden -ErrorAction SilentlyContinue)) 'The isolated WireGuard fixture name is not free.'
+    # No address, peer, DNS, or routes are configured; rename only this test-owned adapter.
+    New-IsolatedAliasProfile $aliasProfile $aliasName
+    $aliasHash = (Get-FileHash -LiteralPath $aliasProfile).Hash
+    $stoppedProfileAcl = (Get-Acl -LiteralPath $profilePath).Sddl
+    $aliasGuid = $null
+    try {
+        $null = Invoke-Captured $wireguard @('/installtunnelservice', $aliasProfile) 'Install the isolated alias fixture'
+        Wait-Until 'Isolated alias fixture is running' {
+            $service = Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5
+            $null -ne $service -and $service.State -eq 'Running' -and
+                $null -ne (Get-NetAdapter -Name $aliasName -ErrorAction SilentlyContinue)
+        }
+        $aliasPid = (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5).ProcessId
+        $aliasAdapter = Get-NetAdapter -Name $aliasName
+        $aliasGuid = $aliasAdapter.InterfaceGuid
+        Rename-NetAdapter -InputObject $aliasAdapter -NewName $tunnel
+        Wait-Until 'Test-owned adapter occupies the reserved alias' {
+            $adapter = Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue
+            $null -ne $adapter -and $adapter.InterfaceGuid -eq $aliasGuid
+        }
+        foreach ($mode in @('Plan', 'Apply')) {
+            $blocked = Invoke-Tern $mode "$mode with foreign adapter alias" -ExpectFailure
+            Assert-That ($blocked.status -ceq 'blocked' -and -not $blocked.enrolled -and $null -eq $blocked.publicKey -and
+                $blocked.detail -like '*foreign adapter*reserved Tern name*') "$mode did not report foreign adapter ownership."
+            $adapter = Get-NetAdapter -Name $tunnel -IncludeHidden
+            $aliasService = Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5
+            $service = Get-ReservedService
+            Assert-That ($adapter.InterfaceGuid -eq $aliasGuid -and $aliasService.State -eq 'Running' -and
+                $aliasService.ProcessId -eq $aliasPid -and $service.State -eq 'Stopped' -and $service.Description -ceq $serviceMarker) "$mode changed the foreign adapter or either service."
+            Assert-That (@(Get-ServerRoutes).Count -eq 0 -and (Get-FileHash -LiteralPath $aliasProfile).Hash -ceq $aliasHash -and
+                (Get-FileHash -LiteralPath $profilePath).Hash -ceq $updatedHash -and
+                (Get-Acl -LiteralPath $profilePath).Sddl -ceq $stoppedProfileAcl) "$mode changed a profile or installed a server route."
+        }
+    } finally {
+        if ($null -ne (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5)) {
+            $null = Invoke-Captured $wireguard @('/uninstalltunnelservice', $aliasName) 'Uninstall the isolated alias fixture'
+        }
+        Wait-Until 'Isolated alias fixture removed' {
+            $null -eq (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5) -and
+                ($null -eq $aliasGuid -or @(Get-NetAdapter -IncludeHidden | Where-Object InterfaceGuid -eq $aliasGuid).Count -eq 0)
+        }
+        Remove-Item -LiteralPath $aliasProfile
+    }
+
+    $phase = 'reuse the owned stopped service without replacing its SCM registration'
+    Write-Host $phase
+    $resumed = Invoke-Tern Apply 'Apply with owned stopped service'
+    Assert-That ($resumed.status -ceq 'configured' -and $resumed.enrolled -and $resumed.publicKey -ceq $identity) 'Apply did not restart the existing tunnel with its enrolled identity.'
+    Assert-LiveTunnel $identity $newPeer
+    Assert-OwnedProfile
+    Assert-That ((Get-ReservedService).Description -ceq $serviceMarker -and
+        (Get-FileHash -LiteralPath $profilePath).Hash -ceq $updatedHash) 'Apply replaced the owned stopped service registration or rewrote its protected profile.'
 
     $phase = 'restart from DPAPI with staged inputs unavailable and no reachable peer'
     Write-Host $phase

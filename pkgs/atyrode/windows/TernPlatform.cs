@@ -4,10 +4,12 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Management;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 
@@ -30,9 +32,16 @@ namespace Atyrode.Windows
         private static readonly SecurityIdentifier SystemUser = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         private static readonly SecurityIdentifier Installer = new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
         private static readonly Regex LocalRoot = new Regex(@"\A[A-Za-z]:\\\z", RegexOptions.CultureInvariant);
-        private static readonly Regex WireGuardDescription = new Regex(@"\AWireGuard Tunnel(?: #[0-9]+)?\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        private const string ForeignAdapter = "A foreign adapter already uses the reserved Tern name. It was not modified.";
+        private const string ForeignRoute = "Another adapter already has the Tern server /32 route. It was not modified.";
+        private const string ActiveIPv4 = " AND AddressFamily = 2 AND Store = 1";
         private const string CimNamespace = @"root\StandardCimv2";
         private const AceFlags DirectoryInheritance = AceFlags.ContainerInherit | AceFlags.ObjectInherit;
+        private static readonly DevPropKey WireGuardNameProperty = new DevPropKey
+        {
+            Format = new Guid("65726957-7547-7261-644e-616d654b6579"),
+            Id = 3 // WireGuardNT's DEVPKEY_WireGuard_Name
+        };
 
         internal static bool IsAdmin
         {
@@ -222,49 +231,143 @@ namespace Atyrode.Windows
             return TernService.Open(IsAdmin);
         }
 
-        internal static void AssertAdapterOwnership(TernService service)
+        internal static void AssertNetworkOwnership(TernService service, string serverAddress, Func<bool> matchesProfileKey)
         {
-            int count = 0;
-            foreach (ManagementBaseObject adapter in FindAdapters())
-                if (++count > 1 || service == null || !IsWireGuard(adapter))
-                    throw new TernException("A foreign adapter already uses the reserved Tern name. It was not modified.");
+            ReservedAdapter adapter = ReadReservedAdapter();
+            if (adapter.Index != 0 &&
+                (service == null || service.Status != ServiceControllerStatus.Running || !matchesProfileKey()))
+                throw new TernException(ForeignAdapter);
+            ReadServerHostRoute(serverAddress, adapter.Index);
+        }
+
+        internal static void AssertStartNetworkClear(string serverAddress)
+        {
+            // WireGuard can rename the existing occupant to free an alias. A stopped
+            // service does not authorize that, even if the occupant is a WireGuard NIC.
+            if (ReadReservedAdapter().Index != 0)
+                throw new TernException(ForeignAdapter);
+            ReadServerHostRoute(serverAddress, 0);
         }
 
         internal static bool NetworkHealthy(string address, string serverAddress)
         {
-            uint index = 0;
-            foreach (ManagementBaseObject adapter in FindAdapters())
-            {
-                // IF_OPER_STATUS_UP
-                if (index != 0 || !IsWireGuard(adapter) || !IsNumber(adapter["InterfaceOperationalStatus"], 1))
-                    return false;
-                index = Convert.ToUInt32(adapter["InterfaceIndex"], CultureInfo.InvariantCulture);
-                if (index == 0) return false;
-            }
-            if (index == 0) return false;
+            ReservedAdapter adapter = ReadReservedAdapter();
+            bool hostRoute = ReadServerHostRoute(serverAddress, adapter.Index);
+            if (!adapter.HasAlias || !adapter.Up || !hostRoute) return false;
 
-            // AF_INET = 2; Store = 1 is ActiveStore. The Windows stack also creates its own
-            // multicast/broadcast routes; inspect the reserved server host route, not those.
-            string ipv4 = " WHERE InterfaceIndex = " + index.ToString(CultureInfo.InvariantCulture) +
-                " AND AddressFamily = 2 AND Store = 1";
-            string destination = serverAddress + "/32";
+            string ipv4 = " WHERE InterfaceIndex = " + adapter.Index.ToString(CultureInfo.InvariantCulture) + ActiveIPv4;
             return ExactlyOne(Query("SELECT IPAddress, PrefixLength FROM MSFT_NetIPAddress" + ipv4),
                     row => (string)row["IPAddress"] == address && IsNumber(row["PrefixLength"], 32)) &&
                 ExactlyOne(Query("SELECT Forwarding FROM MSFT_NetIPInterface" + ipv4), row => IsNumber(row["Forwarding"], 0)) &&
-                ExactlyOne(Query("SELECT NextHop FROM MSFT_NetRoute" + ipv4 + " AND DestinationPrefix = '" + destination + "'"),
-                    row => (string)row["NextHop"] == "0.0.0.0");
+                IsBestRoute(serverAddress, adapter.Index);
         }
 
-        private static bool IsWireGuard(ManagementBaseObject adapter)
+        private static bool ReadServerHostRoute(string serverAddress, uint ownedIndex)
         {
-            return WireGuardDescription.IsMatch((string)adapter["InterfaceDescription"] ?? "");
+            // Match globally, not only on the expected NIC. Even a competing /32 of
+            // lower priority is a conflict. Broader routes do not claim this host route.
+            bool found = false, uniqueOnLink = false;
+            foreach (ManagementBaseObject row in Query("SELECT InterfaceIndex, NextHop FROM MSFT_NetRoute" +
+                " WHERE DestinationPrefix = '" + serverAddress + "/32'" + ActiveIPv4))
+            {
+                if (ownedIndex == 0 || !IsNumber(row["InterfaceIndex"], ownedIndex))
+                    throw new TernException(ForeignRoute);
+                uniqueOnLink = !found && (string)row["NextHop"] == "0.0.0.0";
+                found = true;
+            }
+            return uniqueOnLink;
         }
 
-        private static IEnumerable<ManagementBaseObject> FindAdapters()
+        private static bool IsBestRoute(string serverAddress, uint ownedIndex)
         {
-            // Unlike Get-NetAdapter's default view, the provider query includes hidden adapters.
-            return Query("SELECT InterfaceDescription, InterfaceIndex, InterfaceOperationalStatus FROM MSFT_NetAdapter WHERE Name = '" + Tunnel + "'");
+            // GetBestRoute is an unbound IPv4 lookup; do not force the tunnel as the source.
+            uint destination = BitConverter.ToUInt32(IPAddress.Parse(serverAddress).GetAddressBytes(), 0);
+            IPv4Route route;
+            return GetBestRoute(destination, 0, out route) == 0 &&
+                route.Index == ownedIndex && route.Destination == destination &&
+                route.Mask == UInt32.MaxValue && route.NextHop == 0;
         }
+
+        private struct ReservedAdapter
+        {
+            internal uint Index;
+            internal bool HasAlias, Up;
+        }
+
+        private static ReservedAdapter ReadReservedAdapter()
+        {
+            var result = new ReservedAdapter();
+            // Include hidden adapters, and identify the kernel adapter by the same
+            // WireGuard device property wg.exe uses, not by the cosmetic interface description.
+            foreach (ManagementBaseObject row in Query(
+                "SELECT Name, PnPDeviceID, InterfaceIndex, InterfaceOperationalStatus FROM MSFT_NetAdapter"))
+            {
+                bool alias = String.Equals((string)row["Name"], Tunnel, StringComparison.OrdinalIgnoreCase);
+                string deviceName = WireGuardDeviceName((string)row["PnPDeviceID"]);
+                bool wireGuardName = String.Equals(deviceName, Tunnel, StringComparison.OrdinalIgnoreCase);
+                if (!alias && !wireGuardName) continue;
+                if (result.Index != 0 || !String.Equals(deviceName, Tunnel, StringComparison.Ordinal))
+                    throw new TernException(ForeignAdapter);
+
+                result.Index = Convert.ToUInt32(row["InterfaceIndex"], CultureInfo.InvariantCulture);
+                if (result.Index == 0) throw new TernException(ForeignAdapter);
+                result.HasAlias = alias;
+                result.Up = IsNumber(row["InterfaceOperationalStatus"], 1); // IF_OPER_STATUS_UP
+            }
+            if (!result.HasAlias)
+            {
+                // Independently check the alias lookup WireGuardNT uses to find an
+                // incumbent to rename, including any alias missing from the CIM view.
+                ulong ignored;
+                int error = ConvertInterfaceAliasToLuid(Tunnel, out ignored);
+                if (error == 0) throw new TernException(ForeignAdapter);
+                // FILE_NOT_FOUND, INVALID_PARAMETER (unknown alias), NOT_FOUND.
+                if (error != 2 && error != 87 && error != 1168) throw new Win32Exception(error);
+            }
+            return result;
+        }
+
+        private static string WireGuardDeviceName(string deviceId)
+        {
+            if (deviceId == null || !deviceId.StartsWith(@"SWD\WireGuard\", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            uint device;
+            if (CM_Locate_DevNodeW(out device, deviceId, 0) != 0) return null;
+            DevPropKey key = WireGuardNameProperty;
+            var name = new StringBuilder(128); // WireGuardNT's MAX_ADAPTER_NAME
+            uint bytes = (uint)name.Capacity * sizeof(char), type;
+            return CM_Get_DevNode_PropertyW(device, ref key, out type, name, ref bytes, 0) == 0 &&
+                type == 0x12 ? name.ToString() : null; // DEVPROP_TYPE_STRING
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DevPropKey
+        {
+            internal Guid Format;
+            internal uint Id;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IPv4Route
+        {
+            // MIB_IPFORWARDROW
+            internal uint Destination, Mask, Policy, NextHop, Index, Type, Protocol, Age, NextHopAs;
+            internal uint Metric1, Metric2, Metric3, Metric4, Metric5;
+        }
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint CM_Locate_DevNodeW(out uint device, string deviceId, uint flags);
+
+        [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint CM_Get_DevNode_PropertyW(uint device, ref DevPropKey key, out uint type,
+            [Out] StringBuilder value, ref uint size, uint flags);
+
+        [DllImport("iphlpapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int ConvertInterfaceAliasToLuid(string name, out ulong luid);
+
+        [DllImport("iphlpapi.dll", ExactSpelling = true)]
+        private static extern uint GetBestRoute(uint destination, uint source, out IPv4Route route);
 
         private static IEnumerable<ManagementBaseObject> Query(string query)
         {
@@ -294,12 +397,13 @@ namespace Atyrode.Windows
     internal sealed class TernService : IDisposable
     {
         private const string Name = "WireGuardTunnel$" + TernPlatform.Tunnel;
-        private const uint ScManagerConnect = 0x0001;
+        private const uint ScManagerConnect = 0x0001, ScManagerCreateService = 0x0002;
         private const uint ServiceQueryConfig = 0x0001, ServiceChangeConfig = 0x0002, ServiceQueryStatus = 0x0004;
-        private const uint ServiceStart = 0x0010, ServiceStop = 0x0020;
-        private const uint ServiceWin32OwnProcess = 0x0010, ServiceAutoStart = 2, ServiceNoChange = 0xffffffff;
-        private const uint ServiceControlStop = 1;
-        private const int ErrorServiceDoesNotExist = 1060;
+        private const uint ServiceStart = 0x0010, ServiceStop = 0x0020, Delete = 0x00010000;
+        private const uint ServiceWin32OwnProcess = 0x0010, ServiceAutoStart = 2, ServiceDemandStart = 3, ServiceNoChange = 0xffffffff;
+        private const uint ServiceControlStop = 1, ServiceErrorNormal = 1;
+        private const uint ServiceConfigSidInfo = 5, ServiceSidTypeUnrestricted = 1;
+        private const int ErrorServiceDoesNotExist = 1060, ErrorServiceMarkedForDelete = 1072, ErrorServiceExists = 1073;
         private const string TunnelVerb = " /tunnelservice ";
         private static readonly string ExecutableArgument = ServiceArgument(TernPlatform.WireGuard);
         private static readonly string ExpectedImage = ExecutableArgument + TunnelVerb + ServiceArgument(TernPlatform.ProfilePath);
@@ -330,13 +434,47 @@ namespace Atyrode.Windows
             var result = new TernService(service);
             try
             {
-                result.Automatic = result.ReadOwnedStartType() == ServiceAutoStart;
+                result.Automatic = result.VerifyAutomatic();
                 return result;
             }
             catch
             {
                 result.Dispose();
                 throw;
+            }
+        }
+
+        internal static TernService Create()
+        {
+            using (ServiceHandle manager = OpenSCManagerW(null, null, ScManagerCreateService))
+            {
+                if (manager.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+
+                // Match WireGuard's InstallTunnel settings, except defer boot startup until
+                // after the explicit, network-checked Start. Dependencies are a UTF-16 MULTI_SZ.
+                ServiceHandle service = CreateServiceW(manager, Name, "WireGuard Tunnel: " + TernPlatform.Tunnel,
+                    ServiceQueryConfig | ServiceQueryStatus | ServiceChangeConfig | ServiceStart | Delete,
+                    ServiceWin32OwnProcess, ServiceDemandStart, ServiceErrorNormal, ExpectedImage,
+                    null, IntPtr.Zero, "Nsi\0TcpIp\0\0", null, null);
+                if (service.IsInvalid)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    service.Dispose();
+                    if (error == ErrorServiceExists || error == ErrorServiceMarkedForDelete)
+                        throw new TernException("The reserved service changed during Apply; inspect its state before retrying.");
+                    throw new Win32Exception(error);
+                }
+
+                var info = new ServiceSidInfo { SidType = ServiceSidTypeUnrestricted };
+                if (!ChangeServiceConfig2W(service, ServiceConfigSidInfo, ref info))
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    // Roll back only on the handle returned by successful creation, never by name.
+                    try { DeleteService(service); }
+                    finally { service.Dispose(); }
+                    throw new Win32Exception(error);
+                }
+                return new TernService(service);
             }
         }
 
@@ -366,9 +504,14 @@ namespace Atyrode.Windows
             if (!StartServiceW(handle, 0, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
         }
 
+        internal bool VerifyAutomatic()
+        {
+            return ReadOwnedStartType() == ServiceAutoStart;
+        }
+
         internal void MakeAutomatic()
         {
-            if (ReadOwnedStartType() == ServiceAutoStart)
+            if (VerifyAutomatic())
             {
                 Automatic = true;
                 return;
@@ -433,11 +576,26 @@ namespace Atyrode.Windows
             internal uint ServiceType, CurrentState, ControlsAccepted, Win32ExitCode, ServiceSpecificExitCode, CheckPoint, WaitHint;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ServiceSidInfo
+        {
+            internal uint SidType;
+        }
+
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
         private static extern ServiceHandle OpenSCManagerW(string machineName, string databaseName, uint access);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
         private static extern ServiceHandle OpenServiceW(ServiceHandle manager, string serviceName, uint access);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern ServiceHandle CreateServiceW(ServiceHandle manager, string serviceName, string displayName,
+            uint access, uint serviceType, uint startType, uint errorControl, string binaryPath,
+            string loadOrderGroup, IntPtr tagId, string dependencies, string startName, string password);
+
+        [DllImport("advapi32.dll", ExactSpelling = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool DeleteService(ServiceHandle service);
 
         [DllImport("advapi32.dll", ExactSpelling = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -463,5 +621,9 @@ namespace Atyrode.Windows
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool ChangeServiceConfigW(ServiceHandle service, uint serviceType, uint startType, uint errorControl,
             string binaryPath, string loadOrderGroup, IntPtr tagId, string dependencies, string startName, string password, string displayName);
+
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ChangeServiceConfig2W(ServiceHandle service, uint infoLevel, ref ServiceSidInfo info);
     }
 }

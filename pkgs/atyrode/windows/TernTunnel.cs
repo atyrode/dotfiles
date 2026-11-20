@@ -30,7 +30,6 @@ namespace Atyrode.Windows
         private const string InstallWireGuard = "Install the native Windows WireGuard client before applying the Tern tunnel.";
         private const string MissingIdentity = "The reserved Tern profile is missing but an identity is already expected. Restore the original profile; it will not be replaced.";
         private const string ForeignProfile = "The reserved Tern profile is corrupt or foreign. Restore the original profile rather than replacing its identity.";
-        private const string ServiceChanged = "The reserved service changed during Apply; inspect its state before retrying.";
         private const string VerifyFailed = "The reserved service, adapter IPv4 address, /32 route, or WireGuard peer did not verify. Check the WireGuard log.";
         private static readonly TimeSpan ServiceWait = TimeSpan.FromSeconds(30);
         private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
@@ -66,7 +65,7 @@ namespace Atyrode.Windows
                         bool profile = CheckIdentityPath(desired, service);
                         installed = TernPlatform.WireGuardInstalled();
                         if (admin)
-                            TernPlatform.AssertAdapterOwnership(service);
+                            AssertNetworkOwnership(desired, service, installed);
                         if (!apply)
                             return Plan(desired, service, profile, installed, admin);
                     }
@@ -91,7 +90,7 @@ namespace Atyrode.Windows
                         bool profile = CheckIdentityPath(desired, service);
                         if (!TernPlatform.WireGuardInstalled())
                             throw new TernException(InstallWireGuard);
-                        TernPlatform.AssertAdapterOwnership(service);
+                        AssertNetworkOwnership(desired, service, true);
                         return ReconcileProfile(desired, service, profile, true);
                     }
                 }
@@ -351,13 +350,21 @@ namespace Atyrode.Windows
             return key;
         }
 
+        private static void AssertNetworkOwnership(Desired desired, TernService service, bool wireGuardInstalled)
+        {
+            // Consult the protected profile only when a running adapter claims the name.
+            // A matching device name alone cannot authorize it or exempt its route.
+            TernPlatform.AssertNetworkOwnership(service, desired.ServerAddress,
+                () => wireGuardInstalled && CompareLive("public-key", GetPublicKey(desired, ReadPrivateKey(ReadProfile()))) == Health.Verified);
+        }
+
         private static Health CheckHealth(TernService service, Desired desired, string publicKey)
         {
             if (service == null || service.Status != ServiceControllerStatus.Running || !TernPlatform.NetworkHealthy(desired.Address, desired.ServerAddress))
                 return Health.Drift;
 
             Health result = CompareLive("public-key", publicKey);
-            if (result != Health.Verified) return result;
+            if (result != Health.Verified) return Health.Unreadable; // Never restart on an unproven live identity.
             result = CompareLive("peers", desired.ServerPublicKey);
             if (result != Health.Verified) return result;
             result = CompareLive("allowed-ips", desired.ServerPublicKey + "\t" + desired.ServerAddress + "/32");
@@ -374,12 +381,12 @@ namespace Atyrode.Windows
 
         private static int Plan(Desired desired, TernService service, bool profile, bool installed, bool admin)
         {
+            if (!admin)
+                return Report("inspect", AdminInspection);
             if (!profile)
                 return Report("missing", "The Windows Tern identity is not provisioned. Apply creates a new Windows-local key.");
             if (!installed)
                 return Report("inspect", "Install the native Windows WireGuard client before verifying the protected Tern identity.");
-            if (!admin)
-                return Report("inspect", AdminInspection);
 
             return ReconcileProfile(desired, service, true, false);
         }
@@ -418,6 +425,8 @@ namespace Atyrode.Windows
                     }
                 }
             }
+            if (health != Health.Verified)
+                TernPlatform.AssertStartNetworkClear(desired.ServerAddress);
             if (write)
             {
                 try { TernProfileStore.Write(TernPlatform.ProfilePath, config); }
@@ -430,40 +439,32 @@ namespace Atyrode.Windows
                 TernPlatform.AssertProfile();
             }
 
-            if (service == null)
+            using (TernService created = service == null ? TernService.Create() : null)
             {
-                // The official installer can remove a stopped service of this name. Never invoke it over an existing service.
-                using (TernService current = TernPlatform.ReadService())
-                {
-                    if (current != null)
-                        throw new TernException(ServiceChanged);
-                }
-                if (RunWireGuard(TernPlatform.WireGuard, "/installtunnelservice \"" + TernPlatform.ProfilePath + "\"", 120000) == null)
-                    throw new TernException("Could not install or start the reserved Tern tunnel service. Check the WireGuard log.");
-            }
-            else
-            {
-                if (!service.Automatic)
-                    service.MakeAutomatic();
+                TernService target = service ?? created;
+                if (created == null && !target.Automatic)
+                    target.MakeAutomatic();
                 if (health != Health.Verified)
-                    service.Start();
-            }
-
-            // SCM can announce Running before the adapter and route are available.
-            var timer = Stopwatch.StartNew();
-            do
-            {
-                using (TernService current = TernPlatform.ReadService())
                 {
-                    if (current == null || current.Status == ServiceControllerStatus.Stopped)
-                        break;
-                    TernPlatform.AssertAdapterOwnership(current);
-                    if (current.Automatic && CheckHealth(current, desired, publicKey) == Health.Verified)
-                        return Configured(desired, publicKey);
+                    TernPlatform.AssertStartNetworkClear(desired.ServerAddress);
+                    target.Start();
                 }
-                Thread.Sleep(500);
-            } while (timer.Elapsed < ServiceWait);
-            throw new TernException(VerifyFailed);
+                if (created != null)
+                    target.MakeAutomatic();
+
+                // SCM can announce Running before the adapter and route are available.
+                var timer = Stopwatch.StartNew();
+                do
+                {
+                    bool automatic = target.VerifyAutomatic();
+                    if (target.Status == ServiceControllerStatus.Stopped)
+                        break;
+                    if (automatic && CheckHealth(target, desired, publicKey) == Health.Verified)
+                        return Configured(desired, publicKey);
+                    Thread.Sleep(500);
+                } while (timer.Elapsed < ServiceWait);
+                throw new TernException(VerifyFailed);
+            }
         }
     }
 }

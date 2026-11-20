@@ -9,11 +9,14 @@ let
   inherit (workspace)
     hostname
     interface
+    nativePort
     proxyPort
     serverAddress
     webPort
     ;
   peers = lib.attrValues (lib.filterAttrs (_: peer: peer.publicKey != null) workspace.peers);
+  nativePeers = lib.attrValues (workspace.selectNativePeers workspace.peers);
+  nativeEnabled = nativePeers != [ ];
   peerArgs = lib.concatMap (peer: [
     "peer"
     peer.publicKey
@@ -107,8 +110,8 @@ in
         {
           assertion =
             lib.toInt (toString config.boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start")
-            > lib.max webPort proxyPort;
-          message = "Both private Tern listeners must be in the privileged port range.";
+            > lib.max webPort (lib.max proxyPort (if nativeEnabled then nativePort else 0));
+          message = "Private Tern listeners must be in the privileged port range.";
         }
         {
           assertion = dnsToken.path == "/no-such-path" || dnsToken.path == dnsTokenPath;
@@ -119,7 +122,10 @@ in
       networking.firewall = {
         # Merge at the priority of the reviewed VPS UDP allowlist.
         allowedUDPPorts = lib.mkForce [ workspace.port ];
-        interfaces.${interface}.allowedTCPPorts = [ proxyPort ];
+        interfaces.${interface} = {
+          allowedTCPPorts = [ proxyPort ];
+          allowedUDPPorts = lib.mkIf nativeEnabled [ nativePort ];
+        };
       };
 
       systemd.services.${wireguardService} = {
@@ -181,7 +187,12 @@ in
             iptables -w -t raw -A ${ingressChain} -i ${interface} -s ${peer.address}/32 \
               -d ${serverAddress}/32 -p tcp --dport 443 -j RETURN
           '') peers}
-          iptables -w -t raw -A ${ingressChain} -i ${interface} -j DROP
+          ${
+            lib.concatMapStrings (peer: ''
+              iptables -w -t raw -A ${ingressChain} -i ${interface} -s ${peer.address}/32 \
+                -d ${serverAddress}/32 -p udp --dport ${toString nativePort} -j RETURN
+            '') nativePeers
+          }iptables -w -t raw -A ${ingressChain} -i ${interface} -j DROP
           iptables -w -t raw -A ${ingressChain} -d ${serverAddress}/32 -j DROP
           iptables -w -t raw -I PREROUTING -j ${ingressChain}
 

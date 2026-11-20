@@ -57,8 +57,18 @@ function Wait-Until([string]$Step, [scriptblock]$Condition) {
     throw "Acceptance: $Step did not converge within 45 seconds."
 }
 
+function Get-RunnerService([string]$Name) {
+    # Enumerate successfully before treating a missing match as absence. Let the
+    # local provider use its default timeout, including on the first cold query.
+    Get-CimInstance -ClassName Win32_Service -ErrorAction Stop | Where-Object Name -eq $Name
+}
+
 function Get-ReservedService {
-    Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -OperationTimeoutSec 5
+    Get-RunnerService $serviceName
+}
+
+function Get-RunnerAdapter([string]$Name, [switch]$IncludeHidden) {
+    Get-NetAdapter -IncludeHidden:$IncludeHidden -ErrorAction Stop | Where-Object Name -eq $Name
 }
 
 function Get-ServiceProcess {
@@ -122,10 +132,10 @@ function Assert-LiveTunnel([string]$PublicKey, [string]$PeerKey) {
     Wait-Until 'Running tunnel service, /32 address and server route' {
         $service = Get-ReservedService
         if ($null -eq $service -or $service.State -ne 'Running') { return $false }
-        $addresses = @(Get-NetIPAddress -InterfaceAlias $tunnel -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+        $addresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object InterfaceAlias -eq $tunnel)
         $expectedAddress = @($addresses | Where-Object { $_.IPAddress -eq $manifest.address -and $_.PrefixLength -eq 32 })
         if (-not $expectedAddress -or $addresses.Count -ne $expectedAddress.Count) { return $false }
-        $routes = @(Get-NetRoute -InterfaceAlias $tunnel -AddressFamily IPv4 -PolicyStore ActiveStore -ErrorAction SilentlyContinue)
+        $routes = @(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore -ErrorAction Stop | Where-Object InterfaceAlias -eq $tunnel)
         $serverRoute = @($routes | Where-Object { $_.DestinationPrefix -eq "$($manifest.serverAddress)/32" -and $_.NextHop -eq '0.0.0.0' })
         $defaultRoute = @($routes | Where-Object DestinationPrefix -eq '0.0.0.0/0')
         $serverRoute.Count -gt 0 -and $defaultRoute.Count -eq 0
@@ -270,8 +280,8 @@ try {
     Assert-That ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) 'The hosted runner is not already elevated; this test will not request UAC.'
 
     $phase = 'read deployed IPv4 address and route from the checkout'
-    # Use only the deployed address and route; the peer key and loopback
-    # endpoint below are independent of the fleet.
+    # Read topology only. The test manifest below never reads the fleet peer
+    # inventory or the installed production manifest.
     $networkPath = Join-Path $PSScriptRoot '..\..\fleet\machines\dev-01\tern-network.json'
     $network = Get-Content -LiteralPath $networkPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $clientAddress = $network.clients.windows
@@ -294,9 +304,9 @@ try {
     $publicKeyPattern = '\A[A-Za-z0-9+/]{43}=\z'
     $streams = [Collections.Generic.List[string]]::new()
     Assert-That (-not (Test-Path -LiteralPath $store) -and $null -eq (Get-ReservedService)) 'The reserved service or profile store predates this test; refusing to touch it.'
-    Assert-That ($null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue)) 'A reserved adapter predates this test; refusing to touch it.'
+    Assert-That ($null -eq (Get-RunnerAdapter $tunnel -IncludeHidden)) 'A reserved adapter predates this test; refusing to touch it.'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'WireGuard')) -and
-        $null -eq (Get-Service -Name 'WireGuardManager' -ErrorAction SilentlyContinue)) 'WireGuard is already present; refusing to use pre-existing WireGuard state.'
+        $null -eq (Get-RunnerService 'WireGuardManager')) 'WireGuard is already present; refusing to use pre-existing WireGuard state.'
     $ownsReserved = $true
     $ownsVendorDir = -not (Test-Path -LiteralPath $vendorDir)
     $scratch = Join-Path $env:RUNNER_TEMP ("tern-acceptance-" + [guid]::NewGuid().ToString('N'))
@@ -371,7 +381,7 @@ try {
                 $service.StartMode -ceq $foreign.StartMode -and $service.StartName -ceq $foreign.StartName -and
                 $service.Description -ceq $foreign.Description) "$mode changed or attempted to start the stopped foreign service."
             Assert-That (-not (Test-Path -LiteralPath $store) -and @(Get-ServerRoutes).Count -eq 0 -and
-                $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue)) "$mode created a protected store, reserved adapter or server route."
+                $null -eq (Get-RunnerAdapter $tunnel -IncludeHidden)) "$mode created a protected store, reserved adapter or server route."
         }
     } finally {
         $null = Invoke-Captured $sc @('delete', $serviceName) 'Remove the stopped service fixture'
@@ -466,7 +476,7 @@ try {
     $null = Invoke-Captured $sc @('stop', $serviceName) 'Stop the reserved tunnel before native Apply'
     Wait-Until 'Owned service stopped and adapter removed' {
         $service = Get-ReservedService
-        $null -ne $service -and $service.State -eq 'Stopped' -and $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue)
+        $null -ne $service -and $service.State -eq 'Stopped' -and $null -eq (Get-RunnerAdapter $tunnel -IncludeHidden)
     }
     Assert-That ((Get-ReservedService).Description -ceq $serviceMarker) 'The stopped service fixture lost its registration marker.'
 
@@ -474,10 +484,9 @@ try {
     Write-Host $phase
     $aliasName = 'wg-alias-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
     $aliasServiceName = 'WireGuardTunnel$' + $aliasName
-    $aliasServiceFilter = "Name='$aliasServiceName'"
     $aliasProfile = Join-Path $scratch "$aliasName.conf.dpapi"
-    Assert-That ($null -eq (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5) -and
-        $null -eq (Get-NetAdapter -Name $aliasName -IncludeHidden -ErrorAction SilentlyContinue)) 'The isolated WireGuard fixture name is not free.'
+    Assert-That ($null -eq (Get-RunnerService $aliasServiceName) -and
+        $null -eq (Get-RunnerAdapter $aliasName -IncludeHidden)) 'The isolated WireGuard fixture name is not free.'
     # No address, peer, DNS, or routes are configured; rename only this test-owned adapter.
     New-IsolatedAliasProfile $aliasProfile $aliasName
     $aliasHash = (Get-FileHash -LiteralPath $aliasProfile).Hash
@@ -486,16 +495,16 @@ try {
     try {
         $null = Invoke-Captured $wireguard @('/installtunnelservice', $aliasProfile) 'Install the isolated alias fixture'
         Wait-Until 'Isolated alias fixture is running' {
-            $service = Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5
+            $service = Get-RunnerService $aliasServiceName
             $null -ne $service -and $service.State -eq 'Running' -and
-                $null -ne (Get-NetAdapter -Name $aliasName -ErrorAction SilentlyContinue)
+                $null -ne (Get-RunnerAdapter $aliasName)
         }
-        $aliasPid = (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5).ProcessId
+        $aliasPid = (Get-RunnerService $aliasServiceName).ProcessId
         $aliasAdapter = Get-NetAdapter -Name $aliasName
         $aliasGuid = $aliasAdapter.InterfaceGuid
         Rename-NetAdapter -InputObject $aliasAdapter -NewName $tunnel
         Wait-Until 'Test-owned adapter occupies the reserved alias' {
-            $adapter = Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue
+            $adapter = Get-RunnerAdapter $tunnel -IncludeHidden
             $null -ne $adapter -and $adapter.InterfaceGuid -eq $aliasGuid
         }
         foreach ($mode in @('Plan', 'Apply')) {
@@ -503,7 +512,7 @@ try {
             Assert-That ($blocked.status -ceq 'blocked' -and -not $blocked.enrolled -and $null -eq $blocked.publicKey -and
                 $blocked.detail -like '*foreign adapter*reserved Tern name*') "$mode did not report foreign adapter ownership."
             $adapter = Get-NetAdapter -Name $tunnel -IncludeHidden
-            $aliasService = Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5
+            $aliasService = Get-RunnerService $aliasServiceName
             $service = Get-ReservedService
             Assert-That ($adapter.InterfaceGuid -eq $aliasGuid -and $aliasService.State -eq 'Running' -and
                 $aliasService.ProcessId -eq $aliasPid -and $service.State -eq 'Stopped' -and $service.Description -ceq $serviceMarker) "$mode changed the foreign adapter or either service."
@@ -512,11 +521,11 @@ try {
                 (Get-Acl -LiteralPath $profilePath).Sddl -ceq $stoppedProfileAcl) "$mode changed a profile or installed a server route."
         }
     } finally {
-        if ($null -ne (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5)) {
+        if ($null -ne (Get-RunnerService $aliasServiceName)) {
             $null = Invoke-Captured $wireguard @('/uninstalltunnelservice', $aliasName) 'Uninstall the isolated alias fixture'
         }
         Wait-Until 'Isolated alias fixture removed' {
-            $null -eq (Get-CimInstance -ClassName Win32_Service -Filter $aliasServiceFilter -OperationTimeoutSec 5) -and
+            $null -eq (Get-RunnerService $aliasServiceName) -and
                 ($null -eq $aliasGuid -or @(Get-NetAdapter -IncludeHidden | Where-Object InterfaceGuid -eq $aliasGuid).Count -eq 0)
         }
         Remove-Item -LiteralPath $aliasProfile
@@ -533,7 +542,7 @@ try {
 
     $phase = 'restart from DPAPI with staged inputs unavailable and no reachable peer'
     Write-Host $phase
-    Assert-That ($null -eq (Get-Service -Name 'WireGuardManager' -ErrorAction SilentlyContinue)) 'This restart must not rely on the WireGuard manager service.'
+    Assert-That ($null -eq (Get-RunnerService 'WireGuardManager')) 'This restart must not rely on the WireGuard manager service.'
     $runningProcess = Get-ServiceProcess
     $offline = Join-Path $scratch 'offline'
     $null = New-Item -ItemType Directory -Path $offline
@@ -541,7 +550,7 @@ try {
     $null = Invoke-Captured $sc @('stop', $serviceName) 'Stop the reserved tunnel'
     Wait-Until 'Service stopped and old adapter removed' {
         $service = Get-ReservedService
-        $null -ne $service -and $service.State -eq 'Stopped' -and $null -eq (Get-NetAdapter -Name $tunnel -ErrorAction SilentlyContinue)
+        $null -ne $service -and $service.State -eq 'Stopped' -and $null -eq (Get-RunnerAdapter $tunnel -IncludeHidden)
     }
     $null = Invoke-Captured $sc @('start', $serviceName) 'Start the reserved tunnel through SCM'
     Assert-LiveTunnel $identity $newPeer
@@ -566,7 +575,7 @@ try {
     $null = Invoke-Captured $wireguard @('/uninstalltunnelservice', $tunnel) 'Uninstall the reserved tunnel before MSI removal'
     Wait-Until 'Reserved service and adapter removed before MSI removal' {
         $null -eq (Get-ReservedService) -and
-            $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue) -and
+            $null -eq (Get-RunnerAdapter $tunnel -IncludeHidden) -and
             @(Get-ServerRoutes).Count -eq 0
     }
     $null = Invoke-Captured $msiexec @('/x', $msi, '/quiet', '/norestart') 'Uninstall WireGuard MSI' -TimeoutSeconds 180
@@ -589,14 +598,17 @@ try {
     }
     Assert-That ((Get-FileHash -LiteralPath $profilePath).Hash -ceq $updatedHash -and
         (Get-Acl -LiteralPath $profilePath).Sddl -ceq $retainedAcl -and $null -eq (Get-ReservedService) -and
-        $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue) -and
+        $null -eq (Get-RunnerAdapter $tunnel -IncludeHidden) -and
         @(Get-ServerRoutes).Count -eq 0) 'Plan changed the retained encrypted identity or reinstated tunnel state.'
     Assert-NoPlaintext
 } catch {
     $failed = $true
     # Never render exception details from native commands, decryption or JSON parsing.
     $message = if ($_.Exception.Message.StartsWith('Acceptance: ')) { $_.Exception.Message } else {
-        "Unexpected $($_.Exception.GetType().Name) at acceptance script line $($_.InvocationInfo.ScriptLineNumber)."
+        $code = if ($_.Exception -is [Microsoft.Management.Infrastructure.CimException]) {
+            " (CIM status $($_.Exception.NativeErrorCode), HRESULT $('0x{0:X8}' -f $_.Exception.HResult))"
+        }
+        "Unexpected $($_.Exception.GetType().Name)$code at acceptance script line $($_.InvocationInfo.ScriptLineNumber)."
     }
     Write-Error -ErrorAction Continue "Phase '$phase' failed. $message"
 } finally {

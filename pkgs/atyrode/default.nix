@@ -45,6 +45,8 @@
   # contents never enter the diagnostic inventory.
   varsDirectory ? ../../vars,
   stdenvNoCC,
+  # Checks can package an independent peer inventory without changing runtime validation.
+  ternWorkspace ? import ../../fleet/tern-workspace.nix,
   tmux,
   windowsPackages,
   writeShellApplication,
@@ -87,7 +89,6 @@ let
   # Keep the native helper in that platform's CLI package for conformance too.
   buildsTernTunnel = stdenvNoCC.hostPlatform.system == "x86_64-linux";
   ternTunnel = callPackage ./windows { };
-  ternWorkspace = import ../../fleet/tern-workspace.nix;
   ternTunnelManifest = builtins.toFile "atyrode-tern-tunnel.json" (
     builtins.toJSON {
       inherit (ternWorkspace)

@@ -7,15 +7,27 @@
 
 let
   fixtures = import ../lib/atyrode-fixtures.nix { inherit pkgs; };
-  developmentAtyrode = atyrode.override { revision = "unknown"; };
-  launcherAtyrode = atyrode.override { revision = "1111111111111111111111111111111111111111"; };
+  liveTopology = import ../../fleet/tern-workspace.nix;
+  withWindowsPublicKey =
+    publicKey:
+    liveTopology
+    // {
+      peers = liveTopology.peers // {
+        windows = liveTopology.peers.windows // { inherit publicKey; };
+      };
+    };
+  # Exercise enrollment pending independently of the fleet's registered peer.
+  ternWorkspace = withWindowsPublicKey null;
+  fixtureAtyrode = atyrode.override { inherit ternWorkspace; };
+  developmentAtyrode = fixtureAtyrode.override { revision = "unknown"; };
+  launcherAtyrode = fixtureAtyrode.override { revision = "1111111111111111111111111111111111111111"; };
   targetPolicy = pkgs.writeText "candidate-personal-policy" ''
     # Candidate personal policy
 
     This fixture deliberately differs from the launcher's embedded policy.
   '';
   targetAtyrode =
-    (atyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; }).overrideAttrs
+    (fixtureAtyrode.override { revision = "feedfacefeedfacefeedfacefeedfacefeedface"; }).overrideAttrs
       (old: {
         installPhase =
           builtins.replaceStrings
@@ -25,7 +37,7 @@ let
             ]
             old.installPhase;
       });
-  publishedKeyAtyrode = atyrode.override {
+  publishedKeyAtyrode = fixtureAtyrode.override {
     sopsDirectory = pkgs.writeTextDir "secrets/fixture-nixos-age.key/secret" "{}";
   };
   serviceGeneration =
@@ -48,25 +60,10 @@ let
     mkdir -p "$out/home-files/.config/systemd/user"
     ln -s ${targetAtyrode} "$out/home-path"
   '';
-  ternWorkspace = import ../../fleet/tern-workspace.nix;
   mismatchedWindowsKey = builtins.concatStringsSep "" (builtins.genList (_: "1") 42) + "0=";
-  mismatchedWindowsManifest = pkgs.writeText "fixture-mismatched-tern-tunnel.json" (
-    builtins.toJSON {
-      inherit (ternWorkspace)
-        endpoint
-        port
-        serverAddress
-        serverPublicKey
-        ;
-      inherit (ternWorkspace.peers.windows) address;
-      expectedPublicKey = mismatchedWindowsKey;
-    }
-  );
-  mismatchedWslLauncher = developmentAtyrode.overrideAttrs (old: {
-    installPhase = old.installPhase + ''
-      install -m0444 ${mismatchedWindowsManifest} "$out/libexec/atyrode/windows/tern-tunnel.json"
-    '';
-  });
+  mismatchedWslLauncher = developmentAtyrode.override {
+    ternWorkspace = withWindowsPublicKey mismatchedWindowsKey;
+  };
   wslCandidate = pkgs.runCommand "fixture-wsl-generation-with-atyrode" { } ''
     mkdir -p "$out/etc/systemd/system" "$out/etc/systemd/user" \
       "$out/etc/profiles/per-user" "$out/etc/atyrode"
@@ -1363,6 +1360,8 @@ pkgs.runCommand "check-atyrode-apply"
         ''
           test "$(stat -c %a "$native_tunnel")" = 555
           test "$(head -c 2 "$native_tunnel")" = MZ
+          jq -e --argjson key '${builtins.toJSON liveTopology.peers.windows.publicKey}' \
+            'has("expectedPublicKey") and .expectedPublicKey == $key' "''${native_tunnel%.exe}.json" >/dev/null
         ''
       else
         ''

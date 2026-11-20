@@ -3,16 +3,8 @@ let
   inherit (pkgs) lib;
   workspace = import ../../fleet/tern-workspace.nix;
   peers = lib.attrValues workspace.peers;
-  # Without enrollment, probe a configured but revoked address, if any.
-  probePeer = lib.findFirst (peer: peer.publicKey != null) (
-    if peers != [ ] then
-      builtins.head peers
-    else
-      {
-        address = "198.51.100.2";
-        publicKey = null;
-      }
-  ) peers;
+  # Without enrollment, probe the configured but denied Mac address.
+  probePeer = lib.findFirst (peer: peer.publicKey != null) workspace.peers.macbook peers;
   inherit (config.systemd.services) tern-workspace-ingress tern-workspace-caddy;
   ingress = pkgs.writeShellScript "tern-workspace-ingress" tern-workspace-ingress.script;
   caddyStart = tern-workspace-caddy.serviceConfig.ExecStart;

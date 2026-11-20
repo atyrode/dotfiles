@@ -1,6 +1,8 @@
 # Only public topology and peer keys belong here. Windows and iPhone generate
 # their private keys in the native WireGuard clients; null means not enrolled.
 let
+  network = builtins.fromJSON (builtins.readFile ./machines/dev-01/tern-network.json);
+
   generatedKey =
     machine:
     let
@@ -19,7 +21,7 @@ in
   endpoint = "dev-01.tyrode.dev";
   interface = "wg-tern";
   port = 51837;
-  serverAddress = "10.219.83.1";
+  inherit (network) serverAddress;
   # Reserved listeners prevent an unrelated VPS user from taking either end
   # of the reverse proxy while a service is restarting.
   webPort = 977;
@@ -27,15 +29,15 @@ in
   serverPublicKey = generatedKey "dev-01";
   peers = {
     macbook = {
-      address = "10.219.83.2";
+      address = network.clients.macbook;
       publicKey = generatedKey "macbook";
     };
     windows = {
-      address = "10.219.83.3";
+      address = network.clients.windows;
       publicKey = null;
     };
     iphone = {
-      address = "10.219.83.4";
+      address = network.clients.iphone;
       publicKey = null;
     };
   };

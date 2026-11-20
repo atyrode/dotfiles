@@ -3,8 +3,23 @@ set -euo pipefail
 umask 077
 ingress=$1 caddyfile=$2 hostname=$3 interface=$4 private=$5 peer=$6 wg_port=$7 web_port=$8 proxy_port=$9
 admission=${10}
-transport=192.0.2.1 other=192.0.2.3 marker=workspace-upstream
+marker=workspace-upstream
 url=https://$hostname
+
+# Give the isolated veth pair and unrelated listener a disjoint underlay.
+underlay=$(
+  python3 - "$private" "$peer" <<'PY'
+from ipaddress import IPv4Address, IPv4Network
+from itertools import islice
+import sys
+
+server, peer = map(IPv4Address, sys.argv[1:])
+pool = IPv4Network(f"{server}/23", strict=False)
+network = next(subnet for subnet in pool.subnets() if server not in subnet and peer not in subnet)
+print(*islice(network.hosts(), 3))
+PY
+)
+read -r transport client_transport other <<<"$underlay"
 
 tmp=$(mktemp -d /tmp/tern-ingress.XXXXXXXX)
 children=()
@@ -55,7 +70,7 @@ ip addr add "$transport/24" dev external
 ip addr add "$other/32" dev lo
 ip link set external up
 client ip link set lo up
-client ip addr add 192.0.2.2/24 dev outside
+client ip addr add "$client_transport/24" dev outside
 client ip link set outside up
 client ip route add "$other/32" via "$transport"
 

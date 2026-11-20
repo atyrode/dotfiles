@@ -68,29 +68,6 @@ function Get-ServiceProcess {
     try { '{0}:{1}' -f $process.Id, $process.StartTime.ToUniversalTime().Ticks } finally { $process.Dispose() }
 }
 
-function Get-TestPublicKey([string]$PrivateKey) {
-    # Windows PowerShell's native pipeline honors this encoding. A .NET
-    # Framework Process.StandardInput writer can prepend a BOM to wg's input.
-    $OutputEncoding = [Text.Encoding]::ASCII
-    $public = $PrivateKey | & $wg pubkey 2>$null
-    Assert-That ($LASTEXITCODE -eq 0 -and $public -is [string] -and $public -cmatch $publicKeyPattern) 'WireGuard did not derive a public key from ASCII stdin.'
-    $public
-}
-
-function New-TestPeer {
-    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-    $privateBytes = [byte[]]::new(32)
-    try {
-        $rng.GetBytes($privateBytes)
-        $privateBytes[0] = $privateBytes[0] -band 248
-        $privateBytes[31] = ($privateBytes[31] -band 127) -bor 64
-        Get-TestPublicKey ([Convert]::ToBase64String($privateBytes))
-    } finally {
-        [Array]::Clear($privateBytes, 0, $privateBytes.Length)
-        $rng.Dispose()
-    }
-}
-
 function Set-TestManifest {
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestFile -Encoding Ascii
 }
@@ -158,7 +135,7 @@ function Assert-LiveTunnel([string]$PublicKey, [string]$PeerKey) {
     }
 }
 
-function Assert-NoPlaintext([string]$PublicKey) {
+function Assert-NoPlaintext {
     # Independently decrypt only our ephemeral profile in memory, without loading
     # the production executable into the acceptance process.
     Add-Type -AssemblyName System.Security
@@ -172,7 +149,8 @@ function Assert-NoPlaintext([string]$PublicKey) {
         $match = [regex]::Match([Text.Encoding]::UTF8.GetString($plaintext), '(?im)^\s*PrivateKey\s*=\s*([A-Za-z0-9+/]{43}=)\s*$')
         Assert-That $match.Success 'The native DPAPI file did not yield a valid private key in memory.'
         $privateKey = $match.Groups[1].Value
-        Assert-That ((Get-TestPublicKey $privateKey) -ceq $PublicKey) 'The DPAPI profile private key did not match the live public key.'
+        # SCM must load this protected file without the provisioner. The cold
+        # restart below verifies its live public identity independently via wg.
     } finally {
         if ($null -ne $plaintext) { [Array]::Clear($plaintext, 0, $plaintext.Length) }
         [Array]::Clear($encrypted, 0, $encrypted.Length)
@@ -207,6 +185,19 @@ try {
         $env:RUNNER_OS -eq 'Windows' -and $env:RUNNER_ARCH -eq 'X64' -and $env:RUNNER_TEMP) 'Run this script only on a disposable GitHub-hosted x64 Windows runner.'
     $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     Assert-That ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) 'The hosted runner is not already elevated; this test will not request UAC.'
+
+    $phase = 'read deployed IPv4 address and route from the checkout'
+    # Use only the deployed address and route; the peer key and loopback
+    # endpoint below are independent of the fleet.
+    $networkPath = Join-Path $PSScriptRoot '..\..\fleet\machines\dev-01\tern-network.json'
+    $network = Get-Content -LiteralPath $networkPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $clientAddress = $network.clients.windows
+    $serverAddress = $network.serverAddress
+    $existingAddresses = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -in @($clientAddress, $serverAddress) })
+    $existingRoutes = @(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore | Where-Object DestinationPrefix -eq "$serverAddress/32")
+    Assert-That ($existingAddresses.Count -eq 0 -and $existingRoutes.Count -eq 0) 'A Tern address or server route already exists on the runner; refusing to provision the test tunnel.'
+
+    $phase = 'verify reserved runner state'
     $msiexec = Join-Path $env:SystemRoot 'System32\msiexec.exe'
     $sc = Join-Path $env:SystemRoot 'System32\sc.exe'
     $wireguard = Join-Path $env:ProgramFiles 'WireGuard\wireguard.exe'
@@ -264,10 +255,12 @@ try {
     $fixtureAcl = (Get-Acl -LiteralPath $fixturePath).Sddl
     $fixture = [IO.File]::Open($fixturePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $managerFiles = @(Get-ChildItem -LiteralPath $managerStore -Force -Name | Sort-Object) -join '|'
-    $peer = New-TestPeer
+    # The disconnected peer needs only a public key. RFC 7748 §6.1 supplies two
+    # real X25519 public vectors; no remote or fleet private key is ever needed.
+    $peer = 'hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo='
     $manifest = [ordered]@{
-        address = '192.0.2.213'
-        serverAddress = '198.51.100.214'
+        address = $clientAddress
+        serverAddress = $serverAddress
         serverPublicKey = $peer
         expectedPublicKey = $null
         endpoint = '127.0.0.1'
@@ -290,7 +283,7 @@ try {
     Assert-LiveTunnel $identity $peer
     $originalHash = (Get-FileHash -LiteralPath $profilePath).Hash
     $originalProcess = Get-ServiceProcess
-    Assert-NoPlaintext $identity
+    Assert-NoPlaintext
 
     $phase = 'approve key, verify no-op and fail closed on identity mismatch'
     Write-Host $phase
@@ -300,8 +293,7 @@ try {
     Assert-That ($plan.status -eq 'configured' -and $plan.enrolled -and $plan.publicKey -ceq $identity) 'Plan did not verify the enrolled identity.'
     $again = Invoke-Tern Apply 'Repeat apply'
     Assert-That ($again.status -eq 'configured' -and $again.enrolled -and $again.publicKey -ceq $identity) 'Repeat apply did not preserve the enrolled identity.'
-    $newPeer = New-TestPeer
-    Assert-That ($newPeer -cne $peer -and $newPeer -cne $identity) 'Throwaway peer unexpectedly reused a public key.'
+    $newPeer = '3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08='
     $manifest.expectedPublicKey = $newPeer
     Set-TestManifest
     $blocked = Invoke-Tern Apply 'Mismatched identity apply' -ExpectFailure
@@ -340,7 +332,7 @@ try {
     Assert-LiveTunnel $identity $newPeer
     Assert-OwnedProfile
     Assert-That ((Get-FileHash -LiteralPath $profilePath).Hash -ceq $updatedHash -and (Get-ServiceProcess) -ne $runningProcess) 'Native restart did not reload the persisted identity and peer unchanged.'
-    Assert-NoPlaintext $identity
+    Assert-NoPlaintext
 
     $phase = 'verify the unrelated manager fixture remained isolated'
     $observed = [byte[]]::new($marker.Length)

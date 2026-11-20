@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/tern-windows.yml
       - checks/fleet/tern-windows.ps1
+      - fleet/machines/dev-01/tern-network.json
+      - fleet/tern-workspace.nix
       - pkgs/atyrode/default.nix
       - pkgs/atyrode/windows/default.nix
       - pkgs/atyrode/windows/TernPlatform.cs
@@ -16,6 +18,8 @@ on:
     paths:
       - .github/workflows/tern-windows.yml
       - checks/fleet/tern-windows.ps1
+      - fleet/machines/dev-01/tern-network.json
+      - fleet/tern-workspace.nix
       - pkgs/atyrode/default.nix
       - pkgs/atyrode/windows/default.nix
       - pkgs/atyrode/windows/TernPlatform.cs

@@ -56,7 +56,12 @@ pkgs.testers.runNixOSTest {
   nodes.machine = {
     imports = [
       (
-        { config, lib, pkgs, ... }:
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
         import ../../modules/nixos/tern-workspace-network.nix {
           inherit config lib pkgs;
           ternWorkspaceFixture = workspace;
@@ -66,16 +71,29 @@ pkgs.testers.runNixOSTest {
         # Provide only the Clan declaration interface; this VM never uses the
         # fleet's SOPS configuration or reads a deployed secret.
         options.clan.core.vars.generators = lib.mkOption {
-          type = lib.types.attrsOf (lib.types.submodule {
-            freeformType = lib.types.attrsOf lib.types.anything;
-            options.files = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; };
-          });
+          type = lib.types.attrsOf (
+            lib.types.submodule {
+              freeformType = lib.types.attrsOf lib.types.anything;
+              options.files = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; };
+            }
+          );
         };
       }
     ];
     clan.core.vars.generators = {
       tern-workspace-wireguard.files.privatekey.path = privateKey;
       tern-workspace-dns.files.api-token.path = dnsToken;
+    };
+    # As on dev-01, networkd has an explicit uplink and no WireGuard netdev.
+    # Only the production oneshot may create the workspace interface.
+    networking.useNetworkd = true;
+    networking.useDHCP = false;
+    systemd.network.netdevs = lib.mkForce { };
+    systemd.network.networks = lib.mkForce {
+      "00-uplink" = {
+        matchConfig.Name = "eth0";
+        networkConfig.DHCP = "ipv4";
+      };
     };
     networking.firewall = {
       enable = true;

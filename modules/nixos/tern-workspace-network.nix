@@ -151,10 +151,10 @@ in
           wg set ${interface} private-key "$CREDENTIALS_DIRECTORY/privatekey" \
             listen-port ${toString workspace.port} ${lib.escapeShellArgs peerArgs}
           ip -4 address add ${serverAddress}/32 dev ${interface}
+          ip link set dev ${interface} up
           ${lib.concatMapStringsSep "\n" (peer: ''
             ip -4 route add ${peer.address}/32 dev ${interface} src ${serverAddress}
           '') peers}
-          ip link set dev ${interface} up
           trap - EXIT
         '';
         preStop = "ip link delete dev ${interface}";

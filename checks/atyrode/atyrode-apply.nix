@@ -52,7 +52,12 @@ let
   mismatchedWindowsKey = builtins.concatStringsSep "" (builtins.genList (_: "1") 43) + "=";
   mismatchedWindowsManifest = pkgs.writeText "fixture-mismatched-tern-tunnel.json" (
     builtins.toJSON {
-      inherit (ternWorkspace) endpoint port serverAddress serverPublicKey;
+      inherit (ternWorkspace)
+        endpoint
+        port
+        serverAddress
+        serverPublicKey
+        ;
       inherit (ternWorkspace.peers.windows) address;
       expectedPublicKey = mismatchedWindowsKey;
     }

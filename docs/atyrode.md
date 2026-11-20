@@ -91,6 +91,10 @@ the server. For setup and updates, open Windows Terminal as Administrator,
 enter the managed WSL distro, and run `atyrode apply wsl`; WSL `sudo` does not
 elevate the Windows token. If only the native phase failed after the switch,
 `atyrode windows apply` retries it without switching WSL again.
+If a retained Tern profile reports `client-missing`, run `atyrode windows apply`
+from that elevated session before retrying the guest switch. It reinstalls
+the declared WireGuard package if WinGet reports it missing, then verifies
+the retained identity before applying any other Windows changes.
 
 ### What the CLI shows while it runs
 

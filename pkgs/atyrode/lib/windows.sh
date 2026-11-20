@@ -76,7 +76,8 @@ windows_tunnel() { # Plan|Apply
     --slurpfile manifest "${windows_tunnel_exe%.exe}.json" '
     if length == 1 then .[0] else empty end
     | select(type == "object" and keys == ["detail","enrolled","publicKey","status"])
-    | select(.status as $status | ["missing","change","configured","inspect","blocked"] | index($status) != null)
+    | select(.status as $status | ["missing","change","configured","inspect","client-missing","blocked"] | index($status) != null)
+    | select(.status != "client-missing" or ($mode == "Plan" and .publicKey == null))
     | select(.detail | type == "string" and length > 0)
     | select(.publicKey == null or (.publicKey | type == "string" and length == 44 and test("^[A-Za-z0-9+/]{43}=$")))
     | select((.enrolled | type == "boolean") and (.status != "configured" or .publicKey != null))
@@ -207,14 +208,46 @@ windows_candidate_plan() { # candidate-cli host
     die "$EX_UNAVAILABLE" "candidate Windows preflight did not report native mutation readiness; nothing was activated"
 }
 
-windows_reconcile() {
-  local action="$1" host="$2" json="$3" plan winget package id source status version tunnel final
+windows_install_package() { # winget package
+  local winget="$1" package="$2" id version
   local -a install_args
+  id="$(jq -r '.id' <<<"$package")"
+  version="$(jq -r '.installVersion // empty' <<<"$package")"
+  install_args=(
+    install --id "$id" --exact --source winget
+    --accept-package-agreements --accept-source-agreements --disable-interactivity
+  )
+  [[ -z "$version" ]] || install_args+=(--version "$version")
+  show_command "$winget" "${install_args[@]}"
+  "$winget" "${install_args[@]}" </dev/null >&2
+}
+
+windows_reconcile() {
+  local action="$1" host="$2" json="$3" plan winget package tunnel final repair_package
   plan="$(windows_plan "$host")"
   if [[ "$action" == plan ]]; then
     windows_emit "$plan" "$json"
     jq -e '.ready' <<<"$plan" >/dev/null || return "$EX_UNAVAILABLE"
     return 0
+  fi
+  # A retained profile with an unavailable client is not safe to activate
+  # against. Standalone reconciliation can restore the declared client only,
+  # then repeat the protected identity and conflict checks before continuing.
+  if repair_package="$(jq -ce '
+    select(.ready and .tunnel.status == "client-missing")
+    | [.packages[] | select(.id == "WireGuard.WireGuard" and .source == "winget" and .status == "missing")]
+    | select(length == 1) | .[0]
+  ' <<<"$plan")"; then
+    winget="$(windows_winget)"
+    printf 'atyrode: restoring the native WireGuard client before verifying the retained Tern identity\n' >&2
+    windows_install_package "$winget" "$repair_package" || return "$EX_SOFTWARE"
+    plan="$(windows_plan "$host")"
+    if ! jq -e '.canApply and (.tunnel.publicKey != null)
+      and (.tunnel.status == "configured" or .tunnel.status == "change")
+      and any(.packages[]; .id == "WireGuard.WireGuard" and .status == "installed")' <<<"$plan" >/dev/null; then
+      windows_emit "$plan" "$json"
+      return "$EX_UNAVAILABLE"
+    fi
   fi
   if ! jq -e '.canApply' <<<"$plan" >/dev/null; then
     windows_emit "$plan" "$json"
@@ -224,20 +257,8 @@ windows_reconcile() {
     winget="$(windows_winget)"
     printf 'atyrode: reconciling native Windows packages through WSL interop (non-transactional)\n' >&2
     while IFS= read -r package; do
-      source="$(jq -r '.source' <<<"$package")"
-      status="$(jq -r '.status' <<<"$package")"
-      if [[ "$source" == winget && "$status" == missing ]]; then
-        id="$(jq -r '.id' <<<"$package")"
-        version="$(jq -r '.installVersion // empty' <<<"$package")"
-        install_args=(
-          install --id "$id" --exact --source winget
-          --accept-package-agreements --accept-source-agreements --disable-interactivity
-        )
-        [[ -z "$version" ]] || install_args+=(--version "$version")
-        show_command "$winget" "${install_args[@]}"
-        "$winget" "${install_args[@]}" </dev/null >&2 || return "$EX_SOFTWARE"
-      fi
-    done < <(jq -c '.packages[] | select(.status != "installed")' <<<"$plan")
+      windows_install_package "$winget" "$package" || return "$EX_SOFTWARE"
+    done < <(jq -c '.packages[] | select(.source == "winget" and .status == "missing")' <<<"$plan")
     plan="$(windows_plan "$host")"
     if ! jq -e '.canApply and .changes == 0' <<<"$plan" >/dev/null; then
       windows_emit "$plan" "$json"

@@ -49,7 +49,7 @@ let
     ln -s ${targetAtyrode} "$out/home-path"
   '';
   ternWorkspace = import ../../fleet/tern-workspace.nix;
-  mismatchedWindowsKey = builtins.concatStringsSep "" (builtins.genList (_: "1") 43) + "=";
+  mismatchedWindowsKey = builtins.concatStringsSep "" (builtins.genList (_: "1") 42) + "0=";
   mismatchedWindowsManifest = pkgs.writeText "fixture-mismatched-tern-tunnel.json" (
     builtins.toJSON {
       inherit (ternWorkspace)
@@ -1444,7 +1444,9 @@ pkgs.runCommand "check-atyrode-apply"
     status=missing
     if [[ "$2" == Plan ]]; then
       if [[ -f "$TUNNEL_STATE" ]]; then
-        if [[ "$expectedKey" == null || "$expectedKey" == "\"$TUNNEL_PUBLIC_KEY\"" ]]; then
+        if [[ ! -f "$WINGET_STATE/wireguard" ]]; then
+          status=client-missing
+        elif [[ "$expectedKey" == null || "$expectedKey" == "\"$TUNNEL_PUBLIC_KEY\"" ]]; then
           status=configured
         else
           status=blocked
@@ -1845,6 +1847,48 @@ pkgs.runCommand "check-atyrode-apply"
     jq -e '.tunnel.status == "inspect" and (.nativeConverged | not) and (.enrollmentPending | not)' \
       <<<"$protected_apply" >/dev/null
 
+    # A retained profile without its client cannot authorize guest activation.
+    # Only elevated standalone repair may install WireGuard, and other
+    # packages/tunnel changes wait until the retained identity can be checked.
+    rm -f "$TMPDIR/nh-activations" "$WINGET_STATE/twilight" "$WINGET_STATE/wireguard"
+    : > "$TUNNEL_LOG"
+    : > "$WINGET_LOG"
+    managed_repair_status=0
+    managed_repair="$(atyrode apply wsl --candidate ${wslCandidate} --json)" || managed_repair_status=$?
+    test "$managed_repair_status" = 69
+    jq -e '.windowsPlan.ready and (.windowsPlan.canApply | not)
+      and .windowsPlan.tunnel.status == "client-missing"' <<<"$managed_repair" >/dev/null
+    if TUNNEL_NOT_ELEVATED=1 atyrode windows apply wsl --json >/dev/null; then
+      echo 'unauthorized WireGuard repair unexpectedly succeeded' >&2
+      exit 1
+    fi
+    touch "$WINGET_STATE/stable"
+    if atyrode windows apply wsl --json >/dev/null; then
+      echo 'WireGuard repair with a package conflict unexpectedly succeeded' >&2
+      exit 1
+    fi
+    rm -f "$WINGET_STATE/stable"
+    test ! -e "$WINGET_STATE/wireguard"
+    grep -q '^install ' "$WINGET_LOG" && false
+
+    wrong_repair_status=0
+    wrong_repair="$(${mismatchedWslLauncher}/bin/atyrode windows apply wsl --json)" ||
+      wrong_repair_status=$?
+    test "$wrong_repair_status" = 69
+    jq -e '.tunnel.status == "blocked" and (.canApply | not)' <<<"$wrong_repair" >/dev/null
+    test "$(awk '/^install / { print $3 }' "$WINGET_LOG")" = 'WireGuard.WireGuard'
+    test ! -e "$WINGET_STATE/twilight"
+    grep -q '^Apply ' "$TUNNEL_LOG" && false
+
+    rm -f "$WINGET_STATE/wireguard"
+    : > "$WINGET_LOG"
+    repaired="$(atyrode windows apply wsl --json)"
+    jq -e --arg key "$TUNNEL_PUBLIC_KEY" '.nativeConverged and .tunnel.publicKey == $key' \
+      <<<"$repaired" >/dev/null
+    test "$(awk '/^install / { print $3 }' "$WINGET_LOG")" = \
+      "$(printf '%s\n' WireGuard.WireGuard Zen-Team.Zen-Browser.Twilight)"
+    test ! -e "$TMPDIR/nh-activations"
+
     # A native collision (even with a valid nonzero report) or unreadable
     # native status stops before any guest or Windows mutation.
     rm -f "$TMPDIR/nh-activations" "$WINGET_STATE/wireguard"
@@ -1933,6 +1977,7 @@ pkgs.runCommand "check-atyrode-apply"
     # The blocked-conflict scenario above left the stable Zen package present;
     # clear it so this scenario turns on interop reachability alone.
     rm -f "$WINGET_STATE/stable" "$WINGET_STATE/twilight"
+    touch "$WINGET_STATE/wireguard"
     : > "$WINGET_LOG"
     : > "$TUNNEL_LOG"
     mv "$XDG_CONFIG_HOME/atyrode/host.json" "$TMPDIR/host.json.before-worker"

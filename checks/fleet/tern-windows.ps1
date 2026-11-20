@@ -92,7 +92,7 @@ function Invoke-Tern([string]$Mode, [string]$Step, [switch]$ExpectFailure) {
     try { $status = $line | ConvertFrom-Json } catch { throw "Acceptance: $Step emitted invalid status JSON (exit $($result.Code))." }
     $fields = @($status.PSObject.Properties.Name | Sort-Object) -join ','
     Assert-That ($fields -ceq 'detail,enrolled,publicKey,status') "$Step used an unexpected status schema."
-    Assert-That ($status.status -cin @('missing', 'change', 'configured', 'inspect', 'blocked') -and $status.enrolled -is [bool] -and
+    Assert-That ($status.status -cin @('missing', 'change', 'configured', 'inspect', 'blocked', 'client-missing') -and $status.enrolled -is [bool] -and
         ($null -eq $status.publicKey -or ($status.publicKey -is [string] -and $status.publicKey -cmatch $publicKeyPattern)) -and
         $status.detail -is [string] -and -not [string]::IsNullOrWhiteSpace($status.detail)) "$Step emitted invalid status values."
     if ($ExpectFailure) {
@@ -255,6 +255,7 @@ function Assert-NoPlaintext {
 }
 
 $scratch = $null
+$msi = $null
 $fixture = $null
 $fixturePath = $null
 $ownsReserved = $false
@@ -313,7 +314,8 @@ try {
 
     $phase = 'install official signed WireGuard MSI'
     Write-Host $phase
-    $msi = Join-Path $scratch 'wireguard-amd64-1.1.1.msi'
+    # Retain the signed installer for removal, outside the staged-file plaintext sweep.
+    $msi = "$scratch-wireguard.msi"
     Invoke-WebRequest -UseBasicParsing -TimeoutSec 45 -Uri 'https://download.wireguard.com/windows-client/wireguard-amd64-1.1.1.msi' -OutFile $msi
     $signature = Get-AuthenticodeSignature -LiteralPath $msi
     Assert-That ($signature.Status -eq 'Valid' -and $null -ne $signature.SignerCertificate -and
@@ -321,7 +323,6 @@ try {
     Assert-That ((Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash -eq
         '7BFED60AD61B785C914B38B61555A975488E1D3EC472DBFB2FCDF498FCA75242') 'Official WireGuard MSI SHA256 did not match the pinned release.'
     $null = Invoke-Captured $msiexec @('/i', $msi, '/quiet', '/norestart', 'DO_NOT_LAUNCH=1') 'Install WireGuard MSI' -TimeoutSeconds 180
-    Remove-Item -LiteralPath $msi
     Assert-That ((Test-Path -LiteralPath $wireguard -PathType Leaf) -and (Test-Path -LiteralPath $wg -PathType Leaf)) 'WireGuard CLI executables were not installed.'
 
     $phase = 'lock unrelated manager fixture'
@@ -546,7 +547,6 @@ try {
     Assert-LiveTunnel $identity $newPeer
     Assert-OwnedProfile
     Assert-That ((Get-FileHash -LiteralPath $profilePath).Hash -ceq $updatedHash -and (Get-ServiceProcess) -ne $runningProcess) 'Native restart did not reload the persisted identity and peer unchanged.'
-    Assert-NoPlaintext
 
     $phase = 'verify the unrelated manager fixture remained isolated'
     $observed = [byte[]]::new($marker.Length)
@@ -557,6 +557,41 @@ try {
     $fixture = $null
     Assert-That ((Get-Acl -LiteralPath $fixturePath).Sddl -ceq $fixtureAcl -and
         (@(Get-ChildItem -LiteralPath $managerStore -Force -Name | Sort-Object) -join '|') -ceq $managerFiles) 'The unrelated profile ACL or its manager file inventory changed.'
+    Remove-Item -LiteralPath $fixturePath -Force
+    $fixturePath = $null
+
+    $phase = 'plan with the retained encrypted identity after WireGuard removal'
+    Write-Host $phase
+    $retainedAcl = (Get-Acl -LiteralPath $profilePath).Sddl
+    $null = Invoke-Captured $wireguard @('/uninstalltunnelservice', $tunnel) 'Uninstall the reserved tunnel before MSI removal'
+    Wait-Until 'Reserved service and adapter removed before MSI removal' {
+        $null -eq (Get-ReservedService) -and
+            $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue) -and
+            @(Get-ServerRoutes).Count -eq 0
+    }
+    $null = Invoke-Captured $msiexec @('/x', $msi, '/quiet', '/norestart') 'Uninstall WireGuard MSI' -TimeoutSeconds 180
+    Assert-That (-not (Test-Path -LiteralPath $wireguard) -and -not (Test-Path -LiteralPath $wg)) 'The WireGuard executables are still present after MSI removal.'
+    foreach ($inputFile in @($entry, $manifestFile)) {
+        Move-Item -LiteralPath (Join-Path $offline (Split-Path -Leaf $inputFile)) -Destination $inputFile
+    }
+    $clientMissing = Invoke-Tern Plan 'Plan with WireGuard missing and existing profile'
+    Assert-That ($clientMissing.status -ceq 'client-missing' -and $null -eq $clientMissing.publicKey -and
+        -not $clientMissing.enrolled) 'Elevated Plan did not report a missing WireGuard client with identity verification pending.'
+
+    # An unreadable profile is not a recoverable missing-client result, even when elevated.
+    $profileLock = [IO.File]::Open($profilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    try {
+        $blocked = Invoke-Tern Plan 'Plan with WireGuard missing and inaccessible profile' -ExpectFailure
+        Assert-That ($blocked.status -ceq 'blocked' -and $null -eq $blocked.publicKey -and
+            -not $blocked.enrolled) 'Plan treated an inaccessible profile as safe to recover.'
+    } finally {
+        $profileLock.Dispose()
+    }
+    Assert-That ((Get-FileHash -LiteralPath $profilePath).Hash -ceq $updatedHash -and
+        (Get-Acl -LiteralPath $profilePath).Sddl -ceq $retainedAcl -and $null -eq (Get-ReservedService) -and
+        $null -eq (Get-NetAdapter -Name $tunnel -IncludeHidden -ErrorAction SilentlyContinue) -and
+        @(Get-ServerRoutes).Count -eq 0) 'Plan changed the retained encrypted identity or reinstated tunnel state.'
+    Assert-NoPlaintext
 } catch {
     $failed = $true
     # Never render exception details from native commands, decryption or JSON parsing.
@@ -589,6 +624,7 @@ try {
         $cleanupFailed = $true
     }
     try {
+        if ($null -ne $msi -and (Test-Path -LiteralPath $msi)) { Remove-Item -LiteralPath $msi -Force }
         if ($null -ne $scratch -and (Test-Path -LiteralPath $scratch)) { Remove-Item -LiteralPath $scratch -Force -Recurse }
     } catch {
         Write-Error -ErrorAction Continue 'Could not remove the isolated staging directory; the ephemeral runner will be discarded.'

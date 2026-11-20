@@ -386,7 +386,12 @@ namespace Atyrode.Windows
             if (!profile)
                 return Report("missing", "The Windows Tern identity is not provisioned. Apply creates a new Windows-local key.");
             if (!installed)
-                return Report("inspect", "Install the native Windows WireGuard client before verifying the protected Tern identity.");
+            {
+                // Reject corrupt or foreign profiles before allowing package-only
+                // repair. The expected public key still needs wg.exe to verify.
+                ReadPrivateKey(ReadProfile());
+                return Report("client-missing", "The protected Tern identity is retained but cannot be verified without WireGuard. Run atyrode windows apply from an Administrator Windows Terminal to reinstall the missing client and check the identity before further changes.");
+            }
 
             return ReconcileProfile(desired, service, true, false);
         }

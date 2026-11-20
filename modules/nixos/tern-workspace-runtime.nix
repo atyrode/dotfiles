@@ -10,7 +10,9 @@ let
   user = "tern-workspace";
   home = "/var/lib/${user}";
   runtime = "/run/${user}";
-  socket = "${runtime}/daemon.sock";
+  configDir = "${home}/.config/tern";
+  # Tern checkpoints panes beside its socket. A socket in /run loses that state at boot.
+  socket = "${configDir}/daemon.sock";
   binaryDirectory = "/var/lib/tern-workspace-bin";
   tern = "${binaryDirectory}/tern";
   installUnit = "tern-workspace-install.service";
@@ -38,7 +40,7 @@ let
         ]
       }:/run/current-system/sw/bin";
       SHELL = "${pkgs.bashInteractive}/bin/bash";
-      TERN_CONFIG_DIR = "${home}/.config/tern";
+      TERN_CONFIG_DIR = configDir;
       TERN_DAEMON_SOCKET = socket;
       XDG_RUNTIME_DIR = runtime;
     };
@@ -97,9 +99,10 @@ in
     serviceConfig = common.serviceConfig // {
       RuntimeDirectory = user;
       RuntimeDirectoryMode = "0700";
+      ExecStartPre = "${pkgs.coreutils}/bin/install -d -m 0700 ${configDir}";
       ExecStart = "${tern} daemon";
-      # Type=exec guarantees only that the binary started, not that its socket exists.
-      ExecStartPost = "${pkgs.bash}/bin/bash -c 'until test -S ${socket}; do ${pkgs.coreutils}/bin/sleep 0.1; done'";
+      # A socket inode can outlive the daemon. Wait for a response before starting the frontend.
+      ExecStartPost = "${pkgs.bash}/bin/bash -c 'until ${tern} ls --json >/dev/null 2>&1; do ${pkgs.coreutils}/bin/sleep 0.1; done'";
       TimeoutStartSec = "15s";
     };
   };

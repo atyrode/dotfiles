@@ -2,7 +2,7 @@
 
 Open **`https://tern.tyrode.dev` in a browser** on each enrolled device. They attach to the same workspace on `dev-01`; closing a tab or shutting down a client does not stop a server-side shell. Connecting a native Tern window to `tern remote serve` over QUIC is a different path and is not how to join this browser view. There is no SSH port forward, tailnet account, public terminal endpoint or OIDC provider.
 
-`tern-workspace-daemon` owns the panes, `tern-workspace-web` attaches to its Unix socket, and a private Caddy instance terminates HTTPS. Restarting the web frontend does not restart the daemon. A **server reboot** stops processes: Tern can restore its saved layout, directories and scrollback, not the memory of arbitrary running programs. The workspace starts empty once, not each time a device connects.
+`tern-workspace-daemon` owns the panes, `tern-workspace-web` attaches to its Unix socket, and a private Caddy instance terminates HTTPS. Restarting only the web frontend leaves the daemon and running pane processes alone. The daemon's socket lives under the dedicated workspace home because Tern saves its workspace state beside that socket. On a clean daemon restart, Tern restores saved sessions, tab and pane layouts, working directories, and scrollback. Restarting the daemon or rebooting the server still ends running processes: a restored pane starts a new shell, not the old process or its running command. The workspace starts empty on first provision, not each time a device connects.
 
 The workspace runs as `tern-workspace`, not the SSH administrator. Its writable home is `/var/lib/tern-workspace`, not `/home/alex`. Clone projects and authorize development tools in that account through their normal login flows; do not copy another account's sessions. Loss of this disk is not a reconnect: protect the workspace home with an appropriately private backup if recovery is required. [Stencil Tern](https://stencil.so/tern#everywhere) is a closed beta, not FOSS. WireGuard and Caddy are self-hosted; Tern 0.9.29's default web client fetches a versioned, integrity-checked WebAssembly asset from `build.stencil.so`. This setup is not a promise of offline operation or zero vendor contact.
 
@@ -11,7 +11,7 @@ The workspace runs as `tern-workspace`, not the SSH administrator. Its writable 
 1. **Name and certificate.** Create a DNS-only A record for `tern.tyrode.dev` using `serverAddress` from the [dev-01 overlay addresses](../fleet/machines/dev-01/tern-network.json). From the checkout root, print the value with `jq -r '.serverAddress' fleet/machines/dev-01/tern-network.json`. No proxy, public-address A, or AAAA. `dev-01.tyrode.dev` must still resolve publicly: it is the WireGuard endpoint, not the private website. Issue a dedicated Cloudflare API token with Zone:Read and DNS:Edit restricted to the DNS-01 validation zone. To avoid granting write access to the primary zone, delegate `_acme-challenge.tern.tyrode.dev` by CNAME into a separately managed zone and scope the token there. Where the server has a stable egress IP, restrict the token to it. In an authorized writable checkout, enter the token only at the hidden prompt:
 
    ```sh
-   nix shell --inputs-from . nixpkgs#age-plugin-se -c \
+   CLAN_NO_COMMIT=1 nix shell --inputs-from . nixpkgs#age-plugin-se -c \
      clan vars generate dev-01 --generator tern-workspace-dns --flake "$PWD"
    ```
 

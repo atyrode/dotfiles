@@ -12,38 +12,66 @@ let
   caddyfile = builtins.appendContext (builtins.elemAt (lib.splitString " " caddyStart) 3) (
     builtins.getContext caddyStart
   );
-in
-pkgs.writeShellApplication {
-  name = "check-tern-workspace-ingress";
-  runtimeInputs =
-    with pkgs;
-    [
-      bash
-      caddy
-      coreutils
-      curl
-      gnused
-      iproute2
-      openssl
-      python3
-      util-linux
-      wireguard-tools
-    ]
-    ++ tern-workspace-ingress.path;
-  text = ''
-    exec unshare -Urn bash ${./tern-workspace-ingress.sh} ${
-      lib.escapeShellArgs [
-        ingress
-        caddyfile
-        workspace.hostname
-        workspace.interface
-        workspace.serverAddress
-        probePeer.address
-        (toString workspace.port)
-        (toString workspace.webPort)
-        (toString workspace.proxyPort)
-        (if probePeer.publicKey == null then "denied" else "admitted")
+  probe = pkgs.writeShellApplication {
+    name = "check-tern-workspace-ingress";
+    runtimeInputs =
+      with pkgs;
+      [
+        bash
+        caddy
+        coreutils
+        curl
+        gnused
+        iproute2
+        openssl
+        python3
+        util-linux
+        wireguard-tools
       ]
-    }
+      ++ tern-workspace-ingress.path;
+    text = ''
+      exec unshare -n bash ${./tern-workspace-ingress.sh} ${
+        lib.escapeShellArgs [
+          ingress
+          caddyfile
+          workspace.hostname
+          workspace.interface
+          workspace.serverAddress
+          probePeer.address
+          (toString workspace.port)
+          (toString workspace.webPort)
+          (toString workspace.proxyPort)
+          (if probePeer.publicKey == null then "denied" else "admitted")
+        ]
+      }
+    '';
+  };
+in
+pkgs.testers.runNixOSTest {
+  name = "tern-workspace-ingress";
+  # Hosted Nix builders can run QEMU with software emulation and need no user namespaces.
+  requiredFeatures.kvm = false;
+  nodes.machine = {
+    virtualisation = {
+      memorySize = 1024;
+      vlans = [ ];
+    };
+    environment.systemPackages = [ probe ];
+    # Bring up the driver channel in stage one, including slow TCG boots.
+    boot.initrd.kernelModules = [ "virtio_console" ];
+    boot.kernelModules = [
+      "veth"
+      "wireguard"
+    ];
+  };
+  testScript = ''
+    import select
+
+    machine.start()
+    assert machine.shell is not None
+    assert select.select([machine.shell], [], [], 900)[0], "VM shell did not become ready"
+    machine.connect()
+    machine.wait_for_unit("multi-user.target")
+    machine.succeed("${lib.getExe probe}")
   '';
 }

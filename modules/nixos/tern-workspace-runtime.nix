@@ -24,6 +24,13 @@ let
     ];
     text = builtins.readFile ./tern-workspace-install.sh;
   };
+
+  # Check the kernel's listener table: the socket file alone can be stale.
+  waitForDaemon = pkgs.writeShellScript "tern-workspace-wait-for-daemon" ''
+    until [[ -S ${socket} && -n "$(${pkgs.iproute2}/bin/ss -Hx state listening src ${socket})" ]]; do
+      ${pkgs.coreutils}/bin/sleep 0.1
+    done
+  '';
   daemonUnit = "tern-workspace-daemon.service";
   webUnit = "tern-workspace-web.service";
 
@@ -101,8 +108,10 @@ in
       RuntimeDirectoryMode = "0700";
       ExecStartPre = "${pkgs.coreutils}/bin/install -d -m 0700 ${configDir}";
       ExecStart = "${tern} daemon";
-      # A socket inode can outlive the daemon. Wait for a response before starting the frontend.
-      ExecStartPost = "${pkgs.bash}/bin/bash -c 'until ${tern} ls --json >/dev/null 2>&1; do ${pkgs.coreutils}/bin/sleep 0.1; done'";
+      # The last client can leave an empty owner to exit cleanly. Restart it
+      # without connecting at startup, which would arm that idle timeout again.
+      Restart = "always";
+      ExecStartPost = "${waitForDaemon}";
       TimeoutStartSec = "15s";
     };
   };

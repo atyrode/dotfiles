@@ -96,10 +96,12 @@ declarative root-owned SSH keys drawn from the reviewed fleet key registry,
 passwordless sudo for the operator's account alone, and rootless Docker — and
 clan refuses to deploy it unless the operator names it.
 
-`dev-01` enables `nix-ld` for Stencil's Tern executable. Native desktop SSH
-setup still owns its per-user remote service. The separate [private Tern
-workspace](tern-workspace.md) runs as an unprivileged account and is reached
-through its own WireGuard peers, not the public Caddy edge or fleet admin VPN.
+`dev-01` enables `nix-ld` for Stencil's Tern executable. Tern's SSH setup
+still owns the administrator's separate per-user remote service. The
+[private Tern workspace](tern-workspace.md) runs as `tern-workspace`.
+Its HTTPS and native QUIC frontends share a local daemon socket. Clients
+reach them through the workspace's own WireGuard tunnel, not the public
+Caddy edge or fleet admin VPN. Desktop clients add the host without SSH setup.
 
 The parcel development edge serves `myparcelle.tyrode.dev` from port 4173
 and `auth.myparcelle.tyrode.dev` from port 8082. Caddy owns TLS; the

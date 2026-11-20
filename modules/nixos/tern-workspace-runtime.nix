@@ -3,6 +3,7 @@
   host,
   lib,
   pkgs,
+  utils,
   ...
 }:
 let
@@ -33,6 +34,40 @@ let
   '';
   daemonUnit = "tern-workspace-daemon.service";
   webUnit = "tern-workspace-web.service";
+  wireguardUnit = "wireguard-${workspace.interface}.service";
+  nativeName = "tern-workspace-native";
+  nativeState = "/var/lib/${nativeName}";
+  nativeRuntime = "/run/${nativeName}";
+  nativePort = toString workspace.nativePort;
+  nativePeers = lib.attrValues (workspace.selectNativePeers workspace.peers);
+  nativeEnabled = workspace.serverPublicKey != null && nativePeers != [ ];
+  nativeDependencies = [
+    daemonUnit
+    wireguardUnit
+    "tern-workspace-ingress.service"
+    "${utils.escapeSystemdPath "/sys/subsystem/net/devices/${workspace.interface}"}.device"
+  ];
+  nativeAuthorizedKeys = pkgs.writeText "tern-workspace-native-authorized-keys" (
+    lib.concatMapStrings (peer: "${peer.nativePublicKey}\n") nativePeers
+  );
+
+  # systemd can proceed without a cgroup filter if BPF is unavailable. Check
+  # the actual attachments before running Tern, with no test traffic.
+  requireNativeFilters = pkgs.writeShellScript "tern-workspace-native-require-filters" ''
+    set -euo pipefail
+    if ! {
+      IFS=: read -r hierarchy _ cgroup < /proc/self/cgroup &&
+      [[ "$hierarchy" == 0 && "$cgroup" == /* ]] &&
+      ${pkgs.bpftools}/bin/bpftool -j cgroup show "/sys/fs/cgroup$cgroup" |
+        ${lib.getExe pkgs.jq} -e '
+          map(.name) as $attached |
+          ["sd_fw_ingress", "sd_fw_egress", "sd_restrictif_i", "sd_restrictif_e", "sd_bind4"] - $attached == []
+        ' >/dev/null
+    }; then
+      echo "Tern native requires the systemd cgroup IP, interface and bind filters" >&2
+      exit 1
+    fi
+  '';
 
   common = {
     environment = {
@@ -132,4 +167,61 @@ in
       StandardError = "null";
     };
   };
+
+  systemd.services.${nativeName} = lib.mkIf nativeEnabled (
+    common
+    // {
+      description = "Private Tern workspace native frontend";
+      # Dependency links leave the retained daemon unit definition unchanged.
+      wantedBy = [
+        daemonUnit
+        wireguardUnit
+      ];
+      after = nativeDependencies;
+      bindsTo = nativeDependencies;
+      partOf = [
+        daemonUnit
+        wireguardUnit
+      ];
+      unitConfig."X-Atyrode-SessionOwner" = false;
+      # Keep the native host identity across restarts, outside the daemon's
+      # config and the browser token. The daemon socket remains unchanged.
+      environment = common.environment // {
+        HOME = nativeState;
+        TERN_CONFIG_DIR = nativeState;
+        XDG_RUNTIME_DIR = nativeRuntime;
+      };
+      serviceConfig = common.serviceConfig // {
+        StateDirectory = nativeName;
+        RuntimeDirectory = nativeName;
+        RuntimeDirectoryMode = "0700";
+        WorkingDirectory = nativeState;
+        InaccessiblePaths = [
+          "-${configDir}/web-token"
+          "-${home}/.ssh"
+        ];
+        ExecStartPre = [
+          # The root probe must not load jq modules or shell state from the workspace.
+          "+${pkgs.coreutils}/bin/env -i -C / HOME=/var/empty ${requireNativeFilters}"
+          "${waitForDaemon}"
+        ];
+        TimeoutStartSec = "15s";
+        # The built-in user-mode policy authenticates the explicit SSH key
+        # list. This is Tern authentication, not an SSH server.
+        ExecStart = "${tern} remote serve --user --listen ${workspace.serverAddress}:${nativePort} --state-dir ${nativeState} --relay none --authorized-keys ${nativeAuthorizedKeys}";
+        AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
+        CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_NETLINK"
+          "AF_UNIX"
+        ];
+        RestrictNetworkInterfaces = workspace.interface;
+        IPAddressDeny = "any";
+        IPAddressAllow = map (peer: "${peer.address}/32") nativePeers;
+        SocketBindDeny = "any";
+        SocketBindAllow = "ipv4:udp:${nativePort}";
+      };
+    }
+  );
 }

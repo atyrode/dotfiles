@@ -2,16 +2,18 @@
 let
   inherit (pkgs) lib;
   liveTopology = import ../../fleet/tern-workspace.nix;
-  # The corresponding private files are derived inside the guest, never
-  # provisioned from the fleet. Only the Mac-shaped fixture peer is enrolled.
+  # All identities are fixtures. The WireGuard private keys are derived in
+  # the guest; only the Mac-shaped fixture peer also has a native key.
   workspace = liveTopology // {
     serverPublicKey = "kPcQmX1l3oIKbhXN/8h4pky+9fs++kEaF20k/IqevyU=";
     peers = {
       macbook = liveTopology.peers.macbook // {
         publicKey = "sGz/CCMqGffKXmAilP6rcOSQmfwtaE20xwXUG/w4Gh0=";
+        nativePublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmn5xo5Mm9FhaLV2ZeTQnYYQmzPqxvXZNOxrw7+k9d/";
       };
       windows = liveTopology.peers.windows // {
-        publicKey = null;
+        publicKey = "BUsa+bdXg4ICvWNmi3mryRKiYWoD74/ghD2OqBNXmBU=";
+        nativePublicKey = null;
       };
     };
   };
@@ -44,6 +46,7 @@ let
           (toString workspace.webPort)
           (toString workspace.proxyPort)
           workspace.serverPublicKey
+          (toString workspace.nativePort)
         ]
       }
     '';
@@ -124,6 +127,7 @@ pkgs.testers.runNixOSTest {
           cd ${fixture}
           printf %s 'Tern ingress VM server fixture' | openssl dgst -sha256 -binary | base64 >server.key
           printf %s 'Tern ingress VM client fixture' | openssl dgst -sha256 -binary | base64 >client.key
+          printf %s 'Tern ingress VM WireGuard-only fixture' | openssl dgst -sha256 -binary | base64 >wireguard-only.key
           printf '%s\n' 'fixture-not-a-cloudflare-token' >${dnsToken}
 
           openssl req -x509 -newkey ed25519 -noenc -days 1 -subj /CN=Ingress-test-CA \

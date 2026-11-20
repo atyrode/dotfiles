@@ -185,7 +185,8 @@ let
     lib.sort builtins.lessThan (
       fleetGenerators
       ++ lib.optional (hosts.${name}.activation == "nixos") "cloudflare-dns"
-      ++ lib.optional (name == "dev-01") "manifold-dev-recovery"
+      ++ lib.optionals (name == "dev-01") [ "manifold-dev-recovery" "tern-workspace-dns" ]
+      ++ lib.optional (builtins.elem name [ "dev-01" "macbook" ]) "tern-workspace-wireguard"
     );
   clanMachineSecretsAgree = lib.all (
     name:
@@ -201,7 +202,7 @@ let
       actualClanMachines == expectedClanMachines
     ) "clan's inventory must name exactly the nix-darwin and NixOS hosts of fleet/hosts.nix, by class";
     assert lib.assertMsg clanMachineSecretsAgree
-      "every clan machine must read /var/lib/sops-nix/key.txt, encrypt to the admins group, and declare exactly the babel, git-identity, manifold, omp-auth-broker, and wireguard generators -- plus cloudflare-dns on the VPS alone and manifold-dev-recovery on dev-01 alone";
+      "clan machine identities, secret audiences and generator names must agree with the reviewed host registry";
     pkgs.runCommand "check-host-registry-${system}"
       {
         nativeBuildInputs = [ pkgs.jq ];

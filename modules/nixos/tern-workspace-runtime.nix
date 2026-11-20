@@ -27,7 +27,7 @@ let
 
   # Check the kernel's listener table: the socket file alone can be stale.
   waitForDaemon = pkgs.writeShellScript "tern-workspace-wait-for-daemon" ''
-    until [[ -S ${socket} && -n "$(${pkgs.iproute2}/bin/ss -Hlx src ${socket})" ]]; do
+    until [[ -S ${socket} && -n "$(${pkgs.iproute2}/bin/ss -Hx state listening src ${socket})" ]]; do
       ${pkgs.coreutils}/bin/sleep 0.1
     done
   '';

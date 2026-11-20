@@ -201,7 +201,8 @@ in
           "-${home}/.ssh"
         ];
         ExecStartPre = [
-          "+${requireNativeFilters}"
+          # The root probe must not load jq modules or shell state from the workspace.
+          "+${pkgs.coreutils}/bin/env -i -C / HOME=/var/empty ${requireNativeFilters}"
           "${waitForDaemon}"
         ];
         TimeoutStartSec = "15s";

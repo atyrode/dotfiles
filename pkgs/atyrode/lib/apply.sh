@@ -146,27 +146,30 @@ apply_config() {
     fi
     original_args+=(--ref "$ref")
   fi
-  local host
+  local host data activation
   host="$(resolve_host "$requested")"
+  data="$(host_json "$host")"
+  activation="$(jq -r '.activation' <<<"$data")"
   # Resolve in the submitting login, before systemd substitutes its own
   # environment. Every worker and post-switch CLI inherits the same answer.
   export ATYRODE_HOST="$host"
   if [[ "$apply_job_worker" == 0 && "$plan" == 0 && "$dry" == 0 ]] &&
     apply_supervision_available; then
-    submit_apply_job "${original_args[@]}"
+    local report_json=false
+    [[ "$activation" != nixos-wsl || "$json" != 1 ]] || report_json=true
+    submit_apply_job "$report_json" "${original_args[@]}"
     return $?
   fi
 
-  local data expected_system expected_user expected_home expected_hostname actual_hostname conflicting_host platform activation identity_mode source repository flake_source revision resolved_revision dirty backend installable
-  local windows_preflight='null' mutation_boundary="activation only after preflight"
+  local expected_system expected_user expected_home expected_hostname actual_hostname conflicting_host platform identity_mode source repository flake_source revision resolved_revision dirty backend installable
+  local windows_preflight='null' windows_cli="" mutation_boundary="activation only after preflight"
+  local windows_ready=1 tern_enrollment_pending=0
   local provisioning_leftovers=""
-  data="$(host_json "$host")"
   expected_system="$(jq -r '.system' <<<"$data")"
   expected_user="$(jq -r '.username' <<<"$data")"
   expected_home="$(jq -r '.homeDirectory' <<<"$data")"
   expected_hostname="$(jq -r '.hostname // empty' <<<"$data")"
   platform="$(jq -r '.platform' <<<"$data")"
-  activation="$(jq -r '.activation' <<<"$data")"
   identity_mode="$(jq -r '.identityMode // "fixed"' <<<"$data")"
   if [[ "$identity_mode" == runtime ]]; then
     if [[ -z "$git_auth_mode" ]]; then
@@ -248,7 +251,17 @@ apply_config() {
     nixos-wsl)
       backend="nh-os"
       mutation_boundary="NixOS activation followed by non-transactional native Windows reconciliation"
-      windows_preflight="$(windows_plan "$host")"
+      # --plan does not build. If a closure is already supplied, its Plan
+      # can be read now; otherwise this is only the launcher's observation.
+      if [[ "$plan" == 1 ]]; then
+        if [[ -n "$candidate_path" ]]; then
+          windows_cli="$(windows_candidate_cli "$candidate_path" "$expected_user")" || return $?
+          windows_preflight="$(windows_candidate_plan "$windows_cli" "$host")" || return $?
+        else
+          windows_preflight="$(windows_plan "$host")" || return $?
+        fi
+        jq -e '.ready' <<<"$windows_preflight" >/dev/null || windows_ready=0
+      fi
       ;;
     # A VPS converges itself the way WSL does when the operator sits on it:
     # `fleet apply` refuses its own machine by design, so without this a VPS
@@ -271,15 +284,24 @@ apply_config() {
       capabilities:$capabilities,activation:$activation,backend:$backend,revision:$revision,
       resolvedRevision:$resolvedRevision,dirty:$dirty,repository:$repository,
       windowsPlan:$windowsPlan,mutationBoundary:$mutationBoundary}')"
+  # Preserve stdout for the JSON report even when nh prints its diff there.
+  local activation_output=1
+  [[ "$activation" != nixos-wsl || "$json" != 1 ]] || activation_output=2
   if [[ "$preview_json" == 0 ]]; then
     if [[ "$json" == 1 ]]; then
-      printf '%s\n' "$output"
+      # WSL builds first, then reports the candidate's preflight or native
+      # result, rather than printing an incomplete object from the launcher.
+      if [[ "$activation" != nixos-wsl || "$plan" == 1 ]]; then
+        printf '%s\n' "$output"
+      fi
     else
       jq -r '"host: \(.host)\ninstallable: \(.installable)\nsource: \(.source)\nsystem: \(.system)\nuser: \(.user)\nhome: \(.homeDirectory)\nidentity: \(.identityMode)\ncapabilities: \(.capabilities | join(", "))\nactivation: \(.activation)\nbackend: \(.backend)\nrevision: \(.revision)\ndirty: \(.dirty)\nmutation boundary: \(.mutationBoundary)"' <<<"$output"
-      [[ "$activation" != nixos-wsl ]] || windows_render_plan "$windows_preflight"
+      if [[ "$activation" == nixos-wsl && "$plan" == 1 ]]; then
+        windows_render_plan "$windows_preflight"
+      fi
     fi
   fi
-  if [[ "$activation" == nixos-wsl ]] && ! jq -e '.ready' <<<"$windows_preflight" >/dev/null; then
+  if [[ "$windows_ready" == 0 ]]; then
     return "$EX_UNAVAILABLE"
   fi
   # The plan is a list of what will change, not a dump of what was resolved.
@@ -289,6 +311,7 @@ apply_config() {
   if [[ "$preview_json" == 0 ]]; then
     local -a planned=()
     [[ -n "$candidate_path" ]] || planned+=("Build the candidate closure of $host through $backend.")
+    [[ "$activation" != nixos-wsl ]] || planned+=("Preflight native Windows using the selected closure.")
     planned+=("Analyse what activating the candidate does to services.")
     if [[ "$dry" == 0 ]]; then
       [[ "$identity_mode" == runtime ]] ||
@@ -299,7 +322,7 @@ apply_config() {
       planned+=("Activate the inspected closure through $backend.")
       planned+=("Record $host as the activated host.")
       [[ "$activation" != nixos-wsl ]] ||
-        planned+=("Reconcile native Windows packages through WinGet.")
+        planned+=("Reconcile native Windows packages, then the reserved Tern tunnel.")
       planned+=("Converge the account login shell.")
       planned+=("Arm the hourly archive timer.")
       planned+=("Review the provisioning surfaces this machine declares.")
@@ -408,7 +431,7 @@ apply_config() {
     # copy an operator pastes back, and printed before it runs so the thousand
     # lines of nh and Nix output that follow are unmistakably theirs.
     show_command env "LC_ALL=$nh_locale" "${build_args[@]}"
-    LC_ALL="$nh_locale" "${build_args[@]}" || {
+    LC_ALL="$nh_locale" "${build_args[@]}" >&"$activation_output" || {
       step_fail "$backend did not build $host; nothing was activated and this machine is unchanged"
       die "$EX_SOFTWARE" "$backend failed to build $host"
     }
@@ -418,6 +441,34 @@ apply_config() {
     candidate="$(readlink -f "$candidate_link" 2>/dev/null || true)"
     [[ -n "$candidate" && -d "$candidate" ]] ||
       die "$EX_SOFTWARE" "$backend left no candidate closure at $candidate_link, so there is nothing to analyse or activate"
+  fi
+
+  if [[ "$activation" == nixos-wsl ]]; then
+    [[ "$preview_json" == 1 ]] || step_begin 'Preflight native Windows using the selected closure'
+    if ! windows_cli="$(windows_candidate_cli "$candidate" "$expected_user")" ||
+      ! windows_preflight="$(windows_candidate_plan "$windows_cli" "$host")"; then
+      [[ "$preview_json" == 1 ]] || step_fail 'native Windows readiness could not be checked'
+      die "$EX_UNAVAILABLE" "candidate Windows preflight failed; nothing was activated"
+    fi
+    output="$(jq -c --argjson windowsPlan "$windows_preflight" '.windowsPlan = $windowsPlan' <<<"$output")"
+    if [[ "$json" == 0 && "$preview_json" == 0 ]]; then
+      windows_render_plan "$windows_preflight"
+    fi
+    local readiness_field=canApply
+    [[ "$dry" == 0 ]] || readiness_field=ready
+    if ! jq -e --arg field "$readiness_field" '.[$field] == true' <<<"$windows_preflight" >/dev/null; then
+      if [[ "$preview_json" == 1 ]]; then
+        jq -c '. + {windowsTransactional:false}' <<<"$output"
+      else
+        [[ "$json" == 0 ]] || printf '%s\n' "$output"
+        step_fail 'native Windows readiness was not established'
+      fi
+      die "$EX_UNAVAILABLE" "candidate Windows preflight refused; nothing was activated"
+    fi
+    if [[ "$preview_json" == 0 ]]; then
+      if [[ "$json" == 1 && "$dry" == 1 ]]; then printf '%s\n' "$output"; fi
+      step_ok
+    fi
   fi
 
   [[ "$preview_json" == 1 ]] || step_begin 'Analyse what activating the candidate does to services'
@@ -489,7 +540,7 @@ apply_config() {
   local profile_link profile_before profile_after
   profile_link="$(gen_profile)"
   profile_before="$(readlink "$profile_link" 2>/dev/null || true)"
-  activate_closure "$activation" "$candidate" "$nh_locale" "$nh_command" || {
+  activate_closure "$activation" "$candidate" "$nh_locale" "$nh_command" >&"$activation_output" || {
     profile_after="$(readlink "$profile_link" 2>/dev/null || true)"
     if [[ "$profile_before" == "$profile_after" ]]; then
       step_fail "$backend did not complete, and nothing was activated: this machine is unchanged"
@@ -527,15 +578,24 @@ apply_config() {
   fi
   step_ok
   if [[ "$activation" == nixos-wsl ]]; then
-    local windows_result
-    step_begin 'Reconcile native Windows packages through WinGet'
-    step_why 'WinGet state is native Windows state; no Nix generation covers it'
-    if ! windows_result="$(windows_reconcile apply "$host" 1)"; then
+    local windows_result windows_status=0
+    step_begin 'Reconcile native Windows packages, then the reserved Tern tunnel'
+    step_why 'native Windows state is not covered by a Nix generation or rollback'
+    windows_result="$("$windows_cli" windows apply "$host" --json)" || windows_status=$?
+    if ! jq -e '.tunnel | type == "object"' <<<"$windows_result" >/dev/null 2>&1; then
+      windows_result=null
+    fi
+    if [[ "$json" == 1 ]]; then
+      jq -c --argjson windowsResult "$windows_result" '. + {windowsResult:$windowsResult}' <<<"$output"
+    elif [[ "$windows_result" != null ]]; then
+      windows_render_plan "$windows_result"
+    fi
+    if [[ "$windows_status" != 0 ]] || ! jq -e '.nativeConverged' <<<"$windows_result" >/dev/null; then
       step_fail 'the non-transactional Windows phase did not complete'
       die "$EX_SOFTWARE" "NixOS activation succeeded, but the non-transactional Windows phase failed; rerun 'atyrode windows apply'"
     fi
+    jq -e '.enrollmentPending' <<<"$windows_result" >/dev/null && tern_enrollment_pending=1
     step_ok
-    [[ "$json" == 1 ]] || windows_render_plan "$windows_result"
   fi
   # Declared state first, decisions second. Convergence is not a question:
   # the login shell is part of what this host says it is, so apply fixes it
@@ -573,6 +633,9 @@ apply_config() {
   provisioning_leftovers="$(jq -r '
     map(select(.status == "incomplete" or .status == "degraded") | .id) | join(", ")
   ' <<<"$provisioning_checks")"
+  if [[ "$tern_enrollment_pending" == 1 ]]; then
+    provisioning_leftovers="${provisioning_leftovers:+$provisioning_leftovers, }Tern peer enrollment"
+  fi
   apply_epilogue "$dry" "$restart" "$activation" "$expected_home" "$host" "$apply_status"
   return "$apply_status"
 }

@@ -47,7 +47,7 @@ pkgs.runCommand "check-windows-control-plane"
 
     jq -e '
       .schemaVersion == 2
-      and (.packages | length) == 2
+      and (.packages | length) == 3
       and ([.packages[] | select(
         .id == "Zen-Team.Zen-Browser.Twilight"
         and .source == "winget"
@@ -63,27 +63,21 @@ pkgs.runCommand "check-windows-control-plane"
         and .versionPolicy == "installed; WinGet owns normal font updates"
         and (.mutableStateOwner | contains("Windows owns the installed font files"))
       )] | length == 1)
+      and ([.packages[] | select(
+        .id == "WireGuard.WireGuard"
+        and .source == "winget"
+        and .installVersion == null
+        and .conflicts == []
+      )] | length == 1)
     ' ${packageFile} >/dev/null
 
     export BOOTSTRAP_PATH=${../../get.ps1}
     export WSL_STATE="$TMPDIR/wsl-state"
     export WSL_STUB_LOG="$TMPDIR/wsl.log"
     export INSTALL_LOCATION="$TMPDIR/windows-install"
+    export CANDIDATE=/nix/store/00000000000000000000000000000000-nixos-system-wsl-fixture
+    export CANDIDATE_CLI="$CANDIDATE/etc/profiles/per-user/alex/bin/atyrode"
     mkdir -p "$TMPDIR/bin" "$WSL_STATE"
-
-    pwsh -NoLogo -NoProfile -NonInteractive -Command '
-      $tokens = $null
-      $errors = $null
-      [void][System.Management.Automation.Language.Parser]::ParseFile(
-        $env:BOOTSTRAP_PATH,
-        [ref]$tokens,
-        [ref]$errors
-      )
-      if ($errors.Count -ne 0) {
-        $errors | ForEach-Object { Write-Error $_ }
-        exit 1
-      }
-    '
 
     cat > "$TMPDIR/bin/wsl.exe" <<'EOF'
     #!${pkgs.runtimeShell}
@@ -107,7 +101,29 @@ pkgs.runCommand "check-windows-control-plane"
       *'--exec /bin/sh -c '*' /etc/atyrode-bootstrap-pending'*)
         touch "$WSL_STATE/pending"
         ;;
-      *'--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#wsl'*)
+      *'--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes build --no-link --print-out-paths github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.wsl.config.system.build.toplevel')
+        test -f "$WSL_STATE/distro"
+        printf '%s\n' "$CANDIDATE"
+        ;;
+      *"--exec /run/current-system/sw/bin/test -x $CANDIDATE/home-path/bin/atyrode")
+        exit 1
+        ;;
+      *"--exec /run/current-system/sw/bin/test -x $CANDIDATE_CLI"|*"--exec /run/current-system/sw/bin/test -x $CANDIDATE/bin/switch-to-configuration")
+        ;;
+      "-d atyrode-nixos -u root --exec $CANDIDATE_CLI windows bootstrap-preflight --json")
+        if [[ "''${BOOTSTRAP_PREFLIGHT:-}" == inspect ]]; then
+          printf '%s\n' '{"schemaVersion":2,"command":"windows plan","host":"wsl","ready":true,"canApply":false}'
+        else
+          printf '%s\n' '{"schemaVersion":2,"command":"windows plan","host":"wsl","ready":true,"canApply":true}'
+          touch "$WSL_STATE/preflight"
+        fi
+        ;;
+      "-d atyrode-nixos -u root --exec /run/current-system/sw/bin/nix-env --profile /nix/var/nix/profiles/system --set $CANDIDATE")
+        test -f "$WSL_STATE/preflight"
+        touch "$WSL_STATE/profile"
+        ;;
+      "-d atyrode-nixos -u root --exec $CANDIDATE/bin/switch-to-configuration switch")
+        test -f "$WSL_STATE/profile"
         touch "$WSL_STATE/managed"
         ;;
       *'--exec /run/current-system/sw/bin/rm -f /etc/atyrode-bootstrap-pending'*)
@@ -117,8 +133,13 @@ pkgs.runCommand "check-windows-control-plane"
         touch "$WSL_STATE/distro"
         ;;
       '--terminate atyrode-nixos')
+        test -f "$WSL_STATE/managed"
+        test ! -e "$WSL_STATE/pending"
+        touch "$WSL_STATE/restarted"
         ;;
-      *'--exec /etc/profiles/per-user/alex/bin/atyrode windows apply')
+      "-d atyrode-nixos -u alex --cd /home/alex --exec $CANDIDATE_CLI windows apply wsl")
+        test -f "$WSL_STATE/restarted"
+        touch "$WSL_STATE/reconciled"
         ;;
       *)
         exit 97
@@ -151,16 +172,46 @@ pkgs.runCommand "check-windows-control-plane"
     if ($env:BOOTSTRAP_APPLY -eq '1') {
         $parameters.Apply = $true
     }
-    & $env:BOOTSTRAP_PATH @parameters
+    # The Linux fixture substitutes only the native Windows token probe; the
+    # production elevation gate and the rest of the script still run.
+    $tokens = $null
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        $env:BOOTSTRAP_PATH, [ref]$tokens, [ref]$errors
+    )
+    if ($errors.Count -ne 0) {
+        $errors | ForEach-Object { Write-Error $_ }
+        exit 1
+    }
+    $probe = $ast.EndBlock.Statements | Where-Object {
+        $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq 'Test-Administrator'
+    }
+    $extent = $probe.Body.Extent
+    $script = $ast.Extent.Text.Remove($extent.StartOffset, $extent.EndOffset - $extent.StartOffset)
+    $script = $script.Insert($extent.StartOffset, '{ return ($env:BOOTSTRAP_ADMIN -eq "1") }')
+    & ([scriptblock]::Create($script)) @parameters
     EOF
+
+    export BOOTSTRAP_ADMIN=1
 
     # Plan is read-only even for a completely fresh machine.
     : > "$WSL_STUB_LOG"
-    env OS=Windows_NT BOOTSTRAP_APPLY=0 BOOTSTRAP_FAKE_HASH=unused \
+    env OS=Windows_NT BOOTSTRAP_ADMIN=0 BOOTSTRAP_APPLY=0 BOOTSTRAP_FAKE_HASH=unused \
       pwsh -NoLogo -NoProfile -NonInteractive -File "$TMPDIR/run-bootstrap.ps1" \
       >/dev/null
     test ! -e "$WSL_STATE/distro"
     grep -qF -- '--install' "$WSL_STUB_LOG" && false
+
+    # An explicit -Apply without a native admin token must not import or start a guest.
+    : > "$WSL_STUB_LOG"
+    if env OS=Windows_NT BOOTSTRAP_ADMIN=0 BOOTSTRAP_APPLY=1 BOOTSTRAP_FAKE_HASH=unused \
+      pwsh -NoLogo -NoProfile -NonInteractive -File "$TMPDIR/run-bootstrap.ps1" \
+      > "$TMPDIR/bootstrap-not-admin.out" 2> "$TMPDIR/bootstrap-not-admin.err"; then
+      exit 1
+    fi
+    grep -qF 'requires an elevated PowerShell' "$TMPDIR/bootstrap-not-admin.err"
+    grep -qE -- '--install|--exec' "$WSL_STUB_LOG" && false
+    test ! -e "$INSTALL_LOCATION"
 
     # An unrelated distribution with the selected name is never reused or overwritten.
     touch "$WSL_STATE/distro"
@@ -191,21 +242,36 @@ pkgs.runCommand "check-windows-control-plane"
     grep -qF -- '--install --from-file' "$WSL_STUB_LOG" && false
     test ! -e "$WSL_STATE/distro"
 
-    # A fresh image has no nixos-rebuild command yet. The bootstrap installs
-    # the target flake's pinned rebuild package, activates that exact revision,
-    # removes the pending marker, then invokes native reconciliation.
-    rm -rf "$WSL_STATE" "$INSTALL_LOCATION"
-    mkdir -p "$WSL_STATE"
+    # Provision only the pinned stock image if the native probe cannot apply.
+    # It stays pending, without a new profile, activated marker or native apply.
+    : > "$WSL_STUB_LOG"
+    if env OS=Windows_NT BOOTSTRAP_APPLY=1 BOOTSTRAP_PREFLIGHT=inspect \
+      BOOTSTRAP_FAKE_HASH=e7180ad555fdcb8e1e057e2ef056de467603a5e502ff8531053738371be3f6b9 \
+      pwsh -NoLogo -NoProfile -NonInteractive -File "$TMPDIR/run-bootstrap.ps1" \
+      > "$TMPDIR/bootstrap-inspect.out" 2> "$TMPDIR/bootstrap-inspect.err"; then
+      exit 1
+    fi
+    grep -qF 'no generation was activated' "$TMPDIR/bootstrap-inspect.err"
+    grep -qF -- '--install --from-file' "$WSL_STUB_LOG"
+    grep -qF -- "$CANDIDATE_CLI windows bootstrap-preflight --json" "$WSL_STUB_LOG"
+    grep -qE -- 'nix-env|switch-to-configuration switch|windows apply|--terminate' "$WSL_STUB_LOG" && false
+    test -f "$WSL_STATE/distro"
+    test -f "$WSL_STATE/pending"
+    test ! -e "$WSL_STATE/managed"
+    test ! -e "$WSL_STATE/profile"
+
+    # A retry reuses the pending stock guest. The stub requires the exact
+    # revision's candidate to pass preflight before that same closure switches.
     : > "$WSL_STUB_LOG"
     env OS=Windows_NT BOOTSTRAP_APPLY=1 \
       BOOTSTRAP_FAKE_HASH=e7180ad555fdcb8e1e057e2ef056de467603a5e502ff8531053738371be3f6b9 \
       pwsh -NoLogo -NoProfile -NonInteractive -File "$TMPDIR/run-bootstrap.ps1" \
       >/dev/null
-    grep -qF -- '--install --from-file' "$WSL_STUB_LOG"
-    grep -qF -- '--exec /run/current-system/sw/bin/env PATH=/run/wrappers/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin /run/current-system/sw/bin/nix --extra-experimental-features nix-command flakes shell github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#nixosConfigurations.wsl.pkgs.nixos-rebuild --command nixos-rebuild switch --flake github:atyrode/dotfiles/0123456789abcdef0123456789abcdef01234567#wsl --option experimental-features nix-command flakes' \
-      "$WSL_STUB_LOG"
-    grep -qF -- '--exec /etc/profiles/per-user/alex/bin/atyrode windows apply' "$WSL_STUB_LOG"
-    test -f "$WSL_STATE/distro"
+    grep -qF -- '--install --from-file' "$WSL_STUB_LOG" && false
+    grep -qF -- "$CANDIDATE_CLI windows bootstrap-preflight --json" "$WSL_STUB_LOG"
+    grep -qF -- "$CANDIDATE/bin/switch-to-configuration switch" "$WSL_STUB_LOG"
+    grep -qF -- "$CANDIDATE_CLI windows apply wsl" "$WSL_STUB_LOG"
+    test -f "$WSL_STATE/reconciled"
     test -f "$WSL_STATE/managed"
     test ! -e "$WSL_STATE/pending"
 

@@ -1,0 +1,88 @@
+name: Tern Windows
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/tern-windows.yml
+      - checks/fleet/tern-windows.ps1
+      - fleet/machines/dev-01/tern-network.json
+      - fleet/tern-workspace.nix
+      - pkgs/atyrode/default.nix
+      - pkgs/atyrode/windows/default.nix
+      - pkgs/atyrode/windows/TernPlatform.cs
+      - pkgs/atyrode/windows/TernProfileStore.cs
+      - pkgs/atyrode/windows/TernTunnel.cs
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/tern-windows.yml
+      - checks/fleet/tern-windows.ps1
+      - fleet/machines/dev-01/tern-network.json
+      - fleet/tern-workspace.nix
+      - pkgs/atyrode/default.nix
+      - pkgs/atyrode/windows/default.nix
+      - pkgs/atyrode/windows/TernPlatform.cs
+      - pkgs/atyrode/windows/TernProfileStore.cs
+      - pkgs/atyrode/windows/TernTunnel.cs
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: tern-windows-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+        with:
+          github_access_token: ''
+          enable_kvm: 'false'
+          nix_conf: substituters = https://cache.nixos.org
+      - name: Build the Windows executable used by the WSL package
+        id: build
+        run: |
+          nix build --impure --print-build-logs \
+            --expr 'let p=(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux; in p.callPackage ./pkgs/atyrode/windows {}' \
+            --out-link result
+          digest="$(sha256sum result/bin/tern-tunnel.exe)"
+          printf 'sha256=%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
+      - name: Transfer only the Windows executable
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tern-tunnel-wsl-${{ github.run_attempt }}
+          path: result/bin/tern-tunnel.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  tern-windows:
+    name: tern-windows-native
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Download this run's Windows executable
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: ${{ runner.temp }}/tern-tunnel-wsl
+          merge-multiple: true
+      - name: Exercise shipped Tern helper with native WireGuard and DPAPI
+        env:
+          TERN_TUNNEL_ARTIFACT_SHA256: ${{ needs.build.outputs.sha256 }}
+        shell: powershell
+        run: ./checks/fleet/tern-windows.ps1

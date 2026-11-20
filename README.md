@@ -12,14 +12,15 @@ curl -fsSL https://raw.githubusercontent.com/atyrode/dotfiles/main/get.sh | bash
 
 It lists the registered presets for this platform, asks which one to install, and hands off to the cloned `bootstrap/install.sh`, which installs the pinned Nix if needed and relays to `atyrode apply`. What bootstrap owns, how it repairs a half-installed machine, and how an interrupted run recovers are in [Bootstrap](docs/bootstrap.md). From then on the only command is `atyrode apply`.
 
-Native Windows 11, from PowerShell, is plan-only by default: it resolves `main` to an exact commit and reports the native and WSL changes without applying them. After review, run the printed revision:
+Native Windows 11, from PowerShell, is plan-only by default: it resolves `main` to an exact commit and reports the native and WSL changes without applying them. After review, run the printed revision in an elevated PowerShell as the Windows user who will own the WSL distribution:
 
 ```powershell
 irm https://raw.githubusercontent.com/atyrode/dotfiles/main/get.ps1 | iex
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/atyrode/dotfiles/main/get.ps1))) -Ref <exact-revision> -Apply
+$revision = '<exact-revision>'
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/atyrode/dotfiles/$revision/get.ps1"))) -Ref $revision -Apply
 ```
 
-Apply verifies a pinned NixOS-WSL image, activates `wsl`, and reconciles reviewed native packages through WinGet; if it first enables or updates WSL, follow its reboot instruction and run the same apply command again. The two ownership domains are in [Home Manager and system boundary](docs/system-boundary.md#windows-and-nixos-wsl).
+Apply verifies a pinned NixOS-WSL image, checks native Windows readiness before activating `wsl`, then reconciles reviewed WinGet packages and the reserved Tern tunnel. If it first enables or updates WSL, follow its reboot instruction and run the same apply command again. The two ownership domains are in [Home Manager and system boundary](docs/system-boundary.md#windows-and-nixos-wsl).
 
 ## What's included
 

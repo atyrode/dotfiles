@@ -26,6 +26,7 @@ readonly lib_dir='@lib_dir@'
 readonly test_hooks='@test_hooks@'
 readonly tool_inventory='@tools@'
 readonly windows_package_inventory='@windows_packages@'
+readonly windows_tunnel_exe='@windows_tunnel_exe@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly sops_directory='@sops_directory@'
 readonly clan_var_names='@clan_var_names@'
@@ -219,9 +220,12 @@ window (--keep / --keep-since), and collects the store. nh shows its plan and
 asks first (--yes skips the prompt, --dry-run only previews); on macOS clean
 also sweeps stale Home Manager Apps aliases. Commands reserved for later issues:
 workspace and agent.
-windows treats WinGet as the native Windows package owner. plan is read-only;
-apply reconciles exact package IDs through WSL interop after refusing channel
-conflicts. Windows mutations are not part of a Nix generation or rollback.
+windows plan reads WinGet package state and the reserved native Tern tunnel.
+windows apply installs exact package IDs before reconciling that tunnel through
+the packaged native executable over WSL interop, without PowerShell or any
+execution policy change. It refuses conflicts and reports public-key enrollment.
+If protected state must be inspected or changed, run the Windows phase from
+an administrator Windows Terminal. Native changes are outside Nix rollback.
 EOF
 }
 

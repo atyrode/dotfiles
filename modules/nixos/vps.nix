@@ -115,13 +115,11 @@ in
     inherit (machineAddress) domain;
     # The reviewed public-VPS exposure is TCP 22, and 80 + 443 for exactly the
     # vhosts the edge modules lib/configurations.nix imports beside this one
-    # declare (docs/hosts.md lists them), plus the UDP
-    # port of every WireGuard interface clan's service declares here: this
-    # machine is the overlay's controller, and a controller listens. mkForce
-    # keeps this authoritative over clan-core's recommended-defaults mDNS port
-    # (UDP 5353), which must never listen on a public uplink -- and over the
-    # wireguard service's own opening, which the list restates so that a
-    # reader of this file sees every port.
+    # declare (docs/hosts.md lists them). Also allow the UDP listeners of Clan's
+    # declared WireGuard interfaces. The separate Tern overlay module adds its
+    # own listener at the same priority. mkForce keeps the combined list
+    # authoritative over clan-core's recommended-defaults mDNS port (UDP 5353),
+    # which must never be open on a public uplink.
     firewall = {
       enable = true;
       allowedTCPPorts = lib.mkForce [

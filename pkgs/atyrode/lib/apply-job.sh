@@ -75,6 +75,16 @@ write_apply_job_json() {
   mv -f "$temp" "$path"
 }
 
+replay_apply_job() {
+  local job_dir="$1"
+  if [[ -f "$job_dir/report.json" ]]; then
+    cat "$job_dir/output.log" >&2
+    cat "$job_dir/report.json"
+  else
+    [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
+  fi
+}
+
 apply_job_phase() {
   local job_dir="$1" unit="$2" systemctl
   if [[ -f "$job_dir/result.json" ]]; then
@@ -161,18 +171,25 @@ cmd_apply_status() {
     phase="$(jq -r '.phase' "$job_dir/result.json")"
   fi
   if [[ "$json" == 1 ]]; then
+    local report=null
+    if [[ -s "$job_dir/report.json" ]]; then
+      report="$(jq -cse 'if length == 1 then .[0] else null end' "$job_dir/report.json" 2>/dev/null)" || report=null
+    fi
     if [[ -r "$job_dir/result.json" ]]; then
       jq -nc --slurpfile metadata "$job_dir/metadata.json" \
-        --slurpfile result "$job_dir/result.json" \
+        --slurpfile result "$job_dir/result.json" --argjson report "$report" \
         --rawfile output "$job_dir/output.log" --arg phase "$phase" --argjson progress "$progress" \
-        '$metadata[0] + {phase:$phase,progress:$progress,result:$result[0],output:$output}'
+        '$metadata[0] + {phase:$phase,progress:$progress,result:$result[0],output:$output}
+        + (if $report == null then {} else {report:$report} end)'
     else
-      jq -nc --slurpfile metadata "$job_dir/metadata.json" \
+      jq -nc --slurpfile metadata "$job_dir/metadata.json" --argjson report "$report" \
         --rawfile output "$job_dir/output.log" --arg phase "$phase" --argjson progress "$progress" \
-        '$metadata[0] + {phase:$phase,progress:$progress,result:null,output:$output}'
+        '$metadata[0] + {phase:$phase,progress:$progress,result:null,output:$output}
+        + (if $report == null then {} else {report:$report} end)'
     fi
   else
     [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
+    [[ ! -s "$job_dir/report.json" ]] || cat "$job_dir/report.json"
     printf 'atyrode: apply job %s: %s\n' "$job_id" "$phase" >&2
     jq -r --arg phase "$phase" '
       if .step then "  \(if $phase == "waiting" or $phase == "running" then "step" else "last step" end): \(.index)/\(.total) \(.step)" else empty end,
@@ -239,6 +256,11 @@ run_apply_job_worker() {
       set -e
       apply_config "$@"
     )
+  elif [[ "$(jq -r '.separateReport // false' <<<"$metadata")" == true ]]; then
+    (
+      set -e
+      apply_config "$@"
+    ) >"$job_dir/report.json" 2>>"$job_dir/output.log"
   else
     (
       set -e
@@ -260,6 +282,8 @@ run_apply_job_worker() {
 }
 
 submit_apply_job() {
+  local separate_report="$1"
+  shift
   local root job_id job_dir unit created_at metadata latest_temp self systemd_run systemctl
   local env_name probe_status unreachable live=false submitted=1 status=0 origin_tty=""
   local -a run_args job_argv
@@ -279,9 +303,19 @@ submit_apply_job() {
   # keeps the detached job whose output apply-status replays.
   ! interactive || live=true
   [[ ! -t 0 ]] || origin_tty="$(tty)"
+  # Keep the WSL JSON apply report separate from detached progress and
+  # Windows diagnostics so the submitter can still read it as JSON.
+  if [[ "$separate_report" == true && "$live" == false ]]; then
+    : >"$job_dir/report.json"
+    chmod 600 "$job_dir/report.json"
+  else
+    separate_report=false
+  fi
   metadata="$(jq -nc --arg jobId "$job_id" --arg unit "$unit" \
     --arg createdAt "$created_at" --argjson live "$live" --arg originTty "$origin_tty" \
-    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt,live:$live,originTty:$originTty}')"
+    --argjson separateReport "$separate_report" \
+    '{schemaVersion:1,jobId:$jobId,unit:$unit,createdAt:$createdAt,live:$live,originTty:$originTty}
+    + (if $separateReport then {separateReport:true} else {} end)')"
   write_apply_job_json "$job_dir/metadata.json" "$metadata"
   self="$(atyrode_self)" ||
     die "$EX_UNAVAILABLE" "atyrode package wrapper is unavailable"
@@ -398,7 +432,7 @@ submit_apply_job() {
           # only account of how far the apply got. It is already on disk and
           # apply-status prints it; withholding it here sends the operator to
           # the journal for evidence this command is holding.
-          [[ ! -s "$job_dir/output.log" ]] || cat "$job_dir/output.log"
+          replay_apply_job "$job_dir"
           printf 'atyrode: apply job %s stopped without publishing a result; inspect: journalctl --user -u %s\n' \
             "$job_id" "$unit" >&2
           return "$EX_SOFTWARE"
@@ -415,6 +449,6 @@ submit_apply_job() {
     esac
     sleep 0.1
   done
-  cat "$job_dir/output.log"
+  replay_apply_job "$job_dir"
   return "$(jq -r '.exitCode' "$job_dir/result.json")"
 }

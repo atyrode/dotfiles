@@ -76,6 +76,26 @@ supervised job result. Optional surfaces left unconfigured are listed as
 outstanding rather than labelled a complete apply; explicitly declining an
 optional surface is not a failure.
 
+On `wsl`, the selected closure's CLI checks WinGet package conflicts and the
+reserved native tunnel before the guest switches. A plan that cannot verify
+protected Windows state (for example, `inspect` without elevation) blocks
+apply. `atyrode windows plan` still reports what it can read; its JSON
+`canApply` field distinguishes a readable plan from readiness to apply.
+`atyrode apply --plan` does not build the candidate, so unless a built closure
+is supplied with `--candidate`, it shows the invoking CLI's Windows plan.
+
+After the guest switches, the candidate installs the reviewed WinGet packages
+and reconciles the [`atyrode-tern` WireGuard tunnel](tern-workspace.md#first-provision).
+It distinguishes a working local tunnel from a public key not yet enrolled on
+the server. For setup and updates, open Windows Terminal as Administrator,
+enter the managed WSL distro, and run `atyrode apply wsl`; WSL `sudo` does not
+elevate the Windows token. If only the native phase failed after the switch,
+`atyrode windows apply` retries it without switching WSL again.
+If a retained Tern profile reports `client-missing`, run `atyrode windows apply`
+from that elevated session before retrying the guest switch. It reinstalls
+the declared WireGuard package if WinGet reports it missing, then verifies
+the retained identity before applying any other Windows changes.
+
 ### What the CLI shows while it runs
 
 Every verb that changes this machine is a command an operator waits on, so it

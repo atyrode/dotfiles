@@ -160,7 +160,8 @@ let
           package: builtins.elem (lib.getName package) allowedUnfreePackages;
       }
     ]
-    ++ clanMachineModules;
+    ++ clanMachineModules
+    ++ lib.optional (name == "macbook") ../modules/darwin/tern-workspace.nix;
   };
 
   nixosWslMachineModule = name: host: {
@@ -218,6 +219,8 @@ let
       ++ lib.optionals (name == "dev-01") [
         # Tern's SSH installer replaces its generic Linux binary on each retry.
         { programs.nix-ld.enable = true; }
+        ../modules/nixos/tern-workspace-runtime.nix
+        ../modules/nixos/tern-workspace-network.nix
         manifold.nixosModules.native
         ../modules/nixos/manifold-dev-hub.nix
         ../modules/nixos/manifold-dev-babel-store.nix

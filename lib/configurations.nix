@@ -216,6 +216,8 @@ let
         ../modules/nixos/parxel-dev.nix
       ]
       ++ lib.optionals (name == "dev-01") [
+        # Tern's SSH installer replaces its generic Linux binary on each retry.
+        { programs.nix-ld.enable = true; }
         manifold.nixosModules.native
         ../modules/nixos/manifold-dev-hub.nix
         ../modules/nixos/manifold-dev-babel-store.nix

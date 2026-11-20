@@ -54,7 +54,9 @@ expect() {
   if ((result != 0)); then
     printf >&2 '%s: expected %s, command exited %d: %s\n' "$phase" "$wanted" "$result" "$*"
     if [[ $phase == 'off-tunnel traffic' || $phase == 'missing-key start' ]]; then
+      ip -br link show dev external >&2
       ip neigh show dev external >&2
+      client ip -br link show dev outside >&2
       client ip neigh show dev outside >&2
     elif [[ $phase == 'enrolled tunnel' ]]; then
       local latest
@@ -77,8 +79,10 @@ blocked() {
   fi
 }
 
-ip link add external type veth peer name outside
-ip link set outside netns "$client_pid"
+# Give both fixture links explicit MACs before udev can apply its persistent
+# address policy. A late MAC change would leave the client's ARP entry stale.
+ip link add name external address 02:00:00:00:00:01 type veth \
+  peer name outside address 02:00:00:00:00:02 netns "$client_pid"
 ip addr add "$transport/24" dev external
 ip addr add "$other/32" dev lo
 ip link set external up

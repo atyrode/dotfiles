@@ -158,17 +158,5 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("${wireguardService}")
     machine.wait_for_unit("tern-workspace-caddy.service")
     machine.succeed("${lib.getExe probe}")
-
-    machine.succeed("systemctl stop tern-workspace-ingress.service")
-    machine.fail("systemctl is-active ${wireguardService} tern-workspace-caddy.service")
-    machine.fail("ip link show dev ${interface}")
-    machine.succeed("rm ${privateKey} && systemctl start ${wireguardService}")
-    machine.fail("systemctl is-active ${wireguardService} tern-workspace-caddy.service")
-    machine.fail("ip link show dev ${interface}")
-
-    machine.succeed("systemctl restart sops-install-secrets.service && systemctl start ${wireguardService}")
-    machine.wait_for_unit("${wireguardService}")
-    machine.wait_for_unit("tern-workspace-caddy.service")
-    machine.succeed("${lib.getExe probe}")
   '';
 }

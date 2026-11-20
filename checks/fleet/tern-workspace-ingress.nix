@@ -2,6 +2,17 @@
 let
   inherit (pkgs) lib;
   workspace = import ../../fleet/tern-workspace.nix;
+  peers = lib.attrValues workspace.peers;
+  # Without enrollment, probe a configured but revoked address, if any.
+  probePeer = lib.findFirst (peer: peer.publicKey != null) (
+    if peers != [ ] then
+      builtins.head peers
+    else
+      {
+        address = "198.51.100.2";
+        publicKey = null;
+      }
+  ) peers;
   inherit (config.systemd.services) tern-workspace-ingress tern-workspace-caddy;
   ingress = pkgs.writeShellScript "tern-workspace-ingress" tern-workspace-ingress.script;
   caddyStart = tern-workspace-caddy.serviceConfig.ExecStart;
@@ -14,19 +25,33 @@ pkgs.writeShellApplication {
   name = "check-tern-workspace-ingress";
   runtimeInputs =
     with pkgs;
-    [ bash caddy coreutils curl gnused iproute2 openssl python3 util-linux wireguard-tools ]
+    [
+      bash
+      caddy
+      coreutils
+      curl
+      gnused
+      iproute2
+      openssl
+      python3
+      util-linux
+      wireguard-tools
+    ]
     ++ tern-workspace-ingress.path;
   text = ''
-    exec unshare -Urn bash ${./tern-workspace-ingress.sh} ${lib.escapeShellArgs [
-      ingress
-      caddyfile
-      workspace.hostname
-      workspace.interface
-      workspace.serverAddress
-      workspace.peers.macbook.address
-      (toString workspace.port)
-      (toString workspace.webPort)
-      (toString workspace.proxyPort)
-    ]}
+    exec unshare -Urn bash ${./tern-workspace-ingress.sh} ${
+      lib.escapeShellArgs [
+        ingress
+        caddyfile
+        workspace.hostname
+        workspace.interface
+        workspace.serverAddress
+        probePeer.address
+        (toString workspace.port)
+        (toString workspace.webPort)
+        (toString workspace.proxyPort)
+        (if probePeer.publicKey == null then "denied" else "admitted")
+      ]
+    }
   '';
 }

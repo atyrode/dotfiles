@@ -76,6 +76,13 @@ supervised job result. Optional surfaces left unconfigured are listed as
 outstanding rather than labelled a complete apply; explicitly declining an
 optional surface is not a failure.
 
+On `wsl`, activation and the native Windows phase are separate. The latter
+installs the reviewed WinGet packages and reconciles the single
+[`atyrode-tern` WireGuard tunnel](tern-workspace.md#first-provision). It
+distinguishes a working local tunnel from a public key not yet enrolled on
+the server. From an Administrator Windows Terminal in the managed distro,
+`atyrode windows apply` retries only that phase; it does not switch WSL again.
+
 ### What the CLI shows while it runs
 
 Every verb that changes this machine is a command an operator waits on, so it

@@ -7,9 +7,12 @@ let
       path = ../vars/per-machine + "/${machine}/tern-workspace-wireguard/publickey/value";
       match = builtins.match "([A-Za-z0-9+/]{43}=)\n?" (builtins.readFile path);
     in
-    if !builtins.pathExists path then null
-    else if match == null then throw "Invalid Tern WireGuard public key for ${machine}"
-    else builtins.head match;
+    if !builtins.pathExists path then
+      null
+    else if match == null then
+      throw "Invalid Tern WireGuard public key for ${machine}"
+    else
+      builtins.head match;
 in
 {
   hostname = "tern.tyrode.dev";

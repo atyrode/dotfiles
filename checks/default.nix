@@ -185,8 +185,14 @@ let
     lib.sort builtins.lessThan (
       fleetGenerators
       ++ lib.optional (hosts.${name}.activation == "nixos") "cloudflare-dns"
-      ++ lib.optionals (name == "dev-01") [ "manifold-dev-recovery" "tern-workspace-dns" ]
-      ++ lib.optional (builtins.elem name [ "dev-01" "macbook" ]) "tern-workspace-wireguard"
+      ++ lib.optionals (name == "dev-01") [
+        "manifold-dev-recovery"
+        "tern-workspace-dns"
+      ]
+      ++ lib.optional (builtins.elem name [
+        "dev-01"
+        "macbook"
+      ]) "tern-workspace-wireguard"
     );
   clanMachineSecretsAgree = lib.all (
     name:

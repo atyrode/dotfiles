@@ -31,7 +31,12 @@ let
       inherit (config.environment.sessionVariables) NIX_LD NIX_LD_LIBRARY_PATH;
       HOME = home;
       # Native agent blocks need the fleet's pinned omp, not the operator's user profile.
-      PATH = lib.mkForce "${binaryDirectory}:${lib.makeBinPath [ pkgs.omp pkgs.git ]}:/run/current-system/sw/bin";
+      PATH = lib.mkForce "${binaryDirectory}:${
+        lib.makeBinPath [
+          pkgs.omp
+          pkgs.git
+        ]
+      }:/run/current-system/sw/bin";
       SHELL = "${pkgs.bashInteractive}/bin/bash";
       TERN_CONFIG_DIR = "${home}/.config/tern";
       TERN_DAEMON_SOCKET = socket;

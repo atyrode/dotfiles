@@ -98,7 +98,9 @@ in
           message = "Tern workspace ingress requires the VPS's iptables firewall backend.";
         }
         {
-          assertion = lib.toInt (toString config.boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start") > lib.max webPort proxyPort;
+          assertion =
+            lib.toInt (toString config.boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start")
+            > lib.max webPort proxyPort;
           message = "Both private Tern listeners must be in the privileged port range.";
         }
         {
@@ -123,7 +125,10 @@ in
       systemd.services.${wireguardService} = {
         bindsTo = [ "${ingressService}.service" ];
         partOf = [ "${ingressService}.service" ];
-        after = [ "${ingressService}.service" secretInstallUnit ];
+        after = [
+          "${ingressService}.service"
+          secretInstallUnit
+        ];
         unitConfig.ConditionFileNotEmpty = wireguardKey.path;
       };
 

@@ -34,7 +34,7 @@ in
     };
     windows = {
       address = network.clients.windows;
-      publicKey = null;
+      publicKey = "wnyugZMgI7mxhMyHJm8hi2KP4ULgyNlVyWFisjAuhAo=";
     };
     iphone = {
       address = network.clients.iphone;

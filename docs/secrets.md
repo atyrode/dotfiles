@@ -236,6 +236,14 @@ tunnel target from the registry and that machine's `address.nix`, so no host
 is named anywhere else. Rotation is one `clan vars generate --regenerate` of
 the shared var followed by an apply on every machine.
 
+The VPS alone also carries [`cloudflare-dns`](../modules/nixos/cloudflare-dns.nix):
+the Cloudflare API token, scoped to `Zone.DNS: Edit` on `tyrode.dev` and
+client-IP filtered to that machine, that the operator's agents use to manage
+the zone's records. It is per machine and prompted, never shared or minted;
+Home Manager links `~/.config/cloudflare/api-token` to the placed file.
+Rotation is a new token in Cloudflare followed by
+`clan vars generate --regenerate` of the var and an apply.
+
 The [private Tern workspace](tern-workspace.md#first-provision) has separate
 per-machine WireGuard keys and a dev-01-only DNS-01 credential. Windows and
 iOS generate their own private keys; only their public peers enter the fleet

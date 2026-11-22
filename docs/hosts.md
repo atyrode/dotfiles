@@ -148,6 +148,13 @@ caps myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
 weight 20) as a drop-in, so the development surface keeps
 its share of the twelve cores when CI and rebuilds run at once.
 
+[`modules/nixos/dev-host-services.nix`](../modules/nixos/dev-host-services.nix)
+turns off what dev-01 has no use for: the Home Manager Ollama service (a
+default of the agent-tools contract on other hosts), systemd-resolved's global
+LLMNR and mDNS responders (their sockets listen on every address even with the
+per-link switches off) and systemd-oomd, because user-level earlyoom is the
+host memory guard.
+
 [`modules/nixos/myparcelle-ci-clever.nix`](../modules/nixos/myparcelle-ci-clever.nix)
 runs the controller of myParcelle's on-demand CI machines on Clever Cloud
 (labels `self-hosted`, `linux`, `x64`, `clever`; a trial until 2026-11-30).

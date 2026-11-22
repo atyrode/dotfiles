@@ -364,6 +364,9 @@ let
     tern-workspace-ingress = import ./fleet/tern-workspace-ingress.nix {
       inherit pkgs;
     };
+    myparcelle-ci-clever-guard-budget = import ./fleet/myparcelle-ci-clever-guard-budget.nix {
+      inherit pkgs;
+    };
     manifold-preview-routing = import ./fleet/manifold-preview-routing.nix {
       inherit pkgs;
       previewVhost =

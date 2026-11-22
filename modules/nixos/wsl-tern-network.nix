@@ -9,6 +9,8 @@
 #     addressed to this host on that port, on any interface and either IP
 #     family, including while the firewall reloads or is stopped.
 # The listener must start after, and be bound to, `wsl-tern-ingress.service`.
+# The guard is ordered with `firewall.service` only when that unit is enabled;
+# NixOS-WSL masks it, and the guard then runs on its own.
 {
   config,
   lib,
@@ -29,6 +31,7 @@ let
   covers = range: range.from <= port && port <= range.to;
   opensPort =
     scope: builtins.elem port scope.allowedUDPPorts || builtins.any covers scope.allowedUDPPortRanges;
+  firewallUnit = config.systemd.services.firewall.enable;
   overlay = config.networking.wireguard.interfaces.${interface} or null;
 in
 {
@@ -57,9 +60,9 @@ in
   systemd.services.${service} = {
     description = "Drop Tern host traffic except from the Mac over the fleet overlay";
     wantedBy = [ "multi-user.target" ];
-    bindsTo = [ "firewall.service" ];
-    partOf = [ "firewall.service" ];
-    after = [ "firewall.service" ];
+    bindsTo = lib.optional firewallUnit "firewall.service";
+    partOf = lib.optional firewallUnit "firewall.service";
+    after = lib.optional firewallUnit "firewall.service";
     path = [ fw.package ];
     serviceConfig = {
       Type = "oneshot";

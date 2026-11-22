@@ -138,9 +138,14 @@ in
 
   systemd.services.${nativeName} = {
     description = "Tern native frontend for the WSL host";
+    # Boot lifecycle (daemon, tunnel) and guard recovery (ingress) all pull the
+    # frontend in, so starting the fixed guard is enough; the daemon is never
+    # restarted. BindsTo/After on the guard still keep it from listening
+    # whenever the guard is not active.
     wantedBy = [
       daemonUnit
       wireguardUnit
+      ingressUnit
     ];
     # The frontend follows the daemon and the tunnel; neither follows it.
     after = [

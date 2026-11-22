@@ -1,8 +1,7 @@
 # Agent tools
 
 OMP, agents, rules and generic skills are part of the Home Manager profile.
-`atyrode apply` activates them. The native Code plugin family is installed
-separately through Manifold, not synchronized into the OMP profile.
+`atyrode apply` activates them.
 
 ## Ownership
 
@@ -23,12 +22,8 @@ Dotfiles owns deployment and the operator's authored configuration:
 - Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
-Native Code owns catalog generation, routing selection, session overlays and
-its account-management interface as Manifold plugins. Manifold owns their
-governed execution, shared workspace state and resource consent. Separately,
-dotfiles packages the historical standalone continuity bridge and generates
-its immutable routing catalog from the reviewed model registry; that is not
-the current native Code product or a second native runtime.
+Dotfiles packages the historical standalone Code continuity bridge and
+generates its immutable routing catalog from the reviewed model registry.
 
 OMP owns execution: role resolution, retries, live credential selection,
 compaction, terminal protocols, and mutable runtime data such as authentication,
@@ -186,9 +181,9 @@ cwd; default, named and explicitly selected agent directories; opted-in adapter 
 portable/outside-repository contexts; and loaded snapshots versus a changed file
 in a new process.
 
-The existing `agent-policy` action also runs this acceptance against each
-repository's **current candidate** `AGENTS.md` in dotfiles, Code, Babel and
-Manifold. Runtime, common source and personal source come from one action
+The existing `agent-policy` action also runs this acceptance against the
+repository's **current candidate** `AGENTS.md`. Runtime, common source and
+personal source come from one action
 snapshot; there is no second OMP pin or frozen copy of another repository's
 instructions. Consumer fixtures use the authored personal document; the native
 check separately proves its actual rendering and deployment.
@@ -235,60 +230,10 @@ the [read-only workflow](../.github/workflows/agent-policy.yml), local composite
 action and offline Nix `agent-policy` check enforce it. CI catches byte drift,
 not every semantic contradiction. Review local and shared text together.
 
-### Optional automation enrollment
-
-Copying the template is not enrollment. An authorized enrollment change must
-add reviewed support to the
-[reusable synchronizer allowlist](../.github/workflows/sync-agent-policy.yml)
-and [`ci/agent-policy-sync.py`](../ci/agent-policy-sync.py) core-check mapping.
-Use the existing
-[consumer workflow pattern](https://github.com/atyrode/code/blob/main/.github/workflows/agent-policy.yml):
-PR/push checks invoke reviewed dotfiles `main` read-only; hourly/manual
-synchronization calls the reusable workflow with repository-scoped
-contents/pull-requests/actions write permission. Preserve read-only defaults,
-enable Actions PR creation and provide core CI `workflow_dispatch`. Preserve
-existing classic core checks, their GitHub Actions application bindings,
-strict/up-to-date enforcement, admin/review settings and other rulesets.
-Enroll `agent-policy`, bound to GitHub Actions app ID `15368`, in a dedicated
-active, main-only, strict required-status-check ruleset with no bypass actors.
-Create and verify that rule before removing only a duplicate classic
-`agent-policy` requirement introduced during enrollment. These settings require
-their own authority; the synchronizer never mutates them or acquires credentials
-to make enrollment possible.
-
-The repository token reads main's exact SHA, protected state and classic
-app-bound checks from the public branch endpoint. The bounded effective-branch
-rules endpoint supplies active strict policy requirements; evaluate/disabled
-rules do not count. Core check bindings may be supplied by applicable classic
-or active ruleset requirements, but `agent-policy` itself must be app-bound in
-a strict active rule. The PR GraphQL query separately confirms the tested
-head/base, readiness, mergeability and successful current-head status rollup,
-without requesting administrative branch-protection fields. Missing evidence
-blocks merge; no operator-token fallback or permission expansion is used.
-
-The Code, Babel and Manifold consumers receive generated-only draft PRs,
-exact-head core/policy CI, guarded squash merge, and separately observed main
-CI. Maintainer holds remain effective; the bot neither reviews its PR nor uses
-cross-repository write credentials. Following reviewed dotfiles `main` trusts
-its automation code as well as its Markdown. Delivery is eventual convergence
-through scheduling and CI, not an exact-time promise. Existing green runs are
-not retroactively invalidated when the source changes.
-
-Replacement publication first records a prepared candidate in the existing
-bot-owned `agent-policy-sync-status:v1` comment. Its optional `prepared` field
-binds the previous and candidate head/base/source/digest, the observed base and
-the commit timestamp; canonical `agent-policy-sync:v1` PR metadata is unchanged.
-After interruption, a later attempt reconstructs the exact generated candidate
-and accepts only the recorded old or prepared branch head. It keeps the record
-until PR metadata and status agree, without relying on a discarded commit
-remaining fetchable. Holds still stop publication, and recovery does not approve
-or merge without fresh applicable CI and protection checks. Missing, ambiguous or
-mutated ownership evidence remains a refusal, not permission to infer a repair.
-
 ### Publication is not activation
 
-A source PR publishes policy and generated repository outputs. Consumer PRs
-deliver repository copies. Separately authorized Home Manager activation
+A source PR publishes policy and generated repository outputs. Separately
+authorized Home Manager activation
 deploys the personal policy/template through the packaged CLI and agents
 module; normal `atyrode apply` consumes a published revision without requiring
 a checkout. Authoring operations require an explicit `--repo PATH`, never a
@@ -378,8 +323,7 @@ Use `omp --help` and `omp <command> --help` for the pinned upstream command
 surface. [Upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
 may describe behavior newer than the repository pin. This document is
 authoritative for `omp-managed` and `ompu`. The adjacent standalone `code`
-command is the temporary continuity bridge described below; it is not the
-native Manifold plugin runtime.
+command is the temporary continuity bridge described below.
 
 Plain `omp` executes upstream OMP directly, with no managed extension, defaults,
 or policy overlay. `omp update` is blocked so it cannot shadow the Nix-pinned
@@ -542,8 +486,8 @@ OpenAI-only routing uses Sol 6.2 medium. The curated `sol` and `astra` shortkeys
 resolve to `openai-codex/gpt-6.2-sol` (smart, tier 3) and
 `openai-codex/gpt-6.2-astra` (elite, tier 4); their pool and quota bucket stay
 unchanged. Explicit strong/elite selections remain visible choices, including
-Opus, Astra and Fable where served. Native Code's separately pinned Manifold OMP
-runtime and reviewed catalogs are not upgraded by the dotfiles OMP pin.
+Opus, Astra and Fable where served. The standalone bridge's reviewed catalogs
+are not upgraded by the dotfiles OMP pin.
 
 Routine `plan`/`slow` high is not a fixed effort for every profile: the explicit
 main-effort choices minimal, low, medium, high, xhigh and max map respectively
@@ -601,13 +545,8 @@ refresh command and bundled-agent routing smoke against the pinned binary in a
 disposable home. Refresh preserves catalog identities, reachability attestation
 and historical measurements; it does not call a provider or a benchmark.
 
-The Code/Manifold transition owns coordinated changes to this bridge's source,
-patch, wrapper and catalog. It must preserve supported standalone launch and
-account boundaries without creating another native/runtime owner.
-
-`omp-configured` carries the generated catalog, `CODE_*` wrapper integration
-and restricted `omp-analysis` RPC launcher required by `code engine`. The
-wrapper reuses OMP's existing auth-broker target and the general
+`omp-configured` carries the generated catalog and `CODE_*` wrapper integration.
+The wrapper reuses OMP's existing auth-broker target and the general
 `atyrode runtime` interface; it creates no second broker or runtime authority.
 
 The reviewed registry is `pkgs/omp-configured/config/models.yml`. For an
@@ -649,24 +588,6 @@ Reported output tokens can include reasoning, so these are not measured
 visible-answer decode rates or intelligence scores. Other model measurements
 remain historical; these six calls do not qualify the entire catalog.
 
-This bridge does **not** install Manifold plugin bundles, start or configure a
-Manifold hub, alter `manifold-agent`, or claim the native plugin workspace. The
-retired classifier-model pull schedule, catalog/model-fact refresher and
-automatic Code-to-Babel profile import remain retired. Native Manifold plugin
-installation and review still belong to Manifold's plugin manager.
-
-Retire the standalone command only after the native Manifold path reliably
-covers the operator's accepted daily workflows: choosing a catalog profile and
-account, launching managed and untrusted OMP workspaces, using brokered provider
-login, selecting the declared local runtime, and recovering workspace/session
-state. Passing builds or CI alone is not acceptance; the operator must confirm
-the replacement in sustained daily use before the package, catalog, wrapper and
-private analysis launcher are removed together.
-
-Publishing this source does not activate hosts, stop existing sessions, migrate
-credentials or change native Manifold deployment. Direct OMP launchers and the
-general local runtime remain separately owned.
-
 ## Security boundaries
 
 Decision records: [ADR-0004](adr/0004-agent-trust-tiers.md) for the trust
@@ -687,8 +608,7 @@ owns the loopback service and other machines' SSH forwarding target.
 audiences and rotation. Until the token is placed the service does not start;
 `atyrode doctor provisioning` reports the owed generation.
 `atyrode auth broker status` reports mode, host, service and placement without
-printing the token. The broker and its clients retain their tool-owned state;
-the native Code plugin does not transfer that state into dotfiles.
+printing the token. The broker and its clients retain their tool-owned state.
 
 Add Anthropic/OpenAI OAuth accounts with the broker's supported flow:
 `omp auth-broker login <provider> --via=alex@<broker host>`.
@@ -800,73 +720,52 @@ resolving again rather than repeatedly resetting under the old watcher.
 
 ## Session archive
 
-Home Manager configures [Babel](https://github.com/atyrode/babel) to archive
-available OMP, Codex and Claude session sources under the registry's stable
-host identity. Actual archival requires configured custody and a successful
-push; installing a timer is not evidence of either. Babel owns snapshot,
-catalog, browsing and recovery behavior; consult its documentation and
-`babel --help` for product workflows. This section owns dotfiles deployment
-and the managed-state boundary.
+Home Manager configures a restic archive of available OMP, Codex and Claude
+session sources under the registry's stable host identity, into one shared
+Cellar-backed repository. restic is the whole mechanism: no service or catalog
+sits between the session files and the repository, so recovery needs only
+restic and the repository password. Actual archival requires the placed
+environment and a successful push; installing a timer is not evidence of
+either. The archive is append-only: nothing runs `restic forget` or `prune`,
+and the repository is created once by the operator (`restic init`), never by a
+timer.
 
-[`modules/shared/babel-archive.nix`](../modules/shared/babel-archive.nix) owns
-provisioning; [Secrets](secrets.md#declaring-a-secret) owns the shared
-`babel-custody` inputs, per-machine storage, whole append-only payload key
-ring, validation and rotation. Home Manager links placed mode-600 files at
-`~/.config/babel/storage.json` and `~/.config/babel/payload-keys.json`; do not
-run `babel storage configure` on a fleet machine to replace that ownership.
+[`modules/shared/omp-session-archive.nix`](../modules/shared/omp-session-archive.nix)
+owns provisioning; [Secrets](secrets.md#declaring-a-secret) owns the shared
+`omp-session-archive` var and its `babel-custody` inputs. Home Manager links the
+placed mode-600 environment file at `~/.config/omp-session-archive/restic.env`;
+the file names the repository, the repository password file and the object-store
+credential, and no credential is ever an argument.
 
-For migration from plain local files, Home Manager refuses to replace them.
-Before removing any file, import the full existing ring into encrypted custody
-and verify it retains every key held by any configured machine or the old vault
-item; refuse conflicting material under the same key ID. Only then remove the
-old plain files (including `~/.config/babel/repository-password`) before the
-authorized apply that places the links. Never leave the ring prompt empty for
-an existing archive: minting a fresh ring would lose access to sealed content.
-Keep all prior keys when rotating through the secret owner's procedure.
-
-Do not run `babel sync --generate-key` on a managed machine: Babel's atomic
-rotation replaces the Home Manager symlink with a local file and does not
-update fleet custody. Rotate the shared var instead, retaining all prior keys.
-
-A `babel-archive` systemd user timer (launchd agent on macOS) then runs the
-`babel-archive-push` wrapper unattended. The timer's start condition is
-`~/.config/babel/storage.json`, so it arms only on a configured machine —
-storage is placed and verified first, and only then does anything push on a
-schedule. systemd reads that condition when the timer starts, and the unit does
-not change when the document appears, so `atyrode apply` starts the timer
-after every activation and a machine whose document was placed today does not
-wait for its next login; `systemctl --user start babel-archive.timer` arms one
-by hand. To see why a timer is not armed,
-`systemctl --user status babel-archive.timer` reports it inactive and names the
-condition that was not met, `journalctl --user -u babel-archive.timer` keeps the
-same line, and the presence or absence of `~/.config/babel/storage.json` is that
-answer read directly.
+An `omp-session-archive` systemd user timer (launchd agent on macOS) runs the
+`omp-session-archive-push` wrapper hourly. It archives, when they exist,
+`~/.omp/agent/sessions`, `~/.omp/agent/blobs`, `~/.claude/projects`,
+`~/.codex/sessions` and Codex's `history.jsonl` and `session_index.jsonl`,
+tagged `omp-sessions`, skipping cache directories; auth files and databases
+under those homes are not archived. The timer's start condition is
+`~/.config/omp-session-archive/restic.env`, so it arms only on a configured
+machine. systemd reads that condition when the timer starts, and the unit does
+not change when the file appears, so `atyrode apply` starts the timer after
+every activation; `systemctl --user start omp-session-archive.timer` arms one by
+hand. To see why a timer is not armed, `systemctl --user status
+omp-session-archive.timer` reports it inactive and names the unmet condition,
+and `journalctl --user -u omp-session-archive.timer` keeps the same line.
 
 macOS has no equivalent condition, so there the wrapper's own check is the whole
-gate. With no `~/.config/babel/storage.json` the wrapper prints one line and
-exits 0 — which is also what a hand-run `babel-archive-push` does on any
-unconfigured machine — so an unconfigured machine is a no-op rather than a
-failing unit; when the machine is configured and the push fails, a missing
-restic repository included, it exits nonzero and the failure stays visible.
-After a successful push the wrapper stamps
-`~/.local/state/babel/last-success` with one ISO-8601 UTC line, and
-`atyrode apply` reads that stamp to warn when the archive is unconfigured, has
-never succeeded here, or has not succeeded within 48 hours.
+gate. With no `restic.env` the wrapper prints one line and exits 0 -- which is
+also what a hand-run `omp-session-archive-push` does on any unconfigured machine
+-- so an unconfigured machine is a no-op rather than a failing unit; when the
+machine is configured and the push fails, a missing restic repository included,
+it exits nonzero and the failure stays visible. After a successful push the
+wrapper stamps `~/.local/state/omp-session-archive/last-success` with one
+ISO-8601 UTC line, and `atyrode apply` reads that stamp to warn when the archive
+is unconfigured, has never succeeded here, or has not succeeded within 48 hours.
 
-The push runs Babel in local mode: the wrapper hands it a run-scoped copy of
-the storage document without its `catalog` block, in a private directory under
-the runtime directory that is removed when the push exits. The Go-era shared
-PostgreSQL catalog is retired, so a complete restic snapshot is the whole of a
-successful push and nothing is published beside it. For the same reason, run
-`babel-archive-push` rather than a bare `babel archive push` to archive by
-hand: the bare command reads the placed shared-mode document and still
-publishes to that catalog.
-
-Other operator surfaces are Babel's own: `babel archive status [--json]`
-reports repository and stamp health, `babel archive verify [--deep]` checks
-repository integrity (`--deep` reads the pack data, not just the index), and
-`babel sessions list` lists this machine's sessions, or with `--host` another
-host's newest snapshot.
+To inspect the archive, source the environment file and use restic directly:
+`restic snapshots --tag omp-sessions`, `restic check` for integrity, and
+`restic restore` for recovery. The previous Babel-written archive remains in its
+own repository path in the same bucket; reading it needs the restic password and
+payload key ring still held in the `babel-custody` var.
 
 These commands have different effects: listing/status inspect state, integrity
 verification accesses the configured repository, and push writes the live
@@ -918,81 +817,10 @@ instead of leaving a stale list.
 | [`ts-react-dead-code-sweep`](../modules/home/agents/skills/ts-react-dead-code-sweep/SKILL.md) | generic | repository-authored |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | generic | repository-authored |
 | [`update-check`](../modules/home/agents/skills/update-check/SKILL.md) | generic | repository-authored |
-| `babel-recall` | package-owned | pinned Babel `babel/recall-skill.md`, installed unchanged by `pkgs.babel-recall` |
-| `manifold-terminal` | package-owned | pinned Manifold `packages.<system>.manifold`, installed unchanged with `bin/manifold` |
 
 `ts-react-dead-code-sweep` has no surface in this repository — it is a
 cross-project skill, deployed to the global `~/.agents/skills` so it is
 available whenever these machines work on a TypeScript project.
-
-### Manifold terminal client
-
-The common agent-tools profile installs Manifold's compiled `manifold` CLI and
-its `share/agent-skills/manifold-terminal/SKILL.md` from the existing Manifold
-flake input. The skill uses the shared OMP/Codex/Claude routes above; dotfiles
-implements neither the client nor a second skill. The fleet agent release pin
-and Agent/Run action runner remain separate.
-
-With an inherited Manifold terminal binding, `manifold context` and
-`manifold doctor` work outside a checkout. Missing `manifold` means the package
-is not installed. Do not dump binding values, borrow credentials or substitute
-ordinary terminal identity for Agent/Run authority.
-
-`nix build --no-link .#checks.x86_64-linux.omp-context .#checks.x86_64-linux.omp-stack`
-checks fresh personal-context loading outside a repository, the installed
-entrypoint on the managed package path, shared skill bytes and fresh OMP skill
-discovery both inside and outside a project. These no-provider checks do not
-exercise live terminal authority, activate a machine or refresh existing
-sessions. A published Manifold input revision exposing the package is required
-for normal installation; source-override proof is not published-pin proof.
-
-### Babel Recall: source delivery and operator prerequisites
-
-The managed home includes `babel-recall-runner` and the `babel-recall` skill from
-the independently pinned Recall consumer package. Babel authors the sole skill
-body in `babel/recall-skill.md`; the package installs those exact bytes at
-`share/agent-skills/babel-recall/SKILL.md`. Its non-secret, version-bound
-`share/babel-recall/read-results.json` contains exact-door SDK `readResults`
-approvals with contract digests and byte limits. The wrapper supplies that
-immutable profile through `MANIFOLD_READ_RESULTS` and execs the supported
-Manifold action runner; it implements no retrieval client, credential discovery
-or lifecycle. The legacy `babel` archive package, custody links, scheduled push
-and standalone Code continuity are unchanged.
-
-`omp-stack` covers package/managed-skill byte identity, both configured skill
-roots, runner presence on the managed package path and OMP skill-command
-discovery through its existing no-provider RPC seam. This is a source check,
-not evidence of deployed Recall authority or live retrieval; Claude and Codex
-discovery routes are grounded in the sources above, not provider turns.
-
-Source proof on dev-01, 2026-09-21: the Nix-built wrapper ran the supported SDK
-against a synthetic loopback lifecycle peer backed by Babel's actual doors,
-ledger, native HTTP service and archive core. It delivered the unchanged skill
-and redacted evidence, reported one cold snapshot fetch, recovered a withheld
-request handle through the owned action trace, and confirmed every SDK run's
-cleanup. `omp-stack` also passed its byte-identity and no-provider OMP discovery
-checks. The initial run used an exact source-revision override; the default
-locked package and Linux `omp-stack` subsequently passed with merged Babel
-`1ea3838931b4acf92076bceb6214fa35a5ba5cef` and SDK
-`3e8510c473d84175568ac81012763635112ed7d3`. This proves the package path, not
-deployed authority or managed activation.
-
-**OPERATOR STEP — activate separately:** only after the matching Babel/SDK
-proof and reviewed source pins are integrated, authorize normal Home Manager
-activation to expose this delivery; inspect any reported skill-path collision
-without overwriting tool-owned content. Source publication and a passing
-package check do not activate a machine or refresh an existing session.
-
-**OPERATOR STEP — provision authority separately:** the owner must provision
-the native Recall service and its fixed routes, and a trusted launcher must
-provide the authorized Agent credential, service origin and run binding
-inherited by the runner. Ordinary callers receive no restic grants; installing
-the skill/profile or having the legacy archive configured grants no Recall
-authority. Only use the skill when that authorized runner is available and the
-operator requests past discussion; retrieved content does not authorize public
-disclosure. Activation, credentials, service/grant provisioning and live archive
-access are operator-owned prerequisites, not operations exercised by this
-source integration.
 
 ### Vendoring a third-party skill
 
@@ -1040,8 +868,8 @@ been open that long.
 
 The generic [`update-check`](../modules/home/agents/skills/update-check/SKILL.md)
 skill is the agent-side counterpart. Its single read-only command compares
-these pins, this machine's OMP and Codex, and the `@oh-my-pi/*` SDK pin in
-atyrode/manifold-omp with the latest releases, and it reports a pending pin PR.
+these pins and this machine's OMP and Codex
+with the latest releases, and it reports a pending pin PR.
 The personal policy runs it at most once per session. When nothing is
 available it says nothing; otherwise it asks the operator before anything is
 bumped.

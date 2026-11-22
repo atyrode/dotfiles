@@ -152,14 +152,9 @@ pkgs.runCommand "check-omp-stack"
     test "$(yq eval '.tools.approvalMode' ${yoloConfig})" = "null"
 
     # The hand-curated preset launchers were sunset: the managed bin set is now
-    # exactly `code omp omp-analysis omp-managed ompu` (plus the zsh
-    # completion). The omp-passthrough launchers report the pinned version;
-    # Code's headless engine path is exercised by the Babel migration check.
-    # Also validate the analysis posture the restricted launcher applies: an
-    # unreadable or malformed layer would take the Babel worker down at launch,
-    # which is exactly the failure this launcher exists to end.
-    "$raw_omp" models --config ${pkgs.omp-configured.analysisConfig} --json >/dev/null
-    for command in omp omp-analysis omp-managed ompu; do
+    # exactly `code omp omp-managed ompu` (plus the zsh
+    # completion). The omp-passthrough launchers report the pinned version.
+    for command in omp omp-managed ompu; do
       command_version="$(${pkgs.omp-configured}/bin/"$command" --version)"
       test "''${command_version##*/}" = "${ompRuntimeVersion}"
     done
@@ -252,7 +247,7 @@ pkgs.runCommand "check-omp-stack"
     test ! -e ${pkgs.omp-configured}/bin/pi
     test "$(
       find ${pkgs.omp-configured}/bin -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | paste -sd, -
-    )" = "code,omp,omp-analysis,omp-managed,ompu"
+    )" = "code,omp,omp-managed,ompu"
 
     ${pkgs.omp-configured}/bin/omp models --json > "$TMPDIR/models.json" 2> "$TMPDIR/models.err"
     test ! -s "$TMPDIR/models.err"
@@ -283,27 +278,15 @@ pkgs.runCommand "check-omp-stack"
     rpc_project="$TMPDIR/rpc-project"
     mkdir -p "$rpc_home" "$rpc_project/.omp" "$rpc_project/.agents/skills/project-fixture"
     # Exercise the evaluated Home Manager sources in a disposable home, not
-    # an invented skill copy. No Recall, terminal action or provider turn is sent.
+    # an invented skill copy. No provider turn is sent.
     mkdir -p "$rpc_home/.agents" "$rpc_home/.claude"
     ln -s ${managedSkills} "$rpc_home/.agents/skills"
     ln -s ${claudeSkills} "$rpc_home/.claude/skills"
-    recall_skill="$rpc_home/.agents/skills/babel-recall/SKILL.md"
-    cmp ${pkgs.babel-recall.src}/babel/recall-skill.md "$recall_skill"
-    cmp ${pkgs.babel-recall}/share/agent-skills/babel-recall/SKILL.md "$recall_skill"
-    cmp "$recall_skill" "$rpc_home/.claude/skills/babel-recall/SKILL.md"
-    test "$(readlink -f "$recall_skill")" = \
-      "$(readlink -f "$rpc_home/.claude/skills/babel-recall/SKILL.md")"
-    recall_runner="$(PATH=${lib.makeBinPath agentTools.home.packages} command -v babel-recall-runner)"
-    test "$recall_runner" = "${pkgs.babel-recall}/bin/babel-recall-runner"
-    test -x "$recall_runner"
-    terminal_skill="$rpc_home/.agents/skills/manifold-terminal/SKILL.md"
-    cmp ${pkgs.manifold-terminal-client}/share/agent-skills/manifold-terminal/SKILL.md "$terminal_skill"
-    cmp "$terminal_skill" "$rpc_home/.claude/skills/manifold-terminal/SKILL.md"
-    test "$(readlink -f "$terminal_skill")" = \
-      "$(readlink -f "$rpc_home/.claude/skills/manifold-terminal/SKILL.md")"
-    terminal_client="$(PATH=${lib.makeBinPath agentTools.home.packages} command -v manifold)"
-    test "$terminal_client" = "${pkgs.manifold-terminal-client}/bin/manifold"
-    test -x "$terminal_client"
+    update_skill="$rpc_home/.agents/skills/update-check/SKILL.md"
+    cmp ${../../modules/home/agents/skills/update-check/SKILL.md} "$update_skill"
+    cmp "$update_skill" "$rpc_home/.claude/skills/update-check/SKILL.md"
+    test "$(readlink -f "$update_skill")" = \
+      "$(readlink -f "$rpc_home/.claude/skills/update-check/SKILL.md")"
     printf '%s\n' 'managed-project-guidance-fixture' > "$rpc_project/.omp/AGENTS.md"
     printf '%s\n' '{"defaultThinkingLevel":"low"}' > "$rpc_project/.omp/settings.json"
     cat > "$rpc_project/.omp/config.yml" <<'EOF'
@@ -343,15 +326,12 @@ pkgs.runCommand "check-omp-stack"
         | any(.name == "skill:project-fixture" and .description == "managed-project-skill-fixture"))
       and
       (map(select(.id == "commands" and .success == true))[0].data.commands
-        | any(.name == "skill:babel-recall"))
-      and
-      (map(select(.id == "commands" and .success == true))[0].data.commands
-        | any(.name == "skill:manifold-terminal"))
+        | any(.name == "skill:update-check"))
     ' "$TMPDIR/rpc.jsonl" >/dev/null
     test ! -e "$rpc_home/.pi"
 
     # A fresh process outside a checkout must still discover the installed
-    # terminal skill, without inheriting the project fixture's skill.
+    # update-check skill, without inheriting the project fixture's skill.
     mkdir -p "$rpc_home/outside"
     printf '%s\n' '{"id":"commands","type":"get_available_commands"}' \
       | env \
@@ -366,7 +346,7 @@ pkgs.runCommand "check-omp-stack"
           --no-lsp > "$TMPDIR/rpc-outside.jsonl"
     jq -s -e '
       (map(select(.id == "commands" and .success == true))[0].data.commands
-        | any(.name == "skill:manifold-terminal")
+        | any(.name == "skill:update-check")
           and (any(.name == "skill:project-fixture") | not))
     ' "$TMPDIR/rpc-outside.jsonl" >/dev/null
 

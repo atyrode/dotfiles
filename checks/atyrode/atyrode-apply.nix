@@ -51,12 +51,8 @@ let
       printf '[Unit]\nDescription=Fixture 1.0\n[Service]\nExecStart=%s\n' '${command}' \
         > "$out/home-files/.config/systemd/user/${service}.service"
     '';
-  ownerOld =
-    serviceGeneration "owner-old" "manifold-agent"
-      "/nix/store/fixture-manifold-1.0/bin/agent --old";
-  ownerNew =
-    serviceGeneration "owner-new" "manifold-agent"
-      "/nix/store/fixture-manifold-1.0/bin/agent --new";
+  ownerOld = serviceGeneration "owner-old" "docker" "/nix/store/fixture-docker-1.0/bin/dockerd --old";
+  ownerNew = serviceGeneration "owner-new" "docker" "/nix/store/fixture-docker-1.0/bin/dockerd --new";
   scopedOld = serviceGeneration "scoped-old" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --old";
   scopedNew = serviceGeneration "scoped-new" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --new";
   unknownCandidate = pkgs.runCommand "fixture-unknown-generation" { } ''mkdir "$out"'';
@@ -141,7 +137,7 @@ pkgs.runCommand "check-atyrode-apply"
     #!${pkgs.runtimeShell}
     case "$*" in
       *show-environment*) exit 0 ;;
-      *'show --property=LoadState,ActiveState -- manifold-agent.service')
+      *'show --property=LoadState,ActiveState -- docker.service')
         printf 'LoadState=loaded\nActiveState=%s\n' "''${ATYRODE_TEST_OWNER_ACTIVE:-active}" ;;
       *is-active*)
         unit=""
@@ -345,8 +341,8 @@ pkgs.runCommand "check-atyrode-apply"
     # The CLI reads and drives this machine, so it must see the machine's own
     # programs no matter what PATH the caller had. A bootstrap that has just
     # activated still holds the PATH it started with: on a real Darwin run that
-    # made every managed tool report missing, `gh` unavailable, and the babel
-    # ceremony unable to find babel -- a healthy machine reported as broken.
+    # made every managed tool report missing, and `gh` unavailable -- a
+    # healthy machine reported as broken.
     #
     # `nix-locate` is a declared tool, so doctor has an opinion about it. Here
     # it exists only inside the activated profile and nowhere on the PATH the
@@ -716,7 +712,7 @@ pkgs.runCommand "check-atyrode-apply"
       mkdir -p "$secret_root/run/secrets.d/1/vars" "$secret_root/targets/discovered"
       ln -s secrets.d/1 "$secret_root/run/secrets"
       mkdir -p "$vars_root/git-identity" "$vars_root/omp-auth-broker" \
-        "$vars_root/babel-archive" \
+        "$vars_root/omp-session-archive" \
         "$vars_root/dangling" "$vars_root/unreadable" \
         "$vars_root/not-file/value" "$vars_root/nested/deep"
       printf 'FIXTURE_ONLY_CONTEXT_SECRET\n' > "$vars_root/git-identity/auth-key"
@@ -729,7 +725,7 @@ pkgs.runCommand "check-atyrode-apply"
       ln -s "$secret_root/targets/token" "$vars_root/omp-auth-broker/token"
       ln -s "$secret_root/targets/discovered" "$vars_root/discovered"
       ln -s "$secret_root/targets/unreadable" "$vars_root/git-identity/signing-key"
-      ln -s "$secret_root/targets/missing" "$vars_root/babel-archive/storage.json"
+      ln -s "$secret_root/targets/missing" "$vars_root/omp-session-archive/restic.env"
       ln -s "$secret_root/targets/missing" "$vars_root/dangling/value"
       ln -s "$secret_root/targets/unreadable" "$vars_root/unreadable/value"
       export _ATYRODE_TEST_IDENTITY_ROOT="$secret_root"
@@ -917,65 +913,59 @@ pkgs.runCommand "check-atyrode-apply"
     atyrode provision nonsense 2>"$TMPDIR/provision-usage.err" && false
     grep -qF machine-key "$TMPDIR/provision-usage.err"
 
-    # The archive is never offered: its storage document is a clan var, so
+    # The archive is never offered: its environment file is a clan var, so
     # there is no ceremony this machine could run, only a generation an
     # operator device owes it or a fix for an archive that is placed but not
-    # working. Every reading is a state of the document and the success stamp,
-    # judged for a fleet machine because a portable profile has no var at all.
-    babel_probe() { # host status code
+    # working. Every reading is a state of the environment file and the success
+    # stamp, judged for a fleet machine because a portable profile has no var
+    # at all.
+    archive_probe() { # host status code
       ATYRODE_HOST="$1" atyrode doctor provisioning --json |
         jq -e --arg status "$2" --arg code "$3" '
-          .surfaces[] | select(.id == "babel-archive")
+          .surfaces[] | select(.id == "omp-session-archive")
           | .status == $status and (.code // "") == $code
         ' >/dev/null ||
-        { echo "atyrode: babel-archive on $1 was not $2/$3" >&2; exit 1; }
+        { echo "atyrode: omp-session-archive on $1 was not $2/$3" >&2; exit 1; }
     }
-    babel_probe development-x86_64-linux not-applicable portable-profile
-    babel_probe fixture-nixos degraded archive-input-unavailable
-    # Document placed but no success stamp: the archive has never run here.
+    archive_probe development-x86_64-linux not-applicable portable-profile
+    archive_probe fixture-nixos degraded archive-input-unavailable
+    # Environment placed but no success stamp: the archive has never run here.
     # That is configured-but-not-working, so it is told, never offered --
     # there is no yes/no in "your archive is broken", only a fix.
-    mkdir -p "$XDG_CONFIG_HOME/babel"
-    printf '{"password_file":"%s"}\n' "$XDG_CONFIG_HOME/babel/repository-password" > "$XDG_CONFIG_HOME/babel/storage.json"
-    printf 'fixture-password\n' > "$XDG_CONFIG_HOME/babel/repository-password"
-    printf '{}\n' > "$XDG_CONFIG_HOME/babel/payload-keys.json"
-    babel_probe fixture-nixos degraded never-succeeded
+    mkdir -p "$XDG_CONFIG_HOME/omp-session-archive"
+    printf "RESTIC_PASSWORD_FILE='%s'\n" "$XDG_CONFIG_HOME/omp-session-archive/repository-password" > "$XDG_CONFIG_HOME/omp-session-archive/restic.env"
+    printf 'fixture-password\n' > "$XDG_CONFIG_HOME/omp-session-archive/repository-password"
+    archive_probe fixture-nixos degraded never-succeeded
     # A stamp older than the staleness window is degraded; a fresh one is fine.
-    mkdir -p "$XDG_STATE_HOME/babel"
-    date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
-    babel_probe fixture-nixos degraded archive-stale
-    date -u +%FT%TZ > "$XDG_STATE_HOME/babel/last-success"
-    babel_probe fixture-nixos ok ""
-    # A recent success must not hide an incomplete activation or lost input.
-    rm "$XDG_CONFIG_HOME/babel/payload-keys.json"
-    babel_probe fixture-nixos degraded archive-input-unavailable
-    ln -s "$TMPDIR/missing-payload-keys" "$XDG_CONFIG_HOME/babel/payload-keys.json"
-    babel_probe fixture-nixos degraded archive-input-unavailable
-    rm "$XDG_CONFIG_HOME/babel/payload-keys.json"
-    printf '{}\n' > "$XDG_CONFIG_HOME/babel/payload-keys.json"
-    chmod 000 "$XDG_CONFIG_HOME/babel/repository-password"
-    babel_probe fixture-nixos degraded archive-input-unavailable
-    chmod 600 "$XDG_CONFIG_HOME/babel/repository-password"
-    : > "$XDG_CONFIG_HOME/babel/repository-password"
-    babel_probe fixture-nixos degraded archive-input-unavailable
-    printf 'fixture-password\n' > "$XDG_CONFIG_HOME/babel/repository-password"
-    cp "$XDG_CONFIG_HOME/babel/storage.json" "$TMPDIR/valid-babel-storage"
-    printf '{}\n' > "$XDG_CONFIG_HOME/babel/storage.json"
-    babel_probe fixture-nixos degraded archive-config-invalid
-    mv "$TMPDIR/valid-babel-storage" "$XDG_CONFIG_HOME/babel/storage.json"
-    babel_probe fixture-nixos ok ""
+    mkdir -p "$XDG_STATE_HOME/omp-session-archive"
+    date -u -d '3 days ago' +%FT%TZ > "$XDG_STATE_HOME/omp-session-archive/last-success"
+    archive_probe fixture-nixos degraded archive-stale
+    date -u +%FT%TZ > "$XDG_STATE_HOME/omp-session-archive/last-success"
+    archive_probe fixture-nixos ok ""
+    # A recent success must not hide a lost or unreadable input.
+    chmod 000 "$XDG_CONFIG_HOME/omp-session-archive/repository-password"
+    archive_probe fixture-nixos degraded archive-input-unavailable
+    chmod 600 "$XDG_CONFIG_HOME/omp-session-archive/repository-password"
+    : > "$XDG_CONFIG_HOME/omp-session-archive/repository-password"
+    archive_probe fixture-nixos degraded archive-input-unavailable
+    printf 'fixture-password\n' > "$XDG_CONFIG_HOME/omp-session-archive/repository-password"
+    cp "$XDG_CONFIG_HOME/omp-session-archive/restic.env" "$TMPDIR/valid-archive-env"
+    printf 'RESTIC_REPOSITORY=x\n' > "$XDG_CONFIG_HOME/omp-session-archive/restic.env"
+    archive_probe fixture-nixos degraded archive-config-invalid
+    mv "$TMPDIR/valid-archive-env" "$XDG_CONFIG_HOME/omp-session-archive/restic.env"
+    archive_probe fixture-nixos ok ""
     # Arming is an apply-owned mutation. A refused start must make the apply
     # fail, and the announced start is what shows the arm branch ran rather
-    # than the skip for a missing document.
+    # than the skip for a missing environment file.
     set +e
     _ATYRODE_TEST_SYSTEMD_AVAILABLE=0 ATYRODE_SYSTEMCTL="$TMPDIR/bin/fake-systemctl" \
       atyrode apply --repo "$HOME/nix-dotfiles" >/dev/null 2>"$TMPDIR/apply-archive-arm.err"
     archive_status="$?"
     set -e
     test "$archive_status" = 69
-    grep -qE '^  \$ .*fake-systemctl --user start babel-archive\.timer$' "$TMPDIR/apply-archive-arm.err"
+    grep -qE '^  \$ .*fake-systemctl --user start omp-session-archive\.timer$' "$TMPDIR/apply-archive-arm.err"
     grep -qF 'now?' "$TMPDIR/apply-archive-arm.err" && false
-    rm -rf "$XDG_CONFIG_HOME/babel" "$XDG_STATE_HOME/babel"
+    rm -rf "$XDG_CONFIG_HOME/omp-session-archive" "$XDG_STATE_HOME/omp-session-archive"
 
     # The broker token is the same shape as the archive document: a shared
     # clan var an operator device generates and the next apply places behind
@@ -1103,7 +1093,7 @@ pkgs.runCommand "check-atyrode-apply"
       rm -f "$TMPDIR/nh-activations"
       owner_preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
       jq -e '.disruption.status == "blocked" and
-        any(.disruption.effects[]; .service == "manifold-agent.service" and
+        any(.disruption.effects[]; .service == "docker.service" and
           .protected and (.action == "restart" or .action == "stop"))' \
         <<<"$owner_preview" >/dev/null
       set +e
@@ -1744,7 +1734,7 @@ pkgs.runCommand "check-atyrode-apply"
     printf '%s\n' "\$*" >> "$TMPDIR/changelog-fetch-args"
     case "\$*" in
       *'/compare/1111111111111111111111111111111111111111...feedfacefeedfacefeedfacefeedfacefeedface')
-        printf '%s\n' '{"status":"ahead","ahead_by":2,"commits":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit":{"message":"feat(atyrode): the shell reads main\n\nbody"}},{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","commit":{"message":"fix: retain manifold ingress"}}]}' ;;
+        printf '%s\n' '{"status":"ahead","ahead_by":2,"commits":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit":{"message":"feat(atyrode): the shell reads main\n\nbody"}},{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","commit":{"message":"fix: retain preview ingress"}}]}' ;;
       *'/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs')
         cat "$TMPDIR/changelog-check-runs" ;;
       *) exit 22 ;;
@@ -1770,7 +1760,7 @@ pkgs.runCommand "check-atyrode-apply"
       and .running == "1111111111111111111111111111111111111111"
       and .target == "feedfacefeedfacefeedfacefeedfacefeedface"
       and (.commits | map(.sha)) == ["aaaaaaaaaaaa", "feedfacefeed"]
-      and (.commits | map(.subject)) == ["feat(atyrode): the shell reads main", "fix: retain manifold ingress"]
+      and (.commits | map(.subject)) == ["feat(atyrode): the shell reads main", "fix: retain preview ingress"]
     ' >/dev/null
     # A red or unfinished main is said as such, never mistaken for green.
     printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"failure"}]}' > "$TMPDIR/changelog-check-runs"

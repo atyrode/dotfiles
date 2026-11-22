@@ -24,7 +24,7 @@ let
   machine = config.clan.core.settings.machine.name;
 
   # Where sops-nix places the private halves, stated from its fixed layout for
-  # the reason babel-archive.nix gives, and asserted against clan's answer once
+  # the reason omp-session-archive.nix gives, and asserted against clan's answer once
   # there is one so the two cannot silently diverge.
   placed = name: "/run/secrets/vars/git-identity/${name}";
   agrees =
@@ -69,7 +69,7 @@ in
     }
   ];
 
-  # A shared module rather than `users.<name>`, for the reason babel-archive.nix
+  # A shared module rather than `users.<name>`, for the reason omp-session-archive.nix
   # gives: naming the user here would read the very attribute set this defines.
   # The home module reads these paths; it never learns where they came from.
   home-manager.sharedModules = [

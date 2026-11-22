@@ -6,7 +6,6 @@
   clan-core,
   disko,
   home-manager,
-  manifold,
   nix-homebrew,
   nixos-facter-modules,
   nixos-wsl,
@@ -36,9 +35,9 @@ let
   clanMachineModules = [
     ../modules/shared/clan-machine.nix
     ../modules/shared/git-identity.nix
-    ../modules/shared/babel-archive.nix
+    ../modules/shared/babel-custody.nix
+    ../modules/shared/omp-session-archive.nix
     ../modules/shared/omp-auth-broker.nix
-    ../modules/shared/manifold-agent.nix
   ];
 
   # Home Manager inside a NixOS machine of this fleet: the package overlay
@@ -208,7 +207,6 @@ let
         (machineDirectory + "/network.nix")
         (machineDirectory + "/boot.nix")
         ../modules/nixos/vps.nix
-        ../modules/nixos/cloudflare-dns.nix
         ../modules/nixos/caddy-on-demand-ask.nix
         ../modules/nixos/myparcelle-dev.nix
         ../modules/nixos/games.nix
@@ -221,11 +219,6 @@ let
         { programs.nix-ld.enable = true; }
         ../modules/nixos/tern-workspace-runtime.nix
         ../modules/nixos/tern-workspace-network.nix
-        manifold.nixosModules.native
-        ../modules/nixos/manifold-dev-hub.nix
-        ../modules/nixos/manifold-dev-babel-store.nix
-        ../modules/nixos/manifold-dev-babel-restic.nix
-        ../modules/nixos/manifold-dev-recovery.nix
         ../modules/nixos/myparcelle-ci-runners.nix
         ../modules/nixos/myparcelle-ci-clever.nix
         ../modules/nixos/myparcelle-ci-clever-guard.nix
@@ -254,8 +247,7 @@ let
   # `<name>.fleet` through the hosts file the service writes. What the
   # overlay is for is the substrate: `fleet apply` reaching a machine that
   # exposes no port, and the backup routine reaching the disk at home. It is
-  # not manifold's transport -- the agent dials the hub's public origin from
-  # anywhere, overlay or not -- and manifold does not read it (docs/manifold.md).
+  # not an agent transport: nothing but the fleet's own substrate uses it.
   overlayInstance = "fleet";
   overlayController = "dev-01";
   clan = clan-core.lib.clan {

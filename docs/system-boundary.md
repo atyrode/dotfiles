@@ -65,7 +65,7 @@ phase therefore reports the exact
 installs reviewed exact package IDs, but does not silently uninstall a
 conflicting Zen channel.
 
-Service-launched shells, including Manifold terminals, may start without the
+Service-launched shells may start without the
 Windows PATH inherited by a Windows Terminal login. The WSL module and the
 CLI's pre-activation Windows check share `atyrode-wsl-path`: it locates Windows
 under the configured automount root, asks `cmd.exe` for its PATH, and translates

@@ -58,8 +58,8 @@ let
   # session here -- and a workstation rarely carries clever-tools itself. This
   # exposes one copy to the CLI so the probe has an answer on a machine that
   # has no clever of its own.
-  babelClever = writeShellApplication {
-    name = "babel-clever";
+  cleverTool = writeShellApplication {
+    name = "atyrode-clever";
     runtimeInputs = [ clever-tools ];
     text = ''
       exec clever "$@"
@@ -101,7 +101,6 @@ let
       expectedPublicKey = ternWorkspace.peers.windows.publicKey;
     }
   );
-  manifoldInventory = ../../fleet/manifold.json;
   authBrokerInventory = ../../fleet/auth-broker.json;
   systemPolicy = ../../fleet/system-boundary.json;
   provisioningPolicy = ../../fleet/provisioning.json;
@@ -296,7 +295,7 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@agents_policy@' '${agentsPolicy}' \
       --replace-fail '@atyrode_preview_parser@' '${lib.getExe atyrode-preview}' \
       --replace-fail '@atyrode_disruption@' "$out/libexec/atyrode-disruption" \
-      --replace-fail '@babel_clever@' '${lib.getExe babelClever}' \
+      --replace-fail '@clever_tool@' '${lib.getExe cleverTool}' \
       --replace-fail '@atyrode_runtime@' "$out/libexec/atyrode-runtime" \
       --replace-fail '@capabilities@' '${capabilityDescriptions}' \
       --replace-fail '@flakeRef@' '${flakeRef}' \
@@ -308,7 +307,6 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@revision@' '${revision}' \
       --replace-fail '@sops_directory@' '${sopsDirectory}' \
       --replace-fail '@clan_var_names@' '${clanVarNames}' \
-      --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@auth_broker_inventory@' '${authBrokerInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@provisioning_policy@' '${provisioningPolicy}' \

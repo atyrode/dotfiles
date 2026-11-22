@@ -49,8 +49,7 @@ that computer. Fleet membership is the reviewed registry in Git, not dynamic
 discovery: a clone cannot add a machine to this repository, make it appear in
 the generated fleet context, or alter an operator machine. Services remain
 separate trust boundaries. SSH accepts only the private halves of reviewed
-public keys; Manifold enrollment needs its owner key and yields a machine
-token; OMP, Babel, and provider access require their encrypted credentials. An
+public keys; OMP and provider access require their encrypted credentials. An
 unenrolled copy is therefore inert or rejected, not connected to the fleet.
 
 A clone becomes dangerous only after a separate authority is compromised: a
@@ -185,8 +184,7 @@ path under `/run/secrets` at activation and never in the Nix store. The
 `host-registry` check asserts that the declared set is exactly the fleet's, so
 a new generator is a reviewed change rather than a side effect.
 
-The fleet declares four on every clan machine, and a pair more on every
-Manifold spoke. The first, [`git-identity`](../modules/shared/git-identity.nix),
+The fleet declares these on every clan machine. The first, [`git-identity`](../modules/shared/git-identity.nix),
 is on every clan machine: an authentication key and a signing key, ed25519, minted
 per machine and never shared, so retiring a machine deletes one registration
 instead of rotating a key the whole fleet uses. The private halves are secrets
@@ -195,34 +193,32 @@ are ordinary values in `vars/`, which is what keeps the signer set reviewable.
 How Git and `ssh` consume them is its own section, [Git identity](#git-identity),
 below.
 
-The second is the pair in
-[`babel-archive`](../modules/shared/babel-archive.nix), Babel's storage
-custody, which replaces a Bitwarden ceremony. `babel-custody` is shared and
-prompted: the restic repository password -- existing, never minted, the one
-value no provider can reissue -- the two Clever Cloud add-on environments
-pasted whole as `clever addon env <add-on> --format json` prints them, and
-the deployment's payload key ring, pasted whole from a configured machine's
-`~/.config/babel/payload-keys.json` or left empty to mint a ring of one fresh
-key. The first three files are secrets that are never deployed
-(`deploy = false`): they exist only as inputs, so no machine holds the raw
-add-on environments, and a paste that is not JSON or lacks a key fails at the
-operator's terminal rather than at an activation. The ring is the fourth
-file, and it is deployed: it is validated to Babel's own rules at generation,
-placed on every machine at mode 0600, and linked from
-`~/.config/babel/payload-keys.json`, because every host opens records with
-the same ring. `babel-archive` is per machine and depends on the custody:
-from the first three inputs it renders the storage document Babel reads,
-under the registry identity, with the repository password placed beside it at
-the path the document names. Both are placed by sops-nix at mode 0600 and
-owned by the account that runs the archive timer, and Home Manager links
-`~/.config/babel/storage.json` to the placed document, so Babel reads it
-where it always has. No provider hostname or credential is in the repository:
-all of it arrives through the prompts. Rotating a payload key is an edit of
-the var, never a regeneration -- the ring is append-only, because an object
-sealed under a retired key still needs it: `clan vars get <host>
+The second is the pair that provisions the session archive.
+[`babel-custody`](../modules/shared/babel-custody.nix) is shared and prompted
+and holds what only the operator can supply: the restic repository password --
+existing, never minted, the one value no provider can reissue -- the two Clever
+Cloud add-on environments pasted whole as `clever addon env <add-on> --format
+json` prints them, and the payload key ring of the retired Babel archive. It
+is kept because it is the only way to read that archive. The first three files
+are secrets that are never deployed (`deploy = false`): they exist only as
+inputs, so no machine holds the raw add-on environments, and a paste that is
+not JSON or lacks a key fails at the operator's terminal rather than at an
+activation. The ring is deployed unchanged; rotating it is an edit of the var,
+never a regeneration -- the ring is append-only, because an object sealed under
+a retired key still needs it: `clan vars get <host>
 babel-custody/payload-keys.json`, add the new key and name it `active_key_id`,
 `clan vars set <host> babel-custody/payload-keys.json` over stdin (`set`
-re-encrypts to the same audience and commits), then apply on every machine.
+re-encrypts to the same audience and commits).
+
+[`omp-session-archive`](../modules/shared/omp-session-archive.nix) is shared
+and derived, with no prompt: from the custody's password and Cellar
+environment it renders `restic.env` (repository locator, password-file path and
+object-store credential) and carries a copy of the password beside it. Both
+are placed by sops-nix at mode 0600, owned by the account that runs the archive
+timer, and Home Manager links `~/.config/omp-session-archive/restic.env` to the
+placed environment, so the push reads it where the timer's start condition
+looks. No provider hostname or credential is in the repository: all of it
+arrives through the custody prompts.
 
 The third, [`omp-auth-broker`](../modules/shared/omp-auth-broker.nix), is
 the bearer token of the fleet's one OMP authentication broker
@@ -239,56 +235,6 @@ authenticates through its tunnel with it. Which machine serves is
 tunnel target from the registry and that machine's `address.nix`, so no host
 is named anywhere else. Rotation is one `clan vars generate --regenerate` of
 the shared var followed by an apply on every machine.
-
-The fourth, [`cloudflare-dns`](../modules/nixos/cloudflare-dns.nix), is on
-the VPS alone: the Cloudflare API token that edits the `tyrode.dev` zone,
-which manifold's cutover kit pulls to say which host `manifold.tyrode.dev`
-names. It is per machine and prompted, never shared or minted: Cloudflare
-issues it, scoped to `Zone.DNS: Edit` on that one zone and client-IP filtered
-to the VPS's address, so the same string is inert anywhere else and the other
-machines never hold it. The `host-registry` check is what says so -- every
-machine declares the fleet-wide four, and a machine whose registry activation
-is plain `nixos` declares this one too. A paste that is not a token fails at
-the operator's terminal, and the placed file is linked from
-`~/.config/cloudflare/api-token`, where the kit and any Cloudflare tool on the
-machine already read it.
-
-dev-01 alone also declares
-[`manifold-dev-recovery`](../modules/nixos/manifold-dev-recovery.nix), the
-recovery custody of the development hub it runs
-([manifold.md](manifold.md#the-preview-tier-on-dev-01)): that hub's owner
-key, the Cellar add-on environment pasted whole as `clever addon env
-<add-on> --format json` prints it, and the name of the add-on's Object Lock
-bucket that holds the hub's checkpoints. It is per machine and prompted,
-never minted, and all three files are secrets that are never deployed
-(`deploy = false`): the owner key is root on that hub and the add-on key can
-delete what the add-on stores, so they exist only as inputs an operator
-device reads with `clan vars get`, and the bucket name stays out of this
-public repository. `clan vars set dev-01 manifold-dev-recovery/<file>` over
-stdin fills one file straight from its source without a paste, but it skips
-the generator's shape checks, so the pipe must carry what the script would
-write.
-
-The pair on every spoke of [`fleet/manifold.json`](../fleet/manifold.json)
-is in [`manifold-agent`](../modules/shared/manifold-agent.nix), and it
-replaces the Bitwarden note that carried the hub's owner key
-([manifold.md](manifold.md#enrollment)). `manifold-custody` is shared and
-prompted: the hub's owner key, existing and never minted here, entered once
-with `clan vars generate <host> --generator manifold-custody`. Its one file
-is a secret that is never deployed (`deploy = false`): it is root on the
-hub, so it exists only as an input an operator device reads, and no machine
-of the fleet receives it. `manifold-agent` is per machine and holds the
-token the hub minted for that machine. A generator runs without a network,
-so it cannot mint the token itself; `atyrode runtime enroll manifold-agent
-<host> --repo PATH` on an operator device asks the hub with the custody key and stores
-the answer with `clan vars set`, and the prompt exists for an operator who
-has a token in hand and no CLI. sops-nix places it at
-`/run/secrets/vars/manifold-agent/machine-token`, mode 0600 and owned by the
-account whose agent reads it, and Home Manager forces the link
-`~/.config/manifold/machine.token` onto it, so the native units read the
-path they always have; until the value exists the link dangles, which the
-units read as "not enrolled". Rotation is `--rotate-token` on the same
-enroll command, then an apply and an agent restart on the machine.
 
 The [private Tern workspace](tern-workspace.md#first-provision) has separate
 per-machine WireGuard keys and a dev-01-only DNS-01 credential. Windows and

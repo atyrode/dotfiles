@@ -89,20 +89,18 @@ candidate_link_path() { # host
   mktemp -u "$directory/candidate-$1.XXXXXXXX"
 }
 
-# One machine, one activation or service mutation at a time. apply and
+# One machine, one activation at a time. apply and
 # rollback take this before they read the current generation and hold it
 # past the switch, so the generation a report was computed against is the one
-# still running when the switch starts; every manifold-agent start, stop,
-# restart and enrollment takes it too, so a report that found the owner
-# unloaded cannot be overtaken by a start, nor a transport restart by an
-# activation that changes its role. The lock is an flock on a descriptor
+# still running when the switch starts, and a concurrent rollback cannot
+# overtake it. The lock is an flock on a descriptor
 # this shell keeps open: taken by the analyzer, it lives with the open file
 # description, which the child leaves behind when it exits. /tmp because
 # root's rollback and the user's apply must contend for the same file, and
 # because a lock a user cannot see is not a lock.
 #
-# apply hands work to a child atyrode (a provisioning offer runs `runtime
-# provision manifold-agent`) while it holds the lock, so the child must not
+# apply hands work to a child atyrode (a provisioning offer runs `context
+# render`) while it holds the lock, so the child must not
 # contend with its parent. It inherits the descriptor's number, and takes it
 # on proof rather than trust: the analyzer checks by fstat that the number
 # names the lock file and then flocks it, which a descriptor sharing the
@@ -122,7 +120,7 @@ activation_lock() {
     exec {activation_lock_fd}<"$activation_lock_file" ||
       die "$EX_UNAVAILABLE" "cannot open the activation lock $activation_lock_file"
     "$atyrode_disruption" --hold-lock-fd "$activation_lock_fd" --lock-file "$activation_lock_file" ||
-      die "$EX_UNAVAILABLE" "another activation or service mutation holds $activation_lock_file (an apply, rollback or manifold-agent operation is in progress); let it finish, or inspect it with: atyrode apply-status"
+      die "$EX_UNAVAILABLE" "another activation holds $activation_lock_file (an apply, rollback or clean is in progress); let it finish, or inspect it with: atyrode apply-status"
   fi
   export ATYRODE_ACTIVATION_LOCK_FD="$activation_lock_fd"
 }
@@ -174,52 +172,6 @@ disruption_analyze() { # host activation current candidate user scope...
   [[ -x "$atyrode_disruption" ]] ||
     die "$EX_UNAVAILABLE" "the disruption analyzer is unavailable, so no activation can be shown safe"
   "$atyrode_disruption" "${args[@]}"
-}
-
-# The same reading, for a stop or restart asked of one unit outside any
-# activation (`runtime stop|restart manifold-agent`, token rotation). The
-# unit's role is read from the definition the running generation deploys and
-# from the file the manager loaded, which must agree; a unit holding the
-# session-owner role is refused while the manager reports it loaded, and
-# only a manager proving it is not loaded turns the request into a plain
-# start. There is no flag past this: a deliberately drained owner is stopped
-# through the manager by the operator, after which apply migrates it.
-disruption_mutation_guard() { # scope:service action live-path
-  local target="$1" action="$2" live="$3" host data activation user current report
-  validate_scope "$target"
-  host="$(resolve_host "")"
-  data="$(host_json "$host")"
-  activation="$(jq -r '.activation' <<<"$data")"
-  user="$(jq -r '.username' <<<"$data")"
-  current="$(current_generation "$activation" "$user")" ||
-    die "$EX_UNAVAILABLE" "the generation $host runs now cannot be named, so a $action of ${target#*:} cannot be shown safe"
-  [[ -n "$current" ]] ||
-    die "$EX_UNAVAILABLE" "$host has no activated generation, so ${target#*:} has no deployed definition to read; activate first"
-  local -a args=(--host "$host" --activation "$activation" --current "$current" --user "$user" --runtime --mutate "$action" --service "$target")
-  [[ -z "$live" ]] || args+=(--live "$live")
-  local -a manager_args
-  disruption_manager_args manager_args
-  args+=("${manager_args[@]+"${manager_args[@]}"}")
-  [[ -x "$atyrode_disruption" ]] ||
-    die "$EX_UNAVAILABLE" "the disruption analyzer is unavailable, so no service mutation can be shown safe"
-  report="$("$atyrode_disruption" "${args[@]}")" ||
-    die "$EX_UNAVAILABLE" "the disruption analyzer did not produce a report, and a $action without one cannot be shown safe"
-  disruption_render "$report"
-  case "$(jq -r '.status' <<<"$report")" in
-    safe) ;;
-    blocked)
-      local stop_command
-      case "$target" in
-        launchd:*) stop_command="launchctl bootout \"gui/\$(id -u)/${target#*:}\"" ;;
-        user:*) stop_command="systemctl --user stop ${target#*:}" ;;
-        *) stop_command="systemctl stop ${target#*:}" ;;
-      esac
-      die "$EX_UNAVAILABLE" "$action refused: ${target#*:} is a loaded session owner; close admission with core.machines.drain and finish every terminal, then perform deliberate legacy maintenance with: $stop_command; only then migrate with atyrode apply"
-      ;;
-    *)
-      die "$EX_UNAVAILABLE" "$action refused: whether ${target#*:} may be disrupted could not be established (see the report above)"
-      ;;
-  esac
 }
 
 # `--scope scope:service` is checked here rather than trusted to reach the

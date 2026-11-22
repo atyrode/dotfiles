@@ -171,10 +171,9 @@ collect_provisioning_checks() {
   probe_agent_context
   probe_git_identity
   probe_declared_inputs
-  probe_babel_archive
+  probe_omp_session_archive
   probe_omp_auth_broker
   probe_local_qwen
-  probe_manifold_agent
   probe_convergence
   jq -e --argjson expected "$(jq -c '.surfaceOrder' "$provisioning_policy")" \
     'map(.id) == $expected' <<<"$provisioning_checks" >/dev/null ||
@@ -217,7 +216,7 @@ clever_program() {
   elif command -v clever >/dev/null 2>&1; then
     printf 'clever\n'
   else
-    printf '%s\n' "$babel_clever"
+    printf '%s\n' "$clever_tool"
   fi
 }
 
@@ -391,7 +390,6 @@ provisioning_run() { # id host authoring_repo
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
     local-qwen) "$atyrode_runtime" provision local-qwen ;;
-    manifold-agent) run_self_visible runtime provision manifold-agent ;;
     *) die "$EX_SOFTWARE" "no provisioning ceremony is wired for $1" ;;
   esac
 }
@@ -423,12 +421,12 @@ provision_machine_key() { # repo
   say "review the commit clan made in $checkout, then push it; apply on $host places the key"
 }
 
-# Arm the hourly archive timer once activation has placed the storage
-# document. modules/home/agent-tools/contract.nix gates the timer with a
-# ConditionPathExists on that document so that an unconfigured machine never
-# pushes on a schedule (babel SPEC.md 12, gate 728). systemd evaluates the
+# Arm the hourly archive timer once activation has placed the archive
+# environment. modules/shared/omp-session-archive.nix gates the timer with a
+# ConditionPathExists on that file so that an unconfigured machine never
+# pushes on a schedule. systemd evaluates the
 # condition when the timer is started, not continuously, and the unit itself
-# does not change when the document appears, so an activation that placed it
+# does not change when the file appears, so an activation that placed it
 # leaves the timer inactive until something starts it -- and without this,
 # that something would be the next login. Starting a running timer is a
 # no-op, so this is safe to repeat. A host with no systemd (macOS runs the
@@ -437,11 +435,11 @@ archive_arm_timer() {
   local systemctl
   local -a arm
   systemctl="$(optional_host_command ATYRODE_SYSTEMCTL systemctl)" || return 0
-  arm=("$systemctl" --user start babel-archive.timer)
+  arm=("$systemctl" --user start omp-session-archive.timer)
   # Keep the service's real error alongside the command that retries arming.
   show_command "${arm[@]}"
   if ! "${arm[@]}"; then
-    printf 'could not arm the hourly archive timer; arm it with: systemctl --user start babel-archive.timer\n' >&2
+    printf 'could not arm the hourly archive timer; arm it with: systemctl --user start omp-session-archive.timer\n' >&2
     return "$EX_UNAVAILABLE"
   fi
 }
@@ -449,7 +447,7 @@ archive_arm_timer() {
 # The apply step around it: nothing to arm on a machine whose document is not
 # placed yet, and that machine is told which device owes the generation.
 archive_converge_timer() { # host
-  if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json" ]]; then
+  if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/omp-session-archive/restic.env" ]]; then
     if archive_arm_timer; then
       step_ok
     else
@@ -457,7 +455,7 @@ archive_converge_timer() { # host
       return "$EX_UNAVAILABLE"
     fi
   else
-    step_skip "no storage document placed yet (clan vars generate $1 on an operator device, then apply)"
+    step_skip "no archive environment placed yet (clan vars generate $1 on an operator device, then apply)"
   fi
 }
 

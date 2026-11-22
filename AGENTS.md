@@ -133,9 +133,7 @@ local skip. Coordinate final gates against the combined tree for concurrent work
   parallel convergence engine. Prefer a suitable maintained upstream tool to
   custom glue, considering compatibility and migration cost.
 - Dotfiles owns machine identity, installed tools/skills and fleet substrate.
-  Code owns session routing; Babel owns session exploration/archive behavior;
-  Manifold owns its application. Keep substrate glue here, product behavior
-  with its owner. Fleet machines must be rebuildable from this repository and
+  Fleet machines must be rebuildable from this repository and
   declared, locked inputs, not a hidden second configuration repository.
 - **Source delivery is not live authority.** Instruction edits and PR automation
   do not authorize `atyrode apply`, `atyrode fleet apply`, secrets migration or

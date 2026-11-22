@@ -41,8 +41,8 @@ let
   # Which public keys may run ONE command on this machine and nothing else
   # (`modules/home/ssh/deploy-keys`): rendered with a forced command and every
   # forwarding refused, so the automation holding the private half -- a GitHub
-  # workflow, for the manifold deploy key -- can trigger that script and cannot
-  # open a shell. Rows naming another host are not rendered here.
+  # workflow -- can trigger that script and cannot open a shell. Rows naming
+  # another host are not rendered here.
   deployKeys = map (fields: {
     inherit fields;
     name = builtins.elemAt fields 0;
@@ -186,8 +186,8 @@ in
     setSocketVariable = true;
   };
 
-  # A file already at a path Home Manager now links -- the hand-placed
-  # Cloudflare token the cloudflare-dns var replaces, for one -- is moved
+  # A file already at a path Home Manager now links -- a hand-placed
+  # credential file, for one -- is moved
   # aside as <name>.backup instead of failing the activation, as on the other
   # classes. The apply that first places a var must not stop halfway because
   # the machine had the value before the fleet did.

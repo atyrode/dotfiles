@@ -35,7 +35,7 @@ let
   target = "${broker.username}@${broker.hostname}.${brokerAddress.domain}";
 
   # Stated from sops-nix's fixed layout rather than read from clan, for the
-  # reason babel-archive.nix gives: clan reports a path only once the value
+  # reason omp-session-archive.nix gives: clan reports a path only once the value
   # exists, and the readers below need it at evaluation. Asserted against
   # clan's answer once there is one.
   placed = "/run/secrets/vars/omp-auth-broker/token";
@@ -81,7 +81,7 @@ in
   # generated the link dangles, which the supervisor, the temporary standalone
   # Code launcher and doctor all read as "not yet placed". A shared module
   # rather than `users.<name>`, for
-  # the reason babel-archive.nix gives: naming the user here would read the
+  # the reason omp-session-archive.nix gives: naming the user here would read the
   # very attribute set this defines.
   home-manager.sharedModules = [
     (

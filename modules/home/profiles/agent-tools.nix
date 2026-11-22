@@ -21,22 +21,8 @@
   # on-demand `nix shell` tool for live watching only.
   fonts.fontconfig.enable = true;
 
-  # Babel refuses to guess who is judging: every review and reality decision it
-  # records must be attributed to an operator identity (atyrode/babel SPEC.md
-  # §4.7), taken from --operator or $BABEL_OPERATOR. Every managed home already
-  # commits as exactly one person (git.nix), so the same reviewed-commit
-  # authorization names that person as Babel's operator; without this,
-  # `babel web` serves read-only and refuses judgment clicks with a warning at
-  # launch.
-  home.sessionVariables.BABEL_OPERATOR = "alex";
-
   home.packages =
     (with pkgs; [
-      # Legacy archive continuity remains on its existing Babel pin, timer and
-      # custody machinery. The current native-plugin Recall consumer is the
-      # independently pinned babel-recall package installed by contract.nix;
-      # its skill/runner delivery neither replaces archival nor activates Recall.
-      babel
       # Bun runs agent-generated local review proxies without falling back to
       # an unpinned, network-fetched runtime through `npx -y bun`.
       bun
@@ -47,13 +33,8 @@
       nerd-fonts.symbols-only
       # General-purpose JS runtime for agent tooling and one-off npx calls.
       nodejs_24
-      # Babel's archival engine (atyrode/babel SPEC.md 2.3): it encrypts and
-      # deduplicates this machine's agent session history. It belongs to this
-      # capability rather than base because the sessions Babel archives are
-      # exactly what agent-tools installs, so every machine that produces them
-      # can also preserve them. The version is pinned by flake.lock, and the
-      # retention policy is append-only: Babel never runs `restic forget` or
-      # `restic prune`.
+      # restic is the archival engine of omp-session-archive
+      # (modules/shared/omp-session-archive.nix) and the recovery tool for it.
       restic
       tmux
     ])

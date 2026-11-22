@@ -54,20 +54,16 @@ effects, and changes outside an explicitly requested `--scope` refuse. A
 retained owner (`keep`) stays running with its update pending.
 `--expected-disruption` binds automation to a particular safe preview; it
 cannot authorize a blocked report, and `--yes` is not a bypass. Apply,
-rollback and every Manifold agent mutation hold the same activation lock,
-including token rotation. A NixOS-global user unit is inactive only if every
+rollback and clean hold the same activation lock.
+A NixOS-global user unit is inactive only if every
 live user manager proves it; an inaccessible manager is unknown, not evidence
 of absence. Owner-to-transport role changes refuse while the old owner remains
 loaded, even if this activation would retain it, because the next activation
 must not inherit permission to kill a process that still owns sessions.
 
 Context rendering re-enters the inspected candidate's CLI, never an unrelated
-global profile. Runtime stop, restart and token rotation likewise compare the
-deployed role with the loaded definition before acting, and rotation performs
-that check before contacting the hub; the [Manifold migration
-runbook](manifold.md#upgrades) names the deliberate initial maintenance
-boundary. These checks prevent accidental disruption through supported tools,
-not raw commands run outside them by an unrestricted account.
+global profile. These checks prevent accidental disruption through supported
+tools, not raw commands run outside them by an unrestricted account.
 
 Activation success and apply completion are distinct. A failed requested
 provisioning ceremony, login-shell convergence, timer start, or context render
@@ -203,8 +199,8 @@ surface, so it is not offered again -- asking twice is how a prompt becomes
 noise -- and the way back in is the command the offer named, which clears the
 record as a side effect of the surface becoming configured; declining any
 other surface prints the reminder unchanged. Off a terminal both are stated
-without a question, since there is nobody to answer. Babel readiness first
-requires readable, nonempty storage, payload-key and repository-password
+without a question, since there is nobody to answer. Session-archive readiness first
+requires readable, nonempty environment and repository-password
 files: a previous success stamp cannot hide incomplete placement. Only then
 does the probe judge whether an archive has ever succeeded or is older than
 48 hours (see [Agent tools](agent-tools.md#session-archive)). None of this can fail the activation:
@@ -358,9 +354,6 @@ minutes after the final session closes, the WSL idle reaper verifies that vLLM
 has no active or queued requests and no new token activity, then stops the
 container and releases its GPU memory. A new session or direct API activity
 resets the deadline; stale leases from crashed processes are discarded.
-`manifold-agent` joins the machine to the self-hosted manifold hub declared in
-`fleet/manifold.json`; enrollment, upgrade discipline, replacing an unmanaged
-agent, and the master-migration runbook live in [manifold](manifold.md).
 
 Diagnostics use stable non-zero exits for invalid input, missing files or
 tools, identity mismatches, and activation failure, and never expose

@@ -1,7 +1,7 @@
 # Caddy's on-demand TLS permission is ONE global `ask` endpoint, yet more
-# than one preview tier issues certificates on demand under its own wildcard:
-# manifold's `*.manifold.tyrode.dev` and myParcelle's
-# `*.preview.myparcelle.tyrode.dev`. Each tier's router alone knows which of
+# than one preview tier may issue certificates on demand under its own
+# wildcard, such as myParcelle's `*.preview.myparcelle.tyrode.dev`. Each
+# tier's router alone knows which of
 # its names are live. This module owns the global endpoint: a loopback
 # dispatcher that forwards each question, unchanged, to the router of the one
 # zone that owns the name, and refuses any other name. A tier registers its
@@ -30,7 +30,7 @@ in
     type = lib.types.attrsOf (lib.types.strMatching "127\\.0\\.0\\.1:[0-9]+");
     default = { };
     example = {
-      "manifold.tyrode.dev" = "127.0.0.1:7900";
+      "preview.myparcelle.tyrode.dev" = "127.0.0.1:4300";
     };
     description = ''
       DNS zone -> loopback router that answers Caddy's on-demand TLS question

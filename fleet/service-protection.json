@@ -3,36 +3,6 @@
   "ownerProperty": "X-Atyrode-SessionOwner",
   "protected": [
     {
-      "scope": "user",
-      "service": "manifold-agent.service",
-      "owner": "modules/home/profiles/manifold-node.nix (pkgs/manifold-agent)",
-      "reason": "owns the production-connected PTYs until the terminal host is split out; a stop ends every live terminal (#565)"
-    },
-    {
-      "scope": "launchd",
-      "service": "org.nix-community.home.manifold-agent",
-      "owner": "modules/home/profiles/manifold-node.nix (pkgs/manifold-agent)",
-      "reason": "the same agent on macOS, labelled by Home Manager"
-    },
-    {
-      "scope": "user",
-      "service": "manifold-terminal-host.service",
-      "owner": "modules/home/profiles/manifold-node.nix",
-      "reason": "owns terminal workloads independently of the replaceable transport"
-    },
-    {
-      "scope": "launchd",
-      "service": "org.nix-community.home.manifold-terminal-host",
-      "owner": "modules/home/profiles/manifold-node.nix",
-      "reason": "retained terminal owner; replacing its loaded plist stops live workloads"
-    },
-    {
-      "scope": "system",
-      "service": "manifold-owner.service",
-      "owner": "Manifold nixosModules.native via modules/nixos/manifold-dev-hub.nix",
-      "reason": "retains native jobs and PTYs independently of the preview hub and replaceable transport"
-    },
-    {
       "scope": "system",
       "service": "sshd.service",
       "owner": "modules/nixos/vps.nix, modules/nixos/wsl.nix (services.openssh)",

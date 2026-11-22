@@ -17,7 +17,7 @@ def unit(executable, machine="dev-01", owner=None):
         "[Unit]\nDescription=Fixture service\n"
         + marker
         + "[Service]\n"
-        + f"ExecStart={executable}\nEnvironment=MANIFOLD_MACHINE_NAME={machine}\n"
+        + f"ExecStart={executable}\nEnvironment=SESSION_MACHINE_NAME={machine}\n"
         + "Restart=always\n[Install]\nWantedBy=default.target\n"
     )
 
@@ -81,15 +81,15 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     current = root / "old-home-manager-generation"
     candidate = root / "new-home-manager-generation"
     units = "home-files/.config/systemd/user/"
-    agent = units + "manifold-agent.service"
-    old_exe = "/nix/store/2nznq6pcv33namwd2w7fc42d2f9kjqxb-manifold-agent-0.6.2/bin/manifold-agent"
-    new_exe = "/nix/store/ih8wab1r5zv4ccpary8m38728c2i1sc1-manifold-agent-0.6.2/bin/manifold-agent"
+    agent = units + "docker.service"
+    old_exe = "/nix/store/2nznq6pcv33namwd2w7fc42d2f9kjqxb-session-agent-0.6.2/bin/session-agent"
+    new_exe = "/nix/store/ih8wab1r5zv4ccpary8m38728c2i1sc1-session-agent-0.6.2/bin/session-agent"
     put(current, agent, unit(old_exe, "%H"))
     put(candidate, agent, unit(new_exe, "dev-01"))
     changed = report(current, candidate)
     assert changed["status"] == "blocked", changed
     assert any(
-        effect["service"] == "manifold-agent.service"
+        effect["service"] == "docker.service"
         and effect["protected"]
         and effect["action"] in ("restart", "stop")
         for effect in changed["effects"]
@@ -129,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
 
     # A live definition cannot contradict the deployed role during direct service control.
     mutation = report(guarded, guarded, extra=(
-        *runtime, "--mutate", "restart", "--service", "user:manifold-agent.service",
+        *runtime, "--mutate", "restart", "--service", "user:docker.service",
         "--live", str(split_generation / agent)))
     assert mutation["status"] == "unknown", mutation
 
@@ -138,7 +138,7 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     global_new = root / "global-new-system"
     for generation, executable in ((global_old, old_exe), (global_new, new_exe)):
         put(generation, "etc/systemd/system/placeholder", "")
-        put(generation, "etc/systemd/user/manifold-agent.service", unit(executable, owner=True))
+        put(generation, "etc/systemd/user/docker.service", unit(executable, owner=True))
     run_user = root / "run-user"
     (run_user / "0").mkdir(parents=True)
     (run_user / "123456").mkdir()
@@ -182,19 +182,19 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
 
     # Once both generations explicitly separate ownership, updating only transport is safe.
     put(current, agent, unit(old_exe, owner=False))
-    host = units + "manifold-terminal-host.service"
-    host_exe = "/nix/store/fixed-terminal-host/bin/manifold-terminal-host"
+    host = units + "session-host.service"
+    host_exe = "/nix/store/fixed-terminal-host/bin/session-host"
     put(current, host, unit(host_exe, owner=True))
     put(candidate, host, unit(host_exe, owner=True))
     transport = report(current, candidate)
     assert transport["status"] == "safe", transport
-    put(candidate, host, unit("/nix/store/replacement-host/bin/manifold-terminal-host", owner=True))
+    put(candidate, host, unit("/nix/store/replacement-host/bin/session-host", owner=True))
     assert report(current, candidate)["status"] == "blocked"
     (candidate / host).unlink()
     removed = report(current, candidate)
     assert removed["status"] == "blocked", removed
     assert any(
-        effect["service"] == "manifold-terminal-host.service"
+        effect["service"] == "session-host.service"
         and effect["protected"] and effect["action"] == "stop"
         for effect in removed["effects"]
     ), removed
@@ -203,11 +203,11 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
         "[Service]", "X-SwitchMethod=keep-old\nRefuseManualStop=true\n[Service]"
     )
     put(current, host, retained)
-    put(candidate, host, retained.replace(host_exe, "/nix/store/new-host/bin/manifold-agent"))
+    put(candidate, host, retained.replace(host_exe, "/nix/store/new-host/bin/session-agent"))
     kept = report(current, candidate)
     assert kept["status"] == "safe", kept
     assert any(
-        effect["service"] == "manifold-terminal-host.service" and effect["action"] == "keep"
+        effect["service"] == "session-host.service" and effect["action"] == "keep"
         for effect in kept["effects"]
     ), kept
     put(current, host, unit(host_exe, owner=True))
@@ -225,7 +225,7 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     caddy = report(old_system, new_system, "nixos")
     assert caddy["status"] == "safe", caddy
     assert not any(
-        effect["service"] in ("manifold-agent.service", "manifold-terminal-host.service")
+        effect["service"] in ("docker.service", "session-host.service")
         and effect["action"] in ("stop", "restart")
         for effect in caddy["effects"]
     ), caddy
@@ -249,7 +249,7 @@ with tempfile.TemporaryDirectory(prefix="disruption-contract-") as directory:
     put(candidate, agent, unit(old_exe, owner=False))
     put(current, units + "worker.service", unit("/nix/store/old-worker/bin/worker"))
     put(candidate, units + "worker.service", unit("/nix/store/new-worker/bin/worker"))
-    scoped = report(current, candidate, scope="user:manifold-agent.service")
+    scoped = report(current, candidate, scope="user:docker.service")
     assert scoped["status"] == "blocked", scoped
 
     # Missing or unreadable candidate state is not an empty, harmless generation.

@@ -15,7 +15,7 @@ readonly agents_policy='@agents_policy@'
 readonly registry='@registry@'
 readonly atyrode_preview_parser='@atyrode_preview_parser@'
 readonly atyrode_disruption='@atyrode_disruption@'
-readonly babel_clever='@babel_clever@'
+readonly clever_tool='@clever_tool@'
 readonly atyrode_runtime='@atyrode_runtime@'
 readonly capability_inventory='@capabilities@'
 readonly homebrew_brewfile='@homebrew_brewfile@'
@@ -30,7 +30,6 @@ readonly windows_tunnel_exe='@windows_tunnel_exe@'
 readonly managed_git_allowed_signers='@git_allowed_signers@'
 readonly sops_directory='@sops_directory@'
 readonly clan_var_names='@clan_var_names@'
-readonly manifold_inventory='@manifold_inventory@'
 readonly auth_broker_inventory='@auth_broker_inventory@'
 readonly flake_ref='@flakeRef@'
 readonly embedded_revision='@revision@'
@@ -77,8 +76,6 @@ apply_job_worker=0
 . "$lib_dir/clean.sh"
 # shellcheck source=lib/authbroker.sh
 . "$lib_dir/authbroker.sh"
-# shellcheck source=lib/manifold.sh
-. "$lib_dir/manifold.sh"
 # shellcheck source=lib/windows.sh
 . "$lib_dir/windows.sh"
 # shellcheck source=lib/fleet.sh
@@ -97,12 +94,9 @@ Usage:
   atyrode capabilities list [--json]
   atyrode capabilities show [HOST] [--json]
   atyrode runtime list [--json]
-  atyrode runtime status [local-qwen|manifold-agent] [--json]
+  atyrode runtime status [local-qwen] [--json]
   atyrode runtime provision local-qwen [--data-dir PATH] [--yes]
-  atyrode runtime enroll manifold-agent HOST --repo PATH [--rotate-token]
-  atyrode runtime provision manifold-agent
   atyrode runtime start|stop|run [local-qwen]
-  atyrode runtime start|stop|restart manifold-agent
   atyrode runtime autostart [local-qwen] on|off
   atyrode runtime boot
   atyrode runtime shortcut [local-qwen]
@@ -179,7 +173,7 @@ machine's own `atyrode apply --candidate`, bound to the fingerprint just shown
 reached is the machine's own clan.core.networking.targetHost, so a deployment
 cannot be aimed somewhere the reviewed configuration does not name. What is
 deployed is the checkout named by --repo, always explicit: fleet, provision
-machine-key and runtime enroll each commit into or build from a checkout the
+machine-key each commit into or build from a checkout the
 operator selected, report its revision and whether its tree is dirty, and
 never substitute a conventional ~/nix-dotfiles for it. Plain apply resolves the
 selected published revision; doctor inspects the source packaged with its CLI.
@@ -262,7 +256,7 @@ main() {
     __converge-notice) converge_shell_notice ;;
     clean) cmd_clean "$@" ;;
     rollback) cmd_rollback "$@" ;;
-    runtime) cmd_runtime "$@" ;;
+    runtime) exec "$atyrode_runtime" "$@" ;;
     fleet) cmd_fleet "$@" ;;
     auth) cmd_auth "$@" ;;
     provision) cmd_provision "$@" ;;

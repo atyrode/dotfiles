@@ -5,7 +5,7 @@
   omp,
 }:
 
-# Temporary standalone continuity bridge, not the native Manifold Code product.
+# Temporary standalone continuity bridge.
 # Keep the public v0.19.0 source fixed; reviewed routing/metadata changes live in
 # the auditable downstream patch rather than an unmerged or moving source pin.
 buildGoModule {

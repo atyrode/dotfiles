@@ -8,14 +8,7 @@
 let
   cfg = config.atyrode.agentTools;
   rgcfg = cfg.resourceGuard;
-  managedSkills = pkgs.symlinkJoin {
-    name = "atyrode-agent-skills";
-    paths = [
-      ../agents/skills
-      "${pkgs.babel-recall}/share/agent-skills"
-      "${pkgs.manifold-terminal-client}/share/agent-skills"
-    ];
-  };
+  managedSkills = ../agents/skills;
   defaultsConfig = ../../../pkgs/omp-configured/config/defaults.yml;
   policyConfig = ../../../pkgs/omp-configured/config/policy.yml;
   untrustedConfig = ../../../pkgs/omp-configured/config/untrusted.yml;
@@ -88,131 +81,6 @@ let
       --avoid '^(sshd|systemd|dbus-daemon|zsh|tmux.*|omp)$' \
       --prefer '^(bun|node|chrome|chromium|MainThread)$'
   '';
-
-  # The one document that marks this machine as part of the archive fleet.
-  # On a clan machine it is a link to the storage document sops-nix places
-  # from the babel-archive var (modules/shared/babel-archive.nix), dangling
-  # until that var is generated; nothing else writes it. That is what makes
-  # it usable as the gate for everything downstream: the push wrapper below
-  # refuses without it, and the hourly timer does not arm without it. The
-  # wrapper resolves the same path at run time from XDG_CONFIG_HOME rather
-  # than baking this one in, because it is also a command an operator runs by
-  # hand and it has to mean the invoking shell's configuration directory.
-  babelStorageDocument = "${config.xdg.configHome}/babel/storage.json";
-
-  # Hourly archive of this machine's agent session history through Babel
-  # (atyrode/babel SPEC.md 6.2). Babel replaced an rclone-crypt copy of the
-  # same trees: it archives them with restic under a stable host identity in
-  # the one repository the fleet shares, so the result is verifiable and
-  # selectively restorable instead of a mirrored directory.
-  #
-  # Babel discovers the source roots itself from its own configuration, so
-  # this wrapper deliberately names no transcript paths. It exists to
-  # distinguish three states that a bare `babel archive push` would blur:
-  #
-  #   no storage.json  this machine is not part of the archive fleet. One
-  #                    line to stderr and exit 0: an unconfigured machine is
-  #                    a no-op, never an hourly unit failure.
-  #   push fails       loud and nonzero. The common cause is a repository
-  #                    that was never created, and that MUST stay visible:
-  #                    `babel archive init` is a deliberate one-time operator
-  #                    act (babel SPEC.md decision 49), never a side effect
-  #                    of a timer, because concurrent creation corrupts a
-  #                    fresh repository and a mistyped locator would silently
-  #                    become a second, empty archive.
-  #   push succeeds    stamp the time so `atyrode apply` can report archive
-  #                    freshness without reaching the network.
-  #
-  # The push runs in Babel's local mode, so a snapshot is all it writes. The
-  # placed storage document is shared-mode because it also names the Go-era
-  # PostgreSQL catalog, into which a shared-mode push records each snapshot's
-  # sessions after restic has committed it. That catalog is retired
-  # (atyrode/babel docs/parity.md: sharedcatalog and sync are absent by
-  # decision), and depending on it failed the push for reasons that say
-  # nothing about the archive: its harness CHECK predates Babel's own
-  # analysis sessions, so a machine holding one landed a complete snapshot
-  # and then exited 1, every hour. Babel reads its configuration only from
-  # $XDG_CONFIG_HOME/babel, so the push reads a projection of the placed
-  # document with the catalog removed and the mode set to local: the same
-  # repository, password file, object-store credential and host identity.
-  # The projection holds that credential, so it exists only for the push: a
-  # mode-600 file in a mode-700 directory under the runtime directory,
-  # removed on exit. The placed document is only read.
-  #
-  # restic is a runtime input rather than an assumed PATH entry: the profile
-  # installs it for interactive use, but a user unit's environment is not the
-  # login shell's, and a timer that fails at 02:00 for a missing binary is a
-  # bad way to learn that.
-  babelArchivePush = pkgs.writeShellApplication {
-    name = "babel-archive-push";
-    runtimeInputs = [
-      pkgs.babel
-      pkgs.restic
-      pkgs.coreutils
-      pkgs.jq
-    ];
-    text = ''
-      config_file="''${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
-      state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/babel"
-
-      if [[ ! -f "$config_file" ]]; then
-        echo "babel-archive-push: not configured; run 'atyrode apply' to set this machine up" >&2
-        exit 0
-      fi
-
-      scratch="$(mktemp -d "''${XDG_RUNTIME_DIR:-''${TMPDIR:-/tmp}}/babel-archive-push.XXXXXX")"
-      trap 'rm -rf "$scratch"' EXIT
-      mkdir -m 700 "$scratch/babel"
-      # jq's diagnostics are discarded because they can quote the document.
-      if ! (umask 077 && jq '.mode = "local" | del(.catalog)' "$config_file" \
-        2>/dev/null >"$scratch/babel/storage.json"); then
-        echo "babel-archive-push: $config_file is not a readable storage document" >&2
-        exit 1
-      fi
-
-      # --json because the stamp has to be earned rather than assumed. A push
-      # legitimately succeeds having archived nothing (a machine that runs no
-      # harness yet, or whose source roots moved), and it fails having
-      # archived only part of the tree. Neither is a fresh archive, and a
-      # stamp that cannot tell the difference reports health that does not
-      # exist.
-      push_status=0
-      result="$(XDG_CONFIG_HOME="$scratch" babel archive push --json)" || push_status=$?
-
-      if (( push_status != 0 )); then
-        # Babel has already named the reason on stderr and the journal keeps
-        # it. The common one is a repository that was never created:
-        # `babel archive init` is a deliberate one-time operator act, never a
-        # side effect of this timer.
-        echo "babel-archive-push: push failed (exit $push_status); not recording a successful archive" >&2
-        exit "$push_status"
-      fi
-
-      snapshot="$(jq -r '.snapshot_id // ""' <<<"$result")"
-      incomplete="$(jq -r '.incomplete // false' <<<"$result")"
-      files="$(jq -r '.total_files_processed // 0' <<<"$result")"
-
-      if [[ -z "$snapshot" ]]; then
-        echo "babel-archive-push: no snapshot created; nothing on this host to archive" >&2
-        exit 0
-      fi
-
-      if [[ "$incomplete" != false ]]; then
-        echo "babel-archive-push: snapshot $snapshot is incomplete; not recording a successful archive" >&2
-        exit 1
-      fi
-
-      echo "babel-archive-push: snapshot $snapshot, $files file(s)" >&2
-
-      umask 077
-      mkdir -p "$state_dir"
-      stamp_tmp="$(mktemp "$state_dir/.last-success.XXXXXX")"
-      date -u +%FT%TZ >"$stamp_tmp"
-      mv -f "$stamp_tmp" "$state_dir/last-success"
-    '';
-    meta.description = "Hourly Babel archive push of this machine's agent session history";
-  };
-
 in
 {
   options.atyrode.agentTools = {
@@ -264,24 +132,6 @@ in
         description = ''
           Where sops-nix places the shared bearer token. The broker refuses to
           serve while it is absent, so that it never mints a token of its own.
-        '';
-      };
-
-      # The Code Manifold plugin installs a native broker that serves the same
-      # loopback bind this unit would (`brokerBind`). Two supervisors for one
-      # address is the failure this switch exists to declare away: while the
-      # native one holds custody, this home defines no broker unit at all.
-      # Leaving the unit declared and neutralising it on the host instead put a
-      # `RefuseManualStart=yes` drop-in beside a unit Home Manager still wanted
-      # started, and every activation then failed at `sd-switch` with
-      # `OnlyByDependency` (2026-09-17).
-      nativeCustody = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = ''
-          The Code Manifold plugin's native broker holds this machine's
-          loopback broker bind, so this home runs no broker service of its own.
-          The role still records what this machine would serve.
         '';
       };
     };
@@ -377,8 +227,6 @@ in
       {
         home.packages = [
           cfg.ompPackage
-          pkgs.babel-recall
-          pkgs.manifold-terminal-client
         ]
         ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 
@@ -443,7 +291,7 @@ in
         # with; the condition keeps the unit from restarting every five
         # seconds until the value is generated, and the supervisor's own check
         # is what says so in the journal when it is started by hand.
-        systemd.user.services = lib.mkIf (pkgs.stdenv.hostPlatform.isLinux && !bcfg.nativeCustody) {
+        systemd.user.services = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           atyrode-omp-auth-brokers = {
             Unit = {
               Description =
@@ -464,7 +312,7 @@ in
           };
         };
 
-        launchd.agents = lib.mkIf (pkgs.stdenv.hostPlatform.isDarwin && !bcfg.nativeCustody) {
+        launchd.agents = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
           atyrode-omp-auth-brokers = {
             enable = true;
             config = {
@@ -478,77 +326,6 @@ in
           };
         };
       })
-
-      {
-        # The wrapper by name so an operator can run one archive by hand.
-        # Babel itself comes from the agent-tools profile; rclone is gone with
-        # the legacy crypt archive, whose objects were the only thing it was
-        # kept on PATH to browse. restic is the recovery tool now, and Babel
-        # SPEC.md 11 exercises restoring with restic alone, no Babel involved.
-        home.packages = [ babelArchivePush ];
-
-        # No Install on the service: a first archive can move multiple GB, and
-        # a startup-transaction job that long holds user-manager readiness at
-        # "starting". The timer triggers it instead.
-        systemd.user.services.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          Unit = {
-            Description = "Archive agent session histories with Babel";
-            After = [ "network.target" ];
-          };
-          Service = {
-            Type = "oneshot";
-            ExecStart = "${babelArchivePush}/bin/babel-archive-push";
-          };
-        };
-
-        # ConditionPathExists gates arming on the storage document having been
-        # placed. Babel's SPEC.md 12 orders the rollout the other way round
-        # from an unconditional timer -- storage is placed and verified first,
-        # and only then does anything start pushing on a schedule, which
-        # SPEC.md 14 gate 728 restates as "timer enablement only after
-        # shared-storage health passes". A timer armed before that is kept
-        # from publishing into an unconfigured archive only by the push
-        # failing, and a guarantee made of a failure is no guarantee.
-        #
-        # The condition is the mechanism modules/home/profiles/manifold-node.nix
-        # already uses for an unenrolled machine: systemd leaves the unit
-        # inactive and records the unmet path in the journal instead of failing
-        # it, so an operator asking why nothing archives gets an answer naming
-        # the missing document. Because the condition is evaluated when the
-        # timer starts rather than continuously, and the unit does not change
-        # when the document appears, `atyrode apply` starts the timer after
-        # every activation -- a machine whose document was placed today must
-        # not have to wait for its next login.
-        #
-        # launchd has no equivalent condition, so on macOS the wrapper's own
-        # check of the same document is the gate.
-        #
-        # Persistent: a machine that was asleep or off at the top of the hour
-        # runs the missed archive once it is back, rather than silently
-        # skipping a window of session history.
-        systemd.user.timers.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          Unit = {
-            Description = "Hourly Babel archive of agent session histories";
-            ConditionPathExists = babelStorageDocument;
-          };
-          Timer = {
-            OnCalendar = "hourly";
-            RandomizedDelaySec = "10m";
-            Persistent = true;
-          };
-          Install.WantedBy = [ "timers.target" ];
-        };
-
-        launchd.agents.babel-archive = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
-          enable = true;
-          config = {
-            ProgramArguments = [ "${babelArchivePush}/bin/babel-archive-push" ];
-            StartInterval = 3600;
-            RunAtLoad = true;
-            ProcessType = "Background";
-          };
-        };
-      }
 
       {
         # Ollama remains a general local-model backend and playground.

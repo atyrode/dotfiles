@@ -15,7 +15,6 @@
       "mobile"
       "media"
       "containers"
-      "manifold-node"
     ];
   };
 
@@ -32,7 +31,6 @@
       "development"
       "agent-tools"
       "security"
-      "manifold-node"
     ];
   };
 
@@ -57,12 +55,6 @@
       "agent-tools"
       "security"
       "containers"
-      # A spoke of the stable manifold hub (fleet/manifold.json), like every
-      # machine here; this one also hosts the development hub, which is
-      # Docker and a Caddy front (modules/nixos/manifold-dev-hub.nix), not a
-      # capability. The old infra closure got the agent from the server
-      # profile; the entry that replaced it (#516) had dropped it.
-      "manifold-node"
     ];
   };
 }

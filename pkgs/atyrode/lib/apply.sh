@@ -603,7 +603,7 @@ apply_config() {
   # machine that is still wrong never gets asked what else it would like.
   step_begin 'Converge the account login shell'
   converge_login_shell "$host" || apply_status="$EX_UNAVAILABLE"
-  # The activation above may have just placed Babel's storage document, and
+  # The activation above may have just placed the archive environment, and
   # the timer gated on it only re-reads its condition when started.
   step_begin 'Arm the hourly archive timer'
   archive_converge_timer "$host" || apply_status="$EX_UNAVAILABLE"

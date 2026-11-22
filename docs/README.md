@@ -15,7 +15,6 @@ not in a checklist.
 | [bootstrap.md](bootstrap.md) | The only supported path from an unmanaged machine to a registered host: what bootstrap owns before it relays to `atyrode apply`, repairs, failure codes, recovery |
 | [atyrode.md](atyrode.md) | What the `atyrode` CLI promises: the mutation boundary, what reaches the terminal, and where its identities and surfaces come from (`atyrode --help` is the syntax) |
 | [secrets.md](secrets.md) | Secrets and their audience: sops-nix, the operator and machine identities, enrolment and revocation |
-| [manifold.md](manifold.md) | The `manifold-node` capability: a spoke of the self-hosted hub, its enrollment, operator-timed agent upgrades, and master migration |
 | [tern-workspace.md](tern-workspace.md) | Private Tern workspace: service ownership, DNS, device enrollment, verification and recovery |
 | [agent-tools.md](agent-tools.md) | OMP launchers, shared authentication, agents, and rules |
 | [`tui-visual-verification`](../modules/home/agents/skills/tui-visual-verification/SKILL.md) | Headless TUI verification — character-exact geometry, data-dependent responsive contracts, and conditional pixel inspection |

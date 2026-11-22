@@ -7,10 +7,9 @@
     "agent-context",
     "git-identity",
     "declared-inputs",
-    "babel-archive",
+    "omp-session-archive",
     "omp-auth-broker",
     "local-qwen",
-    "manifold-agent",
     "convergence"
   ],
   "surfaces": {
@@ -50,10 +49,10 @@
       "implies": "Clan checks every declared file and its existing invalidation rules on an operator device; current apply places generated files and Home Manager links. No secret values are inspected and no keys are rotated.",
       "declinable": false
     },
-    "babel-archive": {
-      "label": "Babel session archive",
+    "omp-session-archive": {
+      "label": "OMP session archive",
       "command": "clan vars generate <host>",
-      "implies": "Generates this machine's storage document on an operator device from the repository password, the add-on credentials, and the payload key ring typed once; the next apply places them and arms the hourly timer that snapshots session history. No vault and no provider session on this machine.",
+      "implies": "Generates the restic environment for the shared session archive on an operator device from the repository password and the add-on credentials typed once; the next apply places it and arms the hourly timer that snapshots session history. No vault and no provider session on this machine.",
       "declinable": false
     },
     "omp-auth-broker": {
@@ -66,12 +65,6 @@
       "label": "local-qwen model runtime",
       "command": "atyrode runtime provision local-qwen",
       "implies": "Builds a Docker image and downloads about 40 GB of model weights. No secret and no vault, but it is the largest thing this machine will fetch.",
-      "declinable": true
-    },
-    "manifold-agent": {
-      "label": "Manifold fleet agent",
-      "command": "atyrode runtime provision manifold-agent",
-      "implies": "Starts the native managed agent for the machine token activation placed. The token is this machine's clan var, minted by `atyrode runtime enroll manifold-agent <host>` on an operator device that holds the hub's owner key as a clan var this machine never receives. No vault and no owner key on this machine.",
       "declinable": true
     },
     "convergence": {

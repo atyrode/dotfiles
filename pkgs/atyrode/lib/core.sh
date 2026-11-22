@@ -59,11 +59,9 @@ narrate_log() { log_event "$@"; }
 # nothing guarantees the caller's PATH names them. A bootstrap that has just
 # activated still holds the PATH it started with, so everything downstream
 # inspects the machine that existed a minute ago: `doctor tools` reports every
-# managed program missing, the git family calls `gh` unavailable, and the babel
-# ceremony -- which deliberately takes babel from the machine rather than
-# carrying its closure into this CLI -- cannot find it. That is what turned a
-# successful Darwin bootstrap into an unrecognised failure and an offer to
-# reset a healthy Nix installation.
+# managed program missing, and the git family calls `gh` unavailable. That is
+# what turned a successful Darwin bootstrap into an unrecognised failure and an
+# offer to reset a healthy Nix installation.
 #
 # Appended, never prepended. This CLI's own tools are prefixed onto PATH by its
 # wrapper and must keep winning, and a directory already present keeps the

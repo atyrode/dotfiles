@@ -133,6 +133,11 @@ in
     };
   };
 
+  # The edge modules lib/configurations.nix imports beside this one only add
+  # virtual hosts; this machine is their front, so the server itself is
+  # enabled here.
+  services.caddy.enable = true;
+
   services.openssh = {
     enable = true;
     openFirewall = false;

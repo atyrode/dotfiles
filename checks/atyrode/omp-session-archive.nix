@@ -9,6 +9,10 @@ let
   homeOf = machine: machine.home-manager.users.${lib.head (lib.attrNames machine.home-manager.users)};
   linuxHome = homeOf clanMachine;
   darwinHome = homeOf darwinMachine;
+  # Only the strings are inspected: the inspected machines are dev-01 and the
+  # macbook even on runners of another system, whose derivations that runner
+  # cannot build.
+  inspect = builtins.unsafeDiscardStringContext;
   service = linuxHome.systemd.user.services.omp-session-archive;
   timer = linuxHome.systemd.user.timers.omp-session-archive;
   darwinAgent = darwinHome.launchd.agents.omp-session-archive;
@@ -111,11 +115,11 @@ pkgs.runCommand "check-omp-session-archive"
     test ${lib.escapeShellArg service.Service.Type} = oneshot
     test ${lib.escapeShellArg (lib.concatStringsSep " " service.Unit.After)} = 'network.target'
     test ${if service ? Install then "1" else "0"} = 0
-    case ${lib.escapeShellArg service.Service.ExecStart} in
+    case ${lib.escapeShellArg (inspect service.Service.ExecStart)} in
       /nix/store/*-omp-session-archive-push/bin/omp-session-archive-push) ;;
       *) echo 'the service does not run omp-session-archive-push' >&2; exit 1 ;;
     esac
-    case ${lib.escapeShellArg service.Service.ExecStart} in
+    case ${lib.escapeShellArg (inspect service.Service.ExecStart)} in
       *babel*) echo 'the service names babel' >&2; exit 1 ;;
     esac
 
@@ -170,7 +174,7 @@ pkgs.runCommand "check-omp-session-archive"
     # macOS runs the same wrapper hourly via launchd, which has no condition to
     # gate on, so the wrapper's own check of the environment file is the gate.
     test ${lib.escapeShellArg (toString darwinAgent.enable)} = 1
-    case ${lib.escapeShellArg (builtins.head darwinAgent.config.ProgramArguments)} in
+    case ${lib.escapeShellArg (inspect (builtins.head darwinAgent.config.ProgramArguments))} in
       /nix/store/*-omp-session-archive-push/bin/omp-session-archive-push) ;;
       *) echo 'the launchd agent does not run omp-session-archive-push' >&2; exit 1 ;;
     esac

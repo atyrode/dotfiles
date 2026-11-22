@@ -8,7 +8,8 @@
 { pkgs }:
 let
   inherit (pkgs) lib;
-  port = 944;
+  # Unprivileged: a non-root Darwin listener cannot bind below 1024.
+  port = 9443;
   wgPort = 51820;
   prefix = "fd42:944:0:100";
   hubAddress = "${prefix}::1";
@@ -184,6 +185,8 @@ pkgs.testers.runNixOSTest {
       ips = [ "${host.address}/56" ];
       ports = [
         "udp/${toString port}"
+        # The old privileged port: listening, yet the hub must still drop it.
+        "udp/944"
         "udp/945"
         "tcp/${toString port}"
         "tcp/22"
@@ -298,6 +301,7 @@ pkgs.testers.runNixOSTest {
           windows.wait_until_succeeds(f"{probe} udp {MAC} ${toString port} {WIN} | grep -x reply")
           # Nothing else on the Mac, from the enrolled address ...
           for proto, dest, p in (
+              ("udp", MAC, "944"),
               ("udp", MAC, "945"),
               ("tcp", MAC, "${toString port}"),
               ("tcp", MAC, "22"),

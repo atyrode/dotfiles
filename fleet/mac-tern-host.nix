@@ -47,7 +47,8 @@ assert
   || throw "The reserved Windows fleet address overlaps a clan peer's /96.";
 {
   interface = "fleet";
-  port = 944;
+  # Unprivileged: the non-root macOS listener cannot bind below 1024.
+  port = 9443;
   address = "${prefix}:${var "macbook" "wireguard-network-fleet" "suffix"}";
   clientAddress = "${prefix}:${reservedSuffix}";
   clientWireGuardPublicKey = "g6hXIykTEJri9gr8OaNuVdf05VyffHRkpBsnXI2JWSU=";

@@ -4,7 +4,8 @@
 # restarted here. Only a login-scoped `remote serve` frontend is added, so a
 # stopped or absent Tern simply leaves the listener off.
 #
-# Exposure is closed by construction: one UDP port bound to the Mac's own
+# Exposure is closed by construction: one unprivileged UDP port (the
+# non-root user agent cannot bind below 1024) bound to the Mac's own
 # fleet ULA (never a wildcard), authentication by one explicit Tern public
 # key, no relay. This adds no SSH access and does not touch the PF ruleset;
 # which peers can reach the port is the fleet's own policy.
@@ -116,8 +117,8 @@ in
       message = "The Mac Tern host authorizes only the native Windows Tern Ed25519 public key";
     }
     {
-      assertion = topology.port == 944 && topology.interface == "fleet";
-      message = "The Mac Tern host listens only on UDP/944 of the fleet overlay";
+      assertion = topology.port >= 1024 && topology.port <= 65535 && topology.interface == "fleet";
+      message = "The Mac Tern host listens only on one unprivileged UDP port (1024-65535) of the fleet overlay";
     }
   ];
 

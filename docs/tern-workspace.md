@@ -71,3 +71,28 @@ The browser workspace uses Tern's first-window key (`""`). Tern matches the loca
 - On `dev-01`, `systemctl is-active wireguard-wg-tern tern-workspace-daemon tern-workspace-web tern-workspace-caddy tern-workspace-native` and `sudo wg show wg-tern latest-handshakes` separate application, ingress and peer failures. An enrolled client routes only the server's overlay address (`serverAddress/32`); the server admits HTTPS and, for native-enrolled peers, QUIC, not SSH or peer-to-peer traffic. Off-VPN clients should not reach either endpoint. Private DNS resolution alone proves neither a connection nor authorization.
 - To revoke only native access, set that peer's `nativePublicKey` to `null`. To revoke all access, set both `nativePublicKey` and `publicKey` to `null`. Publish and apply on `dev-01`. For the Mac, replace the WireGuard public-key reference rather than deleting Clan's generated files. No other device's key needs to change. If browser authorization may have leaked, also rotate Tern's browser token during an announced **frontend-only** maintenance window and pair the remaining browsers again. The daemon owns the panes.
 - Both frontend credentials grant control of the shared development shell. This is not read-only guest access or a per-user permission model. Do not hand out a peer's private key or browser link. Guests are outside this deployment.
+
+## WSL host picker
+
+The Mac's Tern desktop host picker also offers **`alex@wsl.fleet:944`**: the Linux guest of the Windows machine, as the account `alex`. It is a **separate host** with its own panes, not the `dev-01` workspace and not a shared session. Windows PowerShell and the Windows desktop are not on this host; a native Windows host is a separate design and is not included.
+
+- **Path.** Native QUIC over the fleet WireGuard overlay only: `wsl.fleet` resolves to the IPv6 address derived from the Clan-generated `dev-01` public prefix and the per-host suffix (the `.value` files), the same address `wireguard-fleet.service` gives the guest. There is no public listener, relay, password, or fallback; if the overlay is down the host is unreachable.
+- **Services.** `wsl-tern-daemon.service` owns the panes as `alex`. The QUIC frontend, `wsl-tern-native.service`, follows the daemon and fleet tunnel; stopping the tunnel does not stop the daemon. `wsl-tern-install.service` publishes the verified executable to `/var/lib/wsl-tern-bin/tern`. The frontend keeps its separate host identity under `/var/lib/wsl-tern-native` (owner `alex`, mode `0700`).
+- **Authorization.** Only the Mac's existing configured Tern Ed25519 public key (`nativePublicKey` of `macbook` in the [peer inventory](../fleet/tern-workspace.nix)) is allowed. No SSH authorization is added or changed, and there is no unauthenticated mode.
+- **Binary.** Stage the official Linux x86-64 **Tern 0.9.30** in WSL as `alex`: extract `tern/tern` from your Stencil download to `~/.local/bin/tern` (mode `0755`). Do not overwrite an existing installation. The Windows desktop app does not supply this executable, and dev-01 stays on 0.9.29. Without the executable, the units stay off. If you stage it after applying WSL, run `sudo systemctl start wsl-tern-daemon.service` to verify and publish it and start the services.
+- **Guest lifetime.** The host is reachable only while the WSL guest is running. A guest shutdown ends running processes; reopening restores saved layout, not those processes.
+
+**First connection.** Choose **Add remote host**, not setup over SSH, and enter `alex@wsl.fleet:944`. Compare the prompt with the real host key fingerprint read independently in a trusted WSL shell, and stop if it differs:
+
+```sh
+state=/var/lib/wsl-tern-native
+systemctl is-active --quiet wsl-tern-native.service &&
+  test -s "$state/host_key" &&
+  env HOME="$state" TERN_CONFIG_DIR="$state" \
+    XDG_RUNTIME_DIR=/run/wsl-tern-native \
+    /var/lib/wsl-tern-bin/tern remote host-key --state-dir "$state"
+```
+
+Share only the fingerprint; never read out or copy `host_key`. Verify once with `systemctl is-active wireguard-fleet wsl-tern-daemon wsl-tern-native`.
+
+**Deployment and Manifold.** Old Manifold sessions are not migrated into Tern. Before applying WSL, review `atyrode apply wsl --preview-json` and save or exit any Manifold sessions that the activation would retire. Do not override a blocked preview.

@@ -27,6 +27,11 @@ let
   '';
 in
 {
+  imports = [
+    ./wsl-tern-host.nix
+    ./wsl-tern-network.nix
+  ];
+
   assertions = [
     {
       assertion = host.activation == "nixos-wsl";

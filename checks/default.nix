@@ -345,6 +345,9 @@ let
     tern-workspace-ingress = import ./fleet/tern-workspace-ingress.nix {
       inherit pkgs;
     };
+    myparcelle-ci-clever-guard-budget = import ./fleet/myparcelle-ci-clever-guard-budget.nix {
+      inherit pkgs;
+    };
     # Two unrelated reasons land checks on this one leg.
     #
     # Platform-independent lints: their output is a pure function of the

@@ -11,12 +11,12 @@ their instances, Clever's telemetry for the minutes they ran) and acts on the
   2. today's CI spend (Paris day) reaching CI_CLEVER_GUARD_DAY_EUR (25), or
      CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (`<Paris date>:<EUR>`) on that one date
      only, past which it is ignored and #alertes is told once to remove it, or
-  3. the month's reaching CI_CLEVER_GUARD_MONTH_EUR (200), pulls the kill
-     switch: the latch file is written (systemd then stops the controller and
-     refuses to start it; the controller itself refuses too), CI_RUNS_ON goes
-     back to dev-01, every CI application is stopped, #alertes gets one line.
-     Only a human removes the latch; while it exists every tick stops any CI
-     application found running and keeps CI_RUNS_ON on dev-01;
+  3. the month reaching the live monthly budget (host default:
+     CI_CLEVER_GUARD_MONTH_EUR), or an unsafe live budget file, pulls the kill
+     switch. The current policy can be inspected and updated with the
+     installed myparcelle-ci-budget command without a system activation.
+     The latch stops the controller, routes CI to dev-01 and stops the pool.
+     Only a human removes it after resolving the cause.
   4. more than CI_CLEVER_MAX_MACHINES applications running at once, two
      readings in a row: the newest extras are stopped, one line an hour;
   5. no complete reading of Clever for CI_CLEVER_GUARD_BLIND_MIN (15): every
@@ -28,17 +28,21 @@ CI_CLEVER_QUIET=1 logs the #alertes lines instead of posting them.
 Credentials arrive as systemd credentials; no secret is ever logged.
 """
 
+import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import syslog
 import time
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -66,6 +70,9 @@ ORGANISATION = os.environ.get("CI_CLEVER_ORGANISATION", "orga_9bc7fb11-ca4f-4a85
 REPOSITORY = os.environ.get("CI_CLEVER_REPOSITORY", "tyrode-dev/myParcelle")
 DAY_CAP = number("CI_CLEVER_GUARD_DAY_EUR", 25)
 MONTH_CAP = number("CI_CLEVER_GUARD_MONTH_EUR", 200)
+BUDGET_DIRECTORY = "/var/lib/myparcelle-ci-budget"
+BUDGET_FILENAME = "monthly-eur"
+BUDGET_OWNER_UID = 0
 MAX_MACHINES = int(number("CI_CLEVER_MAX_MACHINES", 40))
 MAX_AGE_MS = number("CI_CLEVER_GUARD_MAX_AGE_MIN", 70) * 60_000
 BLIND_MS = number("CI_CLEVER_GUARD_BLIND_MIN", 15) * 60_000
@@ -339,14 +346,165 @@ def stop_everything_blind(why):
     return stop_all(clever, apps, why)
 
 
+class BudgetPolicyError(Exception):
+    """The live monthly budget file is present but unreadable, malformed or unsafe."""
+
+
+_BUDGET_VALUE = re.compile(r"[1-9][0-9]{0,6}")
+_BUDGET_TEMP = f".{BUDGET_FILENAME}.tmp"
+_BUDGET_LOCK = ".lock"
+
+
+def _open_budget_directory():
+    """The protected directory's fd (no symlink, owned by BUDGET_OWNER_UID, writable by no one else), or None if absent."""
+    try:
+        fd = os.open(BUDGET_DIRECTORY, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise BudgetPolicyError(f"directory {BUDGET_DIRECTORY} unusable ({error.strerror})") from error
+    info = os.fstat(fd)
+    if info.st_uid != BUDGET_OWNER_UID or info.st_mode & 0o022 or info.st_mode & 0o005 != 0o005:
+        os.close(fd)
+        raise BudgetPolicyError(f"directory {BUDGET_DIRECTORY} is not root-owned and protected")
+    return fd
+
+
+def read_monthly_budget():
+    """The live monthly cap in whole EUR, or None when the policy file is absent; BudgetPolicyError otherwise unusable."""
+    directory = _open_budget_directory()
+    if directory is None:
+        return None
+    try:
+        try:
+            fd = os.open(BUDGET_FILENAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise BudgetPolicyError(f"{BUDGET_FILENAME} unreadable ({error.strerror})") from error
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != BUDGET_OWNER_UID or info.st_mode & 0o022 or not info.st_mode & stat.S_IROTH:
+                raise BudgetPolicyError(f"{BUDGET_FILENAME} must be a root-owned regular file readable but not writable by others")
+            data = os.read(fd, 65)
+        except OSError as error:
+            raise BudgetPolicyError(f"{BUDGET_FILENAME} unreadable ({error.strerror})") from error
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+    text = data[:-1] if data.endswith(b"\n") else data
+    if len(data) > 64 or not _BUDGET_VALUE.fullmatch(text.decode("ascii", "replace")):
+        raise BudgetPolicyError(f"{BUDGET_FILENAME} is not a positive whole number of EUR (1 to 7 digits)")
+    return int(text)
+
+
+def _publish_budget(eur):
+    """Publish one durable budget update, serializing writers through the protected directory."""
+    directory = _open_budget_directory()
+    if directory is None:
+        raise BudgetPolicyError(f"directory {BUDGET_DIRECTORY} is missing (created by the NixOS configuration)")
+    lock = None
+    try:
+        lock = os.open(_BUDGET_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600, dir_fd=directory)
+        lock_info = os.fstat(lock)
+        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != BUDGET_OWNER_UID or stat.S_IMODE(lock_info.st_mode) != 0o600:
+            raise BudgetPolicyError("budget update lock is not a root-owned 0600 file")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            before = read_monthly_budget()
+        except BudgetPolicyError:
+            before = "invalid"
+        if before == eur:
+            return before
+        with suppress(FileNotFoundError):
+            os.unlink(_BUDGET_TEMP, dir_fd=directory)
+        try:
+            fd = os.open(_BUDGET_TEMP, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=directory)
+            with os.fdopen(fd, "w", encoding="ascii") as target:
+                os.fchmod(target.fileno(), 0o644)
+                target.write(f"{eur}\n")
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(_BUDGET_TEMP, BUDGET_FILENAME, src_dir_fd=directory, dst_dir_fd=directory)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(_BUDGET_TEMP, dir_fd=directory)
+        os.fsync(directory)
+        before_label = f"{MONTH_CAP:g} EUR (host default)" if before is None else (
+            f"{before} EUR" if before != "invalid" else "invalid"
+        )
+        syslog.openlog("myparcelle-ci-budget")
+        syslog.syslog(syslog.LOG_NOTICE, f"monthly cap changed: {before_label} -> {eur} EUR")
+        return before
+    except OSError as error:
+        raise BudgetPolicyError(f"cannot confirm write to {BUDGET_FILENAME} ({error.strerror}); run `myparcelle-ci-budget show`") from error
+    finally:
+        if lock is not None:
+            os.close(lock)
+        os.close(directory)
+
+
+def budget_command(args):
+    """`show` | `set <EUR>`: the live monthly cap, nothing else (no latch, no network, no runner)."""
+    if args == ["show"]:
+        try:
+            live = read_monthly_budget()
+        except BudgetPolicyError as error:
+            print(f"monthly cap: INVALID policy file ({error}); the guard fails closed; repair with `myparcelle-ci-budget set <EUR>`", file=sys.stderr)
+            return 1
+        if live is None:
+            print(f"monthly cap: {MONTH_CAP:g} EUR (source: host fallback, no {os.path.join(BUDGET_DIRECTORY, BUDGET_FILENAME)})")
+        else:
+            print(f"monthly cap: {live} EUR (source: {os.path.join(BUDGET_DIRECTORY, BUDGET_FILENAME)})")
+        return 0
+    if len(args) == 2 and args[0] == "set":
+        if not _BUDGET_VALUE.fullmatch(args[1]):
+            print("budget set: expected a positive whole number of EUR (1 to 7 digits)", file=sys.stderr)
+            return 2
+        if os.geteuid() != 0:
+            print("budget set: must run as root", file=sys.stderr)
+            return 1
+        new = int(args[1])
+        try:
+            before = _publish_budget(new)
+        except BudgetPolicyError as error:
+            print(f"budget set: {error}", file=sys.stderr)
+            return 1
+        if before == new:
+            print(f"monthly cap: {new} EUR (unchanged)")
+        else:
+            print(f"monthly cap: {new} EUR; the latch and runners are untouched")
+        return 0
+    print("usage: budget show | budget set <positive whole EUR>", file=sys.stderr)
+    return 2
+
+
 def euros(value):
     return f"{value:.2f} €".replace(".", ",")
 
 
-def pull_kill_switch(clever, apps, reason):
-    with open(LATCH, "x", encoding="utf-8") as latch:
-        latch.write(json.dumps({"at": datetime.now().astimezone().isoformat(), "reason": reason}) + "\n")
+def record_kill_switch(reason):
+    """Latch locally first, even if no external service can be reached."""
+    try:
+        with open(LATCH, "x", encoding="utf-8") as latch:
+            latch.write(json.dumps({"at": datetime.now().astimezone().isoformat(), "reason": reason}) + "\n")
+    except FileExistsError:
+        return False
     log(f"kill switch: {reason}")
+    return True
+
+
+def latch_recovery():
+    return (
+        f"Vérifier les plafonds actifs et corriger la cause avant de lever le verrou {LATCH}. "
+        "Pour le mois : `myparcelle-ci-budget show`, puis `sudo myparcelle-ci-budget set <EUR>` si nécessaire. "
+        "Seul un humain lève le verrou (myParcelle docs/workflows/DELIVERY.md § Clever cost guard)."
+    )
+
+
+def pull_kill_switch(clever, apps, reason):
+    record_kill_switch(reason)
     routed = route_to_dev_01()
     stopped, failed = stop_all(clever, apps, "kill switch")
     # systemd stops the controller once the latch exists (it stops its own machines, within 90 s).
@@ -365,11 +523,35 @@ def pull_kill_switch(clever, apps, reason):
         f"Contrôleur {'arrêté' if controller_stopped else 'TOUJOURS ACTIF (arrêter à la main)'}, "
         f"{len(stopped)} machine(s) arrêtée(s){', échec : ' + ', '.join(failed) if failed else ''}, "
         f"CI {'renvoyée sur dev-01' if routed else 'NON renvoyée sur dev-01 (CI_RUNS_ON à poser à la main)'}. "
-        f"Seul un humain lève le verrou : `sudo rm {LATCH}` (myParcelle docs/workflows/DELIVERY.md § Clever cost guard)."
+        f"{latch_recovery()}"
     )
 
 
+def enforce_latched_pool(clever, up, state):
+    """The latch exists: stop the pool and alert if the controller is still running."""
+    if any(running(app) for app in up):
+        stop_all(clever, up, "kill switch latched")
+    if controller_active() and not state.get("latchedControllerAlerted"):
+        state["latchedControllerAlerted"] = True
+        post(f"🛑 CI sur Clever Cloud : le verrou {LATCH} est posé mais {CONTROLLER} tourne : l'arrêter à la main.")
+
+
 def tick(state, now):
+    # An invalid local policy stops the controller even when Clever is unreachable.
+    try:
+        override = read_monthly_budget()
+    except BudgetPolicyError as error:
+        if REPORT:
+            raise
+        reason = f"plafond mensuel invalide ({error})"
+        fresh = record_kill_switch(reason)
+        routed = route_to_dev_01()
+        if fresh:
+            routing = "CI renvoyée sur dev-01" if routed else "repli CI non confirmé"
+            post(f"🛑 CI sur Clever Cloud : coupe-circuit — {reason}, {routing}. {latch_recovery()}")
+        clever = Clever()
+        return enforce_latched_pool(clever, clever.pool(), state)
+    month_cap = MONTH_CAP if override is None else override
     clever = Clever()
     apps = clever.pool()
     price = prices()
@@ -384,7 +566,7 @@ def tick(state, now):
     month = before["eur"] + day
     cap = day_cap(state, day_start)
     up = sorted((app for app in apps if running(app)), key=started)
-    log(f"{len(up)}/{len(apps)} CI application(s) running; today {euros(day)} (cap {euros(cap)}), month {euros(month)} (cap {euros(MONTH_CAP)})")
+    log(f"{len(up)}/{len(apps)} CI application(s) running; today {euros(day)} (cap {euros(cap)}), month {euros(month)} (cap {euros(month_cap)})")
     if REPORT:
         for app in up:
             ages = [round((now - i["creationDate"]) / 60_000, 1) for i in app["instances"] if i.get("creationDate")]
@@ -393,18 +575,13 @@ def tick(state, now):
 
     # 2, 3: the caps; while latched, nothing runs.
     if os.path.exists(LATCH):
-        if any(running(app) for app in up):
-            stop_all(clever, up, "kill switch latched")
         route_to_dev_01()
-        if controller_active() and not state.get("latchedControllerAlerted"):
-            state["latchedControllerAlerted"] = True
-            post(f"🛑 CI sur Clever Cloud : le verrou {LATCH} est posé mais {CONTROLLER} tourne : l'arrêter à la main.")
-        return
+        return enforce_latched_pool(clever, up, state)
     state.pop("latchedControllerAlerted", None)
     if day >= cap:
         return pull_kill_switch(clever, apps, f"dépense CI du jour {euros(day)} ≥ plafond {euros(cap)}")
-    if month >= MONTH_CAP:
-        return pull_kill_switch(clever, apps, f"dépense CI du mois {euros(month)} ≥ plafond {euros(MONTH_CAP)}")
+    if month >= month_cap:
+        return pull_kill_switch(clever, apps, f"dépense CI du mois {euros(month)} ≥ plafond {euros(month_cap)}")
 
     # 1: an instance running too long.
     alerted = state.setdefault("longRunning", {})
@@ -465,6 +642,11 @@ def tick(state, now):
 
 
 def main():
+    if sys.argv[1:2] == ["budget"]:
+        return budget_command(sys.argv[2:])
+    if sys.argv[1:] not in ([], ["--report"]):
+        print("usage: myparcelle-ci-clever-guard [--report]", file=sys.stderr)
+        return 2
     now = int(time.time() * 1000)
     state = load_state()
     try:

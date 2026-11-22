@@ -13,13 +13,17 @@
 #               failing closed. A one-day exception to the day cap names its
 #               Paris date (`<date>:<EUR>`): the guard ignores it on any other
 #               day and tells #alertes once to remove it.
-#   kill switch a cap reached writes the latch `${latch}`.
+#   budget      Optional live monthly cap `${budgetDirectory}/monthly-eur`.
+#               `myparcelle-ci-budget show` is read-only; root sets a new cap
+#               with `myparcelle-ci-budget set <EUR>`. Absent uses the default;
+#               invalid fails closed. Neither command removes the latch.
+#   kill switch reaching a cap or unreadable live policy writes `${latch}`.
 #               While it exists, systemd stops the controller and refuses to
 #               start it (and the controller refuses by itself), the guard
 #               stops any CI machine it sees and keeps CI_RUNS_ON on dev-01.
-#               Only a human removes it, after reading why (`cat` it): it
-#               outlives the Paris midnight, and nothing sends CI back to
-#               Clever by itself:
+#               Only a human removes it, after reading why and checking the
+#               active caps against current spend in the guard journal.
+#               Fix that cause first; the latch does not expire:
 #                 sudo rm ${latch}
 #                 sudo systemctl start myparcelle-ci-clever.service
 #                 gh variable set CI_RUNS_ON -R tyrode-dev/myParcelle \
@@ -47,6 +51,7 @@ let
   stateDirectory = "/var/lib/${user}";
   latch = "${stateDirectory}/kill-switch";
   tokenDirectory = "/var/lib/myparcelle-ci-runners";
+  budgetDirectory = "/var/lib/myparcelle-ci-budget";
   controller = "myparcelle-ci-clever.service";
 
   caps = {
@@ -60,6 +65,12 @@ let
   guard = pkgs.writers.writePython3Bin user {
     flakeIgnore = [ "E501" ];
   } (builtins.readFile ./myparcelle-ci-clever-guard.py);
+
+  # A distinct binary: an older guard ignores arguments and would run a live tick.
+  budget = pkgs.writeShellScriptBin "myparcelle-ci-budget" ''
+    export CI_CLEVER_GUARD_MONTH_EUR=${lib.escapeShellArg caps.CI_CLEVER_GUARD_MONTH_EUR}
+    exec ${lib.getExe guard} budget "$@"
+  '';
 in
 {
   users = {
@@ -71,7 +82,10 @@ in
     };
   };
 
-  environment.systemPackages = [ guard ];
+  environment.systemPackages = [
+    guard
+    budget
+  ];
   environment.etc."${user}.env".text = lib.concatStrings (
     lib.mapAttrsToList (name: value: "${name}=${value}\n") caps
   );
@@ -143,4 +157,8 @@ in
   };
   # And refuses to start it.
   systemd.services.myparcelle-ci-clever.unitConfig.ConditionPathExists = [ "!${latch}" ];
+
+  # The guard only reads this root-owned budget directory. Its own state
+  # directory deliberately does not share that authority.
+  systemd.tmpfiles.rules = [ "d ${budgetDirectory} 0755 root root - -" ];
 }

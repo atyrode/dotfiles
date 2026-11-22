@@ -24,6 +24,8 @@ let
   binaryCaches = import ../shared/binary-caches.nix;
 in
 {
+  imports = [ ./tern-mac-host.nix ];
+
   system = {
     primaryUser = username;
     stateVersion = 7;

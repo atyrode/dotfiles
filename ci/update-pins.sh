@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh selected repository-owned binary pins to their latest releases.
-# With no package names, refresh OMP, Codex, and Manifold. Prints one line per
+# With no package names, refresh OMP and Codex. Prints one line per
 # bump on stdout -- the manifest the workflow reads -- and narrates what it
 # fetched and rewrote on stderr. Requires curl, jq, awk, and nix.
 set -euo pipefail
@@ -22,10 +22,10 @@ NARRATE_NAME=update-pins
 targets=("$@")
 for target in "${targets[@]}"; do
   case "$target" in
-    omp | codex | manifold) ;;
+    omp | codex) ;;
     *)
       refuse "$NARRATE_NAME" "$target is not a pin this repository owns"
-      say "usage: ${0##*/} [omp|codex|manifold]..."
+      say "usage: ${0##*/} [omp|codex]..."
       exit 2
       ;;
   esac
@@ -70,73 +70,6 @@ replace_hash() { # file asset new_hash
   ' "$1" >"$1.bump" && mv "$1.bump" "$1"
 }
 
-# Reports a bump this run declined to make. Cron reruns are unattended, so a
-# hold must be visible where someone will actually see it: the job summary when
-# running in Actions, stderr otherwise. It never lands on stdout, which is the
-# bump manifest the workflow reads to decide whether to open a pull request.
-hold() { # name reason
-  refuse "$NARRATE_NAME" "holding $1 bump: $2"
-  [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] ||
-    printf -- '- holding %s bump: %s\n' "$1" "$2" >>"$GITHUB_STEP_SUMMARY"
-}
-
-# Manifold is the one pin whose upgrade ORDER is load-bearing. The hub accepts
-# older agent protocol versions but can never accept a newer one — it closes the
-# dial 4409 — and that lockout is invisible to systemd: the agent process stays
-# healthy and re-dials forever, so the machine simply vanishes from the canvas.
-# On 2026-08-30 an unattended refresh to 0.5.0 (protocol 13) against a v0.4.4
-# hub (protocol 4) took a spoke off the canvas exactly that way.
-# docs/manifold.md "Upgrades" makes hub-first an operator-timed step; this guard
-# makes the six-hourly cron obey it. Fails closed: anything it cannot prove
-# holds the bump.
-guard_manifold() { # tag version repo
-  local tag="$1" version="$2" repo="$3" master_url health_url protocol_url host_protocol_url hub candidate
-  if ! master_url="$(jq -er .masterUrl "$repo_root/fleet/manifold.json")"; then
-    hold manifold "fleet/manifold.json declares no masterUrl"
-    return 1
-  fi
-  health_url="$master_url/healthz"
-  show_command curl -fsSL --max-time 20 "$health_url"
-  if ! hub="$(curl -fsSL --max-time 20 "$health_url" | jq -er .protocolVersion)"; then
-    hold manifold "hub $master_url is unreachable, so $version cannot be cleared"
-    return 1
-  fi
-  if [[ ! "$hub" =~ ^[0-9]+$ ]]; then
-    hold manifold "hub $master_url reported an invalid protocol version"
-    return 1
-  fi
-  # Read the candidate's protocol version from its tagged source rather than by
-  # running the asset: the number is a source constant, and a pin refresh must
-  # never execute an unvetted binary to decide whether to pin it.
-  protocol_url="https://raw.githubusercontent.com/$repo/$tag/packages/protocol/src/version.ts"
-  show_command curl -fsSL --max-time 20 "$protocol_url"
-  candidate="$(curl -fsSL --max-time 20 "$protocol_url" |
-    sed -nE 's/^export const PROTOCOL_VERSION = ([0-9]+);$/\1/p' | head -n 1)" || candidate=""
-  if [[ ! "$candidate" =~ ^[0-9]+$ ]]; then
-    hold manifold "cannot read PROTOCOL_VERSION from $tag"
-    return 1
-  fi
-  if [[ "$candidate" -gt "$hub" ]]; then
-    hold manifold \
-      "$version speaks protocol $candidate but the hub serves $hub; deploy the hub first (docs/manifold.md)"
-    return 1
-  fi
-  # Service topology is a release capability, not a semver guess. An unknown
-  # terminal-host contract must not silently install a combined PTY owner as
-  # a replaceable transport (or start a mode an older binary does not support).
-  host_protocol_url="https://raw.githubusercontent.com/$repo/$tag/packages/protocol/src/terminal-host.ts"
-  show_command curl -fsSL --max-time 20 "$host_protocol_url"
-  manifold_terminal_host_protocol="$(curl -fsSL --max-time 20 "$host_protocol_url" |
-    sed -nE 's/^export const TERMINAL_HOST_PROTOCOL_VERSION = ([0-9]+);$/\1/p')" || manifold_terminal_host_protocol=""
-  case "$manifold_terminal_host_protocol" in
-    1 | 2 | 3) ;;
-    *)
-      hold manifold "cannot prove supported terminal-host protocol (accepted: 1, 2, 3) for $tag; update the service contract before pinning"
-      return 1
-      ;;
-  esac
-}
-
 bump() { # name file repo tag_prefix url_template assets...
   local name="$1" file="$2" repo="$3" tag_prefix="$4" url_template="$5"
   shift 5
@@ -146,11 +79,6 @@ bump() { # name file repo tag_prefix url_template assets...
   version="${tag#"$tag_prefix"}"
   if [[ "$version" == "$current" ]]; then
     say "$name is current at $current"
-    return 0
-  fi
-  # A per-target precondition, declared as guard_<name>. Bumps without one are
-  # unordered by construction and stay unconditional.
-  if declare -F "guard_$name" >/dev/null && ! "guard_$name" "$tag" "$version" "$repo"; then
     return 0
   fi
   tmp="$(mktemp -d)"
@@ -164,10 +92,6 @@ bump() { # name file repo tag_prefix url_template assets...
     hash="$(nix hash file --sri "$tmp/${asset//\//-}")"
     replace_hash "$file" "$asset" "$hash"
   done
-  if [[ "$name" == manifold ]]; then
-    run_visible sed -i \
-      "s/terminalHostProtocol = [0-9]*;/terminalHostProtocol = $manifold_terminal_host_protocol;/" "$file"
-  fi
   printf '%s %s -> %s\n' "$name" "$current" "$version"
 }
 
@@ -181,10 +105,4 @@ if wants codex; then
   bump codex "$repo_root/pkgs/codex/default.nix" openai/codex rust-v \
     'https://github.com/openai/codex/releases/download/@tag@/@asset@.tar.gz' \
     codex-aarch64-apple-darwin codex-x86_64-unknown-linux-musl codex-aarch64-unknown-linux-musl
-fi
-
-if wants manifold; then
-  bump manifold "$repo_root/pkgs/manifold-agent/default.nix" atyrode/manifold v \
-    'https://github.com/atyrode/manifold/releases/download/@tag@/@asset@' \
-    manifold-agent-linux-x64 manifold-agent-darwin-arm64
 fi

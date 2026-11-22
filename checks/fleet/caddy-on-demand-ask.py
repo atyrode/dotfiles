@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 caddyfile, zones = sys.argv[1], json.loads(sys.argv[2])
-assert len(zones) >= 2, zones
+assert zones, zones
 
 
 def router(zone):

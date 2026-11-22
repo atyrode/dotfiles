@@ -2,8 +2,6 @@
 # repositoryPkgsFor (registry-aware overlay for this repository's targets)
 # and evaluationPkgsFor (empty-registry overlay for portable evaluations).
 {
-  manifold-client,
-  manifold-recall-sdk-src,
   clan-core,
   lib,
   nixpkgs,
@@ -64,24 +62,12 @@ let
         codex = final.callPackage ../pkgs/codex { };
         codex-seed = final.callPackage ../pkgs/codex-seed { };
         # Temporary continuity bridge: keep the last accepted standalone Code
-        # release available without handing it native Manifold ownership.
+        # release available.
         code = final.callPackage ../pkgs/code { };
         omp = final.callPackage ../pkgs/omp { };
         omp-agents = final.callPackage ../pkgs/omp-agents { };
         omp-configured = final.callPackage ../pkgs/omp-configured { };
         omp-seed = final.callPackage ../pkgs/omp-seed { };
-        # Fleet agent for the self-hosted manifold hub (#418), pinned as a
-        # release asset (atyrode/manifold#52): the upstream flake's bun-deps
-        # FOD is not reproducible across machines (atyrode/manifold#51).
-        # fleet/manifold.json supportedSystems gates consumers to the
-        # published asset platforms.
-        manifold-agent = final.callPackage ../pkgs/manifold-agent { };
-        # The ordinary-terminal client and its skill stay product-owned.
-        # Do not shadow Nixpkgs' unrelated manifold geometry library.
-        manifold-terminal-client = manifold-client.packages.${final.stdenv.hostPlatform.system}.manifold;
-        manifold-action-runner = final.callPackage ../pkgs/manifold-action-runner {
-          src = manifold-recall-sdk-src;
-        };
         # The fleet CLI, from the same clan-core revision that builds the
         # machines, so `clan secrets` and `clan vars` on the operator's
         # machine speak the layout the machines evaluate.

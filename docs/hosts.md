@@ -86,10 +86,10 @@ The provider is a different kind of fact and
 stays out of every file; `checks/lints/production-facts.nix` enforces both
 halves of that rule. `dev-01`, the persistent development VPS, is the
 first machine of this shape: `modules/nixos/vps.nix` is its policy — SSH plus
-the web ports of exactly the vhosts `modules/nixos/manifold-dev-hub.nix`,
+the web ports of exactly the vhosts
 `modules/nixos/myparcelle-dev.nix`, `modules/nixos/games.nix`,
 `modules/nixos/kroissant-dev.nix`, `modules/nixos/house-studio-dev.nix`, and
-`modules/nixos/parxel-dev.nix` name (the Manifold preview tier, parcel fronts,
+`modules/nixos/parxel-dev.nix` name (parcel fronts,
 games, the kroissant site's development stack, the house studio, and the
 parxel design preview), with upstreams bound to loopback,
 declarative root-owned SSH keys drawn from the reviewed fleet key registry,
@@ -115,7 +115,7 @@ Its pull-request previews are `pr-<n>.preview.myparcelle.tyrode.dev`, one
 wildcard vhost forwarded whole to the loopback router on port 4300 that
 myParcelle's `scripts/preview/` tooling generates as previews come and go
 (its `deploy/README.md` § Pull-request previews).
-Their certificates are issued on demand like the Manifold tier's. Caddy's
+Their certificates are issued on demand. Caddy's
 on-demand permission is one global `ask` endpoint, so
 [`modules/nixos/caddy-on-demand-ask.nix`](../modules/nixos/caddy-on-demand-ask.nix)
 owns it: a loopback dispatcher on 7899 forwards each question to the router
@@ -126,8 +126,7 @@ dispatcher through real Caddy. The extra `preview.` label keeps the wildcard
 off `auth.myparcelle.tyrode.dev`, whose managed certificate a covering
 wildcard site would suppress.
 Source delivery does not authorize activation: any future activation needs
-an independently reviewed service-disruption plan and the
-[terminal-preservation safeguards](manifold.md#upgrades).
+an independently reviewed service-disruption plan.
 
 myParcelle's CI also runs here:
 [`modules/nixos/myparcelle-ci-runners.nix`](../modules/nixos/myparcelle-ci-runners.nix)
@@ -145,10 +144,9 @@ wait and retry.
 
 Within the operator's own account,
 [`modules/nixos/dev-cpu-shares.nix`](../modules/nixos/dev-cpu-shares.nix)
-caps the agent terminals (`manifold-terminal-host`: eight cores, half weight)
-and myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
-weight 20) as drop-ins, so the development surface and the terminals keep
-their share of the twelve cores when CI and rebuilds run at once.
+caps myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
+weight 20) as a drop-in, so the development surface keeps
+its share of the twelve cores when CI and rebuilds run at once.
 
 [`modules/nixos/myparcelle-ci-clever.nix`](../modules/nixos/myparcelle-ci-clever.nix)
 runs the controller of myParcelle's on-demand CI machines on Clever Cloud

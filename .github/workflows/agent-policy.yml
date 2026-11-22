@@ -28,7 +28,5 @@ jobs:
         with:
           layout: dotfiles
 
-      - name: Exercise renderer and synchronizer contracts
-        run: |
-          python3 checks/lints/agent-policy-test.py
-          python3 checks/lints/agent-policy-sync-test.py
+      - name: Exercise renderer contract
+        run: python3 checks/lints/agent-policy-test.py

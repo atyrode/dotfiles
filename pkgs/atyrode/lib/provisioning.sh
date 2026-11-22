@@ -174,7 +174,6 @@ collect_provisioning_checks() {
   probe_omp_session_archive
   probe_omp_auth_broker
   probe_local_qwen
-  probe_manifold_agent
   probe_convergence
   jq -e --argjson expected "$(jq -c '.surfaceOrder' "$provisioning_policy")" \
     'map(.id) == $expected' <<<"$provisioning_checks" >/dev/null ||
@@ -391,7 +390,6 @@ provisioning_run() { # id host authoring_repo
     operator-identity) run_self_visible operator init ;;
     agent-context) run_self_visible context render ;;
     local-qwen) "$atyrode_runtime" provision local-qwen ;;
-    manifold-agent) run_self_visible runtime provision manifold-agent ;;
     *) die "$EX_SOFTWARE" "no provisioning ceremony is wired for $1" ;;
   esac
 }

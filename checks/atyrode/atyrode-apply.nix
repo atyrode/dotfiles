@@ -51,12 +51,8 @@ let
       printf '[Unit]\nDescription=Fixture 1.0\n[Service]\nExecStart=%s\n' '${command}' \
         > "$out/home-files/.config/systemd/user/${service}.service"
     '';
-  ownerOld =
-    serviceGeneration "owner-old" "manifold-agent"
-      "/nix/store/fixture-manifold-1.0/bin/agent --old";
-  ownerNew =
-    serviceGeneration "owner-new" "manifold-agent"
-      "/nix/store/fixture-manifold-1.0/bin/agent --new";
+  ownerOld = serviceGeneration "owner-old" "docker" "/nix/store/fixture-docker-1.0/bin/dockerd --old";
+  ownerNew = serviceGeneration "owner-new" "docker" "/nix/store/fixture-docker-1.0/bin/dockerd --new";
   scopedOld = serviceGeneration "scoped-old" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --old";
   scopedNew = serviceGeneration "scoped-new" "caddy" "/nix/store/fixture-caddy-1.0/bin/caddy --new";
   unknownCandidate = pkgs.runCommand "fixture-unknown-generation" { } ''mkdir "$out"'';
@@ -141,7 +137,7 @@ pkgs.runCommand "check-atyrode-apply"
     #!${pkgs.runtimeShell}
     case "$*" in
       *show-environment*) exit 0 ;;
-      *'show --property=LoadState,ActiveState -- manifold-agent.service')
+      *'show --property=LoadState,ActiveState -- docker.service')
         printf 'LoadState=loaded\nActiveState=%s\n' "''${ATYRODE_TEST_OWNER_ACTIVE:-active}" ;;
       *is-active*)
         unit=""
@@ -1097,7 +1093,7 @@ pkgs.runCommand "check-atyrode-apply"
       rm -f "$TMPDIR/nh-activations"
       owner_preview="$(atyrode apply --repo "$HOME/nix-dotfiles" --preview-json)"
       jq -e '.disruption.status == "blocked" and
-        any(.disruption.effects[]; .service == "manifold-agent.service" and
+        any(.disruption.effects[]; .service == "docker.service" and
           .protected and (.action == "restart" or .action == "stop"))' \
         <<<"$owner_preview" >/dev/null
       set +e
@@ -1738,7 +1734,7 @@ pkgs.runCommand "check-atyrode-apply"
     printf '%s\n' "\$*" >> "$TMPDIR/changelog-fetch-args"
     case "\$*" in
       *'/compare/1111111111111111111111111111111111111111...feedfacefeedfacefeedfacefeedfacefeedface')
-        printf '%s\n' '{"status":"ahead","ahead_by":2,"commits":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit":{"message":"feat(atyrode): the shell reads main\n\nbody"}},{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","commit":{"message":"fix: retain manifold ingress"}}]}' ;;
+        printf '%s\n' '{"status":"ahead","ahead_by":2,"commits":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commit":{"message":"feat(atyrode): the shell reads main\n\nbody"}},{"sha":"feedfacefeedfacefeedfacefeedfacefeedface","commit":{"message":"fix: retain preview ingress"}}]}' ;;
       *'/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs')
         cat "$TMPDIR/changelog-check-runs" ;;
       *) exit 22 ;;
@@ -1764,7 +1760,7 @@ pkgs.runCommand "check-atyrode-apply"
       and .running == "1111111111111111111111111111111111111111"
       and .target == "feedfacefeedfacefeedfacefeedfacefeedface"
       and (.commits | map(.sha)) == ["aaaaaaaaaaaa", "feedfacefeed"]
-      and (.commits | map(.subject)) == ["feat(atyrode): the shell reads main", "fix: retain manifold ingress"]
+      and (.commits | map(.subject)) == ["feat(atyrode): the shell reads main", "fix: retain preview ingress"]
     ' >/dev/null
     # A red or unfinished main is said as such, never mistaken for green.
     printf '%s\n' '{"check_runs":[{"name":"ci-gate","status":"completed","conclusion":"failure"}]}' > "$TMPDIR/changelog-check-runs"

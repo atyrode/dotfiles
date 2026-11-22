@@ -14,7 +14,7 @@ ancestor with a narrow downstream native-routing patch.
 - **`ompu`** — a sandboxed launcher for untrusted repositories (stripped credentials,
   restricted tools/approvals, sanitized state).
 - **`code`** — the pinned facet-dial catalog and launcher retained for daily
-  continuity while native Manifold workflows are proven and accepted.
+  continuity.
 
 Agent prompts and routing come from the pinned OMP bundle: task uses `task`,
 scout/sonic use `smol`, and reviewer uses `slow`; security-reviewer and seance
@@ -23,8 +23,7 @@ Existing writable overrides are preserved, not silently migrated by seeding;
 review and remove those separately before expecting native routing.
 
 Use the pinned binaries' `--help` output for upstream behavior; this README
-describes the four operator launchers. `omp-analysis` is also exposed only as
-the restricted RPC engine used by `code engine`.
+describes the four operator launchers.
 
 ## Install it standalone (Nix)
 
@@ -36,8 +35,8 @@ nix profile install github:atyrode/dotfiles#omp-configured
 ```
 
 That puts `omp`, `omp-managed`, `ompu` and `code` on your PATH. The managed
-defaults, policy, untrusted posture, Code catalog and restricted analysis
-posture are baked into the package; bare `omp` retains the operator's mutable
+defaults, policy, untrusted posture and Code catalog
+are baked into the package; bare `omp` retains the operator's mutable
 configuration.
 
 Home Manager supervises the shared OMP auth broker on managed machines.

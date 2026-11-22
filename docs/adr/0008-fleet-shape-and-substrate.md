@@ -16,8 +16,8 @@ roadmap; no step may leave a machine that cannot converge.
 
 The repository grew into a platform run by one person: a fleet of machines, a
 9,800-line Bash CLI with its own convergence model, a second convergence model
-in `install.sh`, three agent tools that each carry a little cross-machine glue
-(`code`, `babel`, `manifold`), a production server managed from a separate
+in `install.sh`, several agent tools that each carry a little cross-machine
+glue, a production server managed from a separate
 9,500-line repository, and secrets fetched by hand from Bitwarden on every
 machine. Eight problems follow from that shape, in the order they surfaced.
 Bootstrap is an interactive chain of commands and yes/no questions, so no
@@ -90,8 +90,8 @@ Everything else is decommissioned or becomes a template:
   `development-*` profile, which already exists.
 
 **Workshop and services on one box — decided.** The workshop is the machine
-development happens on, the one built and broken deliberately; it also hosts
-`manifold`'s hub. One box, two systemd slices (`services.slice` with a memory
+development happens on, the one built and broken deliberately. One box,
+two systemd slices (`services.slice` with a memory
 floor, `workshop.slice` with a memory ceiling), so a development build can never
 starve a service — the failure that originally drove the fleet to two boxes.
 A separate small services box is earned only if a service's uptime ever
@@ -156,7 +156,7 @@ designed around the one human step instead of hoping for a habit: the machine
 that sees the disk **starts the backup itself** the moment it is attached
 (udev on Linux, a launchd watcher on the Mac), records the completion in a
 stamp the fleet can read, and `doctor` turns an overdue stamp into a loud,
-persistent, specific nag — in the login shell, in `manifold`, and as a
+persistent, specific nag — in the login shell and as a
 desktop notification — that says exactly which disk to plug into which
 machine. The only human step is plugging the disk in; the fleet does the
 remembering, the starting, and the nagging.
@@ -165,14 +165,12 @@ remembering, the starting, and the nagging.
 
 Green `main` is the event that matters, so it is what moves machines:
 
-1. A release of a fleet tool (`code`, `babel`, `omp`) **dispatches** the
+1. A release of a fleet tool (`code`, `omp`) **dispatches** the
    dotfiles pin bump the moment it publishes, instead of waiting for a cron.
 
    Temporary exception: the standalone Code continuity bridge stays at its
-   reviewed pin and does not accept routine release-driven bumps. The
-   Code/Manifold transition may advance its binary, wrapper and catalog
-   together when a reviewed plugin stage requires a newer CLI contract. This
-   exception ends when the accepted native workflow retires the bridge.
+   reviewed pin and does not accept routine release-driven bumps. A reviewed
+   change may advance its binary, wrapper and catalog together.
 2. CI builds every host closure, pushes it to the cache, and on green `main`
    **pushes** a converge to every reachable machine over the overlay.
 3. A **slow timer** on every machine is the floor for machines that were
@@ -199,7 +197,7 @@ propagation is its job and must be kept true.
 ### Naming
 
 One name per machine, used everywhere: host registry key, hostname, overlay
-name, `manifold` label, `doctor` output. **Decided:** servers keep the cattle
+name, `doctor` output. **Decided:** servers keep the cattle
 form `tyrode-<role>-NN`; personal devices take `alex-<form>` (`alex-air`,
 `alex-desk`); architecture and platform stay fields in the registry, never
 part of a name.
@@ -235,20 +233,9 @@ peer, keys and ULA addresses are clan vars, and every machine resolves every
 other as `<name>.fleet`. `atyrode fleet apply wsl` targets that name; the
 public SSH port stays on the workshop alone. The overlay is substrate and
 nothing else: it exists for deployment to machines that expose no port and for
-the Data row's `localbackup`. It is deliberately **not** `manifold`'s
-transport and does not overlap it. `manifold` connects the same machines at
-the application layer — each agent dials out to a hub that is off this fleet
-by its own ADR 0022, the hub brokers every terminal and opens no
-machine-to-machine path — and it must stay reachable from a client machine on
-a portable profile, which the overlay never carries. The two therefore own
-different questions (what can reach what; what can I see and drive), neither
-reads the other's configuration, and shifting either into the other's
-repository was considered and rejected: `manifold` owning reachability would
-contradict its own no-VPN, agent-is-not-a-supervisor posture, and this
-repository owning terminals would be a second pane of glass. The one
-duplication between them, a spoke list in `fleet/manifold.json` beside the
-`manifold-node` capability in the host registry, was deleted in favour of the
-capability.
+the Data row's `localbackup`.
+*(amended 2026-11-22)* Manifold, the application layer that once ran over
+these machines, was retired on 2026-11-22; the overlay is unaffected.
 
 ### Presentation
 
@@ -324,7 +311,7 @@ Each step leaves the fleet usable. Steps marked **open** wait for the operator.
    and keeps it in the repository encrypted to the group; the operator's
    identities are registered as clan users, one per device; the first surface
    moves (`git-identity`) as a clan var, then `clever` and Cellar tokens as
-   values, then babel. Each surface leaves Bitwarden only when its clan path
+   values. Each surface leaves Bitwarden only when its clan path
    works; `vault.sh` dies last.
 4. **Overlay and flow.** *(amended 2026-09-02 and 2026-09-05)* clan's
    `wireguard` service with the workshop as controller (#582); push-on-green
@@ -367,7 +354,7 @@ of this record proposed composing by hand, and its maintainers are theirs. Its
 service catalog (wireguard with generated keys and address allocation,
 localbackup, sshd, trusted caches, emergency access, users) maps onto the
 substrate table row by row, and its role model
-(controller/peer, hub/agent) is the shape `manifold` has.
+(controller/peer) is the shape this fleet needs.
 
 **Measured before deciding.** The existing consumer uses two of clan's
 generators and none of its services; that is an argument about the past, not
@@ -440,7 +427,7 @@ is evaluated then.
    depend on any one device — which is what the record as accepted ("the Mac's
    Secure Enclave") had quietly undone. *(Revised 2026-09-02 from the Mac
    alone.)*
-7. The unpushed `manifold` work — **stays on the old box for now**; the
+7. The unpushed work on the old box — **stays on the old box for now**; the
    runbook lists it as the first thing that must leave before anything is
    deleted.
 8. Clan's place, decided for the target fleet rather than today's three

@@ -101,7 +101,6 @@ let
       expectedPublicKey = ternWorkspace.peers.windows.publicKey;
     }
   );
-  manifoldInventory = ../../fleet/manifold.json;
   authBrokerInventory = ../../fleet/auth-broker.json;
   systemPolicy = ../../fleet/system-boundary.json;
   provisioningPolicy = ../../fleet/provisioning.json;
@@ -308,7 +307,6 @@ stdenvNoCC.mkDerivation {
       --replace-fail '@revision@' '${revision}' \
       --replace-fail '@sops_directory@' '${sopsDirectory}' \
       --replace-fail '@clan_var_names@' '${clanVarNames}' \
-      --replace-fail '@manifold_inventory@' '${manifoldInventory}' \
       --replace-fail '@auth_broker_inventory@' '${authBrokerInventory}' \
       --replace-fail '@system_policy@' '${systemPolicy}' \
       --replace-fail '@provisioning_policy@' '${provisioningPolicy}' \

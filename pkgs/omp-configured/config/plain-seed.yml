@@ -27,8 +27,8 @@ task:
   # silently killing subagent spawns.
   disabledAgents: []
 
-# Everyday shared roles; the Code Manifold plugin owns reviewed per-session
-# routing separately. Local changes to these leaves survive future reseeding.
+# Everyday shared roles. Local changes to these leaves survive future
+# reseeding.
 modelRoles:
   default: anthropic/claude-sonnet-5-5:medium
   advisor: anthropic/claude-haiku-5-5:low

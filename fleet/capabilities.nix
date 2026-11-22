@@ -9,7 +9,6 @@
   desktop = "Operator-selected graphical applications";
   development = "Cross-repository Nix, shell, and workflow quality tools, not project language runtimes";
   media = "Audio and video conversion and inspection";
-  manifold-node = "Fleet agent joining this machine to the self-hosted manifold hub";
   mobile = "Android device tooling";
   security = "Declared scanning and network diagnostics";
 }

@@ -4,23 +4,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Manifold owns the terminal client and the preview executor's declared
-    # owner/transport profile; the fleet agent stays independently release-pinned.
-    manifold.url = "github:atyrode/manifold";
-    manifold.inputs.nixpkgs.follows = "nixpkgs";
-
-    # Client protocol compatibility must not advance the preview owner/transport
-    # source or the fleet agent's independently pinned release asset.
-    manifold-client.url = "github:atyrode/manifold/a7c2237b7cf8829ca93928339703c699300d6937";
-    manifold-client.inputs.nixpkgs.follows = "nixpkgs";
-
-    # The supported SDK runner is independent of the preview executor.
-    # No activation follows this pin.
-    manifold-recall-sdk-src = {
-      url = "github:atyrode/manifold/3e8510c473d84175568ac81012763635112ed7d3";
-      flake = false;
-    };
-
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -80,9 +63,6 @@
     {
       self,
       nixpkgs,
-      manifold,
-      manifold-client,
-      manifold-recall-sdk-src,
       clan-core,
       disko,
       home-manager,
@@ -106,8 +86,6 @@
 
       packagesLib = import ./lib/packages.nix {
         inherit
-          manifold-client
-          manifold-recall-sdk-src
           clan-core
           lib
           nixpkgs
@@ -124,7 +102,6 @@
           clan-core
           disko
           home-manager
-          manifold
           nix-homebrew
           nixos-facter-modules
           nixos-wsl
@@ -193,7 +170,6 @@
           inherit (pkgs)
             atyrode
             atyrode-preview
-            manifold-action-runner
             codex
             codex-seed
             code
@@ -202,7 +178,6 @@
             omp-configured
             omp-seed
             ;
-          manifold = pkgs.manifold-terminal-client;
           # One verification root per system; CI builds each host closure.
           # Members are named by host id for inspection.
           fleet-closures = pkgs.linkFarm "fleet-closures-${system}" (

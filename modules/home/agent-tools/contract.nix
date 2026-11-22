@@ -8,13 +8,7 @@
 let
   cfg = config.atyrode.agentTools;
   rgcfg = cfg.resourceGuard;
-  managedSkills = pkgs.symlinkJoin {
-    name = "atyrode-agent-skills";
-    paths = [
-      ../agents/skills
-      "${pkgs.manifold-terminal-client}/share/agent-skills"
-    ];
-  };
+  managedSkills = ../agents/skills;
   defaultsConfig = ../../../pkgs/omp-configured/config/defaults.yml;
   policyConfig = ../../../pkgs/omp-configured/config/policy.yml;
   untrustedConfig = ../../../pkgs/omp-configured/config/untrusted.yml;
@@ -140,24 +134,6 @@ in
           serve while it is absent, so that it never mints a token of its own.
         '';
       };
-
-      # The Code Manifold plugin installs a native broker that serves the same
-      # loopback bind this unit would (`brokerBind`). Two supervisors for one
-      # address is the failure this switch exists to declare away: while the
-      # native one holds custody, this home defines no broker unit at all.
-      # Leaving the unit declared and neutralising it on the host instead put a
-      # `RefuseManualStart=yes` drop-in beside a unit Home Manager still wanted
-      # started, and every activation then failed at `sd-switch` with
-      # `OnlyByDependency` (2026-09-17).
-      nativeCustody = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = ''
-          The Code Manifold plugin's native broker holds this machine's
-          loopback broker bind, so this home runs no broker service of its own.
-          The role still records what this machine would serve.
-        '';
-      };
     };
 
     resourceGuard = {
@@ -251,7 +227,6 @@ in
       {
         home.packages = [
           cfg.ompPackage
-          pkgs.manifold-terminal-client
         ]
         ++ lib.optional cfg.seedPlainConfig cfg.seedPackage;
 
@@ -316,7 +291,7 @@ in
         # with; the condition keeps the unit from restarting every five
         # seconds until the value is generated, and the supervisor's own check
         # is what says so in the journal when it is started by hand.
-        systemd.user.services = lib.mkIf (pkgs.stdenv.hostPlatform.isLinux && !bcfg.nativeCustody) {
+        systemd.user.services = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
           atyrode-omp-auth-brokers = {
             Unit = {
               Description =
@@ -337,7 +312,7 @@ in
           };
         };
 
-        launchd.agents = lib.mkIf (pkgs.stdenv.hostPlatform.isDarwin && !bcfg.nativeCustody) {
+        launchd.agents = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin {
           atyrode-omp-auth-brokers = {
             enable = true;
             config = {

@@ -3,12 +3,8 @@
 # here grants a forced command with no PTY, no port or agent forwarding and
 # no X11 (modules/nixos/vps.nix renders each row with those options into the
 # same root-owned /etc/ssh/authorized_keys.d/<user> file). Public material
-# only; the private half belongs to whatever automation holds it -- for the
-# manifold deploy row, a GitHub Actions repository-level credential on
-# atyrode/manifold; for the plugins deploy row, the same-named credential on
-# atyrode/code and atyrode/babel, whose releases hand the receiver a plugin
-# bundle to install on the integrated preview -- so a workflow can trigger
-# that one script on the host and cannot open a shell.
+# only; the private half belongs to whatever automation holds it, so a
+# workflow can trigger that one script on the host and cannot open a shell.
 #
 # A key reaches a machine only through a reviewed commit here and a redeploy;
 # a line removed cannot connect. Rotate by replacing the KEY field and the
@@ -23,8 +19,6 @@
 # COMMAND  absolute path of the forced command on that host. The caller's
 #          command text arrives as SSH_ORIGINAL_COMMAND; the script decides.
 
-manifold-deploy  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIINhtNvQ1OSskawGaz6rKvHFg3J95BF1ref1QwwupxXu  /home/alex/manifold-dev/infra/previews/receiver.sh
-plugins-deploy   dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAINQnbB1ko44SXqwsfzn3/C7qJoyyQXgEPKHrtlxwInLl  /home/alex/manifold-dev/infra/previews/receiver.sh
 # The private half is the preview environment's DEV_DEPLOY_SSH_KEY on the
 # myParcelle repository; its receiver moves its own clone to origin/main first.
 myparcelle-preview  dev-01  ssh-ed25519  AAAAC3NzaC1lZDI1NTE5AAAAIEk2KS48t8xtkyMTGJ/s/FO2dI+jPaySPVNhixOsECI9  /home/alex/myparcelle-previews/tooling/scripts/preview/receiver.sh

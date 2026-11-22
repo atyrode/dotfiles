@@ -162,19 +162,13 @@ let
   # Every clan machine decrypts with the key `atyrode apply` places
   # (pkgs/atyrode/lib/apply.sh names the same path), every value is encrypted
   # to the admins group, and the declared generators are exactly the fleet's:
-  # a new one is a reviewed change, not a side effect. The fleet-wide eight
-  # are on every machine -- every one is a Manifold spoke and a member of the
-  # `fleet` WireGuard overlay, whose service mints a key pair and an address
-  # allocation per machine; the VPS -- the one machine whose registry
-  # activation is plain `nixos` -- also holds the Cloudflare DNS token
-  # (modules/nixos/cloudflare-dns.nix), and no other machine may; dev-01,
-  # which hosts the development hub, alone holds that hub's recovery custody
-  # (modules/nixos/manifold-dev-recovery.nix).
+  # a new one is a reviewed change, not a side effect. The fleet-wide six
+  # are on every machine -- every one a member of the `fleet` WireGuard
+  # overlay, whose service mints a key pair and an address allocation per
+  # machine; dev-01 alone holds the private Tern workspace DNS credential.
   fleetGenerators = [
     "babel-custody"
     "git-identity"
-    "manifold-agent"
-    "manifold-custody"
     "omp-auth-broker"
     "omp-session-archive"
     "wireguard-keys-fleet"
@@ -184,11 +178,7 @@ let
     name:
     lib.sort builtins.lessThan (
       fleetGenerators
-      ++ lib.optional (hosts.${name}.activation == "nixos") "cloudflare-dns"
-      ++ lib.optionals (name == "dev-01") [
-        "manifold-dev-recovery"
-        "tern-workspace-dns"
-      ]
+      ++ lib.optional (name == "dev-01") "tern-workspace-dns"
       ++ lib.optional (builtins.elem name [
         "dev-01"
         "macbook"
@@ -282,16 +272,6 @@ let
     };
   }
   // {
-    manifold-node = import ./atyrode/manifold-node.nix {
-      inherit
-        hosts
-        lib
-        pkgs
-        system
-        ;
-      nixosConfigs = canonicalNixosConfigs;
-      darwinConfigs = canonicalDarwinConfigs;
-    };
     atyrode-disruption = import ./atyrode/atyrode-disruption.nix {
       inherit pkgs;
       inherit (pkgs) atyrode;
@@ -365,15 +345,6 @@ let
     tern-workspace-ingress = import ./fleet/tern-workspace-ingress.nix {
       inherit pkgs;
     };
-    manifold-preview-routing = import ./fleet/manifold-preview-routing.nix {
-      inherit pkgs;
-      previewVhost =
-        canonicalNixosConfigs.dev-01.config.services.caddy.virtualHosts."preview.manifold.tyrode.dev".extraConfig;
-    };
-    manifold-runtime-libraries = import ./fleet/manifold-runtime-libraries.nix {
-      inherit lib pkgs;
-      execution = canonicalNixosConfigs.dev-01.config.services.manifold.execution;
-    };
     # Two unrelated reasons land checks on this one leg.
     #
     # Platform-independent lints: their output is a pure function of the
@@ -386,7 +357,6 @@ let
     agent-policy = import ./lints/agent-policy.nix { inherit lib pkgs; };
     docs-drift-guard = import ./lints/docs-drift-guard.nix { inherit pkgs; };
     classify-ci-paths = import ./lints/classify-ci-paths.nix { inherit pkgs; };
-    preview-owner-pin = import ./lints/preview-owner-pin.nix { inherit pkgs; };
     development-image-publish = import ./lints/development-image-publish.nix { inherit pkgs; };
     macos-bash = import ./lints/macos-bash.nix { inherit pkgs; };
     production-facts = import ./lints/production-facts.nix { inherit pkgs; };

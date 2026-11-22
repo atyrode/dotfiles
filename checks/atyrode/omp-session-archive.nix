@@ -14,6 +14,7 @@ let
   # cannot build.
   inspect = builtins.unsafeDiscardStringContext;
   service = linuxHome.systemd.user.services.omp-session-archive;
+  execStart = lib.concatStringsSep " " (lib.toList service.Service.ExecStart);
   timer = linuxHome.systemd.user.timers.omp-session-archive;
   darwinAgent = darwinHome.launchd.agents.omp-session-archive;
   darwinHasService = darwinHome.systemd.user.services ? omp-session-archive;
@@ -115,11 +116,11 @@ pkgs.runCommand "check-omp-session-archive"
     test ${lib.escapeShellArg service.Service.Type} = oneshot
     test ${lib.escapeShellArg (lib.concatStringsSep " " service.Unit.After)} = 'network.target'
     test ${if service ? Install then "1" else "0"} = 0
-    case ${lib.escapeShellArg (inspect service.Service.ExecStart)} in
+    case ${lib.escapeShellArg (inspect execStart)} in
       /nix/store/*-omp-session-archive-push/bin/omp-session-archive-push) ;;
       *) echo 'the service does not run omp-session-archive-push' >&2; exit 1 ;;
     esac
-    case ${lib.escapeShellArg (inspect service.Service.ExecStart)} in
+    case ${lib.escapeShellArg (inspect execStart)} in
       *babel*) echo 'the service names babel' >&2; exit 1 ;;
     esac
 

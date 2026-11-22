@@ -169,7 +169,7 @@ Its cost ledger and daily cost lines are in `/var/lib/myparcelle-ci-clever`.
 [`modules/nixos/myparcelle-ci-clever-guard.nix`](../modules/nixos/myparcelle-ci-clever-guard.nix)
 is its cost guard, apart from it and sharing no state with it: every two
 minutes it reads Clever itself and stops CI machines running over 70 min, any
-beyond the controller's limit, and all of them when it cannot read Clever for
+beyond the controller's limit (60, `CI_CLEVER_MAX_MACHINES`: keep both equal), and all of them when it cannot read Clever for
 15 min. Reaching an active cap pulls a kill switch:
 the controller stopped and refused, every machine stopped, CI back on dev-01,
 and a latch in `/var/lib/myparcelle-ci-clever-guard` that only a human removes;

@@ -97,3 +97,36 @@ systemctl is-active --quiet wsl-tern-native.service &&
 Share only the fingerprint; never read out or copy `host_key`. Verify once with `systemctl is-active wireguard-fleet wsl-tern-daemon wsl-tern-native`.
 
 **Deployment and Manifold.** Old Manifold sessions are not migrated into Tern. Before applying WSL, review `atyrode apply wsl --preview-json` and save or exit any Manifold sessions that the activation would retire. Do not override a blocked preview.
+
+## Mac host picker (Windows to Mac)
+
+The native Windows Tern desktop can also connect to the Mac's own Tern: a **separate host** from the `dev-01` shared workspace. It uses the Mac's existing `/Applications/Tern.app` (0.9.30). Nothing is downloaded, replaced or restarted, and no SSH access or PF rule is added. The user-scoped launch agent `dev.atyrode.tern-mac-host` runs `remote serve --user --relay none` on UDP/9443, bound to the Mac's fleet address only, and authorizes only the Windows desktop's Tern key (`peers.windows.nativePublicKey` in the [peer inventory](../fleet/tern-workspace.nix)). The port is 9443, not 944, because the non-root launch agent cannot bind a port below 1024 on macOS. There is no public shell or relay. It works only while the Mac is awake with its owner logged in and the app present, and `dev-01` and the Mac's fleet tunnel are up.
+
+On Windows, create a **separate** native WireGuard profile named `atyrode-mac`. It must not reuse `atyrode-tern`, `wsl`, or any other profile. Let WireGuard generate the private key locally and never paste it anywhere. Its public key must equal `clientWireGuardPublicKey` in [`fleet/mac-tern-host.nix`](../fleet/mac-tern-host.nix), which the hub admits; if it differs, stop and publish the reviewed public key first. From the checkout root, print the public fields (no secret is read):
+
+```sh
+nix eval --raw --file fleet/mac-tern-host.nix --apply \
+  'h: "Address = ${h.clientAddress}/128\n\n[Peer]\nPublicKey = ${h.serverPublicKey}\nAllowedIPs = ${h.address}/128\nEndpoint = ${h.endpoint}:${toString h.endpointPort}\nPersistentKeepalive = 25\n"'
+```
+
+Paste these fields after `PrivateKey` in the existing `[Interface]` section. Keep the private key WireGuard generated; remove any `ListenPort` line.
+
+Leave DNS and listen port unset. `AllowedIPs` is only the Mac's single `/128`: Windows carries no other fleet route. The hub (`dev-01`, [`modules/nixos/mac-tern-fleet.nix`](../modules/nixos/mac-tern-fleet.nix)) limits this peer to client-to-Mac UDP/9443 and back and drops every other packet to or from the Windows address. No global firewall or WSL setting changes.
+
+If a manual networkd reload on `dev-01` drops the Windows peer, restart `mac-tern-fleet-peer.service` on `dev-01` to re-enroll it. A missing peer fails closed; do not widen the tunnel or the firewall to recover it.
+
+**First connection.** A `.fleet` name for the Mac is not known to resolve natively on Windows, so do not rely on one. For the one-time setup, use the bracketed IPv6 literal printed as `AllowedIPs` (without `/128`) in Tern's **Add remote host** (not setup over SSH): `<mac-username>@[<that-address>]:9443`, where the username is the Mac account that is logged in. Switch to a name only after verifying it resolves on Windows natively.
+
+Before trusting the prompt, read the Mac's host-key fingerprint independently, from a trusted shell on the Mac as its owner. This reads the state directory the launch agent uses, `~/.local/state/tern-mac-host`, and the executable the app bundle declares:
+
+```sh
+state="$HOME/.local/state/tern-mac-host"
+app=/Applications/Tern.app
+exe="$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")" &&
+  test -s "$state/host_key" &&
+  "$app/Contents/MacOS/$exe" remote host-key --state-dir "$state"
+```
+
+Compare only the `SHA256:` fingerprint with the Windows prompt and stop if it differs. Never print, copy or share `host_key`.
+
+**Not yet physically verified:** the Windows `atyrode-mac` tunnel, the hub peer on `dev-01`, the Mac listener, the Tern prompt and fingerprint, and a real attach have not been exercised on hardware. In particular, `remote host-key` output on the Mac and the bracketed-literal host entry are unconfirmed. Treat a connection and a typed command in a Mac pane as the acceptance test; a mere tunnel handshake is not.

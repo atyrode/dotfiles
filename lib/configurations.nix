@@ -215,6 +215,7 @@ let
         { programs.nix-ld.enable = true; }
         ../modules/nixos/tern-workspace-runtime.nix
         ../modules/nixos/tern-workspace-network.nix
+        ../modules/nixos/mac-tern-fleet.nix
         ../modules/nixos/myparcelle-ci-runners.nix
         ../modules/nixos/myparcelle-ci-clever.nix
         ../modules/nixos/myparcelle-ci-clever-guard.nix

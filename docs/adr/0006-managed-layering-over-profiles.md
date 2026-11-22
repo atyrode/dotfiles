@@ -21,14 +21,13 @@ Deliver agent-tool configuration as an **immutable managed layer over the user's
 mutable base**, plus a **generator or a one-time seed** — not a curated set of
 switchable profiles.
 
-- **OMP**: the `code` tool generates a profile from a prompt (or dials) and
-  launches it through the zero-preset `omp-managed` layer; the hand-curated
-  preset launchers and profiles wiki were removed (#151). This concerns *model
-  routing*. Complete native profiles initially remained as the authentication
-  boundary, but that split sessions, settings, and OAuth refresh state. Trusted
-  clients now use one OMP v17 broker and credential store in profile `default`;
-  `code` captures immutable per-launch account pools while presets remain
-  non-secret selection state.
+- **OMP**: the zero-preset `omp-managed` layer carries the managed defaults; the
+  hand-curated preset launchers and profiles wiki were removed (#151). This
+  concerns *model routing*. Complete native profiles initially remained as the
+  authentication boundary, but that split sessions, settings, and OAuth refresh
+  state. Trusted clients now use one OMP v17 broker and credential store in
+  profile `default`. A prompt-driven profile generator (the standalone `code`
+  launcher) was later retired on 2026-11-22.
 - **Codex**: runs vanilla against `~/.codex`; the curated defaults are a one-time
   seed into `config.toml` (then user-owned), and the multi-profile switcher was
   removed (#153).

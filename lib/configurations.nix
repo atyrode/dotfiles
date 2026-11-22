@@ -118,11 +118,6 @@ let
                 ATYRODE_HOST = profileName;
                 ATYRODE_CAPABILITIES = lib.concatStringsSep "," profile.capabilities;
                 ATYRODE_GIT_AUTH_MODE = gitAuthMode;
-                # Browser-hosted terminals choose fonts on the client, so
-                # server-installed Nerd Fonts cannot supply Code's PUA
-                # glyphs. Keep portable profiles single-cell and readable
-                # with an ASCII facet set; fixed machines retain Nerd Font.
-                CODE_FACET_GLYPHS = "runtime=@,lane=~,model=#,thinking=?,advisor=&,spark=^,fable=*,main=+,fast=!,relief=%";
               };
             };
             xdg.configFile."atyrode/host.json".text = builtins.toJSON identity;

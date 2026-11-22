@@ -8,8 +8,8 @@ Decision record: [ADR-0004](adr/0004-agent-trust-tiers.md).
 
 ## Normal sessions
 
-Managed sessions launched through `omp-managed` — including every profile the
-`code` generator produces — use the trusted-machine unattended approval policy:
+Managed sessions launched through `omp-managed` use the trusted-machine
+unattended approval policy:
 workspace edits, shell/eval, browser, task spawning, and GitHub operations do
 not prompt. Secret filtering remains enabled, and requested isolation uses
 automatic backend selection and patch merging (both policy-fixed).

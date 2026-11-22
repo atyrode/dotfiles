@@ -172,7 +172,6 @@
             atyrode-preview
             codex
             codex-seed
-            code
             omp
             omp-agents
             omp-configured

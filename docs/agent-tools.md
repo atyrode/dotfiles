@@ -22,9 +22,6 @@ Dotfiles owns deployment and the operator's authored configuration:
 - Claude Code's user-scope `~/.claude/settings.json` permission rules; and
 - mise itself, with no globally declared mise tools.
 
-Dotfiles packages the historical standalone Code continuity bridge and
-generates its immutable routing catalog from the reviewed model registry.
-
 OMP owns execution: role resolution, retries, live credential selection,
 compaction, terminal protocols, and mutable runtime data such as authentication,
 sessions, caches, onboarding state and machine-local UI state. Dotfiles supplies
@@ -255,18 +252,13 @@ nix build .#development-image --print-build-logs
 docker load --input result
 image="$(nix eval --raw .#development-image.imageName):$(nix eval --raw .#development-image.imageTag)"
 docker run --rm -it "$image"
-code_path="$(nix eval --raw .#code.outPath)/bin/code"
-catalog="$(mktemp)"
-"$code_path" generate --models-file pkgs/omp-configured/config/models.yml --out "$catalog"
 nix shell --inputs-from . nixpkgs#tmux nixpkgs#python3 \
-  --command python3 ci/verify-development-image.py "$image" \
-    --code-executable "$code_path" --catalog "$catalog"
-rm "$catalog"
+  --command python3 ci/verify-development-image.py "$image"
 ```
 
-The smoke first checks the genuine credential-free chooser state, then exercises
-the real packaged Code with public availability-only input. It neither creates
-credentials nor launches model inference.
+The smoke checks the genuine credential-free OMP terminal state, the runtime
+contract and the offline build users. It neither creates credentials nor
+launches model inference.
 
 The default command is the real login zsh, running as `developer` (UID/GID
 1000) in `/workspace`. Supplying another command retains home activation and
@@ -322,8 +314,7 @@ Three commands make up the operator surface:
 Use `omp --help` and `omp <command> --help` for the pinned upstream command
 surface. [Upstream documentation](https://github.com/can1357/oh-my-pi/tree/main/docs)
 may describe behavior newer than the repository pin. This document is
-authoritative for `omp-managed` and `ompu`. The adjacent standalone `code`
-command is the temporary continuity bridge described below.
+authoritative for `omp-managed` and `ompu`.
 
 Plain `omp` executes upstream OMP directly, with no managed extension, defaults,
 or policy overlay. `omp update` is blocked so it cannot shadow the Nix-pinned
@@ -495,8 +486,8 @@ to minimal, medium, high, xhigh, xhigh and max, subject to model/local capabilit
 clamps. This changes effort, never the selected model tier.
 
 `omp-managed config managed --json` reports owned shared selectors and chains,
-not proof of native child retries. Historical OMP 18.1.14 role-identity failures
-([Code #142](https://github.com/atyrode/code/issues/142)) cannot establish
+not proof of native child retries. Historical OMP 18.1.14 role-identity
+failures cannot establish
 current behavior. When changing routing or the OMP pin, use disposable
 credential-free state and a deterministic local provider: spawn real bundled
 task/scout/sonic/reviewer children, fail shared leads, and inspect child calls
@@ -524,69 +515,6 @@ prefetches speech models at activation or manages a separate speech cache;
 existing downloaded caches remain untouched. A first use on an uncached
 machine can require a download. Publishing this change does not activate any
 host or download/remove its models.
-
-
-### Code continuity bridge
-
-[Code](https://github.com/atyrode/code) v0.19.0 is the historical standalone
-Go launcher retained for daily continuity, not current native Code main.
-Nix builds its already-public ancestor tag from source with fixed hashes and
-a narrow downstream routing patch. The patch changes shared-role generation
-and provides the metadata-only refresh described below; it does not revive a
-Go product in the native TypeScript plugin repository. It also keeps the
-legacy `code generate init` scaffolder from compressing tiers: known families
-(Haiku/Sonnet/Opus/Fable, Luna/Terra/Sol/Astra) keep tiers 1–4, and in a pool
-with any of them a missing tier-1..3 family refuses before any models file is
-written or refreshed. The temporary package is intentionally absent from
-automatic pin-update jobs.
-
-OMP qualification also runs the bridge's real model-list decoder, metadata-only
-refresh command and bundled-agent routing smoke against the pinned binary in a
-disposable home. Refresh preserves catalog identities, reachability attestation
-and historical measurements; it does not call a provider or a benchmark.
-
-`omp-configured` carries the generated catalog and `CODE_*` wrapper integration.
-The wrapper reuses OMP's existing auth-broker target and the general
-`atyrode runtime` interface; it creates no second broker or runtime authority.
-
-The reviewed registry is `pkgs/omp-configured/config/models.yml`. For an
-authorized metadata-only refresh, supply a scoped projection of the pinned
-`omp models --json` catalog, not a prompt or benchmark result:
-
-```text
-code generate refresh --metadata-only --models-file pkgs/omp-configured/config/models.yml --from-json <omp-models.json>
-```
-
-The OMP 18.20.0 catalog projection dated 2026-11-14 supplied the prior metadata
-for eight families; that capture does not establish facts or measurements for
-replacement identities. Metadata-only refresh performs no model probes or
-benchmark calls and preserves speed, TTFT and the existing `probed` attestation.
-Changing a curated ID separately requires exact metadata and successful
-CLI-owned chat reachability for that new ID; never carry its predecessor's
-measurements forward. Keep the authored shortkey, pool, tier, bucket and role.
-Global `refreshed: null` remains until every current ID has a complete metadata
-and chat benchmark refresh. Provider-reported output tokens divided by full
-request time are not visible-answer decode throughput, intelligence rankings
-or OAuth billing. Do not overwrite historical measurements with a one-shot
-latency sample.
-
-Sol/Astra 6.2 metadata comes separately from exact installed OMP 18.22.2
-`omp-managed models openai-codex --json` rows captured on 2026-11-18, retaining
-their listed standard windows and image/thinking capabilities. Their new-ID
-reachability is attested by a separate CLI-owned chat benchmark: three successful
-requests each, low thinking, parallelism 1, requested maximum 384 tokens.
-The catalog records mean `generationTps` (reported output tokens divided by
-generation time, excluding TTFT), rounded to one decimal, and mean TTFT in
-seconds, rounded to two decimals:
-
-| Curated family | Reported output-generation rate (tok/s) | TTFT (s) |
-| --- | --- | --- |
-| Sol 6.2 | 42.3 | 1.51 |
-| Astra 6.2 | 31.2 | 6.09 |
-
-Reported output tokens can include reasoning, so these are not measured
-visible-answer decode rates or intelligence scores. Other model measurements
-remain historical; these six calls do not qualify the entire catalog.
 
 ## Security boundaries
 

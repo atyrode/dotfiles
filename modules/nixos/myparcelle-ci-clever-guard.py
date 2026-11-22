@@ -11,7 +11,7 @@ their instances, Clever's telemetry for the minutes they ran) and acts on the
   2. today's CI spend (Paris day) reaching CI_CLEVER_GUARD_DAY_EUR (25), or
      CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (`<Paris date>:<EUR>`) on that one date
      only, past which it is ignored and #alertes is told once to remove it, or
-  3. the month's reaching CI_CLEVER_GUARD_MONTH_EUR (100), pulls the kill
+  3. the month's reaching CI_CLEVER_GUARD_MONTH_EUR (200), pulls the kill
      switch: the latch file is written (systemd then stops the controller and
      refuses to start it; the controller itself refuses too), CI_RUNS_ON goes
      back to dev-01, every CI application is stopped, #alertes gets one line.
@@ -65,7 +65,7 @@ def number(name, default):
 ORGANISATION = os.environ.get("CI_CLEVER_ORGANISATION", "orga_9bc7fb11-ca4f-4a85-9c2e-855f421760a0")
 REPOSITORY = os.environ.get("CI_CLEVER_REPOSITORY", "tyrode-dev/myParcelle")
 DAY_CAP = number("CI_CLEVER_GUARD_DAY_EUR", 25)
-MONTH_CAP = number("CI_CLEVER_GUARD_MONTH_EUR", 100)
+MONTH_CAP = number("CI_CLEVER_GUARD_MONTH_EUR", 200)
 MAX_MACHINES = int(number("CI_CLEVER_MAX_MACHINES", 40))
 MAX_AGE_MS = number("CI_CLEVER_GUARD_MAX_AGE_MIN", 70) * 60_000
 BLIND_MS = number("CI_CLEVER_GUARD_BLIND_MIN", 15) * 60_000

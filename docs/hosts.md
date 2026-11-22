@@ -172,7 +172,7 @@ Its cost ledger and daily cost lines are in `/var/lib/myparcelle-ci-clever`.
 is its cost guard, apart from it and sharing no state with it: every two
 minutes it reads Clever itself and stops CI machines running over 70 min, any
 beyond the controller's limit, and all of them when it cannot read Clever for
-15 min. Today's CI spend reaching €25, or the month's €100, pulls a kill switch:
+15 min. Today's CI spend reaching €25, or the month's €200, pulls a kill switch:
 the controller stopped and refused, every machine stopped, CI back on dev-01,
 and a latch in `/var/lib/myparcelle-ci-clever-guard` that only a human removes;
 it outlives the Paris midnight, and CI goes back to Clever only when that human

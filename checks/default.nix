@@ -348,6 +348,9 @@ let
     tern-workspace-ingress = import ./fleet/tern-workspace-ingress.nix {
       inherit pkgs;
     };
+    wsl-tern-network = import ./fleet/wsl-tern-network.nix {
+      inherit pkgs;
+    };
     myparcelle-ci-clever-guard-budget = import ./fleet/myparcelle-ci-clever-guard-budget.nix {
       inherit pkgs;
     };

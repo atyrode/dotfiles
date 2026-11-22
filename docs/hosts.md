@@ -110,6 +110,10 @@ still owns the administrator's separate per-user remote service. The
 Its HTTPS and native QUIC frontends share a local daemon socket. Clients
 reach them through the workspace's own WireGuard tunnel, not the public
 Caddy edge or fleet admin VPN. Desktop clients add the host without SSH setup.
+The `wsl` guest runs its own, separate Tern host (`wsl-tern-daemon` and
+`wsl-tern-native`, `alex@wsl.fleet:944`) over the fleet WireGuard overlay,
+for the Mac only; it needs the operator's own Linux Tern 0.9.30 in WSL. See
+[its operating contract](tern-workspace.md#wsl-host-picker).
 
 The parcel development edge serves `myparcelle.tyrode.dev` from port 4173
 and `auth.myparcelle.tyrode.dev` from port 8082. Caddy owns TLS; the

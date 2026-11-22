@@ -16,6 +16,11 @@ let
   socket = "${configDir}/daemon.sock";
   binaryDirectory = "/var/lib/tern-workspace-bin";
   tern = "${binaryDirectory}/tern";
+  # Approved executable for this host; dev-01 stays on 0.9.29.
+  approvedTern = {
+    version = "0.9.29";
+    sha256 = "4bfb8c8396d90d1db58e482e43152a55b3187e3e2e1a058ee230f4e016ff2b58";
+  };
   installUnit = "tern-workspace-install.service";
   installTern = pkgs.writeShellApplication {
     name = "tern-workspace-install";
@@ -119,7 +124,7 @@ in
     description = "Provision the approved private Tern workspace executable";
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${lib.getExe installTern} ${host.username} ${host.homeDirectory} ${binaryDirectory}";
+      ExecStart = "${lib.getExe installTern} ${host.username} ${host.homeDirectory} ${binaryDirectory} ${approvedTern.version} ${approvedTern.sha256}";
       TimeoutStartSec = "45s";
       UMask = "0077";
       NoNewPrivileges = true;

@@ -8,7 +8,7 @@ their instances, Clever's telemetry for the minutes they ran) and acts on the
   1. an instance running longer than CI_CLEVER_GUARD_MAX_AGE_MIN (70) is
      stopped, and #alertes gets one line; so is any application with
      autoscaling (instances or flavour) or more than one instance;
-  2. today's CI spend (Paris day) reaching CI_CLEVER_GUARD_DAY_EUR (25), or
+  2. today's CI spend (Paris day) reaching CI_CLEVER_GUARD_DAY_EUR (40), or
      CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (`<Paris date>:<EUR>`) on that one date
      only, past which it is ignored and #alertes is told once to remove it, or
   3. the month reaching the live monthly budget (host default:
@@ -68,8 +68,8 @@ def number(name, default):
 
 ORGANISATION = os.environ.get("CI_CLEVER_ORGANISATION", "orga_9bc7fb11-ca4f-4a85-9c2e-855f421760a0")
 REPOSITORY = os.environ.get("CI_CLEVER_REPOSITORY", "tyrode-dev/myParcelle")
-DAY_CAP = number("CI_CLEVER_GUARD_DAY_EUR", 25)
-MONTH_CAP = number("CI_CLEVER_GUARD_MONTH_EUR", 200)
+DAY_CAP = number("CI_CLEVER_GUARD_DAY_EUR", 40)
+MONTH_CAP = number("CI_CLEVER_GUARD_MONTH_EUR", 300)
 BUDGET_DIRECTORY = "/var/lib/myparcelle-ci-budget"
 BUDGET_FILENAME = "monthly-eur"
 BUDGET_OWNER_UID = 0

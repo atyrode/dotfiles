@@ -158,7 +158,10 @@ in
       wireguardUnit
       ingressUnit
     ];
-    partOf = [ wireguardUnit ];
+    partOf = [
+      wireguardUnit
+      ingressUnit
+    ];
     unitConfig = {
       "X-Atyrode-SessionOwner" = false;
       ConditionPathExists = tern;

@@ -77,6 +77,9 @@ pkgs.testers.runNixOSTest {
           backend = "iptables";
           allowedUDPPorts = [ wgPort ];
         };
+        # Mirror NixOS-WSL: firewall logically enabled (module rules and
+        # assertions hold) but its systemd unit is masked and never runs.
+        systemd.services.firewall.enable = false;
         networking.wireguard.interfaces.${host.interface} = {
           ips = [ "${host.address}/56" ];
           listenPort = wgPort;
@@ -84,9 +87,10 @@ pkgs.testers.runNixOSTest {
           generatePrivateKeyFile = true;
         };
         systemd.services.tern-udp-fixture = {
-          wantedBy = [ "multi-user.target" ];
+          wantedBy = [ "wsl-tern-ingress.service" ];
           bindsTo = [ "wsl-tern-ingress.service" ];
           after = [ "wsl-tern-ingress.service" ];
+          partOf = [ "wsl-tern-ingress.service" ];
           serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${listener}";
         };
         environment.systemPackages = [ pkgs.wireguard-tools ];
@@ -138,16 +142,32 @@ pkgs.testers.runNixOSTest {
           seen = set(wsl.succeed("cat /run/tern-udp-fixture.log").split())
           assert seen == {str(ipaddress.ip_address(MAC))}, seen
 
+      # The WSL shape: firewall.service is masked and never ran; the guard and
+      # fixture are up without it.
+      def assert_firewall_absent():
+          assert wsl.succeed("systemctl is-enabled firewall.service || true").strip() == "masked"
+          assert wsl.succeed("systemctl is-active firewall.service || true").strip() == "inactive"
+
+      assert_firewall_absent()
+      wsl.fail("systemctl start firewall.service")
+      wsl.succeed("systemctl is-active wsl-tern-ingress.service tern-udp-fixture.service")
+      wsl.succeed("ip6tables -w -t raw -S wsl-tern")
+      wsl.succeed("iptables -w -t raw -S wsl-tern")
       matrix()
 
-      # Firewall reload: guard and fixture are bound to it and come back.
-      wsl.succeed("systemctl restart firewall.service")
-      wsl.succeed("systemctl start wsl-tern-ingress.service tern-udp-fixture.service")
+      # Guard restart: the bound listener comes back with it.
+      wsl.succeed("systemctl restart wsl-tern-ingress.service")
+      assert_firewall_absent()
       matrix()
 
-      # Guard alone stopped and started.
+      # Guard stop: the bound listener shuts down and the chains go away;
+      # start recovers both, still without the global firewall.
       wsl.succeed("systemctl stop wsl-tern-ingress.service")
-      wsl.succeed("systemctl start wsl-tern-ingress.service tern-udp-fixture.service")
+      assert wsl.succeed("systemctl show -p ActiveState --value tern-udp-fixture.service").strip() == "inactive"
+      wsl.fail("ip6tables -w -t raw -S wsl-tern")
+      wsl.fail("iptables -w -t raw -S wsl-tern")
+      wsl.succeed("systemctl start wsl-tern-ingress.service")
+      assert_firewall_absent()
       matrix()
     '';
 }

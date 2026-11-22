@@ -116,8 +116,8 @@ in
       message = "The Mac Tern host authorizes only the native Windows Tern Ed25519 public key";
     }
     {
-      assertion = topology.port == 944 && topology.interface == "fleet";
-      message = "The Mac Tern host listens only on UDP/944 of the fleet overlay";
+      assertion = topology.port >= 1024 && topology.port <= 65535 && topology.interface == "fleet";
+      message = "The Mac Tern host listens only on an unprivileged UDP port (1024-65535) of the fleet overlay";
     }
   ];
 

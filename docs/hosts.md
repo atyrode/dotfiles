@@ -184,14 +184,14 @@ Its cost ledger and daily cost lines are in `/var/lib/myparcelle-ci-clever`.
 [`modules/nixos/myparcelle-ci-clever-guard.nix`](../modules/nixos/myparcelle-ci-clever-guard.nix)
 is its cost guard, apart from it and sharing no state with it: every two
 minutes it reads Clever itself and stops CI machines running over 70 min, any
-beyond the controller's limit, and all of them when it cannot read Clever for
+beyond the controller's limit (60, `CI_CLEVER_MAX_MACHINES`: keep both equal), and all of them when it cannot read Clever for
 15 min. Reaching an active cap pulls a kill switch:
 the controller stopped and refused, every machine stopped, CI back on dev-01,
 and a latch in `/var/lib/myparcelle-ci-clever-guard` that only a human removes;
 it outlives the Paris midnight, and CI goes back to Clever only when that human
 also sets `CI_RUNS_ON` again (the module's header has the commands).
-`/etc/myparcelle-ci-clever-guard.env` sets the host defaults: €25 per Paris day
-and €200 per month. The installed `myparcelle-ci-budget show` prints the
+`/etc/myparcelle-ci-clever-guard.env` sets the host defaults: €40 per Paris day
+and €300 per month. The installed `myparcelle-ci-budget show` prints the
 active monthly cap; `sudo myparcelle-ci-budget set <EUR>` writes its optional
 root-owned override at `/var/lib/myparcelle-ci-budget/monthly-eur`.
 The guard reads it on its next tick without a restart. A missing override uses

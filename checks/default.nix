@@ -178,7 +178,10 @@ let
     name:
     lib.sort builtins.lessThan (
       fleetGenerators
-      ++ lib.optional (name == "dev-01") "tern-workspace-dns"
+      ++ lib.optionals (name == "dev-01") [
+        "cloudflare-dns"
+        "tern-workspace-dns"
+      ]
       ++ lib.optional (builtins.elem name [
         "dev-01"
         "macbook"

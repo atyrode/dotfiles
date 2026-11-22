@@ -14,7 +14,7 @@ let
   inherit (host) username;
 
   # Stated from sops-nix's fixed layout and asserted against clan's answer
-  # once there is one, for the reason babel-archive.nix gives.
+  # once there is one, for the reason omp-session-archive.nix gives.
   placed = "/run/secrets/vars/cloudflare-dns/api-token";
   reported = config.clan.core.vars.generators.cloudflare-dns.files."api-token".path;
 in

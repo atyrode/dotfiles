@@ -287,15 +287,6 @@ pkgs.runCommand "check-omp-stack"
     mkdir -p "$rpc_home/.agents" "$rpc_home/.claude"
     ln -s ${managedSkills} "$rpc_home/.agents/skills"
     ln -s ${claudeSkills} "$rpc_home/.claude/skills"
-    recall_skill="$rpc_home/.agents/skills/babel-recall/SKILL.md"
-    cmp ${pkgs.babel-recall.src}/babel/recall-skill.md "$recall_skill"
-    cmp ${pkgs.babel-recall}/share/agent-skills/babel-recall/SKILL.md "$recall_skill"
-    cmp "$recall_skill" "$rpc_home/.claude/skills/babel-recall/SKILL.md"
-    test "$(readlink -f "$recall_skill")" = \
-      "$(readlink -f "$rpc_home/.claude/skills/babel-recall/SKILL.md")"
-    recall_runner="$(PATH=${lib.makeBinPath agentTools.home.packages} command -v babel-recall-runner)"
-    test "$recall_runner" = "${pkgs.babel-recall}/bin/babel-recall-runner"
-    test -x "$recall_runner"
     terminal_skill="$rpc_home/.agents/skills/manifold-terminal/SKILL.md"
     cmp ${pkgs.manifold-terminal-client}/share/agent-skills/manifold-terminal/SKILL.md "$terminal_skill"
     cmp "$terminal_skill" "$rpc_home/.claude/skills/manifold-terminal/SKILL.md"
@@ -341,9 +332,6 @@ pkgs.runCommand "check-omp-stack"
       and
       (map(select(.id == "commands" and .success == true))[0].data.commands
         | any(.name == "skill:project-fixture" and .description == "managed-project-skill-fixture"))
-      and
-      (map(select(.id == "commands" and .success == true))[0].data.commands
-        | any(.name == "skill:babel-recall"))
       and
       (map(select(.id == "commands" and .success == true))[0].data.commands
         | any(.name == "skill:manifold-terminal"))

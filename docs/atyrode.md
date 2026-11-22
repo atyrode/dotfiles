@@ -203,8 +203,8 @@ surface, so it is not offered again -- asking twice is how a prompt becomes
 noise -- and the way back in is the command the offer named, which clears the
 record as a side effect of the surface becoming configured; declining any
 other surface prints the reminder unchanged. Off a terminal both are stated
-without a question, since there is nobody to answer. Babel readiness first
-requires readable, nonempty storage, payload-key and repository-password
+without a question, since there is nobody to answer. Session-archive readiness first
+requires readable, nonempty environment and repository-password
 files: a previous success stamp cannot hide incomplete placement. Only then
 does the probe judge whether an archive has ever succeeded or is older than
 48 hours (see [Agent tools](agent-tools.md#session-archive)). None of this can fail the activation:

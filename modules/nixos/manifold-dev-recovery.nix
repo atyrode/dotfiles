@@ -16,7 +16,7 @@
 # Per machine and prompted, never minted: the hub minted its key, and Clever
 # Cloud issued the add-on's credentials. A paste that is not the expected
 # shape fails here, on the operator's terminal, without being quoted; jq's
-# own diagnostics are discarded for the reason babel-archive.nix gives.
+# own diagnostics are discarded for the reason omp-session-archive.nix gives.
 { pkgs, ... }:
 {
   clan.core.vars.generators.manifold-dev-recovery = {

@@ -42,7 +42,7 @@ let
   spoke = builtins.elem "manifold-node" host.capabilities;
 
   # Stated from sops-nix's fixed layout rather than read from clan, for the
-  # reason babel-archive.nix gives; asserted against clan's answer once there
+  # reason omp-session-archive.nix gives; asserted against clan's answer once there
   # is one.
   placed = "/run/secrets/vars/manifold-agent/machine-token";
   reported = config.clan.core.vars.generators.manifold-agent.files."machine-token".path;
@@ -101,7 +101,7 @@ lib.mkIf spoke {
     '';
   };
 
-  # A shared module rather than `users.<name>`, for the reason babel-archive.nix
+  # A shared module rather than `users.<name>`, for the reason omp-session-archive.nix
   # gives: naming the user here would read the very attribute set this defines.
   home-manager.sharedModules = [
     (

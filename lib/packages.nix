@@ -2,8 +2,6 @@
 # repositoryPkgsFor (registry-aware overlay for this repository's targets)
 # and evaluationPkgsFor (empty-registry overlay for portable evaluations).
 {
-  babel,
-  babel-recall-src,
   manifold-client,
   manifold-recall-sdk-src,
   clan-core,
@@ -81,15 +79,8 @@ let
         # The ordinary-terminal client and its skill stay product-owned.
         # Do not shadow Nixpkgs' unrelated manifold geometry library.
         manifold-terminal-client = manifold-client.packages.${final.stdenv.hostPlatform.system}.manifold;
-        # Archival instrument for this machine's agent session history. The
-        # right-hand `babel` is the flake input from the enclosing scope: this
-        # attribute set is not recursive, so there is no self-reference here.
-        babel = babel.packages.${final.stdenv.hostPlatform.system}.default;
         manifold-action-runner = final.callPackage ../pkgs/manifold-action-runner {
           src = manifold-recall-sdk-src;
-        };
-        babel-recall = final.callPackage ../pkgs/babel-recall {
-          src = babel-recall-src;
         };
         # The fleet CLI, from the same clan-core revision that builds the
         # machines, so `clan secrets` and `clan vars` on the operator's

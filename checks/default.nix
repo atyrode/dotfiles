@@ -171,12 +171,12 @@ let
   # which hosts the development hub, alone holds that hub's recovery custody
   # (modules/nixos/manifold-dev-recovery.nix).
   fleetGenerators = [
-    "babel-archive"
     "babel-custody"
     "git-identity"
     "manifold-agent"
     "manifold-custody"
     "omp-auth-broker"
+    "omp-session-archive"
     "wireguard-keys-fleet"
     "wireguard-network-fleet"
   ];
@@ -275,9 +275,10 @@ let
     omp-agent-references = import ./omp/omp-agent-references.nix { inherit lib pkgs; };
     omp-native-routing = import ./omp/omp-native-routing.nix { inherit pkgs; };
     agent-tools-terminal-viewing = import ./atyrode/agent-terminal-viewing.nix { inherit pkgs; };
-    babel-archive = import ./atyrode/babel-archive.nix {
+    omp-session-archive = import ./atyrode/omp-session-archive.nix {
       inherit lib pkgs;
       clanMachine = canonicalNixosConfigs.dev-01.config;
+      darwinMachine = canonicalDarwinConfigs.macbook.config;
     };
   }
   // {

@@ -1268,54 +1268,52 @@ probe_declared_inputs() {
 
 # A success stamp describes an earlier run, not whether the files activation
 # placed are still usable. Check the archive's inputs before trusting it.
-probe_babel_archive() {
-  local host config_file payload_file password_file stamp_file file last="" last_epoch now
+probe_omp_session_archive() {
+  local host env_file password_file stamp_file last="" last_epoch now
 
   host="$(resolve_host)"
   if [[ "$(jq -r '.identityMode // "fixed"' <<<"$(host_json "$host")")" == runtime ]]; then
-    provisioning_check_add babel-archive not-applicable portable-profile \
-      "a portable profile is not a clan machine, so no storage document is generated for it" ""
+    provisioning_check_add omp-session-archive not-applicable portable-profile \
+      "a portable profile is not a clan machine, so no archive environment is generated for it" ""
     return 0
   fi
-  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/storage.json"
-  payload_file="${XDG_CONFIG_HOME:-$HOME/.config}/babel/payload-keys.json"
-  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/babel/last-success"
-  for file in "$config_file" "$payload_file"; do
-    if [[ ! -f "$file" || ! -r "$file" || ! -s "$file" ]]; then
-      provisioning_check_add babel-archive degraded archive-input-unavailable \
-        "required archive file $file is missing, empty, or unreadable; an earlier success does not establish readiness" \
-        "check the declared babel vars on an operator device, then atyrode apply to place them; do not rotate existing keys"
-      return 0
-    fi
-  done
-  if ! password_file="$(jq -ers 'if length == 1 then .[0].password_file | strings | select(startswith("/")) else empty end' "$config_file" 2>/dev/null)"; then
-    provisioning_check_add babel-archive degraded archive-config-invalid \
-      "the archive storage document does not name an absolute repository password file" \
-      "apply the configuration that generates this archive storage document"
+  env_file="${XDG_CONFIG_HOME:-$HOME/.config}/omp-session-archive/restic.env"
+  stamp_file="${XDG_STATE_HOME:-$HOME/.local/state}/omp-session-archive/last-success"
+  if [[ ! -f "$env_file" || ! -r "$env_file" || ! -s "$env_file" ]]; then
+    provisioning_check_add omp-session-archive degraded archive-input-unavailable \
+      "required archive file $env_file is missing, empty, or unreadable; an earlier success does not establish readiness" \
+      "check the declared omp-session-archive vars on an operator device, then atyrode apply to place them"
+    return 0
+  fi
+  if ! password_file="$(sed -n 's/^RESTIC_PASSWORD_FILE=.\(\/.*\).$/\1/p' "$env_file" 2>/dev/null)" ||
+    [[ -z "$password_file" ]]; then
+    provisioning_check_add omp-session-archive degraded archive-config-invalid \
+      "the archive environment does not name an absolute repository password file" \
+      "apply the configuration that generates this archive environment"
     return 0
   fi
   if [[ ! -f "$password_file" || ! -r "$password_file" || ! -s "$password_file" ]]; then
-    provisioning_check_add babel-archive degraded archive-input-unavailable \
+    provisioning_check_add omp-session-archive degraded archive-input-unavailable \
       "the archive repository password file is missing, empty, or unreadable" \
-      "check the declared babel vars on an operator device, then atyrode apply to place them; do not rotate existing keys"
+      "check the declared omp-session-archive vars on an operator device, then atyrode apply to place them"
     return 0
   fi
   [[ ! -f "$stamp_file" ]] || read -r last <"$stamp_file" || true
   if [[ -z "$last" ]]; then
-    provisioning_check_add babel-archive degraded never-succeeded \
-      "babel is configured here but has never archived successfully" \
-      "babel archive status (then: babel-archive-push)"
+    provisioning_check_add omp-session-archive degraded never-succeeded \
+      "the session archive is configured here but has never succeeded" \
+      "systemctl --user start omp-session-archive.service (or run omp-session-archive-push)"
     return 0
   fi
   if last_epoch="$(date -u -d "$last" +%s 2>/dev/null)"; then
     now="$(date -u +%s)"
     if ((now - last_epoch > 48 * 3600)); then
-      provisioning_check_add babel-archive degraded archive-stale \
-        "the last successful babel archive was $last" "babel archive status"
+      provisioning_check_add omp-session-archive degraded archive-stale \
+        "the last successful session archive was $last" "journalctl --user -u omp-session-archive.service"
       return 0
     fi
   fi
-  provisioning_check_add babel-archive ok "" "babel archived successfully at $last" ""
+  provisioning_check_add omp-session-archive ok "" "session history archived successfully at $last" ""
 }
 
 # The broker's bearer token is a shared clan var placed by activation, so this

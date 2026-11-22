@@ -50,7 +50,7 @@ discovery: a clone cannot add a machine to this repository, make it appear in
 the generated fleet context, or alter an operator machine. Services remain
 separate trust boundaries. SSH accepts only the private halves of reviewed
 public keys; Manifold enrollment needs its owner key and yields a machine
-token; OMP, Babel, and provider access require their encrypted credentials. An
+token; OMP and provider access require their encrypted credentials. An
 unenrolled copy is therefore inert or rejected, not connected to the fleet.
 
 A clone becomes dangerous only after a separate authority is compromised: a
@@ -195,34 +195,32 @@ are ordinary values in `vars/`, which is what keeps the signer set reviewable.
 How Git and `ssh` consume them is its own section, [Git identity](#git-identity),
 below.
 
-The second is the pair in
-[`babel-archive`](../modules/shared/babel-archive.nix), Babel's storage
-custody, which replaces a Bitwarden ceremony. `babel-custody` is shared and
-prompted: the restic repository password -- existing, never minted, the one
-value no provider can reissue -- the two Clever Cloud add-on environments
-pasted whole as `clever addon env <add-on> --format json` prints them, and
-the deployment's payload key ring, pasted whole from a configured machine's
-`~/.config/babel/payload-keys.json` or left empty to mint a ring of one fresh
-key. The first three files are secrets that are never deployed
-(`deploy = false`): they exist only as inputs, so no machine holds the raw
-add-on environments, and a paste that is not JSON or lacks a key fails at the
-operator's terminal rather than at an activation. The ring is the fourth
-file, and it is deployed: it is validated to Babel's own rules at generation,
-placed on every machine at mode 0600, and linked from
-`~/.config/babel/payload-keys.json`, because every host opens records with
-the same ring. `babel-archive` is per machine and depends on the custody:
-from the first three inputs it renders the storage document Babel reads,
-under the registry identity, with the repository password placed beside it at
-the path the document names. Both are placed by sops-nix at mode 0600 and
-owned by the account that runs the archive timer, and Home Manager links
-`~/.config/babel/storage.json` to the placed document, so Babel reads it
-where it always has. No provider hostname or credential is in the repository:
-all of it arrives through the prompts. Rotating a payload key is an edit of
-the var, never a regeneration -- the ring is append-only, because an object
-sealed under a retired key still needs it: `clan vars get <host>
+The second is the pair that provisions the session archive.
+[`babel-custody`](../modules/shared/babel-custody.nix) is shared and prompted
+and holds what only the operator can supply: the restic repository password --
+existing, never minted, the one value no provider can reissue -- the two Clever
+Cloud add-on environments pasted whole as `clever addon env <add-on> --format
+json` prints them, and the payload key ring of the retired Babel archive. It
+is kept because it is the only way to read that archive. The first three files
+are secrets that are never deployed (`deploy = false`): they exist only as
+inputs, so no machine holds the raw add-on environments, and a paste that is
+not JSON or lacks a key fails at the operator's terminal rather than at an
+activation. The ring is deployed unchanged; rotating it is an edit of the var,
+never a regeneration -- the ring is append-only, because an object sealed under
+a retired key still needs it: `clan vars get <host>
 babel-custody/payload-keys.json`, add the new key and name it `active_key_id`,
 `clan vars set <host> babel-custody/payload-keys.json` over stdin (`set`
-re-encrypts to the same audience and commits), then apply on every machine.
+re-encrypts to the same audience and commits).
+
+[`omp-session-archive`](../modules/shared/omp-session-archive.nix) is shared
+and derived, with no prompt: from the custody's password and Cellar
+environment it renders `restic.env` (repository locator, password-file path and
+object-store credential) and carries a copy of the password beside it. Both
+are placed by sops-nix at mode 0600, owned by the account that runs the archive
+timer, and Home Manager links `~/.config/omp-session-archive/restic.env` to the
+placed environment, so the push reads it where the timer's start condition
+looks. No provider hostname or credential is in the repository: all of it
+arrives through the custody prompts.
 
 The third, [`omp-auth-broker`](../modules/shared/omp-auth-broker.nix), is
 the bearer token of the fleet's one OMP authentication broker

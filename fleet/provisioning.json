@@ -7,7 +7,7 @@
     "agent-context",
     "git-identity",
     "declared-inputs",
-    "babel-archive",
+    "omp-session-archive",
     "omp-auth-broker",
     "local-qwen",
     "manifold-agent",
@@ -50,10 +50,10 @@
       "implies": "Clan checks every declared file and its existing invalidation rules on an operator device; current apply places generated files and Home Manager links. No secret values are inspected and no keys are rotated.",
       "declinable": false
     },
-    "babel-archive": {
-      "label": "Babel session archive",
+    "omp-session-archive": {
+      "label": "OMP session archive",
       "command": "clan vars generate <host>",
-      "implies": "Generates this machine's storage document on an operator device from the repository password, the add-on credentials, and the payload key ring typed once; the next apply places them and arms the hourly timer that snapshots session history. No vault and no provider session on this machine.",
+      "implies": "Generates the restic environment for the shared session archive on an operator device from the repository password and the add-on credentials typed once; the next apply places it and arms the hourly timer that snapshots session history. No vault and no provider session on this machine.",
       "declinable": false
     },
     "omp-auth-broker": {

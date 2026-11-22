@@ -4,15 +4,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Babel is the fleet's archival instrument for agent session history
-    # (atyrode/babel SPEC.md 2.3): restic to a Cellar bucket under a stable
-    # host identity; the shared catalog is retired. Pinned as a flake
-    # input rather than re-packaged under pkgs/, because its derivation is a
-    # plain buildGoModule with a fixed vendorHash. flake.lock carries the
-    # exact revision the hourly archive timer executes.
-    babel.url = "github:atyrode/babel";
-    babel.inputs.nixpkgs.follows = "nixpkgs";
-
     # Manifold owns the terminal client and the preview executor's declared
     # owner/transport profile; the fleet agent stays independently release-pinned.
     manifold.url = "github:atyrode/manifold";
@@ -23,12 +14,8 @@
     manifold-client.url = "github:atyrode/manifold/a7c2237b7cf8829ca93928339703c699300d6937";
     manifold-client.inputs.nixpkgs.follows = "nixpkgs";
 
-    # Recall's plugin skill and supported SDK runner are independent of the
-    # legacy archive timer and preview executor. No activation follows these pins.
-    babel-recall-src = {
-      url = "github:atyrode/babel";
-      flake = false;
-    };
+    # The supported SDK runner is independent of the preview executor.
+    # No activation follows this pin.
     manifold-recall-sdk-src = {
       url = "github:atyrode/manifold/3e8510c473d84175568ac81012763635112ed7d3";
       flake = false;
@@ -93,10 +80,8 @@
     {
       self,
       nixpkgs,
-      babel,
       manifold,
       manifold-client,
-      babel-recall-src,
       manifold-recall-sdk-src,
       clan-core,
       disko,
@@ -121,8 +106,6 @@
 
       packagesLib = import ./lib/packages.nix {
         inherit
-          babel
-          babel-recall-src
           manifold-client
           manifold-recall-sdk-src
           clan-core
@@ -210,7 +193,6 @@
           inherit (pkgs)
             atyrode
             atyrode-preview
-            babel-recall
             manifold-action-runner
             codex
             codex-seed

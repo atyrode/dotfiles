@@ -1,7 +1,6 @@
 {
   bash,
   cacert,
-  code,
   coreutils,
   findutils,
   gitMinimal,
@@ -927,24 +926,8 @@ let
     '';
   };
   # The managed launcher: applies the platform extensions + managed defaults +
-  # policy to an arbitrary one-shot `--config`. The code generator points
-  # CODE_OMP here so a synthesised profile launches through the full managed
-  # layering.
+  # policy to an arbitrary one-shot `--config`.
   ompManaged = mkOmpCommand "omp-managed";
-
-  # First-principles facet grid: `code generate` renders a routing block for
-  # every valid (lane, model-tier, thinking, spark) combination from the model
-  # catalog, baked at build time so the generator view stays immutable and
-  # reviewable. The patched standalone executable that browses the grid also
-  # renders it, keeping profile IDs and native shared-role policy in one owner.
-  # Explicit strong/elite choices remain available; ordinary deliberative roles
-  # do not silently advance the selected model tier.
-  generatedProfiles = runCommand "omp-generated-profiles" { } ''
-    mkdir -p "$out/share/omp"
-    ${lib.getExe code} generate \
-      --models-file ${./config/models.yml} \
-      --out "$out/share/omp/generated.plain"
-  '';
   trustedUntrustedPath = lib.makeBinPath [
     bash
     coreutils
@@ -1163,106 +1146,6 @@ let
       run_isolated "$raw_omp" "''${managed_args[@]}" "''${forwarded_args[@]}"
     '';
   };
-
-  # The generator and central authentication broker share OMP's default profile.
-  # `code` constrains each trusted child with an immutable account pool.
-  ompManagedDefault = writeShellApplication {
-    name = "omp-managed-default";
-    text = ''
-      exec ${lib.getExe ompManaged} --profile default "$@"
-    '';
-  };
-
-  codeLauncher = writeShellApplication {
-    name = "code";
-    runtimeInputs = [ coreutils ];
-    text = ''
-      omp_bin=${lib.escapeShellArg (lib.getExe omp)}
-      export CODE_GENERATED=${generatedProfiles}/share/omp/generated.plain
-      export CODE_OMP=${lib.getExe ompManagedDefault}
-      export CODE_OMP_UNTRUSTED=${lib.getExe ompUntrusted}
-      # code is not OMP: it asks the broker over HTTP for the identities it
-      # presents and hands the run its credential through the environment
-      # (withAuthEnv), so the bearer token has to be a value here rather than
-      # a file OMP would read on its own. It is read from the one place OMP
-      # itself resolves it, the token of the default profile's configuration
-      # root, which Home Manager links to the clan var sops-nix places; a
-      # machine where it is not yet placed has a dangling link, reads as
-      # unreadable, and launches without a broker. CODE_AUTH_LOGIN_VIA is the
-      # SSH target the tunnel machines export from Home Manager, so the
-      # provider login runs on the broker host; on that host it stays unset
-      # and the login is local.
-      broker_token_file="$HOME/.omp/auth-broker.token"
-      if [[ -z "''${OMP_AUTH_BROKER_TOKEN:-}" && -r "$broker_token_file" ]]; then
-        OMP_AUTH_BROKER_TOKEN="$(<"$broker_token_file")"
-      fi
-      if [[ -n "''${OMP_AUTH_BROKER_TOKEN:-}" ]]; then
-        export OMP_AUTH_BROKER_TOKEN
-        export OMP_AUTH_BROKER_URL="''${OMP_AUTH_BROKER_URL:-http://127.0.0.1:46171}"
-        export OMP_AUTH_BROKER_SNAPSHOT_CACHE="''${OMP_AUTH_BROKER_SNAPSHOT_CACHE:-''${XDG_CACHE_HOME:-$HOME/.cache}/atyrode/omp-auth-broker/snapshot.json}"
-      else
-        unset OMP_AUTH_BROKER_URL OMP_AUTH_BROKER_TOKEN OMP_AUTH_BROKER_SNAPSHOT_CACHE
-      fi
-      # Resolve by command name rather than a Nix store path: atyrode owns
-      # machine-local capabilities, while code remains independently releasable.
-      export CODE_RUNTIME_BROKER="''${CODE_RUNTIME_BROKER:-atyrode}"
-      export CODE_USAGE="''${CODE_USAGE:-$omp_bin --profile default usage --json}"
-      export CODE_AUTH_ACCOUNT_STATE="''${CODE_AUTH_ACCOUNT_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-auth-account-state.json}"
-      export CODE_SELECTION_STATE="''${CODE_SELECTION_STATE:-''${XDG_STATE_HOME:-$HOME/.local/state}/atyrode/code-generator-selection.json}"
-      # The generator's prompt→profile classifier runs on the resident,
-      # nix-managed ollama daemon (loopback HTTP, no auth) — see services.ollama
-      # in the host config. CODE_OLLAMA_ENDPOINT / CODE_EVAL_MODEL override the
-      # daemon/model. The account manager owns only non-secret selection state;
-      # every trusted launch receives the central broker plus an immutable
-      # per-process account pool while remaining on the shared default client
-      # profile. On supported machines, code discovers machine-local targets
-      # from CODE_RUNTIME_BROKER. Selecting one delegates provisioning and launch
-      # to atyrode without forwarding the cloud broker environment.
-
-      usage() {
-        printf '%s\n' \
-          'code - build an OMP profile from a prompt and run it' \
-          "" \
-          'usage:' \
-          '  code                 open the profile generator' \
-          '  code [args]          open it, forwarding extra args to the launch' \
-          '  code -U, --no-usage  open without fetching the usage panel' \
-          '  code -h, --help      this help' \
-          "" \
-          'subcommands (no terminal required):' \
-          '  code ls              list live sessions' \
-          '  code session reap    retire sessions (dry run unless --yes)' \
-          '  code wt              list and clean session worktrees' \
-          '  code generate        re-render the profile catalog' \
-          "" \
-          'In the generator: type a prompt or adjust the dials, v opens the' \
-          'account manager, w toggles an isolated git worktree, and ? shows' \
-          'all keys. Enter launches the selected hosted or local runtime; m' \
-          'runs the managed hosted defaults, and u opens an untrusted sandbox.'
-      }
-
-      case "''${1:-}" in
-        -h | --help) usage; exit 0 ;;
-        -U | --no-usage) export CODE_USAGE=""; shift ;;
-      esac
-
-      # Subcommands that never open the TUI must not require a terminal. They
-      # exist for scripts and for triaging a machine over a bare `ssh host
-      # 'code ls'`, which is exactly when no tty is attached; only the
-      # generator below needs one.
-      case "''${1:-}" in
-        generate | session | sessions | ls | worktree | wt) exec ${lib.getExe code} "$@" ;;
-      esac
-
-      if [[ ! -t 0 || ! -t 1 ]]; then
-        printf 'code: no interactive terminal.\n' >&2
-        usage >&2
-        exit 2
-      fi
-
-      exec ${lib.getExe code} "$@"
-    '';
-  };
 in
 runCommand "omp-configured-${lib.getVersion omp}"
   {
@@ -1275,15 +1158,12 @@ runCommand "omp-configured-${lib.getVersion omp}"
       # checks/omp/omp-managed-keys.nix can prove they still mirror the YAML they
       # gate. Drift there makes `omp config set` silently accept a key Nix
       # overrides.
-      # ompManagedDefault is exposed for the broker-launch checks in
-      # checks/omp/omp-stack.nix.
       inherit
         goplsCommand
         defaultsConfig
         enforcedPolicyPaths
         managedDefaultPaths
         neutralRoot
-        ompManagedDefault
         platformRoot
         policyConfig
         untrustedConfig
@@ -1292,7 +1172,7 @@ runCommand "omp-configured-${lib.getVersion omp}"
     };
 
     meta = omp.meta // {
-      description = "Declaratively configured OMP with the atyrode profile generator";
+      description = "Declaratively configured OMP launchers";
       mainProgram = "omp";
     };
   }
@@ -1301,6 +1181,5 @@ runCommand "omp-configured-${lib.getVersion omp}"
     ln -s ${lib.getExe ompDefault} "$out/bin/omp"
     ln -s ${lib.getExe ompManaged} "$out/bin/omp-managed"
     ln -s ${lib.getExe ompUntrusted} "$out/bin/ompu"
-    ln -s ${lib.getExe codeLauncher} "$out/bin/code"
     ln -s ${omp}/share/zsh/site-functions/_omp "$out/share/zsh/site-functions/_omp"
   ''

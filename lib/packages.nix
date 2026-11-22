@@ -61,9 +61,6 @@ let
         # nixpkgs, which also cannot build codex on aarch64-darwin.
         codex = final.callPackage ../pkgs/codex { };
         codex-seed = final.callPackage ../pkgs/codex-seed { };
-        # Temporary continuity bridge: keep the last accepted standalone Code
-        # release available.
-        code = final.callPackage ../pkgs/code { };
         omp = final.callPackage ../pkgs/omp { };
         omp-agents = final.callPackage ../pkgs/omp-agents { };
         omp-configured = final.callPackage ../pkgs/omp-configured { };

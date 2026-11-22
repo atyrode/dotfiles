@@ -1,9 +1,7 @@
-# omp-configured — managed, untrusted, and continuity launchers
+# omp-configured — managed and untrusted launchers
 
 `omp-configured` packages [oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`)
-with declarative launch policy and temporarily retains the standalone
-[Code](https://github.com/atyrode/code) 0.19.0 launcher, built from its public
-ancestor with a narrow downstream native-routing patch.
+with declarative launch policy.
 
 ## What you get
 
@@ -13,8 +11,6 @@ ancestor with a narrow downstream native-routing patch.
   through a one-shot `--config`, without replacing the operator's configuration.
 - **`ompu`** — a sandboxed launcher for untrusted repositories (stripped credentials,
   restricted tools/approvals, sanitized state).
-- **`code`** — the pinned facet-dial catalog and launcher retained for daily
-  continuity.
 
 Agent prompts and routing come from the pinned OMP bundle: task uses `task`,
 scout/sonic use `smol`, and reviewer uses `slow`; security-reviewer and seance
@@ -23,7 +19,7 @@ Existing writable overrides are preserved, not silently migrated by seeding;
 review and remove those separately before expecting native routing.
 
 Use the pinned binaries' `--help` output for upstream behavior; this README
-describes the four operator launchers.
+describes the three operator launchers.
 
 ## Install it standalone (Nix)
 
@@ -34,14 +30,13 @@ any machine that has Nix and uses `omp`:
 nix profile install github:atyrode/dotfiles#omp-configured
 ```
 
-That puts `omp`, `omp-managed`, `ompu` and `code` on your PATH. The managed
-defaults, policy, untrusted posture and Code catalog
+That puts `omp`, `omp-managed` and `ompu` on your PATH. The managed
+defaults, policy and untrusted posture
 are baked into the package; bare `omp` retains the operator's mutable
 configuration.
 
 Home Manager supervises the shared OMP auth broker on managed machines.
-Its supported commands and credential custody remain OMP's; the Code wrapper
-only reuses that authority and does not copy authentication.
+Its supported commands and credential custody remain OMP's.
 
 ## How the managed layering stays reliable
 

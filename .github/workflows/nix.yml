@@ -174,12 +174,8 @@ jobs:
           image_tag="$(nix eval --raw .#development-image.imageTag)"
           docker load --input result
           printf 'Compressed development image archive: %s bytes\n' "$(stat -Lc %s result)" >> "$GITHUB_STEP_SUMMARY"
-          code_path="$(nix eval --raw .#code.outPath)/bin/code"
-          catalog="$RUNNER_TEMP/code-smoke.plain"
-          "$code_path" generate --models-file pkgs/omp-configured/config/models.yml --out "$catalog"
           nix shell --inputs-from . nixpkgs#tmux nixpkgs#python3 \
-            --command python3 ci/verify-development-image.py "$image_name:$image_tag" \
-              --code-executable "$code_path" --catalog "$catalog"
+            --command python3 ci/verify-development-image.py "$image_name:$image_tag"
 
       - name: Retain terminal verification captures
         if: always() && steps.verify.outputs.captures != ''

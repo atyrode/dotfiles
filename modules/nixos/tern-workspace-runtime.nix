@@ -122,6 +122,9 @@ in
   # the vendor binary and the operator's account state stay outside the store.
   systemd.services.tern-workspace-install = {
     description = "Provision the approved private Tern workspace executable";
+    # NixOS starts the active target again on switch. The oneshot stages a new
+    # executable without restarting the protected daemon or its frontends.
+    wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${lib.getExe installTern} ${host.username} ${host.homeDirectory} ${binaryDirectory} ${approvedTern.version} ${approvedTern.sha256}";

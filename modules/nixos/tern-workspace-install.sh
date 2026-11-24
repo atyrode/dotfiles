@@ -34,8 +34,9 @@ if [[ -e $destination || -L $destination ]]; then
     0:0:755 | 0:0:555) ;;
     *) fail "$destination must be root:root with mode 0755 or 0555" ;;
   esac
-  verified "$destination" || fail "$destination does not match approved Tern $version; move it aside before retrying"
-  exit 0
+  if verified "$destination"; then
+    exit 0
+  fi
 fi
 
 stage=$(mktemp -- "$directory/.tern.XXXXXXXX") || fail "cannot stage executable in $directory"
@@ -50,5 +51,6 @@ if ! setpriv --reuid="$owner" --regid="$group" --init-groups --reset-env --no-ne
 fi
 verified "$stage" || fail "$source does not match approved Tern $version; restore that version and retry"
 chmod 0755 -- "$stage" || fail "cannot make staged executable readable and executable"
-mv -T --update=none-fail -- "$stage" "$destination" || fail "cannot publish $destination"
+# Rename the verified file over the old path; running processes keep their inode.
+mv -T -- "$stage" "$destination" || fail "cannot publish $destination"
 printf 'Tern workspace install: installed approved Tern %s at %s\n' "$version" "$destination"

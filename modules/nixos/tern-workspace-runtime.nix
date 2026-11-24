@@ -16,10 +16,10 @@ let
   socket = "${configDir}/daemon.sock";
   binaryDirectory = "/var/lib/tern-workspace-bin";
   tern = "${binaryDirectory}/tern";
-  # Approved executable for this host; dev-01 stays on 0.9.29.
+  # Approved vendor executable for dev-01.
   approvedTern = {
-    version = "0.9.29";
-    sha256 = "4bfb8c8396d90d1db58e482e43152a55b3187e3e2e1a058ee230f4e016ff2b58";
+    version = "0.9.33";
+    sha256 = "13c714f3f8cb24a8fcbdd37ec98a4e9c87d51cb35746d2adad6f117459e298c7";
   };
   installUnit = "tern-workspace-install.service";
   installTern = pkgs.writeShellApplication {

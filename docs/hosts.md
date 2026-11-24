@@ -201,6 +201,7 @@ root-owned override at `/var/lib/myparcelle-ci-budget/monthly-eur`.
 The guard reads it on its next tick without a restart. A missing override uses
 the default; an invalid one pulls the latch. Neither command clears the latch
 or changes the daily cap, runner routing, or production.
+The watchdog reports the guard's configured daily ceiling in Livraison.
 
 The games edge sends `games.tyrode.dev` to `127.0.0.1:8093`. The
 [game checkout](https://github.com/atyrode/scrabble/tree/dev) owns its path

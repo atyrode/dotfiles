@@ -90,6 +90,10 @@ in
     lib.mapAttrsToList (name: value: "${name}=${value}\n") caps
   );
 
+  # The router reports the guard's configured daily ceiling in Livraison.
+  systemd.services.myparcelle-ci-clever-watchdog.environment.CI_CLEVER_DAY_CAP_EUR =
+    caps.CI_CLEVER_GUARD_DAY_EUR;
+
   systemd.services.${user} = {
     description = "myParcelle CI on Clever Cloud: cost guard (caps, machine age and count, kill switch)";
     after = [ "network-online.target" ];

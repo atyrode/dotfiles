@@ -7,7 +7,7 @@
 # Clever. The program's header lists the rules.
 #
 #   caps        /etc/myparcelle-ci-clever-guard.env, from `caps` below:
-#               €40 a Paris day, €300 a month (Clever's prices, excluding
+#               €70 a Paris day, €900 a month (Clever's prices, excluding
 #               VAT), 70 min per instance, CI_CLEVER_MAX_MACHINES at once
 #               (keep it equal to the controller's), 15 min blind before
 #               failing closed. A one-day exception to the day cap names its
@@ -55,8 +55,8 @@ let
   controller = "myparcelle-ci-clever.service";
 
   caps = {
-    CI_CLEVER_GUARD_DAY_EUR = "40";
-    CI_CLEVER_GUARD_MONTH_EUR = "300";
+    CI_CLEVER_GUARD_DAY_EUR = "70";
+    CI_CLEVER_GUARD_MONTH_EUR = "900";
     CI_CLEVER_GUARD_MAX_AGE_MIN = "70";
     CI_CLEVER_MAX_MACHINES = "60";
     CI_CLEVER_GUARD_BLIND_MIN = "15";

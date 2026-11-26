@@ -196,12 +196,25 @@ it outlives the Paris midnight, and CI goes back to Clever only when that human
 also sets `CI_RUNS_ON` again (the module's header has the commands).
 `/etc/myparcelle-ci-clever-guard.env` sets the host defaults: €70 per Paris day
 and €900 per month. The installed `myparcelle-ci-budget show` prints the
-active monthly cap; `sudo myparcelle-ci-budget set <EUR>` writes its optional
-root-owned override at `/var/lib/myparcelle-ci-budget/monthly-eur`.
-The guard reads it on its next tick without a restart. A missing override uses
-the default; an invalid one pulls the latch. Neither command clears the latch
-or changes the daily cap, runner routing, or production.
-The watchdog reports the guard's configured daily ceiling in Livraison.
+active monthly cap and today's effective day cap with its source;
+`sudo myparcelle-ci-budget set <EUR>` writes the optional root-owned monthly
+override at `/var/lib/myparcelle-ci-budget/monthly-eur`. A missing monthly
+override uses the default; an invalid one pulls the latch.
+`sudo myparcelle-ci-budget set-day <EUR>` writes a one-day cap override next to
+it (`day-eur`, `<Paris date>:<EUR>`, today's date, whole EUR 1 to 7 digits) and
+`sudo myparcelle-ci-budget clear-day` removes it. The guard reads both on its
+next tick without a restart or activation. The day override wins over the Nix
+`CI_CLEVER_GUARD_DAY_EUR_OVERRIDE` and the default on its Paris date only, is
+ignored automatically afterwards, and an invalid one is ignored too (the base
+cap applies). Every tick logs the day cap and its source. No command clears
+the latch or changes runner routing or production.
+To lift a latch caused by the day cap: `sudo myparcelle-ci-budget set-day <EUR>`,
+`sudo systemctl start myparcelle-ci-clever-guard.service`, check in
+`journalctl -u myparcelle-ci-clever-guard.service -n 5` that the fresh
+reading shows spend below the cap with source "day override file", then lift
+the latch with the commands in the module's header.
+The watchdog reports the guard's configured daily ceiling (the host default) in
+Livraison; it does not follow the live day override.
 
 The games edge sends `games.tyrode.dev` to `127.0.0.1:8093`. The
 [game checkout](https://github.com/atyrode/scrabble/tree/dev) owns its path

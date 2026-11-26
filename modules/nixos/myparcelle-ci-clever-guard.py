@@ -8,9 +8,12 @@ their instances, Clever's telemetry for the minutes they ran) and acts on the
   1. an instance running longer than CI_CLEVER_GUARD_MAX_AGE_MIN (70) is
      stopped, and #alertes gets one line; so is any application with
      autoscaling (instances or flavour) or more than one instance;
-  2. today's CI spend (Paris day) reaching CI_CLEVER_GUARD_DAY_EUR (70), or
-     CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (`<Paris date>:<EUR>`) on that one date
-     only, past which it is ignored and #alertes is told once to remove it, or
+  2. today's CI spend (Paris day) reaching the day cap: the live day override
+     file (`<Paris date>:<EUR>`, set with `myparcelle-ci-budget set-day`), else
+     CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (same format, from the Nix env), else
+     CI_CLEVER_GUARD_DAY_EUR (70). An override is used on its own Paris date
+     only; past it, or malformed, it is ignored (logged; #alertes told once
+     when malformed or from the env). Each tick logs the cap and its source. Or
   3. the month reaching the live monthly budget (host default:
      CI_CLEVER_GUARD_MONTH_EUR), or an unsafe live budget file, pulls the kill
      switch. The current policy can be inspected and updated with the
@@ -42,8 +45,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
-from datetime import datetime
+from contextlib import contextmanager, suppress
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 API = "https://api.clever-cloud.com"
@@ -72,6 +75,7 @@ DAY_CAP = number("CI_CLEVER_GUARD_DAY_EUR", 70)
 MONTH_CAP = number("CI_CLEVER_GUARD_MONTH_EUR", 900)
 BUDGET_DIRECTORY = "/var/lib/myparcelle-ci-budget"
 BUDGET_FILENAME = "monthly-eur"
+DAY_FILENAME = "day-eur"
 BUDGET_OWNER_UID = 0
 MAX_MACHINES = int(number("CI_CLEVER_MAX_MACHINES", 60))
 MAX_AGE_MS = number("CI_CLEVER_GUARD_MAX_AGE_MIN", 70) * 60_000
@@ -224,27 +228,18 @@ def paris_midnight(ms, first_of_month=False):
 
 
 def day_cap(state, day_start):
-    """CI_CLEVER_GUARD_DAY_EUR, or CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (`<Paris date>:<EUR>`) on that date alone.
+    """(cap, source) of today's Paris day: see effective_day_cap for the precedence.
 
-    An override that is malformed or not for today is ignored (the base cap is the stricter default) and
-    #alertes is told once, so a one-day exception cannot outlive its day unnoticed.
+    An override that is malformed, unsafe or not for today is ignored (the base cap is the stricter default) and, for the
+    malformed or env ones, #alertes is told once, so a one-day exception cannot outlive its day unnoticed.
     """
-    override = os.environ.get("CI_CLEVER_GUARD_DAY_EUR_OVERRIDE", "").strip()
-    if not override:
-        return DAY_CAP
-    today = datetime.fromtimestamp(day_start / 1000, PARIS).date().isoformat()
-    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}):(\d+(?:\.\d+)?)", override)
-    if match and match[1] == today:
-        return float(match[2])
-    why = f"not for today ({today})" if match else "malformed"
-    log(f"CI_CLEVER_GUARD_DAY_EUR_OVERRIDE={override} ignored, {why}: day cap {euros(DAY_CAP)}")
-    if not REPORT and state.get("overrideIgnored") != override:
-        state["overrideIgnored"] = override
-        post(
-            f"ℹ️ CI sur Clever Cloud : l'exception de plafond journalier CI_CLEVER_GUARD_DAY_EUR_OVERRIDE={override} est ignorée ({why}) ; "
-            f"plafond du jour {euros(DAY_CAP)}. La retirer de myparcelle-ci-clever-guard.nix (dotfiles)."
-        )
-    return DAY_CAP
+    cap, source, ignored = effective_day_cap(datetime.fromtimestamp(day_start / 1000, PARIS).date().isoformat())
+    for key, value, message, alert in ignored:
+        log(message.replace("{cap}", euros(cap)))
+        if alert and not REPORT and state.get(key) != value:
+            state[key] = value
+            post(alert.replace("{cap}", euros(cap)))
+    return cap, source
 
 
 def wanted_up(app):
@@ -351,7 +346,7 @@ class BudgetPolicyError(Exception):
 
 
 _BUDGET_VALUE = re.compile(r"[1-9][0-9]{0,6}")
-_BUDGET_TEMP = f".{BUDGET_FILENAME}.tmp"
+_DAY_VALUE = re.compile(r"(\d{4}-\d{2}-\d{2}):([1-9][0-9]{0,6})")
 _BUDGET_LOCK = ".lock"
 
 
@@ -370,37 +365,73 @@ def _open_budget_directory():
     return fd
 
 
-def read_monthly_budget():
-    """The live monthly cap in whole EUR, or None when the policy file is absent; BudgetPolicyError otherwise unusable."""
+def _read_policy_text(filename):
+    """The policy file's text without its final newline, or None when the directory or file is absent; BudgetPolicyError otherwise unusable."""
     directory = _open_budget_directory()
     if directory is None:
         return None
     try:
         try:
-            fd = os.open(BUDGET_FILENAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+            fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
         except FileNotFoundError:
             return None
         except OSError as error:
-            raise BudgetPolicyError(f"{BUDGET_FILENAME} unreadable ({error.strerror})") from error
+            raise BudgetPolicyError(f"{filename} unreadable ({error.strerror})") from error
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != BUDGET_OWNER_UID or info.st_mode & 0o022 or not info.st_mode & stat.S_IROTH:
-                raise BudgetPolicyError(f"{BUDGET_FILENAME} must be a root-owned regular file readable but not writable by others")
+                raise BudgetPolicyError(f"{filename} must be a root-owned regular file readable but not writable by others")
             data = os.read(fd, 65)
         except OSError as error:
-            raise BudgetPolicyError(f"{BUDGET_FILENAME} unreadable ({error.strerror})") from error
+            raise BudgetPolicyError(f"{filename} unreadable ({error.strerror})") from error
         finally:
             os.close(fd)
     finally:
         os.close(directory)
-    text = data[:-1] if data.endswith(b"\n") else data
-    if len(data) > 64 or not _BUDGET_VALUE.fullmatch(text.decode("ascii", "replace")):
+    if len(data) > 64:
+        raise BudgetPolicyError(f"{filename} is too long")
+    return (data[:-1] if data.endswith(b"\n") else data).decode("ascii", "replace")
+
+
+def read_monthly_budget():
+    """The live monthly cap in whole EUR, or None when the policy file is absent; BudgetPolicyError otherwise unusable."""
+    text = _read_policy_text(BUDGET_FILENAME)
+    if text is None:
+        return None
+    if not _BUDGET_VALUE.fullmatch(text):
         raise BudgetPolicyError(f"{BUDGET_FILENAME} is not a positive whole number of EUR (1 to 7 digits)")
     return int(text)
 
 
-def _publish_budget(eur):
-    """Publish one durable budget update, serializing writers through the protected directory."""
+def read_day_override():
+    """The day override file's (Paris date, whole EUR), or None when absent; BudgetPolicyError otherwise unusable."""
+    text = _read_policy_text(DAY_FILENAME)
+    if text is None:
+        return None
+    match = _DAY_VALUE.fullmatch(text)
+    if match:
+        try:
+            date.fromisoformat(match[1])
+        except ValueError:
+            match = None
+    if not match:
+        raise BudgetPolicyError(f"{DAY_FILENAME} is not `<Paris date>:<positive whole EUR, 1 to 7 digits>`")
+    return match[1], int(match[2])
+
+
+def _day_override_text():
+    live = read_day_override()
+    return None if live is None else f"{live[0]}:{live[1]}"
+
+
+def _monthly_budget_text():
+    live = read_monthly_budget()
+    return None if live is None else str(live)
+
+
+@contextmanager
+def _locked_directory():
+    """The protected directory's fd, with the writers' lock held; BudgetPolicyError when it cannot be had or an update cannot be confirmed."""
     directory = _open_budget_directory()
     if directory is None:
         raise BudgetPolicyError(f"directory {BUDGET_DIRECTORY} is missing (created by the NixOS configuration)")
@@ -411,42 +442,123 @@ def _publish_budget(eur):
         if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != BUDGET_OWNER_UID or stat.S_IMODE(lock_info.st_mode) != 0o600:
             raise BudgetPolicyError("budget update lock is not a root-owned 0600 file")
         fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            before = read_monthly_budget()
-        except BudgetPolicyError:
-            before = "invalid"
-        if before == eur:
-            return before
-        with suppress(FileNotFoundError):
-            os.unlink(_BUDGET_TEMP, dir_fd=directory)
-        try:
-            fd = os.open(_BUDGET_TEMP, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=directory)
-            with os.fdopen(fd, "w", encoding="ascii") as target:
-                os.fchmod(target.fileno(), 0o644)
-                target.write(f"{eur}\n")
-                target.flush()
-                os.fsync(target.fileno())
-            os.replace(_BUDGET_TEMP, BUDGET_FILENAME, src_dir_fd=directory, dst_dir_fd=directory)
-        finally:
-            with suppress(FileNotFoundError):
-                os.unlink(_BUDGET_TEMP, dir_fd=directory)
-        os.fsync(directory)
-        before_label = f"{MONTH_CAP:g} EUR (host default)" if before is None else (
-            f"{before} EUR" if before != "invalid" else "invalid"
-        )
-        syslog.openlog("myparcelle-ci-budget")
-        syslog.syslog(syslog.LOG_NOTICE, f"monthly cap changed: {before_label} -> {eur} EUR")
-        return before
+        yield directory
     except OSError as error:
-        raise BudgetPolicyError(f"cannot confirm write to {BUDGET_FILENAME} ({error.strerror}); run `myparcelle-ci-budget show`") from error
+        raise BudgetPolicyError(f"cannot confirm the update ({error.strerror}); run `myparcelle-ci-budget show`") from error
     finally:
         if lock is not None:
             os.close(lock)
         os.close(directory)
 
 
+def _publish_policy(filename, text, current):
+    """Durably publish one line as `filename` (atomic replace, 0644) under the writers' lock.
+
+    `current` reads the present value as text (None when absent, BudgetPolicyError when unusable).
+    Returns (before, changed): before is that text, None when absent, "invalid" when unusable.
+    """
+    with _locked_directory() as directory:
+        try:
+            before = current()
+        except BudgetPolicyError:
+            before = "invalid"
+        if before == text:
+            return before, False
+        temp = f".{filename}.tmp"
+        with suppress(FileNotFoundError):
+            os.unlink(temp, dir_fd=directory)
+        try:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=directory)
+            with os.fdopen(fd, "w", encoding="ascii") as target:
+                os.fchmod(target.fileno(), 0o644)
+                target.write(f"{text}\n")
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temp, filename, src_dir_fd=directory, dst_dir_fd=directory)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(temp, dir_fd=directory)
+        os.fsync(directory)
+        return before, True
+
+
+def _audit(message):
+    syslog.openlog("myparcelle-ci-budget")
+    syslog.syslog(syslog.LOG_NOTICE, message)
+
+
+def _publish_budget(eur):
+    """Publish the live monthly cap; returns the previous one (None: host default, "invalid") or `eur` when unchanged."""
+    before, changed = _publish_policy(BUDGET_FILENAME, str(eur), _monthly_budget_text)
+    if not changed:
+        return eur
+    before_value = before if before in (None, "invalid") else int(before)
+    before_label = f"{MONTH_CAP:g} EUR (host default)" if before is None else (
+        f"{before_value} EUR" if before != "invalid" else "invalid"
+    )
+    _audit(f"monthly cap changed: {before_label} -> {eur} EUR")
+    return before_value
+
+
+def _publish_day_override(today, eur):
+    """Publish today's one-day cap override; returns True when it changed anything."""
+    before, changed = _publish_policy(DAY_FILENAME, f"{today}:{eur}", _day_override_text)
+    if changed:
+        _audit(f"day cap override set: {before or 'none'} -> {today}:{eur}")
+    return changed
+
+
+def _clear_day_override():
+    """Remove the day override file; returns False when there was none."""
+    with _locked_directory() as directory:
+        try:
+            os.unlink(DAY_FILENAME, dir_fd=directory)
+        except FileNotFoundError:
+            return False
+        os.fsync(directory)
+    _audit("day cap override cleared")
+    return True
+
+
+def effective_day_cap(today):
+    """(cap, source, ignored) for the Paris date `today` (YYYY-MM-DD).
+
+    Precedence: today's day override file, then CI_CLEVER_GUARD_DAY_EUR_OVERRIDE for today, then CI_CLEVER_GUARD_DAY_EUR.
+    A file or env override that is malformed, unsafe or for another date is ignored: the base cap is the stricter default.
+    `ignored` lists (state key, state value, log line, #alertes line or None); "{cap}" stands for the resulting cap.
+    """
+    ignored = []
+    path = os.path.join(BUDGET_DIRECTORY, DAY_FILENAME)
+    try:
+        live = read_day_override()
+    except BudgetPolicyError as error:
+        live = None
+        ignored.append((
+            "dayFileIgnored", str(error), f"{path} ignored ({error}): day cap {{cap}}",
+            f"ℹ️ CI sur Clever Cloud : l'exception de plafond journalier {path} est ignorée ({error}) ; plafond du jour {{cap}}. "
+            "La refaire avec `sudo myparcelle-ci-budget set-day <EUR>` ou la retirer avec `sudo myparcelle-ci-budget clear-day`.",
+        ))
+    if live is not None:
+        if live[0] == today:
+            return float(live[1]), f"day override file {path}", ignored
+        ignored.append((None, None, f"{path} ({live[0]}:{live[1]}) ignored, not for today ({today}): day cap {{cap}}", None))
+    override = os.environ.get("CI_CLEVER_GUARD_DAY_EUR_OVERRIDE", "").strip()
+    if not override:
+        return DAY_CAP, "host default CI_CLEVER_GUARD_DAY_EUR", ignored
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}):(\d+(?:\.\d+)?)", override)
+    if match and match[1] == today:
+        return float(match[2]), "CI_CLEVER_GUARD_DAY_EUR_OVERRIDE (Nix env)", ignored
+    why = f"not for today ({today})" if match else "malformed"
+    ignored.append((
+        "overrideIgnored", override, f"CI_CLEVER_GUARD_DAY_EUR_OVERRIDE={override} ignored, {why}: day cap {{cap}}",
+        f"ℹ️ CI sur Clever Cloud : l'exception de plafond journalier CI_CLEVER_GUARD_DAY_EUR_OVERRIDE={override} est ignorée ({why}) ; "
+        "plafond du jour {cap}. La retirer de myparcelle-ci-clever-guard.nix (dotfiles).",
+    ))
+    return DAY_CAP, "host default CI_CLEVER_GUARD_DAY_EUR", ignored
+
+
 def budget_command(args):
-    """`show` | `set <EUR>`: the live monthly cap, nothing else (no latch, no network, no runner)."""
+    """`show` | `set <EUR>` | `set-day <EUR>` | `clear-day`: the live caps, nothing else (no latch, no network, no runner)."""
     if args == ["show"]:
         try:
             live = read_monthly_budget()
@@ -457,26 +569,49 @@ def budget_command(args):
             print(f"monthly cap: {MONTH_CAP:g} EUR (source: host fallback, no {os.path.join(BUDGET_DIRECTORY, BUDGET_FILENAME)})")
         else:
             print(f"monthly cap: {live} EUR (source: {os.path.join(BUDGET_DIRECTORY, BUDGET_FILENAME)})")
+        today = datetime.now(PARIS).date().isoformat()
+        cap, source, ignored = effective_day_cap(today)
+        print(f"day cap: {cap:g} EUR for {today} (source: {source})")
+        for _key, _value, message, _alert in ignored:
+            print("day cap note: " + message.replace("{cap}", euros(cap)))
         return 0
-    if len(args) == 2 and args[0] == "set":
+    if len(args) == 2 and args[0] in ("set", "set-day"):
+        what = "budget " + args[0]
         if not _BUDGET_VALUE.fullmatch(args[1]):
-            print("budget set: expected a positive whole number of EUR (1 to 7 digits)", file=sys.stderr)
+            print(f"{what}: expected a positive whole number of EUR (1 to 7 digits)", file=sys.stderr)
             return 2
         if os.geteuid() != 0:
-            print("budget set: must run as root", file=sys.stderr)
+            print(f"{what}: must run as root", file=sys.stderr)
             return 1
         new = int(args[1])
         try:
-            before = _publish_budget(new)
+            if args[0] == "set-day":
+                today = datetime.now(PARIS).date().isoformat()
+                changed = _publish_day_override(today, new)
+            else:
+                changed = _publish_budget(new) != new
         except BudgetPolicyError as error:
-            print(f"budget set: {error}", file=sys.stderr)
+            print(f"{what}: {error}", file=sys.stderr)
             return 1
-        if before == new:
-            print(f"monthly cap: {new} EUR (unchanged)")
-        else:
+        if args[0] == "set-day":
+            print(f"day cap: {new} EUR for {today} only (Paris date){'' if changed else ', unchanged'}; ignored afterwards; the latch and runners are untouched")
+        elif changed:
             print(f"monthly cap: {new} EUR; the latch and runners are untouched")
+        else:
+            print(f"monthly cap: {new} EUR (unchanged)")
         return 0
-    print("usage: budget show | budget set <positive whole EUR>", file=sys.stderr)
+    if args == ["clear-day"]:
+        if os.geteuid() != 0:
+            print("budget clear-day: must run as root", file=sys.stderr)
+            return 1
+        try:
+            removed = _clear_day_override()
+        except BudgetPolicyError as error:
+            print(f"budget clear-day: {error}", file=sys.stderr)
+            return 1
+        print("day override: cleared; the latch and runners are untouched" if removed else "day override: none to clear")
+        return 0
+    print("usage: budget show | budget set <positive whole EUR> | budget set-day <positive whole EUR> | budget clear-day", file=sys.stderr)
     return 2
 
 
@@ -564,9 +699,9 @@ def tick(state, now):
         eur = spend(clever, apps, month_start, day_start, price) if month_start < day_start else 0.0
         before = state["monthBefore"] = {"dayStart": day_start, "at": now, "eur": eur}
     month = before["eur"] + day
-    cap = day_cap(state, day_start)
+    cap, cap_source = day_cap(state, day_start)
     up = sorted((app for app in apps if running(app)), key=started)
-    log(f"{len(up)}/{len(apps)} CI application(s) running; today {euros(day)} (cap {euros(cap)}), month {euros(month)} (cap {euros(month_cap)})")
+    log(f"{len(up)}/{len(apps)} CI application(s) running; today {euros(day)} (cap {euros(cap)}, source: {cap_source}), month {euros(month)} (cap {euros(month_cap)})")
     if REPORT:
         for app in up:
             ages = [round((now - i["creationDate"]) / 60_000, 1) for i in app["instances"] if i.get("creationDate")]
@@ -579,7 +714,7 @@ def tick(state, now):
         return enforce_latched_pool(clever, up, state)
     state.pop("latchedControllerAlerted", None)
     if day >= cap:
-        return pull_kill_switch(clever, apps, f"dépense CI du jour {euros(day)} ≥ plafond {euros(cap)}")
+        return pull_kill_switch(clever, apps, f"dépense CI du jour {euros(day)} ≥ plafond {euros(cap)} ({cap_source})")
     if month >= month_cap:
         return pull_kill_switch(clever, apps, f"dépense CI du mois {euros(month)} ≥ plafond {euros(month_cap)}")
 

@@ -109,7 +109,7 @@ def extras(directory):
     for name in others:
         info = os.lstat(os.path.join(directory, name))
         assert stat.S_ISREG(info.st_mode) and info.st_mode & 0o777 == 0o600 and info.st_uid == UID, (name, oct(info.st_mode))
-        assert name != guard._BUDGET_TEMP, "a temporary file was left behind"
+        assert name != f".{guard.BUDGET_FILENAME}.tmp", "a temporary file was left behind"
     return others
 
 
@@ -235,7 +235,7 @@ with mock.patch.object(os, "geteuid", return_value=0):
     victim = os.path.join(ROOT, "victim")
     with open(victim, "w") as target:
         target.write("keep\n")
-    os.symlink(victim, os.path.join(directory, guard._BUDGET_TEMP))
+    os.symlink(victim, os.path.join(directory, f".{guard.BUDGET_FILENAME}.tmp"))
     code, _, _ = run_command(["set", "400"])
     assert code == 0 and open(victim).read() == "keep\n" and open(policy_file()).read() == "400\n"
     assert extras(directory) is not None
@@ -255,6 +255,158 @@ with mock.patch.object(os, "geteuid", return_value=0):
     directory = fresh_directory("200\n", directory_mode=0o777)
     code, _, _ = run_command(["set", "500"])
     assert code == 1 and open(policy_file()).read() == "200\n"
+
+# --- the day override command and reader ---------------------------------------------------------------
+TODAY = datetime.now(guard.PARIS).date().isoformat()
+guard.MONTH_CAP = 123.0
+guard.DAY_CAP = 70.0
+os.environ.pop("CI_CLEVER_GUARD_DAY_EUR_OVERRIDE", None)
+
+
+def day_path():
+    return os.path.join(guard.BUDGET_DIRECTORY, guard.DAY_FILENAME)
+
+
+def write_day(content, mode=0o644):
+    with open(day_path(), "wb") as target:
+        target.write(content if isinstance(content, bytes) else content.encode())
+        target.write(b"\n")
+    os.chmod(day_path(), mode)
+
+
+# Reading: valid, another date, and every malformed or unsafe shape.
+fresh_directory()
+assert guard.read_day_override() is None, "an absent day file"
+write_day("2026-06-15:90")
+assert guard.read_day_override() == ("2026-06-15", 90)
+write_day("2026-01-02:9999999")
+assert guard.read_day_override() == ("2026-01-02", 9999999)
+for text in ("", "90", "2026-06-15", "2026-06-15:", "2026-06-15:0", "2026-06-15:-5", "2026-06-15:5.5", "2026-06-15:12345678",
+             "2026-13-40:5", "26-06-15:5", "2026-06-15:05", "2026-06-15 5", " 2026-06-15:5", "2026-06-15:5 ", "junk", "2026-06-15:5\n"):
+    write_day(text)
+    try:
+        guard.read_day_override()
+    except guard.BudgetPolicyError:
+        pass
+    else:
+        raise AssertionError(f"day file {text!r} was accepted")
+for mode in (0o666, 0o664, 0o600, 0o640):
+    write_day("2026-06-15:90", mode=mode)
+    try:
+        guard.read_day_override()
+    except guard.BudgetPolicyError:
+        pass
+    else:
+        raise AssertionError(f"day file mode {oct(mode)} accepted")
+os.unlink(day_path())
+os.symlink("elsewhere", day_path())
+try:
+    guard.read_day_override()
+except guard.BudgetPolicyError:
+    pass
+else:
+    raise AssertionError("a symlinked day file was accepted")
+
+# Precedence and expiry.
+fresh_directory()
+assert guard.effective_day_cap(TODAY)[:2] == (70.0, "host default CI_CLEVER_GUARD_DAY_EUR")
+write_day(f"{TODAY}:90")
+cap, source, ignored = guard.effective_day_cap(TODAY)
+assert (cap, ignored) == (90.0, []) and source.startswith("day override file "), (cap, source, ignored)
+with mock.patch.dict(os.environ, {"CI_CLEVER_GUARD_DAY_EUR_OVERRIDE": f"{TODAY}:120"}):
+    assert guard.effective_day_cap(TODAY)[0] == 90.0, "the file wins over the Nix env exception"
+    write_day("2000-01-01:90")
+    cap, source, ignored = guard.effective_day_cap(TODAY)
+    assert cap == 120.0 and source.startswith("CI_CLEVER_GUARD_DAY_EUR_OVERRIDE") and len(ignored) == 1 and ignored[0][3] is None, (cap, source, ignored)
+write_day("2000-01-01:90")
+cap, source, ignored = guard.effective_day_cap(TODAY)
+assert cap == 70.0 and "host default" in source and "not for today" in ignored[0][2], (cap, source, ignored)
+write_day("garbage")
+cap, source, ignored = guard.effective_day_cap(TODAY)
+assert cap == 70.0 and ignored[0][0] == "dayFileIgnored" and "set-day" in ignored[0][3], (cap, source, ignored)
+with mock.patch.dict(os.environ, {"CI_CLEVER_GUARD_DAY_EUR_OVERRIDE": "2000-01-01:120"}):
+    cap, source, ignored = guard.effective_day_cap(TODAY)
+    assert cap == 70.0 and [entry[0] for entry in ignored] == ["dayFileIgnored", "overrideIgnored"], ignored
+
+# The command: show, set-day, clear-day.
+fresh_directory("250\n")
+code, out, err = run_command(["show"])
+assert code == 0 and f"day cap: 70 EUR for {TODAY} (source: host default" in out and not err, (code, out, err)
+for args in (["clear-day", "x"], ["set-day"], ["set-day", "1", "2"]):
+    code, out, err = run_command(args)
+    assert code == 2 and "usage" in err, (args, code, err)
+
+directory = fresh_directory("250\n")
+before = snapshot(directory)
+with mock.patch.object(os, "geteuid", return_value=1000):
+    for args in (["set-day", "90"], ["clear-day"]):
+        code, out, err = run_command(args)
+        assert code == 1 and "root" in err and not out, (args, code, out, err)
+assert snapshot(directory) == before, "an unprivileged day command wrote"
+
+with mock.patch.object(os, "geteuid", return_value=0):
+    syslog.lines.clear()
+    for value in ("0", "-1", "abc", "1.5", "", "12345678", "01", "1e3", " 5"):
+        code, _, err = run_command(["set-day", value])
+        assert code == 2 and err, (value, code)
+    assert snapshot(directory) == before and not syslog.lines
+
+    # Set: today's Paris date, 0644, next to the monthly file, which is untouched.
+    code, out, err = run_command(["set-day", "90"])
+    assert code == 0 and not err and TODAY in out and "90 EUR" in out, (code, out, err)
+    assert open(day_path()).read() == f"{TODAY}:90\n"
+    info = os.stat(day_path())
+    assert info.st_mode & 0o777 == 0o644 and info.st_uid == UID, oct(info.st_mode)
+    assert open(policy_file()).read() == "250\n" and guard.read_monthly_budget() == 250
+    assert not any(name.endswith(".tmp") for name in os.listdir(directory)), os.listdir(directory)
+    assert syslog.lines == [f"day cap override set: none -> {TODAY}:90"], syslog.lines
+    code, out, _ = run_command(["show"])
+    assert code == 0 and "250 EUR" in out and f"day cap: 90 EUR for {TODAY} (source: day override file" in out, out
+
+    # Same value: no write, no log. A new value replaces it atomically.
+    inode = os.stat(day_path()).st_ino
+    code, out, _ = run_command(["set-day", "90"])
+    assert code == 0 and "unchanged" in out and os.stat(day_path()).st_ino == inode and len(syslog.lines) == 1
+    code, _, _ = run_command(["set-day", "95"])
+    assert code == 0 and open(day_path()).read() == f"{TODAY}:95\n" and os.stat(day_path()).st_ino != inode
+    assert syslog.lines[-1] == f"day cap override set: {TODAY}:90 -> {TODAY}:95", syslog.lines
+
+    # An expired file is replaced; an invalid or unreadable one is repaired; a hostile temporary entry gets no write.
+    write_day("2000-01-01:50")
+    code, _, _ = run_command(["set-day", "60"])
+    assert code == 0 and open(day_path()).read() == f"{TODAY}:60\n"
+    for mode in (0o600, 0o666):
+        write_day(f"{TODAY}:60", mode=mode)
+        code, _, _ = run_command(["set-day", "60"])
+        assert code == 0 and guard.read_day_override() == (TODAY, 60) and os.stat(day_path()).st_mode & 0o777 == 0o644
+    write_day("junk")
+    code, _, _ = run_command(["set-day", "70"])
+    assert code == 0 and guard.read_day_override() == (TODAY, 70)
+    victim = os.path.join(ROOT, "day-victim")
+    with open(victim, "w") as target:
+        target.write("keep\n")
+    os.symlink(victim, os.path.join(directory, f".{guard.DAY_FILENAME}.tmp"))
+    code, _, _ = run_command(["set-day", "80"])
+    assert code == 0 and open(victim).read() == "keep\n" and open(day_path()).read() == f"{TODAY}:80\n"
+
+    # Clear: only the day file goes; idempotent; logged once.
+    logged = len(syslog.lines)
+    code, out, _ = run_command(["clear-day"])
+    assert code == 0 and "cleared" in out and not os.path.exists(day_path()) and open(policy_file()).read() == "250\n"
+    assert syslog.lines[logged:] == ["day cap override cleared"], syslog.lines
+    code, out, _ = run_command(["clear-day"])
+    assert code == 0 and "none to clear" in out and len(syslog.lines) == logged + 1
+
+    # A missing directory is an error, never created; an unsafe directory is refused.
+    guard.BUDGET_DIRECTORY = os.path.join(ROOT, "missing-day-directory")
+    for args in (["set-day", "90"], ["clear-day"]):
+        code, _, err = run_command(args)
+        assert code == 1 and "missing" in err and not os.path.exists(guard.BUDGET_DIRECTORY), (args, err)
+    directory = fresh_directory("200\n", directory_mode=0o777)
+    code, _, _ = run_command(["set-day", "90"])
+    assert code == 1 and not os.path.exists(day_path())
+
+guard.DAY_CAP = 25.0
 
 # The entry point routes `budget` to the command and never reads Clever.
 directory = fresh_directory("250\n")
@@ -446,6 +598,85 @@ with World() as world:
             assert guard.main() == 1
     untouched(world)
     assert not os.path.exists(os.path.join(ROOT, "state.json"))
+
+# --- the day override in the tick ---------------------------------------------------------------------
+guard.MONTH_CAP = 1000.0
+guard.DAY_CAP = 0.05  # today's 0,12 EUR is over it
+os.environ.pop("CI_CLEVER_GUARD_DAY_EUR_OVERRIDE", None)
+
+
+def tick_logs(world):
+    logs = []
+    with mock.patch.object(guard, "log", logs.append):
+        world.tick()
+    return logs
+
+
+# Today's override lifts the day cap and the guard logs the cap with its source.
+directory = fresh_directory()
+write_day("2026-06-15:1")
+with World() as world:
+    logs = tick_logs(world)
+    untouched(world)
+    assert any("cap 1,00 €, source: day override file" in line for line in logs), logs
+
+# Over today's override: the kill switch names the cap and its source.
+HOURLY = 1.0  # today 12 h = 12 EUR
+fresh_directory()
+write_day("2026-06-15:1")
+with World() as world:
+    world.tick()
+    reason = json.load(open(world.latch))["reason"]
+    assert world.latched() and "plafond 1,00 €" in reason and "day override file" in reason, reason
+HOURLY = 0.01
+
+# An override for another day is ignored automatically: the base cap applies (logged, nothing to remove).
+fresh_directory()
+write_day("2026-06-14:1000")
+with World() as world:
+    logs = tick_logs(world)
+    assert world.latched() and "host default" in json.load(open(world.latch))["reason"]
+    assert any("not for today (2026-06-15)" in line for line in logs), logs
+
+# It wins over the Nix env exception, and an expired file falls through to it.
+os.environ["CI_CLEVER_GUARD_DAY_EUR_OVERRIDE"] = "2026-06-15:1000"
+fresh_directory()
+write_day("2026-06-15:0")
+with World() as world:
+    logs = tick_logs(world)
+    assert world.latched() is False, "an invalid file must fall through to the env exception"
+    assert any("source: CI_CLEVER_GUARD_DAY_EUR_OVERRIDE" in line for line in logs), logs
+fresh_directory()
+write_day("2026-06-15:1")
+with mock.patch.dict(os.environ, {"CI_CLEVER_GUARD_DAY_EUR_OVERRIDE": "2026-06-15:0.01"}):
+    with World() as world:
+        logs = tick_logs(world)
+        untouched(world)
+        assert any("cap 1,00 €, source: day override file" in line for line in logs), logs
+os.environ.pop("CI_CLEVER_GUARD_DAY_EUR_OVERRIDE")
+
+# An unsafe or malformed file never raises the cap, never latches by itself, and #alertes hears once.
+fresh_directory()
+write_day("junk", mode=0o666)
+with World() as world, mock.patch.object(guard, "DAY_CAP", 25.0):
+    state = {}
+    for _ in range(2):
+        with contextlib.redirect_stdout(io.StringIO()):
+            guard.tick(state, NOW)
+    untouched_but_alert = [post for post in world.posts if "set-day" in post]
+    assert len(untouched_but_alert) == 1 and len(world.posts) == 1 and not world.latched(), world.posts
+
+# Report mode reads the override and posts nothing.
+fresh_directory()
+write_day("2026-06-15:1")
+with World() as world:
+    logs = []
+    with mock.patch.object(guard, "REPORT", True), mock.patch.object(guard, "log", logs.append), contextlib.redirect_stdout(io.StringIO()):
+        guard.tick({}, NOW)
+    untouched(world)
+    assert any("source: day override file" in line for line in logs), logs
+
+guard.DAY_CAP = 25.0
 
 shutil.rmtree(ROOT)
 print("budget policy: ok")

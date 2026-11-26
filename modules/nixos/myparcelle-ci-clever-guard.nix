@@ -12,18 +12,36 @@
 #               (keep it equal to the controller's), 15 min blind before
 #               failing closed. A one-day exception to the day cap names its
 #               Paris date (`<date>:<EUR>`): the guard ignores it on any other
-#               day and tells #alertes once to remove it.
-#   budget      Optional live monthly cap `${budgetDirectory}/monthly-eur`.
-#               `myparcelle-ci-budget show` is read-only; root sets a new cap
-#               with `myparcelle-ci-budget set <EUR>`. Absent uses the default;
-#               invalid fails closed. Neither command removes the latch.
+#               day and tells #alertes once to remove it. It is a Nix edit
+#               and an activation; the live day override below needs neither.
+#   budget      Optional live caps in `${budgetDirectory}`, read by the guard
+#               on its next tick, no activation. `myparcelle-ci-budget show`
+#               is read-only and prints the monthly cap and today's effective
+#               day cap with its source. Root sets the monthly cap
+#               (`monthly-eur`) with `myparcelle-ci-budget set <EUR>`; absent
+#               uses the default, invalid fails closed. Root sets a one-day cap
+#               (`day-eur`, `<Paris date>:<EUR>`) with
+#               `myparcelle-ci-budget set-day <EUR>` (today's Paris date, whole
+#               EUR, 1 to 7 digits, like the monthly cap) and removes it with
+#               `clear-day`. The guard uses it on that Paris date only, ahead of
+#               the Nix env exception and the default; afterwards it ignores it
+#               without any action (an unreadable or malformed one is ignored
+#               too, falling back to the stricter base cap). Each tick logs the
+#               day cap and its source. No command removes the latch.
 #   kill switch reaching a cap or unreadable live policy writes `${latch}`.
 #               While it exists, systemd stops the controller and refuses to
 #               start it (and the controller refuses by itself), the guard
 #               stops any CI machine it sees and keeps CI_RUNS_ON on dev-01.
 #               Only a human removes it, after reading why and checking the
 #               active caps against current spend in the guard journal.
-#               Fix that cause first; the latch does not expire:
+#               Fix that cause first; the latch does not expire. After a day
+#               cap latch, in this order: raise the cap, run the guard once and
+#               read the fresh line (it also reads while latched), then lift:
+#                 sudo myparcelle-ci-budget set-day <EUR>
+#                 sudo systemctl start myparcelle-ci-clever-guard.service
+#                 journalctl -u myparcelle-ci-clever-guard.service -n 5 --no-pager
+#                   (the latest "today X (cap Y, source: ...)" is from now: X is
+#                   below Y and the source is the day override file)
 #                 sudo rm ${latch}
 #                 sudo systemctl start myparcelle-ci-clever.service
 #                 gh variable set CI_RUNS_ON -R tyrode-dev/myParcelle \
@@ -69,6 +87,8 @@ let
   # A distinct binary: an older guard ignores arguments and would run a live tick.
   budget = pkgs.writeShellScriptBin "myparcelle-ci-budget" ''
     export CI_CLEVER_GUARD_MONTH_EUR=${lib.escapeShellArg caps.CI_CLEVER_GUARD_MONTH_EUR}
+    export CI_CLEVER_GUARD_DAY_EUR=${lib.escapeShellArg caps.CI_CLEVER_GUARD_DAY_EUR}
+    ${lib.optionalString (caps ? CI_CLEVER_GUARD_DAY_EUR_OVERRIDE) "export CI_CLEVER_GUARD_DAY_EUR_OVERRIDE=${lib.escapeShellArg caps.CI_CLEVER_GUARD_DAY_EUR_OVERRIDE}"}
     exec ${lib.getExe guard} budget "$@"
   '';
 in

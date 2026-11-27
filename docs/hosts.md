@@ -171,14 +171,15 @@ combined 28 GiB slot budget fits under a 29 GiB account slice. These counts
 are a starting point to tune. Each slot runs one job in a fresh runner and
 Docker-in-Docker engine, on its own network, with no writable state that
 another job can mount. Jobs use GitHub's ref-scoped cache, not a persistent
-browser-build directory on the host.
+browser-build directory on the host. Fresh engines pull through the public
+registry mirror, not one shared on this host.
 Jobs reach the public internet only: private ranges, link-local and the host's
 own addresses are refused for the CI account. The registration token is the
-root-only Clan var `myparcelle-ci-github-token`. If removal of a job's
-containers or volumes cannot be verified, that slot stays out of service
-and logs a critical journal entry. After verifying that none of the slot's
-containers or volumes remain, an administrator clears
-`/var/lib/myparcelle-ci-slot-<n>/teardown-failed` and starts the unit again.
+root-only Clan var `myparcelle-ci-github-token`. A slot persists a lease
+before starting; it releases the lease only after verifying removal of all
+its job containers and volumes. Failed verification logs a critical journal
+entry. An administrator verifies cleanup, clears
+`/var/lib/myparcelle-ci-slot-<n>/lease`, and starts the unit again.
 It is not a registry fact that CI is routed there: myParcelle's router
 (`bun run ci:pool`) decides that. To follow a new runner image, bump its
 digest in the module.

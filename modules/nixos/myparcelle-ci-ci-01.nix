@@ -48,11 +48,8 @@
 # Network: jobs reach the public internet only (nftables table below); ci-01
 # is not on the fleet overlay at all.
 #
-# Docker Hub limits anonymous pulls per address and every job's engine starts
-# empty, so a pull-through mirror of Docker Hub serves the jobs' images.
-#
-# Not enabled: the optional read-only Bun cache generation (jobs run cold,
-# never fail).
+# Each fresh engine uses the same public Docker Hub mirror as myParcelle's
+# Clever runners. There is no shared on-host registry cache or Bun generation.
 {
   config,
   lib,
@@ -101,17 +98,11 @@ let
   tokenFile = "/run/secrets/vars/myparcelle-ci-github-token/token";
   reported = config.clan.core.vars.generators.myparcelle-ci-github-token.files."token".path;
 
-  # One bridge per slot: no shared network, so no route between slots (the
-  # engine's own bridge rules drop traffic between user-defined networks).
-  # The pull-through mirror alone is attached to all of them; it serves
-  # read-only pulls and takes no pushes.
+  # A distinct user-defined bridge for each runner/engine pair.
   slotNetwork = slot: "myparcelle-ci-${toString slot}";
-  networks = map slotNetwork slotNumbers;
-  mirrorName = "myparcelle-ci-mirror";
 
   runnerImage = "ghcr.io/tyrode-dev/myparcelle-ci-runner@sha256:7f9557c849ad3c9e2d8c15510373800e4cc2aefd6725fceefa95de6cf60efe4b";
-  dindImage = "docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac";
-  mirrorImage = "registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e";
+  dindImage = "mirror.gcr.io/library/docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac";
 
   dockerEnvironment = [
     "DOCKER_HOST=${dockerHost}"
@@ -203,6 +194,7 @@ let
       cpus=$2
       runner_memory=$3
       engine_memory=$4
+      network=$5
       name=myparcelle-ci-runner-$slot
       IFS= read -r ACTIONS_RUNNER_INPUT_JITCONFIG
       export ACTIONS_RUNNER_INPUT_JITCONFIG
@@ -211,13 +203,13 @@ let
       # are volumes; the socket and the workspace are mounted by both
       # containers at the same paths, so bind mounts a job asks the engine for
       # (compose files, build contexts) resolve to the same files.
-      docker run --detach --rm --privileged --name "$name-engine" --network "myparcelle-ci-$slot" \
+      docker run --detach --rm --privileged --name "$name-engine" --network "$network" \
         --cpuset-cpus "$cpus" --memory="$engine_memory" --memory-swap="$engine_memory" \
         --env DOCKER_TLS_CERTDIR= \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
         --volume "$name-data:/var/lib/docker" \
         --entrypoint sh ${dindImage} -c \
-        'chown 1001:1001 /home/runner/_work && exec dockerd-entrypoint.sh dockerd --host unix:///var/run/engine/docker.sock --group 123 --registry-mirror http://${mirrorName}:5000' \
+        'chown 1001:1001 /home/runner/_work && exec dockerd-entrypoint.sh dockerd --host unix:///var/run/engine/docker.sock --group 123 --registry-mirror https://mirror.gcr.io' \
         >/dev/null
 
       # As root: the image's own entry gives the `runner` account its home and
@@ -255,51 +247,64 @@ let
       if timeout --kill-after=5s 45s ${asCI} ${lib.getExe removeJob} "$1"; then
         exit 0
       fi
-      if [[ ! -e $STATE_DIRECTORY/teardown-failed ]]; then
-        : >"$STATE_DIRECTORY/teardown-failed"
-        logger -p daemon.crit -t myparcelle-ci "ci-01 slot $1 quarantined: failed to verify container and volume cleanup; see runner unit journal"
-      fi
+      logger -p daemon.crit -t myparcelle-ci "ci-01 slot $1 quarantined: failed to verify container and volume cleanup; see runner unit journal"
       exit 1
+    '';
+  };
+
+  reserveSlot = pkgs.writeShellApplication {
+    name = "myparcelle-ci-reserve-slot";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.util-linux
+    ];
+    text = ''
+      # Reserve the on-disk directory entry before job state can exist. An
+      # out-of-space failure during teardown then cannot lose quarantine.
+      if ! touch "$STATE_DIRECTORY/lease" || ! sync "$STATE_DIRECTORY"; then
+        logger -p daemon.crit -t myparcelle-ci "ci-01 slot $1 refused startup: could not persist the cleanup lease"
+        exit 1
+      fi
+      ${lib.getExe verifyCleanup} "$1"
+      # Stop must not clear the lease if the pre-start cleanup failed.
+      touch "$RUNTIME_DIRECTORY/release-allowed"
     '';
   };
 
   stopJob = pkgs.writeShellApplication {
     name = "myparcelle-ci-stop-job";
+    runtimeInputs = [ pkgs.coreutils ];
     text = ''
+      [[ -e $RUNTIME_DIRECTORY/release-allowed ]] || exit 0
       trap '${lib.getExe forgetRunner}' EXIT
       ${lib.getExe verifyCleanup} "$@"
+      rm "$STATE_DIRECTORY/lease"
     '';
   };
 
   prepare = pkgs.writeShellApplication {
     name = "myparcelle-ci-prepare";
-    runtimeInputs = [ docker ];
+    runtimeInputs = [
+      docker
+      pkgs.coreutils
+      pkgs.util-linux
+    ];
     text = ''
-      for network in ${lib.escapeShellArgs networks}; do
-        docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+      network=$1
+      for _ in $(seq 60); do
+        [[ -S ${runtimeDir}/docker.sock ]] && break
+        sleep 1
       done
-      docker image inspect ${runnerImage} >/dev/null 2>&1 || docker pull --quiet ${runnerImage} >/dev/null
+      docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+      # Serialize cold image pulls across slots. Each slot restarts on error,
+      # rather than depending on a shared oneshot that can fail at boot.
+      exec 9>${runtimeDir}/myparcelle-ci-image.lock
+      flock 9
+      for image in ${runnerImage} ${dindImage}; do
+        docker image inspect "$image" >/dev/null 2>&1 || docker pull --quiet "$image" >/dev/null
+      done
     '';
   };
-
-  # Created, attached to every slot's network, then started: `docker run`
-  # attaches to one network only.
-  runMirror = pkgs.writeShellApplication {
-    name = "myparcelle-ci-mirror";
-    runtimeInputs = [ docker ];
-    text = ''
-      docker rm --force ${mirrorName} >/dev/null 2>&1 || true
-      docker create --name ${mirrorName} --network ${builtins.head networks} \
-        --sysctl net.ipv4.ip_forward=0 --sysctl net.ipv6.conf.all.forwarding=0 \
-        --memory=256m --env REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
-        --volume ${mirrorName}:/var/lib/registry ${mirrorImage} >/dev/null
-      for network in ${lib.escapeShellArgs (builtins.tail networks)}; do
-        docker network connect "$network" ${mirrorName}
-      done
-      exec docker start --attach ${mirrorName}
-    '';
-  };
-
   dockerUnit = "user@${toString uid}.service";
 in
 {
@@ -404,38 +409,6 @@ in
         overrideStrategy = "asDropin";
         serviceConfig.Delegate = "cpu cpuset io memory pids";
       };
-
-      myparcelle-ci-prepare = {
-        description = "myParcelle CI runner image and network";
-        after = [ dockerUnit ];
-        requires = [ dockerUnit ];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          User = user;
-          Group = user;
-          Environment = dockerEnvironment;
-          ExecStartPre = "${pkgs.bash}/bin/bash -c 'for _ in $(seq 60); do [ -S ${runtimeDir}/docker.sock ] && exit 0; sleep 1; done; exit 1'";
-          ExecStart = lib.getExe prepare;
-          TimeoutStartSec = "20min";
-        };
-      };
-
-      myparcelle-ci-mirror = {
-        description = "Docker Hub pull-through mirror for myParcelle CI jobs";
-        after = [ "myparcelle-ci-prepare.service" ];
-        requires = [ "myparcelle-ci-prepare.service" ];
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig = {
-          User = user;
-          Group = user;
-          Environment = dockerEnvironment;
-          ExecStart = lib.getExe runMirror;
-          ExecStop = "${lib.getExe docker} stop ${mirrorName}";
-          Restart = "always";
-          RestartSec = 10;
-        };
-      };
     }
     // lib.listToAttrs (
       map (
@@ -445,21 +418,17 @@ in
           after = [
             "network-online.target"
             "nftables.service"
-            "myparcelle-ci-prepare.service"
-            "myparcelle-ci-mirror.service"
+            dockerUnit
           ];
-          wants = [
-            "network-online.target"
-            "myparcelle-ci-mirror.service"
-          ];
+          wants = [ "network-online.target" ];
           requires = [
-            "myparcelle-ci-prepare.service"
+            dockerUnit
             "nftables.service"
           ];
           wantedBy = [ "multi-user.target" ];
-          # A failed teardown stays quarantined, including across reboots,
-          # until an operator verifies cleanup and clears the marker.
-          unitConfig.ConditionPathExists = "!/var/lib/myparcelle-ci-slot-${toString slot}/teardown-failed";
+          # An unverified teardown leaves the durable lease in place. The
+          # operator checks job state before releasing the slot again.
+          unitConfig.ConditionPathExists = "!/var/lib/myparcelle-ci-slot-${toString slot}/lease";
           # Waiting for the token, or for GitHub, retries forever.
           startLimitIntervalSec = 0;
           serviceConfig = {
@@ -469,13 +438,15 @@ in
             StateDirectory = "myparcelle-ci-slot-${toString slot}";
             StateDirectoryMode = "0700";
             ExecStartPre = [
-              "${lib.getExe verifyCleanup} ${toString slot}"
+              "${asCI} ${lib.getExe prepare} ${slotNetwork slot}"
+              "${lib.getExe reserveSlot} ${toString slot}"
               "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotOf slot).labels)}"
             ];
-            ExecStart = "${lib.getExe startJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).runner} ${(slotOf slot).engine}";
+            ExecStart = "${lib.getExe startJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).runner} ${(slotOf slot).engine} ${slotNetwork slot}";
             ExecStopPost = "${lib.getExe stopJob} ${toString slot}";
             Restart = "always";
             RestartSec = 5;
+            TimeoutStartSec = "20min";
             # A job's own ceiling is the workflow's timeout-minutes.
             TimeoutStopSec = 90;
             # Not ProtectHome: it would hide /run/user, the engine's socket.

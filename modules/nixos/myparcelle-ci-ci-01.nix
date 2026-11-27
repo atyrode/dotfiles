@@ -128,7 +128,7 @@ let
       trustedTier
       // small
       // {
-        labels = trustedLabels;
+        labels = trustedLabels ++ [ "ci-01-trusted-small" ];
         cpus = "8-9";
       }
     )
@@ -136,7 +136,7 @@ let
       trustedTier
       // small
       // {
-        labels = trustedLabels;
+        labels = trustedLabels ++ [ "ci-01-trusted-small" ];
         cpus = "10-11";
       }
     )
@@ -144,7 +144,7 @@ let
       prTier
       // small
       // {
-        inherit labels;
+        labels = labels ++ [ "ci-01-small" ];
         cpus = "8-9";
       }
     )
@@ -152,7 +152,7 @@ let
       prTier
       // small
       // {
-        inherit labels;
+        labels = labels ++ [ "ci-01-small" ];
         cpus = "10-11";
       }
     )
@@ -398,8 +398,8 @@ in
       content = ''
         chain output {
           type filter hook output priority filter; policy accept;
-          meta skuid ${toString uid} ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, ${machineAddress.ipv4} } reject
-          meta skuid ${toString uid} ip6 daddr { fc00::/7, fe80::/10, ${machineAddress.ipv6} } reject
+          meta skuid ${toString uid} ip daddr { ${lib.concatStringsSep ", " (machineAddress.blockedJobIPv4 ++ [ machineAddress.ipv4 ])} } reject
+          meta skuid ${toString uid} ip6 daddr { ${lib.concatStringsSep ", " (machineAddress.blockedJobIPv6 ++ [ machineAddress.ipv6 ])} } reject
         }
       '';
     };

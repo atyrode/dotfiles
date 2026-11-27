@@ -220,8 +220,8 @@ let
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
         --volume "$name-data:/var/lib/docker" \
         --entrypoint sh ${dindImage} -c \
-        'printf "%s\n" "$1" >/tmp/daemon.json && chown 1001:1001 /home/runner/_work &&
-         exec dockerd-entrypoint.sh dockerd --config-file /tmp/daemon.json --host unix:///var/run/engine/docker.sock --group 123' \
+        'mkdir -p /etc/docker && printf "%s\n" "$1" >/etc/docker/daemon.json && chown 1001:1001 /home/runner/_work &&
+         exec dockerd-entrypoint.sh dockerd --config-file /etc/docker/daemon.json --host unix:///var/run/engine/docker.sock --group 123' \
         sh ${lib.escapeShellArg innerDaemonConfig} \
         >/dev/null
 

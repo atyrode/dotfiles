@@ -145,7 +145,7 @@ myParcelle's CI also runs here:
 declares five ephemeral self-hosted GitHub Actions runners (labels
 `self-hosted`, `linux`, `x64`, `dev-01`; the first three also `pull-request`,
 which myParcelle's pull-request jobs require, so the last two stay free for
-its merge queue) under the `myparcelle-ci` system
+its merge queue; the last one also carries `dev-01-ops` and is named `dev-01-ops-5-…`, the label myParcelle's operations jobs on dev-01 ask for) under the `myparcelle-ci` system
 account and its own rootless Docker engine. Each job runs in a fresh
 Docker-in-Docker engine and runner container pair, capped per job and as a
 whole slice, and deleted when the job ends; each start mints a single-use

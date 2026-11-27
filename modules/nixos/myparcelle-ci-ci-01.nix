@@ -102,7 +102,7 @@ let
   slotNetwork = slot: "myparcelle-ci-${toString slot}";
 
   runnerImage = "ghcr.io/tyrode-dev/myparcelle-ci-runner@sha256:7f9557c849ad3c9e2d8c15510373800e4cc2aefd6725fceefa95de6cf60efe4b";
-  dindImage = "mirror.gcr.io/library/docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac";
+  dindImage = "docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac";
 
   dockerEnvironment = [
     "DOCKER_HOST=${dockerHost}"

@@ -230,6 +230,47 @@ let
     '';
   };
 
+  # Env and identity are dropped only for Docker calls and job startup. No
+  # root helper reads a configuration file from the CI account's home.
+  asCI =
+    "${lib.getExe' pkgs.util-linux "setpriv"} --reuid=${user} --regid=${user} --clear-groups "
+    + "${lib.getExe' pkgs.coreutils "env"} -i ${lib.escapeShellArgs dockerEnvironment}";
+
+  startJob = pkgs.writeShellApplication {
+    name = "myparcelle-ci-start-job";
+    text = ''
+      exec 3<"$RUNTIME_DIRECTORY/jitconfig"
+      ${lib.getExe' pkgs.coreutils "rm"} "$RUNTIME_DIRECTORY/jitconfig"
+      exec ${asCI} ${lib.getExe runJob} "$@" <&3 3<&-
+    '';
+  };
+
+  verifyCleanup = pkgs.writeShellApplication {
+    name = "myparcelle-ci-verify-cleanup";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.util-linux
+    ];
+    text = ''
+      if timeout --kill-after=5s 45s ${asCI} ${lib.getExe removeJob} "$1"; then
+        exit 0
+      fi
+      if [[ ! -e $STATE_DIRECTORY/teardown-failed ]]; then
+        : >"$STATE_DIRECTORY/teardown-failed"
+        logger -p daemon.crit -t myparcelle-ci "ci-01 slot $1 quarantined: failed to verify container and volume cleanup; see runner unit journal"
+      fi
+      exit 1
+    '';
+  };
+
+  stopJob = pkgs.writeShellApplication {
+    name = "myparcelle-ci-stop-job";
+    text = ''
+      trap '${lib.getExe forgetRunner}' EXIT
+      ${lib.getExe verifyCleanup} "$@"
+    '';
+  };
+
   prepare = pkgs.writeShellApplication {
     name = "myparcelle-ci-prepare";
     runtimeInputs = [ docker ];
@@ -307,8 +348,12 @@ in
       content = ''
         chain output {
           type filter hook output priority filter; policy accept;
-          meta skuid ${toString uid} ip daddr { ${lib.concatStringsSep ", " (machineAddress.blockedJobIPv4 ++ [ machineAddress.ipv4 ])} } reject
-          meta skuid ${toString uid} ip6 daddr { ${lib.concatStringsSep ", " (machineAddress.blockedJobIPv6 ++ [ machineAddress.ipv6 ])} } reject
+          meta skuid ${toString uid} ip daddr { ${
+            lib.concatStringsSep ", " (machineAddress.blockedJobIPv4 ++ [ machineAddress.ipv4 ])
+          } } reject
+          meta skuid ${toString uid} ip6 daddr { ${
+            lib.concatStringsSep ", " (machineAddress.blockedJobIPv6 ++ [ machineAddress.ipv6 ])
+          } } reject
         }
       '';
     };

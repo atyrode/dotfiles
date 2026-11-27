@@ -57,4 +57,23 @@
       "containers"
     ];
   };
+
+  "ci-01" = {
+    description = "Dedicated, rebuildable GitHub Actions runner host for myParcelle's CI";
+    system = "x86_64-linux";
+    platform = "linux";
+    activation = "nixos";
+    username = "alex";
+    homeDirectory = "/home/alex";
+    hostname = "ci-01";
+    nixTrustedUsers = [
+      "root"
+      "alex"
+    ];
+    capabilities = [
+      "base"
+      "security"
+      "containers"
+    ];
+  };
 }

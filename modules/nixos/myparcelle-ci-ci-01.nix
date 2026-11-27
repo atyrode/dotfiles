@@ -1,0 +1,550 @@
+# ci-01: the dedicated GitHub Actions runner host for myParcelle's CI
+# (myParcelle's deploy/README.md § The ci-01 host contract). The runners follow
+# the same shape as dev-01's (myparcelle-ci-runners.nix), which this module
+# does not touch; what differs is stated here so a reader of one need not
+# diff the other.
+#
+#   user       `myparcelle-ci`, a system account with its own home under
+#              /var/lib and its own rootless Docker engine; no wheel, no
+#              docker group, no SSH login, no access to /home.
+#   isolation  every job runs in a fresh pair of containers in that engine: a
+#              privileged `docker:dind` sibling (the job's own engine, for
+#              `services:`, buildx and compose, with its own /var/lib/docker
+#              volume) and the myParcelle runner image sharing its network
+#              namespace, so every job has its own loopback and ports. Both,
+#              and their volumes, are deleted when the job ends. The engine is
+#              privileged only inside the account's rootless user namespace:
+#              it holds nothing of the host, and the rootless engine hides
+#              the host's loopback from containers.
+#   ephemeral  each start mints a just-in-time runner configuration: one
+#              runner, one job, then it de-registers and the unit restarts.
+#   credential the long-lived GitHub token that mints those configurations is
+#              the clan var `myparcelle-ci-github-token` (a fine-grained token
+#              on the one repository, Administration: write), placed root-only
+#              by sops-nix. Only root's ExecStartPre reads it; the CI account
+#              receives the single-use runner configuration and nothing else.
+#   labels     pull-request slots carry `self-hosted linux x64 ci-01` (the
+#              large one adds `ci-01-heavy`). Trusted slots carry `self-hosted
+#              linux x64 ci-01-trusted` and no `ci-01` (the large one adds
+#              `ci-01-heavy`): only jobs that certify or publish main ask for
+#              them, and no pull-request job is routed there. Names are
+#              `ci-01-<slot>-<epoch>` (`ci-01-trusted-...` on trusted slots).
+#   image      the public image myParcelle publishes, pinned by digest like
+#              every other input of this repository (Chromium, Firefox and
+#              WebKit included). To follow a new image, bump `runnerImage` from
+#              `bun deploy/ci-runners/image.ts digest` in a myParcelle checkout.
+#
+# Sizing (a starting point, tuned from the queue's real load). The machine has
+# 12 shared vCPUs and 32 GiB; about 3 GiB stay with the host (kernel, sshd, the
+# mirror, a deployment's Nix evaluation), so the account's slice is held to
+# 29 GiB and the slots' limits add up to 28, never past it. Large slots (one
+# per tier) hold four CPUs and 8 GiB (5 for the runner container, 3 for its
+# engine), past the 8 GiB the Keycloak lane needs (it failed at 4). Small slots
+# (two per tier) hold two CPUs and 3 GiB (2 and 1) for typecheck,
+# browser-smoke shards and the like. CPUs are pinned with cpusets because the
+# gate sizes its lanes from the affinity mask: the large slots own CPUs 0-7 and
+# the four small slots share 8-11 in pairs (a small runner sees two CPUs; each
+# pair is oversubscribed 2x). The slice yields CPU to the host under contention
+# (weight 50) and is held to 11 cores, so a deployment is never starved.
+#
+# Isolation: each slot has its own network, so no route runs between slots, and
+# only trusted slots write the shared browser-build directory's `main/`.
+#
+# Network: jobs reach the public internet only (nftables table below); ci-01
+# is not on the fleet overlay at all.
+#
+# Docker Hub limits anonymous pulls per address and every job's engine starts
+# empty, so a pull-through mirror of Docker Hub serves the jobs' images.
+#
+# Not enabled: the optional read-only Bun cache generation (jobs run cold,
+# never fail).
+{
+  config,
+  lib,
+  machineDirectory,
+  pkgs,
+  ...
+}:
+let
+  machineAddress = import (machineDirectory + "/address.nix");
+  user = "myparcelle-ci";
+  uid = 940;
+  home = "/var/lib/${user}";
+  runtimeDir = "/run/user/${toString uid}";
+  dockerHost = "unix://${runtimeDir}/docker.sock";
+  docker = config.virtualisation.docker.rootless.package;
+
+  repository = "tyrode-dev/myParcelle";
+  labels = [
+    "self-hosted"
+    "linux"
+    "x64"
+    "ci-01"
+  ];
+  # Two tiers of four slot shapes (myParcelle's deploy/README.md § The ci-01
+  # host contract). Trusted slots carry no `ci-01` label: only the jobs that
+  # certify or publish main ask for `ci-01-trusted`, and no pull-request job is
+  # routed to them.
+  prTier = {
+    tier = "pr";
+    prefix = "ci-01";
+  };
+  trustedTier = {
+    tier = "trusted";
+    prefix = "ci-01-trusted";
+  };
+  trustedLabels = [
+    "self-hosted"
+    "linux"
+    "x64"
+    "ci-01-trusted"
+  ];
+  small = {
+    runner = "2g";
+    engine = "1g";
+  };
+  large = {
+    runner = "5g";
+    engine = "3g";
+  };
+  slots = [
+    (
+      trustedTier
+      // large
+      // {
+        labels = trustedLabels ++ [ "ci-01-heavy" ];
+        cpus = "0-3";
+      }
+    )
+    (
+      prTier
+      // large
+      // {
+        labels = labels ++ [ "ci-01-heavy" ];
+        cpus = "4-7";
+      }
+    )
+    (
+      trustedTier
+      // small
+      // {
+        labels = trustedLabels;
+        cpus = "8-9";
+      }
+    )
+    (
+      trustedTier
+      // small
+      // {
+        labels = trustedLabels;
+        cpus = "10-11";
+      }
+    )
+    (
+      prTier
+      // small
+      // {
+        inherit labels;
+        cpus = "8-9";
+      }
+    )
+    (
+      prTier
+      // small
+      // {
+        inherit labels;
+        cpus = "10-11";
+      }
+    )
+  ];
+  slotNumbers = lib.range 1 (builtins.length slots);
+  slotOf = number: builtins.elemAt slots (number - 1);
+
+  # Root-only, placed by sops-nix from the clan var below.
+  tokenFile = "/run/secrets/vars/myparcelle-ci-github-token/token";
+  reported = config.clan.core.vars.generators.myparcelle-ci-github-token.files."token".path;
+
+  # The persistent browser-build directory (MYPARCELLE_CI_E2E_BUILD_ROOT), one
+  # volume with `pr/` and `main/`. The partition is enforced by the mounts: the
+  # trusted slots mount the whole volume read-write; every other slot mounts
+  # `pr/` read-write and `main/` read-only, so no pull-request job can make
+  # main's suite serve a build it forged.
+  buildVolume = "myparcelle-ci-e2e-build";
+  buildRoot = "/ci-cache/e2e-build";
+
+  # One bridge per slot: no shared network, so no route between slots (the
+  # engine's own bridge rules drop traffic between user-defined networks).
+  # The pull-through mirror alone is attached to all of them; it serves
+  # read-only pulls and takes no pushes.
+  slotNetwork = slot: "myparcelle-ci-${toString slot}";
+  networks = map slotNetwork slotNumbers;
+  mirrorName = "myparcelle-ci-mirror";
+
+  runnerImage = "ghcr.io/tyrode-dev/myparcelle-ci-runner@sha256:7f9557c849ad3c9e2d8c15510373800e4cc2aefd6725fceefa95de6cf60efe4b";
+  dindImage = "docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac";
+  mirrorImage = "registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e";
+
+  dockerEnvironment = [
+    "DOCKER_HOST=${dockerHost}"
+    "XDG_RUNTIME_DIR=${runtimeDir}"
+    "HOME=${home}"
+  ];
+
+  # Root: reads the token and leaves one runner's configuration, readable by
+  # the CI account only, in the unit's runtime directory. The token reaches
+  # curl on stdin, never argv or the environment.
+  mintRunner = pkgs.writeShellApplication {
+    name = "myparcelle-ci-mint-runner";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+      pkgs.jq
+    ];
+    text = ''
+      slot=$1
+      labels=$2
+      prefix=$3
+      [[ -s ${tokenFile} ]] || {
+        echo "myparcelle-ci: ${tokenFile} is not placed; the runner waits for it" >&2
+        exit 1
+      }
+      body=$(jq -cn --arg name "$prefix-$slot-$(date +%s)" --argjson labels "$labels" \
+        '{name: $name, runner_group_id: 1, labels: $labels, work_folder: "_work"}')
+      umask 077
+      response=$(printf 'Authorization: Bearer %s\n' "$(<${tokenFile})" |
+        curl --silent --show-error --fail-with-body --max-time 30 -H @- \
+          -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+          --data "$body" https://api.github.com/repos/${repository}/actions/runners/generate-jitconfig)
+      jq -er .encoded_jit_config <<<"$response" >"$RUNTIME_DIRECTORY/jitconfig"
+      jq -er .runner.id <<<"$response" >"$RUNTIME_DIRECTORY/runner-id"
+      chown ${user}: "$RUNTIME_DIRECTORY/jitconfig"
+    '';
+  };
+
+  # Root, after the unit stops: a runner minted but never connected is removed
+  # rather than left offline. A runner that ran its job is already gone, and
+  # the 404 is expected.
+  forgetRunner = pkgs.writeShellApplication {
+    name = "myparcelle-ci-forget-runner";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+    ];
+    text = ''
+      id_file="$RUNTIME_DIRECTORY/runner-id"
+      [[ -s $id_file && -s ${tokenFile} ]] || exit 0
+      id=$(<"$id_file")
+      printf 'Authorization: Bearer %s\n' "$(<${tokenFile})" |
+        curl --silent --output /dev/null --max-time 30 -H @- -X DELETE \
+          -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+          "https://api.github.com/repos/${repository}/actions/runners/$id" || true
+    '';
+  };
+
+  removeJob = pkgs.writeShellApplication {
+    name = "myparcelle-ci-remove-job";
+    runtimeInputs = [ docker ];
+    text = ''
+      name=myparcelle-ci-runner-$1
+      docker rm --force --volumes "$name" "$name-engine" >/dev/null 2>&1 || true
+      docker volume rm --force "$name-work" "$name-socket" "$name-data" >/dev/null 2>&1 || true
+    '';
+  };
+
+  # The CI account: one job in fresh containers, then exit; systemd restarts
+  # the unit, which mints the next runner.
+  runJob = pkgs.writeShellApplication {
+    name = "myparcelle-ci-run-job";
+    runtimeInputs = [
+      docker
+      pkgs.coreutils
+      removeJob
+    ];
+    text = ''
+      slot=$1
+      cpus=$2
+      runner_memory=$3
+      engine_memory=$4
+      tier=$5
+      name=myparcelle-ci-runner-$slot
+      ACTIONS_RUNNER_INPUT_JITCONFIG=$(<"$RUNTIME_DIRECTORY/jitconfig")
+      export ACTIONS_RUNNER_INPUT_JITCONFIG
+      rm -f "$RUNTIME_DIRECTORY/jitconfig"
+      myparcelle-ci-remove-job "$slot"
+      trap 'myparcelle-ci-remove-job "$slot"' EXIT
+
+      # The job's engine. Its socket, its image store and the job's workspace
+      # are volumes; the socket and the workspace are mounted by both
+      # containers at the same paths, so bind mounts a job asks the engine for
+      # (compose files, build contexts) resolve to the same files.
+      docker run --detach --rm --privileged --name "$name-engine" --network "myparcelle-ci-$slot" \
+        --cpuset-cpus "$cpus" --memory="$engine_memory" --memory-swap="$engine_memory" \
+        --env DOCKER_TLS_CERTDIR= \
+        --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
+        --volume "$name-data:/var/lib/docker" \
+        --entrypoint sh ${dindImage} -c \
+        'chown 1001:1001 /home/runner/_work && exec dockerd-entrypoint.sh dockerd --host unix:///var/run/engine/docker.sock --group 123 --registry-mirror http://${mirrorName}:5000' \
+        >/dev/null
+
+      case $tier in
+        trusted) cache=(--volume "${buildVolume}:${buildRoot}") ;;
+        *)
+          cache=(
+            --mount "type=volume,src=${buildVolume},dst=${buildRoot}/pr,volume-subpath=pr"
+            --mount "type=volume,src=${buildVolume},dst=${buildRoot}/main,volume-subpath=main,readonly"
+          )
+          ;;
+      esac
+
+      # As root: the image's own entry gives the `runner` account its home and
+      # waits up to 60 s for the engine, then drops to `runner`.
+      docker run --rm --name "$name" --network "container:$name-engine" --user 0 \
+        --cpuset-cpus "$cpus" --memory="$runner_memory" --memory-swap="$runner_memory" \
+        --env ACTIONS_RUNNER_INPUT_JITCONFIG --env DOCKER_HOST=unix:///var/run/engine/docker.sock \
+        --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
+        --env MYPARCELLE_CI_E2E_BUILD_ROOT=${buildRoot} "''${cache[@]}" \
+        --entrypoint /usr/local/bin/myparcelle-ci-entry ${runnerImage} job
+    '';
+  };
+
+  prepare = pkgs.writeShellApplication {
+    name = "myparcelle-ci-prepare";
+    runtimeInputs = [ docker ];
+    text = ''
+      for network in ${lib.escapeShellArgs networks}; do
+        docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+      done
+      docker image inspect ${runnerImage} >/dev/null 2>&1 || docker pull --quiet ${runnerImage} >/dev/null
+      # The build volume's two partitions, owned by the runner's uid, must exist
+      # before any job mounts them by subpath.
+      docker run --rm --user 0 --volume ${buildVolume}:/d --entrypoint sh ${runnerImage} -c \
+        'mkdir -p /d/pr /d/main && chown 1001:1001 /d /d/pr /d/main'
+    '';
+  };
+
+  # Builds nobody restored for a week go; it runs apart from any job, as root
+  # of the account's user namespace.
+  pruneBuilds = pkgs.writeShellApplication {
+    name = "myparcelle-ci-prune-builds";
+    runtimeInputs = [ docker ];
+    text = ''
+      docker run --rm --user 0 --volume ${buildVolume}:/d --entrypoint find ${runnerImage} \
+        /d/pr /d/main -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} +
+    '';
+  };
+
+  # Created, attached to every slot's network, then started: `docker run`
+  # attaches to one network only.
+  runMirror = pkgs.writeShellApplication {
+    name = "myparcelle-ci-mirror";
+    runtimeInputs = [ docker ];
+    text = ''
+      docker rm --force ${mirrorName} >/dev/null 2>&1 || true
+      docker create --name ${mirrorName} --network ${builtins.head networks} \
+        --memory=256m --env REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+        --volume ${mirrorName}:/var/lib/registry ${mirrorImage} >/dev/null
+      for network in ${lib.escapeShellArgs (builtins.tail networks)}; do
+        docker network connect "$network" ${mirrorName}
+      done
+      exec docker start --attach ${mirrorName}
+    '';
+  };
+
+  dockerUnit = "user@${toString uid}.service";
+in
+{
+  assertions = [
+    {
+      assertion = reported == "/no-such-path" || reported == tokenFile;
+      message = "myparcelle-ci-ci-01 expects ${tokenFile}, but sops-nix places it at ${reported}";
+    }
+  ];
+
+  # Per machine and prompted, never shared or minted: GitHub issues the token.
+  clan.core.vars.generators.myparcelle-ci-github-token = {
+    prompts."token" = {
+      description = "the GitHub token that mints ci-01's runner registrations (fine-grained, tyrode-dev/myParcelle only, Administration: write)";
+      type = "hidden";
+    };
+
+    files."token" = {
+      secret = true;
+      owner = "root";
+      group = "root";
+      mode = "0400";
+    };
+
+    # One line of the token alphabet; a header, a JSON envelope or an empty
+    # paste is refused without being quoted.
+    script = ''
+      token=$(tr -d '\n' <"$prompts/token")
+      [[ "$token" =~ ^[A-Za-z0-9_]{20,}$ ]] ||
+        { echo "myparcelle-ci-github-token: token is not a GitHub token" >&2; exit 1; }
+      printf '%s\n' "$token" >"$out/token"
+    '';
+  };
+
+  # Egress of everything the CI account's engine does for a job (the rootless
+  # engine's own userspace networking emits it as this uid) is public
+  # internet only: private ranges, carrier-grade NAT, link-local (the
+  # hosting metadata endpoint included) and their IPv6 equivalents are
+  # refused, and so is the machine's own public address (no route to its sshd
+  # from a job). Loopback is left alone: the engine's resolver may be there, and
+  # the rootless engine already hides the host's loopback from containers.
+  networking.nftables = {
+    enable = true;
+    tables.myparcelle-ci-egress = {
+      family = "inet";
+      content = ''
+        chain output {
+          type filter hook output priority filter; policy accept;
+          meta skuid ${toString uid} ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, ${machineAddress.ipv4} } reject
+          meta skuid ${toString uid} ip6 daddr { fc00::/7, fe80::/10, ${machineAddress.ipv6} } reject
+        }
+      '';
+    };
+  };
+
+  users = {
+    groups.${user}.gid = uid;
+    users.${user} = {
+      inherit uid home;
+      group = user;
+      isSystemUser = true;
+      createHome = true;
+      homeMode = "700";
+      # A user manager for the account's rootless Docker engine, with no login.
+      linger = true;
+      subUidRanges = [
+        {
+          startUid = 200000;
+          count = 65536;
+        }
+      ];
+      subGidRanges = [
+        {
+          startGid = 200000;
+          count = 65536;
+        }
+      ];
+    };
+  };
+
+  systemd = {
+    # The whole CI account (its engine and every job in it) is held under
+    # this, whatever the per-job limits add up to.
+    slices."user-${toString uid}" = {
+      overrideStrategy = "asDropin";
+      sliceConfig = {
+        MemoryHigh = "28G";
+        MemoryMax = "29G";
+        CPUQuota = "1100%";
+        CPUWeight = 50;
+      };
+    };
+
+    timers.myparcelle-ci-prune-builds = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "daily";
+        RandomizedDelaySec = "1h";
+        Persistent = true;
+      };
+    };
+
+    services = {
+      # Rootless Docker applies --cpuset-cpus only to controllers its user
+      # manager was delegated.
+      "user@${toString uid}" = {
+        overrideStrategy = "asDropin";
+        serviceConfig.Delegate = "cpu cpuset io memory pids";
+      };
+
+      myparcelle-ci-prepare = {
+        description = "myParcelle CI runner image and network";
+        after = [ dockerUnit ];
+        requires = [ dockerUnit ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          User = user;
+          Group = user;
+          Environment = dockerEnvironment;
+          ExecStartPre = "${pkgs.bash}/bin/bash -c 'for _ in $(seq 60); do [ -S ${runtimeDir}/docker.sock ] && exit 0; sleep 1; done; exit 1'";
+          ExecStart = lib.getExe prepare;
+          TimeoutStartSec = "20min";
+        };
+      };
+
+      myparcelle-ci-prune-builds = {
+        description = "Prune myParcelle CI browser builds older than a week";
+        after = [ "myparcelle-ci-prepare.service" ];
+        requires = [ "myparcelle-ci-prepare.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = user;
+          Group = user;
+          Environment = dockerEnvironment;
+          ExecStart = lib.getExe pruneBuilds;
+        };
+      };
+
+      myparcelle-ci-mirror = {
+        description = "Docker Hub pull-through mirror for myParcelle CI jobs";
+        after = [ "myparcelle-ci-prepare.service" ];
+        requires = [ "myparcelle-ci-prepare.service" ];
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          User = user;
+          Group = user;
+          Environment = dockerEnvironment;
+          ExecStart = lib.getExe runMirror;
+          ExecStop = "${lib.getExe docker} stop ${mirrorName}";
+          Restart = "always";
+          RestartSec = 10;
+        };
+      };
+    }
+    // lib.listToAttrs (
+      map (
+        slot:
+        lib.nameValuePair "myparcelle-ci-runner-${toString slot}" {
+          description = "myParcelle CI runner ci-01-${toString slot} (one job, then re-registers)";
+          after = [
+            "network-online.target"
+            "myparcelle-ci-prepare.service"
+            "myparcelle-ci-mirror.service"
+          ];
+          wants = [
+            "network-online.target"
+            "myparcelle-ci-mirror.service"
+          ];
+          requires = [ "myparcelle-ci-prepare.service" ];
+          wantedBy = [ "multi-user.target" ];
+          # Waiting for the token, or for GitHub, retries forever.
+          startLimitIntervalSec = 0;
+          serviceConfig = {
+            User = user;
+            Group = user;
+            Environment = dockerEnvironment;
+            RuntimeDirectory = "myparcelle-ci-runner-${toString slot}";
+            RuntimeDirectoryMode = "0700";
+            ExecStartPre = "+${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotOf slot).labels)} ${(slotOf slot).prefix}";
+            ExecStart = "${lib.getExe runJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).runner} ${(slotOf slot).engine} ${(slotOf slot).tier}";
+            ExecStopPost = [
+              "${lib.getExe removeJob} ${toString slot}"
+              "+${lib.getExe forgetRunner}"
+            ];
+            Restart = "always";
+            RestartSec = 5;
+            # A job's own ceiling is the workflow's timeout-minutes.
+            TimeoutStopSec = 90;
+            # Not ProtectHome: it would hide /run/user, the engine's socket.
+            PrivateTmp = true;
+            NoNewPrivileges = true;
+          };
+        }
+      ) slotNumbers
+    );
+  };
+}

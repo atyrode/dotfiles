@@ -113,39 +113,30 @@ in
   networking = {
     hostName = host.hostname;
     inherit (machineAddress) domain;
-    # The reviewed public-VPS exposure is TCP 22, and 80 + 443 for exactly the
-    # vhosts the edge modules lib/configurations.nix imports beside this one
-    # declare (docs/hosts.md lists them). Also allow the UDP listeners of Clan's
+    # The reviewed public-VPS exposure is TCP 22 (a machine serving the web
+    # adds 80 + 443 in modules/nixos/public-web-edge.nix, docs/hosts.md lists
+    # the vhosts). Also allow the UDP listeners of Clan's
     # declared WireGuard interfaces. The separate Tern overlay module adds its
     # own listener at the same priority. mkForce keeps the combined list
     # authoritative over clan-core's recommended-defaults mDNS port (UDP 5353),
     # which must never be open on a public uplink.
     firewall = {
       enable = true;
-      allowedTCPPorts = lib.mkForce [
-        22
-        80
-        443
-      ];
+      allowedTCPPorts = lib.mkForce [ 22 ];
       allowedUDPPorts = lib.mkForce (
         lib.mapAttrsToList (_name: interface: interface.listenPort) config.networking.wireguard.interfaces
       );
     };
   };
 
-  # The edge modules lib/configurations.nix imports beside this one only add
-  # virtual hosts; this machine is their front, so the server itself is
-  # enabled here.
-  services.caddy.enable = true;
-
   services.openssh = {
     enable = true;
     openFirewall = false;
     authorizedKeysCommand = "none";
     authorizedKeysInHomedir = false;
-    # The install ceremony generates this machine-specific key in RAM, binds
-    # its public fingerprint into the destructive plan, and installs only the
-    # private half onto the new root. It never enters Git or the Nix store.
+    # The key is machine-specific and never enters Git or the Nix store: the
+    # installer generates it in RAM and places the private half on the new
+    # root before the first boot (docs/hosts.md § Installing a NixOS machine).
     hostKeys = [
       {
         path = "/etc/ssh/ssh_host_ed25519_key";

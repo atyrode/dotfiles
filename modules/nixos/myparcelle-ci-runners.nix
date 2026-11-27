@@ -54,7 +54,15 @@ let
     "x64"
     "dev-01"
   ];
-  slotLabels = slot: labels ++ lib.optional (slot <= pullRequestRunners) "pull-request";
+  # The last slot also carries `dev-01-ops`: the label the jobs that act on
+  # dev-01 itself ask for (myParcelle's deploy/README.md § Cutover runbook),
+  # and the one runner dev-01 keeps once CI moves to ci-01.
+  opsRunner = runnerCount;
+  slotLabels =
+    slot:
+    labels
+    ++ lib.optional (slot <= pullRequestRunners) "pull-request"
+    ++ lib.optional (slot == opsRunner) "dev-01-ops";
   # Root-only; the operator places it, nothing in this repository holds it.
   tokenDirectory = "/var/lib/myparcelle-ci-runners";
   tokenFile = "${tokenDirectory}/github-token";
@@ -127,11 +135,12 @@ let
     text = ''
       slot=$1
       labels=$2
+      prefix=$3
       [[ -s ${tokenFile} ]] || {
         echo "myparcelle-ci: ${tokenFile} is not placed; the runner waits for it" >&2
         exit 1
       }
-      body=$(jq -cn --arg name "dev-01-$slot-$(date +%s)" --argjson labels "$labels" \
+      body=$(jq -cn --arg name "$prefix-$slot-$(date +%s)" --argjson labels "$labels" \
         '{name: $name, runner_group_id: 1, labels: $labels, work_folder: "_work"}')
       umask 077
       response=$(printf 'Authorization: Bearer %s\n' "$(<${tokenFile})" |
@@ -342,7 +351,9 @@ in
             Environment = dockerEnvironment;
             RuntimeDirectory = "myparcelle-ci-runner-${toString slot}";
             RuntimeDirectoryMode = "0700";
-            ExecStartPre = "+${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotLabels slot))}";
+            ExecStartPre = "+${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotLabels slot))} ${
+              if slot == opsRunner then "dev-01-ops" else "dev-01"
+            }";
             ExecStart = "${lib.getExe runJob} ${toString slot}";
             ExecStopPost = [
               "${lib.getExe removeJob} ${toString slot}"

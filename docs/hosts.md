@@ -160,6 +160,10 @@ caps myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
 weight 20) as a drop-in, so the development surface keeps
 its share of the twelve cores when CI and rebuilds run at once.
 
+[`modules/nixos/resource-shares.nix`](../modules/nixos/resource-shares.nix)
+guarantees sshd 1 GiB of memory (`MemoryMin` on the service and on `system.slice`), so the host stays reachable
+under memory pressure.
+
 [`modules/nixos/dev-host-services.nix`](../modules/nixos/dev-host-services.nix)
 turns off what dev-01 has no use for: the Home Manager Ollama service (a
 default of the agent-tools contract on other hosts), systemd-resolved's global

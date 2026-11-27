@@ -103,6 +103,11 @@ let
 
   runnerImage = "ghcr.io/tyrode-dev/myparcelle-ci-runner@sha256:7f9557c849ad3c9e2d8c15510373800e4cc2aefd6725fceefa95de6cf60efe4b";
   dindImage = "docker:28.5.2-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac";
+  innerDaemonConfig = builtins.toJSON {
+    ipv6 = false;
+    ip6tables = false;
+    registry-mirrors = [ "https://mirror.gcr.io" ];
+  };
 
   dockerEnvironment = [
     "DOCKER_HOST=${dockerHost}"
@@ -203,8 +208,10 @@ let
       # are volumes; the socket and the workspace are mounted by both
       # containers at the same paths, so bind mounts a job asks the engine for
       # (compose files, build contexts) resolve to the same files.
-      # The runner joins the engine's namespace: both use this IPv4-only
-      # bridge, and RootlessKit does not provide IPv6 to the slot.
+      # No IPv6 egress beyond the job's own throwaway engine. The runner
+      # shares this IPv4-only namespace, and RootlessKit has no IPv6. The
+      # inner daemon defaults to IPv4-only; a job may still create its own
+      # private IPv6 network inside its disposable engine.
       docker run --detach --rm --privileged --name "$name-engine" --network "$network" \
         --cpuset-cpus "$cpus" --memory="$engine_memory" --memory-swap="$engine_memory" \
         --sysctl net.ipv6.conf.all.disable_ipv6=1 \
@@ -213,7 +220,9 @@ let
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
         --volume "$name-data:/var/lib/docker" \
         --entrypoint sh ${dindImage} -c \
-        'chown 1001:1001 /home/runner/_work && exec dockerd-entrypoint.sh dockerd --host unix:///var/run/engine/docker.sock --group 123 --registry-mirror https://mirror.gcr.io' \
+        'printf "%s\n" "$1" >/tmp/daemon.json && chown 1001:1001 /home/runner/_work &&
+         exec dockerd-entrypoint.sh dockerd --config-file /tmp/daemon.json --host unix:///var/run/engine/docker.sock --group 123' \
+        sh ${lib.escapeShellArg innerDaemonConfig} \
         >/dev/null
 
       # As root: the image's own entry gives the `runner` account its home and

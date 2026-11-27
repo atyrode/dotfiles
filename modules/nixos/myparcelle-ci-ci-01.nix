@@ -23,12 +23,9 @@
 #              on the one repository, Administration: write), placed root-only
 #              by sops-nix. Only root's ExecStartPre reads it; the CI account
 #              receives the single-use runner configuration and nothing else.
-#   labels     pull-request slots carry `self-hosted linux x64 ci-01` (the
-#              large one adds `ci-01-heavy`). Trusted slots carry `self-hosted
-#              linux x64 ci-01-trusted` and no `ci-01` (the large one adds
-#              `ci-01-heavy`): only jobs that certify or publish main ask for
-#              them, and no pull-request job is routed there. Names are
-#              `ci-01-<slot>-<epoch>` (`ci-01-trusted-...` on trusted slots).
+#   labels     all slots carry `self-hosted linux x64 ci-01`; `ci-01-heavy`
+#              and `ci-01-small` select capacity, never privilege. Names are
+#              `ci-01-<slot>-<epoch>`.
 #   image      the public image myParcelle publishes, pinned by digest like
 #              every other input of this repository (Chromium, Firefox and
 #              WebKit included). To follow a new image, bump `runnerImage` from
@@ -37,18 +34,16 @@
 # Sizing (a starting point, tuned from the queue's real load). The machine has
 # 12 shared vCPUs and 32 GiB; about 3 GiB stay with the host (kernel, sshd, the
 # mirror, a deployment's Nix evaluation), so the account's slice is held to
-# 29 GiB and the slots' limits add up to 28, never past it. Large slots (one
-# per tier) hold four CPUs and 8 GiB (5 for the runner container, 3 for its
-# engine), past the 8 GiB the Keycloak lane needs (it failed at 4). Small slots
-# (two per tier) hold two CPUs and 3 GiB (2 and 1) for typecheck,
-# browser-smoke shards and the like. CPUs are pinned with cpusets because the
-# gate sizes its lanes from the affinity mask: the large slots own CPUs 0-7 and
-# the four small slots share 8-11 in pairs (a small runner sees two CPUs; each
-# pair is oversubscribed 2x). The slice yields CPU to the host under contention
-# (weight 50) and is held to 11 cores, so a deployment is never starved.
+# 29 GiB and the slots' limits total 28 GiB. Two large slots hold four CPUs
+# and 8 GiB (5 for the runner, 3 for its engine) for Keycloak and the full
+# suite. Four small slots hold two CPUs and 3 GiB (2.5 and 0.5) for work such
+# as typecheck and browser smoke. The large slots own CPUs 0–7 and the four
+# small slots share 8–11 in pairs; a small runner sees two CPUs, as measured
+# by its affinity mask. CPU weight 50 and an 11-core quota favour the host
+# under contention.
 #
-# Isolation: each slot has its own network, so no route runs between slots, and
-# only trusted slots write the shared browser-build directory's `main/`.
+# Isolation: each slot has its own network and no shared host-writable mount.
+# Jobs use GitHub Actions' ref-scoped cache, not a host browser-build store.
 #
 # Network: jobs reach the public internet only (nftables table below); ci-01
 # is not on the fleet overlay at all.
@@ -81,81 +76,23 @@ let
     "x64"
     "ci-01"
   ];
-  # Two tiers of four slot shapes (myParcelle's deploy/README.md § The ci-01
-  # host contract). Trusted slots carry no `ci-01` label: only the jobs that
-  # certify or publish main ask for `ci-01-trusted`, and no pull-request job is
-  # routed to them.
-  prTier = {
-    tier = "pr";
-    prefix = "ci-01";
-  };
-  trustedTier = {
-    tier = "trusted";
-    prefix = "ci-01-trusted";
-  };
-  trustedLabels = [
-    "self-hosted"
-    "linux"
-    "x64"
-    "ci-01-trusted"
-  ];
   small = {
-    runner = "2g";
-    engine = "1g";
+    runner = "2560m";
+    engine = "512m";
+    labels = labels ++ [ "ci-01-small" ];
   };
   large = {
     runner = "5g";
     engine = "3g";
+    labels = labels ++ [ "ci-01-heavy" ];
   };
   slots = [
-    (
-      trustedTier
-      // large
-      // {
-        labels = trustedLabels ++ [ "ci-01-heavy" ];
-        cpus = "0-3";
-      }
-    )
-    (
-      prTier
-      // large
-      // {
-        labels = labels ++ [ "ci-01-heavy" ];
-        cpus = "4-7";
-      }
-    )
-    (
-      trustedTier
-      // small
-      // {
-        labels = trustedLabels ++ [ "ci-01-trusted-small" ];
-        cpus = "8-9";
-      }
-    )
-    (
-      trustedTier
-      // small
-      // {
-        labels = trustedLabels ++ [ "ci-01-trusted-small" ];
-        cpus = "10-11";
-      }
-    )
-    (
-      prTier
-      // small
-      // {
-        labels = labels ++ [ "ci-01-small" ];
-        cpus = "8-9";
-      }
-    )
-    (
-      prTier
-      // small
-      // {
-        labels = labels ++ [ "ci-01-small" ];
-        cpus = "10-11";
-      }
-    )
+    (large // { cpus = "0-3"; })
+    (large // { cpus = "4-7"; })
+    (small // { cpus = "8-9"; })
+    (small // { cpus = "10-11"; })
+    (small // { cpus = "8-9"; })
+    (small // { cpus = "10-11"; })
   ];
   slotNumbers = lib.range 1 (builtins.length slots);
   slotOf = number: builtins.elemAt slots (number - 1);
@@ -163,14 +100,6 @@ let
   # Root-only, placed by sops-nix from the clan var below.
   tokenFile = "/run/secrets/vars/myparcelle-ci-github-token/token";
   reported = config.clan.core.vars.generators.myparcelle-ci-github-token.files."token".path;
-
-  # The persistent browser-build directory (MYPARCELLE_CI_E2E_BUILD_ROOT), one
-  # volume with `pr/` and `main/`. The partition is enforced by the mounts: the
-  # trusted slots mount the whole volume read-write; every other slot mounts
-  # `pr/` read-write and `main/` read-only, so no pull-request job can make
-  # main's suite serve a build it forged.
-  buildVolume = "myparcelle-ci-e2e-build";
-  buildRoot = "/ci-cache/e2e-build";
 
   # One bridge per slot: no shared network, so no route between slots (the
   # engine's own bridge rules drop traffic between user-defined networks).
@@ -190,9 +119,9 @@ let
     "HOME=${home}"
   ];
 
-  # Root: reads the token and leaves one runner's configuration, readable by
-  # the CI account only, in the unit's runtime directory. The token reaches
-  # curl on stdin, never argv or the environment.
+  # Root owns the slot's runtime directory. Only the single-use configuration
+  # leaves it, on the downgraded job process's stdin. The token reaches curl
+  # on stdin, never argv or the environment.
   mintRunner = pkgs.writeShellApplication {
     name = "myparcelle-ci-mint-runner";
     runtimeInputs = [
@@ -203,21 +132,21 @@ let
     text = ''
       slot=$1
       labels=$2
-      prefix=$3
       [[ -s ${tokenFile} ]] || {
         echo "myparcelle-ci: ${tokenFile} is not placed; the runner waits for it" >&2
         exit 1
       }
-      body=$(jq -cn --arg name "$prefix-$slot-$(date +%s)" --argjson labels "$labels" \
+      body=$(jq -cn --arg name "ci-01-$slot-$(date +%s)" --argjson labels "$labels" \
         '{name: $name, runner_group_id: 1, labels: $labels, work_folder: "_work"}')
       umask 077
       response=$(printf 'Authorization: Bearer %s\n' "$(<${tokenFile})" |
-        curl --silent --show-error --fail-with-body --max-time 30 -H @- \
+        curl -q --silent --show-error --fail --max-time 30 -H @- \
           -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
           --data "$body" https://api.github.com/repos/${repository}/actions/runners/generate-jitconfig)
-      jq -er .encoded_jit_config <<<"$response" >"$RUNTIME_DIRECTORY/jitconfig"
-      jq -er .runner.id <<<"$response" >"$RUNTIME_DIRECTORY/runner-id"
-      chown ${user}: "$RUNTIME_DIRECTORY/jitconfig"
+      jq -er '.runner.id | select(type == "number" and . > 0 and floor == .)' \
+        <<<"$response" >"$RUNTIME_DIRECTORY/runner-id"
+      jq -er '.encoded_jit_config | strings | select(test("^[A-Za-z0-9+/=]+$"))' \
+        <<<"$response" >"$RUNTIME_DIRECTORY/jitconfig"
     '';
   };
 
@@ -235,7 +164,7 @@ let
       [[ -s $id_file && -s ${tokenFile} ]] || exit 0
       id=$(<"$id_file")
       printf 'Authorization: Bearer %s\n' "$(<${tokenFile})" |
-        curl --silent --output /dev/null --max-time 30 -H @- -X DELETE \
+        curl -q --silent --output /dev/null --max-time 30 -H @- -X DELETE \
           -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
           "https://api.github.com/repos/${repository}/actions/runners/$id" || true
     '';
@@ -243,11 +172,24 @@ let
 
   removeJob = pkgs.writeShellApplication {
     name = "myparcelle-ci-remove-job";
-    runtimeInputs = [ docker ];
+    runtimeInputs = [
+      docker
+      pkgs.gnugrep
+    ];
     text = ''
       name=myparcelle-ci-runner-$1
       docker rm --force --volumes "$name" "$name-engine" >/dev/null 2>&1 || true
       docker volume rm --force "$name-work" "$name-socket" "$name-data" >/dev/null 2>&1 || true
+
+      # Absence must be verified by a successful list, including when a
+      # daemon outage made the remove calls above fail.
+      containers=$(docker container ls --all --format '{{.Names}}')
+      volumes=$(docker volume ls --format '{{.Name}}')
+      if grep -Fxq -e "$name" -e "$name-engine" <<<"$containers" ||
+         grep -Fxq -e "$name-work" -e "$name-socket" -e "$name-data" <<<"$volumes"; then
+        echo "Job objects still present after teardown: $name" >&2
+        exit 1
+      fi
     '';
   };
 
@@ -255,23 +197,15 @@ let
   # the unit, which mints the next runner.
   runJob = pkgs.writeShellApplication {
     name = "myparcelle-ci-run-job";
-    runtimeInputs = [
-      docker
-      pkgs.coreutils
-      removeJob
-    ];
+    runtimeInputs = [ docker ];
     text = ''
       slot=$1
       cpus=$2
       runner_memory=$3
       engine_memory=$4
-      tier=$5
       name=myparcelle-ci-runner-$slot
-      ACTIONS_RUNNER_INPUT_JITCONFIG=$(<"$RUNTIME_DIRECTORY/jitconfig")
+      IFS= read -r ACTIONS_RUNNER_INPUT_JITCONFIG
       export ACTIONS_RUNNER_INPUT_JITCONFIG
-      rm -f "$RUNTIME_DIRECTORY/jitconfig"
-      myparcelle-ci-remove-job "$slot"
-      trap 'myparcelle-ci-remove-job "$slot"' EXIT
 
       # The job's engine. Its socket, its image store and the job's workspace
       # are volumes; the socket and the workspace are mounted by both
@@ -286,23 +220,12 @@ let
         'chown 1001:1001 /home/runner/_work && exec dockerd-entrypoint.sh dockerd --host unix:///var/run/engine/docker.sock --group 123 --registry-mirror http://${mirrorName}:5000' \
         >/dev/null
 
-      case $tier in
-        trusted) cache=(--volume "${buildVolume}:${buildRoot}") ;;
-        *)
-          cache=(
-            --mount "type=volume,src=${buildVolume},dst=${buildRoot}/pr,volume-subpath=pr"
-            --mount "type=volume,src=${buildVolume},dst=${buildRoot}/main,volume-subpath=main,readonly"
-          )
-          ;;
-      esac
-
       # As root: the image's own entry gives the `runner` account its home and
       # waits up to 60 s for the engine, then drops to `runner`.
       docker run --rm --name "$name" --network "container:$name-engine" --user 0 \
         --cpuset-cpus "$cpus" --memory="$runner_memory" --memory-swap="$runner_memory" \
         --env ACTIONS_RUNNER_INPUT_JITCONFIG --env DOCKER_HOST=unix:///var/run/engine/docker.sock \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
-        --env MYPARCELLE_CI_E2E_BUILD_ROOT=${buildRoot} "''${cache[@]}" \
         --entrypoint /usr/local/bin/myparcelle-ci-entry ${runnerImage} job
     '';
   };
@@ -315,21 +238,6 @@ let
         docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
       done
       docker image inspect ${runnerImage} >/dev/null 2>&1 || docker pull --quiet ${runnerImage} >/dev/null
-      # The build volume's two partitions, owned by the runner's uid, must exist
-      # before any job mounts them by subpath.
-      docker run --rm --user 0 --volume ${buildVolume}:/d --entrypoint sh ${runnerImage} -c \
-        'mkdir -p /d/pr /d/main && chown 1001:1001 /d /d/pr /d/main'
-    '';
-  };
-
-  # Builds nobody restored for a week go; it runs apart from any job, as root
-  # of the account's user namespace.
-  pruneBuilds = pkgs.writeShellApplication {
-    name = "myparcelle-ci-prune-builds";
-    runtimeInputs = [ docker ];
-    text = ''
-      docker run --rm --user 0 --volume ${buildVolume}:/d --entrypoint find ${runnerImage} \
-        /d/pr /d/main -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} +
     '';
   };
 
@@ -341,6 +249,7 @@ let
     text = ''
       docker rm --force ${mirrorName} >/dev/null 2>&1 || true
       docker create --name ${mirrorName} --network ${builtins.head networks} \
+        --sysctl net.ipv4.ip_forward=0 --sysctl net.ipv6.conf.all.forwarding=0 \
         --memory=256m --env REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
         --volume ${mirrorName}:/var/lib/registry ${mirrorImage} >/dev/null
       for network in ${lib.escapeShellArgs (builtins.tail networks)}; do
@@ -443,15 +352,6 @@ in
       };
     };
 
-    timers.myparcelle-ci-prune-builds = {
-      wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnCalendar = "daily";
-        RandomizedDelaySec = "1h";
-        Persistent = true;
-      };
-    };
-
     services = {
       # Rootless Docker applies --cpuset-cpus only to controllers its user
       # manager was delegated.
@@ -473,19 +373,6 @@ in
           ExecStartPre = "${pkgs.bash}/bin/bash -c 'for _ in $(seq 60); do [ -S ${runtimeDir}/docker.sock ] && exit 0; sleep 1; done; exit 1'";
           ExecStart = lib.getExe prepare;
           TimeoutStartSec = "20min";
-        };
-      };
-
-      myparcelle-ci-prune-builds = {
-        description = "Prune myParcelle CI browser builds older than a week";
-        after = [ "myparcelle-ci-prepare.service" ];
-        requires = [ "myparcelle-ci-prepare.service" ];
-        serviceConfig = {
-          Type = "oneshot";
-          User = user;
-          Group = user;
-          Environment = dockerEnvironment;
-          ExecStart = lib.getExe pruneBuilds;
         };
       };
 
@@ -512,6 +399,7 @@ in
           description = "myParcelle CI runner ci-01-${toString slot} (one job, then re-registers)";
           after = [
             "network-online.target"
+            "nftables.service"
             "myparcelle-ci-prepare.service"
             "myparcelle-ci-mirror.service"
           ];
@@ -519,22 +407,28 @@ in
             "network-online.target"
             "myparcelle-ci-mirror.service"
           ];
-          requires = [ "myparcelle-ci-prepare.service" ];
+          requires = [
+            "myparcelle-ci-prepare.service"
+            "nftables.service"
+          ];
           wantedBy = [ "multi-user.target" ];
+          # A failed teardown stays quarantined, including across reboots,
+          # until an operator verifies cleanup and clears the marker.
+          unitConfig.ConditionPathExists = "!/var/lib/myparcelle-ci-slot-${toString slot}/teardown-failed";
           # Waiting for the token, or for GitHub, retries forever.
           startLimitIntervalSec = 0;
           serviceConfig = {
-            User = user;
-            Group = user;
-            Environment = dockerEnvironment;
+            Environment = [ "HOME=/root" ];
             RuntimeDirectory = "myparcelle-ci-runner-${toString slot}";
             RuntimeDirectoryMode = "0700";
-            ExecStartPre = "+${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotOf slot).labels)} ${(slotOf slot).prefix}";
-            ExecStart = "${lib.getExe runJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).runner} ${(slotOf slot).engine} ${(slotOf slot).tier}";
-            ExecStopPost = [
-              "${lib.getExe removeJob} ${toString slot}"
-              "+${lib.getExe forgetRunner}"
+            StateDirectory = "myparcelle-ci-slot-${toString slot}";
+            StateDirectoryMode = "0700";
+            ExecStartPre = [
+              "${lib.getExe verifyCleanup} ${toString slot}"
+              "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotOf slot).labels)}"
             ];
+            ExecStart = "${lib.getExe startJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).runner} ${(slotOf slot).engine}";
+            ExecStopPost = "${lib.getExe stopJob} ${toString slot}";
             Restart = "always";
             RestartSec = 5;
             # A job's own ceiling is the workflow's timeout-minutes.

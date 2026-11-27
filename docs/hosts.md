@@ -163,19 +163,22 @@ the runner registration token: none of the operator's shared secrets (agent
 broker token, session archive, custody keys), no Git identity, and no place on
 the fleet overlay; it is reached at its public name over SSH.
 [`modules/nixos/myparcelle-ci-ci-01.nix`](../modules/nixos/myparcelle-ci-ci-01.nix)
-declares six ephemeral runners in the same `myparcelle-ci` account and rootless
-Docker engine as `dev-01`'s: for pull requests two small (`ci-01`) and one large
-(`ci-01`, `ci-01-heavy`); for the jobs that certify or publish main two small
-(`ci-01-trusted`) and one large (`ci-01-trusted`, `ci-01-heavy`), to which no
-pull-request job is routed. Each runs one job (names `ci-01-<slot>-<epoch>`) in
-a fresh privileged Docker-in-Docker engine plus a container of myParcelle's
-published runner image, pinned by digest, on its own network. Trusted slots
-alone write `main/` of the persistent browser-build directory; the others mount
-it read-only. Large slots hold four CPUs and 8 GiB, small ones two CPUs and
-3 GiB, under a 29 GiB account slice; slot counts are a starting point to tune.
+declares six ephemeral runners under a local `myparcelle-ci` account with a
+rootless Docker engine. All slots carry `ci-01`; the four small slots
+add `ci-01-small` (two CPUs and 3 GiB), and two large ones add `ci-01-heavy`
+(four CPUs and 8 GiB). The labels distinguish capacity, not privilege. The
+combined 28 GiB slot budget fits under a 29 GiB account slice. These counts
+are a starting point to tune. Each slot runs one job in a fresh runner and
+Docker-in-Docker engine, on its own network, with no writable state that
+another job can mount. Jobs use GitHub's ref-scoped cache, not a persistent
+browser-build directory on the host.
 Jobs reach the public internet only: private ranges, link-local and the host's
-own address are refused for the CI account. The module's header gives the sizing reasoning. The registration token is the clan
-var `myparcelle-ci-github-token`, root-only; nothing a job runs can read it.
+own addresses are refused for the CI account. The registration token is the
+root-only Clan var `myparcelle-ci-github-token`. If removal of a job's
+containers or volumes cannot be verified, that slot stays out of service
+and logs a critical journal entry. After verifying that none of the slot's
+containers or volumes remain, an administrator clears
+`/var/lib/myparcelle-ci-slot-<n>/teardown-failed` and starts the unit again.
 It is not a registry fact that CI is routed there: myParcelle's router
 (`bun run ci:pool`) decides that. To follow a new runner image, bump its
 digest in the module.

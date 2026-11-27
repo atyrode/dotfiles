@@ -154,6 +154,36 @@ runner configuration from a root-only token the operator places at
 one repository, Administration: write). Until the file exists the runners
 wait and retry.
 
+`ci-01` is the dedicated CI host: a NixOS machine like `dev-01` that serves
+nothing but myParcelle's CI. It listens on SSH alone (no Caddy, no web ports;
+`modules/nixos/public-web-edge.nix` and the edge modules are `dev-01`'s) and
+carries `base`, `security` and `containers`. Because it runs pull-request code
+behind a privileged Docker-in-Docker engine, it holds only its machine key and
+the runner registration token: none of the operator's shared secrets (agent
+broker token, session archive, custody keys), no Git identity, and no place on
+the fleet overlay; it is reached at its public name over SSH.
+[`modules/nixos/myparcelle-ci-ci-01.nix`](../modules/nixos/myparcelle-ci-ci-01.nix)
+declares six ephemeral runners under a local `myparcelle-ci` account with a
+rootless Docker engine. All slots carry `ci-01`; the four small slots
+add `ci-01-small` (two CPUs and 3 GiB), and two large ones add `ci-01-heavy`
+(four CPUs and 8 GiB). The labels distinguish capacity, not privilege. The
+combined 28 GiB slot budget fits under a 29 GiB account slice. These counts
+are a starting point to tune. Each slot runs one job in a fresh runner and
+Docker-in-Docker engine, on its own network, with no writable state that
+another job can mount. Jobs use GitHub's ref-scoped cache, not a persistent
+browser-build directory on the host. Fresh engines pull through the public
+registry mirror, not one shared on this host.
+Jobs reach the public internet only: private ranges, link-local and the host's
+own addresses are refused for the CI account. The registration token is the
+root-only Clan var `myparcelle-ci-github-token`. A slot persists a lease
+before starting; it releases the lease only after verifying removal of all
+its job containers and volumes. Failed verification logs a critical journal
+entry. An administrator verifies cleanup, clears
+`/var/lib/myparcelle-ci-slot-<n>/lease`, and starts the unit again.
+It is not a registry fact that CI is routed there: myParcelle's router
+(`bun run ci:pool`) decides that. To follow a new runner image, bump its
+digest in the module.
+
 Within the operator's own account,
 [`modules/nixos/dev-cpu-shares.nix`](../modules/nixos/dev-cpu-shares.nix)
 caps myParcelle's follow-main rebuilds (`myparcelle-dev-follow`: two cores,
@@ -273,6 +303,29 @@ missing WSL hostnames, invalid NixOS trust boundaries, missing base
 capabilities, server/desktop or server/development conflicts, non-Linux server
 selections, and duplicate or unknown capabilities. Every repository-owned
 target requires a non-empty description.
+
+## Installing a NixOS machine
+
+Installing writes the machine's disk, so it needs the operator's permission for
+that machine and the merged registry entry. Nothing in the repository wraps it;
+the procedure is clan's, with one addition for the SSH host key:
+
+1. Verify the machine's current host key out of band (the provider's console).
+2. `clan vars generate <host>` on an operator device, committed and merged.
+   `nixos-facter` run on the booted RAM installer produces
+   `fleet/machines/<host>/facter.json` (a provider name in its SMBIOS fields is
+   redacted by hand: [the source boundary](../AGENTS.md#boundaries)).
+3. Generate the host key in RAM only: `install -d -m 700 /dev/shm/hostkey`,
+   `ssh-keygen -t ed25519 -N '' -f /dev/shm/hostkey/ssh_host_ed25519_key`.
+   Record its public fingerprint where the install is reviewed.
+4. `clan machines install <host> --target-host root@<address> --host-key-check
+   strict --phases kexec,disko,install`: clan places the machine's age key. The
+   target stays in the installer with the new root mounted at `/mnt`.
+5. Copy the private half to `/mnt/etc/ssh/ssh_host_ed25519_key` (mode 0600)
+   and the public half beside it over the pinned connection, then run the
+   `reboot` phase.
+6. Shred the `/dev/shm` copy, pin the fingerprint, and from here connect as
+   the registry's account: `vps.nix` closes root login.
 
 ## Renaming or retiring a host
 

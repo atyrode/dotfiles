@@ -40,6 +40,13 @@ let
     ../modules/shared/omp-auth-broker.nix
   ];
 
+  # ci-01 runs pull-request code behind a privileged Docker-in-Docker engine,
+  # so it holds only what it needs: its machine key (clan-machine.nix) and the
+  # runner registration token. It carries none of the operator's shared
+  # secrets (agent broker token, session archive, custody keys), no Git
+  # identity, and no place on the fleet overlay.
+  ciMachineModules = [ ../modules/shared/clan-machine.nix ];
+
   # Home Manager inside a NixOS machine of this fleet: the package overlay
   # reads this flake's own registry, so no machine restates it.
   dotfilesHomeNixosModule =
@@ -202,6 +209,9 @@ let
         (machineDirectory + "/network.nix")
         (machineDirectory + "/boot.nix")
         ../modules/nixos/vps.nix
+      ]
+      ++ lib.optionals (name == "dev-01") [
+        ../modules/nixos/public-web-edge.nix
         ../modules/nixos/cloudflare-dns.nix
         ../modules/nixos/caddy-on-demand-ask.nix
         ../modules/nixos/myparcelle-dev.nix
@@ -209,8 +219,6 @@ let
         ../modules/nixos/kroissant-dev.nix
         ../modules/nixos/house-studio-dev.nix
         ../modules/nixos/parxel-dev.nix
-      ]
-      ++ lib.optionals (name == "dev-01") [
         # Tern's SSH installer replaces its generic Linux binary on each retry.
         { programs.nix-ld.enable = true; }
         ../modules/nixos/tern-workspace-runtime.nix
@@ -223,7 +231,10 @@ let
         ../modules/nixos/resource-shares.nix
         ../modules/nixos/dev-host-services.nix
       ]
-      ++ clanMachineModules;
+      ++ lib.optionals (name == "ci-01") [
+        ../modules/nixos/myparcelle-ci-ci-01.nix
+      ]
+      ++ (if name == "ci-01" then ciMachineModules else clanMachineModules);
     };
 
   # Every registered host is a clan machine, one class each; the Darwin
@@ -277,7 +288,7 @@ let
         hosts.${overlayController}.hostname
       }.${(import (../fleet/machines + "/${overlayController}/address.nix")).domain}";
       roles.peer.machines = lib.mapAttrs (_name: _host: { }) (
-        lib.filterAttrs (name: _host: name != overlayController) clanHosts
+        lib.filterAttrs (name: _host: name != overlayController && name != "ci-01") clanHosts
       );
     };
     machines = lib.mapAttrs (

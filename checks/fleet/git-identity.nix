@@ -25,7 +25,7 @@ let
       inherit (file) exists;
       value = if file.exists then file.value else "";
     }
-  ) clanConfigs;
+  ) (lib.filterAttrs (_name: config: config.clan.core.vars.generators ? git-identity) clanConfigs);
   generated = builtins.filter (key: key.exists) signingKeys;
 in
 pkgs.runCommand "check-git-identity-${system}"

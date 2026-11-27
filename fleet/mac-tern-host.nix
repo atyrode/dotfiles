@@ -30,9 +30,12 @@ let
     in
     "${pad (builtins.elemAt groups 0)}:${pad (builtins.elemAt groups 1)}";
   peerSuffixes = map (machine: var machine "wireguard-network-fleet" "suffix") (
-    builtins.filter (machine: machine != "dev-01") (
-      builtins.attrNames (builtins.readDir ../vars/per-machine)
-    )
+    builtins.filter (
+      machine:
+      machine != "dev-01"
+      # ci-01 is not on the overlay and holds no key pair or suffix.
+      && builtins.pathExists (../vars/per-machine + "/${machine}/wireguard-network-fleet")
+    ) (builtins.attrNames (builtins.readDir ../vars/per-machine))
   );
 
   tern = import ./tern-workspace.nix;

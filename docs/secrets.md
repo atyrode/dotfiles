@@ -244,6 +244,14 @@ Home Manager links `~/.config/cloudflare/api-token` to the placed file.
 Rotation is a new token in Cloudflare followed by
 `clan vars generate --regenerate` of the var and an apply.
 
+`ci-01` is deliberately outside the fleet-wide generators above (no shared
+secret, no Git identity, no overlay key; `checks/default.nix` asserts its
+declared set). Its machine key decrypts its one var, and it alone carries [`myparcelle-ci-github-token`](../modules/nixos/myparcelle-ci-ci-01.nix):
+the GitHub token (fine-grained, myParcelle only, Administration: write) that
+mints its single-use runner registrations. Per machine and prompted, placed
+root-only; only the units' root pre-start reads it. Rotation is
+`clan vars generate --regenerate` of the var and an apply.
+
 The [private Tern workspace](tern-workspace.md#first-provision) has separate
 per-machine WireGuard keys and a dev-01-only DNS-01 credential. Windows and
 iOS generate their own private keys; only their public peers enter the fleet

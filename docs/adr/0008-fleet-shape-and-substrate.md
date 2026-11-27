@@ -233,6 +233,12 @@ the Data row's `localbackup`.
 *(amended 2026-11-22)* Manifold, the application layer that once ran over
 these machines, was retired on 2026-11-22; the overlay is unaffected.
 
+*(amended 2026-11-27)* A fourth machine joins: `ci-01`, a NixOS server whose
+only role is to run myParcelle's CI jobs, one throwaway container set per
+job, so the workshop's cores and memory stay the workshop's. It follows the
+workshop's shape (registry entry, `fleet/machines/ci-01/`, clan vars) and
+serves no web port. The qualification VM deleted above is unrelated to it.
+
 ### Presentation
 
 *(amended 2026-09-06)* The Go terminal interface that bare `atyrode` used to

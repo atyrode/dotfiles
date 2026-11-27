@@ -165,7 +165,8 @@ let
   # a new one is a reviewed change, not a side effect. The fleet-wide six
   # are on every machine -- every one a member of the `fleet` WireGuard
   # overlay, whose service mints a key pair and an address allocation per
-  # machine; dev-01 alone holds the private Tern workspace DNS credential.
+  # machine; dev-01 alone holds the private Tern workspace DNS credential and
+  # ci-01 alone the token that mints its runners.
   fleetGenerators = [
     "babel-custody"
     "git-identity"
@@ -176,17 +177,21 @@ let
   ];
   expectedGenerators =
     name:
-    lib.sort builtins.lessThan (
-      fleetGenerators
-      ++ lib.optionals (name == "dev-01") [
-        "cloudflare-dns"
-        "tern-workspace-dns"
-      ]
-      ++ lib.optional (builtins.elem name [
-        "dev-01"
-        "macbook"
-      ]) "tern-workspace-wireguard"
-    );
+    if name == "ci-01" then
+      # Holds nothing shared, no Git identity and no overlay key.
+      [ "myparcelle-ci-github-token" ]
+    else
+      lib.sort builtins.lessThan (
+        fleetGenerators
+        ++ lib.optionals (name == "dev-01") [
+          "cloudflare-dns"
+          "tern-workspace-dns"
+        ]
+        ++ lib.optional (builtins.elem name [
+          "dev-01"
+          "macbook"
+        ]) "tern-workspace-wireguard"
+      );
   clanMachineSecretsAgree = lib.all (
     name:
     let
@@ -254,7 +259,9 @@ let
     omp-context = import ./omp/omp-context.nix {
       inherit lib pkgs;
       homeConfigs =
-        systemHomeConfigs
+        lib.filterAttrs (
+          name: _config: builtins.elem "agent-tools" hosts.${name}.capabilities
+        ) systemHomeConfigs
         // lib.optionalAttrs isLinux {
           portable = mkPortableHomeConfiguration {
             profileName = "development-${system}";

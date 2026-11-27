@@ -201,6 +201,10 @@ LLMNR and mDNS responders (their sockets listen on every address even with the
 per-link switches off) and systemd-oomd, because user-level earlyoom is the
 host memory guard.
 
+After the cutover to `ci-01` the Clever controller and its cost guard are retired: neither is
+started at boot, and both stay stopped. The router's watchdog keeps running. What follows describes
+the retired fallback.
+
 [`modules/nixos/myparcelle-ci-clever.nix`](../modules/nixos/myparcelle-ci-clever.nix)
 runs the controller of myParcelle's on-demand CI machines on Clever Cloud
 (labels `self-hosted`, `linux`, `x64`, `clever`; a trial until 2026-11-30).

@@ -129,8 +129,11 @@ in
       RestrictSUIDSGID = true;
     };
   };
+  # Retired with the controller it guards (see myparcelle-ci-clever.nix): the
+  # timer and kill-switch path are not started at boot. Start the controller
+  # again only together with these.
   systemd.timers.${user} = {
-    wantedBy = [ "timers.target" ];
+    wantedBy = [ ];
     timerConfig = {
       OnBootSec = "1min";
       OnUnitActiveSec = "2min";
@@ -143,7 +146,7 @@ in
   # controller again stops it, and the path unit, seeing the latch still
   # there, starts it again.
   systemd.paths."${user}-kill-switch" = {
-    wantedBy = [ "paths.target" ];
+    wantedBy = [ ];
     pathConfig = {
       PathExists = latch;
       Unit = "${user}-kill-switch.service";

@@ -67,7 +67,11 @@ in
     description = "myParcelle CI machines on Clever Cloud (one per job, stopped after it)";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    wantedBy = [ "multi-user.target" ];
+    # Retired at the CI cutover to ci-01: nothing starts Clever machines any
+    # more, and the unit is not started at boot. The code and credentials stay
+    # until the operator removes the Clever side; start it by hand to bring
+    # the fallback back.
+    wantedBy = [ ];
     unitConfig.ConditionPathExists = [
       "${tokenDirectory}/clever-oauth.json"
       "${source}/deploy/ci-runners/controller.ts"

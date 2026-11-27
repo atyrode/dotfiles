@@ -142,10 +142,10 @@ an independently reviewed service-disruption plan.
 
 myParcelle's CI also runs here:
 [`modules/nixos/myparcelle-ci-runners.nix`](../modules/nixos/myparcelle-ci-runners.nix)
-declares five ephemeral self-hosted GitHub Actions runners (labels
-`self-hosted`, `linux`, `x64`, `dev-01`; the first three also `pull-request`,
-which myParcelle's pull-request jobs require, so the last two stay free for
-its merge queue; the last one also carries `dev-01-ops` and is named `dev-01-ops-5-…`, the label myParcelle's operations jobs on dev-01 ask for) under the `myparcelle-ci` system
+declares one ephemeral self-hosted GitHub Actions runner after CI moved to
+`ci-01` (labels `self-hosted`, `linux`, `x64`, `dev-01`, `dev-01-ops`; named
+`dev-01-ops-1-…`), for the jobs that act on this machine (deploys, previews and
+the CI observatory), under the `myparcelle-ci` system
 account and its own rootless Docker engine. Each job runs in a fresh
 Docker-in-Docker engine and runner container pair, capped per job and as a
 whole slice, and deleted when the job ends; each start mints a single-use
@@ -200,6 +200,10 @@ default of the agent-tools contract on other hosts), systemd-resolved's global
 LLMNR and mDNS responders (their sockets listen on every address even with the
 per-link switches off) and systemd-oomd, because user-level earlyoom is the
 host memory guard.
+
+After the cutover to `ci-01` the Clever controller and its cost guard are retired: neither is
+started at boot, and both stay stopped. The router's watchdog keeps running. What follows describes
+the retired fallback.
 
 [`modules/nixos/myparcelle-ci-clever.nix`](../modules/nixos/myparcelle-ci-clever.nix)
 runs the controller of myParcelle's on-demand CI machines on Clever Cloud

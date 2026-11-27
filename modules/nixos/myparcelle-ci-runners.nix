@@ -46,8 +46,8 @@ let
   docker = config.virtualisation.docker.rootless.package;
 
   repository = "tyrode-dev/myParcelle";
-  runnerCount = 5;
-  pullRequestRunners = 3;
+  runnerCount = 1;
+  pullRequestRunners = 0;
   labels = [
     "self-hosted"
     "linux"
@@ -109,11 +109,15 @@ let
   # under test reads its cgroup's memory.max and refuses heavy work near it,
   # as it must in production, and a job then sees what a GitHub-hosted VM
   # shows it (no limit). The account's slice below still bounds every job.
-  runnerLimits = [ "--cpus=2" ];
+  runnerLimits = [
+    "--cpus=2"
+    "--memory=1536m"
+    "--memory-swap=1536m"
+  ];
   engineLimits = [
     "--cpus=2"
-    "--memory=2g"
-    "--memory-swap=2g"
+    "--memory=1g"
+    "--memory-swap=1g"
   ];
 
   dockerEnvironment = [
@@ -273,18 +277,16 @@ in
   systemd = {
     tmpfiles.rules = [ "d ${tokenDirectory} 0700 root root - -" ];
 
-    # The whole CI account (its engine and every job in it) is held under
-    # this, whatever the per-job limits add up to: dev (5 GB), Keycloak
-    # (1.5 GB) and the agents keep the rest of the machine's 32 GB; most of
-    # what the jobs hold is reclaimable page cache. CPU: the half weight
-    # yields to dev and the agents under contention, and the quota keeps
-    # three of the twelve cores out of CI's reach.
+    # After the CI cutover to ci-01, dev-01 keeps one operations runner for the
+    # jobs that act on this machine. The whole CI account (its engine and the
+    # job in it) is held to 2 CPUs and 3 GiB, leaving the rest of the machine to
+    # dev, Keycloak and the agents. The half CPU weight yields under contention.
     slices."user-${toString uid}" = {
       overrideStrategy = "asDropin";
       sliceConfig = {
-        MemoryHigh = "17G";
-        MemoryMax = "18G";
-        CPUQuota = "900%";
+        MemoryHigh = "2900M";
+        MemoryMax = "3G";
+        CPUQuota = "200%";
         CPUWeight = 50;
       };
     };

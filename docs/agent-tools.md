@@ -572,15 +572,22 @@ a one-hour installation token limited to the listed repositories, written to
 `/run/gh-app-token/token` for the operator account to read. The key never
 leaves that account's file and no agent receives it.
 
-Inside `~/lanes/` (and wherever `GH_IDENTITY=app`) the `gh` on PATH is a shim
-that reads the token file on every call, so nothing refreshes per session; with
-no token it fails rather than use the operator's `gh auth` login.
-`GH_IDENTITY=operator` opts out. A Git include scoped to `~/lanes/` sets the
-bot's name and noreply address, turns local signing off (the signing key says
-a commit is the operator's), fetches and pushes over HTTPS and serves the same
-token as its credential. Everywhere else the operator's own credentials apply
-unchanged. An installation token cannot call `/user`: `gh auth status`,
-`--author @me` and `--assignee @me` fail under it by design.
+In a tyrode-dev clone under `~/lanes/` (and wherever `GH_IDENTITY=app`) the `gh`
+on PATH is a shim that reads the token file on every call, so nothing refreshes
+per session; with no valid token it fails rather than use the operator's
+`gh auth` login, and `GH_IDENTITY` must be exactly `app` or `operator`
+(`operator` opts out). A Git include, written after the main configuration so
+it wins over the operator's `[user]`, applies only to those clones: the bot's
+name and noreply address, local signing off (the signing key says a commit is
+the operator's), HTTPS for fetch and push and the same token as credential.
+Other clones in `~/lanes/` (dotfiles) and everywhere else keep the operator's
+identity and credentials. The token request lists its permissions explicitly
+in `fleet/github-app.json`; `workflowsWrite` there is an option that adds
+`workflows: write` so agents can edit `.github/workflows`. An installation
+token cannot call `/user`: `gh auth status`, `--author @me` and `--assignee @me`
+fail under it by design. Any process running as the operator account, `ompu`
+sandboxes included, can read the token file, as it could already read the
+operator's SSH key and `gh` login.
 
 ## State ownership
 

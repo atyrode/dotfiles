@@ -19,17 +19,34 @@
 #            listed repositories (one hour). A timer renews it every thirty
 #            minutes. The token and its expiry land in /run/gh-app-token, group
 #            readable by the operator account, never in the Nix store or logs.
-#   gh       a `gh` shim that, inside the lane clones (and wherever
-#            GH_IDENTITY=app), reads the token file on every call and runs the
-#            real gh with it as GH_TOKEN. Reading per call means a session
+#   gh       a `gh` shim that, in a tyrode-dev clone under ~/lanes (the place
+#            the git include below applies) or wherever GH_IDENTITY=app, reads
+#            the token file on every call and runs the real gh with it as
+#            GH_TOKEN, host and configuration directory pinned so no stored
+#            login exists to fall back to. Reading per call means a session
 #            never holds a stale token and nothing needs refreshing per
 #            session. It fails closed: no token, no fallback to the operator's
-#            own `gh auth` credentials. GH_IDENTITY=operator opts out.
-#   git      one include, active inside the lane clones only: the bot's name
-#            and noreply address, no local signing (the operator's signing key
-#            says a commit is the operator's), HTTPS in place of the operator's
-#            SSH key for fetch and push, and a credential helper that serves
-#            the same token file.
+#            own `gh auth` credentials. GH_IDENTITY must be exactly `app` or
+#            `operator`; GH_IDENTITY=operator opts out.
+#   git      an include after the main configuration (programs.git.includes,
+#            so its values win over the operator's [user]), active only in
+#            clones under ~/lanes whose remote is a tyrode-dev repository:
+#            the bot's name and noreply address, no local signing (the
+#            operator's signing key says a commit is the operator's), HTTPS in
+#            place of the operator's SSH key for fetch and push, and a
+#            credential helper that serves the same token file. Other clones
+#            there (dotfiles) keep the operator's identity and key. The include
+#            also sets gh-app.lane, which the shim reads, so both tools agree
+#            on where the App identity applies.
+#   scope    the token request lists its permissions explicitly
+#            (fleet/github-app.json): a permission later added to the App in
+#            GitHub does not reach the agents until a reviewed change lists it.
+#            OPTION `workflowsWrite` (recommended on): adds `workflows: write`
+#            so agents can push edits to .github/workflows (CI PRs). Set it
+#            false, and leave Workflows unticked on the App, to refuse that.
+#   readers  every process running as the operator account, `ompu` sandboxes
+#            included, can read the token file, as it could already read the
+#            operator's SSH key and gh login; the sandbox is environment-only.
 #
 # The Anthropic/OpenAI broker (omp-auth-broker) stays out of this: it vaults
 # model-provider credentials, has no GitHub App support and is not ours to extend.
@@ -45,6 +62,7 @@ let
   inherit (host) username homeDirectory;
 
   lanes = "${homeDirectory}/lanes";
+  permissions = app.permissions // lib.optionalAttrs app.workflowsWrite { workflows = "write"; };
   service = "gh-app";
   runtimeName = "gh-app-token";
   tokenFile = "/run/${runtimeName}/token";
@@ -79,7 +97,8 @@ let
         openssl dgst -sha256 -sign ${placed} | b64url)
 
       body=$(jq -nc --argjson repositories ${lib.escapeShellArg (builtins.toJSON app.repositories)} \
-        '{repositories: $repositories}')
+        --argjson permissions ${lib.escapeShellArg (builtins.toJSON permissions)} \
+        '{repositories: $repositories, permissions: $permissions}')
 
       # The JWT travels on curl's stdin, never its argv, and nothing below
       # prints a response body: a refusal is reported by status alone.
@@ -113,27 +132,48 @@ let
   # tool that shells out to `gh` -- OMP's github tool included -- goes through it.
   ghShim = pkgs.writeShellApplication {
     name = "gh";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.git
+    ];
     text = ''
-      mode=''${GH_IDENTITY:-}
-      if [[ -z $mode ]]; then
-        case "$PWD/" in
-          ${lanes}/*) mode=app ;;
-          *) mode=operator ;;
-        esac
-      fi
+      mode=''${GH_IDENTITY-}
+      case "$mode" in
+        app | operator) ;;
+        "")
+          # Default: the App identity applies exactly where the lane git
+          # include does -- a tyrode-dev clone whose real path is in the lanes
+          # directory -- so gh and git never disagree about who is acting.
+          mode=operator
+          lanes=$(realpath -m ${lanes})
+          here=$(pwd -P)
+          if [[ $here == "$lanes"/* ]] &&
+            [[ $(git config --type=bool --get gh-app.lane 2>/dev/null) == true ]]; then
+            mode=app
+          fi
+          ;;
+        *)
+          echo "gh: GH_IDENTITY must be exactly 'app' or 'operator'" >&2
+          exit 1
+          ;;
+      esac
 
       if [[ $mode == app ]]; then
-        if [[ ! -r ${tokenFile} ]]; then
-          echo "gh: the agents' GitHub App token is not placed (${tokenFile}); refusing to fall back to the operator's credentials. GH_IDENTITY=operator overrides." >&2
+        token=""
+        [[ ! -r ${tokenFile} ]] || token=$(<${tokenFile})
+        if [[ ! $token =~ ^ghs_[A-Za-z0-9_]+$ ]]; then
+          echo "gh: the agents' GitHub App token is missing or malformed (${tokenFile}); refusing to fall back to the operator's credentials. GH_IDENTITY=operator overrides." >&2
           exit 1
         fi
         if (( $(date +%s) - $(stat -c %Y ${tokenFile}) > 3900 )); then
           echo "gh: the App token is older than an hour; gh-app-token.service is not renewing it" >&2
         fi
-        GH_TOKEN=$(<${tokenFile})
-        export GH_TOKEN
-        # gh must not prefer anything else it might find for the same host.
-        unset GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+        # An empty configuration directory leaves gh no stored login, host or
+        # protocol preference of the operator's to use instead of the token.
+        config_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/gh-app/gh-config"
+        (umask 077 && mkdir -p "$config_dir")
+        export GH_TOKEN=$token GH_CONFIG_DIR=$config_dir
+        unset GH_HOST GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
       fi
 
       exec ${lib.getExe pkgs.gh} "$@"
@@ -159,7 +199,10 @@ let
     '';
   };
 
-  laneGitConfig = pkgs.writeText "gh-app-lanes.gitconfig" ''
+  # The identity itself, read only through the nested conditions below.
+  laneIdentityConfig = pkgs.writeText "gh-app-identity.gitconfig" ''
+    [gh-app]
+    	lane = true
     [user]
     	name = ${botName}
     	email = ${botEmail}
@@ -170,11 +213,20 @@ let
     	insteadOf = ssh://git@github.com/
     # The operator's configuration rewrites every https push to SSH with the
     # operator's key. A longer identical prefix wins over that rewrite.
-    [url "https://github.com/tyrode-dev/"]
-    	pushInsteadOf = https://github.com/tyrode-dev/
+    [url "https://github.com/${app.owner}/"]
+    	pushInsteadOf = https://github.com/${app.owner}/
     [credential "https://github.com"]
     	helper =
     	helper = ${lib.getExe credentialHelper}
+  '';
+
+  # Included for any clone under ~/lanes; applies the identity only when a
+  # remote is a tyrode-dev repository, in either URL form.
+  laneGitConfig = pkgs.writeText "gh-app-lanes.gitconfig" ''
+    [includeIf "hasconfig:remote.*.url:https://github.com/${app.owner}/**"]
+    	path = ${laneIdentityConfig}
+    [includeIf "hasconfig:remote.*.url:git@github.com:${app.owner}/**"]
+    	path = ${laneIdentityConfig}
   '';
 in
 {
@@ -185,8 +237,13 @@ in
         message = "fleet/github-app.json has an unsupported schemaVersion";
       }
       {
-        assertion = app.slug != "" && app.appId > 0 && app.installationId > 0 && app.botUserId > 0;
-        message = "fleet/github-app.json is enabled but names no slug, appId, installationId and botUserId";
+        assertion =
+          app.slug != ""
+          && app.appId > 0
+          && app.installationId > 0
+          && app.botUserId > 0
+          && app.permissions != { };
+        message = "fleet/github-app.json is enabled but names no slug, appId, installationId, botUserId and permissions";
       }
       {
         assertion = reported == "/no-such-path" || reported == placed;
@@ -277,9 +334,14 @@ in
 
     home-manager.users.${username} = _: {
       home.packages = [ (lib.hiPrio ghShim) ];
-      xdg.configFile."git/gh-app-lanes".source = laneGitConfig;
-      programs.git.settings.includeIf."gitdir:${lanes}/".path =
-        "${homeDirectory}/.config/git/gh-app-lanes";
+      # `includes`, not `settings.includeIf`: Home Manager writes includes after
+      # the main configuration, so the bot's [user] overrides the operator's.
+      programs.git.includes = [
+        {
+          condition = "gitdir:${lanes}/";
+          path = laneGitConfig;
+        }
+      ];
     };
   };
 }

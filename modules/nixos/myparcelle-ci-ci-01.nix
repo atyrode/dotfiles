@@ -203,8 +203,12 @@ let
       # are volumes; the socket and the workspace are mounted by both
       # containers at the same paths, so bind mounts a job asks the engine for
       # (compose files, build contexts) resolve to the same files.
+      # The runner joins the engine's namespace: both use this IPv4-only
+      # bridge, and RootlessKit does not provide IPv6 to the slot.
       docker run --detach --rm --privileged --name "$name-engine" --network "$network" \
         --cpuset-cpus "$cpus" --memory="$engine_memory" --memory-swap="$engine_memory" \
+        --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+        --sysctl net.ipv6.conf.default.disable_ipv6=1 \
         --env DOCKER_TLS_CERTDIR= \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
         --volume "$name-data:/var/lib/docker" \
@@ -295,7 +299,7 @@ let
         [[ -S ${runtimeDir}/docker.sock ]] && break
         sleep 1
       done
-      docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+      docker network inspect "$network" >/dev/null 2>&1 || docker network create --ipv6=false "$network" >/dev/null
       # Serialize cold image pulls across slots. Each slot restarts on error,
       # rather than depending on a shared oneshot that can fail at boot.
       exec 9>${runtimeDir}/myparcelle-ci-image.lock
@@ -355,10 +359,10 @@ in
           type filter hook output priority filter; policy accept;
           meta skuid ${toString uid} ip daddr { ${
             lib.concatStringsSep ", " (machineAddress.blockedJobIPv4 ++ [ machineAddress.ipv4 ])
-          } } reject
+          } } counter reject
           meta skuid ${toString uid} ip6 daddr { ${
             lib.concatStringsSep ", " (machineAddress.blockedJobIPv6 ++ [ machineAddress.ipv6 ])
-          } } reject
+          } } counter reject
         }
       '';
     };

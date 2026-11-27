@@ -244,6 +244,15 @@ Home Manager links `~/.config/cloudflare/api-token` to the placed file.
 Rotation is a new token in Cloudflare followed by
 `clan vars generate --regenerate` of the var and an apply.
 
+Once [`fleet/github-app.json`](../fleet/github-app.json) enables it, dev-01
+also carries [`gh-app`](../modules/nixos/gh-app-token.nix): the private key of
+the GitHub App the agents act as ([GitHub App identity for
+agents](agent-tools.md#github-app-identity-for-agents)). Per machine and
+prompted, pasted whole, placed `0400` for the `gh-app` account that mints
+installation tokens; no agent reads it. Rotation is a new key in the App's
+settings, `clan vars generate --regenerate` of the var and an apply, then
+deleting the old key in GitHub.
+
 `ci-01` is deliberately outside the fleet-wide generators above (no shared
 secret, no Git identity, no overlay key; `checks/default.nix` asserts its
 declared set). Its machine key decrypts its one var, and it alone carries [`myparcelle-ci-github-token`](../modules/nixos/myparcelle-ci-ci-01.nix):

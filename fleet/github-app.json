@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "owner": "tyrode-dev",
+  "slug": "",
+  "appId": 0,
+  "installationId": 0,
+  "botUserId": 0,
+  "repositories": [
+    "myParcelle"
+  ]
+}

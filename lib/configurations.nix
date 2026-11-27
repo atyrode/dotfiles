@@ -213,6 +213,7 @@ let
       ++ lib.optionals (name == "dev-01") [
         ../modules/nixos/public-web-edge.nix
         ../modules/nixos/cloudflare-dns.nix
+        ../modules/nixos/gh-app-token.nix
         ../modules/nixos/caddy-on-demand-ask.nix
         ../modules/nixos/myparcelle-dev.nix
         ../modules/nixos/games.nix

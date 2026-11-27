@@ -34,13 +34,13 @@
 # Sizing (a starting point, tuned from the queue's real load). The machine has
 # 12 shared vCPUs and 32 GiB; about 3 GiB stay with the host (kernel, sshd, the
 # mirror, a deployment's Nix evaluation), so the account's slice is held to
-# 29 GiB and the slots' limits total 28 GiB. Two large slots hold four CPUs
-# and 8 GiB (5 for the runner, 3 for its engine) for Keycloak and the full
-# suite. Four small slots hold two CPUs and 3 GiB (2.5 and 0.5) for work such
-# as typecheck and browser smoke. The large slots own CPUs 0–7 and the four
-# small slots share 8–11 in pairs; a small runner sees two CPUs, as measured
-# by its affinity mask. CPU weight 50 and an 11-core quota favour the host
-# under contention.
+# 29 GiB and the slots' limits total 28.5 GiB. Two large slots hold four CPUs
+# and 7.5 GiB (5 for the runner, 2.5 for its engine, which Keycloak peaked at
+# 2.16 GiB in) for Keycloak and the full suite. Three small slots hold two CPUs
+# and 4.5 GiB (4 and 0.5): the types lane's `server.test` project was
+# OOM-killed (exit 137) in 2.5 GiB. The large slots own CPUs 0–7 and the small
+# slots share 8–11 (a small runner sees two CPUs, as measured by its affinity
+# mask). CPU weight 50 and an 11-core quota favour the host under contention.
 #
 # Isolation: each slot has its own network and no shared host-writable mount.
 # Jobs use GitHub Actions' ref-scoped cache, not a host browser-build store.
@@ -74,13 +74,13 @@ let
     "ci-01"
   ];
   small = {
-    runner = "2560m";
+    runner = "4g";
     engine = "512m";
     labels = labels ++ [ "ci-01-small" ];
   };
   large = {
     runner = "5g";
-    engine = "3g";
+    engine = "2560m";
     labels = labels ++ [ "ci-01-heavy" ];
   };
   slots = [
@@ -89,7 +89,6 @@ let
     (small // { cpus = "8-9"; })
     (small // { cpus = "10-11"; })
     (small // { cpus = "8-9"; })
-    (small // { cpus = "10-11"; })
   ];
   slotNumbers = lib.range 1 (builtins.length slots);
   slotOf = number: builtins.elemAt slots (number - 1);

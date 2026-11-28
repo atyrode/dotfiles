@@ -165,10 +165,11 @@ the fleet overlay; it is reached at its public name over SSH.
 [`modules/nixos/myparcelle-ci-ci-01.nix`](../modules/nixos/myparcelle-ci-ci-01.nix)
 declares six ephemeral runners under a local `myparcelle-ci` account with a
 rootless Docker engine. All slots carry `ci-01`; the three small slots
-add `ci-01-small` (two CPUs and 4.5 GiB), and two large ones add `ci-01-heavy`
-(four CPUs and 7.5 GiB). The labels distinguish capacity, not privilege. The
-combined 28.5 GiB slot budget fits under a 29 GiB account slice. These counts
-are a starting point to tune. Each slot runs one job in a fresh runner and
+add `ci-01-small` (two CPUs, a 0.5 GiB engine), and two large ones add `ci-01-heavy`
+(four CPUs, a 2.5 GiB engine). Runner containers have no memory limit of their own
+(the application under test reads its cgroup limit and refuses heavy work near it);
+the account's 29 GiB slice bounds them together. The labels distinguish capacity, not
+privilege. These counts are a starting point to tune. Each slot runs one job in a fresh runner and
 Docker-in-Docker engine, on its own network, with no writable state that
 another job can mount. Jobs use GitHub's ref-scoped cache, not a persistent
 browser-build directory on the host. Fresh engines pull through the public

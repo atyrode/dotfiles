@@ -24,10 +24,13 @@
 #              by sops-nix. Only root's ExecStartPre reads it; the CI account
 #              receives the single-use runner configuration and nothing else.
 #   labels     every slot carries `self-hosted linux x64 ci-01 ci-01-heavy
-#              ci-01-small`: slots are identical and take any job, so
-#              workflows and the router need no size-specific routing. The
-#              labels select capacity, never privilege. Names are
-#              `ci-01-<slot>-<epoch>`.
+#              ci-01-small`: slots are identical and take any job. All but
+#              the last also carry `ci-01-pr`, which every pull_request job
+#              asks for (the router writes it into the variables those jobs
+#              read), so the last slot is a reserve that only merge-queue,
+#              push, schedule and dispatch jobs can use: merge groups were
+#              starving behind queued PR runs. The labels select capacity,
+#              never privilege. Names are `ci-01-<slot>-<epoch>`.
 #   image      the public image myParcelle publishes, pinned by digest like
 #              every other input of this repository (Chromium, Firefox and
 #              WebKit included). To follow a new image, bump `runnerImage` from
@@ -86,15 +89,21 @@ let
     "x64"
     "ci-01"
   ];
-  slotLabels = labels ++ [
-    "ci-01-heavy"
-    "ci-01-small"
-  ];
+  # Slots 1..(count - 1) accept pull-request jobs; the last is the merge reserve.
+  slotCount = 4;
+  slotLabels =
+    slot:
+    labels
+    ++ [
+      "ci-01-heavy"
+      "ci-01-small"
+    ]
+    ++ lib.optional (slot < slotCount) "ci-01-pr";
   # Memory limit of every slot's engine, and the core budget each job sizes
   # its parallelism to (4 slots x 3 = the 12 vCPUs).
   engineMemory = "2560m";
   gateCores = 3;
-  slotNumbers = lib.range 1 4;
+  slotNumbers = lib.range 1 slotCount;
 
   # Root-only, placed by sops-nix from the clan var below.
   tokenFile = "/run/secrets/vars/myparcelle-ci-github-token/token";
@@ -439,6 +448,10 @@ in
             "nftables.service"
           ];
           wantedBy = [ "multi-user.target" ];
+          # A switch must never restart a running job. Labels and limits are
+          # read when a runner is minted, so a changed definition (a new label,
+          # say) reaches each slot at its next start, after its current job.
+          restartIfChanged = false;
           # An unverified teardown leaves the durable lease in place. The
           # operator checks job state before releasing the slot again.
           unitConfig.ConditionPathExists = "!/var/lib/myparcelle-ci-slot-${toString slot}/lease";
@@ -453,7 +466,7 @@ in
             ExecStartPre = [
               "${asCI} ${lib.getExe prepare} ${slotNetwork slot}"
               "${lib.getExe reserveSlot} ${toString slot}"
-              "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON slotLabels)}"
+              "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotLabels slot))}"
             ];
             ExecStart = "${lib.getExe startJob} ${toString slot} ${engineMemory} ${slotNetwork slot}";
             ExecStopPost = "${lib.getExe stopJob} ${toString slot}";

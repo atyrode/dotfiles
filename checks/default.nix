@@ -364,6 +364,12 @@ let
     myparcelle-ci-clever-guard-budget = import ./fleet/myparcelle-ci-clever-guard-budget.nix {
       inherit pkgs;
     };
+    myparcelle-ci-admit = import ./fleet/myparcelle-ci-admit.nix {
+      inherit pkgs;
+    };
+    myparcelle-ci-admit-vm = import ./fleet/myparcelle-ci-admit-vm.nix {
+      inherit pkgs;
+    };
     # Two unrelated reasons land checks on this one leg.
     #
     # Platform-independent lints: their output is a pure function of the

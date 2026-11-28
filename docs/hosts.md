@@ -166,7 +166,14 @@ the fleet overlay; it is reached at its public name over SSH.
 declares four identical ephemeral runners under a local `myparcelle-ci` account
 with a rootless Docker engine. Every slot carries all of `ci-01`,
 `ci-01-heavy` and `ci-01-small`, so any slot takes any job and no workflow or
-router variable depends on a slot size. This replaced a fixed split of large
+router variable depends on a slot size, except that the first three also carry
+`ci-01-pr`, which every pull-request job asks for: the fourth slot is a reserve
+that only merge-queue, push, schedule and dispatch jobs can use (merge groups
+had waited 52 minutes behind queued pull-request runs). A switch does not
+restart a running runner, so a changed definition reaches each slot at its
+next registration, after its current job; the router writes the matching
+variables in myParcelle (`deploy/ci-runners/router.ts`). Four identical slots
+replaced a fixed split of large
 and small slots because browser jobs queued about 18 minutes for the two
 large slots while the small slots sat idle. Each slot has a 2.5 GiB engine and
 no CPU pinning (cgroup weights share the account's 11-core quota); each

@@ -1,6 +1,6 @@
 # One private Tern workspace
 
-Open **`https://tern.tyrode.dev`** in a paired browser, or connect from the first window of an enrolled Mac or Windows Tern desktop app using **`tern-workspace@tern.tyrode.dev:944`**. Both reach the same daemon on `dev-01` over the private WireGuard tunnel. Closing a tab or shutting down a client does not stop a server-side shell. Native access uses QUIC, not SSH, the public web edge, or a relay.
+Open **`https://tern.tyrode.dev`** in a paired browser, or connect from the first window of an enrolled Mac or Windows Tern desktop app, or the native Tern app on an enrolled Android phone, using **`tern-workspace@tern.tyrode.dev:944`**. Both reach the same daemon on `dev-01` over the private WireGuard tunnel. Closing a tab or shutting down a client does not stop a server-side shell. Native access uses QUIC, not SSH, the public web edge, or a relay.
 
 `tern-workspace-daemon` owns the panes. The `tern-workspace-web` (HTTPS via private Caddy) and `tern-workspace-native` (QUIC) frontends attach to its existing Unix socket as `tern-workspace`. Restarting a frontend alone leaves the daemon and running pane processes alone. The daemon's socket lives under the dedicated workspace home because Tern saves its workspace state beside that socket. On a clean daemon restart, Tern restores saved sessions, tab and pane layouts, working directories, and scrollback. Restarting the daemon or rebooting the server still ends running processes: a restored pane starts a new shell, not the old process or its running command. The workspace starts empty on first provision, not each time a device connects.
 
@@ -32,13 +32,14 @@ The workspace runs as `tern-workspace`, not the SSH administrator. Its writable 
    | Mac (`macbook`) | Run `atyrode apply macbook`. nix-darwin configures WireGuard and its native launchd job from the machine's Clan key; no separate GUI profile or On-Demand switch. | The tunnel starts at boot. Use a browser or enroll Tern desktop as described below. |
    | Windows (`wsl`) | Open **Windows Terminal as Administrator**, enter the managed WSL distro (`wsl -d atyrode-nixos`), and run `atyrode apply wsl`. Its Windows phase installs WireGuard and configures the native `atyrode-tern` tunnel, not a VPN inside WSL. Enroll the **public** key the phase reports as `peers.windows.publicKey`, publish and apply on `dev-01`. Running `atyrode windows plan` or `atyrode windows apply` in the managed distro inspects or reruns just that phase. WSL `sudo` alone does not elevate Windows. | Windows Service Control Manager starts the tunnel without WSL, a terminal, a tray window or another UAC approval. Leave unrelated profiles untouched; an automatically chosen local listen port is normal. |
    | iPhone | In the WireGuard app, create a tunnel and **generate a new key on the phone**. Enroll only its public key as `peers.iphone.publicKey`, publish and apply on `dev-01`. Use the interface address and peer Allowed IPs printed below. For its one peer use the [server public key](../vars/per-machine/dev-01/tern-workspace-wireguard/publickey/value), endpoint `dev-01.tyrode.dev:51837`, and keepalive `25`. Leave DNS and listen port unset. Approve the iOS VPN permission and enable On-Demand for Wi-Fi and cellular. | iOS brings up the split tunnel. Open the same URL in a WebGPU-capable browser. There is no `atyrode apply` on iOS. |
+   | Android | In the Android WireGuard app, create a tunnel and **generate a new key on the phone**. Enroll only its public key as `peers.android.publicKey`, publish and apply on `dev-01`. Use the Android interface address and peer Allowed IPs printed below. Configure it exactly as for the iPhone: one peer with the same server public key, endpoint `dev-01.tyrode.dev:51837`, keepalive `25`, DNS and listen port unset, and only the server's `/32` as Allowed IPs (a dedicated split tunnel, no full-tunnel or other routes). Approve the Android VPN permission. | Android brings up the split tunnel; the browser can use the same URL, and native access is enrolled separately below. There is no `atyrode apply` on Android. |
 
    On Windows, reserve the native adapter name `atyrode-tern` and the workspace host route (`serverAddress/32`) for this tunnel. The Windows Plan and Apply phases refuse a conflicting native adapter or route during provisioning. At boot, Windows Service Control Manager starts WireGuard itself, not a background conflict monitor. Do not assign the same adapter name or host route to another VPN later.
 
-   From the checkout root, print the iPhone WireGuard fields:
+   From the checkout root, print the WireGuard fields for a phone (`iphone` or `android`):
 
    ```sh
-   jq -r '"Interface address: \(.clients.iphone)/32", "Peer Allowed IPs: \(.serverAddress)/32"' \
+   jq -r --arg device android '"Interface address: \(.clients[$device])/32", "Peer Allowed IPs: \(.serverAddress)/32"' \
      fleet/machines/dev-01/tern-network.json
    ```
 
@@ -64,6 +65,18 @@ The workspace runs as `tern-workspace`, not the SSH administrator. Its writable 
 3. With WireGuard up, in Tern's **first** desktop window choose **Add remote host** and enter `tern-workspace@tern.tyrode.dev:944`. Do **not** choose setup over SSH: this listener is already managed by systemd. Compare the prompt with the fingerprint obtained on the server before trusting that hostname and port. Stop if it differs.
 
 The browser workspace uses Tern's first-window key (`""`). Tern matches the local window key on the host; a later desktop window can show an empty or different session set on the very same daemon. Tern does not let the client choose the remote window key ([upstream #204](https://github.com/stencil-hq/tern-sdk/issues/204)). An empty window is not proof of attachment to the shared pane.
+
+## Enroll Android native
+
+Native access on Android is optional and separate from both WireGuard and browser pairing: the browser token is not needed, and a browser can be used separately.
+
+1. In the Android Tern app, choose **Copy device SSH key**. This copies only the public `ssh-ed25519 <public-key>` line; enroll those two fields (no trailing comment) as `peers.android.nativePublicKey` in the [peer inventory](../fleet/tern-workspace.nix). Publish and apply on `dev-01`. The private half stays in the app. Never reuse a desktop's Tern identity or key for the phone.
+2. Obtain the native host's `SHA256:` fingerprint independently, with the command under [Enroll a native desktop](#enroll-a-native-desktop).
+3. With the Android WireGuard tunnel up, in Tern choose **Add host by address** with host `tern.tyrode.dev:944` and username `tern-workspace`, then connect directly. Do **not** use setup over SSH or a QR code. Compare the host-key prompt with the fingerprint from the server and stop if it differs.
+
+Revoke Android native access with `peers.android.nativePublicKey = null`; revoke everything by also nulling its `publicKey`.
+
+**Not yet verified on real Android:** a direct attach from the Android app to the `dev-01` workspace has not been exercised on hardware. Treat the first-window pane showing the browser's **same running pane**, with input visible from both clients, as the acceptance test; it is pending, not yet passed.
 
 ## Verify and operate
 

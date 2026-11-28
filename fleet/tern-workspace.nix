@@ -1,5 +1,6 @@
-# Only public topology and peer keys belong here. Windows and iPhone generate
-# their private keys in the native WireGuard clients; null means not enrolled.
+# Only public topology and peer keys belong here. Windows, iPhone and Android
+# generate their private keys in the native WireGuard clients (Android also
+# generates its native SSH key locally); null means not enrolled.
 let
   network = builtins.fromJSON (builtins.readFile ./machines/dev-01/tern-network.json);
 
@@ -66,6 +67,11 @@ in
       address = network.clients.iphone;
       publicKey = null;
       nativePublicKey = null;
+    };
+    android = {
+      address = network.clients.android;
+      publicKey = "Gt1NbaQPM5dRcqf/vGzeP2RZZIROg6g/skttz6czzw8=";
+      nativePublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJYqPc8e5hBA8K3l8iuv8rvGeFyCu2B8sgbxv0hD0dU/";
     };
   };
 }

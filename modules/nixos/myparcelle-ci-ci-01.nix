@@ -34,13 +34,18 @@
 # Sizing (a starting point, tuned from the queue's real load). The machine has
 # 12 shared vCPUs and 32 GiB; about 3 GiB stay with the host (kernel, sshd, the
 # mirror, a deployment's Nix evaluation), so the account's slice is held to
-# 29 GiB and the slots' limits total 28.5 GiB. Two large slots hold four CPUs
-# and 7.5 GiB (5 for the runner, 2.5 for its engine, which Keycloak peaked at
-# 2.16 GiB in) for Keycloak and the full suite. Three small slots hold two CPUs
-# and 4.5 GiB (4 and 0.5): the types lane's `server.test` project was
-# OOM-killed (exit 137) in 2.5 GiB. The large slots own CPUs 0–7 and the small
-# slots share 8–11 (a small runner sees two CPUs, as measured by its affinity
-# mask). CPU weight 50 and an 11-core quota favour the host under contention.
+# 29 GiB. Each slot's engine (DinD) has its own limit, 2.5 GiB on the large
+# slots (Keycloak peaked at 2.16 GiB) and 0.5 GiB on the small ones. The
+# runner containers deliberately have NO memory limit, as on dev-01: the
+# application under test reads its cgroup's memory.max and refuses heavy
+# document work near it, and counts page cache. With a 4 GiB runner limit its
+# `bun` lane failed (plu-admin-questions-documents, cgroupBytes 2.9 GB) though
+# nothing was OOM-killed; with 2.5 GiB the types lane was OOM-killed (exit 137).
+# The trade-off: no per-runner memory wall. A runaway job can take memory from
+# the other slots up to the account slice's 29 GiB, never the host's 3 GiB
+# reserve. Two large slots own four CPUs each (0–7), three small slots share
+# 8–11 and see two (by affinity mask). CPU weight 50 and an 11-core quota favour
+# the host under contention.
 #
 # Isolation: each slot has its own network and no shared host-writable mount.
 # Jobs use GitHub Actions' ref-scoped cache, not a host browser-build store.
@@ -74,12 +79,10 @@ let
     "ci-01"
   ];
   small = {
-    runner = "4g";
     engine = "512m";
     labels = labels ++ [ "ci-01-small" ];
   };
   large = {
-    runner = "5g";
     engine = "2560m";
     labels = labels ++ [ "ci-01-heavy" ];
   };
@@ -196,9 +199,8 @@ let
     text = ''
       slot=$1
       cpus=$2
-      runner_memory=$3
-      engine_memory=$4
-      network=$5
+      engine_memory=$3
+      network=$4
       name=myparcelle-ci-runner-$slot
       IFS= read -r ACTIONS_RUNNER_INPUT_JITCONFIG
       export ACTIONS_RUNNER_INPUT_JITCONFIG
@@ -227,7 +229,7 @@ let
       # As root: the image's own entry gives the `runner` account its home and
       # waits up to 60 s for the engine, then drops to `runner`.
       docker run --rm --name "$name" --network "container:$name-engine" --user 0 \
-        --cpuset-cpus "$cpus" --memory="$runner_memory" --memory-swap="$runner_memory" \
+        --cpuset-cpus "$cpus" \
         --env ACTIONS_RUNNER_INPUT_JITCONFIG --env DOCKER_HOST=unix:///var/run/engine/docker.sock \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
         --entrypoint /usr/local/bin/myparcelle-ci-entry ${runnerImage} job
@@ -454,7 +456,7 @@ in
               "${lib.getExe reserveSlot} ${toString slot}"
               "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotOf slot).labels)}"
             ];
-            ExecStart = "${lib.getExe startJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).runner} ${(slotOf slot).engine} ${slotNetwork slot}";
+            ExecStart = "${lib.getExe startJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).engine} ${slotNetwork slot}";
             ExecStopPost = "${lib.getExe stopJob} ${toString slot}";
             Restart = "always";
             RestartSec = 5;

@@ -17,14 +17,32 @@
 # `auth.myparcelle.tyrode.dev`: Caddy 2.10+ skips issuing a managed name a
 # wildcard site covers, which would leave development sign-in without a
 # certificate. DNS: one `*.preview.myparcelle.tyrode.dev` A record.
-_: {
+{ config, lib, ... }:
+{
   atyrode.caddy.onDemandAsk."preview.myparcelle.tyrode.dev" = "127.0.0.1:4300";
 
   services.caddy.virtualHosts = {
-    "myparcelle.tyrode.dev".extraConfig = ''
-      encode zstd gzip
-      reverse_proxy 127.0.0.1:4173
-    '';
+    "myparcelle.tyrode.dev".extraConfig =
+      lib.optionalString config.atyrode.myparcelle.ciStatusWebhook.enable ''
+        @ciWebhook path /hooks/github/ci-status/myparcelle /hooks/github/ci-status/dotfiles
+        handle @ciWebhook {
+          request_body {
+            max_size 2MiB
+          }
+          reverse_proxy 127.0.0.1:9419 {
+            transport http {
+              dial_timeout 1s
+              response_header_timeout 6s
+            }
+          }
+        }
+      ''
+      + ''
+        handle {
+          encode zstd gzip
+          reverse_proxy 127.0.0.1:4173
+        }
+      '';
     "auth.myparcelle.tyrode.dev".extraConfig = ''
       @public path /realms/myparcelle/* /resources/* /robots.txt
       handle @public {

@@ -43,9 +43,12 @@
 # nothing was OOM-killed; with 2.5 GiB the types lane was OOM-killed (exit 137).
 # The trade-off: no per-runner memory wall. A runaway job can take memory from
 # the other slots up to the account slice's 29 GiB, never the host's 3 GiB
-# reserve. Two large slots own four CPUs each (0–7), three small slots share
-# 8–11 and see two (by affinity mask). CPU weight 50 and an 11-core quota favour
-# the host under contention.
+# reserve. Three large slots own four CPUs each (0–3, 4–7, 8–11) and the one
+# small slot shares 10–11 with the third large slot, seeing two (by affinity
+# mask); a mostly idle small slot costs the large ones little. CPU weight 50
+# and an 11-core quota favour the host under contention. Three large slots
+# because browser jobs (ci-01-heavy) queued ~18 minutes behind two while the
+# small slots sat idle; the counts remain a starting point to tune.
 #
 # Isolation: each slot has its own network and no shared host-writable mount.
 # Jobs use GitHub Actions' ref-scoped cache, not a host browser-build store.
@@ -89,9 +92,8 @@ let
   slots = [
     (large // { cpus = "0-3"; })
     (large // { cpus = "4-7"; })
-    (small // { cpus = "8-9"; })
+    (large // { cpus = "8-11"; })
     (small // { cpus = "10-11"; })
-    (small // { cpus = "8-9"; })
   ];
   slotNumbers = lib.range 1 (builtins.length slots);
   slotOf = number: builtins.elemAt slots (number - 1);

@@ -163,10 +163,13 @@ the runner registration token: none of the operator's shared secrets (agent
 broker token, session archive, custody keys), no Git identity, and no place on
 the fleet overlay; it is reached at its public name over SSH.
 [`modules/nixos/myparcelle-ci-ci-01.nix`](../modules/nixos/myparcelle-ci-ci-01.nix)
-declares six ephemeral runners under a local `myparcelle-ci` account with a
-rootless Docker engine. All slots carry `ci-01`; the three small slots
-add `ci-01-small` (two CPUs, a 0.5 GiB engine), and two large ones add `ci-01-heavy`
-(four CPUs, a 2.5 GiB engine). Runner containers have no memory limit of their own
+declares four ephemeral runners under a local `myparcelle-ci` account with a
+rootless Docker engine. All slots carry `ci-01`; the one small slot
+adds `ci-01-small` (two CPUs, a 0.5 GiB engine), and the three large ones add
+`ci-01-heavy` (four CPUs each, a 2.5 GiB engine). The split moved from two
+large and three small slots because browser jobs queued about 18 minutes for
+the two large slots while the small slots sat idle. The small slot shares its
+two CPUs with the third large slot. Runner containers have no memory limit of their own
 (the application under test reads its cgroup limit and refuses heavy work near it);
 the account's 29 GiB slice bounds them together. The labels distinguish capacity, not
 privilege. These counts are a starting point to tune. Each slot runs one job in a fresh runner and

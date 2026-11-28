@@ -216,12 +216,20 @@ installation, and NixOS repairs belong to the consuming infrastructure.
 
 ### Binary cache policy
 
-CI verifies every host closure and the platform checks without publishing a
-custom binary cache. It substitutes from `cache.nixos.org` and builds paths
-that the official cache does not provide. A green `ci-gate` confirms
+CI verifies host closures and platform checks without publishing a custom
+binary cache. It substitutes from `cache.nixos.org` and builds paths that
+the official cache does not provide. A green `ci-gate` confirms the selected
 verification; it does not promise that a machine can download every custom
 path without building locally. Development-image publication remains
 separate and continues after successful main verification.
+
+Main pushes and manual runs keep the full native matrix. Pull requests
+with only explicitly allowlisted Linux paths (such as the `ci-01` NixOS
+module) and documentation run both Linux legs. The changed paths come from
+the pull request's merge checkout, relative to its first parent. Shared,
+unknown, workflow, and classifier paths keep the full matrix. A
+documentation-only pull request uses the documentation drift guard.
+The [path classifier](../ci/classify-ci-paths.sh) owns the allowlist.
 
 `fleet/system-boundary.json` names the official cache and its public signing
 key. `modules/shared/binary-caches.nix` derives the single-entry lists used by

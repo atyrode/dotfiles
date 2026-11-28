@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: read
-  # The classify job lists pull-request files.
-  pull-requests: read
 
 concurrency:
   group: nix-${{ github.workflow }}-${{ github.ref }}
@@ -33,24 +31,27 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
+          fetch-depth: 2
 
       - name: Classify changed paths
         id: classify
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
         run: |
           # Pushes to main and manual runs retain the complete native matrix.
           code=true
           darwin=true
-          if [ -n "$PR_NUMBER" ]; then
-            if files="$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" \
-              --paginate --jq '.[].filename')" && [ -n "$files" ]; then
-              classification="$(printf '%s\n' "$files" | ./ci/classify-ci-paths.sh)"
-              code="$(printf '%s\n' "$classification" | sed -n 's/^code=//p')"
-              darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"
-            fi
+          # Classify the same merge tree that jobs check, relative to its base.
+          # Disabling rename detection includes both the old and new paths.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] \
+            && parents="$(git rev-list --parents -n 1 HEAD)" \
+            && read -r revision base pr_head extra <<< "$parents" \
+            && [ "$revision" = "$GITHUB_SHA" ] \
+            && [ -n "$base" ] && [ -n "$pr_head" ] && [ -z "$extra" ] \
+            && git cat-file -e "$pr_head^{commit}" \
+            && classification="$(git diff --name-only --no-renames -z "$base" "$revision" -- \
+              | ./ci/classify-ci-paths.sh)"; then
+            code="$(printf '%s\n' "$classification" | sed -n 's/^code=//p')"
+            darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"
           fi
           # The system set is centralized in ci/ci.json; keep this
           # static matrix in sync with it.

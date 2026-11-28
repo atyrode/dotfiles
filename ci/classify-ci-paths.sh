@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# Classify pull-request paths for CI. Read one repository-relative path per line
-# from stdin and write GitHub Actions outputs to stdout. An empty input is
-# deliberately fail-safe: callers must not skip verification when file listing
-# fails or is incomplete.
+# Read NUL-delimited repository-relative paths from stdin and write GitHub
+# Actions outputs. An empty or unterminated listing keeps full verification.
 set -euo pipefail
 
 code=false
 darwin=false
 saw_path=false
 
-while IFS= read -r path; do
+while IFS= read -r -d '' path; do
   [ -n "$path" ] || continue
   saw_path=true
 
@@ -26,6 +24,12 @@ while IFS= read -r path; do
       code=true
       ;;
 
+    # Imported only by the ci-01 NixOS constructor in lib/configurations.nix.
+    # Other NixOS files, including the constructor, are not allowlisted here.
+    modules/nixos/myparcelle-ci-ci-01.nix)
+      code=true
+      ;;
+
     # Every other path is shared, Darwin-specific, or not yet proven inert.
     # New paths must opt in here only after establishing their platform scope.
     *)
@@ -35,7 +39,7 @@ while IFS= read -r path; do
   esac
 done
 
-if ! "$saw_path"; then
+if ! "$saw_path" || [ -n "$path" ]; then
   code=true
   darwin=true
 fi

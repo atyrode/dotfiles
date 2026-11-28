@@ -8,7 +8,7 @@ assert_classification() {
   local expected actual
   expected="$1"
   shift
-  actual="$(printf '%s\n' "$@" | bash "$classifier")"
+  actual="$(printf '%s\0' "$@" | bash "$classifier")"
   if [ "$actual" != "$expected" ]; then
     printf 'classification mismatch for: %s\nexpected:\n%s\nactual:\n%s\n' "$*" "$expected" "$actual" >&2
     return 1
@@ -26,10 +26,25 @@ assert_classification $'code=true\ndarwin=true' .github/workflows/nix.yml
 assert_classification $'code=true\ndarwin=false' modules/home/desktop/linux.nix
 assert_classification $'code=true\ndarwin=false' modules/home/desktop/linux.nix docs/guide.md
 assert_classification $'code=true\ndarwin=true' modules/home/desktop/linux.nix unknown/new-file
+assert_classification $'code=true\ndarwin=false' modules/nixos/myparcelle-ci-ci-01.nix
+assert_classification $'code=true\ndarwin=false' modules/nixos/myparcelle-ci-ci-01.nix docs/hosts.md
+assert_classification $'code=true\ndarwin=true' lib/configurations.nix modules/nixos/myparcelle-ci-ci-01.nix
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix modules/nixos/unknown.nix
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix .github/workflows/nix.yml
+assert_classification $'code=true\ndarwin=true' ci/classify-ci-paths.sh modules/nixos/myparcelle-ci-ci-01.nix
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix ci/classify-ci-paths-test.sh
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix modules/shared/previous-name.nix
+assert_classification $'code=true\ndarwin=true' $'modules/nixos/myparcelle-ci-ci-01.nix\ndocs/hosts.md'
 assert_classification $'code=true\ndarwin=true' unknown/new-file
 
 empty_output="$(printf '' | bash "$classifier")"
 if [ "$empty_output" != $'code=true\ndarwin=true' ]; then
   printf 'empty input must fail safe; got:\n%s\n' "$empty_output" >&2
+  exit 1
+fi
+
+partial_output="$(printf 'docs/hosts.md\0modules/shared/partial' | bash "$classifier")"
+if [ "$partial_output" != $'code=true\ndarwin=true' ]; then
+  printf 'unterminated input must fail safe; got:\n%s\n' "$partial_output" >&2
   exit 1
 fi

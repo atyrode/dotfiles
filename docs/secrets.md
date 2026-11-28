@@ -252,6 +252,15 @@ mints its single-use runner registrations. Per machine and prompted, placed
 root-only; only the units' root pre-start reads it. Rotation is
 `clan vars generate --regenerate` of the var and an apply.
 
+The dev-01 [CI status webhook ingress](../modules/nixos/myparcelle-ci-status-webhook.nix)
+loads two host-encrypted systemd credentials from `/etc/credstore.encrypted`.
+These are application enrollment secrets generated on that host, not Clan vars:
+only its dedicated ingress unit receives them; the user-level status relay
+reads non-secret wake markers. Follow the
+[CI status relay runbook](https://github.com/tyrode-dev/myParcelle/blob/main/docs/workflows/DELIVERY.md#ci-status-relay).
+The route and unit are off until a reviewed dev-01 revision sets
+`atyrode.myparcelle.ciStatusWebhook.enable = true;`.
+
 The [private Tern workspace](tern-workspace.md#first-provision) has separate
 per-machine WireGuard keys and a dev-01-only DNS-01 credential. Windows and
 iOS generate their own private keys; only their public peers enter the fleet

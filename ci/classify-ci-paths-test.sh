@@ -26,6 +26,14 @@ assert_classification $'code=true\ndarwin=true' .github/workflows/nix.yml
 assert_classification $'code=true\ndarwin=false' modules/home/desktop/linux.nix
 assert_classification $'code=true\ndarwin=false' modules/home/desktop/linux.nix docs/guide.md
 assert_classification $'code=true\ndarwin=true' modules/home/desktop/linux.nix unknown/new-file
+assert_classification $'code=true\ndarwin=false' modules/nixos/myparcelle-ci-ci-01.nix
+assert_classification $'code=true\ndarwin=false' modules/nixos/myparcelle-ci-ci-01.nix docs/hosts.md
+assert_classification $'code=true\ndarwin=true' lib/configurations.nix modules/nixos/myparcelle-ci-ci-01.nix
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix modules/nixos/unknown.nix
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix .github/workflows/nix.yml
+assert_classification $'code=true\ndarwin=true' ci/classify-ci-paths.sh modules/nixos/myparcelle-ci-ci-01.nix
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix ci/classify-ci-paths-test.sh
+assert_classification $'code=true\ndarwin=true' modules/nixos/myparcelle-ci-ci-01.nix modules/shared/previous-name.nix
 assert_classification $'code=true\ndarwin=true' unknown/new-file
 
 empty_output="$(printf '' | bash "$classifier")"

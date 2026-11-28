@@ -26,6 +26,12 @@ while IFS= read -r path; do
       code=true
       ;;
 
+    # Imported only by the ci-01 NixOS constructor in lib/configurations.nix.
+    # Other NixOS files, including the constructor, are not allowlisted here.
+    modules/nixos/myparcelle-ci-ci-01.nix)
+      code=true
+      ;;
+
     # Every other path is shared, Darwin-specific, or not yet proven inert.
     # New paths must opt in here only after establishing their platform scope.
     *)

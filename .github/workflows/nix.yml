@@ -36,6 +36,7 @@ jobs:
 
       - name: Classify changed paths
         id: classify
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -45,8 +46,14 @@ jobs:
           code=true
           darwin=true
           if [ -n "$PR_NUMBER" ]; then
+            # A rename also removes its former path, which may be shared.
+            # At the API's 3,000-file limit the list might omit shared changes.
             if files="$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" \
-              --paginate --jq '.[].filename')" && [ -n "$files" ]; then
+              --paginate --slurp | jq -r '
+                add | select(length < 3000) | .[] | .filename, (.previous_filename // empty)
+                | if contains("\n") then error("newline in changed path") else . end
+              ')" \
+              && [ -n "$files" ]; then
               classification="$(printf '%s\n' "$files" | ./ci/classify-ci-paths.sh)"
               code="$(printf '%s\n' "$classification" | sed -n 's/^code=//p')"
               darwin="$(printf '%s\n' "$classification" | sed -n 's/^darwin=//p')"

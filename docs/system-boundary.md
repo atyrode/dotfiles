@@ -225,10 +225,11 @@ separate and continues after successful main verification.
 
 Main pushes and manual runs keep the full native matrix. Pull requests
 with only explicitly allowlisted Linux paths (such as the `ci-01` NixOS
-module) and documentation run both Linux legs. Shared, unknown, workflow,
-and classifier paths keep the full matrix. A documentation-only pull
-request uses the documentation drift guard. The [path classifier](../ci/classify-ci-paths.sh)
-owns the allowlist.
+module) and documentation run both Linux legs. The changed paths come from
+the pull request's merge checkout, relative to its first parent. Shared,
+unknown, workflow, and classifier paths keep the full matrix. A
+documentation-only pull request uses the documentation drift guard.
+The [path classifier](../ci/classify-ci-paths.sh) owns the allowlist.
 
 `fleet/system-boundary.json` names the official cache and its public signing
 key. `modules/shared/binary-caches.nix` derives the single-entry lists used by

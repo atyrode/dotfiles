@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "owner": "tyrode-dev",
+  "slug": "",
+  "appId": 0,
+  "installationId": 0,
+  "botUserId": 0,
+  "repositories": [
+    "myParcelle"
+  ],
+  "permissions": {
+    "actions": "write",
+    "checks": "read",
+    "contents": "write",
+    "issues": "write",
+    "metadata": "read",
+    "pull_requests": "write",
+    "statuses": "read"
+  },
+  "workflowsWrite": true,
+  "workflowsWriteNote": "OPTION, recommended on: adds workflows:write to the token so agents can push edits to .github/workflows (CI PRs). Risk: those files run with the repository's CI secrets and permissions once merged. false = refuse it; also leave Workflows unticked on the App."
+}

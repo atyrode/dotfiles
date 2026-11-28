@@ -552,12 +552,50 @@ machines.
 Token rotation follows [the secret owner](secrets.md#declaring-a-secret), not
 an independent agent-tool ceremony.
 
+## GitHub App identity for agents
+
+The agents on dev-01 act on GitHub as a GitHub App owned by the `tyrode-dev`
+organisation, installed on `tyrode-dev/myParcelle` only, not as the operator:
+their `gh` calls spend the installation's rate limit (15,000 requests an hour
+on an Enterprise Cloud organisation, 5,000 otherwise) and their commits, pull
+requests and comments carry the App's bot. [`fleet/github-app.json`](../fleet/github-app.json)
+names the App; [`modules/nixos/gh-app-token.nix`](../modules/nixos/gh-app-token.nix)
+defines nothing until its `enabled` is true, which happens in the pull request
+that records the App's ids after the operator has created it.
+
+The OMP broker above is not involved: it vaults model-provider credentials and
+cannot mint GitHub tokens. The App's private key is a per-machine, prompted
+clan var (`gh-app`, [secrets](secrets.md#declaring-a-secret) owns rotation),
+placed `0400` for the `gh-app` system account. `gh-app-token.service` runs as
+that account every thirty minutes, signs a ten-minute JWT and exchanges it for
+a one-hour installation token limited to the listed repositories, written to
+`/run/gh-app-token/token` for the operator account to read. The key never
+leaves that account's file and no agent receives it.
+
+In a tyrode-dev clone under `~/lanes/` (and wherever `GH_IDENTITY=app`) the `gh`
+on PATH is a shim that reads the token file on every call, so nothing refreshes
+per session; with no valid token it fails rather than use the operator's
+`gh auth` login, and `GH_IDENTITY` must be exactly `app` or `operator`
+(`operator` opts out). A Git include, written after the main configuration so
+it wins over the operator's `[user]`, applies only to those clones: the bot's
+name and noreply address, local signing off (the signing key says a commit is
+the operator's), HTTPS for fetch and push and the same token as credential.
+Other clones in `~/lanes/` (dotfiles) and everywhere else keep the operator's
+identity and credentials. The token request lists its permissions explicitly
+in `fleet/github-app.json`; `workflowsWrite` there is an option that adds
+`workflows: write` so agents can edit `.github/workflows`. An installation
+token cannot call `/user`: `gh auth status`, `--author @me` and `--assignee @me`
+fail under it by design. Any process running as the operator account, `ompu`
+sandboxes included, can read the token file, as it could already read the
+operator's SSH key and `gh` login.
+
 ## State ownership
 
 | State | Owner |
 | --- | --- |
 | `~/.omp/agent/` and named profile roots | OMP/operator mutable configuration, authentication, sessions, and UI state; the one exception is `~/.omp/agent/AGENTS.md`, a Home Manager symlink to the generated agent context |
 | `~/.omp/auth-broker.token` | Home Manager link to the `omp-auth-broker` clan var sops-nix places; the shared bearer token the broker checks and every client sends, mode `0600` |
+| `/run/gh-app-token/` | `gh-app-token.service`; the renewed installation token and its expiry, group-readable by the operator account, gone at reboot |
 | `$XDG_CACHE_HOME/atyrode/omp-auth-broker/` | Broker client snapshot cache |
 | `$XDG_STATE_HOME/atyrode/omp-untrusted/` | `ompu`; isolated mutable sandbox state |
 | `~/.local/state/atyrode/omp-plain-seed/` | Plain-OMP seeder; last-applied seed and drift state |

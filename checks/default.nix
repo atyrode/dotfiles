@@ -166,7 +166,7 @@ let
   # are on every machine -- every one a member of the `fleet` WireGuard
   # overlay, whose service mints a key pair and an address allocation per
   # machine; dev-01 alone holds the private Tern workspace DNS credential and
-  # ci-01 alone the token that mints its runners.
+  # ci-01 alone the token that mints its runners, and dev-01 the agents' GitHub App key once fleet/github-app.json enables it.
   fleetGenerators = [
     "babel-custody"
     "git-identity"
@@ -175,6 +175,7 @@ let
     "wireguard-keys-fleet"
     "wireguard-network-fleet"
   ];
+  ghApp = lib.importJSON ../fleet/github-app.json;
   expectedGenerators =
     name:
     if name == "ci-01" then
@@ -187,6 +188,7 @@ let
           "cloudflare-dns"
           "tern-workspace-dns"
         ]
+        ++ lib.optional (name == "dev-01" && ghApp.enabled) "gh-app"
         ++ lib.optional (builtins.elem name [
           "dev-01"
           "macbook"

@@ -23,8 +23,10 @@
 #              on the one repository, Administration: write), placed root-only
 #              by sops-nix. Only root's ExecStartPre reads it; the CI account
 #              receives the single-use runner configuration and nothing else.
-#   labels     all slots carry `self-hosted linux x64 ci-01`; `ci-01-heavy`
-#              and `ci-01-small` select capacity, never privilege. Names are
+#   labels     every slot carries `self-hosted linux x64 ci-01 ci-01-heavy
+#              ci-01-small`: slots are identical and take any job, so
+#              workflows and the router need no size-specific routing. The
+#              labels select capacity, never privilege. Names are
 #              `ci-01-<slot>-<epoch>`.
 #   image      the public image myParcelle publishes, pinned by digest like
 #              every other input of this repository (Chromium, Firefox and
@@ -34,21 +36,24 @@
 # Sizing (a starting point, tuned from the queue's real load). The machine has
 # 12 shared vCPUs and 32 GiB; about 3 GiB stay with the host (kernel, sshd, the
 # mirror, a deployment's Nix evaluation), so the account's slice is held to
-# 29 GiB. Each slot's engine (DinD) has its own limit, 2.5 GiB on the large
-# slots (Keycloak peaked at 2.16 GiB) and 0.5 GiB on the small ones. The
-# runner containers deliberately have NO memory limit, as on dev-01: the
-# application under test reads its cgroup's memory.max and refuses heavy
-# document work near it, and counts page cache. With a 4 GiB runner limit its
-# `bun` lane failed (plu-admin-questions-documents, cgroupBytes 2.9 GB) though
-# nothing was OOM-killed; with 2.5 GiB the types lane was OOM-killed (exit 137).
-# The trade-off: no per-runner memory wall. A runaway job can take memory from
-# the other slots up to the account slice's 29 GiB, never the host's 3 GiB
-# reserve. Three large slots own four CPUs each (0–3, 4–7, 8–11) and the one
-# small slot shares 10–11 with the third large slot, seeing two (by affinity
-# mask); a mostly idle small slot costs the large ones little. CPU weight 50
-# and an 11-core quota favour the host under contention. Three large slots
-# because browser jobs (ci-01-heavy) queued ~18 minutes behind two while the
-# small slots sat idle; the counts remain a starting point to tune.
+# 29 GiB. Four identical slots, because a fixed large/small split queued
+# browser jobs ~18 minutes behind two large slots while the small ones idled.
+# Each slot's engine (DinD) has the same 2.5 GiB limit (Keycloak peaked at
+# 2.16 GiB). The runner containers deliberately have NO memory limit, as on
+# dev-01: the application under test reads its cgroup's memory.max and
+# refuses heavy document work near it, and counts page cache. With a 4 GiB
+# runner limit its `bun` lane failed (plu-admin-questions-documents,
+# cgroupBytes 2.9 GB) though nothing was OOM-killed; with 2.5 GiB the types
+# lane was OOM-killed (exit 137). The trade-off: no per-runner memory wall. A
+# runaway job can take memory from the other slots up to the account slice's
+# 29 GiB, never the host's 3 GiB reserve. Worst case, four browser jobs at
+# about 3.3 GiB of runner plus the 2.5 GiB engine each come to ~23 GiB.
+# Slots are not CPU-pinned: cgroup weight shares the account's 11-core quota
+# (CPU weight 50 favours the host under contention). Without an affinity mask
+# every job would see 12 CPUs and size its workers (myParcelle's GATE_CORES,
+# else availableParallelism) for all of them, so each runner gets
+# GATE_CORES=3 (`gateCores` below): four jobs then budget 12 cores together. Counts
+# and the budget remain a starting point to tune.
 #
 # Isolation: each slot has its own network and no shared host-writable mount.
 # Jobs use GitHub Actions' ref-scoped cache, not a host browser-build store.
@@ -81,22 +86,15 @@ let
     "x64"
     "ci-01"
   ];
-  small = {
-    engine = "512m";
-    labels = labels ++ [ "ci-01-small" ];
-  };
-  large = {
-    engine = "2560m";
-    labels = labels ++ [ "ci-01-heavy" ];
-  };
-  slots = [
-    (large // { cpus = "0-3"; })
-    (large // { cpus = "4-7"; })
-    (large // { cpus = "8-11"; })
-    (small // { cpus = "10-11"; })
+  slotLabels = labels ++ [
+    "ci-01-heavy"
+    "ci-01-small"
   ];
-  slotNumbers = lib.range 1 (builtins.length slots);
-  slotOf = number: builtins.elemAt slots (number - 1);
+  # Memory limit of every slot's engine, and the core budget each job sizes
+  # its parallelism to (4 slots x 3 = the 12 vCPUs).
+  engineMemory = "2560m";
+  gateCores = 3;
+  slotNumbers = lib.range 1 4;
 
   # Root-only, placed by sops-nix from the clan var below.
   tokenFile = "/run/secrets/vars/myparcelle-ci-github-token/token";
@@ -200,9 +198,8 @@ let
     runtimeInputs = [ docker ];
     text = ''
       slot=$1
-      cpus=$2
-      engine_memory=$3
-      network=$4
+      engine_memory=$2
+      network=$3
       name=myparcelle-ci-runner-$slot
       IFS= read -r ACTIONS_RUNNER_INPUT_JITCONFIG
       export ACTIONS_RUNNER_INPUT_JITCONFIG
@@ -216,7 +213,7 @@ let
       # inner daemon defaults to IPv4-only; a job may still create its own
       # private IPv6 network inside its disposable engine.
       docker run --detach --rm --privileged --name "$name-engine" --network "$network" \
-        --cpuset-cpus "$cpus" --memory="$engine_memory" --memory-swap="$engine_memory" \
+        --memory="$engine_memory" --memory-swap="$engine_memory" \
         --sysctl net.ipv6.conf.all.disable_ipv6=1 \
         --sysctl net.ipv6.conf.default.disable_ipv6=1 \
         --env DOCKER_TLS_CERTDIR= \
@@ -231,7 +228,7 @@ let
       # As root: the image's own entry gives the `runner` account its home and
       # waits up to 60 s for the engine, then drops to `runner`.
       docker run --rm --name "$name" --network "container:$name-engine" --user 0 \
-        --cpuset-cpus "$cpus" \
+        --env GATE_CORES=${toString gateCores} \
         --env ACTIONS_RUNNER_INPUT_JITCONFIG --env DOCKER_HOST=unix:///var/run/engine/docker.sock \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
         --entrypoint /usr/local/bin/myparcelle-ci-entry ${runnerImage} job
@@ -419,11 +416,11 @@ in
     };
 
     services = {
-      # Rootless Docker applies --cpuset-cpus only to controllers its user
+      # Rootless Docker applies --memory only to controllers its user
       # manager was delegated.
       "user@${toString uid}" = {
         overrideStrategy = "asDropin";
-        serviceConfig.Delegate = "cpu cpuset io memory pids";
+        serviceConfig.Delegate = "cpu io memory pids";
       };
     }
     // lib.listToAttrs (
@@ -456,9 +453,9 @@ in
             ExecStartPre = [
               "${asCI} ${lib.getExe prepare} ${slotNetwork slot}"
               "${lib.getExe reserveSlot} ${toString slot}"
-              "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON (slotOf slot).labels)}"
+              "${lib.getExe mintRunner} ${toString slot} ${lib.escapeShellArg (builtins.toJSON slotLabels)}"
             ];
-            ExecStart = "${lib.getExe startJob} ${toString slot} ${(slotOf slot).cpus} ${(slotOf slot).engine} ${slotNetwork slot}";
+            ExecStart = "${lib.getExe startJob} ${toString slot} ${engineMemory} ${slotNetwork slot}";
             ExecStopPost = "${lib.getExe stopJob} ${toString slot}";
             Restart = "always";
             RestartSec = 5;

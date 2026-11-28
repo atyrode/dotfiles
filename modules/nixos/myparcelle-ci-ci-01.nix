@@ -36,24 +36,36 @@
 # Sizing (a starting point, tuned from the queue's real load). The machine has
 # 12 shared vCPUs and 32 GiB; about 3 GiB stay with the host (kernel, sshd, the
 # mirror, a deployment's Nix evaluation), so the account's slice is held to
-# 29 GiB. Four identical slots, because a fixed large/small split queued
+# 29 GiB. Slots are identical, because a fixed large/small split queued
 # browser jobs ~18 minutes behind two large slots while the small ones idled.
-# Each slot's engine (DinD) has the same 2.5 GiB limit (Keycloak peaked at
-# 2.16 GiB). The runner containers deliberately have NO memory limit, as on
-# dev-01: the application under test reads its cgroup's memory.max and
-# refuses heavy document work near it, and counts page cache. With a 4 GiB
-# runner limit its `bun` lane failed (plu-admin-questions-documents,
-# cgroupBytes 2.9 GB) though nothing was OOM-killed; with 2.5 GiB the types
-# lane was OOM-killed (exit 137). The trade-off: no per-runner memory wall. A
-# runaway job can take memory from the other slots up to the account slice's
-# 29 GiB, never the host's 3 GiB reserve. Worst case, four browser jobs at
-# about 3.3 GiB of runner plus the 2.5 GiB engine each come to ~23 GiB.
-# Slots are not CPU-pinned: cgroup weight shares the account's 11-core quota
+#
+# Launcher. Up to `maxSlots` runner units exist but none starts at boot:
+# myparcelle-ci-admit.timer (modules/nixos/myparcelle-ci-admit.py) keeps
+# exactly ONE idle registered runner and starts the next only while live
+# MemAvailable, minus each running job's unspent reserve, minus a host floor,
+# still covers one whole job. It reads only the host (meminfo, cgroups,
+# systemd, leases), never GitHub; anything unreadable starts nothing; a fenced
+# slot (quarantine lease) is never started. A unit runs one job and ends
+# (Restart=no); the next tick decides about its slot again.
+#
+# Memory. Each slot's containers run under the user-manager slice
+# ciSlot<n>.slice whose MemoryMax is `reserveMiB`, so a job that outgrows its
+# reservation is killed alone, not its neighbours. The application under test
+# reads ITS cgroup's memory.max and refuses heavy document work near it, and
+# counts page cache (with a 4 GiB runner limit its `bun` lane failed though
+# nothing was OOM-killed): the containers themselves carry no limit, only the
+# parent slice does, so they still see `max` as on dev-01. Each engine (DinD)
+# keeps its own 2.5 GiB limit (Keycloak peaked at 2.16 GiB). `reserveMiB` is a
+# STARTING value: the largest whole-slot memory.peak (runner + engine, page
+# cache included, so conservative) observed over the first day of real runs,
+# with margin; re-measure and tune it. The slice's 29 GiB cap stays as the
+# backstop for the host.
+#
+# CPU. Slots are not pinned: cgroup weight shares the account's 11-core quota
 # (CPU weight 50 favours the host under contention). Without an affinity mask
 # every job would see 12 CPUs and size its workers (myParcelle's GATE_CORES,
 # else availableParallelism) for all of them, so each runner gets
-# GATE_CORES=3 (`gateCores` below): four jobs then budget 12 cores together. Counts
-# and the budget remain a starting point to tune.
+# GATE_CORES=3 (`gateCores` below).
 #
 # Isolation: each slot has its own network and no shared host-writable mount.
 # Jobs use GitHub Actions' ref-scoped cache, not a host browser-build store.
@@ -91,10 +103,15 @@ let
     "ci-01-small"
   ];
   # Memory limit of every slot's engine, and the core budget each job sizes
-  # its parallelism to (4 slots x 3 = the 12 vCPUs).
+  # its parallelism to (3 x about four concurrent jobs = the 12 vCPUs).
   engineMemory = "2560m";
   gateCores = 3;
-  slotNumbers = lib.range 1 4;
+  # Launcher parameters: see the Launcher paragraph above.
+  maxSlots = 6;
+  reserveMiB = 6144;
+  floorMiB = 3072;
+  slotNumbers = lib.range 1 maxSlots;
+  userCgroupRoot = "/sys/fs/cgroup/user.slice/user-${toString uid}.slice/user@${toString uid}.service";
 
   # Root-only, placed by sops-nix from the clan var below.
   tokenFile = "/run/secrets/vars/myparcelle-ci-github-token/token";
@@ -212,7 +229,7 @@ let
       # shares this IPv4-only namespace, and RootlessKit has no IPv6. The
       # inner daemon defaults to IPv4-only; a job may still create its own
       # private IPv6 network inside its disposable engine.
-      docker run --detach --rm --privileged --name "$name-engine" --network "$network" \
+      docker run --detach --rm --privileged --name "$name-engine" --network "$network" --cgroup-parent "ciSlot$slot.slice" \
         --memory="$engine_memory" --memory-swap="$engine_memory" \
         --sysctl net.ipv6.conf.all.disable_ipv6=1 \
         --sysctl net.ipv6.conf.default.disable_ipv6=1 \
@@ -227,7 +244,7 @@ let
 
       # As root: the image's own entry gives the `runner` account its home and
       # waits up to 60 s for the engine, then drops to `runner`.
-      docker run --rm --name "$name" --network "container:$name-engine" --user 0 \
+      docker run --rm --name "$name" --network "container:$name-engine" --user 0 --cgroup-parent "ciSlot$slot.slice" \
         --env GATE_CORES=${toString gateCores} \
         --env ACTIONS_RUNNER_INPUT_JITCONFIG --env DOCKER_HOST=unix:///var/run/engine/docker.sock \
         --volume "$name-socket:/var/run/engine" --volume "$name-work:/home/runner/_work" \
@@ -300,6 +317,7 @@ let
     runtimeInputs = [
       docker
       pkgs.coreutils
+      pkgs.systemd
       pkgs.util-linux
     ];
     text = ''
@@ -308,6 +326,8 @@ let
         [[ -S ${runtimeDir}/docker.sock ]] && break
         sleep 1
       done
+      # Slot slices (ciSlot<n>.slice, the memory reservation) are user units.
+      systemctl --user daemon-reload
       docker network inspect "$network" >/dev/null 2>&1 || docker network create --ipv6=false "$network" >/dev/null
       # Serialize cold image pulls across slots. Each slot restarts on error,
       # rather than depending on a shared oneshot that can fail at boot.
@@ -321,6 +341,14 @@ let
   dockerUnit = "user@${toString uid}.service";
 in
 {
+  imports = [ ./myparcelle-ci-admit.nix ];
+
+  myparcelleCiAdmit = {
+    slots = maxSlots;
+    inherit reserveMiB floorMiB;
+    sliceRoot = userCgroupRoot;
+  };
+
   assertions = [
     {
       assertion = reported == "/no-such-path" || reported == tokenFile;
@@ -415,6 +443,22 @@ in
       };
     };
 
+    # Each slot's memory reservation, enforced for both of its containers
+    # through `docker run --cgroup-parent`. The user manager is reloaded by the
+    # slot's prepare step, so a new definition needs no restart of the engine.
+    user.slices = lib.listToAttrs (
+      map (
+        slot:
+        lib.nameValuePair "ciSlot${toString slot}" {
+          description = "ci-01 slot ${toString slot}: its job's memory reservation";
+          sliceConfig = {
+            MemoryAccounting = true;
+            MemoryMax = "${toString reserveMiB}M";
+          };
+        }
+      ) slotNumbers
+    );
+
     services = {
       # Rootless Docker applies --memory only to controllers its user
       # manager was delegated.
@@ -427,7 +471,7 @@ in
       map (
         slot:
         lib.nameValuePair "myparcelle-ci-runner-${toString slot}" {
-          description = "myParcelle CI runner ci-01-${toString slot} (one job, then re-registers)";
+          description = "myParcelle CI runner ci-01-${toString slot} (one job, then ends; started by myparcelle-ci-admit)";
           after = [
             "network-online.target"
             "nftables.service"
@@ -438,7 +482,9 @@ in
             dockerUnit
             "nftables.service"
           ];
-          wantedBy = [ "multi-user.target" ];
+          # A switch must never restart a running job; a new definition applies
+          # from the slot's next start. Not wanted at boot: the launcher starts it.
+          restartIfChanged = false;
           # An unverified teardown leaves the durable lease in place. The
           # operator checks job state before releasing the slot again.
           unitConfig.ConditionPathExists = "!/var/lib/myparcelle-ci-slot-${toString slot}/lease";
@@ -457,8 +503,7 @@ in
             ];
             ExecStart = "${lib.getExe startJob} ${toString slot} ${engineMemory} ${slotNetwork slot}";
             ExecStopPost = "${lib.getExe stopJob} ${toString slot}";
-            Restart = "always";
-            RestartSec = 5;
+            Restart = "no";
             TimeoutStartSec = "20min";
             # A job's own ceiling is the workflow's timeout-minutes.
             TimeoutStopSec = 90;

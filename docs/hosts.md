@@ -163,19 +163,28 @@ the runner registration token: none of the operator's shared secrets (agent
 broker token, session archive, custody keys), no Git identity, and no place on
 the fleet overlay; it is reached at its public name over SSH.
 [`modules/nixos/myparcelle-ci-ci-01.nix`](../modules/nixos/myparcelle-ci-ci-01.nix)
-declares four identical ephemeral runners under a local `myparcelle-ci` account
-with a rootless Docker engine. Every slot carries all of `ci-01`,
-`ci-01-heavy` and `ci-01-small`, so any slot takes any job and no workflow or
-router variable depends on a slot size. This replaced a fixed split of large
-and small slots because browser jobs queued about 18 minutes for the two
-large slots while the small slots sat idle. Each slot has a 2.5 GiB engine and
-no CPU pinning (cgroup weights share the account's 11-core quota); each
-runner gets `GATE_CORES=3` so four concurrent jobs size their workers for the
-12 vCPUs together, not 12 each. Runner containers have no memory limit of their own
-(the application under test reads its cgroup limit and refuses heavy work near it);
-the account's 29 GiB slice bounds them together (four browser jobs are about 23 GiB).
-The labels distinguish capacity, not privilege. The count and budget are a
-starting point to tune. Each slot runs one job in a fresh runner and
+declares up to six identical ephemeral runner units under a local
+`myparcelle-ci` account with a rootless Docker engine. Every slot carries all
+of `ci-01`, `ci-01-heavy` and `ci-01-small`, so any slot takes any job and no
+workflow or router variable depends on a slot size (a fixed large/small split
+had queued browser jobs about 18 minutes behind two large slots while the
+small ones idled). Nothing starts at boot: `myparcelle-ci-admit.timer`
+([`myparcelle-ci-admit.py`](../modules/nixos/myparcelle-ci-admit.py)) keeps
+exactly one idle registered runner and starts the next only when live
+`MemAvailable`, minus each running job's unspent reserve and a host floor,
+still covers one more job. It reads only the host (never GitHub), starts
+nothing it cannot read, and never starts a fenced slot. Each slot's containers
+run under a user slice `ciSlot<n>.slice` whose `MemoryMax` is the reserve, so
+a job that outgrows it is killed alone; the containers themselves carry no
+limit (the application under test reads its cgroup limit and refuses heavy
+work near it) and each engine keeps its own 2.5 GiB cap. The reserve and
+floor are starting values taken from measured whole-slot peaks and are tuned
+in the module. Slots are not CPU-pinned (cgroup weights share the account's
+11-core quota); each runner gets `GATE_CORES=3` so concurrent jobs size their
+workers for the 12 vCPUs together, not 12 each. The account's 29 GiB slice
+stays as the backstop for the host. The labels distinguish capacity, not
+privilege. A switch never restarts a running runner unit; a new definition
+applies from the slot's next start. Each slot runs one job in a fresh runner and
 Docker-in-Docker engine, on its own network, with no writable state that
 another job can mount. Jobs use GitHub's ref-scoped cache, not a persistent
 browser-build directory on the host. Fresh engines pull through the public
